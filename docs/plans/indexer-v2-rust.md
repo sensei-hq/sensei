@@ -498,3 +498,78 @@ This is also why `DEFAULT_EXCLUDE_GLOBS` grew entries like `**/target/**` and
 `**/node_modules/**`: they were hand-added to compensate for gitignore not being
 read. Once it is, those entries are redundant and should go, leaving only the
 tracked-but-not-source cases the list actually exists for.
+
+---
+
+# Verification plan — a checkpoint per layer, observable without asking
+
+Each stage produces DATA before it enqueues anything. That is what makes every
+layer verifiable on its own: the test asserts the returned value, no queue and no
+next stage involved. It is also why the `find_*` functions must stay pure.
+
+## A checkpoint per stage, written where it can be tailed
+
+Every stage appends one JSON line to a progress file — default
+`~/.sensei/scan-progress.jsonl` — so the run is observable live with
+`tail -f` rather than by asking. One line per stage completion, plus a SAMPLE so
+the shape can be eyeballed, not just the count.
+
+| stage | the line carries | the sample proves |
+|---|---|---|
+| `scan_root` | roots found, excluded count | the git folders found, AND each exclusion with the rule that caused it |
+| `scan_repo` | repo, folders, files kept/filtered | a few kept paths and a few filtered ones WITH the reason (gitignore / glob / not-source) |
+| `index_file` | file, symbols, references, unresolved by reason | one file's nodes and edges in full |
+| `reconcile` | claims released, nodes deleted, edges unresolved | the specific fqns, not just counts |
+
+A count alone hides the interesting failure. "kept 412 files" is consistent with
+having silently dropped every `.svelte`; "kept 412, filtered 88, here are 5 of
+each with reasons" is not.
+
+## Gate each stage BEFORE it enqueues
+
+The order of work is the order of verification:
+
+1. `find_git_roots` — two configured roots produce the expected git folders, and
+   an excluded folder is absent WITH its rule named. Pure input, pure output.
+2. `find_files` — one repo produces the expected kept/filtered split, nested
+   `.gitignore` honoured, globs applied, prune-not-filter confirmed by the
+   subtree never being read.
+3. `save_folders_and_files` — rows land, the barrier completes, `expected_files`
+   equals the kept count.
+4. `index_file` — one file yields the expected symbols and references, every
+   unresolved carrying a reason.
+5. `reconcile` — the mutation cases below.
+
+Only after each passes alone do we install, run a full scan, and verify the
+emergent behaviour: progress emitted correctly, tasks queued and drained,
+statuses advancing, and no state left in `discovered`.
+
+## Fixture repo — the mutation cases need one, they cannot use this repo
+
+`unparseable`, `rename`, `delete`, `modify` are not observable against a
+real checkout; the test has to CAUSE them. So: a temporary git repo the test
+builds, indexes, mutates, and re-indexes, asserting the delta.
+
+    fixture: two files, x.rs calls z() in z.rs, one type, one field, one trait impl
+
+| case | mutation | asserted |
+|---|---|---|
+| modify | change z()'s body | z's node updated; x's edge untouched; no churn elsewhere |
+| delete symbol | remove z() | z's node DELETED; x's edge UNRESOLVED with target_name kept; NOT pointing at a file-less node |
+| delete file | remove z.rs | file row gone, its nodes gone, x's edge unresolved |
+| rename, module unchanged | move within the same module | file row path updated, id stable, NO node churn |
+| rename, module changed | move to another module | declarations re-minted under the new module |
+| unparseable | truncate x.rs mid-function | NOTHING removed; file marked with reason AND location; nodes dirty; x's edge intact |
+| unparseable then fixed | restore x.rs | dirty cleared, file parsed, no residue |
+| no-op | re-index unchanged | zero rows written, `modified_at` unmoved |
+
+The last one is the one that silently regresses. Every other case is visible
+when it breaks; a no-op that quietly rewrites 300 rows is invisible until
+something else times out.
+
+## Why fixtures rather than the live corpus
+
+The live graph is useful for MEASURING (it produced every number in this design)
+and useless for asserting: it changes under the test, it cannot be mutated
+safely, and no case above can be caused on demand. Measure against the corpus;
+assert against the fixture.
