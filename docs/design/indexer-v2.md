@@ -1111,6 +1111,75 @@ That view is the work queue, for a person and for an agent. It is the same data
 G2 needs to show where a repository is weak, and the same data an agent needs to
 decide whether an answer it just received can be trusted.
 
+## 7d. R12 — the containment model, drawn
+
+    folders ──< scan_state ─────────────── THE FILE ENTITY
+       │        (folder_id, file_path, mtime, content_hash,
+       │         indexed_at, skip_reason)
+       │
+       └──< nodes ──┬── parent_id (self: type owns member)
+                    │
+                    ├── file_path TEXT ······> scan_state      [1] string, not a key
+                    │
+                    └── fqn segment 2 ·······> library_packages.package_name
+                                                     │          [2] the join, unpopulated
+              edges (source_id, target_id) ──> nodes
+
+    libraries (id, kind, name, ecosystem, version, base_url, docs_url, …)
+       ├──< library_packages     (package_name, library_id, source)      0 rows
+       ├──< library_skills       (library_id, name, focus, body, origin, scope, …)   10
+       ├──< library_agents       (library_id, name, focus, body, origin, scope, …)    6
+       ├──< library_pages        (library_id, title, url, content, component, …)    130
+       ├──< referenced_libraries (folder_id, library_id, version_used)
+       └──< project_libraries    (library_id, project_id, enabled)
+
+A node's container is a FILE or a LIBRARY CONTENT ITEM, and both chains already
+exist:
+
+    node -> file -> folder                    first-party
+    node -> package -> library -> content     external
+
+### What is already right
+
+- `library_packages` is EXACTLY the grouping: `package_name` TEXT keyed to a
+  `library_id`, joinable to the fqn's package segment with no new column. It even
+  carries `source` — provenance, which R11.1 requires.
+- `library_skills` and `library_agents` are already near-identical:
+  `library_id, name, focus, body, source, source_path, version_range, origin,
+  scope`. They differ only in that skills add `tokens`/`generated_at`. Two tables
+  for one shape.
+- `referenced_libraries (folder_id, library_id)` already answers "which libraries
+  does this repo use".
+
+### The two defects
+
+**[1] `nodes.file_path` is TEXT, not a key.** Every join to the file entity is a
+string match on `(folder_id, file_path)`. It works, but nothing enforces that the
+file exists — which is precisely how 8,147 ORPHANED nodes came to name files the
+scanner does not track. A key would have made that state unrepresentable.
+
+**[2] `library_packages` is empty**, so the external chain terminates at the
+package and never reaches the library, its pages, its skills or its agents.
+
+### CONTENT TYPE — the generalisation worth making
+
+`skill | agent | page | package` are all things a library CONTAINS, and three of
+them are already the same shape. A single `library_content` with a type
+discriminator would mean a new kind — an mcp server, a plugin, an example — costs
+a row rather than a table, and the R11.3 gap queue stays uniform instead of
+growing a case per kind.
+
+Not urgent, and it is a migration of live data (146 rows). Recorded because the
+shape should be decided BEFORE `library_packages` is populated and a fifth table
+joins the pattern.
+
+### Why this matters beyond tidiness
+
+With [1] and [2] closed, one query answers: given this call site, what library
+does it reach, which of that library's components document it, and which skills
+and agents exist for it. That is R10.7g, and it is two links away — not a new
+subsystem.
+
 ## 8. Decisions
 
 **D1.** Scope is the walk AND the persistence path (see R3).
