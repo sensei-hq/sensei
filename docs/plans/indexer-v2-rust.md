@@ -298,3 +298,59 @@ reindex. `sensei scan` will not pick up an indexer change; force it by resetting
 
 Move the superseded rust module to `to_be_discarded/`. Only after step 9 passes.
 Other languages follow the same ten steps, one at a time (D4).
+
+---
+
+# Pipeline decomposition (R14/R15) — the top-down shape
+
+    scan_root(watch_root)                          TASK
+      find_git_roots(path)                  IO     glob for .git directories
+      -> enqueue scan_repo per root                            [queue]
+
+    scan_repo(repo_root)                           TASK
+      find_submodules(gitmodules_text)     PURE    declared, reliable
+      find_subtrees(git_log_output)        PURE    heuristic, provenance=inferred
+      find_files(root, filters)             IO     glob + apply filters
+      save_repo(repo, submodules, subtrees) DB
+      save_folders_and_files(entries)       DB     <-- STRUCTURE BARRIER (R14)
+      -> enqueue index_file per file                           [queue]
+
+    index_file(file_id)                            TASK
+      read -> walk -> resolve -> persist -> reconcile
+
+## Purity is the testability seam
+
+The three `find_*` functions take TEXT or a PATH and return DATA. No database, no
+task queue, no hidden state:
+
+| function | input | testable with |
+|---|---|---|
+| `find_submodules` | `.gitmodules` contents | a string literal |
+| `find_subtrees` | `git log` output | a fixture, including the KNOWN-BAD cases |
+| `find_files` | a root + filter set | a tempdir |
+
+`find_subtrees` in particular MUST be pure, because its heuristic is known to be
+wrong in four distinct ways (§7g) and the only way to pin that behaviour is to
+feed it recorded output and assert what it does with each. A version that shells
+out to git internally cannot be tested against a rebased history it will never
+see on this machine.
+
+## Ordering is the correctness property, not a style choice
+
+`save_folders_and_files` completes BEFORE any `index_file` is enqueued. That
+barrier is what gives R14 its three properties — no task races another to create
+a file row, the complete post-filter set IS `expected_files`, and a file row with
+no parse outcome is a visibly lost task.
+
+`save_repo` precedes it because a folder needs its repo, and files need folders.
+
+## What each stage owns
+
+| stage | owns | must not |
+|---|---|---|
+| `scan_root` | which repos exist | know anything about files |
+| `scan_repo` | the file and folder set of ONE repo | parse anything |
+| `index_file` | one file's nodes and edges | create a file row (R13) |
+
+`index_file` looking up a `file_id` and failing closed — rather than
+get-or-create — is what keeps that boundary real.
