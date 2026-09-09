@@ -1,7 +1,7 @@
 # Build plan — indexer v2, rust
 
-Spec: `docs/design/indexer-v2.md`. Requirements are cited as R1..R8, acceptance
-as A1..A6. This document is only the sequence: what to build, how to prove it,
+Spec: `docs/design/indexer-v2.md`. Requirements are cited as R1..R10, acceptance
+as A1..A8. This document is only the sequence: what to build, how to prove it,
 what goes wrong.
 
 Rules for every step: failing test first, run it, watch it fail. Gate before
@@ -160,6 +160,96 @@ unresolved reasons.
 
 ---
 
+## Step 7b — Reconcile
+
+Numbered 7b and not 8 on purpose: `persist.rs` and the spec cite "step 9" for
+the DDL decisions in a dozen places, and renumbering would falsify all of them.
+
+**Spec** `docs/design/indexer-v2.md` R10 (R10.1–R10.6), A8, D8, D9. Read it
+first — the eight edge cases are settled there and the numbers behind each are
+in it. This step is the sequence only.
+
+**Build** `crates/senseid/src/indexer/reconcile.rs`, plus the v2-only store
+functions it needs. Nothing under `crates/senseid/src/languages/` and no change
+to any pre-existing `pg_store` function; `upsert_v2_symbol`,
+`merge_v2_edge_occurrences`, `v2_definition_nodes` and `v2_edges` are v2's own
+and may change.
+
+Build in this order — each item is usable and testable before the next exists.
+
+1. **Claims (D9).** `upsert_v2_symbol` also writes
+   `props = jsonb_set(props, '{claims}', coalesce(props->'claims','{}') ||
+   jsonb_build_object($file, true))`. NOT `props || …` — that replaces the whole
+   `claims` object, which is the exact bug `merge_v2_edge_occurrences` exists to
+   avoid. Add `PgStore::v2_claims_of_file(folder_id, file_path) -> BTreeSet<String>`.
+2. **Demotion (R10.2).** `PgStore::demote_v2_symbol(node_id)`: clear
+   `file_path`, `line_start`, `line_end`, `docstring`, `signature`, set
+   `resolved = false`, `is_exported = false`, `kind` to the placeholder
+   `persist::KIND_NOT_YET_KNOWN` already defines, and REMOVE the props keys
+   `symbol_kind`, `visibility`, `declared_type`, `params`, `span_columns` (jsonb
+   `-`, not a whole-props write — `claims` and anything another writer owns must
+   survive). A left-behind `line_start` on a `resolved = false` row is a
+   fabricated definition site (R4).
+3. **Occurrence removal (R10.4).**
+   `PgStore::drop_v2_edge_occurrences(edge_id, file_path)` →
+   `props = jsonb_set(props, '{occurrences}', (props->'occurrences') - $2)`,
+   then delete the edge row iff the result is `{}`. Return which of the two
+   happened; the caller counts both.
+4. **The edge lookup (R10.1).**
+   `PgStore::v2_edges_contributed_by(folder_id, file_path, claims)` with the
+   two-disjunct predicate R10.1 states. Assert over the corpus that it is a
+   SUPERSET of `props->'occurrences' ? file_path`, never a narrowing.
+5. **`reconcile(store, folder_id, facts) -> Reconciled`.** Typed return,
+   destructured exhaustively (R9): `{ claimed, released, demoted, contested,
+   occurrences_dropped, edges_deleted }`. `contested` is the R10.4 report — an
+   identity another file still claims — and exists for the same reason
+   `persist::Written` returns `collisions`.
+6. **The read boundary (R10.3).** A `Read` outcome that reconcile consumes, so
+   an `Err` from `lang::*::read` cannot reach it as an empty fact set. Guard
+   test over the v2 sources: `FileFacts` has no production constructor outside a
+   language module's `read`, and nothing calls `unwrap_or_default`/`ok()` on a
+   `Result<FileFacts, _>`.
+7. **The brake (R10.3).** Previously ≥1 claim and now zero ⇒ re-read from disk
+   once, apply only if the second read also claims zero. Absent-on-disk skips
+   the brake — that is observed, not inferred.
+
+**Verify** — (b) is the one that matters; (a) passes for three implementations
+that destroy data.
+
+- R10.6(a): claims of F equal `facts.symbols`; `occurrences -> F` equals the
+  grouping of `facts`.
+- **R10.6(b), the load-bearing check:** index two files, re-index one, and
+  assert the OTHER file's contribution is byte-identical before and after —
+  read back through `persist::read_back` with F projected out. Write it against
+  three deliberately wrong implementations and watch it catch each:
+  `delete_nodes_by_file`-style node deletion, `DELETE FROM edges WHERE
+  source_id = ANY(…)`, and dropping the whole `occurrences` object.
+- R10.6(c): every fqn in `previous_claims(F) \ facts.symbols` still has a node,
+  `resolved = false`, `file_path = NULL`, no definition column or prop.
+- Shared edge: a two-file fixture minting one source identity (the corpus has
+  only 4, all from one known A7 identity, so it cannot carry this test).
+- Shared claim: two files declaring one fqn; releasing one must not demote.
+- Parent/child: re-index a `lib.rs` and assert the child files' 3,290-shaped
+  file-scope edges survive. This is the case `file_path` attribution breaks.
+- Deletion: `reconcile(F, ∅)` down the same path as an emptied file.
+- Move: same fqn, two files, both scan orders, identical graph (A6).
+- Idempotence: reconcile twice with the same facts changes nothing.
+
+**Watch out**
+
+- `props || EXCLUDED.props` and `jsonb_set(props, '{k}', v)` are not
+  interchangeable. The first replaces `claims`/`occurrences` wholesale. Every
+  bug in this step is a variant of that one.
+- Do not add a GC. A stub with no edges is `prune_orphan_stubs_scoped`'s and it
+  already runs every tick. Two owners of deletion is a race.
+- Do not gate on `tree.has_error()`. Measured: true for 6 of 372 intact files,
+  false for 53 of 366 truncated ones — wrong in both directions.
+- Do not infer a rename. `a/b.rs` → `a/c.rs` changes every fqn in the file; it
+  is a deletion plus an addition and needs no code.
+- A package rename is NOT this step (R10.5). Do not add a partial version of it.
+
+---
+
 ## Step 8 — Differential harness
 
 **Build** a harness that runs v1 and v2 over the same corpus and diffs the facts.
@@ -180,9 +270,20 @@ Not a test — a tool that prints a report.
 
 ## Step 9 — Cutover, reindex, acceptance
 
-**Build** the switch in the file processor for rust only.
+**Build** the switch in the file processor for rust only. Three deletion
+triggers must be re-pointed at `reconcile` in the same change, or the graph gets
+two removal semantics: `process_git_folder`'s `plan.removed` loop,
+`scan::prune_vanished`, and the `delete_file` / `delete_folder` handlers. All
+three call `delete_nodes_by_file` today, whose `file_path` predicate deletes
+child module nodes and cascades their edges (R10.1).
 
-**Verify** — run the acceptance list (A1..A6) against the live graph after a full
+The DDL decisions this step owns, all deferred here by earlier steps: widening
+`sensei.node_kind` (for `trait`/`static`/`macro` and a "not yet known" value
+that retires the `parameter` placeholder), widening `sensei.edge_kind`, and
+`create index … on sensei.edges using gin ((props->'occurrences'))`, which
+collapses R10.1's two-disjunct lookup into one test.
+
+**Verify** — run the acceptance list (A1..A8) against the live graph after a full
 reindex. `sensei scan` will not pick up an indexer change; force it by resetting
 `daemon.last_version` and restarting, then set it back.
 

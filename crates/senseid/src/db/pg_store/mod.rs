@@ -493,7 +493,9 @@ mod indexer_v2;
 /// agree on which side of the relation is being counted, so the choice is one
 /// shared enum rather than a string each side re-interprets.
 pub(crate) use graph::CallDirection;
-pub(crate) use indexer_v2::{EdgeColumns, NodeColumns};
+#[cfg(test)]
+pub(crate) use indexer_v2::LibColumns;
+pub(crate) use indexer_v2::{Dropped, EdgeColumns, NodeColumns};
 mod library;
 mod logs;
 mod mcp;
