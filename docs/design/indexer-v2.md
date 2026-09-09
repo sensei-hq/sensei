@@ -1222,6 +1222,32 @@ They are the same change and splitting them means migrating the same table twice
   file that does not exist when the reference is a foreign key. The state stops
   needing detection because it stops being possible.
 
+### The file row is created by the WALK, never by node persistence
+
+Persisting a node must LOOK UP `file_id` and FAIL CLOSED if it is absent. It must
+NOT get-or-create.
+
+Get-or-create is the obvious convenience and it defeats the entire purpose of the
+key. A node naming an untracked file would simply create one, producing a phantom
+`files` row with no `mtime`, no `content_hash` and no `indexed_at` — a file that
+was never scanned. That is the 8,147 ORPHANED problem again, one table over, and
+worse because the foreign key now certifies it.
+
+The ordering falls out of who holds the facts:
+
+    walk opens x.rs
+      -> upsert the files row (mtime, content_hash, parse status)  -> id
+      -> persist nodes carrying that file_id
+
+Only the walk opened the file, so only the walk can state its facts. By the time
+nodes are written the row exists, and a lookup that misses means the pipeline is
+broken — which it should say, not paper over (R4).
+
+There is no legitimate exception. `file_id` is set only on DECLARATIONS, and a
+declaration exists only because its file was walked. PARTIAL and EXTERNAL nodes
+carry `file_id` NULL by definition (R10.7d), which is a different thing from a
+missing lookup.
+
 Keep `(folder_id, file_path)` as a unique constraint: it is the natural key, and
 `plan_reindex` and the walk both address files by path.
 
