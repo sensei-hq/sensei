@@ -1361,6 +1361,57 @@ module-changing rename is a re-mint. That is a property of the FQN grammar, not
 of the storage choice, and it is the price of an identity a reference can
 independently compute (R2).
 
+## 7g. R15 — the two-stage scan, and what git can and cannot tell us
+
+    SCAN ROOT   glob for .git directories            -> repo roots
+                read .gitmodules                     -> submodules (declared)
+                  |
+                  +-> per root:
+    SCAN REPO   glob files and folders, apply filters
+                create the folder rows and the file rows    <-- structure barrier
+                  |
+                  +-> enqueue one parse task per file
+
+Two stages, each doing one thing: find the repos, then find the files. Structure
+is complete before any parse task exists (R14).
+
+### Submodule: yes, from git
+
+Declared in `.gitmodules` at the repo root, and the submodule's directory holds a
+`.git` FILE (not a directory) pointing into the parent's `.git/modules/`. Both
+are working-tree facts, cheap to read at SCAN ROOT, and DECLARED rather than
+inferred.
+
+### Subtree: NO, and a folder-level scan would not help
+
+A subtree is ordinary files in the parent repo. There is no `.gitmodules` entry,
+no nested `.git`, no marker of any kind in the working tree. Verified here:
+`homebrew/` and `marketplace/` are subtrees and are indistinguishable from any
+other directory.
+
+The only trace is in COMMIT HISTORY:
+
+    5d998336 Squashed 'marketplace/' content from commit 10ea796
+    4a8e7ed4 Squashed 'homebrew/' content from commit 4f2e246
+
+So adding a folder-level scan does not solve it — there is nothing in the folder
+to find. History archaeology (`git log --grep='git-subtree-dir'`) is the only
+route and it is LOSSY: a squash or a rebase drops the trailer, and a subtree
+added by hand never had one.
+
+Treat subtree detection as best-effort enrichment with a provenance of
+"inferred from history", never as a structural fact the graph depends on. If it
+matters, it belongs in the same class as library grouping (R11.1): declared by
+the user when the heuristic misses.
+
+### What a folder-level pass IS worth doing for
+
+Not subtrees — NESTED MANIFESTS. A `Cargo.toml` with `[workspace] members`, a
+`package.json` with `workspaces`, a `pyproject.toml`. These are declared,
+reliable, and they are what actually define package boundaries inside one repo
+— which is the `package -> module -> item` slice of R10.7c and the input to
+`library_packages` (R10.7h).
+
 ## 8. Decisions
 
 **D1.** Scope is the walk AND the persistence path (see R3).
