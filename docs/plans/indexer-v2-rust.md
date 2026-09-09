@@ -354,3 +354,42 @@ no parse outcome is a visibly lost task.
 
 `index_file` looking up a `file_id` and failing closed — rather than
 get-or-create — is what keeps that boundary real.
+
+## Progress is emitted for the UI, and the barrier is what makes it determinate
+
+`RepoProgress { total, pending, running, completed, failed, current_file }`
+already exists (`tasks/progress.rs:38`) and is consumed by the UI at both file
+and repo level. Two consequences of R14 that must not be optimised away later:
+
+**`total` is known BEFORE the first file is indexed.** Because
+`save_folders_and_files` completes before any `index_file` is enqueued, the
+denominator is fixed at the barrier. Enqueueing as files are discovered would
+make `total` grow during the scan, so the UI would show a percentage that moves
+backwards. The barrier is what makes progress determinate rather than a spinner
+with a number on it.
+
+**Most of it is DERIVED from the files table, not tallied.** The file lifecycle
+(§7f) maps directly onto the counters:
+
+| counter | source |
+|---|---|
+| `total` | `count(files)` for the repo |
+| `pending` | files discovered with no parse outcome |
+| `completed` | files parsed |
+| `failed` | files unparseable, by `skip_reason` |
+| `running` | the TASK QUEUE — not derivable from files |
+| `current_file` | the task queue |
+
+Deriving four of the six means they cannot drift from the thing they describe —
+the same argument as folder completeness (R10.7b) and node dirtiness (R10.7).
+Only `running` and `current_file` are genuinely queue state, because "a task is
+executing right now" is not a fact about a file.
+
+This also means progress survives a restart. A maintained tally is lost when the
+daemon stops; a derived one is recomputed from rows that are already durable.
+
+**Repo-level progress needs `failed` to distinguish causes.** An unparseable file
+and an excluded file are both "not indexed" but only one is actionable (R10.9).
+The UI should be able to show "3 files could not be parsed" separately from "17
+binary files skipped", because the first is a call to action and the second is
+noise.
