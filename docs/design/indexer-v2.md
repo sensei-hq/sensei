@@ -1235,13 +1235,42 @@ worse because the foreign key now certifies it.
 
 The ordering falls out of who holds the facts:
 
-    walk opens x.rs
-      -> upsert the files row (mtime, content_hash, parse status)  -> id
-      -> persist nodes carrying that file_id
+    WALK          discover the file set, create ALL the file rows   <-- barrier
+      |
+      +-> enqueue one parse task per file
+            |
+            +-> PARSE   read, resolve, persist nodes with file_id already known
+
+The file rows are created by the walk BEFORE any parse task is enqueued. Four
+things follow, and three of them are problems that simply do not arise:
+
+1. **No race.** Parse tasks run concurrently. If each did get-or-create, two
+   tasks touching one file would race to insert it. Creating the rows upfront,
+   single-threaded, removes the race rather than locking around it.
+2. **The denominator is free.** At that barrier the walk knows the complete
+   post-filter file set — which is exactly `expected_files` (R10), obtained
+   without a second count.
+3. **A stalled parse is visible.** A file row with no parse outcome is a task
+   that never ran. Today that is indistinguishable from a file that does not
+   exist.
+4. **Order independence holds** (R6). Parse tasks can complete in any order
+   because none of them creates shared state; they only fill in their own row
+   and write their own nodes.
 
 Only the walk opened the file, so only the walk can state its facts. By the time
 nodes are written the row exists, and a lookup that misses means the pipeline is
 broken — which it should say, not paper over (R4).
+
+A FILE THEREFORE HAS ITS OWN LIFECYCLE, distinct from the node completeness
+states of R10.7d (which describe symbols):
+
+    discovered  -> the walk created the row; no parse outcome yet
+                -> parsed        the declarations are current
+                -> unparseable   skip_reason + detail (R10.7, R10.9)
+                -> skipped       binary, non-UTF8, excluded by config
+
+`discovered` with no successor is a stalled or lost parse task, and it is
+actionable in the same way an unparseable file is.
 
 There is no legitimate exception. `file_id` is set only on DECLARATIONS, and a
 declaration exists only because its file was walked. PARTIAL and EXTERNAL nodes
