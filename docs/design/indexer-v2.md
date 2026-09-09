@@ -982,6 +982,35 @@ This is the `library -> package -> symbol` slice of R10.7c, with the top level
 optional — the same shape as `folder -> file -> type -> member`, where a folder
 may or may not be a project.
 
+### R10.7h — `sensei.library.json` is the declared-grouping source, WHEN AVAILABLE
+
+A library manifest at the dependency's root is how the grouping is declared
+rather than guessed. Real example, `rokkit/sensei.library.json`:
+
+    library:  "rokkit"                     the grouping name
+    version, repo, branch, site
+    skills[]  name, focus, path, url       5 entries
+    agents[]  name, focus, path, url       3 entries
+    llms      docs corpus path + index
+    install   how to add a skill or agent
+
+That populates `libraries`, `library_skills`, `library_agents` and locates the
+pages corpus — four of the five tables in the R10.7g chain.
+
+WHEN AVAILABLE is the operative clause. Most dependencies will never ship one.
+Absent it the package stands alone: `lib·@rokkit/ui·…` is unchanged and complete,
+and the graph is ungrouped rather than wrong. Grouping is enrichment (R10.7f), so
+its absence is not a gap to be filled by inference.
+
+THE ONE THING THE MANIFEST DOES NOT CARRY: the package list. Nothing in it states
+that `@rokkit/ui` belongs to `rokkit`, so `library_packages` — the table with
+zero rows — still cannot be populated from this file alone. The options are to
+add `packages: [...]` to the manifest, or to read the repo's workspace members
+(`package.json` workspaces, `Cargo.toml` members), which is equally declared, just
+stated elsewhere. What must NOT happen is inferring it from the `@rokkit/*`
+prefix: `@types/node` belongs to no "types" library and gateway's crates share no
+prefix, so a prefix rule would fabricate groupings and they would be believed.
+
 ### R10.8 — a file that parsed is authoritative, and removal is REMOVAL
 
 When `read` returns `Ok`, the claim set is the truth. A declaration the file no
