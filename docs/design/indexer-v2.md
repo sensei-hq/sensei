@@ -733,52 +733,53 @@ so demotion trades a data-loss RISK for a wrong-data CERTAINTY. Backwards.
 
 They are two different events and get two different mechanisms.
 
-### R10.7 — a file that will not parse marks its contents DIRTY
+### R10.7 — parse status lives on the FILE, and dirty is DERIVED
 
-`read` returning `Err` removes NOTHING. The file is recorded unparseable and
-every node it claims is marked dirty, with the reason. A dirty node is still
-returned by every query — it is the last thing known to be true — but it is
-returned LABELLED, so a caller can tell a current fact from a stale one. The
-label carries the failure and the timestamp, so "why is this stale" is answerable
-without re-reading the file.
+A file is already a node (`kind = 'file'`), and every symbol carries the
+`file_path` it was declared in. So the file is the natural owner of parse status,
+and nothing else needs to be written:
 
-Dirty is a state of KNOWLEDGE, not of the code. Nothing about the graph is
-asserted to be wrong; we are saying we could not re-confirm it.
+- The FILE node records `parsed | unparseable`, and on failure the parser's own
+  error verbatim WITH a location — file, line, column, message (R10.9). One row,
+  one write.
+- A symbol is DIRTY if the file it belongs to is unparseable. That is a JOIN
+  (`nodes.folder_id = f.folder_id AND nodes.file_path = f.file_path AND
+  f.kind = 'file'`), not a flag stamped on each symbol.
 
-### R10.10 — deletion is found by DIFF, not by parse, and the diff must be complete
+Writing dirty onto every symbol was rejected on two grounds. It is N writes where
+one will do — a file with 200 declarations costs 200 updates and 200 more to
+clear. And two copies of one fact can disagree: a partial failure leaves some
+symbols marked and others not, for a file that is either parseable or it is not.
+Derived state cannot drift from the thing it derives from.
 
-A deleted function is invisible to a parse: the parse says what IS there, never
-what stopped being there. Deletion is only detectable by comparing the file's
-PREVIOUS claims against its CURRENT ones. Three cases, and all three are diffs:
+No DDL is required. `(folder_id, file_path)` already identifies a file and the
+file node already exists; status goes in its `props`, alongside the
+`props.claims` / `props.occurrences` precedent.
 
-1. A node this file previously claimed and no longer claims -> the claim is
-   released; the node is deleted if no other file claims it (R10.8).
-2. A node whose EDGES changed -> the edges this file previously contributed and
-   no longer contributes are removed, and the new ones inserted. Unchanged edges
-   are left alone.
-3. A node still claimed and unchanged -> nothing is written at all. No churn, no
-   `modified_at` bump.
+TWO PREREQUISITES, both currently unmet and both small:
 
-Case 2 is the one that is easy to get half right, because "insert the new ones"
-happens naturally and "remove the old ones" does not. It requires finding every
-edge the file previously contributed, which is exactly the rows carrying its
-occurrence key — nothing else. `props -> 'occurrences' ? <file>` IS the
-attribution unit and the ONLY one; any additional predicate can only exclude rows
-that genuinely belong to the file.
+1. **The file node needs an fqn.** Every `kind = 'file'` node in the live graph
+   has an EMPTY fqn, so it is not addressable as a merge target and cannot be
+   upserted by identity like every other node. Give it one.
+2. **The file node must be claimed like any other declaration**, so R10.8's
+   claim/release rules apply to it and a deleted file's node goes with its
+   contents.
 
-A DEFECT of this shape was found and must not be reintroduced:
-`v2_edges_contributed_by` narrowed the lookup with
-`AND (s.fqn = ANY($current_sources) OR s.resolved = false)`. An edge whose source
-the file has since deleted, and which is resolved elsewhere, satisfies neither —
-so the file's stale occurrence survived a re-index forever. Concretely:
-`impl Foo { fn a() { z(); } }` in x.rs, then `fn a` is deleted; `Foo::a` is not
-in the new source list and was resolved, so the `a -> z` edge is never revisited.
+### R10.7b — the composed view
 
-The narrowing was there for cost and the cost does not justify it: scoped by
-`folder_id`, the containment probe alone runs in 19.7ms against the largest
-folder in this corpus (330,437 edges), on the incremental path that reconcile
-exists to serve. If that ever matters, the answer is a GIN index on the props
-key, not a predicate that drops correct rows.
+`node + edge + file + folder` is the query surface both goals need, and each
+layer is already present: folders have `parent_id` (a real tree, 9,205 of 9,377
+populated), files are nodes, symbols carry `file_path`, edges carry endpoints.
+What is missing is the join expressed once, in a view, rather than re-derived by
+every caller.
+
+That view is what makes these answerable in one place:
+- G2: which files will not parse, and where is the risk concentrated by folder
+- G1: is this symbol current, or is its file broken — returned WITH the answer,
+  not as a separate lookup a caller may forget to make
+
+Deferred until v2 has a caller, but the shape is fixed now so the data lands in
+the right place rather than being migrated later.
 
 ### R10.9 — the failure must be ACTIONABLE and REACHABLE
 
