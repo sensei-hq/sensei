@@ -1198,10 +1198,29 @@ They are the same change and splitting them means migrating the same table twice
 - **Rename** `scan_state` -> `files`.
 - **Add `id uuid`** as a surrogate key. Today the PK is `(folder_id, file_path)`
   and there is no id, which is why `nodes` references a file by TEXT.
-- **Point `nodes.file_id` at it.** That closes R12 defect [1] and makes the 8,147
-  ORPHANED nodes UNREPRESENTABLE — a node cannot name a file that does not exist
-  if the reference is a foreign key. The state stops needing detection because it
-  stops being possible.
+- **Point `nodes.file_id` at it**, replacing `file_path` on the node. Measured,
+  this wins on every axis:
+
+  | | `file_path` (today) | `file_id` |
+  |---|---|---|
+  | file rename | rewrite EVERY node in it — 7.4 avg, 1,150 worst | 1 row |
+  | ORPHANED state | representable — 8,147 exist | impossible, it is a FK |
+  | storage | 47 bytes x 354,653 = 16 MB of duplicated text | 16 bytes, ~5.7 MB |
+  | `nodes_unique_identity` | carries a 47-byte column | 16 bytes |
+
+  The rename figure decides it. Today renaming a file rewrites the path on every
+  node it contains, and R10 has no rename handling at all — case 6 says "deletion
+  plus addition". With `file_id` a rename is ONE update to the file row and every
+  node follows, because none of them stored the path.
+
+  The write-side cost is one path->id lookup per FILE (47,904), not per node
+  (354,653), and the file row is being upserted at that moment anyway so the id is
+  already in hand. Readability is not an objection: the view (R12) exposes the
+  path.
+
+  It also makes the 8,147 ORPHANED nodes UNREPRESENTABLE — a node cannot name a
+  file that does not exist when the reference is a foreign key. The state stops
+  needing detection because it stops being possible.
 
 Keep `(folder_id, file_path)` as a unique constraint: it is the natural key, and
 `plan_reindex` and the walk both address files by path.
