@@ -119,11 +119,36 @@ land together; splitting them migrates the same table twice.
       calls | implements | extends | imports | depends_on | traces_to |
       references | covers | rationale_for | duplicates | similar_to
 
-  R8's relations — `extends`, `implements`, member ownership, impl blocks,
-  trait impls — map onto `extends`/`implements` which already exist. **This
-  requirement may be a no-op.** Derive the needed set from R8's seven patterns
-  and diff it against the list above; if the diff is empty, record that and
-  skip the ALTER rather than adding a value nothing writes.
+  **MEASURED AND SETTLED: THE DIFF IS EMPTY. S6 IS A NO-OP.** Recorded here
+  rather than merely skipped, because otherwise the next reader re-opens it.
+
+  Derived from CODE, not from reading this spec:
+  `indexer/persist.rs:575` (`reference_edge_kind`) and `:589`
+  (`relation_edge_kind`) are TOTAL functions from the 6 `RefKind`s and 6
+  `RelationKind`s onto `{calls, references, extends, implements}` — all four
+  already exist. Every finer distinction survives per-occurrence in `props`:
+
+  | R8 fact | representation | new kind? |
+  |---|---|---|
+  | field / param / return types | node props (D2) + `references`, `ref_kind = type_use` | no |
+  | extends / implements | the existing values | no |
+  | trait impl, mixin | `implements` + `relation_kind` in props | no |
+  | construction | `references`, `ref_kind = constructs` | no |
+  | member ownership | `references`, `relation_kind = owns` | no |
+  | macro invocation | `calls`, `ref_kind = macro_invokes` | no |
+
+  `calls` stays reserved for calls alone so `get_callers` keeps its meaning
+  and a construction is not counted as a call.
+
+  Live usage confirms nothing is starved: `calls` 410,678 · `references`
+  253,305 · `imports` 141,984 · `implements` 2,317 · `extends` 1,932; the
+  other six values carry 0 rows. **Do not add a value nothing writes.**
+
+  Follow-up that is NOT DDL: those two `persist.rs` functions carry comments
+  justifying the coarse mapping as deferred pending "step 9's decision". Step
+  9 no longer exists and the mapping is now the correct design, so those
+  comments read as a permanent open TODO. Re-word them when stage 6 is
+  touched.
 - **S7** (R10.1). `create index … using gin ((props->'occurrences'))` on
   `sensei.edges`. This is what lets reconcile ask the definitive attribution
   question (`props->'occurrences' ? F`) instead of an fqn approximation.
@@ -140,11 +165,38 @@ land together; splitting them migrates the same table twice.
       library_skills.library_id -> library_version_id
       library_agents.library_id -> library_version_id
 
-  Migration order matters: create `library_versions`, insert one row per
-  existing `(library, version)` — `version` is populated on **1,083 of 1,121**
-  rows — backfill the three content tables' new FK from it, verify no content
-  row is orphaned, THEN drop `libraries.version` and the old FKs. Same
-  backfill-verify-constrain discipline as S3.
+  **THE BACKFILL KEY IS `coalesce(nullif(version,''), 'latest')`, NOT
+  `version`.** An earlier draft of this requirement cited "`version` is
+  populated on 1,083 of 1,121 rows" as though that meant the migration was
+  mostly covered. The statistic is TRUE and it points exactly BACKWARDS —
+  measured, the CONTENT lives on the 38 unpopulated rows:
+
+  | library | version | pages | skills | agents |
+  |---|---|---:|---:|---:|
+  | rokkit | **NULL** | 94 | 5 | 3 |
+  | dbd | **NULL** | 36 | 1 | 1 |
+  | kavach | 1.1.3 | 0 | 4 | 2 |
+
+  Those are the ONLY three libraries with any content. Keying the backfill on
+  the raw column orphans **140 of 146 content rows — including every single
+  page.** `coalesce(...,'latest')` is required, and it is not a workaround:
+  `latest` is what this spec already says the key may be, and a library whose
+  version was never observed is honestly "latest" with `resolved_version`
+  NULL. It cannot collide, because `libraries` is one row per library.
+
+  Migration order: create `library_versions`, insert one row per library on
+  the coalesced key, backfill the three content tables' FK, **assert zero
+  orphans with a `RAISE EXCEPTION` gate**, THEN drop `libraries.version` and
+  the old FKs. Same backfill-verify-constrain discipline as S3.
+
+  Two blockers found by probing rather than reading, both in rolled-back
+  transactions: `libraries.version` cannot be dropped while
+  `project_libraries_resolved` selects it, so that view must be dropped and
+  recreated explicitly — **never `DROP COLUMN ... CASCADE`**, which takes the
+  view silently. And `library.rs:708` recomputes `page_count` via
+  `library_pages.library_id`, which stops existing; whether `page_count` then
+  means all versions or the current one is an open question to answer before
+  editing it.
 
   `version` is the KEY and may be the literal `latest`; `resolved_version`
   records what `latest` actually meant at `fetched_at`.
