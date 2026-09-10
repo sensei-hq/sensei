@@ -92,16 +92,20 @@ pub(crate) async fn scan_manifests(
             continue;
         };
 
+        // The local route's base_url IS the library root (LibSource::LocalDir).
+        // Passing None here is what left kavach with local_path set, base_url
+        // NULL, and no way for anything to find its docs.
+        let root_str = lib_root.to_string_lossy().to_string();
         let lib_id = state
             .pg
-            .upsert_library(&m.library, "npm", None, None, Some("local"), None)
+            .upsert_library(&m.library, "npm", None, None, Some("local"), Some(&root_str))
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
         match crate::libraries::ingest_manifest_at(&state.pg, &lib_id, &lib_root).await {
             Some((ns, na, np)) => registered.push(serde_json::json!({
                 "library": m.library,
-                "path": lib_root.to_string_lossy(),
+                "path": root_str,
                 "skills": ns,
                 "agents": na,
                 "packages": np,
