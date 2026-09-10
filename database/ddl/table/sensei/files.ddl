@@ -25,6 +25,19 @@ create table if not exists files (
   -- than on a node's props because splitting the code and the detail across two
   -- tables recreates the two-copies-of-one-fact problem R10.9 exists to avoid.
 , skip_detail              text
+  -- The file LIFECYCLE's missing bit (03 S4). The design names four states —
+  -- discovered / parsed / unparseable / skipped — and `skip_reason` already
+  -- separates the last two from the rest. What it cannot separate is
+  -- `discovered` from `parsed`: both are skip_reason NULL, so a parse task
+  -- that never ran looks exactly like one that succeeded and found nothing
+  -- (a real state, R10.3). This column is that one bit and nothing more.
+  --   parsed_at NULL, skip_reason NULL -> discovered  (stalled, if it lingers)
+  --   parsed_at set,  skip_reason NULL -> parsed
+  --   parsed_at set,  skip_reason set  -> unparseable | skipped, per the reason
+  -- A four-value enum column was the other option and was rejected: it would
+  -- restate what skip_reason already says, giving two writes of one fact that
+  -- can disagree. See indexer-v2.md R13.
+, parsed_at                timestamptz
 , indexed_at               timestamptz not null default now()
 , modified_at              timestamptz not null default now()
 , unique (folder_id, file_path)
@@ -47,6 +60,7 @@ A row means the file was EXAMINED at this fingerprint — not necessarily indexe
 - content_hash: sha256 of file content for change detection
 - skip_reason: null = indexed; non-null = examined and deliberately not indexed
 - skip_detail: the parser''s verbatim message with location, when there is one
+- parsed_at: null = discovered (no parse outcome yet); set = a parse ran
 - indexed_at: when this file was last examined';
 
 comment on column files.id
@@ -63,6 +77,8 @@ comment on column files.skip_reason
      is 'Null when the file was indexed. Non-null records why it was examined but deliberately not indexed (unsupported format, binary content, invalid UTF-8, parse error, excluded by config). Recording the fingerprint alongside the reason is what stops a skipped file from being re-enqueued on every reconcile; because the skip is keyed to the fingerprint, fixing the file re-triggers indexing automatically.';
 comment on column files.skip_detail
      is 'The parser''s VERBATIM error with file, line and column, when the grammar produced one (R10.9). skip_reason is the code; this is the text. An agent handed "x.rs:142: expected `}`" can fix the file; one handed "parse_error" can only shrug. Null when there is no detail to record.';
+comment on column files.parsed_at
+     is 'When a parse outcome was last recorded for this file. NULL means the walk created the row and no parse has run yet — the "discovered" state. Together with skip_reason this yields the full file lifecycle: (null, null) discovered; (set, null) parsed; (set, non-null) unparseable or skipped per the reason. It exists because those first two are otherwise indistinguishable, which would make a stalled parse task look identical to a file that parsed and legitimately declared nothing.';
 comment on column files.indexed_at
      is 'Timestamp when this file was last examined (indexed, or skipped with a reason).';
 comment on column files.modified_at

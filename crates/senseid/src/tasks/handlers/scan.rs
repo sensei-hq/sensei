@@ -703,7 +703,7 @@ fn parse_git_remote_config(stdout: &str) -> Vec<serde_json::Value> {
 /// Shells out to `git config` (the codebase carries no git2 dep). Empty on any
 /// failure or a repo with no remote: an honest "no remote", never a fabricated
 /// one — a remote-less repo simply can't be rename-detected by remote.
-fn read_git_remotes(repo_path: &str) -> Vec<serde_json::Value> {
+pub(crate) fn read_git_remotes(repo_path: &str) -> Vec<serde_json::Value> {
     let Ok(output) = std::process::Command::new("git")
         .args(["config", "--get-regexp", r"^remote\..*\.url$"])
         .current_dir(repo_path)

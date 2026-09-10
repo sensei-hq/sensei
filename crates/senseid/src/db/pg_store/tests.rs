@@ -1022,11 +1022,26 @@ async fn folder_completeness_propagates_incompleteness_up_the_tree() {
     assert!(!complete!(child), "incompleteness propagates to the parent");
     assert!(!complete!(root), "...and all the way to the root");
 
-    // Decide it.
+    // WALKING the file is not deciding it. The row now exists, but no parse
+    // has run — the file is `discovered`, and the folder is still short of its
+    // denominator. This assertion is the one that catches a `decided`
+    // predicate keyed on `indexed_at`, which is NOT NULL DEFAULT now() and so
+    // counts every walked file the instant its row appears.
     s.upsert_scan_state(&grand, "a.rs", 1, "h").await.unwrap();
+    assert!(!complete!(grand), "a walked-but-unparsed file is discovered, not decided");
+
+    // NOW decide it.
+    assert_eq!(s.mark_file_parsed(&grand, "a.rs").await.unwrap(), 1);
     assert!(complete!(grand), "denominator met");
     assert!(complete!(child), "an empty folder whose subtree is done is done");
     assert!(complete!(root), "completeness reaches the root in ONE pass, no loop");
+
+    // A CONTENT CHANGE un-decides it. The recorded parse described bytes that
+    // no longer exist, so the file returns to `discovered` and the whole tree
+    // is incomplete again — otherwise a stale parse counts as current work.
+    s.upsert_scan_state(&grand, "a.rs", 2, "DIFFERENT").await.unwrap();
+    assert!(!complete!(grand), "a changed file needs re-parsing");
+    assert!(!complete!(root), "...and that reaches the root too");
 
     s.remove_watch_root(&root_id).await.ok();
 }

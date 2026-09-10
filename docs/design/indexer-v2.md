@@ -1435,6 +1435,24 @@ states of R10.7d (which describe symbols):
 `discovered` with no successor is a stalled or lost parse task, and it is
 actionable in the same way an unparseable file is.
 
+**Stored as `parsed_at`, not as a four-value enum.** `skip_reason` already
+separates `unparseable` and `skipped` from the rest, and it carries WHICH.
+Adding an enum that repeats those two values gives two writes of one fact,
+which can disagree — the failure R10.9 exists to prevent, one column over.
+The only state `skip_reason` cannot express is `discovered` vs `parsed`:
+both are NULL. `files.parsed_at` is exactly that missing bit, and the four
+states read off the pair:
+
+| parsed_at | skip_reason | state |
+|---|---|---|
+| NULL | NULL | `discovered` — no parse outcome yet |
+| set | NULL | `parsed` |
+| set | non-null | `unparseable` or `skipped`, per the reason |
+
+This was missed in stage 0 and the column was added in stage 3, which is a
+second DDL round — the thing stage 0 existed to avoid. Recorded here rather
+than in a source comment.
+
 There is no legitimate exception. `file_id` is set only on DECLARATIONS, and a
 declaration exists only because its file was walked. PARTIAL and EXTERNAL nodes
 carry `file_id` NULL by definition (R10.7d), which is a different thing from a

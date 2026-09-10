@@ -1117,10 +1117,169 @@ impl PgStore {
         self.write_scan_state(folder_id, file_path, mtime, content_hash, Some(reason)).await
     }
 
+    // ── indexer v2 stages 1-3 (docs/spec/indexer/01..03) ─────────────────
+
+    /// Upsert a `sensei.repositories` row keyed on the NORMALIZED REMOTE
+    /// (stage 1, S4/S5).
+    ///
+    /// `repo_key` is the identity, never the path, so two clones, a rename or
+    /// a re-checkout all resolve to ONE row and its metric history survives a
+    /// folder move. A remote-less repo gets `repo_key = NULL`: the column is
+    /// UNIQUE with nulls distinct, so many local-only repos coexist.
+    ///
+    /// NEVER mints a synthetic key from the path (S5). That would make a
+    /// repo's identity change when it moves, which is the one thing this key
+    /// exists to prevent — and it is the D10 leak `normalize_repo_key`
+    /// already refuses at the parsing layer.
+    pub async fn upsert_repository(
+        &self,
+        name: &str,
+        remote: Option<&str>,
+    ) -> Result<uuid::Uuid, String> {
+        let key = remote.and_then(super::repo_key::normalize_repo_key);
+        if let Some(k) = key.as_deref() {
+            let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "INSERT INTO sensei.repositories(repo_key, remote_url, name)
+                 VALUES($1, $2, $3)
+                 ON CONFLICT(repo_key) DO UPDATE SET
+                   remote_url = COALESCE(EXCLUDED.remote_url, repositories.remote_url),
+                   name = EXCLUDED.name, modified_at = now()
+                 RETURNING id",
+            )
+            .bind(k)
+            .bind(remote)
+            .bind(name)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+            return Ok(row.0);
+        }
+        // No remote: nulls are distinct, so this inserts a fresh local-only
+        // row rather than colliding with every other keyless repo.
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.repositories(repo_key, name) VALUES(NULL, $1) RETURNING id",
+        )
+        .bind(name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// Point a repo-root FOLDER at its repository (stage 1, S4/S6).
+    ///
+    /// Only the root folder carries `repository_id`; subfolders resolve by
+    /// nearest ancestor. S6 asserts both directions after a scan — every root
+    /// has one, and every repository has a folder — because this repo's own
+    /// row had ZERO linked folders before the assertion existed.
+    pub async fn link_folder_to_repository(
+        &self,
+        folder_id: &uuid::Uuid,
+        repository_id: &uuid::Uuid,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.folders SET repository_id = $2, modified_at = now() WHERE id = $1",
+        )
+        .bind(folder_id)
+        .bind(repository_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Create or refresh a `files` row and RETURN its id (stage 3, S2).
+    ///
+    /// The id is the point: `nodes.file_id` references it, and persistence
+    /// LOOKS IT UP rather than get-or-creating (R13). A node naming an
+    /// untracked file must fail closed — get-or-create there would mint a
+    /// phantom `files` row with no mtime, no hash and no indexed_at, which is
+    /// the 8,147-ORPHANED problem one table over and worse, because the
+    /// foreign key would then certify it.
+    ///
+    /// Called by the WALK, before any parse task exists (S1). That ordering
+    /// is what removes the race rather than locking around it.
+    ///
+    /// A CONTENT CHANGE RESETS `parsed_at` to NULL — the file returns to
+    /// `discovered`, because the previous parse described bytes that are gone.
+    /// Carrying the old timestamp forward would leave a changed file counted as
+    /// decided by `folder_completeness` while its declarations are stale. An
+    /// unchanged file (a `touch`, or a re-run) keeps its timestamp, which is
+    /// what stops a re-scan from re-reporting the whole tree as unparsed.
+    pub async fn upsert_file_row(
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+        mtime: i64,
+        content_hash: &str,
+        skip_reason: Option<crate::classifiers::ScanSkipReason>,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.files(folder_id, file_path, mtime, content_hash, skip_reason)
+             VALUES($1, $2, $3, $4, $5::sensei.scan_skip_reason)
+             ON CONFLICT(folder_id, file_path) DO UPDATE SET
+               mtime = EXCLUDED.mtime, content_hash = EXCLUDED.content_hash,
+               skip_reason = EXCLUDED.skip_reason, indexed_at = now(), modified_at = now(),
+               parsed_at = CASE
+                   WHEN sensei.files.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+                   THEN NULL ELSE sensei.files.parsed_at END
+             RETURNING id",
+        )
+        .bind(folder_id)
+        .bind(file_path)
+        .bind(mtime)
+        .bind(content_hash)
+        .bind(skip_reason.map(|r| r.as_db()))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// Record that a parse RAN for this file and succeeded (03 S4).
+    ///
+    /// This is the only thing that moves a file from `discovered` to `parsed`,
+    /// and `sensei.folder_completeness` counts exactly these plus deliberate
+    /// skips. Creating the file row is DISCOVERY — the walk saying "this
+    /// exists" — and must not be mistaken for a verdict; that conflation is
+    /// what made the view report every folder complete before any work ran.
+    ///
+    /// Clears `skip_reason`/`skip_detail`: a file that previously failed to
+    /// parse and now parses is fixed, and leaving the old reason behind would
+    /// keep reporting it as broken.
+    ///
+    /// Returns the number of rows touched, so a caller naming a file that has
+    /// no row can tell — 0 means the walk never saw it, which is a pipeline
+    /// bug and not something to paper over (R13).
+    pub async fn mark_file_parsed(
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+    ) -> Result<u64, String> {
+        let r = sqlx_core::query::query(
+            "UPDATE sensei.files
+                SET parsed_at = now(), skip_reason = NULL, skip_detail = NULL,
+                    modified_at = now()
+              WHERE folder_id = $1 AND file_path = $2",
+        )
+        .bind(folder_id)
+        .bind(file_path)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(r.rows_affected())
+    }
+
     /// Single writer behind [`upsert_scan_state`] / [`upsert_scan_state_skipped`]
     /// so the statement lives in exactly one place. `skip_reason` is always
     /// assigned on conflict (never left stale) so a file can move between
     /// indexed and skipped in either direction.
+    ///
+    /// Delegates to [`Self::upsert_file_row`] and drops the id. Both were the
+    /// same INSERT ... ON CONFLICT against `files` differing only in whether
+    /// the caller wanted the returned id, and keeping two copies meant every
+    /// change to the conflict clause — the `parsed_at` reset being the one
+    /// that prompted this — had to be made twice or silently diverge.
     async fn write_scan_state(
         &self,
         folder_id: &uuid::Uuid,
@@ -1129,13 +1288,7 @@ impl PgStore {
         content_hash: &str,
         reason: Option<crate::classifiers::ScanSkipReason>,
     ) -> Result<(), String> {
-        sqlx_core::query::query(
-            "INSERT INTO sensei.files(folder_id, file_path, mtime, content_hash, skip_reason)
-             VALUES($1, $2, $3, $4, $5::sensei.scan_skip_reason)
-             ON CONFLICT(folder_id, file_path) DO UPDATE SET mtime = EXCLUDED.mtime, content_hash = EXCLUDED.content_hash, skip_reason = EXCLUDED.skip_reason, indexed_at = now(), modified_at = now()"
-        ).bind(folder_id).bind(file_path).bind(mtime).bind(content_hash)
-            .bind(reason.map(|r| r.as_db()))
-            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        self.upsert_file_row(folder_id, file_path, mtime, content_hash, reason).await?;
         Ok(())
     }
 
