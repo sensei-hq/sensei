@@ -1750,10 +1750,43 @@ The replacement:
 says we index the USE of a dependency and never its internals, so sometimes we
 genuinely cannot tell. That is a gap with a reason (R11), not a category.
 
-NO new `is_external` column. `nodes` has none today, the fqn already answers
-it, and adding one would store what is derivable — the failure R10.7e names.
-`nodes_unique_fqn` is `btree (folder_id, fqn)`, so a folder-scoped prefix test
-still uses the index for the folder equality; the lookup does not regress.
+**THE DERIVED FLAG ALREADY EXISTS: `sensei.graph_nodes.locality`.** An earlier
+draft of this decision said "`nodes` has no external flag". True of the TABLE,
+false of the schema — the view derives `internal | external | unknown`, and
+its comment documents at length why it must stay THREE-VALUED: a boolean bins
+every unresolved reference stub as external, which is the bug it was built to
+replace. The old edge-resolution proxy reported **791 of 1,040** of this
+repo's own modules as dependencies.
+
+So this is a VIEW EDIT, and it must preserve the third value:
+
+    when n.kind in ('lib_symbol','lib_package') then 'external'   -- before
+    when n.fqn like 'lib·%'                     then 'external'   -- after
+
+**Verified EXACT on the live graph — no node changes locality:**
+
+| via `kind` | via `fqn` | rows |
+|---|---|---:|
+| internal | internal | 354,653 |
+| external | external | 21,928 |
+| unknown | unknown | 18,450 |
+
+There is no off-diagonal cell, so the swap cannot move a node between
+localities in either direction.
+
+It also keeps the view's own stated principle — "a projection, not a second
+copy of a rule". The fqn prefix is set by the same writer that set the kind,
+so reading it still reports the writer's decision rather than re-deriving one.
+R10.7d already names the fqn's first segment as THE discriminator.
+
+And it shrinks the blast radius: anything already asking
+`graph_nodes.locality` needs no change. Only the writers and the direct
+`kind IN (...)` readers do.
+
+NO new `is_external` COLUMN. The view answers it, and a column would store
+what is derivable — the failure R10.7e names. `nodes_unique_fqn` is
+`btree (folder_id, fqn)`, so a folder-scoped prefix test still uses the index
+for the folder equality; the lookup does not regress.
 
 **Cost, measured and NOT small: 111 references across the tree** — heaviest in
 `db/pg_store/{tests,graph}.rs`, `tasks/handlers/process.rs`, `graph_facts.rs`,
