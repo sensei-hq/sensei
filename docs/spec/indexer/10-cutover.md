@@ -35,6 +35,35 @@ decides whether to cut over.
 
   All three call `delete_nodes_by_file` today, whose `file_path` predicate
   deletes child module nodes and cascades their edges (stage 7 S8).
+- **S4b** (D13). **WIPE THE CODE GRAPH, THEN RE-INDEX. Do not migrate it.**
+  `TRUNCATE sensei.nodes, sensei.edges CASCADE`, then a full v2 run.
+
+  The identity grammar changed, so this is not a preference: **194,355 of
+  194,376 fqns carry no reach segment**, and `reach` plus the `<module>`
+  segment both come from re-parsing. A v2 index over the old rows never
+  matches the merge contract and builds a SECOND disjoint graph beside the
+  first.
+
+  | destroyed and rebuilt | |
+  |---|---:|
+  | nodes | 386,884 |
+  | edges | 810,216 |
+  | symbol_names | 134,866 |
+  | embeddings to regenerate | **326,716** |
+  | `inference.drift_items` | 1,727 — `doc_node_id` CASCADEs, `code_node_id` nulls |
+
+  **Do NOT touch these — they are not parsed from source:** repositories
+  (68), folders (9,378), files (48,665), libraries (1,121), library content
+  (146), commands (572). "Indexed data" is `nodes` + `edges` + what derives
+  from them, not the whole `sensei` schema.
+
+  ORDER: wipe BEFORE dropping `lib_symbol`/`lib_package` from `node_kind`
+  (D12) — an enum value cannot be dropped while rows use it, and after the
+  wipe none do.
+
+  **Re-embedding 326,716 nodes is the real cost of this stage.** Verify the
+  embedding backfill sustains that volume BEFORE cutover depends on it, not
+  during. Record the throughput.
 - **S5.** Run A1–A9 against the LIVE graph after a full re-index.
 - **S6.** Record the BEFORE numbers before deploying. They cannot be recovered
   afterwards.
