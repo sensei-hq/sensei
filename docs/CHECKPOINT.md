@@ -1,76 +1,78 @@
 # Checkpoint — indexer v2
 
-**State: DESIGN COMPLETE, IMPLEMENTATION NOT STARTED.**
-Read `docs/design/indexer-v2.md` (spec) then `docs/plans/indexer-v2-rust.md`
-(build + verification). They are self-contained; this file is orientation only.
+**State: DESIGN + SPECS COMPLETE, IMPLEMENTATION NOT STARTED.**
+
+Read in this order:
+1. `docs/plans/indexer-v2-sequence.md` — the master plan, 12 stages
+2. `docs/spec/indexer/00-files-entity.md` — the next thing to build
+3. `docs/design/indexer-v2.md` — the whole-system spec, when a stage cites it
+
+`docs/plans/indexer-v2-rust.md` is SUPERSEDED — it inverts the DDL ordering
+and builds demotion. Marked at the top of the file.
+
+## Next command
+
+    # stage 0 — ALL the DDL, one dbd pass. Pre-release project: reconcile,
+    # NOT hand-written migrations. Verify no database/migrations/ first.
+    cat docs/spec/indexer/00-files-entity.md
 
 ## Where the code is
 
 | | |
 |---|---|
-| last code commit | `bc343622` — v2 steps 1-7 + reconcile |
+| last CODE commit | `bc343622` — v2 steps 1-7 + reconcile |
 | gate there | fmt 0, clippy 0, **3,292 tests / 0 failed** |
 | safety property | `languages/` UNTOUCHED, v2 has NO CALLER, no DDL |
 
-The shipped indexer still runs and is unaffected. Everything after `bc343622`
-is documentation.
+Everything since is documentation. The shipped indexer runs, unaffected.
 
-## Known-wrong IN THE COMMITTED CODE — superseded by the spec, do not build on
+## Known-wrong IN THE COMMITTED CODE — do not build on
 
-1. **DEMOTION** (`demote_v2_symbol`). Keeps a node and nulls `file_path`, so an
-   edge's `target_id` points at a row naming nothing and any consumer reading
-   `target_id IS NOT NULL` calls it resolved. 67,839 such edges measured in
-   `sensei_test`. Replaced by R10.7 (dirty) + R10.8 (delete-and-unresolve).
+1. **`demote_v2_symbol`** — keeps a node, nulls `file_path`, so `target_id`
+   stays non-null and every consumer reads it as resolved. 67,839 such edges
+   measured. Fixed by `07-reconcile.md` S3-S6 (delete + unresolve, ordered).
 2. **`v2_edges_contributed_by`** narrows with
-   `AND (s.fqn = ANY($current) OR s.resolved = false)`, so an edge whose source
-   this file deleted, and which resolves elsewhere, is never revisited and its
-   stale occurrence survives forever. R10.10: the occurrence key is the ONLY
-   attribution unit. The narrowing is not needed — 19.7ms scoped by folder
-   against the largest folder here (330,437 edges).
-3. **11 unverified column mappings**, 6 in `v2_symbol_unchanged`. The round trip
-   reads back props the same writer wrote, so column values verify against
-   themselves. Fix the class (read the COLUMN), not the fields.
+   `AND (s.fqn = ANY($3) OR s.resolved = false)` — an edge whose source this
+   file deleted, resolving elsewhere, is never revisited. Fixed by S7.
+3. **11 self-verifying column mappings**, 6 in `v2_symbol_unchanged`. Fixed as
+   a class in `06-persist.md`.
 
-## Start here
+## Open questions
 
-**R13 first.** Rename `scan_state` -> `files`, add an `id`, point
-`nodes.file_id` at it. It is DDL through dbd, and everything else assumes it —
-including the fix for the 8,147 ORPHANED nodes, which the foreign key makes
-UNREPRESENTABLE rather than merely detectable.
+- `library_content` shape — should `skill|agent|page|package` collapse into one
+  table with a discriminator? **Decide BEFORE stage 2b populates
+  `library_packages`**, or it becomes a migration of 146+ live rows.
+- `sensei.libraries` currently holds PACKAGES (1,121 rows, all `detected`).
+  What happens to those rows when the library level above them appears?
 
-Then the pipeline top-down: `scan_root` -> `scan_repo` -> `index_file`, per
-`docs/plans/indexer-v2-rust.md`.
+## Known-broken
 
-## Measured facts the design rests on (live graph, 48,654 files)
+- 8,147 ORPHANED nodes in the SHIPPED graph read as COMPLETE. Stage 0 sweeps
+  them and the FK makes the state unrepresentable.
+- `library_packages` has 0 rows, so 130 pages / 10 skills / 6 agents are
+  unreachable from any node. Stage 2b.
+
+## Measured facts the design rests on (live DB, verified this session)
 
 | | |
 |---|---:|
-| imports resolved / unresolved | 141,980 / **4** |
-| rust calls: real resolved / unresolved / ghost | 46,545 / 29,875 / 4,542 |
-| typescript calls resolved / unresolved | 104,634 / 64,050 |
-| nodes: COMPLETE / PARTIAL / EXTERNAL / **ORPHANED** | 346,506 / 18,450 / 21,928 / **8,147** |
-| `library_packages` (the grouping) | **0 rows** |
-| library pages / components / skills / agents | 130 / 128 / 10 / 6 |
+| `files` rows / indexed / skipped | 48,665 / 48,646 / 19 |
+| nodes COMPLETE / PARTIAL / EXTERNAL / **ORPHANED** | 346,506 / 18,450 / 21,928 / **8,147** |
+| repositories / folders with `repository_id` / projects | 68 / 69 / 147 |
+| commands / folders / repositories | 572 / 58 / 36 |
+| `library_packages` | **0 rows** |
+| libraries with any URL | **2 of 1,121** |
 | field + enum-variant nodes, any language | **0** |
 
 ## The rules that produced this design
 
-- Mint identity from what the CALL SITE can see; if the two sides mint different
-  strings they never merge. Broke twice before it was believed.
+- Mint identity from what the CALL SITE can see. Broke twice before believed.
 - A WRONG edge is worse than a MISSING one (R4).
-- Absence is not evidence — it is scan-order dependent.
+- Absence is not evidence — it is scan-order dependent (R6).
 - Defer WORK, never discard EVIDENCE (R11).
 - Derived beats stored: derived state cannot drift from what it derives from.
 - Structure before work: create the rows, then enqueue the tasks (R14).
 - Measure against the live corpus; ASSERT against a fixture.
-
-## Open, not blocking
-
-- `library_packages` is empty, so node -> package -> library -> skills/agents
-  stops one link short. Needs `sensei.library.json` ingestion or workspace
-  members. Not v2 work.
-- 8,147 ORPHANED nodes exist in the SHIPPED graph today and read as complete.
-  Partly created by `clear_scan_state_for_root`, which every forced reindex
-  calls. Not v2 work; R13 prevents recurrence.
-- A consistency review of the spec and plan was run at checkpoint time; fold its
-  findings in before implementing.
+- **Inventory what exists before specifying it as new work** — the file entity,
+  the library level, manifest extraction and gitignore handling were each
+  specified as new and each already existed, wired.

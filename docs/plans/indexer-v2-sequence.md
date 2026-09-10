@@ -15,9 +15,14 @@ Each row is startable only when everything above it is done and verified. This
 ordering is not preference: each stage consumes a structure the previous one
 creates.
 
+**`docs/plans/indexer-v2-rust.md` is SUPERSEDED by this file plus the ten
+specs.** It deferred all DDL to its "step 9", which contradicted stage 0 below;
+that conflict is resolved in favour of stage 0 (whole-system spec §7h, D10).
+Keep it only as the historical record of how the Rust steps were first drafted.
+
 | # | spec | builds | depends on |
 |---|---|---|---|
-| 0 | `spec/indexer/00-files-entity.md` | rename `scan_state`->`files`, add `id`, `nodes.file_id` | — (DDL, via dbd) |
+| 0 | `spec/indexer/00-files-entity.md` | **ALL DDL**: `scan_state`->`files` + `id` + `nodes.file_id`, parse-detail column, node_kind/edge_kind widening, occurrences gin index, `project_commands`->`folder_commands`, ORPHANED sweep | — (dbd `reconcile`; pre-release, no `migrations/`) |
 | 1 | `spec/indexer/01-scan-root.md` | find repo roots, apply root exclusions | 0 |
 | 2 | `spec/indexer/02-scan-repo.md` | submodules, subtrees, file/folder discovery, gitignore, **dependency manifests, commands** | 1 |
 | 2b | `spec/indexer/02b-library-discovery.md` | packages -> libraries, skills, agents, docs corpus | 2 |
@@ -33,6 +38,16 @@ creates.
 Steps 1-3 can be verified without any parsing at all. Step 4 needs no database.
 Only 6 onward touch persistence. That is deliberate — it front-loads everything
 cheap to test.
+
+### Why stage 0 takes ALL the DDL, not just the files migration
+
+Deferring the schema bought three workarounds for constraints stage 0 removes:
+the `parameter` kind placeholder (already in committed code, with twelve
+comments citing a build step that no longer exists), and R10.1's two-disjunct
+edge predicate. Both are now WITHDRAWN in the spec. `props.claims` stays in
+jsonb — that one was a deliberate choice, never a deferral. Writing a
+workaround for a constraint you are about to remove is waste, and the
+workaround outlives the constraint.
 
 ## Manifests and commands: ALREADY BUILT — correcting an earlier draft of this plan
 
@@ -168,16 +183,55 @@ skipped and the three that cost the most later.
 the test builds and mutates). It is specified once, in `07-reconcile`, and
 referenced by `09`. Not duplicated.
 
+## Repositories, projects and commands — the naming, settled
+
+Checked against the live schema rather than inferred:
+
+| entity | table | rows | what it is |
+|---|---|---:|---|
+| repository | `sensei.repositories` | 68 | the IDENTITY, keyed on `repo_key` (normalized remote). Survives a re-clone, rename or move. No `project_id` — a repo may belong to several projects. |
+| its placement | `sensei.folders` (69 carry `repository_id`, 67 distinct repos) | 9,378 | where it sits TODAY. Only the repo-root folder carries the link; subfolders resolve by nearest ancestor. |
+| project | `sensei.projects` | 147 | the user-viewable GROUPING of repositories, M:N through the folders junction. |
+
+So `scan_root` produces BOTH — a repo-root folder row and a `repositories`
+row. Two clones of one remote are two folders and one repository. This was
+already the design and it is correct.
+
+`project_commands` is renamed **`folder_commands`** in stage 0 (D11). It is
+keyed on `folder_id`, has no project reference, and its own comment says "per
+folder". `repository_commands` would be wrong too: measured, 572 commands span
+**58 folders but only 36 repositories**, so a repo-grained key collapses 22
+folders' command sets and loses which directory each `build` runs in.
+`project_libraries` (keyed `project_id`) and `project_dependencies`
+(project->project) keep their names — correctly named already.
+
 ## Status
 
 | | |
 |---|---|
-| whole-system spec | written — `docs/design/indexer-v2.md` |
-| per-stage specs | NOT YET EXTRACTED |
-| consistency review | run at checkpoint; findings fold into the extraction |
+| whole-system spec | written and REVIEWED — `docs/design/indexer-v2.md` |
+| consistency review | run, 38 findings, folded in at `f9393c52` |
+| per-stage specs | **WRITTEN** — `docs/spec/indexer/00..10` |
+| superseded | `docs/plans/indexer-v2-rust.md` (DDL ordering; historical only) |
 | code | `bc343622`, nothing since |
 
-The extraction is mechanical but not trivial: several sections of the
-whole-system spec were superseded mid-session, so the split must carry the
-CORRECTED version. The review exists to catch exactly that before it is copied
-into ten files instead of one.
+The review found ten CRITICAL items, all of them stale text that would have
+produced wrong code — five places still prescribing demotion after it had been
+rejected, and an R10.8 that required inbound edges unresolved while every FK
+cascades. Those are fixed in the whole-system spec, and the ten specs carry the
+corrected version rather than the draft.
+
+Three measured corrections came out of it, none from reading: COMPLETE is
+346,506 not 354,653 (the larger number is COMPLETE + ORPHANED); the three file
+counts were one experiment at three sizes; and R11.2's upstream half is
+unbuildable today because exactly 2 of 1,121 library rows carry any URL.
+
+## Known-wrong in the committed code — the three stage specs that fix them
+
+`bc343622` names these in its own commit message and they are not yet fixed:
+
+| defect | fixed by |
+|---|---|
+| `demote_v2_symbol` — keeps a node and nulls `file_path`, so `target_id` stays non-null and every consumer reads it as resolved (67,839 such edges measured) | `07-reconcile.md` S3–S6 |
+| `v2_edges_contributed_by`'s narrowing `AND (s.fqn = ANY($3) OR s.resolved = false)` — an edge whose source this file deleted, resolving elsewhere, is never revisited | `07-reconcile.md` S7 |
+| 11 self-verifying column mappings, 6 in `v2_symbol_unchanged` — the round trip reads back props the same writer wrote | `06-persist.md`, last verification row |

@@ -1,4 +1,30 @@
-# Build plan — indexer v2, rust
+# Build plan — indexer v2, rust  ·  SUPERSEDED
+
+> **DO NOT BUILD FROM THIS FILE.** It is superseded by
+> `docs/plans/indexer-v2-sequence.md` (the master plan) and the per-stage specs
+> at `docs/spec/indexer/00..10`. Kept as the historical record of how the Rust
+> steps were first drafted.
+>
+> Three reasons it must not be followed as written:
+>
+> 1. **DDL ordering is inverted.** This file defers all schema changes to its
+>    "step 9", at the end. The ruling is stage 0, at the start (spec §7h, D10).
+>    Its step 9 also omits the two largest changes the spec requires — R13's
+>    files migration and R10.7's parse-detail column.
+> 2. **Step 7b builds DEMOTION**, which was rejected. Its item 2, its
+>    `Reconciled` shape, and its R10.6(c) verification all prescribe the
+>    superseded mechanism — while lines elsewhere in the same file correctly
+>    say the node is DELETED. See `docs/spec/indexer/07-reconcile.md`.
+> 3. **Its spec pointer excludes the corrections.** "R10 (R10.1–R10.6)" leaves
+>    out R10.7, R10.8 and R10.9 — precisely the sections that supersede what it
+>    points at.
+>
+> Also stale, for the record: the header's "R1..R10 / A1..A8" (the spec defines
+> R1..R15, A1..A9, D1..D11, and this file itself cites R13/R14/R15); "the same
+> ten steps" (there are eleven, after 7b); `find_subtrees` "wrong in four
+> distinct ways" (§7g measures three); the file-lifecycle citation to §7f (it
+> is §7e); and the fqn merge-contract test, which varies four segments and
+> omits `reach` — the one segment measured to break.
 
 Spec: `docs/design/indexer-v2.md`. Requirements are cited as R1..R10, acceptance
 as A1..A8. This document is only the sequence: what to build, how to prove it,
