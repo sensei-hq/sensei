@@ -81,6 +81,25 @@ land together; splitting them migrates the same table twice.
   something else is not a value that means "not yet known". It is free only
   because D2 makes parameters props — that made it available, never correct.
 
+  **REMOVE `lib_symbol` and `lib_package`** (D12). Kind says WHAT a node is;
+  the fqn prefix says WHERE it is from. Measured, the redundancy is total:
+  21,928 nodes carry a `lib_` kind, all 21,928 have a `lib·` fqn, and ZERO
+  other kinds do. `lib_symbol` also destroys the real kind on 18,240 rows.
+  - `lib_package` -> `package`
+  - `lib_symbol` -> the real kind where the use site reveals it, else
+    `unknown`
+  - externality -> `fqn LIKE 'lib·%'`, the one discriminator. **No
+    `is_external` column** — `nodes` has none, the fqn answers it, and adding
+    one stores what is derivable.
+
+  **This is the largest single item in stage 0 and it is a CODE migration,
+  not DDL: 111 references** across `db/pg_store/{tests,graph}.rs`,
+  `tasks/handlers/process.rs`, `graph_facts.rs`, `languages/import_target.rs`,
+  `indexer/{community,persist}.rs`, plus `nodes.ddl`, the `graph_nodes` and
+  `edge_resolution_class` views, and a 21,928-row backfill. Budget for it
+  separately. It is here rather than later only because the alternative is
+  letting the v2 walk write `lib_symbol` and migrating a second time.
+
 - **S6** (§7h.5). Check `sensei.edge_kind` before widening it. **Current 11
   values:**
 
@@ -272,7 +291,11 @@ Every check names the one-line mutation that must break it.
 | every edge whose target was swept has `target_id IS NULL` **and a non-null `target_name`** | remove the backfill from S9 step 1 — 212 edges then survive as `target_id NULL, target_name NULL`, which passes a naive "edges still exist" check while carrying no information |
 | the materialised `orphans` set is used by all three steps, not re-derived per statement | inline the predicate into each statement |
 | the parse-detail column accepts and returns a multi-line parser message verbatim | truncate it to `varchar(80)` |
-| `node_kind` accepts `field` and `variant` | revert S5 |
+| `node_kind` accepts `trait`, `static`, `macro`, `unknown` | revert S5's additions |
+| `node_kind` REJECTS `lib_symbol` and `lib_package` | leave them in the enum |
+| every former `lib_package` row is `package`; every former `lib_symbol` row has a real kind or `unknown`; all 21,928 still have a `lib·` fqn | backfill the kind without checking the fqn survived |
+| "which symbols are external" returns 21,928 via `fqn LIKE 'lib·%'`, matching the pre-migration `kind IN (...)` count exactly | drop a row in the backfill — the counts diverge and nothing else notices |
+| no `is_external` column was added | add one |
 | `EXPLAIN` on `props->'occurrences' ? $1` uses the gin index | drop it (S7) |
 | `folder_commands` has 572 rows across 58 folders | revert S8 |
 | `dbd doctor` is clean | any of the above |
