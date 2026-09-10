@@ -61,7 +61,7 @@ afterthought.
 handler that turns a failure into `[]` and a writer that turns one into "0 rows
 written" are the same defect.
 
-## 5. Checkpoint output
+## 5. Stage report — what you SHOW when the stage is done
 
     {"stage":"06-persist","at":"<iso8601>","repo":"…",
      "files_written":372,"write_errors":0,
