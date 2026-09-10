@@ -5,7 +5,7 @@
 //! section directly.
 
 use super::workspace::resolve_glob_members;
-use super::{FsSignals, ManifestAdapter, ParsedManifest};
+use super::{FsSignals, ManifestAdapter, ParsedManifest, PinnedVersion};
 use crate::indexer::lib_indexer::{DepVersion, parse_cargo_deps};
 use crate::types::PackageInfo;
 use std::path::Path;
@@ -20,6 +20,40 @@ pub struct CargoManifestAdapter;
 impl ManifestAdapter for CargoManifestAdapter {
     fn manifest_filenames(&self) -> &[&'static str] {
         &["Cargo.toml"]
+    }
+
+    fn lockfile_filenames(&self) -> &[&'static str] {
+        &["Cargo.lock"]
+    }
+
+    /// `Cargo.lock` is TOML: an array of `[[package]]` tables, each with a
+    /// `name` and a `version`.
+    ///
+    /// A package's own `dependencies` list holds BARE NAMES with no version,
+    /// so it is read past rather than mistaken for further packages — doing
+    /// otherwise would invent versionless entries. A package with no `version`
+    /// is skipped rather than defaulted (R4).
+    fn parse_lockfile(&self, _filename: &str, content: &str) -> Vec<PinnedVersion> {
+        let Ok(lock) = content.parse::<toml::Value>() else {
+            return Vec::new();
+        };
+        let Some(packages) = lock.get("package").and_then(|p| p.as_array()) else {
+            return Vec::new();
+        };
+        let mut pins: Vec<PinnedVersion> = packages
+            .iter()
+            .filter_map(|p| {
+                Some(PinnedVersion {
+                    name: p.get("name")?.as_str()?.to_string(),
+                    version: p.get("version")?.as_str()?.to_string(),
+                })
+            })
+            .collect();
+        // Stable regardless of the file's own ordering (R6/A6). Cargo already
+        // writes alphabetically, so this is a no-op today and a guarantee
+        // tomorrow.
+        pins.sort_by(|a, b| a.name.cmp(&b.name).then(a.version.cmp(&b.version)));
+        pins
     }
 
     fn ecosystem(&self) -> &'static str {
@@ -306,5 +340,95 @@ mod tests {
         let parsed = CargoManifestAdapter.parse_manifest(content);
         let fs = FsSignals::default();
         assert_eq!(CargoManifestAdapter.infer_role(&parsed, content, &fs), None);
+    }
+}
+
+#[cfg(test)]
+mod lockfile_tests {
+    use super::*;
+    use crate::adapters::manifest::{ManifestAdapter, PinnedVersion};
+
+    fn pins(content: &str) -> Vec<PinnedVersion> {
+        CargoManifestAdapter.parse_lockfile("Cargo.lock", content)
+    }
+
+    #[test]
+    fn reads_name_and_version_from_each_package_block() {
+        let lock = r#"
+version = 4
+
+[[package]]
+name = "adler2"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "serde"
+version = "1.0.219"
+"#;
+        assert_eq!(
+            pins(lock),
+            vec![
+                PinnedVersion { name: "adler2".into(), version: "2.0.1".into() },
+                PinnedVersion { name: "serde".into(), version: "1.0.219".into() },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_pin_is_exact_where_the_manifest_only_had_a_floor() {
+        // The entire reason this reader exists. `clean_version` strips `^`, so
+        // a manifest-derived "1.0" is a RANGE FLOOR wearing the shape of a
+        // pin. The lockfile is the only place the installed version exists.
+        let lock = "[[package]]\nname = \"serde\"\nversion = \"1.0.219\"\n";
+        assert_eq!(pins(lock)[0].version, "1.0.219", "not the manifest's 1.0");
+    }
+
+    #[test]
+    fn the_dependencies_list_inside_a_package_is_not_mistaken_for_a_package() {
+        // A `[[package]]` block lists its own deps as bare names with no
+        // version. Treating those as entries would invent versionless pins.
+        let lock = r#"
+[[package]]
+name = "outer"
+version = "1.0.0"
+dependencies = [
+ "inner",
+ "other",
+]
+
+[[package]]
+name = "inner"
+version = "2.0.0"
+"#;
+        let got = pins(lock);
+        assert_eq!(got.len(), 2, "two packages, not four");
+        // Sorted by name, not by position in the file (R6).
+        assert_eq!(got.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["inner", "outer"]);
+    }
+
+    #[test]
+    fn a_package_missing_a_version_is_skipped_not_defaulted() {
+        // R4: a fabricated version is worse than a missing one — something
+        // would fetch docs for it.
+        let lock = "[[package]]\nname = \"local-only\"\n\n[[package]]\nname = \"ok\"\nversion = \"1.2.3\"\n";
+        assert_eq!(pins(lock), vec![PinnedVersion { name: "ok".into(), version: "1.2.3".into() }]);
+    }
+
+    #[test]
+    fn a_malformed_lockfile_yields_nothing_rather_than_panicking() {
+        assert!(pins("this is not toml {{{").is_empty());
+        assert!(pins("").is_empty());
+    }
+
+    #[test]
+    fn it_accepts_cargo_lock_and_nothing_else() {
+        assert!(CargoManifestAdapter.accepts_lockfile("Cargo.lock"));
+        assert!(!CargoManifestAdapter.accepts_lockfile("bun.lock"));
+        // A lockfile must NOT be routed into the manifest parser.
+        assert!(
+            !CargoManifestAdapter.accepts("Cargo.lock"),
+            "accepts() answers for manifests only"
+        );
     }
 }

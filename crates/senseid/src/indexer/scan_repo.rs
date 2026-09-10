@@ -10,6 +10,7 @@
 //! ordered first precisely because they can be proven without a database, and
 //! a function that needs one to be tested has lost that property.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 // ── S1: submodules, declared in .gitmodules ──────────────────────────────
@@ -511,6 +512,81 @@ mod walk_tests {
     }
 }
 
+/// Every pin in one lockfile, indexed by package name (02 S6b, 02b S11).
+///
+/// The ecosystem picks the adapter and the FILENAME picks the reader within
+/// it — npm alone has several lockfile grammars. An ecosystem with no
+/// registered reader yields an empty map, which is a named gap: the caller
+/// falls back to the manifest range and nothing is fabricated.
+pub fn pins_by_name(ecosystem: &str, filename: &str, content: &str) -> BTreeMap<String, String> {
+    crate::adapters::manifest::registered_adapters()
+        .iter()
+        .filter(|a| a.ecosystem() == ecosystem && a.accepts_lockfile(filename))
+        .flat_map(|a| a.parse_lockfile(filename, content))
+        .map(|p| (p.name, p.version))
+        .collect()
+}
+
+/// The version to record for one DIRECT dependency.
+///
+/// The lockfile pin when it has one, else the manifest's own version. Looked
+/// up BY NAME — the caller never enumerates the lockfile, which is what keeps
+/// the transitive tree out while still getting the resolved pin (02b S11).
+///
+/// A miss returns the manifest version unchanged rather than nothing: the
+/// project really does depend on that package, and dropping it would lose a
+/// real dependency to a missing lockfile entry.
+pub fn resolve_pin(pins: &BTreeMap<String, String>, name: &str, manifest_version: &str) -> String {
+    pins.get(name).cloned().unwrap_or_else(|| manifest_version.to_string())
+}
+
+#[cfg(test)]
+mod pin_tests {
+    use super::*;
+
+    #[test]
+    fn a_direct_dep_takes_the_lockfile_pin_over_the_manifest_floor() {
+        // The whole point of reading a lockfile. `^2.60.1` cleans to `2.60.1`,
+        // which is a range FLOOR indistinguishable from a pin; the lockfile
+        // holds what is actually installed.
+        let lock = r#"{"packages": {"@sveltejs/kit": ["@sveltejs/kit@2.69.2", "", {}, "sha"]}}"#;
+        let pins = pins_by_name("npm", "bun.lock", lock);
+
+        assert_eq!(resolve_pin(&pins, "@sveltejs/kit", "2.60.1"), "2.69.2");
+    }
+
+    #[test]
+    fn a_dep_absent_from_the_lockfile_keeps_the_manifest_version() {
+        // Honest fallback: no lockfile entry means no better answer exists.
+        let pins = pins_by_name("npm", "bun.lock", r#"{"packages": {}}"#);
+        assert_eq!(resolve_pin(&pins, "left-pad", "1.0.0"), "1.0.0");
+    }
+
+    #[test]
+    fn looking_up_by_name_does_not_drag_in_the_transitive_tree() {
+        // A lockfile lists EVERY package. Reading it must not turn 2 direct
+        // deps into 4 libraries — the manifest selects, the lockfile supplies
+        // the version (02b S11).
+        let lock = r#"{"packages": {
+            "direct": ["direct@1.0.0", "", {}, "s"],
+            "transitive-a": ["transitive-a@9.9.9", "", {}, "s"],
+            "transitive-b": ["transitive-b@8.8.8", "", {}, "s"]
+        }}"#;
+        let pins = pins_by_name("npm", "bun.lock", lock);
+        assert_eq!(pins.len(), 3, "the reader sees all three");
+
+        // ...but the caller only ever asks about what the manifest declared.
+        let direct = ["direct"];
+        let resolved: Vec<String> = direct.iter().map(|d| resolve_pin(&pins, d, "1.0.0")).collect();
+        assert_eq!(resolved, vec!["1.0.0"], "one dep in, one version out");
+    }
+
+    #[test]
+    fn an_unknown_ecosystem_yields_no_pins_rather_than_guessing() {
+        assert!(pins_by_name("elvish", "Elv.lock", "whatever").is_empty());
+    }
+}
+
 #[cfg(test)]
 mod corpus_check {
     use super::*;
@@ -542,5 +618,77 @@ mod corpus_check {
         for l in &scan.lockfiles {
             println!("  lock          {}", l.strip_prefix(&root).unwrap().display());
         }
+    }
+
+    /// Resolve every manifest in THIS repo to its nearest lockfile, read the
+    /// pins, and report where a pin differs from the manifest's own version.
+    ///
+    /// `#[ignore]`: it reads the working tree. This is the measurement behind
+    /// 02b S11's claim that a cleaned manifest version is a range FLOOR, not a
+    /// pin — run it after a `bun install` and the numbers move.
+    #[test]
+    #[ignore]
+    fn pins_in_this_repo() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .unwrap()
+            .to_path_buf();
+        let scan = scan_repo_files(&root);
+        let dirs = scan.manifest_dirs();
+
+        let (mut served, mut unserved, mut differing, mut total) = (0, 0, 0, 0);
+        for (manifest, eco) in &scan.manifests {
+            let Some(dir) = manifest.parent() else { continue };
+            let Some(adapter) = crate::adapters::manifest::registered_adapters()
+                .iter()
+                .find(|a| a.ecosystem() == *eco)
+            else {
+                continue;
+            };
+            let lock = nearest_lockfile(dir, &root, adapter.lockfile_filenames(), &scan.lockfiles);
+            let rel = manifest.strip_prefix(&root).unwrap().display().to_string();
+
+            let Some(lock) = lock else {
+                unserved += 1;
+                println!("  {rel:52} NO LOCKFILE (versions stay ranges)");
+                continue;
+            };
+            served += 1;
+            let Ok(content) = std::fs::read_to_string(&lock) else { continue };
+            let name = lock.file_name().unwrap().to_str().unwrap();
+            let pins = pins_by_name(eco, name, &content);
+
+            let Ok(mtext) = std::fs::read_to_string(manifest) else { continue };
+            let mut moved = Vec::new();
+            for dep in adapter.parse_dependencies(&mtext) {
+                if dep.local_source.is_some() {
+                    continue; // a workspace sibling is first-party, not a library
+                }
+                total += 1;
+                let pin = resolve_pin(&pins, &dep.lib_name, &dep.version);
+                if pin != dep.version {
+                    differing += 1;
+                    moved.push(format!("{} {} -> {}", dep.lib_name, dep.version, pin));
+                }
+            }
+            println!(
+                "  {rel:52} lock={:28} pins={:4} moved={}",
+                lock.strip_prefix(&root).unwrap().display(),
+                pins.len(),
+                moved.len()
+            );
+            for m in moved.iter().take(4) {
+                println!("      {m}");
+            }
+        }
+        println!(
+            "\nmanifests {} | manifest dirs {} | served by a lockfile {} | unserved {}",
+            scan.manifests.len(),
+            dirs.len(),
+            served,
+            unserved
+        );
+        println!("direct external deps {total} | version corrected by the lockfile {differing}");
     }
 }
