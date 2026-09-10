@@ -89,8 +89,21 @@ land together; splitting them migrates the same table twice.
   - `lib_symbol` -> the real kind where the use site reveals it, else
     `unknown`
   - externality -> `fqn LIKE 'lib·%'`, the one discriminator. **No
-    `is_external` column** — `nodes` has none, the fqn answers it, and adding
-    one stores what is derivable.
+    `is_external` column** — a column would store what is derivable.
+
+  **The consumer-facing flag ALREADY EXISTS: `sensei.graph_nodes.locality`**
+  (`internal | external | unknown`). Edit its `external` branch from the kind
+  test to the fqn test. **KEEP IT THREE-VALUED** — the view's comment
+  documents why at length: a boolean bins every unresolved reference stub as
+  external, which is the bug it replaced, when the old edge-resolution proxy
+  reported 791 of 1,040 of this repo's own modules as dependencies.
+
+  Verified EXACT on the live graph — internal 354,653, external 21,928,
+  unknown 18,450 under BOTH rules, with no off-diagonal cell. The swap cannot
+  move a node between localities.
+
+  Anything already querying `locality` needs no change; only writers and
+  direct `kind IN (...)` readers do.
 
   **This is the largest single item in stage 0 and it is a CODE migration,
   not DDL: 111 references** across `db/pg_store/{tests,graph}.rs`,
@@ -295,7 +308,8 @@ Every check names the one-line mutation that must break it.
 | `node_kind` REJECTS `lib_symbol` and `lib_package` | leave them in the enum |
 | every former `lib_package` row is `package`; every former `lib_symbol` row has a real kind or `unknown`; all 21,928 still have a `lib·` fqn | backfill the kind without checking the fqn survived |
 | "which symbols are external" returns 21,928 via `fqn LIKE 'lib·%'`, matching the pre-migration `kind IN (...)` count exactly | drop a row in the backfill — the counts diverge and nothing else notices |
-| no `is_external` column was added | add one |
+| `graph_nodes.locality` still returns THREE values, and the per-value counts are unchanged: internal 354,653 / external 21,928 / unknown 18,450 | collapse `locality` to a boolean — every stub becomes `external` and the 791-of-1,040 false-positive bug returns, while every "is it external" query still answers |
+| no `is_external` column was added to `nodes` | add one |
 | `EXPLAIN` on `props->'occurrences' ? $1` uses the gin index | drop it (S7) |
 | `folder_commands` has 572 rows across 58 folders | revert S8 |
 | `dbd doctor` is clean | any of the above |
