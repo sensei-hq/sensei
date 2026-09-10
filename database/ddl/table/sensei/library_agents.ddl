@@ -7,6 +7,7 @@ set search_path to sensei, extensions;
 create table if not exists library_agents (
   id            uuid          primary key default gen_random_uuid()
 , library_id    uuid          not null references sensei.libraries(id) on delete cascade
+, library_version_id       uuid        not null references sensei.library_versions(id) on delete cascade
 , name          text          not null
 , focus         text          not null
 , body          text

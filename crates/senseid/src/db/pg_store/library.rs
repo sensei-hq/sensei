@@ -168,6 +168,41 @@ impl PgStore {
         Ok(())
     }
 
+    /// Resolve — creating if absent — the `library_versions` row that a piece
+    /// of library CONTENT belongs to (S7b).
+    ///
+    /// Content tables key on a VERSION, not a library, so every writer needs
+    /// one. `version = None` means the caller does not know which version it
+    /// fetched, and the honest key for that is the literal `'latest'` with
+    /// `resolved_version` left NULL — not a fabricated version string, and not
+    /// a NULL key that would orphan the content.
+    ///
+    /// This is a get-or-create ON PURPOSE, unlike `nodes.file_id` (R13), and
+    /// the difference is which side owns the fact: a file row is created by
+    /// the walk that observed the file, so a miss there means the pipeline is
+    /// broken. A library version is observed by the fetch that is happening
+    /// right now, so creating it here IS the observation.
+    pub async fn ensure_library_version(
+        &self,
+        library_id: &uuid::Uuid,
+        version: Option<&str>,
+    ) -> Result<uuid::Uuid, String> {
+        let key = version.map(str::trim).filter(|v| !v.is_empty()).unwrap_or("latest");
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.library_versions(library_id, version, resolved_version)
+             VALUES($1, $2, $3)
+             ON CONFLICT(library_id, version) DO UPDATE SET modified_at = now()
+             RETURNING id",
+        )
+        .bind(library_id)
+        .bind(key)
+        .bind(version)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
     // ── Library capabilities (workstream D): skills/agents a library provides ──
     // Two writers coexist in one table, keyed by `source` ('manifest' | 'generated').
 
@@ -186,6 +221,11 @@ impl PgStore {
         skills: &[crate::libraries::manifest::ProvidedSkill],
         agents: &[crate::libraries::manifest::ProvidedAgent],
     ) -> Result<(u32, u32), String> {
+        // Content hangs off a VERSION (S7b). `version_range` is an applies-to
+        // RANGE, not a fetched version, so it is not the key — this content was
+        // read from the manifest we have, which is 'latest' until a fetch says
+        // otherwise.
+        let version_id = self.ensure_library_version(library_id, None).await?;
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
         sqlx_core::query::query(
             "DELETE FROM sensei.library_skills WHERE library_id = $1 AND source = $2",
@@ -206,24 +246,24 @@ impl PgStore {
         let mut ns = 0u32;
         for s in skills.iter().filter(|s| s.body.is_some()) {
             sqlx_core::query::query(
-                "INSERT INTO sensei.library_skills(library_id, name, focus, body, source, source_path, version_range)
-                 VALUES($1,$2,$3,$4,$5,$6,$7)
+                "INSERT INTO sensei.library_skills(library_id, library_version_id, name, focus, body, source, source_path, version_range)
+                 VALUES($1,$8,$2,$3,$4,$5,$6,$7)
                  ON CONFLICT(library_id, name) DO UPDATE SET
                    focus=EXCLUDED.focus, body=EXCLUDED.body, source=EXCLUDED.source,
                    source_path=EXCLUDED.source_path, version_range=EXCLUDED.version_range, modified_at=now()"
-            ).bind(library_id).bind(&s.name).bind(&s.focus).bind(s.body.as_deref()).bind(source).bind(s.path.as_deref()).bind(version_range)
+            ).bind(library_id).bind(&s.name).bind(&s.focus).bind(s.body.as_deref()).bind(source).bind(s.path.as_deref()).bind(version_range).bind(version_id)
                 .execute(&mut *tx).await.map_err(|e| e.to_string())?;
             ns += 1;
         }
         let mut na = 0u32;
         for a in agents.iter().filter(|a| a.body.is_some()) {
             sqlx_core::query::query(
-                "INSERT INTO sensei.library_agents(library_id, name, focus, body, source, source_path, version_range)
-                 VALUES($1,$2,$3,$4,$5,$6,$7)
+                "INSERT INTO sensei.library_agents(library_id, library_version_id, name, focus, body, source, source_path, version_range)
+                 VALUES($1,$8,$2,$3,$4,$5,$6,$7)
                  ON CONFLICT(library_id, name) DO UPDATE SET
                    focus=EXCLUDED.focus, body=EXCLUDED.body, source=EXCLUDED.source,
                    source_path=EXCLUDED.source_path, version_range=EXCLUDED.version_range, modified_at=now()"
-            ).bind(library_id).bind(&a.name).bind(&a.focus).bind(a.body.as_deref()).bind(source).bind(a.path.as_deref()).bind(version_range)
+            ).bind(library_id).bind(&a.name).bind(&a.focus).bind(a.body.as_deref()).bind(source).bind(a.path.as_deref()).bind(version_range).bind(version_id)
                 .execute(&mut *tx).await.map_err(|e| e.to_string())?;
             na += 1;
         }
@@ -687,9 +727,13 @@ impl PgStore {
         source_type: &str,
         component: Option<&str>,
     ) -> Result<uuid::Uuid, String> {
+        // Pages hang off a VERSION (S7b). This writer is not told which one, so
+        // it lands on 'latest' — the honest key for "we fetched the current
+        // docs" — rather than a fabricated version string.
+        let version_id = self.ensure_library_version(library_id, None).await?;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.library_pages(library_id, title, url, local_path, description, content, source_type, component, fetched_at)
-             VALUES($1, $2, $3, $4, $5, $6, $7::sensei.library_source_type, $8, now())
+            "INSERT INTO sensei.library_pages(library_id, library_version_id, title, url, local_path, description, content, source_type, component, fetched_at)
+             VALUES($1, $9, $2, $3, $4, $5, $6, $7::sensei.library_source_type, $8, now())
              ON CONFLICT(library_id, title) DO UPDATE SET
                url = COALESCE(EXCLUDED.url, library_pages.url),
                local_path = COALESCE(EXCLUDED.local_path, library_pages.local_path),
@@ -698,12 +742,27 @@ impl PgStore {
                component = COALESCE(EXCLUDED.component, library_pages.component),
                fetched_at = now(), modified_at = now()
              RETURNING id"
-        ).bind(library_id).bind(title).bind(url).bind(local_path).bind(description).bind(content).bind(source_type).bind(component)
+        ).bind(library_id).bind(title).bind(url).bind(local_path).bind(description).bind(content).bind(source_type).bind(component).bind(version_id)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
     pub async fn update_library_page_count(&self, library_id: &uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query(
+            // page_count is a property of a VERSION (S7b). Kept on `libraries`
+            // too, as the across-all-versions total, so existing readers stay
+            // correct — the per-version count is the one that answers "how much
+            // do we hold for the version this project pins".
+            "UPDATE sensei.library_versions v
+                SET page_count = (SELECT count(*) FROM sensei.library_pages p
+                                   WHERE p.library_version_id = v.id),
+                    modified_at = now()
+              WHERE v.library_id = $1",
+        )
+        .bind(library_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         sqlx_core::query::query(
             "UPDATE sensei.libraries SET page_count = (SELECT count(*) FROM sensei.library_pages WHERE library_id = $1), modified_at = now() WHERE id = $1"
         ).bind(library_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
