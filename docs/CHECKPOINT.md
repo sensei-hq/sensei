@@ -62,7 +62,7 @@ Everything since is documentation. The shipped indexer runs, unaffected.
 | commands / folders / repositories | 572 / 58 / 36 |
 | `library_packages` | **0 rows** |
 | libraries with any URL | **2 of 1,121** |
-| field + enum-variant nodes, any language | **0** |
+| field + enum-variant nodes, any language | **0** (the enum HAS both values — the walk never emitted them) |
 
 ## The rules that produced this design
 

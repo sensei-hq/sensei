@@ -86,7 +86,7 @@ discovery, any manifest reading, any parsing.
 | two roots normalise to one `repo_key` | expected — two clones. Two folder rows, one repository row. Not an error. |
 | a symlink loop | bounded traversal; report the loop rather than hanging. |
 
-## 5. Checkpoint output
+## 5. Stage report — what you SHOW when the stage is done
 
     {"stage":"01-scan-root","at":"<iso8601>","scanned_dir":"…",
      "roots_found":68,"git_dir":66,"git_file":2,
@@ -122,7 +122,7 @@ sequence was ordered around.
 That is intended and was agreed: a large number of directories currently stored
 as "non-git repos" will stop being roots. They are not lost — they are folders
 inside some root, or they are outside the scan. Count the difference and put it
-in the checkpoint; do not let it be discovered later as an apparent regression.
+in the stage report; do not let it be discovered later as an apparent regression.
 
 **The difference already exists as 81 repo-less projects** (S6). That is what
 "non-git repos" turned into downstream, and it is why the project count reads
@@ -143,5 +143,5 @@ Use it. Do not write a second normaliser.
   tree containing a `.git` dir, a `.git` file, an excluded dir, and a nested
   repo.
 - `save_repo` upserts both tables idempotently — running it twice changes no row.
-- Checkpoint line written with a rendered sample.
+- Stage report printed with a rendered sample.
 - The root-count delta against today's folder set is measured and explained.

@@ -70,7 +70,7 @@ in a separate handler where a failure is invisible. Moved into the scan, a
 swallowed manifest error silently costs a folder its commands, and nothing
 counts it.
 
-## 5. Checkpoint output
+## 5. Stage report — what you SHOW when the stage is done
 
     {"stage":"02-scan-repo","at":"<iso8601>","repo":"…/sensei","repo_id":"…",
      "submodules_declared":0,"submodules_checked_out":0,"submodules_enqueued":0,
@@ -128,7 +128,7 @@ Several entries (`node_modules`, `dist`, `build`, `target`, `.next`,
 entry, and the `*.min.js` / `*.bundle.js` entries are NOT gitignore-covered —
 they exist because a vendored Vite bundle under `artifacts/` contributed 540
 call references to single-letter minified names, twice. Measure which entries
-are now redundant using the two separate exclusion counters in the checkpoint,
+are now redundant using the two separate exclusion counters in the stage report,
 and remove only the ones proven so.
 
 **A repo with no manifests is normal**, not a failure. Report zero and move on.
@@ -140,5 +140,5 @@ and remove only the ones proven so.
 - Manifest facts land on the containing FOLDER; this repo produces six
   manifest-bearing folders and 572 commands, matching today's live count.
 - The file set for this repo matches today's 48,665 within an explained delta.
-- Checkpoint line written with both samples rendered.
+- Stage report printed with both samples rendered.
 - No second walker and no hardcoded manifest filename list exist in the tree.

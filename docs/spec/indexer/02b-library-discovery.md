@@ -67,7 +67,7 @@ queue the biggest payoff behind the slowest stage.
 | two libraries claim the same package | REPORT it. This is the library-level analogue of an A7 collision, and picking a winner would be scan-order dependent. |
 | a package appears in no workspace and no manifest | ungrouped, per S5. Complete. |
 
-## 5. Checkpoint output
+## 5. Stage report — what you SHOW when the stage is done
 
     {"stage":"02b-library-discovery","at":"<iso8601>",
      "packages_seen":1121,"library_manifests_found":<n>,
@@ -131,7 +131,7 @@ there is live data in the pattern and it becomes a migration of 146+ rows.
 - The `node -> package -> library -> pages/skills/agents` query returns real
   content for at least one real reference.
 - Ungrouped packages are counted, not errored, and the count is in the
-  checkpoint.
+  stage report.
 - No prefix inference exists anywhere in the stage — verified by a test, not by
   reading.
 - The `library_content` shape question is answered in writing, either way.

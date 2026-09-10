@@ -53,13 +53,45 @@ land together; splitting them migrates the same table twice.
   carries the text. It goes on `files`, not on a node's props — splitting the
   code and the detail across two tables recreates the two-copies-of-one-fact
   problem R10.9 exists to avoid.
-- **S5** (§7h.4). Widen `sensei.node_kind` for the kinds the walk actually
-  produces — at minimum `field` and `variant` — plus one value meaning NOT YET
-  KNOWN, for a stub minted before its declaration is seen. This retires the
-  `parameter` placeholder, which is WITHDRAWN (§2.1).
-- **S6** (§7h.5). Widen `sensei.edge_kind` for the relation kinds R8 needs.
-  Enumerate them from R8's seven patterns before writing the ALTER; do not
-  guess and do not widen twice.
+- **S5** (§7h.4). Widen `sensei.node_kind`. **The current 23 values, listed so
+  nobody has to go and look:**
+
+      file | module | package | class | interface | function | method |
+      property | field | parameter | type | const | enum | enum_variant |
+      section | rationale | struct | component | hook | doc | extension |
+      lib_symbol | lib_package
+
+  **`field` and `enum_variant` ARE ALREADY THERE.** An earlier draft of this
+  requirement said to add them, and the whole-system spec's "0 field and
+  enum-variant nodes in any language" was read as an enum gap. It is not — the
+  enum has supported them all along and **the WALK never emitted them**. That
+  is a stage 4 problem (04-walk-rust S5) and no DDL fixes it.
+
+  What is genuinely absent, for the Rust walk:
+
+  | add | why | note |
+  |---|---|---|
+  | `trait` | Rust traits | `interface` exists and holds 7,131 rows from other languages — decide whether Rust maps onto it or gets its own value, and write the decision down |
+  | `static` | `static X: T` | distinct from `const` (4,307 rows) |
+  | `macro` | `macro_rules!` and proc macros | reach `macro` needs a declaration kind to point at |
+  | `unknown` | a stub minted before its declaration is seen | see below |
+
+  `unknown` is a NEW value, not a reused one. The `parameter` placeholder is
+  WITHDRAWN (§2.1): `parameter` means something, and a value that means
+  something else is not a value that means "not yet known". It is free only
+  because D2 makes parameters props — that made it available, never correct.
+
+- **S6** (§7h.5). Check `sensei.edge_kind` before widening it. **Current 11
+  values:**
+
+      calls | implements | extends | imports | depends_on | traces_to |
+      references | covers | rationale_for | duplicates | similar_to
+
+  R8's relations — `extends`, `implements`, member ownership, impl blocks,
+  trait impls — map onto `extends`/`implements` which already exist. **This
+  requirement may be a no-op.** Derive the needed set from R8's seven patterns
+  and diff it against the list above; if the diff is empty, record that and
+  skip the ALTER rather than adding a value nothing writes.
 - **S7** (R10.1). `create index … using gin ((props->'occurrences'))` on
   `sensei.edges`. This is what lets reconcile ask the definitive attribution
   question (`props->'occurrences' ? F`) instead of an fqn approximation.
@@ -119,7 +151,7 @@ the name changed. S3's foreign key cannot be added while they exist.
        AND f.file_path IS NULL;
     -- expect 8,147
 
-    -- after the transaction commits AND the checkpoint is written:
+    -- after the transaction commits AND the stage report is written:
     DROP TABLE orphans;
 
 **A TEMP TABLE, not a view**, and not for the reason it first appears. A view
@@ -129,17 +161,17 @@ reasons are all about surviving step 3:
 
 1. **A view is EMPTY after the delete.** It selects from `nodes`; once the
    orphans are gone it returns nothing, so there is no way to verify what was
-   deleted or to render the checkpoint's sample.
+   deleted or to render the stage report's sample.
 2. **It cannot carry `name` past the delete** — and `name` is exactly what
    step 1 backfills from and step 3 destroys. Same for `fqn` and `file_path`,
-   which the checkpoint sample needs.
+   which the stage report sample needs.
 3. **A view is a schema object dbd would then own.** In this tree that means a
    file under `ddl/view/` and a permanent artifact for a one-time sweep.
 
 **NOT `ON COMMIT DROP`.** An earlier draft of this section used it while also
 requiring all three steps in one transaction, which drops the table at commit
 and destroys reasons 1 and 2. Let it live for the session and drop it by hand
-once the checkpoint is written.
+once the stage report is written.
 
 Then, **in ONE transaction, in this order** — R10.8's rule, executed by hand
 here for the first time:
@@ -201,9 +233,9 @@ not answer it in a DDL stage.
 | `node_kind` widening rejected | an enum value is in use somewhere the ALTER cannot see. Find it; do not work around it with a placeholder. |
 | the live DB and the DDL tree already disagree before starting | resolve that FIRST. Reconciling on top of unexplained drift attributes someone else's change to this stage. |
 
-## 5. Checkpoint output
+## 5. Stage report — what you SHOW when the stage is done
 
-One JSON line appended to `~/.sensei/scan-progress.jsonl`:
+The stage's verification run PRINTS this. It is not written to a file:
 
     {"stage":"00-files-entity","at":"<iso8601>",
      "files_rows":48665,"files_indexed":48646,"files_skipped":19,
@@ -253,7 +285,7 @@ worked and took 3,070 edges with it".
 
 **The sweep is irreversible and runs against the live daemon DB.** Take a
 backup first (`database/backup/` is the existing home) and record the row counts
-in the checkpoint BEFORE the transaction, not after. This is the only stage in
+in the stage report BEFORE the transaction, not after. This is the only stage in
 the whole plan that destroys production rows.
 
 **`dbd reconcile`, and do not invent a migrations tree to get around a
@@ -279,7 +311,7 @@ with inbound edges unresolved. `ON DELETE RESTRICT` is the honest choice.
 - All eight DDL changes applied through `dbd`, tree and live DB in agreement,
   `dbd doctor` clean.
 - The ORPHANED sweep ran in one transaction; `nodes_after` and the edge count
-  both reconcile exactly; the checkpoint line carries a rendered sample.
+  both reconcile exactly; the stage report carries a rendered sample.
 - ORPHANED is now unrepresentable — the FK rejects it — so it is dropped from
   the completeness enum, leaving FIVE values (R10.7d), and from the R11.3 gap
   queue.

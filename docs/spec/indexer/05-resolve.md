@@ -55,7 +55,7 @@ far" — see S3.
 | a trait-impl member reached without its trait (`x.default()`) | mints the plain member form and does not merge with the `<Type>·<Trait>·<member>` declaration. **22 references over 3 identities**, all `Default::default`. Deferred with its evidence captured, never closed by dropping the `Trait` segment — that would delete the only thing separating `<X as Display>::fmt` from `<X as Debug>::fmt`. |
 | an ambiguous path split (`a::b::c`) | decided by the grammar's `names_a_type` predicate. A misread produces a DANGLING edge, not a wrong one, because the two splits put the boundary in different places and the loser names no declaration at all. |
 
-## 5. Checkpoint output
+## 5. Stage report — what you SHOW when the stage is done
 
     {"stage":"05-resolve","at":"<iso8601>","repo":"…",
      "references":109328,"resolved":<n>,"unresolved":<n>,
