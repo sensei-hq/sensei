@@ -224,7 +224,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // read/hash, (b) re-hash only the mtime-drifted candidates and skip
     // reindexing the ones whose content is byte-identical, (c) reindex genuine
     // edits + new files, and (d) drop files no longer on disk. The first index
-    // sees an empty scan_state and processes everything, populating it. This is
+    // sees an empty `files` table and processes everything, populating it. This is
     // what makes a frequent no-op reconcile near-free.
     let prior_state: std::collections::HashMap<String, (i64, String)> = match &folder_uuid {
         Some(fid) => ctx
@@ -353,7 +353,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // Record the denominator for folder completeness while the walk still knows
     // it. This is the only point that does: `plan.expected` is the post-filter
     // count of indexable files on disk right now, and nothing downstream can
-    // reconstruct it — counting the `scan_state` rows that exist is vacuous,
+    // reconstruct it — counting the `files` rows that exist is vacuous,
     // since a walk that dies partway leaves every written row marked decided and
     // the unwritten ones absent rather than undecided.
     //
@@ -384,7 +384,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // enqueued.
     //
     // This is what stops an infinite re-index loop. `process_file` returns early
-    // for these files WITHOUT writing scan_state, and `plan_reindex` treats a
+    // for these files WITHOUT writing a `files` row, and `plan_reindex` treats a
     // file with no prior row as changed — so an unfingerprinted skip is
     // re-enqueued on every reconcile, the folder never reaches `indexed`, and the
     // whole downstream pipeline (embeddings → deps → connections → communities)
@@ -478,7 +478,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         }
 
         // Safety net (Bug 2): the incremental diff above only drops files that
-        // were in scan_state. Nodes can outlive their scan_state row — an
+        // were in `files`. Nodes can outlive their `files` row — an
         // interrupted index, or a moved dir the fs-watcher missed (e.g.
         // crates/hive-mind → crates/dojo-mind, leaving Hive* struct nodes at
         // vanished paths). `current` is the complete live working-tree file set,
@@ -538,7 +538,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // Recovery (D6b/D6d): also re-drive the barrier for a folder left in a
     // NON-TERMINAL state — `failed` (a prior fatal file, D6c-trigger, possibly
     // since healed by a bounded retry) or `indexing` (a crash mid-scan). Without
-    // this, a healed transient failure whose scan_state is now complete
+    // this, a healed transient failure whose `files` rows are now complete
     // (has_changes=false) would strand the folder at `failed` forever, since the
     // terminal barrier that flips it to `indexed` only runs when there are
     // changes. An `indexed`/`archived`/`discovered` folder with no changes is
@@ -969,7 +969,7 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<u32, Strin
 /// Parse a single file using file_processor, then write results to graph.
 /// Test-only fault seam (D6c-trigger): lets a test force a fatal DB-write
 /// failure for a specific file path, so the fatal path (folder → `failed`,
-/// `Err`, no `scan_state` advance) is exercised without needing a live DB fault.
+/// `Err`, no `files` row advance) is exercised without needing a live DB fault.
 #[cfg(test)]
 pub(super) mod fault {
     use std::collections::HashSet;
@@ -1065,7 +1065,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     };
 
     // Write parsed symbols to PG. A DB-write failure here is FATAL (D6c-trigger):
-    // the file isn't correctly indexed, so we must NOT advance its scan_state and
+    // the file isn't correctly indexed, so we must NOT advance its `files` row and
     // must surface it — mark the folder `failed` (the fail-closed barrier D6d
     // checks this) and propagate `Err` (recorded to task_executions and
     // bounded-retried, D6c). Parse/read errors were TOLERATED above (Ok). A
@@ -1756,8 +1756,8 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     }
 
     // Record this file's fingerprint LAST — only a fully-written file is "seen",
-    // so a fatal failure above leaves scan_state unadvanced and the next scan
-    // retries it. A scan_state write failure is itself fatal.
+    // so a fatal failure above leaves the `files` row unadvanced and the next scan
+    // retries it. A `files` write failure is itself fatal.
     if let Some((mtime, hash)) = super::helpers::file_fingerprint(fpath)
         && let Err(e) = ctx.pg().upsert_scan_state(&folder_id, &result.rel_path, mtime, &hash).await
     {
@@ -1822,7 +1822,7 @@ async fn fail_folder(
         tracing::warn!(error = %se, folder_id = %folder_id, "process_file: marking folder failed also failed");
     }
     tracing::warn!(folder_id = %folder_id, file = %rel_path, error = %err,
-        "process_file: fatal DB write — folder left `failed`, scan_state not advanced");
+        "process_file: fatal DB write — folder left `failed`, `files` row not advanced");
     Err(format!("process_file fatal DB write ({rel_path}): {err}"))
 }
 
@@ -3993,7 +3993,7 @@ mod tests {
         // D6c-trigger: a fatal DB-write failure (simulated via the test fault
         // seam) propagates as Err, marks the folder `failed` (so the fail-closed
         // barrier D6d won't mark it indexed), and does NOT advance the file's
-        // scan_state — so the next scan retries it.
+        // `files` row — so the next scan retries it.
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         std::fs::create_dir_all(root.join("repo/src")).unwrap();
@@ -4017,7 +4017,7 @@ mod tests {
         );
         assert!(
             ctx.pg().list_scan_state(&fid).await.unwrap().is_empty(),
-            "scan_state is NOT advanced for a fatally-failed file"
+            "the `files` row is NOT advanced for a fatally-failed file"
         );
 
         ctx.pg().remove_watch_root(&rid).await.ok();
@@ -4025,7 +4025,7 @@ mod tests {
 
     #[tokio::test]
     async fn process_file_success_advances_scan_state_and_keeps_folder_status() {
-        // The success counterpart: a fully-written file advances scan_state and
+        // The success counterpart: a fully-written file advances its `files` row and
         // does NOT spuriously mark the folder failed (it stays `indexing` for the
         // barrier to flip to `indexed`).
         let tmp = tempfile::tempdir().unwrap();
@@ -4044,7 +4044,7 @@ mod tests {
         assert_eq!(
             ctx.pg().list_scan_state(&fid).await.unwrap().len(),
             1,
-            "a fully-written file advances scan_state"
+            "a fully-written file advances its `files` row"
         );
         assert_eq!(
             ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(),
@@ -4057,7 +4057,7 @@ mod tests {
 
     #[tokio::test]
     async fn process_file_fatal_on_one_file_does_not_block_a_sibling() {
-        // The fatal path is per-file: a sibling file still indexes (its scan_state
+        // The fatal path is per-file: a sibling file still indexes (its `files` row
         // is written) even though another file in the same folder failed fatally.
         // The folder ends `failed` (fail-closed), but the healthy file's work is
         // durable.
@@ -4090,14 +4090,14 @@ mod tests {
             "the folder is `failed` because one of its files failed"
         );
         let scan = ctx.pg().list_scan_state(&fid).await.unwrap();
-        assert_eq!(scan.len(), 1, "only the healthy sibling advanced scan_state");
+        assert_eq!(scan.len(), 1, "only the healthy sibling advanced its `files` row");
         assert!(
             scan.iter().any(|(p, _)| p.ends_with("good.rs")),
             "the sibling's fingerprint is recorded"
         );
         assert!(
             !scan.iter().any(|(p, _)| p.ends_with("bad.rs")),
-            "the failed file did NOT advance scan_state"
+            "the failed file did NOT advance its `files` row"
         );
 
         ctx.pg().remove_watch_root(&rid).await.ok();
@@ -4534,7 +4534,7 @@ mod tests {
     #[tokio::test]
     async fn process_git_folder_recovers_a_failed_folder_with_no_changes() {
         // Recovery (D6b/D6d): a transient fatal failure a bounded retry later
-        // heals leaves the folder `failed` with scan_state complete (no changes).
+        // heals leaves the folder `failed` with its `files` rows complete (no changes).
         // The next scan must RE-DRIVE the barrier — not skip it on
         // has_changes=false — so the folder can reach `indexed`. Here an empty
         // repo marked `failed` is reset to `indexing` and the terminal
@@ -4619,9 +4619,13 @@ mod tests {
             .unwrap();
 
         let reason: Option<String> = sqlx_core::query_scalar::query_scalar(
-            "SELECT skip_reason::text FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2"
-        ).bind(fid).bind("docs/License.txt")
-            .fetch_one(ctx.pg().pool()).await.unwrap();
+            "SELECT skip_reason::text FROM sensei.files WHERE folder_id = $1 AND file_path = $2",
+        )
+        .bind(fid)
+        .bind("docs/License.txt")
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
         assert_eq!(reason.as_deref(), Some("invalid_utf8"), "skip reason persisted");
 
         // The fingerprint itself must be visible to the change-detection gate —
@@ -4635,9 +4639,13 @@ mod tests {
         // User fixes the encoding → the file indexes normally → reason cleared.
         ctx.pg().upsert_scan_state(&fid, "docs/License.txt", 222, "hashB").await.unwrap();
         let cleared: Option<String> = sqlx_core::query_scalar::query_scalar(
-            "SELECT skip_reason::text FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2"
-        ).bind(fid).bind("docs/License.txt")
-            .fetch_one(ctx.pg().pool()).await.unwrap();
+            "SELECT skip_reason::text FROM sensei.files WHERE folder_id = $1 AND file_path = $2",
+        )
+        .bind(fid)
+        .bind("docs/License.txt")
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
         assert_eq!(cleared, None, "re-indexing a fixed file must clear the stale skip reason");
     }
 
