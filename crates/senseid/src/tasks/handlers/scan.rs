@@ -211,7 +211,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     // (e.g. a renamed sub-crate). `reconcile_roots` only prunes project ROOTS and
     // `prune_vanished` only reconciles files *within* an indexed folder, so nothing
     // else removes a non-root `kind='folder'` row whose dir vanished — it lingers
-    // dragging its whole subtree of nodes/edges/scan_state.
+    // dragging its whole subtree of nodes/edges/files.
     let ghosts = prune_vanished_folders(ctx.pg(), &root_id).await;
     // Enforce one-node-one-owner: prune any code node a structural (folder-kind)
     // subfolder still holds a duplicate of under the project's canonical root
@@ -494,9 +494,9 @@ async fn reconcile_roots(
 /// into a directory that is gone, [`prune_vanished`] only reconciles FILE nodes
 /// *within* one indexed folder, and [`reconcile_roots`] only prunes project
 /// ROOTS — so nothing else ever removes such a row, and it lingers dragging its
-/// whole subtree of nodes/edges/scan_state (137 orphan nodes in the live sensei
+/// whole subtree of nodes/edges/files (137 orphan nodes in the live sensei
 /// index). Each ghost folder row is deleted via [`crate::db::pg_store::PgStore::delete_folder_tree`],
-/// cascading its nodes, edges, scan_state and descendant folder rows.
+/// cascading its nodes, edges, files and descendant folder rows.
 ///
 /// SAFETY: a subfolder is pruned only when its enclosing project ROOT (kind
 /// git/standalone/subtree) is confirmed PRESENT on disk. A root whose own
@@ -566,7 +566,7 @@ pub(crate) async fn detect_vanished_folders(
 
 /// Delete each detected ghost folder subtree via
 /// [`crate::db::pg_store::PgStore::delete_folder_tree`], cascading its nodes,
-/// edges, scan_state and descendant folder rows. Non-fatal — a failed delete is
+/// edges, files and descendant folder rows. Non-fatal — a failed delete is
 /// logged and skipped. Idempotent. Returns the number pruned. The apply half of
 /// [`detect_vanished_folders`], shared by the scan reconcile and the audit.
 pub(crate) async fn apply_folder_prune(
@@ -602,7 +602,7 @@ pub(crate) fn dir_present(p: &std::path::Path) -> bool {
 /// Compares the folder's indexed file paths (`sensei.nodes`, module nodes
 /// excluded) against `live_paths` — the repo-relative paths present on disk now
 /// — and drops nodes for any indexed path not in the live set. This catches
-/// orphans the incremental `scan_state` diff and the fs-watcher missed (e.g. a
+/// orphans the incremental `files` diff and the fs-watcher missed (e.g. a
 /// moved sub-crate whose files vanished but whose struct nodes lingered). For
 /// each vanished file it un-resolves inbound edges (preserving `target_name` for
 /// re-resolution), deletes the nodes (cascading their edges) and clears the
@@ -649,7 +649,7 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<u32, String
 
     // No wipe. A branch switch is just an incremental re-index: git rewrites
     // exactly the files that differ between the two branches (updating their
-    // mtime), so process_git_folder's scan_state diff re-indexes only those —
+    // mtime), so process_git_folder's `files` diff re-indexes only those —
     // unchanged files keep their nodes + embeddings, and files that exist on the
     // old branch but not the new one are dropped as "removed". process_git_folder
     // records the new branch (from the task) in props.branch.
@@ -1537,7 +1537,7 @@ mod tests {
         let ss = ctx.pg().list_scan_state(&fid).await.unwrap();
         assert!(
             ss.iter().all(|(p, _)| !p.contains("hive-mind")),
-            "scan_state for the vanished file cleared"
+            "files row for the vanished file cleared"
         );
     }
 
@@ -1581,7 +1581,7 @@ mod tests {
             .unwrap();
 
         // A GHOST subtree: `gone/` (renamed/moved away) + its child `gone/sub/` no
-        // longer exist on disk, yet still carry folder rows + nodes/edge/scan_state.
+        // longer exist on disk, yet still carry folder rows + nodes/edge/files.
         let gone_dir = repo.join("gone"); // NOT created on disk
         let gone_sub = gone_dir.join("sub"); // NOT created on disk
         let gone_fid = ctx
@@ -1670,7 +1670,7 @@ mod tests {
         );
         assert!(abs_paths.contains(&repo.to_string_lossy().to_string()), "repo root kept");
 
-        // Cascade: ghost nodes + edge + scan_state gone; live node survives.
+        // Cascade: ghost nodes + edge + files gone; live node survives.
         let (ghost_nodes,): (i64,) =
             sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id = ANY($1)")
                 .bind(vec![ghost_a, ghost_b])
@@ -1694,7 +1694,7 @@ mod tests {
         assert_eq!(edge_count, 0, "ghost edge cascade-deleted");
         assert!(
             ctx.pg().list_scan_state(&gone_fid).await.unwrap().is_empty(),
-            "ghost scan_state cascade-deleted"
+            "ghost files rows cascade-deleted"
         );
         assert_eq!(
             ctx.pg().list_indexed_files(&live_fid).await.unwrap(),
