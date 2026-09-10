@@ -133,8 +133,7 @@ fn walk(dir: &Path, exclusions: &RootExclusions, scan: &mut RootScan) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) => {
-            scan.unreadable
-                .push(UnreadableDir { path: dir.to_path_buf(), reason: e.to_string() });
+            scan.unreadable.push(UnreadableDir { path: dir.to_path_buf(), reason: e.to_string() });
             return;
         }
     };
