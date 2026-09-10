@@ -1850,3 +1850,33 @@ future temptation to repair the existing graph in place.
 The one real cost to plan for: **re-embedding 326,716 nodes.** It is incurred
 once either way, but stage 10 depends on the embedding backfill actually
 sustaining that volume — verify that before cutover rather than during it.
+
+### D13a — ADDITIVE schema now, DESTRUCTIVE schema at cutover
+
+D13 says data is rebuilt at cutover. There is a second, sharper consequence
+that is easy to miss and expensive to discover by breaking something: **v1 is
+still the writer until cutover, so any schema change v1 cannot tolerate must
+wait for cutover too.**
+
+Verified in the live tree — v1 writes both columns slated for removal:
+`upsert_node` (`db/pg_store/graph.rs:78/89/98`) writes `nodes.file_path`, and
+`graph.rs:917` writes `'lib_symbol'::sensei.node_kind`. Dropping either today
+breaks the running indexer and the graph goes stale, which §7 forbids: "the
+existing indexer keeps running until step 3 for a given language, so the graph
+never goes stale."
+
+| change | when | why |
+|---|---|---|
+| `scan_state` -> `files`, `+id`, `+skip_detail` | DONE | v1's SQL migrated in the same change |
+| `nodes.file_id` + FK | DONE | additive and nullable, so v1 keeps writing `file_path` beside it |
+| `node_kind` widening, occurrences gin index | DONE | purely additive |
+| D11 renames, `library_versions` | **NOW** | restructuring, but v1 survives if its code migrates in the SAME commit |
+| **DROP `nodes.file_path`** | **CUTOVER** | v1 writes it |
+| **DROP `lib_symbol` / `lib_package`** | **CUTOVER** | v1 writes them, and an enum value cannot be dropped while rows use it |
+
+One accepted consequence, stated so it is not later mistaken for a defect:
+while v1 keeps running, new nodes get `file_path` set and `file_id` NULL, so
+the "0 nodes have a path but no id" invariant asserted at the S3 backfill
+DRIFTS. That is harmless precisely because of D13 — those rows are truncated
+at cutover. Do not "repair" it; re-asserting that invariant is meaningful only
+AFTER the wipe.
