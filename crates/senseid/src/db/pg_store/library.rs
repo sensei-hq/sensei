@@ -434,7 +434,7 @@ impl PgStore {
 
     /// The library skills/agents to SUGGEST for a project, from the libraries it
     /// depends on — REUSES `project_libraries_resolved` (the same view
-    /// [`Self::get_project_libraries`] reads) joined to the capability tables. Backs
+    /// [`Self::get_library_enablement`] reads) joined to the capability tables. Backs
     /// the recommender enrichment. Returns `{suggested_skills, suggested_agents}`.
     pub async fn list_project_library_capabilities(
         &self,
@@ -778,8 +778,8 @@ impl PgStore {
     }
 
     /// Roll a folder-level library reference up to a project-level association
-    /// (sensei.project_libraries), scoped to `project_id`. `referenced_libraries`
-    /// is folder-grained; `project_libraries` is the project↔library M2M the
+    /// (sensei.library_enablement), scoped to `project_id`. `referenced_libraries`
+    /// is folder-grained; `library_enablement` is the project↔library M2M the
     /// indexer owns and which `project_libraries_resolved` (the Projects screen)
     /// reads. Idempotent and non-destructive: `ON CONFLICT DO NOTHING` preserves
     /// any user edits to `enabled`/`props` on re-scan.
@@ -789,7 +789,7 @@ impl PgStore {
         project_id: &uuid::Uuid,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.project_libraries(library_id, project_id)
+            "INSERT INTO sensei.library_enablement(library_id, project_id)
              VALUES($1, $2)
              ON CONFLICT (library_id, project_id) WHERE project_id IS NOT NULL DO NOTHING",
         )
@@ -825,7 +825,7 @@ impl PgStore {
             .collect())
     }
 
-    pub async fn get_project_libraries(
+    pub async fn get_library_enablement(
         &self,
         project_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {

@@ -726,7 +726,7 @@ impl PgStore {
         Ok(rows)
     }
 
-    // ── #83 T1 commands surface — project_commands writer + reader ────────
+    // ── #83 T1 commands surface — folder_commands writer + reader ────────
 
     /// Session timeline for the Replay tab (#84 T2 Slice C). Same
     /// paired-call shape as [`get_session_tool_calls`], but also joins
