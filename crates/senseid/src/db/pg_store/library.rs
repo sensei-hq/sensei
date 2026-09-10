@@ -173,9 +173,14 @@ impl PgStore {
     ///
     /// Content tables key on a VERSION, not a library, so every writer needs
     /// one. `version = None` means the caller does not know which version it
-    /// fetched, and the honest key for that is the literal `'latest'` with
-    /// `resolved_version` left NULL — not a fabricated version string, and not
-    /// a NULL key that would orphan the content.
+    /// fetched, and the honest key for that is `'unknown'` — NOT `'latest'`.
+    ///
+    /// `latest` is a TAG (`is_latest`), not a version, and using it as a key
+    /// fabricates: at the S7b migration rokkit's 94 pages were keyed `latest`
+    /// while its real version, 1.4.1, was sitting in the package.json on disk.
+    /// A row keyed `unknown` states what we actually know and can be re-keyed
+    /// the moment a version is resolved; a row keyed `latest` silently claims
+    /// currency it was never given.
     ///
     /// This is a get-or-create ON PURPOSE, unlike `nodes.file_id` (R13), and
     /// the difference is which side owns the fact: a file row is created by
@@ -187,16 +192,21 @@ impl PgStore {
         library_id: &uuid::Uuid,
         version: Option<&str>,
     ) -> Result<uuid::Uuid, String> {
-        let key = version.map(str::trim).filter(|v| !v.is_empty()).unwrap_or("latest");
+        let key = version
+            .map(str::trim)
+            .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("latest"))
+            .unwrap_or("unknown");
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.library_versions(library_id, version, resolved_version)
-             VALUES($1, $2, $3)
+            "INSERT INTO sensei.library_versions(library_id, version, resolved_version, is_latest)
+             VALUES($1, $2, $3, NOT EXISTS(
+                 SELECT 1 FROM sensei.library_versions x
+                  WHERE x.library_id = $1 AND x.is_latest))
              ON CONFLICT(library_id, version) DO UPDATE SET modified_at = now()
              RETURNING id",
         )
         .bind(library_id)
         .bind(key)
-        .bind(version)
+        .bind(version.filter(|v| !v.eq_ignore_ascii_case("latest")))
         .fetch_one(&self.pool)
         .await
         .map_err(|e| e.to_string())?;

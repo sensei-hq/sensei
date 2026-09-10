@@ -23,9 +23,12 @@ set search_path to sensei, extensions;
 create table if not exists library_versions (
   id               uuid        primary key default gen_random_uuid()
 , library_id       uuid        not null references sensei.libraries(id) on delete cascade
-  -- The KEY, and it may be the literal 'latest'. Measured at migration: 130 of
-  -- 130 pages belonged to libraries whose `version` was NULL, so keying on the
-  -- observed column alone would have orphaned every page.
+  -- An ACTUAL version, or the literal 'unknown' when it has not been
+  -- established. NEVER 'latest' — that is a TAG (see is_latest), not a
+  -- version, and conflating them fabricates: at migration rokkit's 94 pages
+  -- were keyed 'latest' while its real version, 1.4.1, sat in the
+  -- package.json on disk. 'unknown' says what we know; 'latest' claimed
+  -- something we had not established.
 , version          text        not null
 , resolved_version text
 , source_type      sensei.library_source_type
@@ -33,6 +36,10 @@ create table if not exists library_versions (
 , docs_url         text
 , local_path       text
 , page_count       integer     not null default 0
+  -- THE TAG. Which registered version is currently the latest, as a movable
+  -- pointer rather than a magic value in `version`. At most one per library,
+  -- enforced by a partial unique index — not merely intended.
+, is_latest        boolean     not null default false
 , fetched_at       timestamptz
 , props            jsonb       not null default '{}'
 , modified_at      timestamptz not null default now()
@@ -41,6 +48,9 @@ create table if not exists library_versions (
 
 create index if not exists library_versions_library_id_idx
     on library_versions(library_id);
+
+create unique index if not exists library_versions_one_latest
+    on library_versions(library_id) where is_latest;
 
 comment on table library_versions is
 'One fetched version of a library''s documentation (S7b). Pages, skills and
@@ -52,9 +62,11 @@ goes stale for older pins, while a repo homepage does not, which is why
 libraries.homepage_url stays put.';
 
 comment on column library_versions.version
-     is 'The KEY, and it may be the literal ''latest''. A library whose version was never observed is keyed ''latest'' — that is what we know, and it beats fabricating a version string. UNIQUE with library_id.';
+     is 'An ACTUAL version, or ''unknown'' when it has not been established. NEVER ''latest'' — latest is a TAG (is_latest), not a version. Keying content on ''latest'' fabricates: at migration rokkit''s 94 pages were keyed that way while its real version, 1.4.1, was readable from package.json on disk.';
+comment on column library_versions.is_latest
+     is 'Whether this is the library''s current version — a movable TAG, at most one per library (partial unique index). Separate from `version` deliberately: "which version is this" and "is this the current one" are different questions, and answering the first with the second is how a stale row starts claiming to be current.';
 comment on column library_versions.resolved_version
-     is 'What ''latest'' actually resolved to at fetched_at. NULL when unknown — the honest state for a library whose version was never observed. Without this, "do we have latest?" is answerable but "is our latest still latest?" is not, and the second is what library_update_scheduler asks.';
+     is 'The concrete version a fetch resolved to when the request was for a moving target. NULL when unknown. This is what makes "is our latest still latest?" answerable — the question library_update_scheduler asks.';
 comment on column library_versions.source_type
      is 'How THIS version''s pages were fetched: llms.txt | http | local.';
 comment on column library_versions.base_url
