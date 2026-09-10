@@ -10,7 +10,12 @@ create type node_kind
       , 'section'
       , 'rationale'
       , 'struct', 'component', 'hook', 'doc', 'extension'
-      , 'lib_symbol', 'lib_package'
+        -- D12: `lib_symbol` / `lib_package` REMOVED. Kind says WHAT a node
+        -- is; the fqn's `lib·` prefix says WHERE it came from. Collapsing the
+        -- two destroyed the real kind on 18,240 rows and duplicated a fact the
+        -- fqn already carried. External packages are `package`; external
+        -- symbols take their real kind, or `unknown` when the use site does
+        -- not reveal one.
         -- Stage 0 S5. Appended at the END: dbd diffs enums positionally, and
         -- Postgres has no DROP VALUE, so order here is permanent.
         --
