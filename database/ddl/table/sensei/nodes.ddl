@@ -6,6 +6,18 @@ create table if not exists nodes (
 , kind                     node_kind   not null
 , name                     text        not null
 , file_path                text
+  -- R13. The file this node is DECLARED in, as a key rather than a repeated
+  -- path. ON DELETE RESTRICT, never CASCADE: removing a file row must not
+  -- silently delete every declaration in it — a file's removal goes through
+  -- reconcile, one declaration at a time, with inbound edges unresolved first
+  -- (R10.8). Nullable, because PARTIAL (referenced, not yet declared) and
+  -- EXTERNAL (`lib·`) nodes have no file by definition.
+  --
+  -- This foreign key is what makes the ORPHANED state UNREPRESENTABLE. 8,147
+  -- nodes previously named a file the scanner did not track and read as
+  -- COMPLETE to every consumer; they were swept when this column landed, and
+  -- the constraint is why they cannot come back.
+, file_id                  uuid        references sensei.files(id) on delete restrict
 , fqn                      text
 , resolved                 boolean     not null default false
 , language                 text
@@ -54,6 +66,9 @@ create unique index if not exists nodes_unique_identity
 create unique index if not exists nodes_unique_fqn
     on nodes (folder_id, fqn)
  where fqn is not null;
+
+create index if not exists nodes_file_id_idx
+    on nodes(file_id);
 
 create index if not exists nodes_folder_id_idx
     on nodes(folder_id);
