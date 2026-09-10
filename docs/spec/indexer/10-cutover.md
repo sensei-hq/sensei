@@ -52,7 +52,7 @@ decides whether to cut over.
 | A7 reports collisions on the live corpus | STOP. Colliding declarations mean one silently overwrites the other and which one wins is scan-order dependent. |
 | the diff shows far more references in v2 | EXPECTED (S2). Compare resolved edges, not raw counts. |
 
-## 5. Checkpoint output
+## 5. Stage report — what you SHOW when the stage is done
 
     {"stage":"10-cutover","at":"<iso8601>","language":"rust",
      "diff":{"improvements":<n>,"regressions":0,"explained":<n>},

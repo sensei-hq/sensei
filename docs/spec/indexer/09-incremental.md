@@ -72,7 +72,7 @@ makes the longest-prefix rule testable without a filesystem.
 | the hash is unchanged but `mtime` moved | refresh `mtime`, no re-parse (S4 last row). |
 | a burst of thousands of events | batch by repo before applying. Do not enqueue one task per event. |
 
-## 5. Checkpoint output
+## 5. Stage report — what you SHOW when the stage is done
 
     {"stage":"09-incremental","at":"<iso8601>","run_id":"…",
      "paths_in":<n>,"matched":<n>,"escalated_to_scan_root":0,

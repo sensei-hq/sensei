@@ -95,9 +95,9 @@ sources.
 a `Result<FileFacts, _>` is the exact shape the DRY/no-fabrication rule forbids,
 and a guard test must assert it appears nowhere in the v2 sources.
 
-## 5. Checkpoint output
+## 5. Stage report — what you SHOW when the stage is done
 
-Per-file facts are too many to log individually; the checkpoint is per-repo.
+Per-file facts are too many to list; the report is per-repo.
 
     {"stage":"04-walk-rust","at":"<iso8601>","repo":"…",
      "files_read":372,"read_errors":{"io":0,"grammar":0,"not_parsed":0,"no_identity":0},
@@ -110,9 +110,13 @@ Per-file facts are too many to log individually; the checkpoint is per-repo.
      "sample_reference":{"site":"fqn.rs:142:9","mints":"rust·senseid·…·item",
                          "resolution":"Unresolved","reason":"NoAnnotation"}}
 
-`symbols_by_kind` must show NON-ZERO `field` and `variant`. The live graph has
-0 of each in every language, so a zero here means S5 regressed to the old
-behaviour and nothing else in the stage would notice.
+`symbols_by_kind` must show NON-ZERO `field` and `enum_variant`. The live
+graph has 0 of each in every language, so a zero here means S5 regressed to
+the old behaviour and nothing else in the stage would notice.
+
+**The schema was never the blocker.** `sensei.node_kind` has carried `field`
+and `enum_variant` all along — the walk simply never emitted them. So this is
+the stage that closes A5, and no DDL contributes to it.
 
 `unhandled_forms` is the work queue for the next iteration, which is why it is
 keyed by tree-sitter kind rather than counted in aggregate.
