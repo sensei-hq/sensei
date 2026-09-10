@@ -3,6 +3,7 @@ set search_path to sensei, extensions;
 create table if not exists library_pages (
   id                       uuid        primary key default gen_random_uuid()
 , library_id               uuid        not null references sensei.libraries(id) on delete cascade
+, library_version_id       uuid        not null references sensei.library_versions(id) on delete cascade
 , title                    text        not null
 , url                      text
 , local_path               text
