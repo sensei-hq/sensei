@@ -15,6 +15,7 @@ pub mod lang;
 pub mod persist;
 pub mod reconcile;
 pub mod resolve;
+pub mod scan_repo;
 pub mod scan_root;
 
 /// Every v2 source file, as `(path relative to `src/indexer/`, body)`.
