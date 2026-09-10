@@ -50,6 +50,47 @@ string literals.
 - **S6.** Store manifest facts at the FOLDER containing the manifest —
   commands, dependencies, workspace members, stack labels, role. This is
   already the shape (`folder_commands.folder_id` after stage 0's D11 rename).
+- **S6b.** **Extend `ManifestAdapter` to LOCKFILES**, because the manifest
+  gives a range and only the lockfile gives the pin (02b S11). Two new trait
+  methods, defaulted so no existing adapter breaks:
+
+      fn lockfile_filenames(&self) -> &[&'static str] { &[] }
+      fn parse_lockfile(&self, content: &str) -> Vec<PinnedVersion> { vec![] }
+
+  Same shape as the rest of the trait — `content: &str`, pure, unit-testable
+  on literals. `accepts()` must keep answering for MANIFESTS only; a lockfile
+  is a distinct file class and routing one into `parse_dependencies` would
+  parse the wrong grammar. Add `accepts_lockfile()` alongside it.
+
+  The glob set stays REGISTRY-DERIVED (S5): the walk tests each file against
+  both predicates as it passes. Still one traversal.
+
+- **S6c.** **Resolution: NEAREST LOCKFILE AT OR ABOVE the manifest's folder,
+  stopping at the repo root.** Not "same folder", not "repo root" — measured
+  here, all three are different:
+
+  | lockfile | serves |
+  |---|---:|
+  | `/Cargo.lock` | the root `Cargo.toml` + **8 workspace members** under `crates/` = 9 manifests |
+  | `app/src-tauri/Cargo.lock` | 1 — and it must win over the root's, or that crate gets another workspace's pins |
+  | `tools/session-report/Cargo.lock` | 1, same reason |
+  | `app`, `website`, `dojo` `bun.lock` | 1 each, sibling to their `package.json` |
+  | `marketplace/package.json` | **NONE.** No lockfile anywhere above it. |
+
+  `crates/senseid/Cargo.toml` has no sibling lock and walks up to `/Cargo.lock`.
+  `app/src-tauri/Cargo.toml` finds its own FIRST and must never reach the
+  root's. A "use the repo root's lockfile" rule gets two of the three wrong.
+
+  This resolution is ONE function, not per-adapter — the walk-up is identical
+  for every ecosystem; only the filenames differ, and those come from
+  `lockfile_filenames()`.
+
+- **S6d.** **No lockfile is a real state, and the version stays a RANGE.**
+  `marketplace/package.json` is the live example. Record the range with its
+  operator intact (`^1.2.3`), never the floor — `clean_version` strips the
+  operator and produces `1.2.3`, which is indistinguishable from a pin and is
+  the R4 fabrication 02b S11 documents. A range recorded as a range can be
+  resolved later; a range recorded as a pin will be believed.
 - **S7** (R14). Create ALL folder and file rows, then stop. Enqueuing parse
   tasks is stage 3's barrier, not this stage's.
 - **S8** (02b S11). `find_libraries` extends the same manifest pass: for each
