@@ -4,7 +4,7 @@ create or replace view folder_completeness as
 with recursive local as (
     -- Per-folder facts ONLY. `expected_files` is written by the walk that
     -- counted them (the sole point that knows the number); `decided` counts the
-    -- scan_state rows that reached a verdict, where a deliberate skip
+    -- files rows that reached a verdict, where a deliberate skip
     -- (binary_content, invalid_utf8) is a verdict just as much as an index is.
     select f.id
          , f.parent_id
@@ -14,7 +14,7 @@ with recursive local as (
                where s.indexed_at is not null or s.skip_reason is not null
            ) as decided
       from folders f
-      left join scan_state s on s.folder_id = f.id
+      left join files s on s.folder_id = f.id
      group by f.id, f.parent_id, f.status, (f.props->>'expected_files')::bigint
 ),
 incomplete as (
@@ -51,6 +51,6 @@ comment on view folder_completeness is
 
 Folder status is otherwise set by the queue reaching DetectCommunities, which is not a dependable signal: the daily analyzer enqueues that task UNBLOCKED, so it can run against a partially-indexed folder. This view trusts only what is on disk in the database.
 
-A folder is complete when every file it owns has reached a verdict AND every folder beneath it is complete. `expected` is the denominator, recorded by the walk — counting only the scan_state rows that EXIST is vacuous, because a walk that died at file 40 of 100 leaves 40 decided rows and 60 with no row at all.
+A folder is complete when every file it owns has reached a verdict AND every folder beneath it is complete. `expected` is the denominator, recorded by the walk — counting only the files rows that EXIST is vacuous, because a walk that died at file 40 of 100 leaves 40 decided rows and 60 with no row at all.
 
 `drifted` compares the stored status against the derived answer, so disagreement is directly queryable instead of being inferred from a suspiciously short result.';
