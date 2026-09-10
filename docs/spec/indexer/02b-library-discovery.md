@@ -62,11 +62,56 @@ A library's metadata and docs can arrive three ways. `libraries.source_type`
 already names them as an enum — `llms.txt | http | local` — so the routes are
 not new; their TRIGGERS and their PRECEDENCE are.
 
-| route | trigger | status |
-|---|---|---|
-| **local** | folder traversal — stage 2 reads the manifests | BUILT. This stage's S1–S5. |
-| **website** | a `docs_url` / llms.txt is known for the package | PARTLY — `indexer/llms_indexer.rs` ingests; nothing decides WHEN to go looking |
-| **github** | a repository URL is known for the package | NOT BUILT. `registry.rs` defers GitHub Releases explicitly. |
+**THE FETCHERS ALL EXIST.** `LibSource` (`indexer/lib_indexer.rs:353`) is
+exactly these three, `detect_lib_source` classifies a URL into them, and
+`resolve_library_pages` implements all three arms. What is missing is not
+fetching — it is the TRIGGER that decides when to fetch.
+
+| route | `LibSource` | what it walks | trigger status |
+|---|---|---|---|
+| **local** | `LocalDir(path)` | `resolve_local_llms_root`: the path itself if named `llms` or holding `index.txt`/`llms.txt`/`llms-full.txt`, ELSE `<path>/docs/llms`. Then `.txt` files at top level + `components/`. **Markdown is not read.** | **MISSING** |
+| **git** | `GitHubTree{owner,repo,branch,path}` | a `github.com/{owner}/{repo}/tree/{branch}/{path}` docs dir | MISSING |
+| **website** | `Website(url)` | an llms index or single file | MISSING |
+
+`index_library` requires a task carrying a URL and errors without one, so
+every route is manual today.
+
+### The measured evidence — two OPPOSITE failures, neither detected
+
+| library | `docs/llms/` on disk | pages | state |
+|---|---|---:|---|
+| rokkit | 119 `.txt` | 94 | current, fetched 2026-08-03 |
+| dbd | **ABSENT** | 36 | **STALE** — pages point at `~/Developer/dbd-rs/docs/llms/llms.txt`, a directory that no longer exists. Fetched 2026-06-30 and served as current ever since. |
+| kavach | **15 `.txt`** | **0** | **NEVER INDEXED** — the content is right there |
+
+kavach is the sharper of the two, because nothing is missing except the
+trigger: `ingest_manifest` (`libraries/mod.rs:107`) already recorded
+`local_path`, so the system KNOWS where kavach is, its `docs/llms/` holds 15
+`.txt` files, and it has 4 skills and 2 agents ingested from its manifest. It
+has zero pages purely because no one enqueued the walk.
+
+dbd is the inverse and the more dangerous: content was fetched once, the
+source was deleted, and the pages are still returned as though current. R11
+says a gap is DATA with a fill path — this is a gap that does not even
+register as one.
+
+### S7b — the LOCAL trigger, and a staleness check
+
+- **S7b.1.** When `ingest_manifest` records a `local_path`, ENQUEUE an
+  `index_library` for that path. That is the local route's trigger and it
+  closes kavach. The path is already in hand; nothing needs discovering.
+- **S7b.2.** `read_local_source_files` ERRORS when the root has no `.txt`
+  files. That error is the STALENESS SIGNAL — record it against the version
+  (`files.skip_detail`'s analogue for libraries) rather than letting the task
+  fail silently. dbd would have surfaced on the first re-run.
+- **S7b.3.** **Do not delete stale pages on a failed fetch.** dbd's 36 pages
+  are the last known-true content; deleting them on a transient read error
+  trades a stale answer for no answer. Mark the version stale, keep the
+  content, and label it on read — the same rule R10.7 applies to a dirty file.
+- **S7b.4.** The local convention is `docs/llms/*.txt`, NOT markdown. A
+  library with a rich `docs/` tree and no `docs/llms/` yields nothing, which
+  is correct behaviour and a confusing result — say so in the stale/empty
+  reason rather than reporting an empty success.
 
 ### S8 — extract the repository URL from responses ALREADY BEING FETCHED
 
