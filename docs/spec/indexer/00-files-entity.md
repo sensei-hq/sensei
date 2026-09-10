@@ -25,11 +25,15 @@ the wrong stage.
 | output | the same tree with seven changes applied through `dbd`, and a live schema matching it |
 | purity | **entirely IO.** There is no pure part of this stage. |
 
-The project is PRE-RELEASE for dbd purposes — there is no `database/migrations/`
-tree — so the workflow is `dbd reconcile`, NOT hand-written migrations. Verify
-that before starting: if a `migrations/` directory has appeared since this was
-written, STOP, because the correct workflow has changed and reconcile would be
-the wrong tool.
+**The workflow is `dbd reconcile`.** This project is pre-release for dbd
+purposes and has no `database/migrations/` tree. Edit the DDL under
+`database/ddl/**` and reconcile; that is the whole procedure.
+
+**Do NOT create a migrations tree.** Hand-written migrations are the workflow
+for a RELEASED dbd project, and introducing one here would switch this project
+onto a workflow it is not on — the single worst mistake available in a dbd
+tree. If reconcile does not do what you want, the answer is different DDL, not
+a different workflow.
 
 ## 3. Requirements
 
@@ -104,12 +108,10 @@ FK first fails on the first orphan and tells you nothing about the other 8,146.
 against `scan_state` before the rename, and the population is identical; only
 the name changed. S3's foreign key cannot be added while they exist.
 
-**Define the set FIRST, and MATERIALISE it.** All the steps below must operate
-on one identical set; re-evaluating the predicate per statement is how they
-drift apart.
+**Define the set FIRST, and MATERIALISE it into a TEMP TABLE.**
 
-    CREATE TEMP TABLE orphans ON COMMIT DROP AS
-    SELECT n.id, n.name
+    CREATE TEMP TABLE orphans AS          -- NOT "ON COMMIT DROP": see below
+    SELECT n.id, n.name, n.fqn, n.file_path
       FROM sensei.nodes n
       LEFT JOIN sensei.files f
              ON f.folder_id = n.folder_id AND f.file_path = n.file_path
@@ -117,8 +119,27 @@ drift apart.
        AND f.file_path IS NULL;
     -- expect 8,147
 
-`n.name` is selected deliberately — step 1 needs it, and after step 3 it is
-gone.
+    -- after the transaction commits AND the checkpoint is written:
+    DROP TABLE orphans;
+
+**A TEMP TABLE, not a view**, and not for the reason it first appears. A view
+would return the SAME rows on each reference — nothing between steps 1 and 2
+modifies `nodes` or `files`, so there is no drift to prevent. The actual
+reasons are all about surviving step 3:
+
+1. **A view is EMPTY after the delete.** It selects from `nodes`; once the
+   orphans are gone it returns nothing, so there is no way to verify what was
+   deleted or to render the checkpoint's sample.
+2. **It cannot carry `name` past the delete** — and `name` is exactly what
+   step 1 backfills from and step 3 destroys. Same for `fqn` and `file_path`,
+   which the checkpoint sample needs.
+3. **A view is a schema object dbd would then own.** In this tree that means a
+   file under `ddl/view/` and a permanent artifact for a one-time sweep.
+
+**NOT `ON COMMIT DROP`.** An earlier draft of this section used it while also
+requiring all three steps in one transaction, which drops the table at commit
+and destroys reasons 1 and 2. Let it live for the session and drop it by hand
+once the checkpoint is written.
 
 Then, **in ONE transaction, in this order** — R10.8's rule, executed by hand
 here for the first time:
@@ -171,7 +192,7 @@ not answer it in a DDL stage.
 
 | input | this stage does |
 |---|---|
-| a `migrations/` tree exists | STOP. The workflow is wrong, not the DDL. |
+| `dbd reconcile` will not express the change | change the DDL. **Do not reach for a migrations tree** — that is the released-project workflow and this project is not on it. |
 | `dbd reconcile` fails partway | do not hand-patch the live DB to match. Fix the DDL and re-run; a hand-patched DB drifts from the tree and the next reconcile fights it. |
 | an orphan's inbound edge has NULL `target_name` | **MEASURED: all 212 are.** Backfill from the target node's `name` (all 212 have one) before unresolving — S9 step 1. Do NOT stop, and do NOT unresolve without it: that yields an edge naming nothing. |
 | a target node has NO name either | THEN stop and report. Nothing can recover the reference, and an edge with no target and no name is a dead row, not a gap. Measured 0 today. |
@@ -193,8 +214,13 @@ One JSON line appended to `~/.sensei/scan-progress.jsonl`:
      "nodes_with_file_id":346506,"nodes_file_id_null":40378,
      "ddl":{"s1":true,"s2":true,"s3":true,"s4":true,
             "s5":true,"s6":true,"s7":true,"s8":true},
-     "sample_orphan":{"fqn":"…","name":"…","file_path":"…",
-                      "inbound_edges":3,"target_names_present":3}}
+     "sample_orphan":{"fqn":"…","name":"agents","file_path":"…",
+                      "inbound_edges":3,"target_names_backfilled":3}}
+
+The sample is rendered FROM the `orphans` temp table after the commit — which
+is why that table must outlive the transaction, and why it selects `fqn` and
+`file_path` alongside `name`. Reading it back from `nodes` is not possible;
+the rows are gone.
 
 The sample is not decoration. A count of 8,147 swept rows tells you the DELETE
 ran; one rendered orphan with its inbound-edge names tells you it swept the
@@ -230,9 +256,11 @@ backup first (`database/backup/` is the existing home) and record the row counts
 in the checkpoint BEFORE the transaction, not after. This is the only stage in
 the whole plan that destroys production rows.
 
-**`dbd reconcile`, not migrations** — verified pre-release at the time of
-writing (no `database/migrations/`). Running reconcile against a released
-project is the single worst mistake available in a dbd tree.
+**`dbd reconcile`, and do not invent a migrations tree to get around a
+stubborn change.** The reconcile-vs-migrations choice is driven by the
+project's release state, not by convenience, and this project is pre-release.
+Creating `database/migrations/` would silently move it onto the other
+workflow.
 
 **134 references across 10 Rust files** name `scan_state` or `nodes.file_path`,
 plus `design.dbml` and the `folder_completeness` view. They are mechanical but
