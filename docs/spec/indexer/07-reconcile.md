@@ -120,27 +120,7 @@ correction, not a cosmetic change.
 | two files claim one identity | `contested`, reported, not resolved (S11). |
 | a DAMAGED file that still parses | undetectable, and accepted. Half its declarations are removed, and the loss is RECOVERABLE: the next healthy index of the SAME FILE restores them and the unresolved edges — `target_name` intact — re-resolve. No other file must be re-indexed. |
 
-## 5. Stage report — what you SHOW when the stage is done
-
-    {"stage":"07-reconcile","at":"<iso8601>","file":"crates/…/x.rs","file_id":"…",
-     "outcome":"parsed",
-     "claimed":12,"released":2,"deleted":2,"inbound_unresolved":7,
-     "contested":[],"occurrences_dropped":4,"edges_deleted":1,
-     "children_at_delete":0,"target_names_present":7,
-     "brake_fired":false,
-     "sample_deleted":{"fqn":"rust·senseid·x·z·item",
-                       "inbound_edges":[{"from":"rust·senseid·y·caller·item",
-                                         "target_name":"z","now":"target_id NULL"}]},
-     "counts_before":{"nodes":395031,"edges":82913},
-     "counts_after":{"nodes":395029,"edges":82912}}
-
-For an unparseable file the shape is the same with `"outcome":"unparseable"`,
-a `reason` and `detail`, and **`counts_before` equal to `counts_after` in every
-field** — that equality is S1 stated as data.
-
-`children_at_delete` must be 0. It is the only evidence S6 held.
-
-## 6. Verification
+## 5. Verification
 
 The mutation fixture is a temp git repo the test builds and mutates. Specified
 HERE and referenced by stage 9; not duplicated.
@@ -166,7 +146,7 @@ HERE and referenced by stage 9; not duplicated.
 | idempotence | reconcile twice with the same facts changes no row the first pass did not | any non-idempotent write |
 | **A9** | MCP answers "which files are unparseable and why"; a dirty node comes back LABELLED | implement the state and skip the surface |
 
-## 7. Watch out
+## 6. Watch out
 
 **`props || EXCLUDED.props` vs `jsonb_set(props, '{k}', v)`** — the first
 replaces `claims`/`occurrences` wholesale. Every bug in this stage is a variant
@@ -185,7 +165,7 @@ package from every OTHER package, which lives in files the rename did not
 touch. The trigger is a folder-level observation by the manifest reader, and
 the action is a full re-index of the scan root. Do not add a partial version.
 
-## 8. Definition of done
+## 7. Definition of done
 
 - `diff_claims` is pure and unit-tested.
 - All four R10.6 clauses hold over the corpus, including (d).

@@ -72,23 +72,7 @@ makes the longest-prefix rule testable without a filesystem.
 | the hash is unchanged but `mtime` moved | refresh `mtime`, no re-parse (S4 last row). |
 | a burst of thousands of events | batch by repo before applying. Do not enqueue one task per event. |
 
-## 5. Stage report — what you SHOW when the stage is done
-
-    {"stage":"09-incremental","at":"<iso8601>","run_id":"…",
-     "paths_in":<n>,"matched":<n>,"escalated_to_scan_root":0,
-     "by_repo":{"…/sensei":<n>},
-     "classified":{"content_changed":<n>,"renamed_module_same":<n>,
-                   "renamed_module_changed":<n>,"added":<n>,
-                   "removed":<n>,"touched_only":<n>},
-     "reparsed":<n>,"reconciled":<n>,"skipped_by_ignore":<n>,
-     "sample_match":{"path":"repo/submodule/x.rs",
-                     "matched_root":"repo/submodule","why":"longest prefix",
-                     "rejected":["repo"]}}
-
-The sample renders the REJECTED roots, which is the only direct evidence S1
-chose correctly rather than matching first.
-
-## 6. Verification
+## 5. Verification
 
 | test | mutation that must break it |
 |---|---|
@@ -105,7 +89,7 @@ chose correctly rather than matching first.
 Uses the mutation fixture from stage 7 — a temp git repo the test builds and
 mutates. It is specified there and referenced here, not duplicated.
 
-## 7. Watch out
+## 6. Watch out
 
 **The root set is not complete until the scan-repo wave drains** (S2). Reading
 it from scan root's in-memory output would miss every submodule and quietly
@@ -121,7 +105,7 @@ re-added them. `build_walker` at `max_depth(1)` is the existing shared answer.
 Batch by repo; a per-event task storm is how the queue got 350-file bursts
 every five minutes.
 
-## 8. Definition of done
+## 7. Definition of done
 
 - `match_repos` and `classify` are pure, tested on literals.
 - Longest prefix proven against a submodule fixture, with rejected roots in the

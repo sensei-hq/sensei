@@ -3,12 +3,11 @@
 Whole-system spec: `docs/design/indexer-v2.md` R14 (the barrier gives the
 denominator), R10.7b (folder rollup). Usable from stage 3 onward.
 
-> **This stage is NOT about the "Stage report" section in every other spec.**
-> Those are a DEVELOPMENT artifact — printed when a stage is built, so its
-> result can be reviewed and redirected before the next stage starts. This
-> stage is the RUNTIME progress the app consumes while a scan is running. Two
-> different things with two different audiences; an earlier draft conflated
-> them into one invented JSONL file.
+> **This stage is the RUNTIME progress the app consumes during a scan.**
+> It is not a per-stage development report: those were withdrawn, because each
+> stage writes real tables and is verified by querying them. This
+> distinction matters — a prescribed report format skews an implementation
+> toward producing the report rather than the rows.
 
 ## 1. Purpose
 
@@ -72,25 +71,7 @@ and the daemon can disagree about what a scan is doing.
 | a stage panics | `Failed` must still be emitted, or the UI shows a task running forever. |
 | an event channel is full | drop and count the drops. Never block the scan on a UI channel — but never drop silently either. |
 
-## 5. Stage report — what you SHOW when the stage is done
-
-Not a file. Run a scan with an SSE client attached and paste the event
-sequence, so the shape can be checked by eye:
-
-    event=folder_queued  folder=…/sensei  files_total=48665
-    event=started        kind=scan_repo   path=…/sensei
-    event=started        kind=index_file  path=crates/…/fqn.rs
-    event=completed      kind=index_file
-    …
-    RepoProgress { total: 48665, pending: 48200, running: 8,
-                   completed: 457, failed: 0,
-                   current_file: Some("crates/…/resolve.rs") }
-
-The pass condition is that every new stage appears, `files_total` equals
-`expected_files`, and `total = pending + running + completed + failed` holds
-at every sample.
-
-## 6. Verification
+## 5. Verification
 
 | test | mutation that must break it |
 |---|---|
@@ -105,7 +86,7 @@ at every sample.
 The incremental test is the one that catches buffering, which turns a live
 feed into a post-mortem and is invisible to any test that reads after the run.
 
-## 7. Watch out
+## 6. Watch out
 
 **The mechanism exists. Extend it.** This is the sixth thing in this design
 that was specified as new work and turned out to be built and wired — after
@@ -118,10 +99,10 @@ and say what is actually missing.
 times" and "the loop ran over files" are different claims. Several defects in
 this design's history were counts that were correct over the wrong population.
 
-## 8. Definition of done
+## 7. Definition of done
 
 - New stages appear in `TaskEvent`; no second progress channel exists,
   verified by test.
 - The denominator comes from the barrier.
 - Failures emit `Failed` with a reason; a panicking stage does not hang the UI.
-- A live SSE capture of a real scan is pasted into the stage report.
+- A live SSE capture of a real scan shows every new stage.

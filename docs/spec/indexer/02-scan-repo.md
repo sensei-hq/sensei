@@ -61,9 +61,13 @@ string literals.
     this stage carries it only when already cached. Network here would put
     I/O in front of the structure barrier and break a scan with no
     connectivity.
-  - **DIRECT dependencies only** — guaranteed by reading the MANIFEST, never
-    the lockfile. Do not add lockfile parsing to get exact pins; 927 of 1,001
-    versions are already exact, and the cost is the whole transitive tree.
+  - **DIRECT dependencies only** — the MANIFEST decides WHICH packages, and
+    that is what keeps the transitive tree out. But the LOCKFILE decides
+    WHICH VERSION: `clean_version` strips `^`, so a manifest-derived version
+    is a range FLOOR indistinguishable from a pin (`^2.8.0` is stored as
+    `2.8.0`). Look the direct deps up in the lockfile BY NAME; never
+    enumerate it. No adapter reads one today — verified, zero references to
+    `package-lock`/`Cargo.lock`/etc. in `crates/`.
   - **`DepVersion.source` is the manifest filename**, not the fetch origin.
     Do not reuse the name.
 
@@ -84,25 +88,7 @@ in a separate handler where a failure is invisible. Moved into the scan, a
 swallowed manifest error silently costs a folder its commands, and nothing
 counts it.
 
-## 5. Stage report — what you SHOW when the stage is done
-
-    {"stage":"02-scan-repo","at":"<iso8601>","repo":"…/sensei","repo_id":"…",
-     "submodules_declared":0,"submodules_checked_out":0,"submodules_enqueued":0,
-     "subtree_guesses":2,
-     "folders":9378,"files_discovered":48665,
-     "files_excluded_by_gitignore":<n>,"files_excluded_by_glob":<n>,
-     "manifests_found":6,"manifests_parsed":6,"manifests_failed":0,
-     "commands":572,"dependencies":<n>,"workspace_members":6,
-     "sample_manifest":{"folder":"app/","file":"package.json","ecosystem":"npm",
-                        "commands":["dev","build","test:unit","test:e2e"],
-                        "deps":42,"role":"app"},
-     "sample_subtree":{"dir":"homebrew/","provenance":"inferred_from_history",
-                       "evidence":"Squashed 'homebrew/' content from commit 4f2e246"}}
-
-Both exclusion counts are separate on purpose: they answer different questions
-and S8 below depends on being able to tell them apart.
-
-## 6. Verification
+## 5. Verification
 
 | test | mutation that must break it |
 |---|---|
@@ -116,7 +102,7 @@ and S8 below depends on being able to tell them apart.
 | one malformed manifest does not cost the repo its other manifests | propagate the error instead of recording it |
 | the manifest filename set is derived from the adapter registry | hardcode a filename list — the test greps for a literal `"package.json"` outside the adapters |
 
-## 7. Watch out
+## 6. Watch out
 
 **Everything about manifests already exists. Inventory before building.**
 `ManifestAdapter` (`crates/senseid/src/adapters.rs`) is a deliberate sibling of
@@ -142,17 +128,17 @@ Several entries (`node_modules`, `dist`, `build`, `target`, `.next`,
 entry, and the `*.min.js` / `*.bundle.js` entries are NOT gitignore-covered —
 they exist because a vendored Vite bundle under `artifacts/` contributed 540
 call references to single-letter minified names, twice. Measure which entries
-are now redundant using the two separate exclusion counters in the stage report,
+are now redundant using the two separate exclusion counters,
 and remove only the ones proven so.
 
 **A repo with no manifests is normal**, not a failure. Report zero and move on.
 
-## 8. Definition of done
+## 7. Definition of done
 
 - Four pure functions unit-tested on literals, with no repo and no database.
 - Submodules enqueue child `scan_repo`s; a declared-but-absent one is reported.
 - Manifest facts land on the containing FOLDER; this repo produces six
   manifest-bearing folders and 572 commands, matching today's live count.
 - The file set for this repo matches today's 48,665 within an explained delta.
-- Stage report printed with both samples rendered.
+- Manifest facts queryable: `folder_commands` shows six folders for this repo.
 - No second walker and no hardcoded manifest filename list exist in the tree.

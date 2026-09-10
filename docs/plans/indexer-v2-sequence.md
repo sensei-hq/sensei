@@ -31,7 +31,7 @@ Keep it only as the historical record of how the Rust steps were first drafted.
 | 5 | `spec/indexer/05-resolve.md` | the shared ladder, reason codes, reach identity | 4 |
 | 6 | `spec/indexer/06-persist.md` | `FileFacts` -> rows, lossless at the boundary | 5 |
 | 7 | `spec/indexer/07-reconcile.md` | claim diff, dirty vs delete, cascade ordering | 6 |
-| 8 | `spec/indexer/08-progress.md` | per-stage checkpoints, the tailable file | 3 (usable from there) |
+| 8 | `spec/indexer/08-progress.md` | extend `TaskEvent` SSE for the new stages | 3 (usable from there) |
 | 9 | `spec/indexer/09-incremental.md` | changed files -> repos, the inverse traversal | 7 |
 | 10 | `spec/indexer/10-cutover.md` | differential harness, switch rust only, retire v1 | 9 |
 
@@ -167,20 +167,23 @@ Uniform, so an implementer never has to guess where something is:
    each citing the whole-system requirement it derives from (R-something).
 4. **Failure modes** — what this stage does when its input is wrong, missing or
    malformed. Never "cannot happen".
-5. **Stage report** — what gets PRINTED and shown when the stage is done, with
-   a rendered SAMPLE so the shape can be checked by eye rather than trusting a
-   count. **Not written to a file.** This is a development artifact: each
-   stage's result is put in front of a reader before the next stage starts, so
-   the work can be redirected while that is still cheap. Runtime progress is a
-   separate concern and already exists — `tasks/progress.rs`'s `TaskEvent` over
-   SSE, extended in stage 8.
-6. **Verification** — the tests that prove it, and for each, the one-line
+5. **Verification** — the tests that prove it, and for each, the one-line
    mutation that must break it.
-7. **Watch out** — the specific trap, with the measurement behind it.
-8. **Definition of done** — what must be true before the next stage starts.
+6. **Watch out** — the specific trap, with the measurement behind it.
+7. **Definition of done** — what must be true before the next stage starts.
 
-A spec missing 4, 6 or 8 is not ready to implement. Those are the three that get
+A spec missing 4, 5 or 7 is not ready to implement. Those are the three that get
 skipped and the three that cost the most later.
+
+**There is deliberately NO "stage report" section.** Two earlier drafts had one
+— first as an appended `~/.sensei/scan-progress.jsonl`, then as a printed
+block — and both were withdrawn. Each stage writes to real tables, so
+verification is a query against `repositories`, `folders`, `files`, `nodes`,
+`edges` after the tests run. A prescribed report format invites building
+reporting code that nothing needs and skews the implementation toward
+producing the report rather than the rows. Runtime progress for the app is a
+separate, already-built concern: `tasks/progress.rs`'s `TaskEvent` over SSE,
+extended in stage 8.
 
 ## Fixtures
 
