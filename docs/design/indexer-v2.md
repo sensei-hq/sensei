@@ -1716,3 +1716,49 @@ Repository- and project-level dependency and command answers are VIEWS over
 the folder-grained tables, following `sensei.folder_completeness`, which
 already recurses `parent_id` to roll per-file facts up. Derived beats stored:
 a view cannot drift from what it derives from.
+
+**D12.** **`node_kind` loses `lib_symbol` and `lib_package`.** A node's KIND
+says what it is; its FQN PREFIX says where it comes from. Those are orthogonal
+axes and the `lib_` values conflate them.
+
+Measured, and the redundancy is total: **21,928 nodes carry a `lib_` kind and
+all 21,928 have a `lib·` fqn; ZERO nodes of any other kind have one.** The
+prefix is a perfect discriminator in both directions, so the kind carries no
+information the fqn does not — and R10.7d already rules that "the
+discriminator is already in the key … so no new column is needed to tell the
+two containers apart."
+
+It is not merely redundant, it DESTROYS information. **18,240 `lib_symbol`
+rows** say only "external", not whether the symbol is a function, a type or a
+const. First-party symbols keep that distinction; external ones lose it, for
+no reason.
+
+And both discriminators are ALREADY IN USE — `kind IN ('lib_symbol',
+'lib_package')` in `db/pg_store/graph.rs`, `fqn.starts_with("lib·")` in the
+language modules and their tests. That is two representations of one fact,
+which R10.7e forbids in the paragraph next door.
+
+The replacement:
+
+| today | becomes |
+|---|---|
+| `lib_package` | `package` — an existing value, and unambiguous |
+| `lib_symbol` | the REAL kind where the use site reveals it (a call site implies `function`, a type position implies `type`), else `unknown` — the value stage 0 adds anyway |
+| "is it external?" | `fqn LIKE 'lib·%'`, the single discriminator |
+
+`unknown` is the honest answer when the use site does not reveal a kind: R5
+says we index the USE of a dependency and never its internals, so sometimes we
+genuinely cannot tell. That is a gap with a reason (R11), not a category.
+
+NO new `is_external` column. `nodes` has none today, the fqn already answers
+it, and adding one would store what is derivable — the failure R10.7e names.
+`nodes_unique_fqn` is `btree (folder_id, fqn)`, so a folder-scoped prefix test
+still uses the index for the folder equality; the lookup does not regress.
+
+**Cost, measured and NOT small: 111 references across the tree** — heaviest in
+`db/pg_store/{tests,graph}.rs`, `tasks/handlers/process.rs`, `graph_facts.rs`,
+`languages/import_target.rs` — plus `nodes.ddl`, the `graph_nodes` and
+`edge_resolution_class` views, and a 21,928-row backfill. Larger than the rest
+of stage 0's enum work put together, and it is a code migration rather than
+pure DDL. It is sequenced there anyway because the alternative is letting the
+v2 walk write `lib_symbol` and migrating twice.
