@@ -105,13 +105,20 @@ land together; splitting them migrates the same table twice.
   Anything already querying `locality` needs no change; only writers and
   direct `kind IN (...)` readers do.
 
-  **This is the largest single item in stage 0 and it is a CODE migration,
-  not DDL: 111 references** across `db/pg_store/{tests,graph}.rs`,
-  `tasks/handlers/process.rs`, `graph_facts.rs`, `languages/import_target.rs`,
-  `indexer/{community,persist}.rs`, plus `nodes.ddl`, the `graph_nodes` and
-  `edge_resolution_class` views, and a 21,928-row backfill. Budget for it
-  separately. It is here rather than later only because the alternative is
-  letting the v2 walk write `lib_symbol` and migrating a second time.
+  **DEFERRED TO STAGE 10 BY D13, and the backfill is WITHDRAWN.** An earlier
+  draft made this "the largest single item in stage 0" — 111 references plus
+  a 21,928-row backfill. The wipe removes the backfill entirely:
+  - the 21,928 rows are DELETED at cutover, so migrating them is work on
+    data destined for the bin;
+  - it could never have been correct anyway — the "real kind" of a
+    `lib_symbol` needs re-parsing, so every row would have become `unknown`;
+  - an enum value cannot be dropped while rows use it, so **wipe first, then
+    drop the values** is strictly cheaper than backfill-then-drop.
+
+  What is left of D12 after the wipe: drop the two labels (a `create type` +
+  `ALTER TABLE ... TYPE` + rename swap, since Postgres has no `DROP VALUE`)
+  and repoint `graph_nodes.locality` at the fqn test. The 111 code references
+  are largely v1's writer, which stage 10 retires regardless.
 
 - **S6** (§7h.5). Check `sensei.edge_kind` before widening it. **Current 11
   values:**
