@@ -33,7 +33,7 @@ pub(crate) struct CommandsQuery {
 /// Accepts `{id}` as a project name OR UUID, matching the read-side pattern
 /// the MCP tool `get_commands` uses (repo_id from `resolve_project` is a
 /// name).
-pub(crate) async fn get_project_commands(
+pub(crate) async fn get_folder_commands(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(q): Query<CommandsQuery>,
@@ -57,7 +57,7 @@ pub(crate) async fn get_project_commands(
 
     let rows = state
         .pg
-        .get_project_commands(&uuid, q.category.as_deref())
+        .get_folder_commands(&uuid, q.category.as_deref())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({"commands": rows, "count": rows.len()})))
@@ -321,14 +321,14 @@ pub(crate) async fn get_project_patterns(
     Ok(Json(data))
 }
 
-pub(crate) async fn get_project_libraries(
+pub(crate) async fn get_library_enablement(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let libs = state
         .pg
-        .get_project_libraries(&uuid)
+        .get_library_enablement(&uuid)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "libraries": libs })))

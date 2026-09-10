@@ -4,7 +4,7 @@ set search_path to sensei, extensions;
 --   'manifest'  — declared in the library's own sensei.library.json (workstream D).
 --   'generated' — auto-generated from usage/docs (library-intelligence.md skill-gen).
 -- Associated to any project that depends on the library (via referenced_libraries /
--- project_libraries) so the recommender can surface them. Keyed unique on
+-- library_enablement) so the recommender can surface them. Keyed unique on
 -- (library_id, name); `focus` is the topic selector for get_library_skill.
 create table if not exists library_skills (
   id            uuid          primary key default gen_random_uuid()

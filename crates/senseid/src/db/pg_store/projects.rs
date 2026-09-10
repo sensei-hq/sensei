@@ -319,7 +319,7 @@ impl PgStore {
                         p.icon, p.stack, p.goal, p.dojo_id,
                         (SELECT count(*) FROM sensei.folders f
                           WHERE f.project_id = p.id AND f.kind::text IN ('git','standalone'))::bigint AS repos_count,
-                        (SELECT count(*) FROM sensei.project_libraries pl
+                        (SELECT count(*) FROM sensei.library_enablement pl
                           WHERE pl.project_id = p.id)::bigint AS libs_count,
                         (SELECT max(s.started_at) FROM activity.sessions s WHERE s.project_id = p.id) AS last_session_at,
                         (SELECT count(*) FROM activity.sessions s
