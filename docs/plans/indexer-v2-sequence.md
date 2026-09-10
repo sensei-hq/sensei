@@ -167,8 +167,13 @@ Uniform, so an implementer never has to guess where something is:
    each citing the whole-system requirement it derives from (R-something).
 4. **Failure modes** — what this stage does when its input is wrong, missing or
    malformed. Never "cannot happen".
-5. **Checkpoint output** — the JSON line it appends, and the SAMPLE it includes
-   so a reader can eyeball the shape rather than trust a count.
+5. **Stage report** — what gets PRINTED and shown when the stage is done, with
+   a rendered SAMPLE so the shape can be checked by eye rather than trusting a
+   count. **Not written to a file.** This is a development artifact: each
+   stage's result is put in front of a reader before the next stage starts, so
+   the work can be redirected while that is still cheap. Runtime progress is a
+   separate concern and already exists — `tasks/progress.rs`'s `TaskEvent` over
+   SSE, extended in stage 8.
 6. **Verification** — the tests that prove it, and for each, the one-line
    mutation that must break it.
 7. **Watch out** — the specific trap, with the measurement behind it.

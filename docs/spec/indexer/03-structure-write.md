@@ -56,7 +56,7 @@ about. That split is what makes the barrier testable without a database.
 | a file's parent folder is missing from the plan | a bug in `plan_structure`. Fail loudly; do not create the folder on the fly, which would hide the ordering defect. |
 | enqueue fails after structure is written | the structure is still correct and the files sit at `discovered`. Report the count that failed to enqueue; a re-run is safe because S1's writes are idempotent. |
 
-## 5. Checkpoint output
+## 5. Stage report — what you SHOW when the stage is done
 
     {"stage":"03-structure-write","at":"<iso8601>","repo":"…","repo_id":"…",
      "folders_created":<n>,"folders_updated":<n>,"folders_removed":<n>,

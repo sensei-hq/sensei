@@ -120,7 +120,7 @@ correction, not a cosmetic change.
 | two files claim one identity | `contested`, reported, not resolved (S11). |
 | a DAMAGED file that still parses | undetectable, and accepted. Half its declarations are removed, and the loss is RECOVERABLE: the next healthy index of the SAME FILE restores them and the unresolved edges — `target_name` intact — re-resolve. No other file must be re-indexed. |
 
-## 5. Checkpoint output
+## 5. Stage report — what you SHOW when the stage is done
 
     {"stage":"07-reconcile","at":"<iso8601>","file":"crates/…/x.rs","file_id":"…",
      "outcome":"parsed",
