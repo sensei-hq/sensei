@@ -174,8 +174,8 @@ the name changed. S3's foreign key cannot be added while they exist.
 
 **Define the set FIRST, and MATERIALISE it into a TEMP TABLE.**
 
-    CREATE TEMP TABLE orphans AS          -- NOT "ON COMMIT DROP": see below
-    SELECT n.id, n.name, n.fqn, n.file_path
+    CREATE TEMP TABLE orphans ON COMMIT DROP AS
+    SELECT n.id, n.name
       FROM sensei.nodes n
       LEFT JOIN sensei.files f
              ON f.folder_id = n.folder_id AND f.file_path = n.file_path
@@ -183,27 +183,26 @@ the name changed. S3's foreign key cannot be added while they exist.
        AND f.file_path IS NULL;
     -- expect 8,147
 
-    -- after the transaction commits AND the stage report is written:
-    DROP TABLE orphans;
+**A TEMP TABLE, not a view.** Two reasons, and neither is drift — a view would
+return the same rows on each reference, since nothing between steps 1 and 2
+modifies `nodes` or `files`:
 
-**A TEMP TABLE, not a view**, and not for the reason it first appears. A view
-would return the SAME rows on each reference — nothing between steps 1 and 2
-modifies `nodes` or `files`, so there is no drift to prevent. The actual
-reasons are all about surviving step 3:
+1. **A view is EMPTY the moment step 3 runs**, because it selects from
+   `nodes`. It cannot carry `name` past the delete, and `name` is exactly what
+   step 1 backfills from and step 3 destroys. A materialised set holds both
+   sides of that ordering.
+2. **A view is a schema object dbd would then own** — a file under `ddl/view/`
+   and a permanent artifact for a one-time sweep.
 
-1. **A view is EMPTY after the delete.** It selects from `nodes`; once the
-   orphans are gone it returns nothing, so there is no way to verify what was
-   deleted or to render the stage report's sample.
-2. **It cannot carry `name` past the delete** — and `name` is exactly what
-   step 1 backfills from and step 3 destroys. Same for `fqn` and `file_path`,
-   which the stage report sample needs.
-3. **A view is a schema object dbd would then own.** In this tree that means a
-   file under `ddl/view/` and a permanent artifact for a one-time sweep.
+`ON COMMIT DROP` is correct here: the table's whole job is to hold one
+identical set across the three statements inside the transaction.
 
-**NOT `ON COMMIT DROP`.** An earlier draft of this section used it while also
-requiring all three steps in one transaction, which drops the table at commit
-and destroys reasons 1 and 2. Let it live for the session and drop it by hand
-once the stage report is written.
+**Verification does NOT depend on it, and must not.** A temp table is invisible
+from another session, so checking the sweep afterwards happens against the
+DURABLE tables — `nodes` down by exactly 8,147, and 212 `edges` rows now
+`target_id IS NULL` with a non-null `target_name`. Both queryable from any
+psql session, which is the point. The irreversible-change record is the backup
+taken beforehand, not a leftover temp table.
 
 Then, **in ONE transaction, in this order** — R10.8's rule, executed by hand
 here for the first time:
@@ -265,33 +264,7 @@ not answer it in a DDL stage.
 | `node_kind` widening rejected | an enum value is in use somewhere the ALTER cannot see. Find it; do not work around it with a placeholder. |
 | the live DB and the DDL tree already disagree before starting | resolve that FIRST. Reconciling on top of unexplained drift attributes someone else's change to this stage. |
 
-## 5. Stage report — what you SHOW when the stage is done
-
-The stage's verification run PRINTS this. It is not written to a file:
-
-    {"stage":"00-files-entity","at":"<iso8601>",
-     "files_rows":48665,"files_indexed":48646,"files_skipped":19,
-     "nodes_before":395031,"orphans_swept":8147,"nodes_after":386884,
-     "edges_before":82913,"edges_after":82913,
-     "target_names_backfilled":212,"edges_unresolved_by_sweep":212,
-     "orphan_children_outside_set":0,"orphans_as_edge_source":0,
-     "nodes_with_file_id":346506,"nodes_file_id_null":40378,
-     "ddl":{"s1":true,"s2":true,"s3":true,"s4":true,
-            "s5":true,"s6":true,"s7":true,"s8":true},
-     "sample_orphan":{"fqn":"…","name":"agents","file_path":"…",
-                      "inbound_edges":3,"target_names_backfilled":3}}
-
-The sample is rendered FROM the `orphans` temp table after the commit — which
-is why that table must outlive the transaction, and why it selects `fqn` and
-`file_path` alongside `name`. Reading it back from `nodes` is not possible;
-the rows are gone.
-
-The sample is not decoration. A count of 8,147 swept rows tells you the DELETE
-ran; one rendered orphan with its inbound-edge names tells you it swept the
-right population. `nodes_after` must equal `nodes_before - orphans_swept`
-exactly — any other number means something cascaded.
-
-## 6. Verification
+## 5. Verification
 
 Every check names the one-line mutation that must break it.
 
@@ -318,11 +291,11 @@ The edge-count assertion is the one that matters most and is the easiest to
 omit: node counts alone cannot distinguish "the sweep worked" from "the sweep
 worked and took 3,070 edges with it".
 
-## 7. Watch out
+## 6. Watch out
 
 **The sweep is irreversible and runs against the live daemon DB.** Take a
 backup first (`database/backup/` is the existing home) and record the row counts
-in the stage report BEFORE the transaction, not after. This is the only stage in
+before the transaction, not after. This is the only stage in
 the whole plan that destroys production rows.
 
 **`dbd reconcile`, and do not invent a migrations tree to get around a
@@ -343,12 +316,12 @@ which is exactly the uncounted mass deletion R10.2's measurement warns about.
 A file's removal goes through reconcile (R10.8), one declaration at a time,
 with inbound edges unresolved. `ON DELETE RESTRICT` is the honest choice.
 
-## 8. Definition of done
+## 7. Definition of done
 
 - All eight DDL changes applied through `dbd`, tree and live DB in agreement,
   `dbd doctor` clean.
 - The ORPHANED sweep ran in one transaction; `nodes_after` and the edge count
-  both reconcile exactly; the stage report carries a rendered sample.
+  both reconcile exactly, verified by querying `nodes` and `edges` after.
 - ORPHANED is now unrepresentable — the FK rejects it — so it is dropped from
   the completeness enum, leaving FIVE values (R10.7d), and from the R11.3 gap
   queue.

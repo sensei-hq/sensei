@@ -86,21 +86,7 @@ discovery, any manifest reading, any parsing.
 | two roots normalise to one `repo_key` | expected — two clones. Two folder rows, one repository row. Not an error. |
 | a symlink loop | bounded traversal; report the loop rather than hanging. |
 
-## 5. Stage report — what you SHOW when the stage is done
-
-    {"stage":"01-scan-root","at":"<iso8601>","scanned_dir":"…",
-     "roots_found":68,"git_dir":66,"git_file":2,
-     "repos_upserted":68,"repos_new":0,"repos_with_remote":66,"repos_local_only":2,
-     "excluded_dirs_skipped":<n>,
-     "roots_missing_repository_id":0,"repos_with_no_folder":0,
-     "projects_grouping_a_repo":66,"projects_grouping_none":81,
-     "sample":[{"abs_path":"…/sensei","git_kind":"Directory",
-                "repo_key":"github.com/sensei-hq/sensei","folder_id":"…"}]}
-
-`git_file` counts submodule checkouts found at root level; if it is 0 on a tree
-you know has submodules, S1 regressed to directories-only.
-
-## 6. Verification
+## 5. Verification
 
 | test | mutation that must break it |
 |---|---|
@@ -116,13 +102,14 @@ That last one is a design test, not a nicety: if discovery cannot run without a
 database, stages 1–3 stop being cheap to test, which is the property the
 sequence was ordered around.
 
-## 7. Watch out
+## 6. Watch out
 
 **Globbing for `.git` finds far fewer roots than today's scan tracks folders.**
 That is intended and was agreed: a large number of directories currently stored
 as "non-git repos" will stop being roots. They are not lost — they are folders
 inside some root, or they are outside the scan. Count the difference and put it
-in the stage report; do not let it be discovered later as an apparent regression.
+in the run, and reconcile it against today's folder count; do not let it be
+discovered later as an apparent regression.
 
 **The difference already exists as 81 repo-less projects** (S6). That is what
 "non-git repos" turned into downstream, and it is why the project count reads
@@ -137,11 +124,12 @@ repositories again, something is minting a project per folder.
 become `host/org/repo`, scheme/creds/port/`.git` stripped, host lowercased.
 Use it. Do not write a second normaliser.
 
-## 8. Definition of done
+## 7. Definition of done
 
 - `find_git_roots` is pure of the database and unit-tested against a fixture
   tree containing a `.git` dir, a `.git` file, an excluded dir, and a nested
   repo.
 - `save_repo` upserts both tables idempotently — running it twice changes no row.
-- Stage report printed with a rendered sample.
+- `select count(*) from sensei.repositories` and the `folders.repository_id`
+  join both reconcile, per S6.
 - The root-count delta against today's folder set is measured and explained.
