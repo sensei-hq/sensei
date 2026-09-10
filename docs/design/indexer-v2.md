@@ -118,17 +118,18 @@ states neither, and the reference's `RefKind` must not be used to fill the gap �
 enum-variant break. A stub whose kind is not yet known says so; the real kind
 arrives with the declaration.
 
-**How it says so, given `sensei.node_kind` has no value for it.** The column is
-`not null` and widening the enum is a DDL change to a table the shipped indexer
-writes, so it is step 9's (§7). Until then an `item` stub carries ONE
-placeholder, chosen here rather than per use site: `parameter`. Not a plausible
-`type` or `function`, because a plausible value is one no caller can tell from a
-real reading, and that is the one thing a failure path may not produce. This one
-is distinguishable twice over — v2 never mints `parameter` for a declaration (a
-parameter is a prop, D2) and no query in the tree selects it, so nothing counts
-a stub as a classification it does not have. The row is additionally marked as a
-stub by the schema's own means (`resolved = false`, null `file_path`), and the
-kind is replaced wholesale when the declaration lands.
+**How it says so.** `sensei.node_kind` is `not null` and has no value meaning
+"not yet known", so **stage 0 widens the enum to add one** (§7h item 4), before
+any v2 code is written.
+
+WITHDRAWN: the `parameter` placeholder. An earlier draft deferred the enum
+widening to the end of the build and had `item` stubs carry `parameter` in the
+meantime, on the reasoning that v2 never mints it for a declaration and no query
+selects it. That reasoning was sound and the mechanism is still wrong — it is a
+workaround for a constraint stage 0 removes, and it is already in committed code
+(`indexer/persist.rs`) with a comment pointing at a build step that no longer
+exists. Do not carry it forward. If the widened enum is not yet applied, stage 0
+is not done, and no code depending on it should be written.
 
 `ty` and `val` collapse into `item`. That is the whole change, and it is forced:
 at a path leaf the namespace is not observable, so either it leaves the key
@@ -171,6 +172,14 @@ use site, where `B` is:
 | a trait's own associated item (`Trait::method`) | value | `item` | `item` | yes, onto the trait's member; an impl's copy is a `TraitMember` and a separate identity by design |
 | a module as a path prefix (`a::b::c`) | type | not a target — `a::b` becomes the `module` segment | `mod` | n/a, and that is the point |
 | a re-exported item (`installer::install`) | either | `item` at the path it is written with | `item` under its DEFINING module | **no** — re-exports are not followed; a recorded gap, not this rule's |
+| a POSITIONAL field (`x.0`, `Wrapper(x).0`) | n/a — not a path | `0` with reach `field` | `0` with reach `field` | yes |
+
+**A tuple-struct field's `member` segment is its DECIMAL INDEX**, reach `field`.
+Stated here rather than left to an implementer because both sides of the merge
+contract must mint the same string and the reference side only ever sees `x.0`.
+`Wrapper(String)` declares `…·Wrapper·0·field`; `w.0` mints the same. It is a
+field, not an item, because it is reachable only through a dot with no call —
+the same rule that separates `healthy·field` from `healthy·item` above.
 
 The one thing the rule still cannot read off a path is WHICH segment names the
 type — `a::b::c` may be item `c` of module `a::b` or member `c` of type `b` in
@@ -372,7 +381,7 @@ file**. `DELETE FROM sensei.nodes WHERE file_path = $F` — which is what
 `delete_nodes_by_file` does today — therefore deletes every child module node of
 a `lib.rs` or `mod.rs`, and `edges.source_id ... on delete cascade` takes all
 3,290 of those children's edges with it, in silence, from files nobody
-re-indexed. Reconcile must not use that predicate, and step 9 must not keep it.
+re-indexed. Reconcile must not use that predicate, and cutover must not keep it.
 
 Finding F's edges without a jsonb scan. Every edge F contributes to is sourced
 at a symbol F declares or at F's own module identity — with **26 exceptions out
@@ -381,53 +390,74 @@ of 119,248 edge sources** (0.02%), all of them split-impl anchors
 `rust·senseid·db::pg_store::commands·PgStore·item`, which no file declares —
 the gap §2.1 records). So the affordable predicate is
 
+    props->'occurrences' ? F
+
+**One test, and it is the definitive one.** The occurrence key is the ONLY unit
+of edge attribution — that is what the fourth row of the table above states — so
+asking which edges carry F's key IS the question, and no fqn-based approximation
+of it is needed. This requires
+`create index … using gin ((props->'occurrences'))`, which **stage 0 creates**
+(§7h item 6).
+
+WITHDRAWN: the two-disjunct interim predicate
+
     source.fqn = ANY(claims(F) ∪ {file_fqn(F)})
       OR (source.resolved = false AND props->'occurrences' ? F)
 
-The second disjunct is the correctness clause and it scans only stub-sourced
-edges. `create index … using gin ((props->'occurrences'))` would collapse both
-into one clean test; it is DDL on a table the shipped indexer writes, so it is
-step 9's (§7). The interim predicate must be proven a SUPERSET of the occurrence
-key over the corpus, never a convenient narrowing of it.
+An earlier draft used this while the gin index was deferred to the end of the
+build, with the first disjunct as a cheap fqn filter and the second as a
+correctness clause. It is a workaround for an index stage 0 now creates, and its
+first disjunct is measurably incomplete on its own — 26 of 119,248 edge sources
+(0.02%) are split-impl anchors no file declares. A narrowing of this predicate
+is exactly the defect already committed in `v2_edges_contributed_by`
+(`AND (s.fqn = ANY($current) OR s.resolved = false)`), which never revisits an
+edge whose source this file deleted but which resolves elsewhere, so its stale
+occurrence survives forever. Scoping by folder is enough: **19.7ms measured
+against the largest folder here (330,437 edges).**
 
-### R10.2 Removal is DEMOTION, never deletion
+### R10.2 Removal — SUPERSEDED by R10.7 / R10.8
 
-A definition F no longer declares does not lose its node. The node is demoted to
-a stub: `resolved = false`, `file_path = NULL`, `kind` back to the placeholder
-§2.1 names, and every definition-only column and prop CLEARED — `line_start`,
-`line_end`, `docstring`, `signature`, `is_exported`, and the props
-`symbol_kind`, `visibility`, `declared_type`, `params`, `span_columns`. Clearing
-them is not tidiness: a row that says `resolved = false` while still carrying a
-`line_start` answers "where is X defined" with a line in a file that no longer
-defines it, which is a fabricated reading (R4).
+**This section prescribed DEMOTION. Demotion was rejected. R10.7 and R10.8 in
+§7b are the rule that replaced it; read those before implementing anything
+here.** What survives in this section is the MEASUREMENT, because the corrected
+design is constrained by it more tightly than the rejected one was.
 
-**Inbound edges are left exactly as they are.** They keep pointing at the same
-node id, which now states that nothing declares it. That reading is true, and it
-is the same shape as an edge to a target that has not been indexed yet — which
-is deliberate, because R6 forbids a graph that can tell those two apart by scan
-order, and A4 already admits the shape.
+The rejected rule was: a definition F no longer declares keeps its node, with
+`resolved = false`, `file_path = NULL`, every definition column cleared, and its
+inbound edges untouched. It fails twice.
 
-Three reasons demotion and not deletion, in order of weight.
+- **It cannot fire when it is needed.** If `x.rs` is edited and `x()` deleted,
+  nothing in a parse of `x.rs` distinguishes "x() was removed" from "x() was
+  never here". Demotion needs a deletion detector it does not have — which is
+  what R10.8 supplies by diffing the previous claim set.
+- **What it leaves behind reads as resolved.** A node with `resolved = false`
+  and `file_path = NULL` is still a live row with an id, so every inbound edge
+  keeps a non-null `target_id`, and every consumer testing
+  `target_id IS NOT NULL` calls it resolved. Measured: **67,839 such edges in
+  `sensei_test`.** Demotion does not defer the loss, it disguises it.
 
-1. **Deleting is not reversible and the input is not trustworthy.** R10.3 shows
-   that a damaged parse cannot be detected. A demotion taken on a bad parse
-   costs a few minutes of `resolved = false` and is undone by the next healthy
-   index of the same file, which re-promotes the same node by fqn. A deletion
-   taken on a bad parse destroys every inbound edge from every file that is not
-   being re-indexed, and nothing re-creates them until each of those files is
-   itself re-indexed.
+What replaces it, one line each:
+
+- an UNPARSEABLE file removes nothing and marks its contents DIRTY (R10.7);
+- a DELETED declaration is found by diffing claims, and its node is deleted
+  AFTER its inbound edges are unresolved (R10.8).
+
+**The three measurements stand, and R10.8 is what they now constrain.**
+
+1. **The input is not trustworthy.** R10.3 shows a damaged parse cannot be
+   detected. This was the argument for demotion; under R10.8 it is the argument
+   for R10.7 — an unparseable file must never be processed as an empty one,
+   because emptiness is what triggers removal.
 2. **The blast radius is measured and large.** 1,485 of 12,519 declarations have
    inbound edges from a file other than their own — 3,070 (declaration,
    referring file) pairs — and the worst is
-   `rust·senseid·db::pg_store·PgStore·item`, referenced from **67 files**. A bad
-   parse of one `mod.rs` would take all 67 files' inbound edges with it.
+   `rust·senseid·db::pg_store·PgStore·item`, referenced from **67 files**. That
+   is the size of the set R10.8 must UNRESOLVE rather than allow to cascade.
 3. **A node deletion cascades in BOTH directions and counts nothing.** The DDL
    is explicit: `source_id … on delete cascade`, `target_id … on delete
    cascade`, and `nodes.parent_id … on delete cascade`. There is no version of
-   "remove the node, keep the edges".
-
-Reconcile therefore performs exactly one kind of deletion: an EDGE ROW whose
-occurrence object became empty. It never deletes a node, so it never cascades.
+   "remove the node, keep the edges" — so R10.8's unresolve-first step is not
+   bookkeeping, it is the only way its own table can be made to satisfy it.
 
 **Reconcile does not garbage-collect.** A stub with no edges and no children is
 collected by the pass that already owns that predicate
@@ -454,22 +484,33 @@ an empty fact set; `.unwrap_or_default()` here is the exact shape R4 forbids.
 **A DAMAGED parse is not detectable, and this was measured rather than
 assumed.** tree-sitter returns a tree for anything.
 
-- Truncating each of the 294 corpus files that declare ≥10 symbols to half its
-  bytes produced **0 `ReadError`s**. Symbols fell 12,167 → 6,973 (57% kept),
-  references 109,328 → 53,524. Per-file retention: min 0%, **median 52%**, max
-  100%. Worst single file: 354 symbols → 187.
+These were TWO experiments over two populations, and an earlier draft reported
+them as one, which made the numbers look inconsistent. Stated separately:
+
+- **Experiment 1, the 294 files declaring ≥10 symbols.** Truncating each to half
+  its bytes produced **0 `ReadError`s**. Symbols fell 12,167 → 6,973 (57%
+  kept), references 109,328 → 53,524. Per-file retention: min 0%, **median
+  52%**, max 100%. Worst single file: 354 symbols → 187.
+- **Experiment 2, the whole corpus.** `tree.root_node().has_error()` is true for
+  **6 of 372 intact, valid** files, and false for **53 of 366 truncated** ones.
+  The two populations differ by exactly the 6, but the run's notes do not record
+  whether that is why, so do not cite a reason for it. The conclusion does not
+  rest on the difference: the gate fails in BOTH directions, refusing to ever
+  reconcile six healthy files and waving through fifty-three damaged ones.
 - `""`, `"fn main() {"` and `"}}} not rust @@@"` all return `Ok` with 0 symbols,
   0 references, 0 relations and 0 imports — identical to a genuinely empty file.
-- The obvious gate does not work in EITHER direction. `tree.root_node()
-  .has_error()` is true for **6 of 372 intact, valid corpus files** and false for
-  **53 of 366 truncated ones**. Gating on it would refuse to ever reconcile six
-  healthy files and would wave through fifty-three damaged ones.
 
 So reconcile does not try to decide whether a parse was good. Two rules replace
 the detector it cannot have.
 
-1. **Removal is demotion (R10.2).** Being wrong is survivable, which is the
-   property that makes an undetectable input acceptable at all.
+1. **Damage is contained by R10.7, and what escapes it is RECOVERABLE.** An
+   unparseable file removes nothing at all, so the whole-file case never reaches
+   a removal decision. What remains is partial damage on a file that still
+   parses, and there the loss is recoverable rather than fatal: the next healthy
+   index of the same file re-declares the symbol under the same fqn and every
+   inbound edge, unresolved by R10.8 with its `target_name` intact, re-resolves
+   to it. Recoverability — not survivability-in-place — is the property that
+   makes an undetectable input acceptable.
 2. **A brake on the one diff shape that is almost always damage.** If F
    previously claimed ≥1 declaration and now claims zero, reconcile does not
    apply the diff on the first read. It re-reads F from disk once and applies
@@ -482,9 +523,11 @@ the detector it cannot have.
 
 What the brake deliberately does NOT cover: partial damage. A file truncated to
 half still claims half its declarations, the brake does not fire, and the other
-half demote to stubs. That is the residual, it is named rather than papered
-over, and it is bounded by R10.2 — the graph says "no definition known", which
-is true of what it can see, and the next healthy index restores it. A threshold
+half are removed by R10.8. That is the residual, it is named rather than papered
+over, and it is bounded by RECOVERABILITY: the deleted nodes' inbound edges are
+unresolved with `target_name` retained, so the next healthy index of the same
+file restores both the declarations and the edges that pointed at them. Nothing
+in another file has to be re-indexed for that to happen. A threshold
 on the retained fraction was rejected: the measured distribution runs from 0% to
 100% with a median of 52%, so any cut-off refuses real edits at the same rate it
 catches damage, and it would silently pin a file's graph to a stale state with
@@ -515,24 +558,38 @@ identity, and the corpus count is the ratchet that says whether the case grew.
 
 **Nodes need the same treatment, and this is the new structure R10 introduces.**
 Measured: **2 identities are claimed by two different files** —
-`rust·senseid·base_url·item` and `rust·senseid·main·item`, both already on A7's
-known list of 15. Without a claim set, reconcile cannot tell "F was the only
-declarer" from "F was one of two", so releasing F's claim would demote a node
-another file still defines. A node therefore carries
+`rust·senseid·base_url·item` and `rust·senseid·main·item`. Both are A7
+violations, and A7 admits no exceptions and keeps no allowlist (an earlier draft
+of this paragraph cited "A7's known list of 15"; no such list exists in A7 or
+anywhere else, and the reference is withdrawn). Without a claim set, reconcile
+cannot tell "F was the only declarer" from "F was one of two", so releasing F's
+claim would remove a node another file still defines. A node therefore carries
 
     props.claims = { "<file path>": true, … }
 
 merged with the same `jsonb_set` idiom the occurrences use, for the same reason
-(plain `||` on `props` would replace the whole object). No DDL: `props` is the
-column the schema documents as extensible and where every other v2 fact that has
-no column already lives.
+(plain `||` on `props` would replace the whole object). This lives in `props`
+DELIBERATELY, not as a deferral: a claim set is a variable-length set keyed by
+path, `props` is the column the schema documents as extensible, and stage 0
+opening the schema (R13) does not change the choice.
 
-The rule: reconcile removes F's key from `props.claims`, and the node demotes
-only when `props.claims` is empty. When a claim remains but the released one was
-the one in the `file_path` column, the node's definition columns are now stale
-and are cleared anyway — the row honestly states "no definition known" until the
-surviving claimant is next indexed and re-promotes it. Reconcile does not pick a
-winner and does not invent the survivor's columns, which it does not have.
+The rule: reconcile removes F's key from `props.claims`, and then the two cases
+diverge completely — which is why they are stated separately rather than as one
+rule with a condition.
+
+- **`props.claims` is now EMPTY.** No file declares this identity any more. The
+  node is DELETED, after its inbound edges are unresolved, per R10.8.
+- **A claim REMAINS, and the released one was the one in the `file_path`
+  column.** The node survives — another file still defines it. Its definition
+  columns now describe a file that no longer declares it, so they are cleared,
+  and the row states "no definition known" until the surviving claimant is next
+  indexed and re-fills them. Reconcile does not pick a winner and does not
+  invent the survivor's columns, which it does not have.
+
+The second case is the ONLY circumstance in which a node is left with cleared
+definition columns. It is not demotion returning under another name: the node
+still has a claimant, so it is a row awaiting refresh, not a row nobody
+declares.
 
 Two files claiming one identity is an A7 violation, not a state to support
 gracefully. So reconcile REPORTS it — the same way `persist::write` returns
@@ -591,10 +648,10 @@ it does not.
 
 > **After `reconcile(F, facts)`, the graph records F as stating exactly what
 > `facts` states and nothing more; every other file's statements are unchanged;
-> and every identity that only F previously stated survives as a stub that
-> states nothing.**
+> and every identity that only F previously stated is REMOVED, with every edge
+> that pointed at it UNRESOLVED rather than deleted.**
 
-Three clauses, each independently testable, and in this order:
+Four clauses, each independently testable, and in this order:
 
 - **(a) F's contribution is exactly the new facts.** The set of nodes whose
   `props.claims` contains F equals `facts.symbols`' fqns, and the set of
@@ -603,9 +660,17 @@ Three clauses, each independently testable, and in this order:
   after with F's contribution projected out; the two must be equal. This is the
   clause that catches a cascade, a source-scoped edge delete, and a
   `file_path`-keyed node delete — all three of which pass (a).
-- **(c) What F alone dropped is a stub, not a hole.** Every fqn in
-  `previous_claims(F) \ facts.symbols` still has a node, with `resolved = false`,
-  `file_path = NULL`, no definition column and no definition prop set.
+- **(c) What F alone dropped is GONE, and its references survive it.** For every
+  fqn in `previous_claims(F) \ facts.symbols`: no node exists with that fqn, and
+  every edge that targeted it has `target_id IS NULL` with a non-null
+  `target_name`. Neither half is sufficient alone — the node still existing is
+  the demotion defect, and the edge being gone is the cascade defect.
+- **(d) An unparseable F changes nothing.** `reconcile` is not reached at all
+  (R10.3: a failed read is `Err` by type). The file is marked unparseable with
+  its reason, F's existing nodes and edges are marked DIRTY, and the row counts
+  for nodes, edges and claims are IDENTICAL before and after. This is the clause
+  that separates "cannot read it" from "it declares nothing", which demotion
+  conflated and R10.7 exists to keep apart.
 
 Reconciling F twice with the same facts must leave all three clauses holding and
 change no row the first pass did not already change. Idempotence is what lets
@@ -672,7 +737,7 @@ is CLOSEABLE from one that is not, or nobody can tell which is worth work.
 
 The rule behind all of these: it is legitimate to defer WORK; it is not
 legitimate to discard EVIDENCE. Anything the AST states and a future pass could
-need is captured now, because re-parsing 48,654 files to recover a field we
+need is captured now, because re-parsing 48,646 files to recover a field we
 already had is the expensive version.
 
 ## 6. Acceptance
@@ -685,8 +750,18 @@ Thresholds, not comparisons.
   use sites in the AST, verified by a walk that counts independently.
 - **A3.** Every `Unresolved` carries a reason, and the reason histogram accounts
   for 100% of them.
-- **A4.** Zero edges point at a symbol that does not exist as a definition
-  somewhere, unless the target is `lib·`.
+- **A4.** After a COMPLETED scan, every edge whose target is not a definition
+  somewhere falls into one of three NAMED populations, and the count of each is
+  reported and ratcheted:
+  - the target is `lib·` — external, complete by R5, will never have a file;
+  - the target is PARTIAL — referenced but not yet declared. **18,450 live**, and
+    R10.7d makes this the ordinary case, not an error;
+  - the target was DELETED by R10.8 — `target_id IS NULL`, `target_name` kept.
+
+  Anything OUTSIDE those three fails. Measured today: **32 references name
+  nothing the package declares anywhere** (§2.1), and that 32 is the ratchet —
+  it may fall, it may not rise. Stated as "zero" this gate fails 18,450 times on
+  the first run and gets waived, which is how an acceptance gate dies.
 - **A5.** Fields, properties and enum variants exist for every type that declares
   them, and "what shape is this data" is answerable.
 - **A6.** Re-indexing in a different file order produces an identical graph.
@@ -697,12 +772,29 @@ Thresholds, not comparisons.
   discriminator existed to prevent becomes a checked property instead of an
   assumed one, and which of two colliding declarations wins is otherwise
   scan-order dependent, so this is also an A6 obligation.
+
+  **There is no allowlist and there are no known exceptions.** The gate is a
+  CORPUS-WIDE run of the walk that groups every minted fqn and fails on any
+  group of size >1, printing both declaration sites. A fixture asserting that a
+  field and a method mint different strings is necessary and not sufficient —
+  it cannot see a collision between two files. The two multi-claimed identities
+  R10.4 measures (`rust·senseid·base_url·item`, `rust·senseid·main·item`) are
+  A7 FAILURES to be repaired by the identity rule, not entries in a tolerated
+  set.
 - **A8.** Re-indexing a file removes what it stopped claiming and nothing else.
-  R10.6's three clauses hold over the corpus for: a file that lost a
-  declaration, a file that lost a use site, a file emptied, a file deleted, and
-  a symbol moved between two files sharing a module path. Zero rows belonging to
-  a file that was not re-indexed change in any of them. This is what makes a
-  stale edge a caught failure rather than a fact the graph reports.
+  R10.6's four clauses hold over the corpus for: a file that lost a declaration,
+  a file that lost a use site, a file emptied, a file deleted, a symbol moved
+  between two files sharing a module path, and **a file that became
+  unparseable**. Zero rows belonging to a file that was not re-indexed change in
+  any of them, and in the unparseable case zero rows change AT ALL. This is what
+  makes a stale edge a caught failure rather than a fact the graph reports.
+- **A9.** An unparseable file is ACTIONABLE and REACHABLE (R10.9). For a file
+  the grammar rejects: `files.skip_reason = 'parse_error'`, the detail column
+  holds the parser's verbatim message with line and column, MCP can answer
+  "which files in this project are unparseable, and why", and every query
+  returning one of that file's nodes labels it DIRTY with the reason. A dirty
+  flag nothing can query is invisible, so an implementation that sets the state
+  and stops does not pass.
 
 ## 7. Build order
 
@@ -777,16 +869,20 @@ wants, from one containment relation rather than a bespoke query per level:
     library -> package -> symbol
 
 These are different SLICES of the same parent/child structure, not different
-structures. `Owns` (R10, D5) is that relation for symbols; folders have
-`parent_id`; files sit between the two. A node knowing its file makes the whole
-chain walkable in one direction and sliceable at any level — which is what makes
-"show me this repo by folder" and "show me this package's types" the same query
-with a different cut.
+structures. Member ownership (§3.3, D5) is that relation for symbols; folders
+have `parent_id`; files sit between the two. A node knowing its file makes the
+whole chain walkable in one direction and sliceable at any level — which is what
+makes "show me this repo by folder" and "show me this package's types" the same
+query with a different cut.
 
 The one thing currently in the way: a symbol references its file by `file_path`
-TEXT, and every `kind = 'file'` node has an EMPTY fqn, so a file is not
-addressable as a merge target the way every other node is. Give the file node an
-fqn and claim it like any other declaration, and the chain closes.
+TEXT, so a file is not addressable the way every other level of the chain is.
+**R13 closes it** — files become `sensei.files` rows with an `id`, and
+`nodes.file_id` is the foreign key. There is NO `kind = 'file'` node with an
+fqn, and an earlier draft of this paragraph proposing one is withdrawn: §2 already
+gives a file its identity as the MODULE it declares, so minting a second fqn for
+the same file would either duplicate that identity — an A7 collision, which is
+the exact thing A7 exists to fail on — or create the second node §2 forbids.
 
 ### R10.9 — the failure must be ACTIONABLE and REACHABLE
 
@@ -820,19 +916,27 @@ Contrast with what this replaces: demotion silently served WRONG data and gave
 nobody anything to act on. Dirty serves the last known-true data, says so, and
 names the fix.
 
-### R10.7d — COMPLETENESS is a derived state with three values
+### R10.7d — COMPLETENESS is a derived state with six values
 
-A node is in exactly one of three states, and the node+file join gives all three
+A node is in exactly one of six states, and the node+file join gives all six
 from columns that already exist. Verified on the live graph:
 
 | state | condition | meaning | live count |
 |---|---|---|---:|
-| COMPLETE | `file_path` set, file has no `skip_reason` | the declaration was parsed | 354,653 |
+| COMPLETE | `file_path` set, file has no `skip_reason` | the declaration was parsed | 346,506 |
 | PARTIAL | first-party, `file_path` IS NULL | referenced, not yet declared | 18,450 |
 | DIRTY | `file_path` set, file HAS a `skip_reason` | was complete, its file now fails | 0 |
 | EXTERNAL | origin is `lib·` | a library symbol — NO file will ever exist | 21,928 |
 | ORPHANED | `file_path` set, NO `scan_state` row for it | claims a file the scanner does not track | 8,147 |
 | EXCLUDED | file's `skip_reason` is not a parse failure | the file is deliberately not indexed | 0 |
+
+**ORPHANED is a PRE-R13 state.** It is enumerated because it exists today, in
+the shipped graph, and must be swept as part of the R13 migration. After R13 it
+is not merely undetected-but-possible, it is UNREPRESENTABLE: `nodes.file_id` is
+a foreign key, so a node cannot name a file that has no row. **After R13 the
+enum has five values and this row is dropped** — from the completeness type, from
+the gap queue, and from R11.3. Do not write a persistent ORPHANED bucket; write
+a one-time migration sweep.
 
 ORPHANED IS THE DANGEROUS ONE AND IT EXISTS TODAY. 8,147 nodes name a
 `file_path` for which there is no `scan_state` row at all, and they read as
@@ -879,18 +983,14 @@ declaration fills it in later by upserting on the same key. That is the
 stub-and-merge model this design already rests on, and it is what makes indexing
 order-independent (R6).
 
-The three states differ in TRAJECTORY, which is why they must not be conflated:
-
-- PARTIAL becomes complete when its file is parsed. Nothing is wrong.
-- DIRTY was complete and will be again. What we hold is the last known-true
-  answer, and we say so.
-- DELETED is neither. It is gone, and no future parse restores it.
-
 THIS IS EXACTLY WHAT DEMOTION GOT WRONG. It set `file_path = NULL` on a deleted
 declaration, making it indistinguishable from PARTIAL — so the graph claimed
 "we have not found this yet" about something that definitively no longer exists,
-and every consumer treated a dead symbol as a pending one. Under R10.8 a deleted
-node is deleted, so the three states stay distinct by construction.
+and every consumer treated a dead symbol as a pending one. The distinction it
+destroyed is a trajectory one: PARTIAL is waiting for a parse that will arrive,
+DIRTY is waiting for a fix, and a DELETED declaration is waiting for nothing.
+**DELETED is not a seventh state** — under R10.8 it is the ABSENCE of a row, so
+the six stay distinct by construction rather than by a flag someone has to set.
 
 Every query that returns a node should return its completeness with it. A caller
 that receives a symbol has to be able to tell "this is current", "this is not
@@ -1033,17 +1133,46 @@ So:
 "x calls something named z that we cannot place" is true and is kept. "x calls z"
 when neither exists is not, and goes.
 
+**ORDERING IS LOAD-BEARING. A plain `DELETE FROM nodes` violates the table
+above.** R10.2 records the DDL: `edges.source_id`, `edges.target_id` and
+`nodes.parent_id` are all `on delete cascade`. So deleting node `z` DELETES
+every inbound edge — the exact opposite of row 2 — and takes `z`'s child nodes
+with it. Two clauses close it, and neither is optional:
+
+- **(i) Unresolve before delete, same transaction.** `UPDATE sensei.edges SET
+  target_id = NULL WHERE target_id = $z` — with `target_name` already
+  populated — runs BEFORE `DELETE FROM sensei.nodes WHERE id = $z`. After the
+  update no edge references `z`, so the `target_id` cascade has nothing to take.
+  `target_name` must be verified non-null before the update, not after: once the
+  node is gone there is nothing left to recover the name from.
+- **(ii) Children are released by their own claims, never by the cascade.** A
+  member of a deleted type is declared by the same file, so the same reconcile
+  pass releases its claim and it is deleted on its own terms — with its own
+  inbound edges unresolved first. The `parent_id` cascade must therefore find
+  NOTHING left to delete. Assert that: count children of `z` immediately before
+  the delete and require zero. If the cascade ever fires, it has silently taken
+  a member's inbound edges with it, which is (i)'s failure one level down.
+
+Deleting a node whose inbound edges were not unresolved first is the single most
+likely way this corrected design still destroys data, and it is the same class
+R10.2's blast-radius measurement sized: 1,485 declarations, 3,070 pairs, worst
+case 67 files behind one identity.
+
 ### What remains genuinely undetectable, and why that is now acceptable
 
-A file that is DAMAGED but still parses is indistinguishable from one that was
-legitimately edited: truncating 294 corpus files to half produced 0 `ReadError`s
-and retained 57% of symbols, and `has_error()` is wrong in both directions (true
-for 6 of 372 intact files, false for 53 of 366 truncated). No gate separates them.
+One residual, stated once here; the measurements behind it are in R10.3 and are
+not repeated. A file that is DAMAGED but still PARSES is indistinguishable from
+one that was legitimately edited — no gate separates them in either direction.
 
-Under R10.8 that is survivable rather than fatal: the loss is RECOVERABLE — the
-next good index restores the declaration and inbound edges re-resolve. Demotion's
-failure was not. The brake still applies: a file going from >=1 claims to zero
-triggers one confirming re-read before any removal.
+Under R10.8 that is RECOVERABLE rather than fatal, and recoverability is the
+whole argument: the next good index of the SAME FILE re-declares the symbol
+under the same fqn, and the inbound edges — unresolved by clause (i) with their
+`target_name` intact — re-resolve to it. No other file has to be re-indexed.
+Demotion had no equivalent property, because the node it left behind still
+satisfied `target_id IS NOT NULL` and so was never revisited by anything.
+
+The brake still applies on top: a file going from ≥1 claims to zero triggers one
+confirming re-read before any removal.
 
 ## 7c. R11 — a gap is DATA, and every gap has a fill path
 
@@ -1080,21 +1209,32 @@ This does NOT weaken the no-inference rule (R10.7f). A user stating a grouping i
 a declaration. The system inferring one from `@rokkit/*` is a guess. The
 difference is not confidence, it is who is answerable for it.
 
-### R11.2 — closing the loop: generate the manifest, offer it upstream
+### R11.2 — closing the loop upstream: DEFERRED, and the measurement says why
 
-When a user fills a grouping, sensei knows something that is true, useful, and
-that every other consumer of that dependency is missing. So:
+The idea: when a user fills a grouping, emit the `sensei.library.json` the
+dependency would have shipped, and offer to open an issue or PR on its
+repository. The gap stops being a local workaround and becomes a contribution.
 
-- emit the `sensei.library.json` the dependency would have shipped
-- offer to open an issue or PR on its repository with that file
+**MEASURED, and it does not hold up yet.** All 1,121 rows in `sensei.libraries`
+are `kind = 'detected'`, and **exactly 2 of them carry any URL at all** —
+`homepage_url`, `docs_url` and `base_url` are populated on 2 rows each. There is
+no repository to file against for 1,119 of the 1,121. The upstream half of this
+loop has no input.
 
-The gap stops being a local workaround and becomes a contribution. Next indexer
-to meet that dependency gets it declared, at provenance level 1, and never has to
-ask a user at all.
+So it splits, and only the first half is in scope:
 
-This is the difference between a tool that tolerates missing metadata and one
-that reduces it. It also gives the user something better than a form to fill in:
-a reason to fill it in once.
+- **IN — emit the manifest locally.** A user-filled grouping is written as a
+  `sensei.library.json` the user owns. Costs nothing beyond serialising what
+  R11.1 already records, and it is what makes the grouping portable.
+- **DEFERRED — contact the dependency's repository.** Needs a repo URL we do
+  not have for 99.8% of packages, and it is the only action in this spec that
+  reaches a THIRD PARTY. That is a materially different class from everything
+  else here and does not get carried in on the back of a metadata feature.
+  CAPTURED NOW: provenance on every grouping (R11.1), which is the input a
+  later upstreaming pass would need.
+
+Populating `homepage_url` from the manifests stage 2 already reads is the
+prerequisite, and it is a `parse_dependencies` field, not a new subsystem.
 
 ### R11.3 — the gap queue is a first-class view
 
@@ -1102,9 +1242,12 @@ a reason to fill it in once.
 query, per gap kind, with counts. Measured examples that exist right now:
 
 - 18,450 PARTIAL nodes — closed by parsing their files
-- 8,147 ORPHANED nodes — closed by re-scan or pruning
+- 8,147 ORPHANED nodes — a PRE-R13 population, closed once by the migration
+  sweep, after which the state is unrepresentable and this row is dropped
+  (R10.7d)
 - 1,121 packages with no library — closed by R11.1
-- 331 references naming an fqn no declaration mints
+- 431 references naming an fqn no declaration mints, of which 100 are closed by
+  the reach rule (§2.1), leaving **331** as the separate defect
 - unresolved references by reason code
 
 That view is the work queue, for a person and for an agent. It is the same data
@@ -1189,7 +1332,20 @@ would have made the entity obvious, and would have made the missing surrogate ke
 obvious with it.
 
 It is the file entity: `(folder_id, file_path, mtime, content_hash, indexed_at,
-modified_at, skip_reason)`, one row per file, 48,665 of them.
+modified_at, skip_reason)`, one row per file.
+
+**The three file populations, each measured and labelled** — this document
+previously used 48,665, 48,654 and 47,904 interchangeably, which is one
+experiment reported at three sizes:
+
+| population | count | what it is |
+|---|---:|---|
+| file rows | **48,665** | every `scan_state` row — the walk's output |
+| indexed | **48,646** | `skip_reason IS NULL` — the set that gets parsed |
+| skipped | **19** | 17 `binary_content`, 2 `invalid_utf8` |
+
+Cite the one that matches the claim. Parse cost is over the 48,646; the
+per-file id lookup is over all 48,665, because the walk creates every row.
 
 ### Do the rename and the key in ONE migration
 
@@ -1208,15 +1364,21 @@ They are the same change and splitting them means migrating the same table twice
   | storage | 47 bytes x 354,653 = 16 MB of duplicated text | 16 bytes, ~5.7 MB |
   | `nodes_unique_identity` | carries a 47-byte column | 16 bytes |
 
-  The rename figure decides it. Today renaming a file rewrites the path on every
-  node it contains, and R10 has no rename handling at all — case 6 says "deletion
-  plus addition". With `file_id` a rename is ONE update to the file row and every
-  node follows, because none of them stored the path.
+  **354,653 is every node carrying a path** — COMPLETE (346,506) plus ORPHANED
+  (8,147). Both store the text, so both count toward the duplication, which is
+  why this figure is larger than R10.7d's COMPLETE row.
 
-  The write-side cost is one path->id lookup per FILE (47,904), not per node
-  (354,653), and the file row is being upserted at that moment anyway so the id is
-  already in hand. Readability is not an objection: the view (R12) exposes the
-  path.
+  The rename figure decides it. Today renaming a file rewrites the path on every
+  node it contains. R10.5 rules that a rename is a deletion plus an addition and
+  needs no case of its own, which is correct for Rust — the module path IS the
+  file path — but it means every node in the file is destroyed and recreated.
+  With `file_id` a rename is ONE update to the file row and every node follows,
+  because none of them stored the path.
+
+  The write-side cost is one path->id lookup per FILE (48,665 — one per file
+  row, since the walk creates them all), not per node (354,653), and the file
+  row is being upserted at that moment anyway so the id is already in hand.
+  Readability is not an objection: the view (R12) exposes the path.
 
   It also makes the 8,147 ORPHANED nodes UNREPRESENTABLE — a node cannot name a
   file that does not exist when the reference is a foreign key. The state stops
@@ -1248,8 +1410,9 @@ things follow, and three of them are problems that simply do not arise:
    tasks touching one file would race to insert it. Creating the rows upfront,
    single-threaded, removes the race rather than locking around it.
 2. **The denominator is free.** At that barrier the walk knows the complete
-   post-filter file set — which is exactly `expected_files` (R10), obtained
-   without a second count.
+   post-filter file set — which is exactly `folders.props.expected_files`, the
+   denominator `sensei.folder_completeness` already divides by (R10.7b) —
+   obtained without a second count.
 3. **A stalled parse is visible.** A file row with no parse outcome is a task
    that never ran. Today that is indistinguishable from a file that does not
    exist.
@@ -1288,7 +1451,7 @@ keys serving two different callers, and neither is redundant:
 The path lookup is already an index scan today — verified, `EXPLAIN` on
 `WHERE folder_id = $1 AND file_path = $2` gives
 `Index Scan using scan_state_pkey`. Preserving that constraint through the rename
-keeps the walk's once-per-file lookup (47,904 per full scan) at O(log n) with no
+keeps the walk's once-per-file lookup (48,665 per full scan) at O(log n) with no
 additional index.
 
 ### Cost, measured
@@ -1298,8 +1461,15 @@ additional index.
 
 It is DDL on a table the SHIPPED indexer writes on every file of every scan, so it
 goes through the dbd workflow, not by hand, and it is the largest schema change
-this design asks for. Sequence it with the `scan_state` detail column R10.7
-already needs (the parser error message and location) so the table is opened once.
+this design asks for. Sequence it with everything else the schema needs so the
+tables are opened ONCE — see §7h.
+
+**EVERY `file_path` PREDICATE STATED EARLIER IN THIS DOCUMENT BECOMES
+`file_id` AT THIS MIGRATION.** §2.1, R10.1, R10.2, R10.6(c), R10.7d's table and
+R10.7e all name `nodes.file_path`, and the column does not survive R13.
+`file_path IS NULL` as the PARTIAL/stub predicate becomes `file_id IS NULL`.
+The path itself is still readable — through the view (R12), from the `files`
+row — but never off a node.
 
 ### Why bother, when the join works today
 
@@ -1319,8 +1489,8 @@ beats one that a reviewer has to notice.
 
 Structure first, work second. The barrier is what gives R14 its properties: no
 parse task creates shared state, so none can race another, and the complete file
-set is known at that instant, which IS `expected_files` (R10) with no second
-count.
+set is known at that instant, which IS `folders.props.expected_files` (R10.7b)
+with no second count.
 
 ### Incremental — a change arrives
 
@@ -1345,8 +1515,8 @@ already gates this today (`plan_reindex`).
 stored the path, so renaming a file rewrites ONE row instead of every node in it
 — 7.4 on average here, 1,150 in the worst case.
 
-But it does NOT always make a rename free of reparsing, and the earlier draft of
-R10 case 6 was closer to right than it looked. In Rust and in TS/JS the MODULE
+But it does NOT always make a rename free of reparsing, and R10.5's ruling —
+that a rename is a deletion plus an addition — is why. In Rust and in TS/JS the MODULE
 PATH is derived from the file path, and the module is a segment of every fqn the
 file declares. So:
 
@@ -1363,24 +1533,41 @@ independently compute (R2).
 
 ## 7g. R15 — the two-stage scan, and what git can and cannot tell us
 
-    SCAN ROOT   glob for .git directories            -> repo roots
-                read .gitmodules                     -> submodules (declared)
+    SCAN ROOT   glob for .git entries, apply root exclusions  -> repo roots
                   |
                   +-> per root:
-    SCAN REPO   glob files and folders, apply filters
+    SCAN REPO   read .gitmodules       -> submodules (declared)
+                  |                       each enqueues its OWN scan_repo
+                read manifests        -> commands, deps, workspace members
+                glob files and folders, apply filters + .gitignore
                 create the folder rows and the file rows    <-- structure barrier
                   |
                   +-> enqueue one parse task per file
 
-Two stages, each doing one thing: find the repos, then find the files. Structure
-is complete before any parse task exists (R14).
+Two stages, each doing one thing: find the repos, then — per repo — find
+everything inside it. Structure is complete before any parse task exists (R14).
 
-### Submodule: yes, from git
+### Submodule: yes, from git — and it is SCAN REPO's job
 
 Declared in `.gitmodules` at the repo root, and the submodule's directory holds a
 `.git` FILE (not a directory) pointing into the parent's `.git/modules/`. Both
-are working-tree facts, cheap to read at SCAN ROOT, and DECLARED rather than
-inferred.
+are working-tree facts and DECLARED rather than inferred.
+
+**It belongs to `scan_repo`, not `scan_root`**, and an earlier draft of this
+section placing it at scan root is withdrawn. `.gitmodules` is a file INSIDE a
+repo; reading it at scan root would mean scan root opening repo contents, which
+is the one thing the two-stage split exists to avoid. A submodule IS a repo
+root, so `scan_repo` enqueues a child `scan_repo` for each one it declares —
+the root set grows during the scan-repo wave rather than being fixed by scan
+root.
+
+That has one consequence worth stating, because the incremental path depends on
+it: **the complete root set is known only after the scan_repo wave drains, and
+`match_repos` (R14, incremental) reads it from the DATABASE, never from scan
+root's output.** Longest-prefix matching a changed path against known roots is
+therefore correct for submodules — `repo/submodule/x.rs` belongs to the
+submodule — because the submodule has its own persisted root row by then. A path
+matching no known root is what escalates back to `scan_root`.
 
 ### Subtree: NO, and a folder-level scan would not help
 
@@ -1429,6 +1616,49 @@ reliable, and they are what actually define package boundaries inside one repo
 — which is the `package -> module -> item` slice of R10.7c and the input to
 `library_packages` (R10.7h).
 
+## 7h. ALL DDL happens ONCE, in stage 0, before any v2 code
+
+Two plans disagreed about this and the disagreement was not cosmetic.
+`docs/plans/indexer-v2-rust.md` deferred every schema change to its step 9, at
+the END. `docs/plans/indexer-v2-sequence.md` — the master plan — puts the files
+migration at stage 0, at the START. **Stage 0 wins, and it takes ALL the DDL
+with it.**
+
+The deferral was not free. Three mechanisms in this document exist ONLY because
+the schema was going to change later, and each is a workaround for a column that
+stage 0 now creates before a line of v2 code is written:
+
+| mechanism | exists because | under stage 0 |
+|---|---|---|
+| the `parameter` kind placeholder (§2.1) | `node_kind` has no `field` / `variant` | **DELETED** — write the real kind |
+| R10.1's two-disjunct edge predicate | no gin index on `props->'occurrences'` | **DELETED** — one clean occurrence test |
+| `nodes.props.claims` in jsonb (R10.4) | — | **KEPT, deliberately.** A claim set is a variable-length set keyed by path; `props` is the right home whether or not the schema is open. This one was never a deferral. |
+
+Writing a workaround for a constraint you are about to remove is pure waste, and
+worse, the workaround outlives the constraint — the `parameter` placeholder is
+already in committed code at `indexer/persist.rs`, and twelve comments across
+the v2 sources cite "step 9" as the moment it goes away. A step that no longer
+exists.
+
+**What stage 0 owns, in one dbd pass:**
+
+1. `scan_state` -> `files`; add `id uuid`; keep `(folder_id, file_path)` UNIQUE
+   (R13).
+2. `nodes.file_path` -> `nodes.file_id`, FK to `files.id` (R13). Sweep the 8,147
+   ORPHANED rows as part of the migration — after the FK they are
+   unrepresentable (R10.7d).
+3. Add the parse-failure DETAIL column to `files` — the parser's verbatim
+   message with line and column (R10.7, R10.9, A9).
+4. Widen `sensei.node_kind` for the kinds the walk actually produces (field,
+   variant, …), retiring the `parameter` placeholder.
+5. Widen `sensei.edge_kind` for the relation kinds R8 needs.
+6. `create index … using gin ((props->'occurrences'))` on `edges` (R10.1).
+7. Rename `project_commands` -> `folder_commands` (D11).
+
+All seven touch tables the SHIPPED indexer writes, so all seven go through the
+dbd workflow rather than by hand, and doing them together means those tables are
+opened once instead of seven times.
+
 ## 8. Decisions
 
 **D1.** Scope is the walk AND the persistence path (see R3).
@@ -1443,11 +1673,27 @@ considered complete (see R8).
 `item`, `field`, `macro`, `mod` (see §2.1). Rust's type and value namespaces
 collapse into `item` because a path leaf does not state which it is, and a
 declaration may occupy both. A7 is what makes that safe.
-**D8.** Reconcile DEMOTES a node it no longer has a claim for; it never deletes
-one (R10.2). Deletion cascades both ways with no count, and the input it would
-act on — a parse that succeeded but read half a file — is measurably
-undetectable (R10.3). The only row reconcile deletes is an edge whose occurrence
-object is empty.
+**D8.** Reconcile DELETES a node that has no remaining claimant, after
+unresolving its inbound edges in the same transaction (R10.8). An UNPARSEABLE
+file removes nothing at all and marks its contents DIRTY (R10.7). **Demotion was
+rejected** — it left an edge whose `target_id` was set pointing at a node naming
+nothing, which every consumer reads as resolved (67,839 such edges measured),
+and it could never fire on the deletion it was designed for. See §7b. The
+cascade risk that argued for demotion is real and is handled by ordering, not by
+avoidance: R10.8 clause (i).
 **D9.** A file's claim on a declaration is a KEY in `nodes.props.claims`, exactly
 as its contribution to an edge is a key in `edges.props.occurrences` (R10.4).
 Both because two files can state one thing, and `file_path` is one column.
+**D10.** ALL DDL is done ONCE, in stage 0, before any v2 code is written — see
+§7h. The alternative (defer schema changes to the end) was tried in the first
+plan and cost three interim mechanisms that exist only to work around a schema
+that was going to change anyway.
+**D11.** `sensei.project_commands` is renamed `folder_commands` in the same
+stage-0 pass. It is keyed on `folder_id`, has no project reference, and its own
+comment says "per folder"; `project` means a user-facing grouping of
+repositories, which this is not. `repository_commands` would be wrong too —
+measured, 572 commands span **58 folders but only 36 repositories**, so a
+repo-grained key collapses 22 folders' command sets and loses which directory
+each `build` runs in. `project_libraries` (keyed `project_id`) and
+`project_dependencies` (project->project) keep their names; they are correctly
+named. Precedent: `project_metrics` was already renamed `repository_metrics`.
