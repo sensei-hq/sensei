@@ -148,6 +148,92 @@ Recommendation: **B**, because A puts the same version string on three tables
 and nothing keeps them consistent — the drift R10.7e names. But it is the
 user's call and it is not blocking S1–S7.
 
+### S11 — `find_libraries`: enqueue resolved work, never a puzzle
+
+An extension of stage 2's manifest pass, not a new walk. `parse_dependencies`
+already returns `Vec<DepVersion>` per manifest, and **`DepVersion` already
+carries the payload shape**:
+
+    lib_name, version, raw_version, source, dev, local_source
+
+So the task gets name + version + ecosystem and spends no time re-deriving
+what the manifest already said. The task's job is FETCH AND PROCESS.
+
+**TRAP 1 — `DepVersion.source` is NOT the fetch source.** It holds the
+MANIFEST FILENAME: `"Gemfile"`, `"Package.swift"`, `"Cargo.toml"`. That is
+provenance. The S9 route (website / github / local) is a different concept
+and the two must not share a field name — call the new one `origin` or
+`fetch_source`. Conflating them is a silent bug: both are strings, both are
+plausibly "source", and nothing type-checks the difference.
+
+**TRAP 2 — scan_repo is OFFLINE and must stay that way.**
+`parse_dependencies(&self, content: &str) -> Vec<DepVersion>` is synchronous
+and takes CONTENT. Resolving the fetch source needs the registry (S8), which
+is network. So `find_libraries` **cannot decide the origin**, and making it
+try would put network I/O in front of the structure barrier (R14) and break
+a scan on a plane.
+
+The split that keeps both properties:
+
+    scan_repo (offline)   -> enqueue (ecosystem, name, version, origin?)
+                             origin carried ONLY if already cached on the
+                             library row from a previous resolution
+    the task (network)    -> resolve origin if absent, CACHE it, fetch, process
+
+First encounter resolves once; every later encounter carries it. That is the
+"don't decipher it again" property in the steady state, without a network
+call at scan time.
+
+**Dedup: enqueue only if `(ecosystem, name, version)` has no content.** The
+key works because the adapters already normalise the range away — measured,
+**927 of 1,001 `version_used` values are exact pins** (`7.0.4`, `1.1.3`), with
+zero raw `^`/`~` specs surviving.
+
+**`latest` IS a version, and that is right — with one addition.** The 74
+non-pin values are dominated by `*` (19 rows): unpinned dependencies. Mapping
+them to the literal version `latest` removes the need for a separate
+"latest-known" concept, exactly as proposed, and makes the dedup key total.
+
+But **`latest` is a MOVING TARGET**, so the row must also record WHICH
+concrete version it resolved to when fetched:
+
+    (react, 'latest')  resolved_version = '18.2.0'  fetched_at = …
+
+Without `resolved_version`, "do we have latest?" is answerable and "is our
+latest still latest?" is not — and the second is the question
+`library_update_scheduler` exists to ask. With it, staleness is a comparison
+against `registry.rs`'s `VersionSource::latest`, which is already built.
+
+Two rows for one library (`latest` and `18.2.0`) is CORRECT, not duplication:
+one project pins, another floats, and they want different docs.
+
+**DIRECT DEPENDENCIES ONLY. Never the transitive tree.** This already holds
+and the reason is structural, not a filter: `parse_dependencies` takes the
+MANIFEST's content, and a manifest declares only what the project chose —
+`package.json`'s `dependencies`/`devDependencies`, `Cargo.toml`'s
+`[dependencies]`. The transitive closure lives in the LOCKFILE, which no
+adapter reads.
+
+**So do not start reading lockfiles.** The temptation is real and specific:
+a lockfile is the obvious way to turn `^1.2.3` into an exact pin. It has no
+payoff here — the adapters already normalise to exact pins in **927 of 1,001**
+cases without one — and the cost is the entire transitive tree, which is
+one to two orders of magnitude larger and consists of packages nobody in this
+repo writes code against. Docs for a dependency's dependency serve neither
+G1 nor G2.
+
+Two exclusions that already work the same way and must be kept:
+
+- **`local_source` deps are not libraries.** npm `link:`/`workspace:`/`file:`
+  and Cargo `path=` resolve to a local sibling; `DepVersion`'s own comment
+  records that the writer routes `Some(_)` to `project_dependencies` and
+  SKIPS the external-library upsert. That is correct — a workspace sibling is
+  first-party code, and stage 4 indexes it properly.
+- **`dev` is a flag, not an exclusion.** Dev dependencies are still DIRECT and
+  you write real code against them (test frameworks, build tools). Keep them,
+  keep the flag, and let a consumer filter. Dropping them would make "how do
+  I test this" unanswerable for the very packages that answer it.
+
 ### What is already built and must NOT be rebuilt
 
 `libraries/version.rs` is the policy heart: `Bump` and `UpdateAction` decide
