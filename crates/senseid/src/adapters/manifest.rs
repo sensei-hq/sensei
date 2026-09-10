@@ -26,6 +26,18 @@ mod swiftpm;
 pub(crate) mod workspace;
 mod xml;
 
+/// One resolved pin read out of a LOCKFILE (02 S6b).
+///
+/// The distinction from [`DepVersion`] is the whole point. A manifest states a
+/// RANGE — `^2.8.0` — and `clean_version` strips the operator, so the stored
+/// `2.8.0` is a range FLOOR indistinguishable from a pin. Only the lockfile
+/// holds what is actually installed, and that is what this carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedVersion {
+    pub name: String,
+    pub version: String,
+}
+
 /// Adapter for a specific ecosystem's manifest format.
 pub trait ManifestAdapter: Send + Sync {
     /// Fixed manifest filenames this adapter recognises (typically one).
@@ -51,6 +63,40 @@ pub trait ManifestAdapter: Send + Sync {
         let Some(dot) = filename.rfind('.') else { return false };
         let ext = &filename[dot + 1..];
         self.manifest_extensions().iter().any(|e| e.eq_ignore_ascii_case(ext))
+    }
+
+    /// Lockfile names this adapter can read (02 S6b). Default: none, so no
+    /// existing adapter breaks by not implementing it.
+    ///
+    /// Deliberately SEPARATE from [`Self::manifest_filenames`], and
+    /// [`Self::accepts`] must keep answering for manifests only: a lockfile is
+    /// a different grammar, and routing one into [`Self::parse_dependencies`]
+    /// would parse the wrong thing and quietly return nothing.
+    fn lockfile_filenames(&self) -> &[&'static str] {
+        &[]
+    }
+
+    /// True when `filename` is a lockfile this adapter reads.
+    fn accepts_lockfile(&self, filename: &str) -> bool {
+        self.lockfile_filenames().contains(&filename)
+    }
+
+    /// The resolved pins in a lockfile. Default: none.
+    ///
+    /// Takes the FILENAME as well as the content because one ecosystem has
+    /// several lockfile formats that share no grammar — npm alone has
+    /// `package-lock.json`, `bun.lock`, `yarn.lock` and `pnpm-lock.yaml`, and
+    /// an adapter handed only the bytes would have to sniff which it was
+    /// given. (02 S6b writes this without the filename; that spec predates
+    /// noticing the one-adapter-many-formats case.)
+    ///
+    /// Returns pins for EVERY package in the file, including transitive ones.
+    /// That is not a transitive-dependency leak: the caller looks its already
+    /// chosen direct deps up BY NAME and never enumerates the result — the
+    /// manifest selects which packages, the lockfile supplies which version
+    /// (02b S11).
+    fn parse_lockfile(&self, _filename: &str, _content: &str) -> Vec<PinnedVersion> {
+        Vec::new()
     }
 
     /// Ecosystem slug matching the `sensei.library_ecosystem` DDL enum.
