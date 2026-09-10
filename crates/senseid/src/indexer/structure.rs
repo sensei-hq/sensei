@@ -21,6 +21,7 @@
 //! incremental update cannot disagree about what changed.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 /// What the walk observed about one file. `hash` is the content fingerprint
 /// that decides re-parsing (R14/S6) — `mtime` alone is not enough, because a
@@ -88,6 +89,104 @@ impl StructurePlan {
     pub fn count(&self, kind: ChangeKind) -> usize {
         self.files.iter().filter(|(_, k)| *k == kind).count()
     }
+}
+
+/// One folder row to write, and what it hangs off.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedFolder {
+    pub abs_path: PathBuf,
+    /// `None` only for the repo root, whose parent is the watch root.
+    pub parent: Option<PathBuf>,
+}
+
+/// One file row to write: which folder owns it, and its path relative to that
+/// folder — the `(folder_id, file_path)` pair `files` is keyed on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedFile {
+    pub abs_path: PathBuf,
+    pub folder: PathBuf,
+    pub rel_path: String,
+}
+
+/// The folder and file rows one repo needs, with ownership resolved.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FolderPlan {
+    /// Parents before children — `apply_structure` sets `parent_id` at INSERT.
+    pub folders: Vec<PlannedFolder>,
+    pub files: Vec<PlannedFile>,
+}
+
+impl FolderPlan {
+    /// The files each folder owns, keyed by folder, for the per-folder
+    /// [`plan_structure`] pass. A folder with no files still appears — that is
+    /// `expected_files = 0`, a real state, not a missing one.
+    pub fn by_folder(&self) -> BTreeMap<&Path, Vec<&PlannedFile>> {
+        let mut m: BTreeMap<&Path, Vec<&PlannedFile>> =
+            self.folders.iter().map(|f| (f.abs_path.as_path(), Vec::new())).collect();
+        for f in &self.files {
+            m.entry(f.folder.as_path()).or_default().push(f);
+        }
+        m
+    }
+}
+
+/// Resolve one repo's folder rows and file ownership (S1). PURE.
+///
+/// **A folder row is a structural unit, not a directory.** `folders` carries
+/// the repo root plus each manifest-bearing directory — measured at 58 folders
+/// across 36 repositories (D11), not one row per directory on disk. Keying
+/// commands and dependencies at the repository instead collapses 22 folders'
+/// command sets and loses which directory each `build` runs in.
+///
+/// Every file is owned by the DEEPEST folder containing it, and its path is
+/// relative to that folder. That is what makes the recursive rollup in
+/// `sensei.folder_completeness` mean something: a workspace member's progress
+/// is its own, and the repo's is the sum.
+pub fn plan_folders(repo_root: &Path, manifest_dirs: &[PathBuf], files: &[PathBuf]) -> FolderPlan {
+    // The repo root always has a row; a manifest sitting AT the root must not
+    // produce a second one (folders.abs_path is UNIQUE, and two rows for one
+    // directory would split its files across two owners).
+    let mut dirs: Vec<PathBuf> = vec![repo_root.to_path_buf()];
+    for d in manifest_dirs {
+        if d != repo_root && d.starts_with(repo_root) && !dirs.contains(d) {
+            dirs.push(d.clone());
+        }
+    }
+    // Shallowest first, then lexicographic — parents precede children, and the
+    // walk's yield order cannot change the result (R6).
+    dirs.sort_by(|a, b| a.components().count().cmp(&b.components().count()).then(a.cmp(b)));
+
+    let folders: Vec<PlannedFolder> = dirs
+        .iter()
+        .map(|d| PlannedFolder {
+            abs_path: d.clone(),
+            parent: if d == repo_root { None } else { deepest_owner(d, &dirs, true) },
+        })
+        .collect();
+
+    let mut files: Vec<PlannedFile> = files
+        .iter()
+        .filter_map(|f| {
+            let folder = deepest_owner(f, &dirs, false)?;
+            let rel = f.strip_prefix(&folder).ok()?.to_string_lossy().to_string();
+            Some(PlannedFile { abs_path: f.clone(), folder, rel_path: rel })
+        })
+        .collect();
+    files.sort_by(|a, b| a.abs_path.cmp(&b.abs_path));
+
+    FolderPlan { folders, files }
+}
+
+/// The deepest directory in `dirs` that contains `path`.
+///
+/// `strict` excludes `path` itself, which is what a folder's PARENT needs — a
+/// folder is not its own parent. A file wants `strict = false` so a file
+/// sitting directly in a manifest directory is owned by it.
+fn deepest_owner(path: &Path, dirs: &[PathBuf], strict: bool) -> Option<PathBuf> {
+    dirs.iter()
+        .filter(|d| path.starts_with(d) && !(strict && *d == path))
+        .max_by_key(|d| d.components().count())
+        .cloned()
 }
 
 /// Classify this scan against the previous one (S4). PURE.
@@ -222,5 +321,146 @@ mod tests {
         let a = map(&[("z.rs", 1, "h"), ("a.rs", 1, "h"), ("m.rs", 1, "h")]);
         let b = map(&[("a.rs", 1, "h"), ("m.rs", 1, "h"), ("z.rs", 1, "h")]);
         assert_eq!(plan_structure(&a, &map(&[])), plan_structure(&b, &map(&[])));
+    }
+}
+
+#[cfg(test)]
+mod folder_plan_tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    fn p(s: &str) -> PathBuf {
+        PathBuf::from(s)
+    }
+
+    fn folder_names(plan: &FolderPlan) -> Vec<(String, Option<String>)> {
+        plan.folders
+            .iter()
+            .map(|f| {
+                (
+                    f.abs_path.to_string_lossy().to_string(),
+                    f.parent.as_ref().map(|p| p.to_string_lossy().to_string()),
+                )
+            })
+            .collect()
+    }
+
+    /// Every file, as (owning folder, folder-relative path).
+    fn owners(plan: &FolderPlan) -> Vec<(String, String)> {
+        plan.files
+            .iter()
+            .map(|f| (f.folder.to_string_lossy().to_string(), f.rel_path.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn a_repo_with_no_manifests_is_one_folder_owning_every_file() {
+        let plan = plan_folders(Path::new("/r"), &[], &[p("/r/a.rs"), p("/r/src/b.rs")]);
+
+        assert_eq!(folder_names(&plan), vec![("/r".to_string(), None)]);
+        assert_eq!(
+            owners(&plan),
+            vec![("/r".into(), "a.rs".into()), ("/r".into(), "src/b.rs".into())]
+        );
+    }
+
+    #[test]
+    fn a_workspace_member_gets_its_own_folder_and_owns_its_files() {
+        // D11: 572 commands span 58 folders but only 36 repositories. A member
+        // that shares the repo's folder loses which directory its `build` runs
+        // in — the exact collapse the folder grain exists to prevent.
+        let plan = plan_folders(
+            Path::new("/r"),
+            &[p("/r/crates/one")],
+            &[p("/r/README.md"), p("/r/crates/one/src/lib.rs")],
+        );
+
+        assert_eq!(
+            folder_names(&plan),
+            vec![("/r".to_string(), None), ("/r/crates/one".to_string(), Some("/r".to_string()))]
+        );
+        assert_eq!(
+            owners(&plan),
+            vec![("/r".into(), "README.md".into()), ("/r/crates/one".into(), "src/lib.rs".into()),],
+            "the member's file is relative to the MEMBER, not the repo"
+        );
+    }
+
+    #[test]
+    fn a_nested_manifest_parents_to_the_nearer_one_not_the_repo_root() {
+        // The recursive rollup in `folder_completeness` walks parent_id. Parent
+        // every member at the repo root and a nested package's files are
+        // counted twice at the top and never at the package above it.
+        let plan = plan_folders(
+            Path::new("/r"),
+            &[p("/r/app"), p("/r/app/plugin")],
+            &[p("/r/app/x.ts"), p("/r/app/plugin/y.ts")],
+        );
+
+        assert_eq!(
+            folder_names(&plan),
+            vec![
+                ("/r".to_string(), None),
+                ("/r/app".to_string(), Some("/r".to_string())),
+                ("/r/app/plugin".to_string(), Some("/r/app".to_string())),
+            ]
+        );
+        // Ordered by absolute path, which `PathBuf` compares component-wise:
+        // "plugin" sorts before "x.ts", so the nested file comes first.
+        assert_eq!(
+            owners(&plan),
+            vec![("/r/app/plugin".into(), "y.ts".into()), ("/r/app".into(), "x.ts".into())],
+            "the deepest enclosing folder owns the file"
+        );
+    }
+
+    #[test]
+    fn a_manifest_at_the_repo_root_does_not_create_a_second_folder() {
+        // `/r/Cargo.toml` puts the repo root in manifest_dirs. It already has a
+        // folder row; a second one would violate folders.abs_path UNIQUE and,
+        // worse, split one directory's files across two owners.
+        let plan = plan_folders(Path::new("/r"), &[p("/r")], &[p("/r/a.rs")]);
+
+        assert_eq!(folder_names(&plan), vec![("/r".to_string(), None)]);
+        assert_eq!(owners(&plan), vec![("/r".into(), "a.rs".into())]);
+    }
+
+    #[test]
+    fn folders_are_emitted_parents_before_children() {
+        // apply_structure sets parent_id at INSERT, so a child written before
+        // its parent has no id to point at. Emission order is the guarantee.
+        let plan = plan_folders(Path::new("/r"), &[p("/r/a/b/c"), p("/r/a"), p("/r/a/b")], &[]);
+
+        let depths: Vec<usize> =
+            plan.folders.iter().map(|f| f.abs_path.components().count()).collect();
+        let mut sorted = depths.clone();
+        sorted.sort();
+        assert_eq!(depths, sorted, "shallower folders come first");
+    }
+
+    #[test]
+    fn a_file_outside_the_repo_root_is_dropped_not_misattributed() {
+        // R4: a wrong owner is worse than a missing row. A path that does not
+        // live under the root cannot be made relative to any folder here.
+        let plan = plan_folders(Path::new("/r"), &[], &[p("/elsewhere/a.rs"), p("/r/b.rs")]);
+
+        assert_eq!(owners(&plan), vec![("/r".into(), "b.rs".into())]);
+    }
+
+    #[test]
+    fn the_plan_is_order_independent() {
+        // R6/A6. The walk's yield order must not change the structure.
+        let a = plan_folders(
+            Path::new("/r"),
+            &[p("/r/z"), p("/r/a")],
+            &[p("/r/z/1.rs"), p("/r/a/2.rs")],
+        );
+        let b = plan_folders(
+            Path::new("/r"),
+            &[p("/r/a"), p("/r/z")],
+            &[p("/r/a/2.rs"), p("/r/z/1.rs")],
+        );
+        assert_eq!(folder_names(&a), folder_names(&b));
+        assert_eq!(owners(&a), owners(&b));
     }
 }

@@ -13,6 +13,7 @@ pub mod facts;
 pub mod fqn;
 pub mod lang;
 pub mod persist;
+pub mod pipeline;
 pub mod reconcile;
 pub mod resolve;
 pub mod scan_repo;
