@@ -30,6 +30,28 @@ create index if not exists edges_kind_idx
 create index if not exists edges_confidence_idx
     on edges(confidence);
 
+-- Stage 0 S7 (R10.1). The ATTRIBUTION index: answers "which edges did file F
+-- contribute to" via `props->'occurrences' ? F`, which is the ONLY unit of
+-- edge attribution reconcile may use. Without it that question needs an
+-- fqn-based approximation, and every such approximation measured so far has
+-- been a narrowing that silently strands stale occurrences.
+--
+-- THE OPERATOR CLASS IS LOAD-BEARING. props.occurrences is an OBJECT keyed by
+-- file, so the test is `?` (key existence), which only the DEFAULT jsonb_ops
+-- supports. jsonb_path_ops is smaller and looks like the better choice; it
+-- CANNOT serve `?` and degrades silently to a seq scan. Proven both ways on
+-- this table before this index was written. Do not "optimise" it.
+create index if not exists edges_occurrences_gin
+    on edges using gin ((props -> 'occurrences'));
+
+comment on index sensei.edges_occurrences_gin is
+'Attribution index for reconcile (R10.1): "which edges did file F contribute
+to", via props->''occurrences'' ? F. Opclass MUST be the default jsonb_ops —
+jsonb_path_ops does not support `?` and falls back to a seq scan without
+error. Measured at creation: 128ms build, 888kB, against a column that is
+100% NULL today because the v2 writer has no caller yet — that is a FLOOR,
+not a steady-state size.';
+
 -- Edge identity (D1): two partial unique indexes give an edge an identity so
 -- insert_edge can upsert instead of duplicating. The nullable target_id forces
 -- the split — a resolved edge is unique by its target node; an unresolved edge
