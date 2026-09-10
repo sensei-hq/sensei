@@ -131,7 +131,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/correlations", get(project_detail::get_metric_correlations))
         .route("/api/metrics/correlations", get(project_detail::get_portfolio_correlations))
         .route("/api/projects/{id}/patterns", get(project_detail::get_project_patterns))
-        .route("/api/projects/{id}/libraries", get(project_detail::get_project_libraries))
+        .route("/api/projects/{id}/libraries", get(project_detail::get_library_enablement))
         .route("/api/projects/{id}/instruments", get(project_detail::get_project_instruments))
         .route("/api/projects/{id}/mcp-tool-stats", get(project_detail::get_project_mcp_tool_stats))
         .route("/api/projects/{id}/services", get(project_detail::list_project_services))
@@ -181,7 +181,7 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/projects/{id}/sessions", get(project_detail::get_project_sessions))
         .route("/api/projects/{id}/project-deps", get(project_detail::get_project_project_deps))
-        .route("/api/projects/{id}/commands", get(project_detail::get_project_commands))
+        .route("/api/projects/{id}/commands", get(project_detail::get_folder_commands))
         // Metrics (Phase 7): latest-per-metric + trend + health for a project, and
         // one metric's series at a grain (?grain=daily|weekly|monthly|quarterly).
         .route("/api/projects/{id}/metrics", get(metrics::get_project_metrics))

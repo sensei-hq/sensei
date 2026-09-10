@@ -101,7 +101,7 @@ pub trait ManifestAdapter: Send + Sync {
     }
 
     /// Discoverable named commands the ecosystem exposes for this manifest
-    /// (#83 T1 commands surface). Feeds `sensei.project_commands` so the
+    /// (#83 T1 commands surface). Feeds `sensei.folder_commands` so the
     /// project window's action buttons + the future `get_commands` MCP
     /// tool + AI-assistant "how do I run tests here?" queries all read from
     /// one authoritative source.
@@ -121,7 +121,7 @@ pub trait ManifestAdapter: Send + Sync {
 }
 
 /// One command discovered from a manifest. Persisted into
-/// `sensei.project_commands`.
+/// `sensei.folder_commands`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredCommand {
     /// Raw name as it appears in the manifest (e.g. `test:unit`, `build-fast`).

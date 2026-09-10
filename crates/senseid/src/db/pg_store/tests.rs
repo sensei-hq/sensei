@@ -5721,7 +5721,7 @@ async fn upsert_referenced_library_merges_props() {
 #[tokio::test]
 async fn project_library_promotion_shows_in_resolved_and_is_idempotent() {
     // #30: referenced_libraries (folder-grained) must roll up to
-    // project_libraries so detected libs — incl. scoped @rokkit/* — show in
+    // library_enablement so detected libs — incl. scoped @rokkit/* — show in
     // project_libraries_resolved (the Projects screen). Was never populated.
     let s = pg_store().await;
     let pid = s.ensure_test_project("proj-lib-promo").await.unwrap();
@@ -5730,13 +5730,13 @@ async fn project_library_promotion_shows_in_resolved_and_is_idempotent() {
     // Promote twice — must be idempotent (no error, no duplicate row).
     s.upsert_project_library(&lib, &pid).await.unwrap();
     s.upsert_project_library(&lib, &pid).await.unwrap();
-    let libs = s.get_project_libraries(&pid).await.unwrap();
+    let libs = s.get_library_enablement(&pid).await.unwrap();
     let hits = libs.iter().filter(|l| l["name"] == "_test:@rokkit/core").count();
     assert_eq!(
         hits, 1,
         "promoted scoped lib should appear exactly once in resolved view; got {libs:?}"
     );
-    s.delete_library(&lib).await.unwrap(); // FK CASCADE removes the project_libraries row
+    s.delete_library(&lib).await.unwrap(); // FK CASCADE removes the library_enablement row
 }
 
 #[tokio::test]
@@ -6536,7 +6536,7 @@ async fn list_project_library_capabilities_suggests_from_a_projects_deps() {
     .unwrap();
     // The project depends on the library.
     s.execute_raw(&format!(
-            "INSERT INTO sensei.project_libraries(library_id, project_id, enabled) VALUES('{lid}','{pid}',true) ON CONFLICT DO NOTHING"
+            "INSERT INTO sensei.library_enablement(library_id, project_id, enabled) VALUES('{lid}','{pid}',true) ON CONFLICT DO NOTHING"
         )).await.unwrap();
 
     let caps = s.list_project_library_capabilities(&pid).await.unwrap();
@@ -6729,7 +6729,7 @@ async fn record_symbol_names_is_monotonic_history() {
 }
 
 #[tokio::test]
-async fn get_project_commands_marks_and_ranks_the_preferred_tool() {
+async fn get_folder_commands_marks_and_ranks_the_preferred_tool() {
     // G10: when several commands share a category, the user's dojo_preference
     // marks one preferred and ranks it first.
     let s = pg_store().await;
@@ -6739,7 +6739,7 @@ async fn get_project_commands_marks_and_ranks_the_preferred_tool() {
     s.set_folder_project(&fid, &pid, "primary", None).await.unwrap();
     // Two `test` commands; alphabetical order is jest, then vitest.
     sqlx_core::query::query(
-            "INSERT INTO sensei.project_commands (folder_id, raw_name, command_line, category, ecosystem)
+            "INSERT INTO sensei.folder_commands (folder_id, raw_name, command_line, category, ecosystem)
              VALUES ($1, 'jest', 'jest', 'test', 'npm'), ($1, 'vitest', 'vitest run', 'test', 'npm')",
         ).bind(fid).execute(s.pool()).await.unwrap();
     // Clean slate for the shared preference row.
@@ -6751,7 +6751,7 @@ async fn get_project_commands_marks_and_ranks_the_preferred_tool() {
     .ok();
 
     // No preference → alphabetical, nothing marked preferred.
-    let before = s.get_project_commands(&pid, Some("test")).await.unwrap();
+    let before = s.get_folder_commands(&pid, Some("test")).await.unwrap();
     assert_eq!(before.len(), 2);
     assert_eq!(before[0]["raw_name"], "jest");
     assert!(
@@ -6761,7 +6761,7 @@ async fn get_project_commands_marks_and_ranks_the_preferred_tool() {
 
     // Prefer vitest → it is marked and ranked first (ahead of the alphabetically-first jest).
     s.upsert_command_preference("user", "test", "vitest", None).await.unwrap();
-    let after = s.get_project_commands(&pid, Some("test")).await.unwrap();
+    let after = s.get_folder_commands(&pid, Some("test")).await.unwrap();
     assert_eq!(after[0]["raw_name"], "vitest", "preferred ranked first");
     assert_eq!(after[0]["preferred"], serde_json::json!(true));
     assert_eq!(after[1]["raw_name"], "jest");
@@ -6772,7 +6772,7 @@ async fn get_project_commands_marks_and_ranks_the_preferred_tool() {
     );
 
     let pool = s.pool();
-    sqlx_core::query::query("DELETE FROM sensei.project_commands WHERE folder_id=$1")
+    sqlx_core::query::query("DELETE FROM sensei.folder_commands WHERE folder_id=$1")
         .bind(fid)
         .execute(pool)
         .await

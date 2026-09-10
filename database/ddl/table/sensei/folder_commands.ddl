@@ -10,7 +10,7 @@ set search_path to sensei, extensions;
 -- canonical verb ('test' / 'build' / 'lint' / 'run' / 'format' /
 -- 'typecheck' / 'e2e' / 'bench' / 'docs' / 'start' / 'dev'), or NULL when
 -- the classifier couldn't decide.
-create table if not exists project_commands (
+create table if not exists folder_commands (
   id             bigserial   primary key
 , folder_id      uuid        not null references sensei.folders(id) on delete cascade
 , raw_name       text        not null                        -- name as it appears in the manifest (e.g. 'test:unit')
@@ -22,11 +22,11 @@ create table if not exists project_commands (
 , unique (folder_id, raw_name)
 );
 
-create index if not exists project_commands_folder_idx    on project_commands (folder_id);
-create index if not exists project_commands_category_idx  on project_commands (category);
-create index if not exists project_commands_ecosystem_idx on project_commands (ecosystem);
+create index if not exists folder_commands_folder_idx    on folder_commands (folder_id);
+create index if not exists folder_commands_category_idx  on folder_commands (category);
+create index if not exists folder_commands_ecosystem_idx on folder_commands (ecosystem);
 
-comment on table project_commands is
+comment on table folder_commands is
 '#83 T1 commands surface. Discoverable commands per folder — populated from
 manifest adapters. One row per (folder_id, raw_name); re-scan replaces the
 per-folder set atomically via delete-then-insert.';

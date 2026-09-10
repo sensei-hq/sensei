@@ -4,7 +4,7 @@ set search_path to sensei, extensions;
 -- that turns a `verification = 'checker'` rule from documentation into an
 -- enforceable pass/fail signal. The daemon resolves a repo's adopted
 -- checker-backed rules, maps each rule's `checker_ref` (a canonical command verb:
--- lint | test | build) to that repo's discovered command (sensei.project_commands),
+-- lint | test | build) to that repo's discovered command (sensei.folder_commands),
 -- runs it, and appends a row here.
 --
 -- Denormalised on purpose: `rule_statement` + `checker_ref` are copied in rather

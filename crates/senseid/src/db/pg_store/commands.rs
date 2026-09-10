@@ -15,7 +15,7 @@ impl PgStore {
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
 
         sqlx_core::query::query(
-            "DELETE FROM sensei.project_commands WHERE folder_id = $1 AND ecosystem = $2",
+            "DELETE FROM sensei.folder_commands WHERE folder_id = $1 AND ecosystem = $2",
         )
         .bind(folder_id)
         .bind(ecosystem)
@@ -25,7 +25,7 @@ impl PgStore {
 
         for (raw_name, command_line, category) in commands {
             sqlx_core::query::query(
-                "INSERT INTO sensei.project_commands
+                "INSERT INTO sensei.folder_commands
                     (folder_id, raw_name, command_line, category, ecosystem, source_file)
                  VALUES ($1, $2, $3, $4, $5, $6)
                  ON CONFLICT (folder_id, raw_name) DO UPDATE SET
@@ -54,7 +54,7 @@ impl PgStore {
     /// filter is applied server-side so callers can ask for just `test` or
     /// `build` without pulling everything. Ordered by category (nulls last)
     /// then raw_name for stable UI display.
-    pub async fn get_project_commands(
+    pub async fn get_folder_commands(
         &self,
         project_id: &uuid::Uuid,
         category: Option<&str>,
@@ -72,7 +72,7 @@ impl PgStore {
         )> = if let Some(cat) = category {
             sqlx_core::query_as::query_as(
                     "SELECT c.id, c.folder_id, f.name, c.raw_name, c.command_line, c.category, c.ecosystem, c.source_file, c.discovered_at
-                       FROM sensei.project_commands c
+                       FROM sensei.folder_commands c
                        JOIN sensei.folders f ON f.id = c.folder_id
                       WHERE f.project_id = $1 AND c.category = $2
                       ORDER BY c.category NULLS LAST, c.raw_name"
@@ -80,7 +80,7 @@ impl PgStore {
         } else {
             sqlx_core::query_as::query_as(
                     "SELECT c.id, c.folder_id, f.name, c.raw_name, c.command_line, c.category, c.ecosystem, c.source_file, c.discovered_at
-                       FROM sensei.project_commands c
+                       FROM sensei.folder_commands c
                        JOIN sensei.folders f ON f.id = c.folder_id
                       WHERE f.project_id = $1
                       ORDER BY c.category NULLS LAST, c.raw_name"
@@ -192,7 +192,7 @@ impl PgStore {
     // ── #84 Track 2 Slice C — Replay tab session timeline ─────────────────
 
     /// The command line a repo runs for a canonical command verb (`lint` | `test`
-    /// | `build` | …), from the manifest-discovered `project_commands`. `None`
+    /// | `build` | …), from the manifest-discovered `folder_commands`. `None`
     /// when the repo has no command in that category. Used to map a checker rule's
     /// `checker_ref` to a runnable command.
     pub async fn project_command_for(
@@ -201,7 +201,7 @@ impl PgStore {
         category: &str,
     ) -> Result<Option<String>, String> {
         let row: Option<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT command_line FROM sensei.project_commands
+            "SELECT command_line FROM sensei.folder_commands
               WHERE folder_id = $1 AND category = $2
               ORDER BY discovered_at DESC LIMIT 1",
         )

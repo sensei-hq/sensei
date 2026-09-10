@@ -418,8 +418,8 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     let folder_name = folder["name"].as_str().unwrap_or_else(|| task.folder_name());
     let folder_id = crate::api::util::json_uuid(&folder["id"]).ok_or("Invalid folder id")?;
     // The folder's project (NULL for standalone folders) — used to roll each
-    // detected dependency up to project_libraries so it shows on the Projects
-    // screen (#30). project_libraries is the project↔library M2M the indexer
+    // detected dependency up to library_enablement so it shows on the Projects
+    // screen (#30). library_enablement is the project↔library M2M the indexer
     // owns; referenced_libraries below is only folder-grained.
     let project_id = crate::api::util::json_uuid(&folder["project_id"]);
 
@@ -548,7 +548,7 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
 
     // #83 T1 commands surface — one pass over the root's known manifests,
     // calling each ManifestAdapter's `parse_commands` and replacing the
-    // folder's rows in `sensei.project_commands`. Idempotent (delete+insert
+    // folder's rows in `sensei.folder_commands`. Idempotent (delete+insert
     // per ecosystem); cheap enough to run alongside the dep pass since it
     // re-reads only the manifest at the folder root, not the whole tree.
     let cmd_count = extract_and_persist_commands(ctx, &folder_id, repo_path).await;
