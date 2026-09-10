@@ -189,9 +189,21 @@ Checked against the live schema rather than inferred:
 
 | entity | table | rows | what it is |
 |---|---|---:|---|
-| repository | `sensei.repositories` | 68 | the IDENTITY, keyed on `repo_key` (normalized remote). Survives a re-clone, rename or move. No `project_id` — a repo may belong to several projects. |
+| repository | `sensei.repositories` | 68 | the IDENTITY, keyed on `repo_key` (normalized remote). Survives a re-clone, rename or move. No `project_id` — the schema permits a repo in several projects. |
 | its placement | `sensei.folders` (69 carry `repository_id`, 67 distinct repos) | 9,378 | where it sits TODAY. Only the repo-root folder carries the link; subfolders resolve by nearest ancestor. |
-| project | `sensei.projects` | 147 | the user-viewable GROUPING of repositories, M:N through the folders junction. |
+| project | `sensei.projects` | 147, of which **66 group a repository** | the user-viewable GROUPING of repositories. |
+
+**The expected cardinality is FEWER projects than repositories**, and the live
+data agrees once the junk is excluded: **66 projects over 67 repositories** —
+63 hold one repo, 3 hold two, and **no repo belongs to more than one project**
+(measured max = 1). The schema permits M:N; the data is 1:N.
+
+The 147 is inflated by **81 projects that group ZERO repositories** plus 2 with
+no folders at all. They were minted per-folder from directories the old scanner
+classified as "non-git repos" — `find-me-board` (1,230 folders),
+`pljava-1_6_7`, and `ms-dotnettools.csdevkit`, a VS Code extension cache under
+a transcripts directory. Under stage 1 those folders stop being roots, so these
+projects must be resolved rather than silently left behind. See 01-scan-root S6.
 
 So `scan_root` produces BOTH — a repo-root folder row and a `repositories`
 row. Two clones of one remote are two folders and one repository. This was
