@@ -56,26 +56,7 @@ about. That split is what makes the barrier testable without a database.
 | a file's parent folder is missing from the plan | a bug in `plan_structure`. Fail loudly; do not create the folder on the fly, which would hide the ordering defect. |
 | enqueue fails after structure is written | the structure is still correct and the files sit at `discovered`. Report the count that failed to enqueue; a re-run is safe because S1's writes are idempotent. |
 
-## 5. Stage report — what you SHOW when the stage is done
-
-    {"stage":"03-structure-write","at":"<iso8601>","repo":"…","repo_id":"…",
-     "folders_created":<n>,"folders_updated":<n>,"folders_removed":<n>,
-     "files_created":<n>,"files_updated":<n>,"files_removed":<n>,
-     "expected_files":48665,
-     "barrier_at":"<iso8601>","tasks_enqueued":48646,
-     "files_at_discovered":48646,
-     "sample_file":{"path":"crates/senseid/src/indexer/fqn.rs","file_id":"…",
-                    "folder_id":"…","lifecycle":"discovered",
-                    "content_hash":"…","enqueued":true}}
-
-`tasks_enqueued` should equal the INDEXED file count (48,646), not the total
-row count (48,665) — skipped files get rows but no parse task. If those two
-numbers are equal, the skip filter is not being applied at enqueue.
-
-`barrier_at` must be earlier than every parse task's start. That is checkable
-after the fact and is the only direct evidence S1 held.
-
-## 6. Verification
+## 5. Verification
 
 | test | mutation that must break it |
 |---|---|
@@ -92,7 +73,7 @@ The get-or-create test is the load-bearing one. It is the single easiest
 "convenience" to add during stage 6 and it defeats the entire purpose of
 stage 0's foreign key.
 
-## 7. Watch out
+## 6. Watch out
 
 **Four things follow from the barrier, and three of them are problems that
 simply do not arise** — this is the reasoning to preserve if the ordering is
@@ -117,7 +98,7 @@ stage 0 the FK makes that impossible, but the CALLER still exists. Find it and
 make it go through reconcile, or the next forced reindex fails loudly on the
 foreign key. Loud is better than the current silence, but neither is done.
 
-## 8. Definition of done
+## 7. Definition of done
 
 - `plan_structure` is pure and unit-tested on snapshot pairs covering add,
   update, remove, rename and unchanged.

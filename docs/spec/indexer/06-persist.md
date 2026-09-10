@@ -61,23 +61,7 @@ afterthought.
 handler that turns a failure into `[]` and a writer that turns one into "0 rows
 written" are the same defect.
 
-## 5. Stage report — what you SHOW when the stage is done
-
-    {"stage":"06-persist","at":"<iso8601>","repo":"…",
-     "files_written":372,"write_errors":0,
-     "nodes_upserted":<n>,"nodes_merged_onto_existing":<n>,"nodes_created":<n>,
-     "edges_merged":<n>,"edges_with_null_target":<n>,
-     "claims_written":<n>,"collisions":[],
-     "round_trip_verified":372,
-     "sample_round_trip":{"fqn":"rust·senseid·…·Reach·Field·item",
-                          "wrote":{"declared_type":null,"visibility":"pub","span":[89,3,89,8]},
-                          "read":{"declared_type":null,"visibility":"pub","span":[89,3,89,8]},
-                          "identical":true}}
-
-`collisions` must be an empty array. If it is not, A7 has failed and the run
-should stop rather than record which declaration happened to win.
-
-## 6. Verification
+## 5. Verification
 
 | test | mutation that must break it |
 |---|---|
@@ -97,7 +81,7 @@ round trip reads back props the same writer wrote, so the column values verify
 against themselves. Fix the CLASS — assert against the column — not the eleven
 fields.
 
-## 7. Watch out
+## 6. Watch out
 
 **The 8-argument insert is the disease, not a style preference.** Positional
 arguments have no slot for a field nobody added, so the compiler cannot help.
@@ -117,7 +101,7 @@ every bug in this area is a variant of that one confusion.
 belongs to `prune_orphan_stubs_scoped`, which already runs every reconcile
 tick. Two owners of deletion is how a race gets built.
 
-## 8. Definition of done
+## 7. Definition of done
 
 - No positional-argument insert exists in the v2 persistence path.
 - The round trip passes over a fixture AND asserts against columns, not props.

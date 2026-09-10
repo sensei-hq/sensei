@@ -52,28 +52,7 @@ decides whether to cut over.
 | A7 reports collisions on the live corpus | STOP. Colliding declarations mean one silently overwrites the other and which one wins is scan-order dependent. |
 | the diff shows far more references in v2 | EXPECTED (S2). Compare resolved edges, not raw counts. |
 
-## 5. Stage report — what you SHOW when the stage is done
-
-    {"stage":"10-cutover","at":"<iso8601>","language":"rust",
-     "diff":{"improvements":<n>,"regressions":0,"explained":<n>},
-     "v1_resolved":<n>,"v2_resolved":<n>,"v2_superset":true,
-     "exceptions":[],
-     "before":{"nodes":395031,"edges":82913,"rust_calls_resolved":46545,
-               "rust_calls_unresolved":29875,"rust_calls_ghost":4542,
-               "field_and_variant_nodes":0},
-     "after":{"…"},
-     "acceptance":{"A1":true,"A2":true,"A3":true,"A4":true,"A5":true,
-                   "A6":true,"A7":true,"A8":true,"A9":true},
-     "triggers_repointed":["process_git_folder","prune_vanished","delete_file"],
-     "sample_improvement":{"site":"…","v1":"dropped","v2":"resolved to …"}}
-
-`before` is written FIRST, in its own line, before anything is deployed (S6).
-
-`field_and_variant_nodes` going from 0 to non-zero is the single clearest
-signal the cutover did what it was for — A5 becomes answerable and "what shape
-is this data" stops returning nothing.
-
-## 6. Verification
+## 5. Verification
 
 | check | mutation that must break it |
 |---|---|
@@ -88,7 +67,7 @@ The unresolved-caller check is the one to do properly. "This has no callers" is
 exactly the claim that needs `rg --no-ignore -g '!target'` and a confirmed
 non-truncated count, not a quick grep.
 
-## 7. Watch out
+## 6. Watch out
 
 **Raw reference counts will look alarming and are the intended result.** v1
 drops references silently — that is the defect. v2 emits an `Unresolved` for
@@ -108,7 +87,7 @@ attempt produced "three scans and a follow-up reconcile".
 **Retirement is last.** The superseded module keeps running until S5 passes, so
 there is never a window where the graph has no indexer.
 
-## 8. Definition of done
+## 7. Definition of done
 
 - The diff report has ZERO unexplained regressions and v2's resolved set is a
   proven superset.
