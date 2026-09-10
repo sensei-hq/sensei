@@ -59,15 +59,51 @@ land together; splitting them migrates the same table twice.
 - **S7** (R10.1). `create index … using gin ((props->'occurrences'))` on
   `sensei.edges`. This is what lets reconcile ask the definitive attribution
   question (`props->'occurrences' ? F`) instead of an fqn approximation.
-- **S8** (D11). Rename `sensei.project_commands` -> `sensei.folder_commands`.
-  Keyed on `folder_id`, no project reference. Leave `project_libraries` and
-  `project_dependencies` alone — those are correctly named.
+- **S8** (D11). Regrain the manifest-derived tables to FOLDER, because a
+  manifest sits at a folder and every fact read out of it is folder-grained:
+  - `project_commands` -> `folder_commands`. Rename only; already keyed
+    `folder_id`. 572 rows across 58 folders / 36 repos.
+  - `project_dependencies` -> `folder_dependencies`, keyed on the FOLDER pair.
+    `from_folder_id` already exists; the two project ids are pre-aggregation
+    in the primary key and are derivable. **0 rows, so this is free** — do it
+    now, not after something populates it.
+  - `project_libraries` -> `library_enablement`. Rename only, **not
+    regrained** — it is a user toggle with a global scope (`project_id NULL`),
+    not an observation. `project_id` stays as the scope column.
+  - `referenced_libraries` — **LEAVE ALONE.** It is already the folder-grained
+    library fact (1,016 rows, 49 folders, `version_used` observed from the
+    manifest). Do not create a `folder_libraries`; it exists under this name.
+- **S10** (D11). Add repository-level and project-level VIEWS over the
+  folder-grained bases — dependencies and commands at minimum. Follow
+  `sensei.folder_completeness`, which already recurses `parent_id`. Views, not
+  tables: an aggregate that is stored can disagree with the manifest it came
+  from, and a view cannot.
+
+### EXECUTION ORDER — S1..S10 are NOT a checklist
+
+They are order-dependent, and the table changes name partway through. Run them
+in exactly this order and use the name that is live at each step:
+
+| # | step | the file table is called |
+|---|---|---|
+| 1 | S1 rename, S2 add `id` | `scan_state` -> **`files`** |
+| 2 | **S9 the ORPHANED sweep** | **`files`** (already renamed) |
+| 3 | S3 add `nodes.file_id`, backfill from `file_path`, verify 0 nulls where a path existed, THEN add the FK and drop `file_path` | `files` |
+| 4 | S4–S8 detail column, enum widening, gin index, the D11 renames | `files` |
+| 5 | S10 the rollup views | `files` |
+
+The sweep sits between the rename and the foreign key because it must run
+against the renamed table and the FK cannot be added while an orphan exists.
+Backfill-then-verify-then-constrain, never constrain-then-backfill: adding the
+FK first fails on the first orphan and tells you nothing about the other 8,146.
 
 ### S9 — the ORPHANED sweep, and it is the dangerous one
 
-8,147 nodes name a `file_path` with no `scan_state` row. S3's foreign key
-cannot be added while they exist. They must be removed, and **removing them
-obeys R10.8's ordering or it destroys data**:
+8,147 nodes name a `file_path` for which there is no row in the file table.
+**That table is `files` by the time this runs** — the count was MEASURED
+against `scan_state` before the rename, and the population is identical; only
+the name changed. S3's foreign key cannot be added while they exist. They must
+be removed, and **removing them obeys R10.8's ordering or it destroys data**:
 
 1. `UPDATE sensei.edges SET target_id = NULL WHERE target_id = ANY($orphans)` —
    after asserting `target_name IS NOT NULL` on every such edge. Once the node

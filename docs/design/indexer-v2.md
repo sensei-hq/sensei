@@ -1464,12 +1464,23 @@ goes through the dbd workflow, not by hand, and it is the largest schema change
 this design asks for. Sequence it with everything else the schema needs so the
 tables are opened ONCE — see §7h.
 
-**EVERY `file_path` PREDICATE STATED EARLIER IN THIS DOCUMENT BECOMES
-`file_id` AT THIS MIGRATION.** §2.1, R10.1, R10.2, R10.6(c), R10.7d's table and
-R10.7e all name `nodes.file_path`, and the column does not survive R13.
-`file_path IS NULL` as the PARTIAL/stub predicate becomes `file_id IS NULL`.
-The path itself is still readable — through the view (R12), from the `files`
-row — but never off a node.
+**EVERY `scan_state` AND `file_path` REFERENCE EARLIER IN THIS DOCUMENT IS
+PRE-R13 AND CHANGES HERE.** Those sections describe the state as MEASURED
+today, which is why they use the old names; they are not stale, they are
+historical. At this migration:
+
+| earlier text says | after R13 |
+|---|---|
+| the `scan_state` table (R10.7, R10.7d's join, R12's diagram) | `sensei.files` |
+| `nodes.file_path` (§2.1, R10.1, R10.2, R10.6(c), R10.7d, R10.7e) | `nodes.file_id`, an FK |
+| `file_path IS NULL` as the PARTIAL/stub predicate | `file_id IS NULL` |
+| "no `scan_state` row for it" (ORPHANED) | unrepresentable — the FK forbids it |
+
+The path is still readable through the view (R12) or from the `files` row —
+never off a node. Note the ORDER within stage 0: the ORPHANED sweep runs
+AFTER the rename and BEFORE the foreign key, so it targets `files` even
+though the 8,147 were counted against `scan_state`. Same population, new
+name. See `docs/spec/indexer/00-files-entity.md`, "Execution order".
 
 ### Why bother, when the join works today
 
@@ -1688,12 +1699,20 @@ Both because two files can state one thing, and `file_path` is one column.
 §7h. The alternative (defer schema changes to the end) was tried in the first
 plan and cost three interim mechanisms that exist only to work around a schema
 that was going to change anyway.
-**D11.** `sensei.project_commands` is renamed `folder_commands` in the same
-stage-0 pass. It is keyed on `folder_id`, has no project reference, and its own
-comment says "per folder"; `project` means a user-facing grouping of
-repositories, which this is not. `repository_commands` would be wrong too —
-measured, 572 commands span **58 folders but only 36 repositories**, so a
-repo-grained key collapses 22 folders' command sets and loses which directory
-each `build` runs in. `project_libraries` (keyed `project_id`) and
-`project_dependencies` (project->project) keep their names; they are correctly
-named. Precedent: `project_metrics` was already renamed `repository_metrics`.
+**D11.** **A manifest sits AT a folder, so every fact read out of one is
+FOLDER-grained at the base, and repository- and project-level answers are
+VIEWS over it.** Storing an aggregate is how the aggregate comes to disagree
+with what a manifest actually said. Applied table by table in stage 0:
+
+| table | today | ruling |
+|---|---|---|
+| `project_commands` | keyed `folder_id`, no project ref | **rename `folder_commands`.** 572 commands span **58 folders but only 36 repositories** — a repo key collapses 22 folders' sets and loses which directory each `build` runs in. |
+| `project_dependencies` | PK `(from_project_id, to_project_id, from_folder_id, source_protocol, source_manifest)`, **0 rows** | **regrain to `folder_dependencies`**, keyed on the folder pair. `from_folder_id` is already present; the project ids are pre-aggregation in the key and are DERIVABLE from the folders. Zero rows, so this is free. |
+| `referenced_libraries` | keyed `(folder_id, library_id)`, `version_used`, **1,016 rows / 49 folders** | **already correct — this IS the folder-grained library fact.** Its comment already says "the pinned version observed in the folder (from package.json, Cargo.toml, …)". Do not create a `folder_libraries`; it exists under this name. |
+| `project_libraries` | `(library_id, project_id, enabled, props)`, **1,299 rows**, `project_id NULL` = GLOBAL | **NOT regrained.** It is a user-curated ENABLEMENT layer derived from `referenced_libraries` ("editable by user"), and a library enabled globally or per project is inherently not folder-grained. Its name is still poor — it reads as an observation and is a toggle. Rename to `library_enablement`; `project_id` stays as the scope column. |
+| `project_metrics` | — | already renamed `repository_metrics`. Precedent for this class of rename. |
+
+Repository- and project-level dependency and command answers are VIEWS over
+the folder-grained tables, following `sensei.folder_completeness`, which
+already recurses `parent_id` to roll per-file facts up. Derived beats stored:
+a view cannot drift from what it derives from.
