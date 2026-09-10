@@ -50,21 +50,22 @@ with stems as (
        , n.folder_id
        , n.kind
        , n.name
-       , n.file_path
+       , fi.file_path
        , n.modified_at
          -- Path::file_stem(): the file name minus its final extension; a name that
          -- begins with `.` and has no other dot is entirely the stem.
        , case
-           when position('.' in substring(regexp_replace(n.file_path, '^.*/', '') from 2)) = 0
-           then regexp_replace(n.file_path, '^.*/', '')
+           when position('.' in substring(regexp_replace(fi.file_path, '^.*/', '') from 2)) = 0
+           then regexp_replace(fi.file_path, '^.*/', '')
            else substring(
-                  regexp_replace(n.file_path, '^.*/', '') from 1
-                  for length(regexp_replace(n.file_path, '^.*/', ''))
-                    - position('.' in reverse(regexp_replace(n.file_path, '^.*/', '')))
+                  regexp_replace(fi.file_path, '^.*/', '') from 1
+                  for length(regexp_replace(fi.file_path, '^.*/', ''))
+                    - position('.' in reverse(regexp_replace(fi.file_path, '^.*/', '')))
                 )
          end as stem
     from nodes n
-   where n.file_path is not null
+    left join files fi on fi.id = n.file_id
+   where fi.file_path is not null
      and n.kind in ('doc', 'file')
 )
 select d.folder_id

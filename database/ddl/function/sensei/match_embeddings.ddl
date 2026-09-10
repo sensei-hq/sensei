@@ -14,11 +14,12 @@ stable
 as $$
   select
     n.id,
-    n.file_path,
+    fi.file_path,
     n.name,
     n.kind,
     (1 - (n.embedding <=> query_embedding))::float as similarity
   from sensei.nodes n
+    left join sensei.files fi on fi.id = n.file_id
   where n.folder_id = p_folder_id
     and n.embedding is not null
     and (1 - (n.embedding <=> query_embedding)) >= match_threshold
