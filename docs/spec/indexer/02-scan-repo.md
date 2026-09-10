@@ -139,7 +139,7 @@ counts it.
 | a file under a `.gitignore`d dir is absent from the file set | replace `build_walker` with a plain `WalkDir` |
 | a nested `.gitignore` is honoured | set `parents(false)` on the walker |
 | a `package.json` in `app/` produces commands on `app/`'s folder, not the repo root's | key the store on `repository_id` |
-| six manifest-bearing folders in THIS repo produce six distinct command sets | key the store on `repository_id` — this is the measured case, 58 folders vs 36 repos |
+| the 18 manifest-bearing folders the walk finds in THIS repo produce 18 distinct command sets | key the store on `repository_id` — 18 folders collapse to 1 repo |
 | one malformed manifest does not cost the repo its other manifests | propagate the error instead of recording it |
 | the manifest filename set is derived from the adapter registry | hardcode a filename list — the test greps for a literal `"package.json"` outside the adapters |
 
@@ -179,7 +179,9 @@ and remove only the ones proven so.
 - Four pure functions unit-tested on literals, with no repo and no database.
 - Submodules enqueue child `scan_repo`s; a declared-but-absent one is reported.
 - Manifest facts land on the containing FOLDER; this repo produces six
-  manifest-bearing folders and 572 commands, matching today's live count.
+  manifest-bearing folders — MEASURED at 18 by the walk, not the six a
+  top-level eyeball suggests: the extra twelve are workspace members under
+  `crates/`, `packages/sumi-palette/`, and two test fixtures.
 - The file set for this repo matches today's 48,665 within an explained delta.
 - Manifest facts queryable: `folder_commands` shows six folders for this repo.
 - No second walker and no hardcoded manifest filename list exist in the tree.

@@ -139,10 +139,11 @@ directory's subtree, so its facts belong to that folder:
 | language / framework | `stack_labels` | |
 | role | `infer_role` | |
 
-This repo has SIX manifest-bearing folders (root `Cargo.toml` + `Makefile`, and
-`package.json` in `app/`, `dojo/`, `website/`, `marketplace/`), so folder-level
-storage is not a refinement — a repo-level store would collapse four different
-`build` commands into one and lose which directory each runs in.
+MEASURED BY THE STAGE-2 WALK: this repo has **18 manifest-bearing folders**,
+not the six a top-level eyeball suggests — the extra twelve are workspace
+members under `crates/`, `packages/sumi-palette/`, and two test fixtures. So
+folder-level storage is not a refinement: a repo-level store would collapse 18
+command sets into one and lose which directory each `build` runs in.
 
 ### The one genuine gap
 
