@@ -316,3 +316,231 @@ mod tests {
         }
     }
 }
+
+// ── S4/S5/S6b: ONE walk that yields files, manifests and lockfiles ───────
+
+/// Lockfile names, per ecosystem. Stage 2 S6b.
+///
+/// These live here rather than on `ManifestAdapter` for now because the trait
+/// has no lockfile method yet; when it gains `lockfile_filenames()` this
+/// constant is DELETED and the set becomes registry-derived, exactly as the
+/// manifest set already is. Kept in one place so that swap is one edit.
+pub const LOCKFILE_NAMES: &[&str] = &[
+    "Cargo.lock",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+    "poetry.lock",
+    "uv.lock",
+    "Gemfile.lock",
+    "composer.lock",
+    "go.sum",
+    "Package.resolved",
+];
+
+/// Everything one repo walk found. Paths are ABSOLUTE.
+#[derive(Debug, Clone, Default)]
+pub struct RepoScan {
+    pub files: Vec<PathBuf>,
+    pub folders: Vec<PathBuf>,
+    /// Manifests, with the adapter's ecosystem already resolved.
+    pub manifests: Vec<(PathBuf, &'static str)>,
+    pub lockfiles: Vec<PathBuf>,
+    /// Paths the ignore rules excluded, counted so the delta against the old
+    /// scan is explainable rather than mysterious.
+    pub ignored: usize,
+}
+
+impl RepoScan {
+    /// The distinct directories holding a manifest — the input to S6c and the
+    /// grain manifest facts are stored at (D11).
+    pub fn manifest_dirs(&self) -> Vec<PathBuf> {
+        let mut v: Vec<PathBuf> =
+            self.manifests.iter().filter_map(|(p, _)| p.parent().map(Path::to_path_buf)).collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+}
+
+/// Walk one repo root ONCE, collecting the file set and, as each entry passes,
+/// testing it against the manifest registry and the lockfile names (S4, S5,
+/// S6b).
+///
+/// ONE traversal, not three. `scan_repo` already has to visit every file for
+/// the file set, so testing each name costs a string comparison; a separate
+/// manifest glob would re-walk the tree to find ~200 entries AND need its own
+/// exclusion rules, which is a second place for them to drift.
+///
+/// Ignore rules come from the SHARED `build_walker` (S4): `.gitignore`,
+/// `.ignore`, the global gitignore, `.git/info/exclude`, and
+/// `require_git(false)` so they still apply in a non-git directory. Reusing it
+/// is what stops the fs-watcher and the scan disagreeing about what belongs in
+/// the index — a disagreement that previously caused a permanent add/prune
+/// churn loop.
+pub fn scan_repo_files(repo_root: &Path) -> RepoScan {
+    let mut scan = RepoScan::default();
+    for entry in crate::tasks::handlers::helpers::build_walker(repo_root).build() {
+        let Ok(entry) = entry else {
+            scan.ignored += 1;
+            continue;
+        };
+        let path = entry.path();
+        let is_dir = entry.file_type().is_some_and(|t| t.is_dir());
+        if is_dir {
+            scan.folders.push(path.to_path_buf());
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+
+        // Tested as the entry passes — no second traversal.
+        if let Some(a) = crate::adapters::manifest::manifest_adapter_for_filename(name) {
+            scan.manifests.push((path.to_path_buf(), a.ecosystem()));
+        } else if LOCKFILE_NAMES.contains(&name) {
+            scan.lockfiles.push(path.to_path_buf());
+        }
+        scan.files.push(path.to_path_buf());
+    }
+    scan.files.sort();
+    scan.folders.sort();
+    scan.manifests.sort();
+    scan.lockfiles.sort();
+    scan
+}
+
+#[cfg(test)]
+mod walk_tests {
+    use super::*;
+
+    fn touch(root: &Path, rel: &str, body: &str) {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, body).unwrap();
+    }
+
+    fn rels(v: &[PathBuf], base: &Path) -> Vec<String> {
+        v.iter()
+            .filter_map(|p| p.strip_prefix(base).ok())
+            .map(|p| p.to_string_lossy().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn one_walk_yields_files_manifests_and_lockfiles() {
+        // S5/S6b: manifests and lockfiles are recognised AS the file set is
+        // built, not by a second glob.
+        let t = tempfile::tempdir().unwrap();
+        touch(t.path(), "Cargo.toml", "[package]\nname='x'\n");
+        touch(t.path(), "Cargo.lock", "# lock\n");
+        touch(t.path(), "src/main.rs", "fn main() {}");
+        touch(t.path(), "app/package.json", "{\"name\":\"a\"}");
+
+        let scan = scan_repo_files(t.path());
+
+        assert!(rels(&scan.files, t.path()).contains(&"src/main.rs".to_string()));
+        let manifests =
+            rels(&scan.manifests.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>(), t.path());
+        assert!(manifests.contains(&"Cargo.toml".to_string()));
+        assert!(manifests.contains(&"app/package.json".to_string()));
+        assert_eq!(rels(&scan.lockfiles, t.path()), vec!["Cargo.lock"]);
+    }
+
+    #[test]
+    fn a_gitignored_file_is_not_in_the_set() {
+        // S4. The shared walker's rules apply, including in a NON-git
+        // directory (require_git(false)) — which is the case a plain WalkDir
+        // gets wrong and the watcher/scan churn loop came from.
+        let t = tempfile::tempdir().unwrap();
+        touch(t.path(), ".gitignore", "secret.rs\nbuilt/\n");
+        touch(t.path(), "keep.rs", "");
+        touch(t.path(), "secret.rs", "");
+        touch(t.path(), "built/out.rs", "");
+
+        let files = rels(&scan_repo_files(t.path()).files, t.path());
+
+        assert!(files.contains(&"keep.rs".to_string()));
+        assert!(!files.contains(&"secret.rs".to_string()), "gitignored file leaked in");
+        assert!(!files.contains(&"built/out.rs".to_string()), "gitignored dir leaked in");
+    }
+
+    #[test]
+    fn manifest_dirs_are_the_grain_facts_are_stored_at() {
+        // D11: a manifest sits AT a folder, so that folder is the grain. Two
+        // manifests in one directory are ONE directory.
+        let t = tempfile::tempdir().unwrap();
+        touch(t.path(), "Cargo.toml", "");
+        touch(t.path(), "package.json", "{}");
+        touch(t.path(), "app/package.json", "{}");
+
+        let dirs = rels(&scan_repo_files(t.path()).manifest_dirs(), t.path());
+
+        assert_eq!(
+            dirs,
+            vec!["app"],
+            "the root dedupes to an empty relative path, app is distinct"
+        );
+    }
+
+    #[test]
+    fn the_walk_and_the_lockfile_resolver_compose() {
+        // The two halves of S6: the walk finds the candidates, the resolver
+        // picks per manifest. Proven together rather than separately.
+        let t = tempfile::tempdir().unwrap();
+        touch(t.path(), "Cargo.toml", "");
+        touch(t.path(), "Cargo.lock", "");
+        touch(t.path(), "crates/a/Cargo.toml", "");
+        touch(t.path(), "tools/x/Cargo.toml", "");
+        touch(t.path(), "tools/x/Cargo.lock", "");
+
+        let scan = scan_repo_files(t.path());
+        let locks = scan.lockfiles.clone();
+
+        assert_eq!(
+            nearest_lockfile(&t.path().join("crates/a"), t.path(), &["Cargo.lock"], &locks),
+            Some(t.path().join("Cargo.lock")),
+            "a member with no sibling lock walks up"
+        );
+        assert_eq!(
+            nearest_lockfile(&t.path().join("tools/x"), t.path(), &["Cargo.lock"], &locks),
+            Some(t.path().join("tools/x/Cargo.lock")),
+            "its own lock wins over the root's"
+        );
+    }
+}
+
+#[cfg(test)]
+mod corpus_check {
+    use super::*;
+
+    /// Run the walk over THIS repository and print what it found.
+    ///
+    /// `#[ignore]` because it depends on the working tree, not because it is
+    /// unimportant: the spec's numbers (six manifest-bearing folders, the
+    /// three Cargo.lock positions) were measured here, and this is how they
+    /// stay honest. `cargo test -p senseid corpus_check -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn walk_this_repo() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(2)
+            .unwrap()
+            .to_path_buf();
+        let scan = scan_repo_files(&root);
+        println!("root            {}", root.display());
+        println!("files           {}", scan.files.len());
+        println!("folders         {}", scan.folders.len());
+        println!("manifests       {}", scan.manifests.len());
+        println!("manifest dirs   {}", scan.manifest_dirs().len());
+        println!("lockfiles       {}", scan.lockfiles.len());
+        for (p, eco) in &scan.manifests {
+            println!("  manifest {:8} {}", eco, p.strip_prefix(&root).unwrap().display());
+        }
+        for l in &scan.lockfiles {
+            println!("  lock          {}", l.strip_prefix(&root).unwrap().display());
+        }
+    }
+}
