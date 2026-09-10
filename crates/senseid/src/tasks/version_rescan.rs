@@ -108,11 +108,11 @@ pub async fn maybe_rescan_on_version_change(
                         match pg.clear_scan_state_for_root(&rid).await {
                             Ok(n) if n > 0 => tracing::info!(
                                 root = %path,
-                                "version rescan: cleared {n} scan_state rows so the graph re-derives"
+                                "version rescan: cleared {n} files rows so the graph re-derives"
                             ),
                             Ok(_) => {}
                             Err(e) => tracing::warn!(error = %e, root = %path,
-                                "version rescan: clearing scan_state failed; the rescan will skip unchanged files"),
+                                "version rescan: clearing files rows failed; the rescan will skip unchanged files"),
                         }
                     }
                 }
@@ -348,7 +348,7 @@ mod tests {
     /// claimed "the code graph rebuilds under the new binary". Observed
     /// immediately after a fresh install: `process_git_folder: OmniRoute — 0
     /// changed files, 9822 unchanged`. Every indexer fix measured this cycle
-    /// needed a manual `DELETE FROM sensei.scan_state` first, which is the same
+    /// needed a manual `DELETE FROM sensei.files` first, which is the same
     /// admission.
     ///
     /// Breaking mutation: drop the `clear_scan_state_for_root` call and the row
@@ -370,13 +370,12 @@ mod tests {
         // A file the old binary already indexed — the row that makes the next
         // scan skip it.
         pg.upsert_scan_state(&fid, "src/lib.rs", 1, "hash-unchanged").await.unwrap();
-        let before: (i64,) = sqlx_core::query_as::query_as(
-            "SELECT count(*) FROM sensei.scan_state WHERE folder_id = $1",
-        )
-        .bind(fid)
-        .fetch_one(pg.pool())
-        .await
-        .unwrap();
+        let before: (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.files WHERE folder_id = $1")
+                .bind(fid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(before.0, 1, "the gate row must exist before the rescan");
 
         pg.set_config(LAST_VERSION_KEY, "0.0.0-old").await.unwrap();
@@ -386,13 +385,12 @@ mod tests {
             "a version change must trigger a rebuild",
         );
 
-        let after: (i64,) = sqlx_core::query_as::query_as(
-            "SELECT count(*) FROM sensei.scan_state WHERE folder_id = $1",
-        )
-        .bind(fid)
-        .fetch_one(pg.pool())
-        .await
-        .unwrap();
+        let after: (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.files WHERE folder_id = $1")
+                .bind(fid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
         assert_eq!(
             after.0, 0,
             "the version rescan must clear the per-file gate, or the ScanRoot it \

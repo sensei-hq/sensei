@@ -77,7 +77,7 @@ impl PgStore {
         }))
     }
 
-    /// Delete every folder at or under `prefix` (cascade nodes/edges/scan_state).
+    /// Delete every folder at or under `prefix` (cascade nodes/edges/files).
     /// Used when an exclusion is added; the emptied projects are then removed by
     /// [`Self::prune_empty_projects`]. `starts_with` is exact-prefix (no LIKE
     /// wildcard hazard). Returns folders deleted.
@@ -442,7 +442,7 @@ impl PgStore {
         Ok(())
     }
 
-    /// Delete a folder (cascade deletes nodes, edges, scan_state, etc.).
+    /// Delete a folder (cascade deletes nodes, edges, files, etc.).
     pub async fn delete_repo_by_name(&self, name: &str) -> Result<(), String> {
         sqlx_core::query::query(
             "DELETE FROM sensei.folders WHERE name = $1 AND kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind, 'standalone'::sensei.folder_kind)"
@@ -744,13 +744,13 @@ impl PgStore {
     /// `swarco/documentation` is its own checkout (its own remote) sitting inside
     /// the `swarco` repo, so 469 files carry nodes under both folders.
     ///
-    /// KEYED ON NODES, NOT `scan_state`, and that distinction is the whole
-    /// accuracy of this check. A first version compared `scan_state.content_hash`
+    /// KEYED ON NODES, NOT `files`, and that distinction is the whole
+    /// accuracy of this check. A first version compared `files.content_hash`
     /// and reported SEVEN cases; six were false. `heal_nested_standalone_roots`
     /// deletes a mis-scoped root's NODES and re-classifies the folder but leaves
-    /// its `scan_state` rows behind, so a folder that was healed long ago still
+    /// its `files` rows behind, so a folder that was healed long ago still
     /// looks fully duplicated by content while holding a single module container
-    /// node. Measured: `cluster/server` 1 node against 1,970 stale scan_state
+    /// node. Measured: `cluster/server` 1 node against 1,970 stale `files`
     /// rows, `cluster/scheduler` 1 against 1,816, `sensei/marketplace` 1 against
     /// 77. Only `swarco/documentation` (4,311 own nodes) was real.
     ///
@@ -1130,7 +1130,7 @@ impl PgStore {
         reason: Option<crate::classifiers::ScanSkipReason>,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.scan_state(folder_id, file_path, mtime, content_hash, skip_reason)
+            "INSERT INTO sensei.files(folder_id, file_path, mtime, content_hash, skip_reason)
              VALUES($1, $2, $3, $4, $5::sensei.scan_skip_reason)
              ON CONFLICT(folder_id, file_path) DO UPDATE SET mtime = EXCLUDED.mtime, content_hash = EXCLUDED.content_hash, skip_reason = EXCLUDED.skip_reason, indexed_at = now(), modified_at = now()"
         ).bind(folder_id).bind(file_path).bind(mtime).bind(content_hash)
@@ -1148,7 +1148,7 @@ impl PgStore {
         let mut stale = Vec::new();
         for (path, mtime) in current_files {
             let row: Option<(i64,)> = sqlx_core::query_as::query_as(
-                "SELECT mtime FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2",
+                "SELECT mtime FROM sensei.files WHERE folder_id = $1 AND file_path = $2",
             )
             .bind(folder_id)
             .bind(path)
@@ -1164,7 +1164,7 @@ impl PgStore {
         Ok(stale)
     }
 
-    /// Drop every `scan_state` row under a watch root, so the next scan re-derives
+    /// Drop every `files` row under a watch root, so the next scan re-derives
     /// the graph instead of skipping unchanged files. Returns rows cleared.
     ///
     /// This is what makes a version rescan actually rescan. `plan_reindex`
@@ -1175,7 +1175,7 @@ impl PgStore {
     /// new binary", but the fan-out hit that gate and rebuilt nothing: observed
     /// `process_git_folder: OmniRoute — 0 changed files, 9822 unchanged`. Every
     /// measurement of an indexer fix this cycle needed a manual
-    /// `DELETE FROM sensei.scan_state` first, which is the same admission.
+    /// `DELETE FROM sensei.files` first, which is the same admission.
     ///
     /// The number of indexable files this folder had on disk at its last walk —
     /// the DENOMINATOR for deciding whether the folder is fully indexed.
@@ -1204,7 +1204,7 @@ impl PgStore {
     /// that task UNBLOCKED (`analyzer_scheduler.rs:252`), so it can run against a
     /// partially-indexed folder. Completeness derived from persisted per-file
     /// facts is trustworthy instead, but needs something to count against:
-    /// counting only the `scan_state` rows that EXIST is vacuous, because a walk
+    /// counting only the `files` rows that EXIST is vacuous, because a walk
     /// that died at file 40 of 100 leaves 40 decided rows and 60 with no row.
     ///
     /// Writes a single key with `||`, so the folder's identity props
@@ -1235,7 +1235,7 @@ impl PgStore {
     /// change, so an ordinary reconcile keeps its cheap stat-only path.
     pub async fn clear_scan_state_for_root(&self, root_id: &uuid::Uuid) -> Result<u64, String> {
         let res = sqlx_core::query::query(
-            "DELETE FROM sensei.scan_state s USING sensei.folders f \
+            "DELETE FROM sensei.files s USING sensei.folders f \
               WHERE s.folder_id = f.id AND f.root_id = $1",
         )
         .bind(root_id)
@@ -1246,7 +1246,7 @@ impl PgStore {
     }
 
     pub async fn delete_scan_state(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
-        sqlx_core::query::query("DELETE FROM sensei.scan_state WHERE folder_id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.files WHERE folder_id = $1")
             .bind(folder_id)
             .execute(&self.pool)
             .await
@@ -1265,7 +1265,7 @@ impl PgStore {
         folder_id: &uuid::Uuid,
     ) -> Result<Vec<(String, i64, String)>, String> {
         let rows: Vec<(String, i64, String)> = sqlx_core::query_as::query_as(
-            "SELECT file_path, mtime, content_hash FROM sensei.scan_state WHERE folder_id = $1",
+            "SELECT file_path, mtime, content_hash FROM sensei.files WHERE folder_id = $1",
         )
         .bind(folder_id)
         .fetch_all(&self.pool)
@@ -1296,14 +1296,12 @@ impl PgStore {
         folder_id: &uuid::Uuid,
         file_path: &str,
     ) -> Result<(), String> {
-        sqlx_core::query::query(
-            "DELETE FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2",
-        )
-        .bind(folder_id)
-        .bind(file_path)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+        sqlx_core::query::query("DELETE FROM sensei.files WHERE folder_id = $1 AND file_path = $2")
+            .bind(folder_id)
+            .bind(file_path)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 

@@ -1016,7 +1016,7 @@ async fn folder_completeness_propagates_incompleteness_up_the_tree() {
     s.set_folder_expected_files(&child, 0).await.unwrap();
     s.set_folder_expected_files(&grand, 1).await.unwrap();
 
-    // grand's single file is still undecided (no scan_state row at all) — which
+    // grand's single file is still undecided (no `files` row at all) — which
     // is exactly the case a bare "no undecided rows" check gets wrong.
     assert!(!complete!(grand), "a folder short of its denominator is incomplete");
     assert!(!complete!(child), "incompleteness propagates to the parent");
@@ -1044,7 +1044,7 @@ async fn folder_completeness_counts_a_deliberate_skip_as_decided() {
 
     s.set_folder_expected_files(&f, 1).await.unwrap();
     sqlx_core::query::query(
-        "INSERT INTO sensei.scan_state (folder_id, file_path, mtime, content_hash, skip_reason)
+        "INSERT INTO sensei.files (folder_id, file_path, mtime, content_hash, skip_reason)
          VALUES ($1, 'logo.png', 1, 'h', 'binary_content')",
     )
     .bind(f)
@@ -1068,7 +1068,7 @@ async fn folder_completeness_counts_a_deliberate_skip_as_decided() {
 async fn folder_expected_files_round_trips_and_is_the_completeness_denominator() {
     // The denominator for folder completeness, persisted at walk time.
     //
-    // Counting only the scan_state rows that EXIST cannot decide completeness: a
+    // Counting only the `files` rows that EXIST cannot decide completeness: a
     // walk that dies at file 40 of 100 leaves 40 rows all marked decided and 60
     // with no row at all, so "no undecided rows" is vacuously true. The walk is
     // the only place that knows how many files there should be, so it records it.
@@ -1940,7 +1940,7 @@ async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change()
 /// language segment changed. `ON CONFLICT (folder_id, fqn)` cannot see the old
 /// row, so the statement fell through to a raw INSERT and hit
 /// `nodes_unique_identity` — the same file/kind/name/parent/line. That made
-/// process_file fail, which withheld scan_state, which made the reconcile
+/// process_file fail, which withheld the `files` row, which made the reconcile
 /// re-drive the folder every 5 minutes forever with the folder stuck `failed`.
 #[tokio::test]
 async fn upsert_node_by_fqn_adopts_row_when_only_the_fqn_changed() {
@@ -2030,7 +2030,7 @@ async fn upsert_node_by_fqn_adopts_row_when_only_the_fqn_changed() {
 /// fqn)`, re-points row A's file_path to B, collides with row B on
 /// `nodes_unique_identity`, and the `adopt_node_by_identity` recovery then tries
 /// to give row B the fqn row A already owns — violating `nodes_unique_fqn`.
-/// `process_file` returned Err, `fail_folder` withheld scan_state, the reconcile
+/// `process_file` returned Err, `fail_folder` withheld the `files` row, the reconcile
 /// re-drove the folder every tick, and the repo never finished indexing: 112
 /// retries per 200KB of daemon log, folder stuck `failed`.
 ///
@@ -4739,7 +4739,7 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
         .upsert_node(&crate_fid, "struct", "DojoStore", "src/store.rs", None, None, None, None)
         .await
         .unwrap();
-    // Its scan_state too. The heal dropped nodes and re-classified the folder but
+    // Its `files` rows too. The heal dropped nodes and re-classified the folder but
     // left these rows behind, so a folder healed long ago still looked fully
     // indexed by content while holding no content nodes. Measured live:
     // `cluster/server` 1 node against 1,970 stale rows, `cluster/scheduler`
@@ -4773,18 +4773,17 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
             .unwrap();
     assert!(!node_exists, "the mis-scoped root's own nodes should be pruned");
 
-    // AND its scan_state, which describes an indexing unit that no longer
+    // AND its `files` rows, which describe an indexing unit that no longer
     // exists. Leaving it made the folder look fully indexed by content while
     // holding no content nodes — the residue that produced six false positives
     // in the contained-duplicate check.
-    let (stale_rows,): (i64,) = sqlx_core::query_as::query_as(
-        "SELECT count(*) FROM sensei.scan_state WHERE folder_id = $1",
-    )
-    .bind(crate_fid)
-    .fetch_one(s.pool())
-    .await
-    .unwrap();
-    assert_eq!(stale_rows, 0, "the mis-scoped root's scan_state must go with its nodes");
+    let (stale_rows,): (i64,) =
+        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.files WHERE folder_id = $1")
+            .bind(crate_fid)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(stale_rows, 0, "the mis-scoped root's `files` rows must go with its nodes");
 
     // The phantom project (lived entirely inside the repo) is gone.
     let (phantom_exists,): (bool,) =
@@ -10135,16 +10134,16 @@ async fn repositories_schema_invariants() {
 /// A folder registered INSIDE another, where BOTH hold nodes for the same files,
 /// is reported — and a nested folder whose nodes were already healed away is NOT.
 ///
-/// Keyed on NODES, not `scan_state`, and that is the whole accuracy of the check.
-/// A first version compared `scan_state.content_hash` and reported seven cases on
+/// Keyed on NODES, not `files`, and that is the whole accuracy of the check.
+/// A first version compared `files.content_hash` and reported seven cases on
 /// the live index; SIX were false. `heal_nested_standalone_roots` deletes a
 /// mis-scoped root's nodes and re-classifies the folder but leaves its
-/// `scan_state` rows, so a folder healed long ago still looks fully duplicated by
+/// `files` rows, so a folder healed long ago still looks fully duplicated by
 /// content while holding one module-container node — `cluster/server` measured 1
-/// node against 1,970 stale scan_state rows. Only `swarco/documentation`
+/// node against 1,970 stale `files` rows. Only `swarco/documentation`
 /// (its own git checkout, 4,311 nodes inside the `swarco` repo) was real.
 ///
-/// Breaking mutation: key the query on `scan_state` again, or drop the
+/// Breaking mutation: key the query on `files` again, or drop the
 /// `file_path` correspondence between outer and inner — the healed folder is
 /// reported and the check goes back to being six-sevenths noise.
 #[tokio::test]
@@ -10160,7 +10159,7 @@ async fn a_nested_folder_whose_files_are_indexed_twice_is_reported_but_a_healed_
     let dup =
         s.upsert_repo_kind(&root_id, "git", "dup", &format!("{base}/outer/dup")).await.unwrap();
     // Nested, but HEALED: its content nodes were deleted, leaving only a module
-    // container. Stale scan_state alone must not resurrect it as a duplicate.
+    // container. Stale `files` rows alone must not resurrect it as a duplicate.
     let healed = s
         .upsert_repo_kind(&root_id, "git", "healed", &format!("{base}/outer/healed"))
         .await
@@ -10205,7 +10204,7 @@ async fn a_nested_folder_whose_files_are_indexed_twice_is_reported_but_a_healed_
         )
         .await
         .unwrap();
-        // The healed one holds stale scan_state but NO content nodes.
+        // The healed one holds stale `files` rows but NO content nodes.
         s.upsert_scan_state(&healed, &format!("f{i}.rs"), 1, &format!("hash-{tag}-{i}"))
             .await
             .unwrap();
@@ -10228,7 +10227,7 @@ async fn a_nested_folder_whose_files_are_indexed_twice_is_reported_but_a_healed_
 
     assert!(
         !dups.iter().any(|(_, i, _, _)| i.ends_with("/outer/healed")),
-        "a healed folder carries stale scan_state but no duplicate nodes: {dups:?}"
+        "a healed folder carries stale `files` rows but no duplicate nodes: {dups:?}"
     );
 }
 

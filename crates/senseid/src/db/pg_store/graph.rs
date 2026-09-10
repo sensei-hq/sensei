@@ -713,8 +713,8 @@ impl PgStore {
                 // was already indexed — e.g. the module container's fqn language
                 // segment is derived from the parse output, so it flips when a parse
                 // stops yielding top-level defs. Without this branch the write fails
-                // forever: process_file returns Err, fail_folder withholds
-                // scan_state, the reconcile re-drives the folder every tick, and the
+                // forever: process_file returns Err, fail_folder withholds the
+                // `files` row, the reconcile re-drives the folder every tick, and the
                 // folder never leaves `failed`.
                 //
                 // Adopt the existing row by re-pointing its fqn at the new value.
@@ -756,8 +756,8 @@ impl PgStore {
                     // declarations, 26 colliding, all 26 `val`.
                     //
                     // Erroring here was a POISON PILL, not a safeguard:
-                    // `process_file` returned Err, `fail_folder` withheld
-                    // `scan_state`, the reconcile re-drove the folder every tick,
+                    // `process_file` returned Err, `fail_folder` withheld the
+                    // `files` row, the reconcile re-drove the folder every tick,
                     // and the whole repo never finished indexing.
                     // Reuses the existing `node_id_by_fqn`. A holder that the
                     // constraint just reported but the SELECT cannot find is a

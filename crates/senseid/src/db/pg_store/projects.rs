@@ -571,12 +571,12 @@ impl PgStore {
         let mut healed = 0u64;
         for (s_id, s_pid, g_id, g_pid, g_root, g_abs) in pairs {
             // 1. Drop the mis-scoped root's own nodes (repo re-indexes the subtree)
-            //    AND its scan_state, which describes an indexing unit that stops
+            //    AND its `files` rows, which describe an indexing unit that stops
             //    existing the moment step 2 re-classifies the folder.
             //
             //    Leaving those rows behind was a real defect, not housekeeping. A
             //    folder healed long ago still looked fully indexed BY CONTENT while
-            //    holding no content nodes, because `scan_state` is where per-file
+            //    holding no content nodes, because `files` is where per-file
             //    content hashes live. Measured live: `cluster/server` 1 node
             //    against 1,970 stale rows, `cluster/scheduler` 1/1,816,
             //    `cluster/web-portal` 1/912, `sensei/marketplace` 1/77 — enough to

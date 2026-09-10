@@ -206,7 +206,7 @@ impl ScanRules {
 }
 
 /// Why the indexer examined a file but deliberately did not index it. Mirrors
-/// the `sensei.scan_skip_reason` enum; persisted on the file's `scan_state` row
+/// the `sensei.scan_skip_reason` enum; persisted on the file's `sensei.files` row
 /// so the skip is recorded WITH its fingerprint. That pairing is what stops a
 /// skipped file being re-enqueued on every reconcile, and it makes the skip
 /// self-healing: fixing the file changes its fingerprint, so it is re-attempted.

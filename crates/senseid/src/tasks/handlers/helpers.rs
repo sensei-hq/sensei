@@ -26,7 +26,7 @@ pub(crate) fn file_mtime_ms(path: &std::path::Path) -> Option<i64> {
 }
 
 /// SHA-256 hex of a file's bytes — the authoritative content-change signal
-/// recorded in `scan_state`. This is the ONLY read the change-detection does,
+/// recorded in `sensei.files`. This is the ONLY read the change-detection does,
 /// and it runs only for files the cheap mtime gate flagged as candidates (an
 /// unchanged file is never hashed). Returns `None` if the file can't be read.
 pub(crate) fn hash_file(path: &std::path::Path) -> Option<String> {
@@ -39,7 +39,7 @@ pub(crate) fn hash_file(path: &std::path::Path) -> Option<String> {
 
 /// Incremental-index fingerprint: `(mtime_ms, sha256_hex)`. The mtime gates
 /// re-indexing cheaply; the content hash is the authoritative change signal
-/// recorded in `scan_state`. Returns `None` if the file can't be read.
+/// recorded in `sensei.files`. Returns `None` if the file can't be read.
 pub(crate) fn file_fingerprint(path: &std::path::Path) -> Option<(i64, String)> {
     let mtime = file_mtime_ms(path)?;
     let hash = hash_file(path)?;
@@ -88,7 +88,7 @@ fn sniff_content(path: &std::path::Path) -> Option<ScanSkipReason> {
 /// Decide whether a file can be indexed as source text, and if not, why.
 ///
 /// `None` means "index it". `Some(reason)` is recorded on the file's
-/// `scan_state` row together with its fingerprint, so the skip sticks across
+/// `sensei.files` row together with its fingerprint, so the skip sticks across
 /// reconciles instead of the file looking changed forever. The extension test
 /// comes first because it is a pure string compare — the content sniff only
 /// reads the head of files the cheap test didn't already settle.
