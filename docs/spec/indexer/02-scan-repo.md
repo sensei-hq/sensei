@@ -52,6 +52,20 @@ string literals.
   already the shape (`folder_commands.folder_id` after stage 0's D11 rename).
 - **S7** (R14). Create ALL folder and file rows, then stop. Enqueuing parse
   tasks is stage 3's barrier, not this stage's.
+- **S8** (02b S11). `find_libraries` extends the same manifest pass: for each
+  `DepVersion` that is NOT a local sibling, enqueue `(ecosystem, name,
+  version)` for stage 2b — but ONLY if that exact version has no content yet.
+  Three constraints, all of which hold today and must not be relaxed:
+  - **This stage stays OFFLINE.** `parse_dependencies` is sync and takes
+    content. The fetch origin needs the registry, so the TASK resolves it;
+    this stage carries it only when already cached. Network here would put
+    I/O in front of the structure barrier and break a scan with no
+    connectivity.
+  - **DIRECT dependencies only** — guaranteed by reading the MANIFEST, never
+    the lockfile. Do not add lockfile parsing to get exact pins; 927 of 1,001
+    versions are already exact, and the cost is the whole transitive tree.
+  - **`DepVersion.source` is the manifest filename**, not the fetch origin.
+    Do not reuse the name.
 
 ## 4. Failure modes
 
