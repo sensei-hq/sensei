@@ -88,7 +88,7 @@ pub(crate) fn cargo_local_source(dep_value: &toml::Value) -> Option<String> {
 /// Emits one `DepVersion` per (name, section) pair across `dependencies`,
 /// `devDependencies`, and `peerDependencies`. Local-protocol versions
 /// (`link:`, `workspace:`, `file:`) are tagged via `local_source` so the
-/// caller can route them to `project_dependencies` instead of writing them
+/// caller can route them to `folder_dependencies` instead of writing them
 /// as external libraries.
 pub(crate) fn parse_npm_deps(pkg: &serde_json::Value) -> Vec<DepVersion> {
     let mut out = Vec::new();
@@ -187,7 +187,7 @@ pub struct DepVersion {
     /// When the dep resolves to a local sibling (npm `link:`, `workspace:`,
     /// `file:`; Cargo `path=`), the payload after the protocol prefix (or the
     /// path string for Cargo). `None` for registry / git / http deps. The
-    /// writer routes `Some(_)` deps to `project_dependencies` and skips the
+    /// writer routes `Some(_)` deps to `folder_dependencies` and skips the
     /// external-library upsert.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_source: Option<String>,
@@ -969,7 +969,7 @@ mod tests {
     // ── local-source detection (1a Step 2) ─────────────────────────────
     //
     // Local-protocol deps (npm `link:`/`workspace:`/`file:`, Cargo `path=`)
-    // must be tagged so extract_deps routes them to project_dependencies
+    // must be tagged so extract_deps routes them to folder_dependencies
     // instead of writing them as external libraries.
 
     #[test]

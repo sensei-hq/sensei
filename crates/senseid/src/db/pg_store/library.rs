@@ -743,37 +743,45 @@ impl PgStore {
         Ok(())
     }
 
-    /// Upsert a project → project edge into `sensei.project_dependencies`.
+    /// Upsert a folder → folder edge into `sensei.folder_dependencies` (D11).
     ///
     /// Called from `extract_deps` when a `link:` / `workspace:` / `file:` /
-    /// `path=` dep resolves to a sibling folder that belongs to a DIFFERENT
-    /// project than the declaring folder. Idempotent on the composite PK
-    /// `(from_project_id, to_project_id, from_folder_id, source_manifest)`.
-    pub async fn upsert_project_dependency(
+    /// `path=` dep resolves to a sibling folder. Idempotent on the composite PK
+    /// `(from_folder_id, to_folder_id, source_manifest)`.
+    ///
+    /// REGRAINED from a project → project edge, and that fixed a real gap: the
+    /// old writer only recorded an edge when the two folders belonged to
+    /// DIFFERENT projects, so a monorepo's crates depending on each other were
+    /// silently dropped. Measured on this repo — all 384 folders share one
+    /// project, so every `path=` dep between the 8 workspace members was
+    /// discarded and the table held 0 rows while the feature was live and
+    /// tested. A project-level answer is now a VIEW over this, derivable via
+    /// `folders.project_id`.
+    pub async fn upsert_folder_dependency(
         &self,
-        from_project_id: &uuid::Uuid,
-        to_project_id: &uuid::Uuid,
         from_folder_id: &uuid::Uuid,
+        to_folder_id: &uuid::Uuid,
         source_protocol: &str,
         source_manifest: &str,
         resolved_target: Option<&str>,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.project_dependencies
-                (from_project_id, to_project_id, from_folder_id, source_protocol, source_manifest, resolved_target)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (from_project_id, to_project_id, from_folder_id, source_manifest) DO UPDATE SET
+            "INSERT INTO sensei.folder_dependencies
+                (from_folder_id, to_folder_id, source_protocol, source_manifest, resolved_target)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (from_folder_id, to_folder_id, source_manifest) DO UPDATE SET
                source_protocol = EXCLUDED.source_protocol,
                resolved_target = EXCLUDED.resolved_target,
-               modified_at = now()"
+               modified_at = now()",
         )
-            .bind(from_project_id)
-            .bind(to_project_id)
-            .bind(from_folder_id)
-            .bind(source_protocol)
-            .bind(source_manifest)
-            .bind(resolved_target)
-            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        .bind(from_folder_id)
+        .bind(to_folder_id)
+        .bind(source_protocol)
+        .bind(source_manifest)
+        .bind(resolved_target)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -913,28 +921,43 @@ impl PgStore {
             .collect())
     }
 
-    /// List outgoing project → project edges for a project.
+    /// List outgoing dependency edges for a project, DERIVED from the
+    /// folder-grained `folder_dependencies` (D11).
     ///
-    /// Returns one row per edge with the target project's name joined in.
-    /// Sorted by target project name for stable UI ordering.
+    /// The stored fact is folder → folder; a project-level answer is this
+    /// join, never a stored aggregate — a stored one can disagree with the
+    /// manifest it came from. `to_project_id` may therefore be NULL (a target
+    /// folder belonging to no project is still a real dependency), and an edge
+    /// whose two folders sit in the SAME project is now included, having been
+    /// silently dropped before the regrain.
+    ///
+    /// Returns one row per edge. Sorted for stable UI ordering.
     pub async fn list_project_dependencies(
         &self,
         project_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, uuid::Uuid, String, String, Option<String>, String)> =
-            sqlx_core::query_as::query_as(
-                "SELECT to_p.id, to_p.name, pd.from_folder_id, pd.source_protocol,
-                        pd.source_manifest, pd.resolved_target, from_f.name
-                   FROM sensei.project_dependencies pd
-                   JOIN sensei.projects to_p   ON to_p.id   = pd.to_project_id
-                   JOIN sensei.folders  from_f ON from_f.id = pd.from_folder_id
-                  WHERE pd.from_project_id = $1
-                  ORDER BY to_p.name, from_f.name, pd.source_manifest",
-            )
-            .bind(project_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        let rows: Vec<(
+            Option<uuid::Uuid>,
+            Option<String>,
+            uuid::Uuid,
+            String,
+            String,
+            Option<String>,
+            String,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT to_p.id, to_p.name, fd.from_folder_id, fd.source_protocol,
+                        fd.source_manifest, fd.resolved_target, from_f.name
+                   FROM sensei.folder_dependencies fd
+                   JOIN sensei.folders  from_f ON from_f.id = fd.from_folder_id
+                   JOIN sensei.folders  to_f   ON to_f.id   = fd.to_folder_id
+              LEFT JOIN sensei.projects to_p   ON to_p.id   = to_f.project_id
+                  WHERE from_f.project_id = $1
+                  ORDER BY to_p.name NULLS LAST, from_f.name, fd.source_manifest",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
         Ok(rows
             .into_iter()

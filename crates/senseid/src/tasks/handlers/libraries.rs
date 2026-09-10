@@ -444,17 +444,24 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         if let Some(target) = &dep.local_source {
             let protocol = local_source_protocol(&dep.source, &dep.raw_version);
             let resolved = resolve_local_target(repo_path, protocol, target);
-            if let Some(pid) = project_id
-                && let Some(abs_target) = resolved.as_ref().and_then(|p| p.to_str())
+            // FOLDER -> FOLDER (D11). The target folder is already in hand, so
+            // this no longer reaches through it to a project id. Two guards
+            // went away with the regrain and their loss is the point: the old
+            // code required `project_id` to be Some and the two projects to
+            // DIFFER, which discarded every intra-project edge — measured, all
+            // 384 folders of this repo share one project, so all 8 workspace
+            // members' `path=` deps were dropped and the table stayed empty.
+            // Only the self-edge check remains, mirroring the table's CHECK so
+            // the common case fails without a round trip.
+            if let Some(abs_target) = resolved.as_ref().and_then(|p| p.to_str())
                 && let Ok(Some(target_folder)) = ctx.pg().get_repo_by_path(abs_target).await
-                && let Some(to_pid) = crate::api::util::json_uuid(&target_folder["project_id"])
-                && to_pid != pid
+                && let Some(to_folder_id) = crate::api::util::json_uuid(&target_folder["id"])
+                && to_folder_id != folder_id
                 && let Err(e) = ctx
                     .pg()
-                    .upsert_project_dependency(
-                        &pid,
-                        &to_pid,
+                    .upsert_folder_dependency(
                         &folder_id,
+                        &to_folder_id,
                         protocol,
                         &dep.source,
                         Some(target),
@@ -463,7 +470,7 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             {
                 tracing::warn!(
                     error = %e, lib = %dep.lib_name, folder = %folder_name,
-                    "extract_deps: upsert_project_dependency failed"
+                    "extract_deps: upsert_folder_dependency failed"
                 );
             }
             if resolved.is_some() {
