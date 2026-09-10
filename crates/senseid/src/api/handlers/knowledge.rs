@@ -123,7 +123,7 @@ pub(crate) struct ContextQuery {
     pub project_id: Option<String>,
     /// Project name OR UUID — the shape the sensei MCP proxy sends, since
     /// `resolve_project` yields a name. Resolved daemon-side to the UUID via the
-    /// shared `resolve_project_uuid`, mirroring `get_project_commands`.
+    /// shared `resolve_project_uuid`, mirroring `get_folder_commands`.
     pub project: Option<String>,
     pub limit: Option<i64>,
     pub tags: Option<String>,
