@@ -33,11 +33,28 @@ Keep it only as the historical record of how the Rust steps were first drafted.
 | 7 | `spec/indexer/07-reconcile.md` | claim diff, dirty vs delete, cascade ordering | 6 |
 | 8 | `spec/indexer/08-progress.md` | extend `TaskEvent` SSE for the new stages | 3 (usable from there) |
 | 9 | `spec/indexer/09-incremental.md` | changed files -> repos, the inverse traversal | 7 |
-| 10 | `spec/indexer/10-cutover.md` | differential harness, switch rust only, retire v1 | 9 |
+| 10 | `spec/indexer/10-cutover.md` | differential harness, **WIPE + rebuild the code graph (D13)**, switch rust only, retire v1 | 9 |
 
 Steps 1-3 can be verified without any parsing at all. Step 4 needs no database.
 Only 6 onward touch persistence. That is deliberate — it front-loads everything
 cheap to test.
+
+### D13: SCHEMA is migrated, DATA is rebuilt
+
+**No stage migrates rows in `nodes` or `edges`.** The identity grammar changed
+— 194,355 of 194,376 existing fqns carry no reach segment, and reach cannot be
+derived without re-parsing — so the code graph is TRUNCATED and rebuilt at
+stage 10, not healed in place.
+
+Every stage before 10 therefore changes SCHEMA only, because schema defines
+the shape v2 writes into and must be right before cutover. A backfill on
+`nodes`/`edges` is waste: cutover deletes it. D12's 21,928-row backfill was
+withdrawn on exactly this ground, and it could not have produced a correct
+value anyway.
+
+This does NOT extend to library data. Libraries, their versions, pages,
+skills and agents come from registries and manifests rather than from
+parsing, so S7b's migration is real work the wipe does not obviate.
 
 ### Why stage 0 takes ALL the DDL, not just the files migration
 

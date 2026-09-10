@@ -1788,6 +1788,15 @@ what is derivable — the failure R10.7e names. `nodes_unique_fqn` is
 `btree (folder_id, fqn)`, so a folder-scoped prefix test still uses the index
 for the folder equality; the lookup does not regress.
 
+**D12's BACKFILL IS WITHDRAWN by D13.** The 21,928 rows are deleted at
+cutover, so migrating them is work spent on data destined for the bin — and
+it could not have produced the right answer anyway: the "real kind" of a
+`lib_symbol` is only knowable by re-parsing. Every row would have become
+`unknown`. What remains of D12 is the ENUM change and the view swap, and both
+get CHEAPER after the wipe: an enum value cannot be dropped while rows use
+it, so wipe-then-drop removes the backfill entirely and leaves a plain type
+swap. Read D13 before doing anything in this decision.
+
 **Cost, measured and NOT small: 111 references across the tree** — heaviest in
 `db/pg_store/{tests,graph}.rs`, `tasks/handlers/process.rs`, `graph_facts.rs`,
 `languages/import_target.rs` — plus `nodes.ddl`, the `graph_nodes` and
@@ -1795,3 +1804,49 @@ for the folder equality; the lookup does not regress.
 of stage 0's enum work put together, and it is a code migration rather than
 pure DDL. It is sequenced there anyway because the alternative is letting the
 v2 walk write `lib_symbol` and migrating twice.
+
+**D13.** **THE CODE GRAPH IS WIPED AND REBUILT AT CUTOVER, NOT MIGRATED.**
+`TRUNCATE sensei.nodes, sensei.edges` (cascading `symbol_names` and the
+community assignments), then a full v2 re-index. This is a stage 10 step.
+
+**The identity grammar changed, so migration is not merely expensive — it is
+impossible.** Measured: **194,355 of 194,376 fqns carry no reach segment at
+all.**
+
+    rust·booksmith-cli·Cli·parse                  what exists today
+    rust·booksmith-cli·<module>·Cli·parse·item    what v2 mints
+
+There is no function from the left to the right. `reach` is a property of USE
+SYNTAX and the `<module>` segment comes from the file's module path; both
+require re-parsing the source. So a v2 index over the existing graph does not
+heal it — the merge contract never matches, and v2 creates a SECOND, disjoint
+graph beside the first. Two more populations confirm the same conclusion from
+different directions: **0 field and enum_variant nodes** exist because the
+walk never emitted them, and the real kind of the **18,240 `lib_symbol`** rows
+is unknowable without re-parsing.
+
+**TIMING IS THE WHOLE DECISION, and it is not "now".** v2 has no caller. A
+wipe today is re-indexed by V1, reproducing the identical old grammar, at a
+cost of **326,716 embeddings**. The wipe only pays the moment v2 is the
+writer.
+
+What is destroyed and rebuilt: **386,884 nodes, 810,216 edges, 134,866
+symbol_names, 326,716 embeddings**, and `inference.drift_items` (1,727 rows —
+`doc_node_id` CASCADEs, `code_node_id` nulls; the one non-obvious casualty).
+
+What SURVIVES, because it is not parsed from source: **68 repositories, 9,378
+folders, 48,665 files, 1,121 libraries, 146 library content rows, 572
+commands.** Library data comes from registries and manifests, so S7b's
+`library_versions` migration is real work that the wipe does not obviate — do
+not conflate "indexed data" with "everything in the sensei schema".
+
+**The consequence for every earlier stage: SCHEMA changes stay, DATA
+migrations on `nodes`/`edges` are dropped.** Schema defines the shape v2
+writes into and must be right before cutover. Backfilling rows that cutover
+deletes is waste, and in D12's case waste that could not have produced a
+correct value. Applies to D12's 21,928-row backfill (withdrawn) and to any
+future temptation to repair the existing graph in place.
+
+The one real cost to plan for: **re-embedding 326,716 nodes.** It is incurred
+once either way, but stage 10 depends on the embedding backfill actually
+sustaining that volume — verify that before cutover rather than during it.
