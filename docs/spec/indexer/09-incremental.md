@@ -59,6 +59,36 @@ makes the longest-prefix rule testable without a filesystem.
   `build_walker`. The fs-watcher receives raw FSEvents that know nothing about
   `.gitignore`; a documented add/prune churn loop was caused by the watcher and
   the scan disagreeing about what belongs in the index.
+- **S9.** **A changed MANIFEST or LOCKFILE retriggers the manifest pass** (02
+  S5–S6d). A dependency change is invisible to the file-parse path: no `.rs`
+  or `.ts` file changed, so nothing else notices, and the graph keeps
+  yesterday's dependency set until a full re-scan happens to run.
+- **S10.** **THE FAN-OUT IS ASYMMETRIC, and this is the part to get right.**
+
+  | changed | retrigger |
+  |---|---|
+  | a manifest (`Cargo.toml`, `package.json`) | THAT folder only |
+  | a lockfile | **EVERY folder whose manifest resolves to it** (02 S6c) |
+
+  A lockfile serves a subtree, so a change to it changes the pins of every
+  manifest below that has no nearer lock. Measured here: a change to
+  `/Cargo.lock` retriggers **9 manifests** — the root plus 8 workspace
+  members under `crates/`. A change to `app/src-tauri/Cargo.lock` retriggers
+  exactly 1.
+
+  Getting this wrong is silent in the direction that matters: retrigger only
+  the lockfile's own folder and eight crates keep stale pins, with nothing
+  counting them. Compute the served set with the SAME resolution function
+  stage 2 uses (S6c) — inverted, not reimplemented. Two implementations of
+  "which manifests does this lockfile serve" will disagree.
+
+- **S11.** A manifest or lockfile change does **NOT** re-parse source files.
+  The dependency set changed; the code did not. Re-parsing 48,646 files
+  because a version bumped is the waste R14's structure/work split exists to
+  avoid. The exception is a PACKAGE RENAME, which changes every fqn in the
+  package and is already a full re-index by R10.5 — detected by the manifest
+  reader comparing `name` against what the graph was built with, not by this
+  stage.
 
 ## 4. Failure modes
 
@@ -84,6 +114,11 @@ makes the longest-prefix rule testable without a filesystem.
 | a removed file goes to reconcile, not `DELETE` | replace the reconcile call |
 | a folder deletion becomes N file reconciles | issue a prefix delete |
 | a `.gitignore`d path that reaches the watcher is skipped | bypass `build_walker` |
+| a changed `Cargo.toml` retriggers the manifest pass for ITS folder only | retrigger the whole repo |
+| a changed `/Cargo.lock` retriggers all 9 manifests it serves, not just the root | retrigger only the lockfile's own folder — 8 crates keep stale pins and nothing counts them |
+| a changed `app/src-tauri/Cargo.lock` retriggers 1, and the root's 9 are untouched | resolve to the repo-root lockfile instead of the nearest |
+| a manifest/lockfile change re-parses ZERO source files | trigger a re-index on a version bump |
+| the served-set computation calls stage 2's resolver, inverted — not a second copy | write a second "which manifests does this lock serve" |
 | an unchanged hash with a moved `mtime` does NOT re-parse | re-parse on `mtime` |
 
 Uses the mutation fixture from stage 7 — a temp git repo the test builds and
