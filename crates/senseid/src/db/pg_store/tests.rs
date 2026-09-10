@@ -5476,33 +5476,23 @@ async fn library_upsert_and_get() {
 }
 
 #[tokio::test]
-async fn upsert_project_dependency_is_idempotent_and_stores_all_columns() {
-    // 1a Step 5: project → project edges must be idempotent on the
-    // composite PK (from_project, to_project, from_folder, source_manifest)
-    // and must preserve source_protocol and resolved_target across upserts.
+async fn upsert_folder_dependency_is_idempotent_and_stores_all_columns() {
+    // D11: folder → folder edges must be idempotent on the composite PK
+    // (from_folder, to_folder, source_manifest) and must preserve
+    // source_protocol and resolved_target across upserts.
     let s = pg_store().await;
-    let from_pid =
-        s.ensure_test_project(&format!("dep-from-{}", uuid::Uuid::new_v4())).await.unwrap();
-    let to_pid = s.ensure_test_project(&format!("dep-to-{}", uuid::Uuid::new_v4())).await.unwrap();
-    let from_fid = create_test_folder(&s, &format!("pd-{}", uuid::Uuid::new_v4())).await;
+    let from_fid = create_test_folder(&s, &format!("fd-from-{}", uuid::Uuid::new_v4())).await;
+    let to_fid = create_test_folder(&s, &format!("fd-to-{}", uuid::Uuid::new_v4())).await;
 
     // First upsert
-    s.upsert_project_dependency(
-        &from_pid,
-        &to_pid,
-        &from_fid,
-        "link",
-        "package.json",
-        Some("../actions"),
-    )
-    .await
-    .unwrap();
+    s.upsert_folder_dependency(&from_fid, &to_fid, "link", "package.json", Some("../actions"))
+        .await
+        .unwrap();
     // Repeat with a different resolved_target — same PK, so this must
     // update in place (last-writer wins on non-key columns).
-    s.upsert_project_dependency(
-        &from_pid,
-        &to_pid,
+    s.upsert_folder_dependency(
         &from_fid,
+        &to_fid,
         "link",
         "package.json",
         Some("../actions-renamed"),
@@ -5513,12 +5503,11 @@ async fn upsert_project_dependency_is_idempotent_and_stores_all_columns() {
     use sqlx_core::query_as::query_as;
     let rows: Vec<(String, Option<String>)> = query_as(
         "SELECT source_protocol, resolved_target
-               FROM sensei.project_dependencies
-              WHERE from_project_id = $1 AND to_project_id = $2 AND from_folder_id = $3",
+               FROM sensei.folder_dependencies
+              WHERE from_folder_id = $1 AND to_folder_id = $2",
     )
-    .bind(from_pid)
-    .bind(to_pid)
     .bind(from_fid)
+    .bind(to_fid)
     .fetch_all(s.pool())
     .await
     .unwrap();
@@ -5528,13 +5517,11 @@ async fn upsert_project_dependency_is_idempotent_and_stores_all_columns() {
     assert_eq!(rows[0].1.as_deref(), Some("../actions-renamed"), "target updated in place");
 
     // Cleanup
-    sqlx_core::query::query("DELETE FROM sensei.project_dependencies WHERE from_folder_id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.folder_dependencies WHERE from_folder_id = $1")
         .bind(from_fid)
         .execute(s.pool())
         .await
         .unwrap();
-    s.delete_project(&from_pid).await.ok();
-    s.delete_project(&to_pid).await.ok();
 }
 
 #[tokio::test]
@@ -5603,24 +5590,18 @@ async fn version_conflicts_view_flags_multi_version_pins_and_excludes_local() {
 
 #[tokio::test]
 async fn list_project_dependencies_joins_target_name_and_folder() {
-    // 1a Step 6: the list endpoint returns each outgoing edge with the
-    // TARGET project's name and the source folder's name joined in.
+    // D11: the stored edge is folder -> folder; the project-level answer is
+    // DERIVED by joining both folders to their projects. This test proves the
+    // derivation, which is why both folders must be wired to a project.
     let s = pg_store().await;
     let suffix = uuid::Uuid::new_v4();
-    let from_pid = s.ensure_test_project(&format!("lpd-from-{suffix}")).await.unwrap();
-    let to_pid = s.ensure_test_project(&format!("lpd-to-{suffix}")).await.unwrap();
-    let from_fid = create_test_folder(&s, &format!("lpd-fid-{suffix}")).await;
+    let (from_pid, from_fid) =
+        create_test_project_and_folder(&s, &format!("lpd-from-{suffix}")).await;
+    let (to_pid, to_fid) = create_test_project_and_folder(&s, &format!("lpd-to-{suffix}")).await;
 
-    s.upsert_project_dependency(
-        &from_pid,
-        &to_pid,
-        &from_fid,
-        "link",
-        "package.json",
-        Some("../actions"),
-    )
-    .await
-    .unwrap();
+    s.upsert_folder_dependency(&from_fid, &to_fid, "link", "package.json", Some("../actions"))
+        .await
+        .unwrap();
 
     let deps = s.list_project_dependencies(&from_pid).await.unwrap();
 
@@ -5632,7 +5613,7 @@ async fn list_project_dependencies_joins_target_name_and_folder() {
         "target project name must be joined in"
     );
     assert!(
-        d["from_folder"].as_str().unwrap().starts_with("lpd-fid-"),
+        d["from_folder"].as_str().unwrap().starts_with("lpd-from-"),
         "source folder name must be joined in"
     );
     assert_eq!(d["source_protocol"], "link");
@@ -5643,7 +5624,7 @@ async fn list_project_dependencies_joins_target_name_and_folder() {
     let none = s.list_project_dependencies(&to_pid).await.unwrap();
     assert!(none.is_empty(), "target project has no outgoing edges");
 
-    sqlx_core::query::query("DELETE FROM sensei.project_dependencies WHERE from_folder_id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.folder_dependencies WHERE from_folder_id = $1")
         .bind(from_fid)
         .execute(s.pool())
         .await
@@ -5653,19 +5634,50 @@ async fn list_project_dependencies_joins_target_name_and_folder() {
 }
 
 #[tokio::test]
-async fn upsert_project_dependency_rejects_self_edges() {
-    // 1a Step 5: DDL check constraint (from_project_id <> to_project_id)
-    // must reject self-edges at the write path.
+async fn folder_dependency_records_an_intra_project_edge() {
+    // THE REGRAIN'S REASON (D11). The old project-grained writer skipped an
+    // edge whenever both folders sat in ONE project, which silently dropped
+    // every monorepo workspace dependency — measured, all 384 folders of this
+    // repo share one project, so the table held 0 rows while the feature was
+    // live and tested. Folder-graining must record it.
     let s = pg_store().await;
-    let pid = s.ensure_test_project(&format!("self-{}", uuid::Uuid::new_v4())).await.unwrap();
+    let suffix = uuid::Uuid::new_v4();
+    let (pid, from_fid) = create_test_project_and_folder(&s, &format!("intra-a-{suffix}")).await;
+    let to_fid = create_test_folder(&s, &format!("intra-b-{suffix}")).await;
+    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
+        .bind(pid)
+        .bind(to_fid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    s.upsert_folder_dependency(&from_fid, &to_fid, "path", "Cargo.toml", Some("../b"))
+        .await
+        .unwrap();
+
+    let deps = s.list_project_dependencies(&pid).await.unwrap();
+    assert_eq!(deps.len(), 1, "an intra-project folder edge MUST be recorded, not skipped");
+    assert_eq!(deps[0]["to_project_id"].as_str().unwrap(), pid.to_string());
+
+    sqlx_core::query::query("DELETE FROM sensei.folder_dependencies WHERE from_folder_id = $1")
+        .bind(from_fid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    s.delete_project(&pid).await.ok();
+}
+
+#[tokio::test]
+async fn upsert_folder_dependency_rejects_self_edges() {
+    // D11: the CHECK (from_folder_id <> to_folder_id) must reject a self-edge
+    // at the write path.
+    let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("self-fid-{}", uuid::Uuid::new_v4())).await;
 
-    let err = s.upsert_project_dependency(&pid, &pid, &fid, "path", "Cargo.toml", Some(".")).await;
+    let err = s.upsert_folder_dependency(&fid, &fid, "path", "Cargo.toml", Some(".")).await;
 
     assert!(err.is_err(), "self-edge must be rejected");
     assert!(err.unwrap_err().contains("check"), "err message must reference the check constraint");
-
-    s.delete_project(&pid).await.ok();
 }
 
 #[tokio::test]
