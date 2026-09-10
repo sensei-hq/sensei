@@ -24,7 +24,7 @@ Keep it only as the historical record of how the Rust steps were first drafted.
 |---|---|---|---|
 | 0 | `spec/indexer/00-files-entity.md` | **ALL DDL**: `scan_state`->`files` + `id` + `nodes.file_id`, parse-detail column, node_kind/edge_kind widening, occurrences gin index, `project_commands`->`folder_commands`, ORPHANED sweep | — (dbd `reconcile`; pre-release, no `migrations/`) |
 | 1 | `spec/indexer/01-scan-root.md` | find repo roots, apply root exclusions | 0 |
-| 2 | `spec/indexer/02-scan-repo.md` | submodules, subtrees, file/folder discovery, gitignore, **dependency manifests, commands** | 1 |
+| 2 | `spec/indexer/02-scan-repo.md` | submodules, subtrees, file/folder discovery, gitignore, **manifests + LOCKFILES, commands** | 1 |
 | 2b | `spec/indexer/02b-library-discovery.md` | packages -> libraries, skills, agents, docs corpus | 2 |
 | 3 | `spec/indexer/03-structure-write.md` | folder + file rows, the barrier, `expected_files` | 2 |
 | 4 | `spec/indexer/04-walk-rust.md` | one parse -> `FileFacts` (symbols, refs, relations) | 3 |
