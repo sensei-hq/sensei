@@ -56,6 +56,111 @@ queue the biggest payoff behind the slowest stage.
   supplies it. This is the prerequisite S6's deferred half needs, it is a field
   not a subsystem, and it is why the 2-of-1,121 number should move.
 
+## 3b. THREE INGESTION ROUTES, and what already exists for each
+
+A library's metadata and docs can arrive three ways. `libraries.source_type`
+already names them as an enum — `llms.txt | http | local` — so the routes are
+not new; their TRIGGERS and their PRECEDENCE are.
+
+| route | trigger | status |
+|---|---|---|
+| **local** | folder traversal — stage 2 reads the manifests | BUILT. This stage's S1–S5. |
+| **website** | a `docs_url` / llms.txt is known for the package | PARTLY — `indexer/llms_indexer.rs` ingests; nothing decides WHEN to go looking |
+| **github** | a repository URL is known for the package | NOT BUILT. `registry.rs` defers GitHub Releases explicitly. |
+
+### S8 — extract the repository URL from responses ALREADY BEING FETCHED
+
+The github and website routes both need a URL, and neither has one: measured,
+**2 of 1,121 library rows carry any URL at all**. But
+`libraries/registry.rs::registry_latest_url` already fetches, per ecosystem:
+
+    npm    https://registry.npmjs.org/<name>/latest   -> repository.url, homepage
+    cargo  https://crates.io/api/v1/crates/<name>     -> crate.repository, crate.homepage
+    pypi   https://pypi.org/pypi/<name>/json          -> info.project_urls
+
+**The URLs are in responses the code already downloads and throws away.**
+Extract `repository` -> a repo URL and `homepage`/`docs` -> `homepage_url` /
+`docs_url`. This is a parse addition to an existing pure helper, unit-testable
+against sample bodies exactly as `registry_latest_url` already is — not a new
+subsystem, and not a new network call.
+
+It is the prerequisite for three separate things: the github route, the
+website route's trigger, and R11.2's deferred upstreaming, which is blocked
+today precisely because 1,119 of 1,121 packages have nothing to file against.
+
+**FAIL-CLOSED, matching the module it joins.** A missing or unparseable
+repository field yields `None`. Never guess a URL from the package name —
+`github.com/<name>/<name>` is wrong far more often than it is right, and a
+fabricated URL is worse than none because something will fetch it.
+
+### S9 — source precedence: website > github > local
+
+When more than one route can supply docs for one library, prefer in that
+order, and RECORD which one won on the row. The reasoning:
+
+- **website** — the library's own published docs. Curated, current, and what
+  its authors intend a reader to see.
+- **github** — raw but complete, and the only route with VERSION HISTORY.
+- **local** — whatever happens to be vendored in `node_modules/` or the
+  registry cache. A real fallback, and often stripped of docs entirely.
+
+**THE PRECEDENCE INVERTS WHEN THE VERSION DOES NOT MATCH, and this is the
+subtlety worth stating.** A website documents ONE version, normally the
+latest. If the project pins `1.2` and the site documents `3.0`, the site is
+the higher-quality source of the WRONG answer, and github's tag for `1.2` is
+the correct one. So:
+
+    pick = highest-precedence source THAT CAN SERVE THE PINNED VERSION
+
+with the version taken from `referenced_libraries.version_used` (populated on
+1,001 rows today). A source that cannot serve the pinned version is not
+preferred over one that can, regardless of rank. If NO source can, serve the
+closest available and **label it as a version mismatch** — an answer marked
+"this documents 3.0, you are on 1.2" is useful; the same answer unlabelled is
+a wrong one (R4).
+
+### S10 — versioned docs: THE SCHEMA CANNOT REPRESENT THIS TODAY
+
+`libraries` is `unique(ecosystem, name)` — **one row per library, therefore
+one version.** `library_pages` has no version column at all
+(`id, library_id, title, url, local_path, description, content, source_type,
+component, embedding, fetched_at, modified_at`). So "docs for v1.2 vs v3.0"
+is currently unrepresentable, and so is a skill or agent that differs between
+versions.
+
+Two shapes, and **this is a DECISION to take before this stage writes
+anything**, because after it there is live data in whichever shape was
+guessed:
+
+| option | shape | cost |
+|---|---|---|
+| A — version column on content | add `version` to `library_pages`, `library_skills`, `library_agents` | 3 tables, and `libraries.version` becomes ambiguous — is it "latest known" or "the one we hold"? |
+| B — a `library_versions` level | `libraries -> library_versions -> pages/skills/agents` | one more join; `libraries` becomes purely the identity and `version` moves off it, which is cleaner but touches more |
+
+**Decide this together with R12's `library_content` question** — whether
+`skill | agent | page | package` collapse into one table with a type
+discriminator. Both questions are "what sits between a library and its
+content", answering them separately risks two migrations over the same
+146+ rows, and R12 already says the shape should be settled BEFORE
+`library_packages` is populated.
+
+Recommendation: **B**, because A puts the same version string on three tables
+and nothing keeps them consistent — the drift R10.7e names. But it is the
+user's call and it is not blocking S1–S7.
+
+### What is already built and must NOT be rebuilt
+
+`libraries/version.rs` is the policy heart: `Bump` and `UpdateAction` decide
+what a version delta MEANS, `advisory.rs` escalates on OSV severity, and
+`tasks/library_update_scheduler.rs` drives the tick. Version-drift
+recommendations — the second use in the brief — EXIST. What this stage adds
+is the version-MATCHED docs half (S9, S10), not the update-recommendation
+half.
+
+Note the constraint that module states about itself and keep it: **the apply
+path is ALWAYS a docs/skills refresh, never a change to the consuming
+project's code.**
+
 ## 4. Failure modes
 
 | input | this stage does |
@@ -66,6 +171,11 @@ queue the biggest payoff behind the slowest stage.
 | a workspace member is not a published package name | do not add it to `library_packages`; the grouping key is the package name a reference can see. |
 | two libraries claim the same package | REPORT it. This is the library-level analogue of an A7 collision, and picking a winner would be scan-order dependent. |
 | a package appears in no workspace and no manifest | ungrouped, per S5. Complete. |
+| a registry response has no `repository` field | `None` (S8). Never derive a URL from the package name — `github.com/<name>/<name>` is wrong more often than right, and something will fetch a fabricated one. |
+| the repository URL 404s or is a dead redirect | record the URL with the failure; do not blank it. The next attempt needs to know it was tried and what happened. |
+| the website documents a version the project does not use | serve it LABELLED as a mismatch (S9). An unlabelled wrong-version answer is the R4 failure. |
+| no source can serve the pinned version | serve the closest with the mismatch label, and count it. This is a gap with a fill path (R11), not an error. |
+| a library has two candidate repository URLs | take the registry's, not the manifest's — the registry is the publisher speaking. Record both. |
 
 ## 5. Stage report — what you SHOW when the stage is done
 
@@ -134,4 +244,11 @@ there is live data in the pattern and it becomes a migration of 146+ rows.
   stage report.
 - No prefix inference exists anywhere in the stage — verified by a test, not by
   reading.
-- The `library_content` shape question is answered in writing, either way.
+- The `library_content` shape question is answered in writing, either way —
+  **together with S10's versioning shape**, since both decide what sits
+  between a library and its content.
+- `repository`/`homepage` extracted from registry responses already being
+  fetched (S8); the 2-of-1,121 URL count moves, and it is measured.
+- Source precedence recorded per library, with the version-mismatch label
+  present on any doc served for a version the project does not pin (S9).
+- No URL is ever derived from a package name, verified by test.
