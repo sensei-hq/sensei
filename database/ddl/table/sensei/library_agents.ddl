@@ -3,10 +3,9 @@ set search_path to sensei, extensions;
 -- Review/assistant agents a library provides, declared in its own sensei.library.json
 -- (workstream D). Mirrors library_skills minus the generation fields (agents are always
 -- manifest-declared in v1). A per-library agent reviews a consuming app's use of the
--- library before coding and verifies after. Unique on (library_id, name).
+-- library before coding and verifies after. Unique on (library_version_id, name).
 create table if not exists library_agents (
   id            uuid          primary key default gen_random_uuid()
-, library_id    uuid          not null references sensei.libraries(id) on delete cascade
 , library_version_id       uuid        not null references sensei.library_versions(id) on delete cascade
 , name          text          not null
 , focus         text          not null
@@ -15,7 +14,7 @@ create table if not exists library_agents (
 , source_path   text
 , version_range text
 , modified_at   timestamptz   not null default now()
-, unique(library_id, name)
+, unique(library_version_id, name)
   -- Shared vocabulary (see sensei.entity_scope / sensei.entity_origin).
   -- scope answers WHO MAY SEE IT and therefore whether it syncs; origin answers
   -- WHERE IT CAME FROM and therefore what a re-import may safely replace.
@@ -23,13 +22,12 @@ create table if not exists library_agents (
 , origin        entity_origin not null default 'imported'
 );
 
-create index if not exists library_agents_library_id_idx
-    on library_agents(library_id);
+create index if not exists library_agents_library_version_id_idx
+    on library_agents(library_version_id);
 
 comment on table library_agents is
 'Review agents a library provides via its sensei.library.json manifest (workstream D).
-Surfaced for any project depending on the library. Unique on (library_id, name).';
-comment on column library_agents.library_id is 'FK to libraries — which library ships this agent.';
+Surfaced for any project depending on the library. Unique on (library_version_id, name).';
 comment on column library_agents.name       is 'Agent name — unique within a library.';
 comment on column library_agents.focus      is 'What the agent reviews (e.g. "config+palette+component review").';
 comment on column library_agents.body       is 'The agent markdown, fetched from the manifest path at ingest so reads are self-contained.';

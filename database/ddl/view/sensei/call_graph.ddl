@@ -13,13 +13,13 @@ select e.id              as edge_id
      , e.source_id
      , src.name          as source_name
      , src.kind          as source_kind
-     , src.file_path     as source_file
+     , srcf.file_path    as source_file
      , src.line_start    as source_line
      , src.is_exported   as source_exported
      , e.target_id
      , tgt.name          as target_name
      , tgt.kind          as target_kind
-     , tgt.file_path     as target_file
+     , tgtf.file_path    as target_file
      , tgt.line_start    as target_line
      , tgt.is_exported   as target_exported
      , e.target_name     as unresolved_target
@@ -42,8 +42,12 @@ select e.id              as edge_id
     on p.id          = f.project_id
   join nodes         src
     on src.id        = e.source_id
+  left join files    srcf
+    on srcf.id       = src.file_id
   left join nodes    tgt
-    on tgt.id        = e.target_id;
+    on tgt.id        = e.target_id
+  left join files    tgtf
+    on tgtf.id       = tgt.file_id;
 
 comment on view call_graph is
 'Resolved and unresolved edges with source/target symbol details and project context.
