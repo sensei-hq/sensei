@@ -7,11 +7,12 @@ select n.id
      , f.project_id
      , p.name            as project
      , p.maturity        as project_maturity
-     , n.file_path
+     , fi.file_path
      , n.tags
      , n.props
      , n.modified_at
   from nodes n
+  left join files fi on fi.id = n.file_id
   join folders  f on f.id = n.folder_id
   left join projects p on p.id = f.project_id
  where n.kind = 'file';

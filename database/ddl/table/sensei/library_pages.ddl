@@ -2,7 +2,6 @@ set search_path to sensei, extensions;
 
 create table if not exists library_pages (
   id                       uuid        primary key default gen_random_uuid()
-, library_id               uuid        not null references sensei.libraries(id) on delete cascade
 , library_version_id       uuid        not null references sensei.library_versions(id) on delete cascade
 , title                    text        not null
 , url                      text
@@ -17,10 +16,10 @@ create table if not exists library_pages (
 );
 
 create unique index if not exists library_pages_library_title_uq
-    on library_pages(library_id, title);
+    on library_pages(library_version_id, title);
 
-create index if not exists library_pages_library_id_idx
-    on library_pages(library_id);
+create index if not exists library_pages_library_version_id_idx
+    on library_pages(library_version_id);
 
 create index if not exists library_pages_embedding_hnsw
     on library_pages using hnsw (embedding vector_cosine_ops)
@@ -38,8 +37,6 @@ Consolidates the former lib_doc_sections, shared_lib_sections, and lib_docs tabl
 
 comment on column library_pages.id
      is 'Surrogate primary key (UUID).';
-comment on column library_pages.library_id
-     is 'Foreign key to libraries — which library this page belongs to.';
 comment on column library_pages.title
      is 'Title of this documentation page/section.';
 comment on column library_pages.url

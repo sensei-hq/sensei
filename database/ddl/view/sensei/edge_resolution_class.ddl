@@ -6,7 +6,7 @@ SELECT e.id
      , e.kind
      , CASE
          -- NOT the same as "correctly resolved": 152,293 resolved edges (46.7%)
-         -- point at a STUB (`file_path IS NULL`), 96,646 of them at a
+         -- point at a STUB (`file_id IS NULL`), 96,646 of them at a
          -- non-lib internal stub. A stub is a placeholder awaiting enrichment,
          -- so this bucket mixes real links with pending ones.
          WHEN e.target_id IS NOT NULL THEN 'resolved'
@@ -16,11 +16,11 @@ SELECT e.id
          WHEN (SELECT count(*) FROM sensei.nodes n
                 WHERE n.folder_id = e.folder_id
                   AND n.name = e.target_name
-                  AND n.file_path IS NOT NULL) = 1 THEN 'name-collision-1'
+                  AND n.file_id IS NOT NULL) = 1 THEN 'name-collision-1'
          WHEN (SELECT count(*) FROM sensei.nodes n
                 WHERE n.folder_id = e.folder_id
                   AND n.name = e.target_name
-                  AND n.file_path IS NOT NULL) > 1 THEN 'name-collision-n'
+                  AND n.file_id IS NOT NULL) > 1 THEN 'name-collision-n'
          ELSE 'no-local-name'
        END AS resolution_class
   FROM sensei.edges e;
@@ -59,7 +59,7 @@ on three counts, each verified:
    is called at :415 with its only in-file definition at :82, yet lands in
    `name-collision-n` because 7 manifest adapters define that method name.
 
-THE `file_path IS NOT NULL` CANDIDATE CLAUSE IS A JUDGEMENT CALL, NOT A FACT.
+THE `file_id IS NOT NULL` CANDIDATE CLAUSE IS A JUDGEMENT CALL, NOT A FACT.
 Removing it moves 59,141 edges and takes the degree-one count from 27,501 to
 53,126 (+93%). Stubs are excluded on the grounds that they are placeholders,
 but stubs ARE the target of 46.7% of all resolved edges — and at least one
@@ -70,6 +70,6 @@ figure.
 
 WHAT THIS VIEW IS GOOD FOR: `no-local-name` is the solid finding. 109,944 of
 110,785 unresolved imports (99.2%) name nothing local, which is why
-externals-as-lib_symbol is the right treatment for imports rather than better
+externals-as-`lib·` is the right treatment for imports rather than better
 local resolution. Use it for that, and do not use the other classes to size
 work until a real defect definition exists.';

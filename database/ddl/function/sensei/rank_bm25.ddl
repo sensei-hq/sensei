@@ -15,9 +15,10 @@ as $$
   ),
   matches as (
     select
-      n.file_path,
+      fi.file_path,
       count(t.term) as matched_terms
     from sensei.nodes n
+    left join sensei.files fi on fi.id = n.file_id
     cross join terms t
     where n.folder_id = p_folder_id
       and (
@@ -25,7 +26,7 @@ as $$
         or lower(coalesce(n.signature, '')) like '%' || t.term || '%'
         or lower(coalesce(n.docstring, '')) like '%' || t.term || '%'
       )
-    group by n.file_path, t.term
+    group by fi.file_path, t.term
   )
   select
     m.file_path,
