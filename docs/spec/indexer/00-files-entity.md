@@ -127,6 +127,39 @@ land together; splitting them migrates the same table twice.
 - **S7** (R10.1). `create index … using gin ((props->'occurrences'))` on
   `sensei.edges`. This is what lets reconcile ask the definitive attribution
   question (`props->'occurrences' ? F`) instead of an fqn approximation.
+- **S7b** (02b S10, decided 2026-09-10). **Add `sensei.library_versions` and
+  repoint library CONTENT at it**, so docs, skills and agents can be
+  version-specific:
+
+      library_versions (id, library_id -> libraries(id), version,
+                        resolved_version, source_type, base_url, docs_url,
+                        fetched_at, props)
+        unique (library_id, version)
+
+      library_pages.library_id  -> library_version_id
+      library_skills.library_id -> library_version_id
+      library_agents.library_id -> library_version_id
+
+  Migration order matters: create `library_versions`, insert one row per
+  existing `(library, version)` — `version` is populated on **1,083 of 1,121**
+  rows — backfill the three content tables' new FK from it, verify no content
+  row is orphaned, THEN drop `libraries.version` and the old FKs. Same
+  backfill-verify-constrain discipline as S3.
+
+  `version` is the KEY and may be the literal `latest`; `resolved_version`
+  records what `latest` actually meant at `fetched_at`.
+
+  **`library_packages` is NOT repointed** — it stays keyed on `library_id`.
+  The grouping is identity, and R10.7g's `node -> package -> library` chain
+  starts from an fqn with no version in it, so a version-keyed grouping could
+  not be walked from a node.
+
+  **`referenced_libraries.version_used` stays TEXT.** A folder can pin a
+  version whose docs were never fetched; an FK would block that or force a
+  phantom row — the get-or-create failure R13 forbids one table over.
+
+  Content is small (130 pages, 10 skills, 6 agents), so this migration is
+  cheap. Do it now rather than after stage 2b starts writing.
 - **S8** (D11). Regrain the manifest-derived tables to FOLDER, because a
   manifest sits at a folder and every fact read out of it is folder-grained:
   - `project_commands` -> `folder_commands`. Rename only; already keyed

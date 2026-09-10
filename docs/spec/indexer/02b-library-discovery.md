@@ -128,9 +128,42 @@ component, embedding, fetched_at, modified_at`). So "docs for v1.2 vs v3.0"
 is currently unrepresentable, and so is a skill or agent that differs between
 versions.
 
-Two shapes, and **this is a DECISION to take before this stage writes
-anything**, because after it there is live data in whichever shape was
-guessed:
+**DECIDED (2026-09-10): option B — a `library_versions` level, with all
+library CONTENT linked to a version.** The DDL moves into stage 0 so the table
+is opened once. Shape:
+
+    libraries          identity only: kind, name, ecosystem, description
+      └──< library_versions   (id, library_id, version, resolved_version,
+                               source_type, base_url, docs_url, fetched_at)
+             ├──< library_pages    -> library_version_id
+             ├──< library_skills   -> library_version_id
+             └──< library_agents   -> library_version_id
+
+Three consequences to carry into the migration:
+
+- **`version` moves OFF `libraries`.** Populated on 1,083 of 1,121 rows today,
+  so the migration is one `library_versions` row per existing
+  `(library, version)`, then drop the column. `libraries` keeps
+  `unique(ecosystem, name)` and becomes purely the identity.
+- **`resolved_version` sits beside `version`** (S11): `version` is the KEY,
+  including the literal `latest`; `resolved_version` is the concrete version
+  `latest` meant at `fetched_at`. Without it, "is our latest still latest?"
+  is unanswerable.
+- **`referenced_libraries.version_used` stays TEXT, not an FK.** A folder can
+  pin a version we have never fetched docs for, and a foreign key would either
+  block that or force a phantom row — the get-or-create failure R13 forbids
+  one table over. Join opportunistically; a miss is an honest "no docs for
+  this version".
+
+**`library_packages` stays at the LIBRARY level, not the version.** Grouping is
+about identity, and the node -> package -> library chain (R10.7g) resolves from
+an fqn that carries NO version, so a version-keyed grouping could not be walked
+from a node at all. Package membership CAN drift across releases — `@rokkit/x`
+present in v1, gone in v2 — and that is a DEFERRED refinement (R11: the
+evidence is captured, the gap is named), not a reason to key the grouping on
+something the caller does not have.
+
+The rejected option, recorded so it is not re-proposed:
 
 | option | shape | cost |
 |---|---|---|
