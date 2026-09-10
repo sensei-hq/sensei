@@ -184,10 +184,48 @@ First encounter resolves once; every later encounter carries it. That is the
 "don't decipher it again" property in the steady state, without a network
 call at scan time.
 
-**Dedup: enqueue only if `(ecosystem, name, version)` has no content.** The
-key works because the adapters already normalise the range away — measured,
-**927 of 1,001 `version_used` values are exact pins** (`7.0.4`, `1.1.3`), with
-zero raw `^`/`~` specs surviving.
+**Dedup: enqueue only if `(ecosystem, name, version)` has no content** — and
+the version must be the RESOLVED PIN, which the manifest does not have.
+
+**CORRECTION — an earlier draft of this spec claimed "927 of 1,001
+`version_used` values are exact pins". That counted STRING SHAPE, not
+semantics, and it is wrong.** `indexer/lib_indexer.rs::clean_version` strips
+`^ ~ >= <= > < =`, so `^7.0.0` is stored as `7.0.0` — a range FLOOR wearing
+the shape of a pin, and indistinguishable from one once the operator is gone.
+Concretely: `app/package.json` declares `"@sveltejs/kit": "^2.8.0"` and the
+graph stores `2.8.0`, while the installed version is whatever 2.x resolved to.
+`svelte` is stored at `3.17.3` and `3.19.1` in other repos for the same
+reason.
+
+Storing a floor as if it were a pin is an R4 fabrication: a plausible value a
+caller cannot tell from a real reading. Fetching docs for `7.0.0` when `7.4.2`
+is installed is exactly the silently-wrong answer S9's mismatch label exists
+to prevent — except here nothing knows to label it.
+
+**So: THE MANIFEST SELECTS WHICH PACKAGES; THE LOCKFILE SUPPLIES WHICH
+VERSION.**
+
+| question | source | why |
+|---|---|---|
+| which packages do we care about? | MANIFEST | it declares only what the project chose — this is what keeps the transitive tree out |
+| what version is actually installed? | LOCKFILE | it is the only place the resolved pin exists |
+
+Reading a lockfile to LOOK UP versions for an already-selected set of direct
+deps does NOT pull in the transitive tree — you index into it by name, you do
+not enumerate it. The two constraints are independent, and an earlier draft
+of this section wrongly treated them as one, concluding "do not read
+lockfiles" from "do not index transitive deps".
+
+No adapter reads a lockfile today — verified, zero references to
+`package-lock`, `pnpm-lock`, `yarn.lock`, `Cargo.lock`, `poetry.lock` or
+`bun.lock` anywhere in `crates/`. So this is new work, one lockfile reader per
+ecosystem, and it is the prerequisite for the dedup key meaning anything.
+
+**Until a lockfile is read, keep the operator.** `DepVersion.raw_version`
+already preserves `^7.0.0`; `version_used` stores the cleaned form and throws
+the evidence away. A range recorded AS a range is honest and can be resolved
+later; a range recorded as a pin cannot be distinguished from one and will be
+believed.
 
 **`latest` IS a version, and that is right — with one addition.** The 74
 non-pin values are dominated by `*` (19 rows): unpinned dependencies. Mapping
@@ -214,13 +252,18 @@ MANIFEST's content, and a manifest declares only what the project chose —
 `[dependencies]`. The transitive closure lives in the LOCKFILE, which no
 adapter reads.
 
-**So do not start reading lockfiles.** The temptation is real and specific:
-a lockfile is the obvious way to turn `^1.2.3` into an exact pin. It has no
-payoff here — the adapters already normalise to exact pins in **927 of 1,001**
-cases without one — and the cost is the entire transitive tree, which is
-one to two orders of magnitude larger and consists of packages nobody in this
-repo writes code against. Docs for a dependency's dependency serve neither
-G1 nor G2.
+**But DO read the lockfile for the VERSION** of each package the manifest
+already selected — see S11. The two things a lockfile offers are separable
+and only one of them is unwanted:
+
+| lockfile gives | verdict |
+|---|---|
+| the resolved pin for a package we already chose | **WANTED.** It is the only place that pin exists. |
+| the full transitive closure | **NOT WANTED.** One to two orders of magnitude larger, packages nobody here writes code against. |
+
+Take the first by LOOKING UP the direct deps by name; never by enumerating
+the file. An earlier draft of this section conflated the two and concluded
+"do not read lockfiles", which would leave every version a range floor.
 
 Two exclusions that already work the same way and must be kept:
 
@@ -263,25 +306,7 @@ project's code.**
 | no source can serve the pinned version | serve the closest with the mismatch label, and count it. This is a gap with a fill path (R11), not an error. |
 | a library has two candidate repository URLs | take the registry's, not the manifest's — the registry is the publisher speaking. Record both. |
 
-## 5. Stage report — what you SHOW when the stage is done
-
-    {"stage":"02b-library-discovery","at":"<iso8601>",
-     "packages_seen":1121,"library_manifests_found":<n>,
-     "libraries_upserted":<n>,"library_packages_rows":<n>,
-     "grouped_packages":<n>,"ungrouped_packages":<n>,
-     "provenance":{"declared_by_dependency":<n>,"declared_by_user":<n>},
-     "skills":10,"agents":6,"pages_located":130,
-     "homepage_url_populated":<n>,
-     "collisions":[],
-     "sample_grouping":{"library":"rokkit","packages":["@rokkit/ui","@rokkit/core"],
-                        "provenance":"declared_by_dependency",
-                        "skills":5,"agents":3,"pages":130}}
-
-`grouped + ungrouped` must equal `packages_seen`. `ungrouped` starting near
-1,121 and falling is the metric this stage exists to move; it is not a failure
-count.
-
-## 6. Verification
+## 5. Verification
 
 | test | mutation that must break it |
 |---|---|
@@ -297,7 +322,7 @@ count.
 That last one is the acceptance test for the whole stage: it is the G1 payoff
 stated as a query, and it is unanswerable today.
 
-## 7. Watch out
+## 6. Watch out
 
 **The model is already right; the data is missing.** An earlier draft of the
 design recorded that the library level "does not exist". It does —
@@ -321,13 +346,13 @@ discriminator would make a fifth kind cost a row rather than a table. **Decide
 that shape BEFORE populating `library_packages`**, because after this stage
 there is live data in the pattern and it becomes a migration of 146+ rows.
 
-## 8. Definition of done
+## 7. Definition of done
 
 - `library_packages` is non-zero and every row carries provenance.
 - The `node -> package -> library -> pages/skills/agents` query returns real
   content for at least one real reference.
 - Ungrouped packages are counted, not errored, and the count is in the
-  stage report.
+  the run.
 - No prefix inference exists anywhere in the stage — verified by a test, not by
   reading.
 - The `library_content` shape question is answered in writing, either way —

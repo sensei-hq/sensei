@@ -95,33 +95,7 @@ sources.
 a `Result<FileFacts, _>` is the exact shape the DRY/no-fabrication rule forbids,
 and a guard test must assert it appears nowhere in the v2 sources.
 
-## 5. Stage report — what you SHOW when the stage is done
-
-Per-file facts are too many to list; the report is per-repo.
-
-    {"stage":"04-walk-rust","at":"<iso8601>","repo":"…",
-     "files_read":372,"read_errors":{"io":0,"grammar":0,"not_parsed":0,"no_identity":0},
-     "symbols":12519,"references":109328,"relations":<n>,"imports":<n>,
-     "symbols_by_kind":{"function":…,"struct":…,"field":…,"variant":…},
-     "reach_histogram":{"item":…,"field":…,"macro":…,"mod":…},
-     "unhandled_forms":{"<ts_kind>":<n>},
-     "sample_symbol":{"fqn":"rust·senseid·indexer::fqn·Reach·Field·item",
-                      "kind":"variant","declared_type":null,"span":[89,3,89,8]},
-     "sample_reference":{"site":"fqn.rs:142:9","mints":"rust·senseid·…·item",
-                         "resolution":"Unresolved","reason":"NoAnnotation"}}
-
-`symbols_by_kind` must show NON-ZERO `field` and `enum_variant`. The live
-graph has 0 of each in every language, so a zero here means S5 regressed to
-the old behaviour and nothing else in the stage would notice.
-
-**The schema was never the blocker.** `sensei.node_kind` has carried `field`
-and `enum_variant` all along — the walk simply never emitted them. So this is
-the stage that closes A5, and no DDL contributes to it.
-
-`unhandled_forms` is the work queue for the next iteration, which is why it is
-keyed by tree-sitter kind rather than counted in aggregate.
-
-## 6. Verification
+## 5. Verification
 
 | test | mutation that must break it |
 |---|---|
@@ -142,7 +116,7 @@ The independent counter is the load-bearing check (A2) and it must run over the
 REAL corpus. A fixture proves the counter agrees with the walk on cases the
 author thought of; the corpus is where the unthought-of forms live.
 
-## 7. Watch out
+## 6. Watch out
 
 **`nodes_unique_identity` is `(folder_id, file_path, kind, name, parent_id,
 line_start)`** — becoming `file_id` after stage 0. A field and a method of the
@@ -168,7 +142,7 @@ it". It is legitimate to defer work; it is not legitimate to discard evidence,
 because re-parsing 48,646 files to recover a field we already had is the
 expensive version.
 
-## 8. Definition of done
+## 7. Definition of done
 
 - `read` is pure, database-free, and its suite runs on string literals.
 - The merge-contract table covers all seven segments including `reach`, and

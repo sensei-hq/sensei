@@ -55,29 +55,7 @@ far" — see S3.
 | a trait-impl member reached without its trait (`x.default()`) | mints the plain member form and does not merge with the `<Type>·<Trait>·<member>` declaration. **22 references over 3 identities**, all `Default::default`. Deferred with its evidence captured, never closed by dropping the `Trait` segment — that would delete the only thing separating `<X as Display>::fmt` from `<X as Debug>::fmt`. |
 | an ambiguous path split (`a::b::c`) | decided by the grammar's `names_a_type` predicate. A misread produces a DANGLING edge, not a wrong one, because the two splits put the boundary in different places and the loser names no declaration at all. |
 
-## 5. Stage report — what you SHOW when the stage is done
-
-    {"stage":"05-resolve","at":"<iso8601>","repo":"…",
-     "references":109328,"resolved":<n>,"unresolved":<n>,
-     "resolved_first_party":<n>,"resolved_lib":<n>,
-     "import_mediated_resolved_pct":99.94,
-     "reasons":{"NotFound":<n>,"NoAnnotation":<n>,"AnnotationNotRead":<n>,
-                "Denylisted":<n>,"ReExport":<n>,"TraitMember":22,
-                "UnhandledForm":<n>},
-     "reasons_sum_equals_unresolved":true,
-     "sample_unresolved":{"site":"pg_store/graph.rs:812:14","wrote":"pool.bind()",
-                          "minted":"rust·senseid·db::pg_store·?·bind·item",
-                          "reason":"NoAnnotation",
-                          "evidence":{"receiver":"pool","binding":"ReturnOf(new_pool)"}}}
-
-`reasons_sum_equals_unresolved` is asserted, not reported — A3 requires 100%
-coverage and a histogram that quietly loses rows is worse than none.
-
-The sample must render the EVIDENCE, not just the reason. "NoAnnotation" tells
-you the class; the receiver and its binding provenance tell you whether a
-future pass could close it.
-
-## 6. Verification
+## 5. Verification
 
 | test | mutation that must break it |
 |---|---|
@@ -94,7 +72,7 @@ The order-independence test is the one that catches the whole class. It is
 cheap, it runs on one file, and it would have caught the ghost-node defect
 before it reached the corpus.
 
-## 7. Watch out
+## 6. Watch out
 
 **"External because we did not find it" is the defect, not the fallback.** It
 is the most natural thing to write and it makes the graph scan-order dependent.
@@ -109,7 +87,7 @@ Resolution is exact, not ranked. There is no "close enough" fqn.
 to guess should return `Unresolved` with a reason instead — the gap is then
 DATA with a fill path (R11), which is the whole disposition of this design.
 
-## 8. Definition of done
+## 7. Definition of done
 
 - One shared ladder, database-free, used by every language module.
 - A test per reason variant; the histogram sums to 100% over the real corpus.
