@@ -102,18 +102,70 @@ FK first fails on the first orphan and tells you nothing about the other 8,146.
 8,147 nodes name a `file_path` for which there is no row in the file table.
 **That table is `files` by the time this runs** — the count was MEASURED
 against `scan_state` before the rename, and the population is identical; only
-the name changed. S3's foreign key cannot be added while they exist. They must
-be removed, and **removing them obeys R10.8's ordering or it destroys data**:
+the name changed. S3's foreign key cannot be added while they exist.
 
-1. `UPDATE sensei.edges SET target_id = NULL WHERE target_id = ANY($orphans)` —
-   after asserting `target_name IS NOT NULL` on every such edge. Once the node
-   is gone there is nothing left to recover the name from.
-2. Assert no orphan has children via `parent_id`. If any do, they are orphans
-   too and belong in the same set; the `parent_id` cascade must find nothing.
-3. `DELETE FROM sensei.nodes WHERE id = ANY($orphans)`.
+**Define the set FIRST, and MATERIALISE it.** All the steps below must operate
+on one identical set; re-evaluating the predicate per statement is how they
+drift apart.
 
-All three in ONE transaction. This is the same rule stage 7 implements in code,
-executed once by hand here, and it is the first live exercise of it.
+    CREATE TEMP TABLE orphans ON COMMIT DROP AS
+    SELECT n.id, n.name
+      FROM sensei.nodes n
+      LEFT JOIN sensei.files f
+             ON f.folder_id = n.folder_id AND f.file_path = n.file_path
+     WHERE n.file_path IS NOT NULL
+       AND f.file_path IS NULL;
+    -- expect 8,147
+
+`n.name` is selected deliberately — step 1 needs it, and after step 3 it is
+gone.
+
+Then, **in ONE transaction, in this order** — R10.8's rule, executed by hand
+here for the first time:
+
+1. **Backfill `target_name`, THEN unresolve.**
+
+        UPDATE sensei.edges e SET target_name = o.name
+          FROM orphans o WHERE e.target_id = o.id AND e.target_name IS NULL;
+        UPDATE sensei.edges SET target_id = NULL
+         WHERE target_id IN (SELECT id FROM orphans);
+
+   **MEASURED, and this is why the order matters: all 212 inbound edges have
+   `target_name IS NULL`, and all 212 target nodes HAVE a name** (23 distinct:
+   `app`, `openapi`, `electron`, `docs`, …). Unresolving without the backfill
+   produces an edge pointing at nothing AND naming nothing — not a recorded
+   gap with a fill path (R11), just a dead row. The name is recoverable only
+   from the node, and only before step 3.
+
+2. **Assert the set is closed over `parent_id`.**
+
+        SELECT count(*) FROM sensei.nodes c
+         WHERE c.parent_id IN (SELECT id FROM orphans)
+           AND c.id NOT IN (SELECT id FROM orphans);   -- must be 0
+
+   **Measured: 0.** The base predicate is already transitively closed, because
+   a member shares its parent's `file_path`. Keep the assertion anyway — it is
+   the guard for a child with a NULL or differing `file_path` whose parent is
+   an orphan, which the cascade would silently take. If it is ever non-zero,
+   the set needs a recursive CTE over `parent_id`, not a manual top-up.
+
+3. `DELETE FROM sensei.nodes WHERE id IN (SELECT id FROM orphans);`
+
+**No source-side concern: 0 orphans are edge SOURCES** (measured), so the
+`source_id` cascade has nothing to take. Assert it rather than assume it — the
+number is only zero today.
+
+### What the 212 actually are, and one thing they expose
+
+All 212 are `kind = 'references'` from MARKDOWN files (`docs/backlog.md`,
+`openspec/specs/openapi/summary.md`) to orphaned `module` nodes named after
+directories. Every source node exists and none is itself an orphan.
+
+Worth noting and NOT fixing here: **those markdown source nodes have an EMPTY
+fqn.** Under §2 a file's identity is the module it declares, and a markdown
+file declares none — so what a `.md` file's node identity should be, or
+whether it should have one, is an open question for the walk. Record it; do
+not answer it in a DDL stage.
 
 ## 4. Failure modes
 
@@ -121,7 +173,9 @@ executed once by hand here, and it is the first live exercise of it.
 |---|---|
 | a `migrations/` tree exists | STOP. The workflow is wrong, not the DDL. |
 | `dbd reconcile` fails partway | do not hand-patch the live DB to match. Fix the DDL and re-run; a hand-patched DB drifts from the tree and the next reconcile fights it. |
-| an orphan's inbound edge has NULL `target_name` | STOP and report the count. Deleting it loses the reference with no way to restore it. This is unmeasured — check before assuming zero. |
+| an orphan's inbound edge has NULL `target_name` | **MEASURED: all 212 are.** Backfill from the target node's `name` (all 212 have one) before unresolving — S9 step 1. Do NOT stop, and do NOT unresolve without it: that yields an edge naming nothing. |
+| a target node has NO name either | THEN stop and report. Nothing can recover the reference, and an edge with no target and no name is a dead row, not a gap. Measured 0 today. |
+| an orphan is an edge SOURCE | measured 0. Assert it; if it is ever non-zero the `source_id` cascade takes those edges and the sweep needs a fourth clause. |
 | an orphan has children | fold them into the orphan set and re-run step 2. Never let the cascade take them. |
 | `node_kind` widening rejected | an enum value is in use somewhere the ALTER cannot see. Find it; do not work around it with a placeholder. |
 | the live DB and the DDL tree already disagree before starting | resolve that FIRST. Reconciling on top of unexplained drift attributes someone else's change to this stage. |
@@ -133,7 +187,9 @@ One JSON line appended to `~/.sensei/scan-progress.jsonl`:
     {"stage":"00-files-entity","at":"<iso8601>",
      "files_rows":48665,"files_indexed":48646,"files_skipped":19,
      "nodes_before":395031,"orphans_swept":8147,"nodes_after":386884,
-     "edges_unresolved_by_sweep":<n>,
+     "edges_before":82913,"edges_after":82913,
+     "target_names_backfilled":212,"edges_unresolved_by_sweep":212,
+     "orphan_children_outside_set":0,"orphans_as_edge_source":0,
      "nodes_with_file_id":346506,"nodes_file_id_null":40378,
      "ddl":{"s1":true,"s2":true,"s3":true,"s4":true,
             "s5":true,"s6":true,"s7":true,"s8":true},
@@ -154,8 +210,9 @@ Every check names the one-line mutation that must break it.
 | `files` exists, `scan_state` does not | revert S1 |
 | a node's file is reachable by FK join, and `nodes.file_path` no longer exists | revert S3 |
 | inserting a node with a `file_id` naming no `files` row is REJECTED | drop the FK |
-| after the sweep, `count(nodes) = before - 8147` | remove step 1 of S9 — the cascade takes inbound edges, and the node count still matches while the EDGE count silently drops, so **assert the edge count too** |
-| every edge whose target was swept has `target_id IS NULL` and `target_name IS NOT NULL` | remove step 1 of S9 |
+| after the sweep, `count(nodes) = before - 8147` **and `count(edges)` is UNCHANGED** | remove S9 step 1's unresolve — the cascade takes the 212 inbound edges, and the NODE count still matches while the edge count silently drops by 212. The node count alone cannot tell "the sweep worked" from "the sweep worked and took 212 edges with it". |
+| every edge whose target was swept has `target_id IS NULL` **and a non-null `target_name`** | remove the backfill from S9 step 1 — 212 edges then survive as `target_id NULL, target_name NULL`, which passes a naive "edges still exist" check while carrying no information |
+| the materialised `orphans` set is used by all three steps, not re-derived per statement | inline the predicate into each statement |
 | the parse-detail column accepts and returns a multi-line parser message verbatim | truncate it to `varchar(80)` |
 | `node_kind` accepts `field` and `variant` | revert S5 |
 | `EXPLAIN` on `props->'occurrences' ? $1` uses the gin index | drop it (S7) |
