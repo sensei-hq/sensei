@@ -966,6 +966,62 @@ async fn a_lib_node_records_the_language_that_minted_it() {
 }
 
 #[tokio::test]
+async fn docs_are_served_for_the_version_a_folder_pins_and_labelled_when_they_cannot_be() {
+    // 02b S9 end to end through the store. A project on 1.2 handed 3.0's docs
+    // gets a confident answer about an API it does not have; the label is what
+    // makes that answer usable instead of wrong (R4).
+    let s = pg_store().await;
+    let rid = s
+        .add_watch_root(&format!("/tmp/s9_{}", uuid::Uuid::new_v4()), "s9", &serde_json::json!([]))
+        .await
+        .unwrap();
+    let abs = format!("/_test/s9-app-{}", uuid::Uuid::new_v4());
+    let folder =
+        s.upsert_folder(&rid, "git", "s9-app", &abs, &abs, None, None, None).await.unwrap();
+
+    let lib =
+        s.upsert_library("_test:s9lib", "npm", Some("1.2.0"), None, None, None).await.unwrap();
+    // Two held versions: the one this folder pins, and a newer one.
+    for (v, page) in [("1.2.0", "list @ 1.2"), ("3.0.0", "list @ 3.0")] {
+        let vid = s.ensure_library_version(&lib, Some(v)).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.library_content(library_version_id, kind, name, body, component, source_type)
+             VALUES($1, 'page'::sensei.library_content_kind, 'List', $2, 'list', 'local'::sensei.library_source_type)",
+        )
+        .bind(vid)
+        .bind(page)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    }
+    s.upsert_referenced_library(&folder, &lib, Some("1.2.0"), None).await.unwrap();
+
+    // The folder pins 1.2 → it gets 1.2's docs, and NO caveat.
+    let d = s.get_library_docs("_test:s9lib", Some("list"), Some(&abs)).await.unwrap();
+    assert_eq!(d.served_version.as_deref(), Some("1.2.0"));
+    assert_eq!(d.version_note, None, "an exact answer needs no caveat");
+    assert_eq!(d.pages[0]["content"], "list @ 1.2");
+
+    // Re-pin to a version nothing serves → closest, LABELLED.
+    s.upsert_referenced_library(&folder, &lib, Some("2.0.0"), None).await.unwrap();
+    let d2 = s.get_library_docs("_test:s9lib", Some("list"), Some(&abs)).await.unwrap();
+    assert!(d2.version_note.is_some(), "a wrong-version answer must say so");
+    assert!(
+        d2.version_note.as_deref().unwrap().contains("you are on 2.0.0"),
+        "the label names both versions: {:?}",
+        d2.version_note
+    );
+
+    // No folder stated → latest, and no caveat INVENTED. There is no pin to miss.
+    let d3 = s.get_library_docs("_test:s9lib", Some("list"), None).await.unwrap();
+    assert_eq!(d3.version_note, None, "absent context is not a mismatch");
+    assert!(d3.pinned_version.is_none());
+
+    s.delete_library(&lib).await.unwrap();
+    s.remove_watch_root(&rid).await.ok();
+}
+
+#[tokio::test]
 async fn registry_urls_land_on_the_right_level_and_a_later_silence_does_not_wipe_them() {
     // 02b S8. repository/homepage are identity-level; docs_url describes where
     // a RELEASE's documentation lives. And registries disagree about what they
