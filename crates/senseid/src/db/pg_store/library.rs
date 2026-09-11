@@ -1026,6 +1026,51 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Persist the URLs a registry response carried about a library (02b S8).
+    ///
+    /// COALESCE on every field: a later lookup that omits one must not wipe a
+    /// value an earlier one established. Registries disagree about which URLs
+    /// they expose — npm has no documentation field at all — so absence is
+    /// "this response did not say", never "there is none".
+    ///
+    /// `repository_url` and `homepage_url` are identity-level and sit on
+    /// `libraries`; `docs_url` describes where a RELEASE's documentation lives
+    /// and sits on its version.
+    pub async fn set_library_urls(
+        &self,
+        library_id: &uuid::Uuid,
+        urls: &crate::libraries::registry::RegistryUrls,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.libraries
+                SET repository_url = COALESCE($2, repository_url),
+                    homepage_url   = COALESCE($3, homepage_url),
+                    modified_at    = now()
+              WHERE id = $1",
+        )
+        .bind(library_id)
+        .bind(urls.repository.as_deref())
+        .bind(urls.homepage.as_deref())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_library_urls: {e}"))?;
+
+        if let Some(docs) = urls.docs.as_deref() {
+            let version_id = self.current_or_new_library_version(library_id).await?;
+            sqlx_core::query::query(
+                "UPDATE sensei.library_versions
+                    SET docs_url = COALESCE($2, docs_url), modified_at = now()
+                  WHERE id = $1",
+            )
+            .bind(version_id)
+            .bind(docs)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("set_library_urls: docs: {e}"))?;
+        }
+        Ok(())
+    }
+
     /// Record — or clear — why a library version has no current docs (02b S7b.2).
     ///
     /// `read_local_source_files` errors when the llms root holds no `.txt`
