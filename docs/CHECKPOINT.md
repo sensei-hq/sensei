@@ -40,7 +40,8 @@ Retire v1, implement v2. Stage 0 (all DDL) is applied to `sensei`,
 | **2b §3b — all three routes verified live** | `ea89b23a` |
 | **2b — markdown fence fidelity in the splitter** | `c82e4eec` |
 | **2b — one parse, three discoverers (verified)** | `fb02ada8` |
-| **2b — reject HTML for a text fetch; manifest-declared URLs** | this commit |
+| **2b — reject HTML for a text fetch; manifest-declared URLs** | `91673e09` |
+| **4–7 groundwork — repo-relative path reconstruction** | this commit |
 | 3 S4b/S4c — derived folder `kind`, `deferred` dropped | this commit |
 | 2b — `library_content.package_name` | this commit |
 
@@ -134,7 +135,19 @@ it — the type must be recreated by hand), and silently reduces an inline
   S9 now ranks three real candidates: a pin of 0.12.6 picks GITHUB over the
   higher-precedence website and the newer local tree — the inversion the rule
   exists for — and a pin of 0.12.0 gets the closest, labelled.
-- **4–7** — parse, fqn, persist, reconcile. This IS the rest of v1 retirement.
+- **4–7** — parse, fqn, persist, reconcile. This IS the rest of v1 retirement,
+  and the whole of the 167 failures. SCOPED: **47 functions / 119 sites in
+  `graph.rs`** reference the dropped `nodes.file_path`, in four shapes —
+  16 SELECT (display), 12 `file_path =` (key lookup), 14 `file_path IS NOT NULL`
+  (the COMPLETE-vs-PARTIAL predicate, R10.7d, now `file_id IS NOT NULL`), and
+  5 regex matches.
+
+  **NOT a mechanical swap.** v1's `nodes.file_path` was REPO-relative;
+  `files.file_path` is FOLDER-relative. They coincide only at a repo root —
+  17 of this repo's 18 folders are modules. The four views exposing it
+  (`symbols`, `graph_nodes`, `doc_coverage`, `file_tags`) now reconstruct the
+  repo-relative form, so the Rust migration can read paths from the views
+  rather than each site re-deriving the join.
 - **8–10** — commands, incremental, cutover.
 
 ## Next command

@@ -58,6 +58,14 @@ set search_path to sensei, extensions;
 -- view needs no `contains` edge kind — parent for the bubbles, edges for the
 -- lines. `parent_name`/`parent_kind` are surfaced so callers group without a
 -- self-join, and are NULL for a top-level node rather than a placeholder.
+-- REPO-RELATIVE, reconstructed. `files.file_path` is FOLDER-relative and a
+-- module folder's `folders.path` is repo-relative, so a node in
+-- `crates/senseid/src/lib.rs` stores `src/lib.rs` against the `crates/senseid`
+-- folder. Exposing that raw would rename the column's meaning without changing
+-- its name — v1's `nodes.file_path` was repo-relative, and 17 of this repo's 18
+-- folders are modules, so almost every path would have been silently truncated.
+-- The repo-root folder is the exception: its `path` is ABSOLUTE, and its files
+-- are already repo-relative, so it passes through.
 create or replace view graph_nodes as
 select n.id
      , n.folder_id
@@ -69,7 +77,8 @@ select n.id
      , n.name
      , n.fqn
      , n.language
-     , fi.file_path
+     , case when f.kind = 'git' then fi.file_path
+            else f.path || '/' || fi.file_path end as file_path
      , n.line_start
      , n.resolved
      , n.is_exported
