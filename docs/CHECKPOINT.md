@@ -39,7 +39,8 @@ Retire v1, implement v2. Stage 0 (all DDL) is applied to `sensei`,
 | **2b S9 — source precedence + mismatch label** | `1857da82` |
 | **2b §3b — all three routes verified live** | `ea89b23a` |
 | **2b — markdown fence fidelity in the splitter** | `c82e4eec` |
-| **2b — one parse, three discoverers (verified)** | this commit |
+| **2b — one parse, three discoverers (verified)** | `fb02ada8` |
+| **2b — reject HTML for a text fetch; manifest-declared URLs** | this commit |
 | 3 S4b/S4c — derived folder `kind`, `deferred` dropped | this commit |
 | 2b — `library_content.package_name` | this commit |
 
@@ -91,9 +92,17 @@ it — the type must be recreated by hand), and silently reduces an inline
 
   | library | local | github @ tag | website |
   |---|---|---|---|
-  | rokkit | 94 (1.4.1) | **94 @ v1.4.1** | — site publishes no llms.txt |
-  | kavach | 15 (1.1.3) | **15 @ v1.1.3** | 1 (`latest`) |
+  | rokkit | 94 (1.4.1) | **94 @ v1.4.1** | 102 (`latest`) |
+  | kavach | 15 (1.1.3) | **15 @ v1.1.3** | 15 (`latest`) |
   | dbd | 43 (0.13.0) | **43 @ v0.12.6** | 43 (`latest`) |
+
+  Website URLs come from each library's OWN `sensei.library.json` under
+  `llms.index` — never a guessed `/llms.txt`, never GitHub's `homepage` field.
+  All three publish that manifest at `/` and `/.well-known/`; rokkit and kavach
+  declare an `llms` block, dbd does not. dbd and kavach agree byte-for-byte
+  across routes; rokkit's site carries 12 guides (`accessibility`,
+  `getting-started`, `theming`, …) that are not in `docs/llms` at the tag — a
+  content difference, not a parsing one.
 
   github resolves a VERSION TAG: `LibSource::GitHubTree`'s `branch` goes into
   the contents API's `?ref=`, which takes a tag as readily as a branch, so docs

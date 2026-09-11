@@ -213,6 +213,29 @@ pub struct ParsedDoc {
     pub component: Option<String>,
 }
 
+/// Whether a response is an HTML page rather than the text document we asked
+/// for.
+///
+/// A `.txt` URL that answers with HTML is a HOST SAYING NO in a way that looks
+/// like yes — the SPA catch-all. It is not documentation, and accepting it is
+/// how an unrelated application's homepage got stored as a library's
+/// documentation: 200, 1,206 bytes, every layer reported success, and the test
+/// asserting "at least one page" passed.
+///
+/// Permissive except for HTML. A static host may send `text/plain`,
+/// `application/octet-stream`, or no content-type at all, and none of those are
+/// grounds to reject. The body is sniffed too, because a host that mislabels
+/// HTML as `text/plain` is still serving HTML.
+pub fn looks_like_html(content_type: Option<&str>, body: &str) -> bool {
+    if content_type.is_some_and(|ct| ct.to_ascii_lowercase().contains("text/html")) {
+        return true;
+    }
+    // CHARS, not bytes. Slicing at byte 200 panics when that offset lands
+    // inside a multi-byte character — rokkit's index has an em-dash there.
+    let head: String = body.trim_start().chars().take(200).collect::<String>().to_ascii_lowercase();
+    head.starts_with("<!doctype html") || head.starts_with("<html")
+}
+
 /// Fetch a URL. Public so MCP handler can use it.
 pub async fn fetch_lib_url_with_timeout(url: &str, timeout_secs: u64) -> Result<String, String> {
     let client = reqwest::Client::builder()
@@ -224,7 +247,20 @@ pub async fn fetch_lib_url_with_timeout(url: &str, timeout_secs: u64) -> Result<
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
-    resp.text().await.map_err(|e| format!("Read body: {}", e))
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let body = resp.text().await.map_err(|e| format!("Read body: {}", e))?;
+    // A 200 is not agreement about WHAT was returned.
+    if looks_like_html(content_type.as_deref(), &body) {
+        return Err(format!(
+            "{url} returned an HTML page, not a text document — the host answers 200 for \
+             unknown paths, so this is a miss dressed as a hit"
+        ));
+    }
+    Ok(body)
 }
 
 async fn fetch_url(url: &str) -> Result<String, String> {
@@ -1353,6 +1389,32 @@ Use --dry-run to preview.
     }
 
     // ── GitHub / website URL parsing (pure, no network) ─────────────────────
+
+    #[test]
+    fn an_html_response_to_a_txt_request_is_a_miss_not_content() {
+        // MEASURED: `kavach.vercel.app` is an unrelated application whose SPA
+        // answers 200 text/html for every path. Fetching `/llms.txt` from it
+        // returned 1,206 bytes of that app's homepage, which was stored as
+        // kavach's documentation. Status code alone cannot tell.
+        assert!(looks_like_html(Some("text/html; charset=utf-8"), "<!DOCTYPE html>"));
+        // Mislabelled HTML is still HTML — sniff the body too.
+        assert!(looks_like_html(Some("text/plain"), "<!doctype html>\n<html>"));
+        assert!(looks_like_html(None, "  <html lang=\"en\">"));
+
+        // Permissive otherwise: a static host may omit the header or send
+        // octet-stream, and neither is grounds to reject real content.
+        assert!(!looks_like_html(Some("text/plain; charset=utf-8"), "# dbd\n\nIntro."));
+        assert!(!looks_like_html(None, "# dbd\n\nIntro."));
+        assert!(!looks_like_html(Some("application/octet-stream"), "# dbd"));
+        // A doc that merely MENTIONS html is not html.
+        assert!(!looks_like_html(Some("text/plain"), "# Guide\n\nUse <html> tags like so."));
+        // Multi-byte characters near the sniff boundary must not panic —
+        // rokkit's index has an em-dash at byte 198 and the first cut at this
+        // sliced by BYTE, which panicked mid-character.
+        let wide = format!("{}— tail", "x".repeat(198));
+        assert!(!looks_like_html(Some("text/plain"), &wide));
+        assert!(!looks_like_html(None, "———————"));
+    }
 
     #[test]
     fn all_three_routes_agree_on_what_counts_as_a_doc() {
