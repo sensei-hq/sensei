@@ -723,17 +723,28 @@ mod corpus {
         let pg = PgStore::connect_test().await.expect("connect");
 
         // (library, ecosystem, owner, repo, tag, website llms URL)
-        // rokkit's site publishes no llms.txt — measured, it 404s — so it has
-        // no website arm. That is a real state, not a gap to paper over.
+        //
+        // The website URLs are the ones each library's OWN
+        // `sensei.library.json` declares under `llms.index` — NOT a guessed
+        // `/llms.txt`, and NOT GitHub's `homepage` field. Both of those led
+        // somewhere wrong: kavach's repo homepage points at an unrelated
+        // application, and `/llms.txt` is not where either library publishes.
         let libs: &[(&str, &str, &str, &str, &str, Option<&str>)] = &[
-            ("rokkit", "npm", "jerrythomas", "rokkit", "v1.4.1", None),
+            (
+                "rokkit",
+                "npm",
+                "jerrythomas",
+                "rokkit",
+                "v1.4.1",
+                Some("https://rokkit.sensei-hq.com/llms/index.txt"),
+            ),
             (
                 "kavach",
                 "npm",
                 "jerrythomas",
                 "kavach",
                 "v1.1.3",
-                Some("https://kavach.vercel.app/llms.txt"),
+                Some("https://kavach.sensei-hq.com/llms/llms.txt"),
             ),
             (
                 "dbd",
