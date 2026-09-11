@@ -3686,7 +3686,41 @@ mod tests {
                 .await
                 .unwrap();
         ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+
+        // MODEL STAGE 3'S BARRIER. Production creates every `files` row before
+        // any parse task exists (R14), which is what lets node persistence FAIL
+        // CLOSED on a missing file (R13, 06 S6). A fixture that seeds a repo on
+        // disk and jumps straight to `process_file` skips that, and the writer
+        // correctly refuses — so the barrier belongs in the fixture, not a
+        // get-or-create in the writer.
+        barrier(ctx, &fid, std::path::Path::new(&repo_path)).await;
         (rid, fid, repo_path)
+    }
+
+    /// Walk a seeded repo and create its `files` rows — the fixture's stand-in
+    /// for stage 3. Paths are folder-relative, exactly as the walk records them.
+    async fn barrier(ctx: &TaskContext, folder_id: &uuid::Uuid, repo_root: &std::path::Path) {
+        fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            let Ok(entries) = std::fs::read_dir(dir) else { return };
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    if p.file_name().and_then(|n| n.to_str()) != Some(".git") {
+                        collect(&p, out);
+                    }
+                } else {
+                    out.push(p);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        collect(repo_root, &mut files);
+        for f in files {
+            let Ok(rel) = f.strip_prefix(repo_root) else { continue };
+            let _ =
+                crate::tasks::test_support::seed_file(ctx.pg(), folder_id, &rel.to_string_lossy())
+                    .await;
+        }
     }
 
     #[tokio::test]

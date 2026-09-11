@@ -439,18 +439,50 @@ async fn tag_file_nodes_by_framework_kind_aggregates_symbol_kinds() {
         .upsert_node(&fid, "file", "Widget.svelte", "src/Widget.svelte", None, None, None, None)
         .await
         .unwrap();
-    s.upsert_node(&fid, "component", "Widget", "src/Widget.svelte", None, None, None, None)
-        .await
-        .unwrap();
-    s.upsert_node(&fid, "hook", "effect", "src/Widget.svelte", None, None, None, None)
-        .await
-        .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "component",
+        "Widget",
+        "src/Widget.svelte",
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "hook",
+        "effect",
+        "src/Widget.svelte",
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     // A plain file with only a function → no framework tag.
     let util = s
         .upsert_node(&fid, "file", "util.rs", "src/util.rs", None, None, None, None)
         .await
         .unwrap();
-    s.upsert_node(&fid, "function", "helper", "src/util.rs", None, None, None, None).await.unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "helper",
+        "src/util.rs",
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     // File-role by path convention (no symbols needed): SvelteKit routes +
     // middleware, and a Next-style middleware file.
@@ -730,7 +762,8 @@ async fn project_identifiers_gathers_names_paths_repos_and_sessions() {
 async fn rank_bm25_returns_results() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("bm25_{}", uuid::Uuid::new_v4())).await;
-    s.upsert_node(
+    crate::tasks::test_support::seed_node(
+        &s,
         &fid,
         "function",
         "authenticate_user",
@@ -742,7 +775,8 @@ async fn rank_bm25_returns_results() {
     )
     .await
     .unwrap();
-    s.upsert_node(
+    crate::tasks::test_support::seed_node(
+        &s,
         &fid,
         "function",
         "validate_email",
@@ -812,9 +846,19 @@ async fn upsert_persists_doc_and_symbol_kinds() {
         ("hook", "useState", "src/Button.svelte"),
         ("extension", "review", "marketplace/commands/review.md"),
     ] {
-        s.upsert_node(&fid, kind, name, path, None, None, Some(1), Some(2))
-            .await
-            .unwrap_or_else(|e| panic!("upsert {kind} failed: {e}"));
+        crate::tasks::test_support::seed_node(
+            &s,
+            &fid,
+            kind,
+            name,
+            path,
+            None,
+            None,
+            Some(1),
+            Some(2),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("upsert {kind} failed: {e}"));
     }
     let kinds = s.count_nodes_by_kind(&fid).await.unwrap();
     for kind in ["doc", "struct", "component", "hook", "extension"] {
@@ -827,7 +871,19 @@ async fn upsert_persists_doc_and_symbol_kinds() {
 async fn doc_nodes_are_embeddable() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("embed_{}", uuid::Uuid::new_v4())).await;
-    s.upsert_node(&fid, "doc", "README", "README.md", None, None, Some(1), Some(2)).await.unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "doc",
+        "README",
+        "README.md",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
     let pending = s.nodes_without_embeddings(&fid, 100).await.unwrap();
     assert!(
         pending.iter().any(|(_, kind, name, _, _)| kind == "doc" && name == "README"),
@@ -1235,6 +1291,61 @@ async fn two_packages_of_one_library_can_each_document_the_same_component() {
 }
 
 #[tokio::test]
+async fn a_repo_relative_path_resolves_to_a_file_in_a_MODULE_folder() {
+    // 06 S6 / R13. v1 callers hold the REPO folder and a repo-relative path;
+    // the file belongs to a MODULE folder under a folder-relative one. Matching
+    // `(folder_id, file_path)` directly misses every file in a module — 17 of
+    // this repo's 18 folders — and the miss is indistinguishable from "not
+    // indexed". Anchoring both sides to the absolute path is what makes the two
+    // grains meet.
+    let s = pg_store().await;
+    let base = format!("/tmp/fidfor_{}", uuid::Uuid::new_v4());
+    let rid = s.add_watch_root(&base, "fidfor", &serde_json::json!([])).await.unwrap();
+
+    let repo = s.upsert_folder(&rid, "git", "repo", &base, &base, None, None, None).await.unwrap();
+    let mod_abs = format!("{base}/crates/senseid");
+    let module = s
+        .upsert_folder(
+            &rid,
+            "module",
+            "senseid",
+            "crates/senseid",
+            &mod_abs,
+            Some(&repo),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    // The file is FOLDER-relative to the module.
+    let fid = s.upsert_file_row(&module, "src/lib.rs", 1, "h", None).await.unwrap();
+
+    // Asked for from the REPO folder, repo-relative — the v1 caller's shape.
+    assert_eq!(
+        s.file_id_for(&repo, "crates/senseid/src/lib.rs").await.unwrap(),
+        Some(fid),
+        "the repo-relative path must reach the module's file"
+    );
+    // Asked for from the module itself, folder-relative.
+    assert_eq!(s.file_id_for(&module, "src/lib.rs").await.unwrap(), Some(fid));
+    // An absolute path resolves from either anchor.
+    assert_eq!(s.file_id_for(&repo, &format!("{mod_abs}/src/lib.rs")).await.unwrap(), Some(fid));
+
+    // FAILS CLOSED. A miss is None — never a licence to create a phantom row.
+    assert_eq!(s.file_id_for(&repo, "crates/senseid/src/nope.rs").await.unwrap(), None);
+    let n: (i64,) =
+        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.files WHERE folder_id = $1")
+            .bind(module)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(n.0, 1, "a miss created nothing");
+
+    s.remove_watch_root(&rid).await.ok();
+}
+
+#[tokio::test]
 async fn folder_completeness_propagates_incompleteness_up_the_tree() {
     // The whole point of the view: a folder is complete only when everything
     // BENEATH it is too. One unfinished file deep in a subtree must keep every
@@ -1435,8 +1546,19 @@ async fn semantic_search_nodes_drops_neighbours_beyond_the_distance_bound() {
         .upsert_node(&fid, "function", "near", "n.rs", None, None, Some(1), Some(9))
         .await
         .unwrap();
-    let id_far =
-        s.upsert_node(&fid, "function", "far", "f.rs", None, None, Some(1), Some(9)).await.unwrap();
+    let id_far = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "far",
+        "f.rs",
+        None,
+        None,
+        Some(1),
+        Some(9),
+    )
+    .await
+    .unwrap();
     s.set_node_embedding(&id_near, &e_near).await.unwrap();
     s.set_node_embedding(&id_far, &e_far).await.unwrap();
 
@@ -1478,10 +1600,32 @@ async fn semantic_search_nodes_drops_neighbours_beyond_the_distance_bound() {
 async fn edge_insert_and_query() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("edge_{}", uuid::Uuid::new_v4())).await;
-    let fn_a =
-        s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
-    let fn_b =
-        s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let fn_a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "a",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
+    let fn_b = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "b",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
     s.insert_edge(&fid, &fn_a, Some(&fn_b), None, None, "calls").await.unwrap();
     let callers = s.get_callers(&fn_b).await.unwrap();
     assert_eq!(callers.len(), 1);
@@ -1499,10 +1643,32 @@ async fn insert_edge_is_idempotent() {
     // SAME id and adds no second row, for both resolved and unresolved edges.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("edgeidem_{}", uuid::Uuid::new_v4())).await;
-    let a =
-        s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
-    let b =
-        s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "a",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
+    let b = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "b",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
 
     // Resolved edge: a repeated identical insert upserts to the same row.
     let e1 = s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
@@ -1535,10 +1701,32 @@ async fn resolve_edge_merges_into_existing_resolved_edge() {
     // throw a unique violation against edges_unique_resolved.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("resolvemerge_{}", uuid::Uuid::new_v4())).await;
-    let a =
-        s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
-    let b =
-        s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "a",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
+    let b = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "b",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
 
     s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap(); // resolved a→b
     let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap(); // unresolved a→"b"
@@ -1813,10 +2001,21 @@ async fn community_coverage_full_singletons_inherit_file_community() {
         .upsert_node(&fid, "file", "widget.rs", "src/widget.rs", None, None, Some(1), Some(99))
         .await
         .unwrap();
-    s.upsert_node(&fid, "struct", "Widget", "src/widget.rs", Some(&file), None, Some(2), Some(2))
-        .await
-        .unwrap();
-    s.upsert_node(
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "struct",
+        "Widget",
+        "src/widget.rs",
+        Some(&file),
+        None,
+        Some(2),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
         &fid,
         "method",
         "new",
@@ -1828,7 +2027,8 @@ async fn community_coverage_full_singletons_inherit_file_community() {
     )
     .await
     .unwrap();
-    s.upsert_node(
+    crate::tasks::test_support::seed_node(
+        &s,
         &fid,
         "method",
         "render",
@@ -2850,7 +3050,19 @@ async fn legacy_upsert_sets_language_from_extension() {
         ("docs/e.md", "doc", None, "markdown"),
     ];
     for (path, kind, sig, want) in cases {
-        let id = s.upsert_node(&fid, kind, "n", path, None, sig, Some(1), Some(2)).await.unwrap();
+        let id = crate::tasks::test_support::seed_node(
+            &s,
+            &fid,
+            kind,
+            "n",
+            path,
+            None,
+            sig,
+            Some(1),
+            Some(2),
+        )
+        .await
+        .unwrap();
         let (lang,): (Option<String>,) = query_as("SELECT language FROM sensei.nodes WHERE id=$1")
             .bind(id)
             .fetch_one(s.pool())
@@ -2973,9 +3185,20 @@ async fn replace_edges_of_kind_swaps_the_full_set() {
     // makes a derived kind (covers) a pure function of the current tree.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("replkind_{}", uuid::Uuid::new_v4())).await;
-    let doc = s.upsert_node(&fid, "doc", "d", "d.md", None, None, None, None).await.unwrap();
-    let f1 = s.upsert_node(&fid, "file", "f1", "f1.rs", None, None, None, None).await.unwrap();
-    let f2 = s.upsert_node(&fid, "file", "f2", "f2.rs", None, None, None, None).await.unwrap();
+    let doc =
+        crate::tasks::test_support::seed_node(&s, &fid, "doc", "d", "d.md", None, None, None, None)
+            .await
+            .unwrap();
+    let f1 = crate::tasks::test_support::seed_node(
+        &s, &fid, "file", "f1", "f1.rs", None, None, None, None,
+    )
+    .await
+    .unwrap();
+    let f2 = crate::tasks::test_support::seed_node(
+        &s, &fid, "file", "f2", "f2.rs", None, None, None, None,
+    )
+    .await
+    .unwrap();
 
     // A STALE covers edge doc→f1 (as if f1 was the covered file last scan).
     s.insert_edge(&fid, &doc, Some(&f1), None, None, "covers").await.unwrap();
@@ -3020,8 +3243,19 @@ async fn replace_edges_of_kind_handles_unresolved_edges() {
     // (D3) will use. Replaces by (target_name, target_file).
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("replun_{}", uuid::Uuid::new_v4())).await;
-    let a =
-        s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "a",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
     s.insert_edge(&fid, &a, None, Some("old"), None, "calls").await.unwrap(); // stale unresolved a→"old"
 
     s.replace_edges_of_kind(
@@ -3060,8 +3294,15 @@ async fn replace_edges_of_kind_is_atomic_and_rolls_back_on_failure() {
     // intact, never half-deleted (no zero-covers window).
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("replatomic_{}", uuid::Uuid::new_v4())).await;
-    let doc = s.upsert_node(&fid, "doc", "d", "d.md", None, None, None, None).await.unwrap();
-    let f1 = s.upsert_node(&fid, "file", "f1", "f1.rs", None, None, None, None).await.unwrap();
+    let doc =
+        crate::tasks::test_support::seed_node(&s, &fid, "doc", "d", "d.md", None, None, None, None)
+            .await
+            .unwrap();
+    let f1 = crate::tasks::test_support::seed_node(
+        &s, &fid, "file", "f1", "f1.rs", None, None, None, None,
+    )
+    .await
+    .unwrap();
     s.insert_edge(&fid, &doc, Some(&f1), None, None, "covers").await.unwrap();
 
     // A batch whose second edge has a bogus source_id (no such node) → the
@@ -3114,8 +3355,19 @@ async fn insert_edge_unresolved_dedups_by_target_file() {
     // files must not collapse to one edge.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("edgetf_{}", uuid::Uuid::new_v4())).await;
-    let a =
-        s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "a",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
 
     let e1 = s.insert_edge(&fid, &a, None, Some("helper"), Some("x.rs"), "calls").await.unwrap();
     let e2 = s.insert_edge(&fid, &a, None, Some("helper"), Some("y.rs"), "calls").await.unwrap();
@@ -3139,10 +3391,32 @@ async fn resolve_edge_second_call_is_safe() {
     // twice must be a safe no-op (one edge), not a unique-violation throw.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("resolve2x_{}", uuid::Uuid::new_v4())).await;
-    let a =
-        s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
-    let b =
-        s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "a",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
+    let b = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "b",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
     let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap();
 
     s.resolve_edge(&u, &b).await.unwrap();
@@ -3162,10 +3436,32 @@ async fn resolve_edge_updates_in_place_when_no_conflict() {
     // updated in place to the resolved target (not deleted).
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("resolveok_{}", uuid::Uuid::new_v4())).await;
-    let a =
-        s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
-    let b =
-        s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "a",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
+    let b = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "b",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
     let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap();
 
     s.resolve_edge(&u, &b).await.unwrap();
@@ -5122,13 +5418,27 @@ async fn list_indexed_files_excludes_modules_and_empties() {
     let repo_abs = format!("{root_path}/repo");
     let fid = s.upsert_repo_kind(&root_id, "git", "repo", &repo_abs).await.unwrap();
 
-    s.upsert_node(&fid, "file", "a.rs", "a.rs", None, None, None, None).await.unwrap();
-    s.upsert_node(&fid, "struct", "B", "b.rs", None, None, None, None).await.unwrap();
-    // A module node records an ABSOLUTE dir path — must be excluded so it never
-    // pollutes the rel-path comparison in prune_vanished.
-    s.upsert_node(&fid, "module", "src", &format!("{repo_abs}/src"), None, None, None, None)
+    crate::tasks::test_support::seed_node(&s, &fid, "file", "a.rs", "a.rs", None, None, None, None)
         .await
         .unwrap();
+    crate::tasks::test_support::seed_node(&s, &fid, "struct", "B", "b.rs", None, None, None, None)
+        .await
+        .unwrap();
+    // A module node records an ABSOLUTE dir path — must be excluded so it never
+    // pollutes the rel-path comparison in prune_vanished.
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "module",
+        "src",
+        &format!("{repo_abs}/src"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     let mut files = s.list_indexed_files(&fid).await.unwrap();
     files.sort();
@@ -6996,8 +7306,19 @@ async fn record_symbol_names_is_monotonic_history() {
     let fid = create_test_folder(&s, &format!("symhist_{}", uuid::Uuid::new_v4())).await;
     let uniq = format!("SymHist_{}", uuid::Uuid::new_v4().simple());
 
-    let nid =
-        s.upsert_node(&fid, "function", &uniq, "x.rs", None, None, Some(1), Some(2)).await.unwrap();
+    let nid = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        &uniq,
+        "x.rs",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
     s.record_symbol_names().await.unwrap();
     let present: Option<(String,)> =
         sqlx_core::query_as::query_as("SELECT name FROM sensei.symbol_names WHERE name = $1")
@@ -10496,7 +10817,8 @@ async fn a_nested_folder_whose_files_are_indexed_twice_is_reported_but_a_healed_
 
     for i in 0..6 {
         // The outer repo indexes both subtrees, repo-relative.
-        s.upsert_node(
+        crate::tasks::test_support::seed_node(
+            &s,
             &outer,
             "function",
             &format!("d{i}"),
@@ -10508,7 +10830,8 @@ async fn a_nested_folder_whose_files_are_indexed_twice_is_reported_but_a_healed_
         )
         .await
         .unwrap();
-        s.upsert_node(
+        crate::tasks::test_support::seed_node(
+            &s,
             &outer,
             "function",
             &format!("h{i}"),
@@ -10521,7 +10844,8 @@ async fn a_nested_folder_whose_files_are_indexed_twice_is_reported_but_a_healed_
         .await
         .unwrap();
         // The duplicate ALSO holds them, folder-relative.
-        s.upsert_node(
+        crate::tasks::test_support::seed_node(
+            &s,
             &dup,
             "function",
             &format!("d{i}"),
@@ -10539,7 +10863,11 @@ async fn a_nested_folder_whose_files_are_indexed_twice_is_reported_but_a_healed_
             .unwrap();
     }
     // ...only the module container the heal leaves behind.
-    s.upsert_node(&healed, "module", "healed", "", None, None, None, None).await.unwrap();
+    crate::tasks::test_support::seed_node(
+        &s, &healed, "module", "healed", "", None, None, None, None,
+    )
+    .await
+    .unwrap();
 
     let dups = s.contained_duplicate_folders().await.unwrap();
     let mine: Vec<_> = dups.iter().filter(|(o, _, _, _)| o.contains(&tag.to_string())).collect();
@@ -12689,16 +13017,46 @@ async fn doc_coverage_pairs_without_any_stored_edge() {
     let s = pg_store().await;
     let suffix = format!("doccov_{}", uuid::Uuid::new_v4().simple());
     let fid = create_test_folder(&s, &suffix).await;
-    s.upsert_node(&fid, "doc", "design", "docs/design.md", None, None, Some(1), Some(1))
-        .await
-        .unwrap();
-    s.upsert_node(&fid, "file", "design.rs", "src/design.rs", None, None, Some(1), Some(1))
-        .await
-        .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "doc",
+        "design",
+        "docs/design.md",
+        None,
+        None,
+        Some(1),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "file",
+        "design.rs",
+        "src/design.rs",
+        None,
+        None,
+        Some(1),
+        Some(1),
+    )
+    .await
+    .unwrap();
     // A file whose stem does NOT match must not pair.
-    s.upsert_node(&fid, "file", "other.rs", "src/other.rs", None, None, Some(1), Some(1))
-        .await
-        .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "file",
+        "other.rs",
+        "src/other.rs",
+        None,
+        None,
+        Some(1),
+        Some(1),
+    )
+    .await
+    .unwrap();
 
     let drift = s.get_doc_drift(&suffix).await.unwrap();
     assert_eq!(drift.len(), 1, "exactly the stem-matched pair, got {drift:?}");
@@ -12759,7 +13117,19 @@ async fn doc_coverage_cannot_hold_a_stale_pairing() {
     let s = pg_store().await;
     let suffix = format!("staleprs_{}", uuid::Uuid::new_v4().simple());
     let fid = create_test_folder(&s, &suffix).await;
-    s.upsert_node(&fid, "doc", "auth", "docs/auth.md", None, None, Some(1), Some(1)).await.unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "doc",
+        "auth",
+        "docs/auth.md",
+        None,
+        None,
+        Some(1),
+        Some(1),
+    )
+    .await
+    .unwrap();
     let code = s
         .upsert_node(&fid, "file", "auth", "src/auth.rs", None, None, Some(1), Some(1))
         .await
@@ -13011,7 +13381,19 @@ async fn folder_branch_is_a_typed_column_and_a_graph_nodes_dimension() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("br_{}", uuid::Uuid::new_v4())).await;
     s.set_folder_branch(&fid, "release/v9").await.unwrap();
-    s.upsert_node(&fid, "function", "f", "src/a.rs", None, None, Some(1), Some(2)).await.unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "f",
+        "src/a.rs",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
 
     let (col,): (Option<String>,) =
         sqlx_core::query_as::query_as("SELECT branch FROM sensei.folders WHERE id = $1")
@@ -13115,9 +13497,19 @@ async fn get_callers_by_name_finds_a_caller_through_an_unresolved_edge() {
     let fid = create_test_folder(&s, &folder).await;
 
     // The target IS defined locally — this is not a phantom symbol.
-    s.upsert_node(&fid, "function", "handleAuth", "src/auth.rs", None, None, Some(10), Some(20))
-        .await
-        .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "handleAuth",
+        "src/auth.rs",
+        None,
+        None,
+        Some(10),
+        Some(20),
+    )
+    .await
+    .unwrap();
     // Two callers: one whose edge RESOLVED, one still unresolved (the caller was
     // indexed before the definition, which is the normal steady state for 35% of
     // this graph). Both are real callers and both must be reported.
@@ -13163,9 +13555,19 @@ async fn symbol_definitions_does_not_count_a_stub_as_a_definition() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("symdef_{}", uuid::Uuid::new_v4())).await;
 
-    s.upsert_node(&fid, "function", "realThing", "src/real.rs", None, None, Some(7), Some(9))
-        .await
-        .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "realThing",
+        "src/real.rs",
+        None,
+        None,
+        Some(7),
+        Some(9),
+    )
+    .await
+    .unwrap();
     // A stub: named, but no file_path — an unresolved reference, not a definition.
     s.upsert_node_by_fqn(
         &fid,
@@ -13359,12 +13761,32 @@ async fn sole_definition_by_name_returns_none_when_ambiguous() {
     assert_eq!(s.sole_definition_id_by_name(&fid, "uniqueThing").await.unwrap(), Some(only));
 
     // Ambiguous: two definitions of the same name in different files.
-    s.upsert_node(&fid, "function", "dupThing", "src/b.rs", None, None, Some(1), Some(2))
-        .await
-        .unwrap();
-    s.upsert_node(&fid, "function", "dupThing", "src/c.rs", None, None, Some(1), Some(2))
-        .await
-        .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "dupThing",
+        "src/b.rs",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "dupThing",
+        "src/c.rs",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         s.sole_definition_id_by_name(&fid, "dupThing").await.unwrap(),
         None,
@@ -13430,10 +13852,32 @@ async fn file_node_lookup_matches_the_repo_relative_path() {
 async fn insert_edge_with_props_stamps_and_merges() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("edgeprops_{}", uuid::Uuid::new_v4())).await;
-    let a =
-        s.upsert_node(&fid, "class", "Sub", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
-    let b =
-        s.upsert_node(&fid, "class", "Base", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "class",
+        "Sub",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
+    let b = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "class",
+        "Base",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
 
     let props = serde_json::json!({ "relation": "trait_impl" });
     let e1 = s
@@ -13525,12 +13969,45 @@ async fn insert_edge_with_props_stamps_and_merges() {
 async fn the_sweep_takes_mislabelled_containment_and_spares_real_inheritance() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("sweep_{}", uuid::Uuid::new_v4())).await;
-    let file =
-        s.upsert_node(&fid, "file", "a.rs", "a.rs", None, None, Some(1), Some(9)).await.unwrap();
-    let sub =
-        s.upsert_node(&fid, "class", "Sub", "a.rs", None, None, Some(2), Some(3)).await.unwrap();
-    let base =
-        s.upsert_node(&fid, "class", "Base", "b.rs", None, None, Some(1), Some(3)).await.unwrap();
+    let file = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "file",
+        "a.rs",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(9),
+    )
+    .await
+    .unwrap();
+    let sub = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "class",
+        "Sub",
+        "a.rs",
+        None,
+        None,
+        Some(2),
+        Some(3),
+    )
+    .await
+    .unwrap();
+    let base = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "class",
+        "Base",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(3),
+    )
+    .await
+    .unwrap();
 
     // The mislabelled shape: FILE source, unresolved, no discriminant.
     s.insert_edge(&fid, &file, None, Some("Sub"), None, "extends").await.unwrap();
@@ -13615,10 +14092,32 @@ async fn persist_edge_fact_reproduces_every_inheritance_arm() {
 
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("facts_{}", uuid::Uuid::new_v4())).await;
-    let sub =
-        s.upsert_node(&fid, "class", "Sub", "a.rs", None, None, Some(1), Some(3)).await.unwrap();
-    let inflight =
-        s.upsert_node(&fid, "class", "Known", "a.rs", None, None, Some(5), Some(7)).await.unwrap();
+    let sub = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "class",
+        "Sub",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(3),
+    )
+    .await
+    .unwrap();
+    let inflight = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "class",
+        "Known",
+        "a.rs",
+        None,
+        None,
+        Some(5),
+        Some(7),
+    )
+    .await
+    .unwrap();
     let mut known = HashMap::new();
     known.insert("rust·demo·a·Known".to_string(), inflight);
 
@@ -13773,10 +14272,32 @@ async fn persist_edge_fact_reproduces_every_inheritance_arm() {
 async fn a_resolved_import_is_not_reported_as_an_empty_external_target() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("impcount_{}", uuid::Uuid::new_v4())).await;
-    let src =
-        s.upsert_node(&fid, "file", "a.ts", "a.ts", None, None, Some(1), Some(9)).await.unwrap();
-    let tgt =
-        s.upsert_node(&fid, "module", "b", "b.ts", None, None, Some(1), Some(9)).await.unwrap();
+    let src = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "file",
+        "a.ts",
+        "a.ts",
+        None,
+        None,
+        Some(1),
+        Some(9),
+    )
+    .await
+    .unwrap();
+    let tgt = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "module",
+        "b",
+        "b.ts",
+        None,
+        None,
+        Some(1),
+        Some(9),
+    )
+    .await
+    .unwrap();
 
     // A resolved import: target_id set, target_name NULL — the shape the
     // invariant guarantees.
@@ -13828,13 +14349,60 @@ async fn a_resolved_import_is_not_reported_as_an_empty_external_target() {
 async fn the_resolution_classes_are_distinct_and_only_one_is_a_defect() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("rescls_{}", uuid::Uuid::new_v4())).await;
-    let src =
-        s.upsert_node(&fid, "file", "a.rs", "a.rs", None, None, Some(1), Some(9)).await.unwrap();
+    let src = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "file",
+        "a.rs",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(9),
+    )
+    .await
+    .unwrap();
     // One local definition named `only` → a miss on it is UNAMBIGUOUS.
-    s.upsert_node(&fid, "function", "only", "b.rs", None, None, Some(1), Some(2)).await.unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "only",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
     // Two named `twin` → a miss on it is AMBIGUOUS, and correctly unresolved.
-    s.upsert_node(&fid, "function", "twin", "c.rs", None, None, Some(1), Some(2)).await.unwrap();
-    s.upsert_node(&fid, "function", "twin", "d.rs", None, None, Some(1), Some(2)).await.unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "twin",
+        "c.rs",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "twin",
+        "d.rs",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
 
     for name in ["only", "twin", "nowhere"] {
         s.insert_edge(&fid, &src, None, Some(name), None, "calls").await.unwrap();
@@ -13890,8 +14458,19 @@ async fn the_resolution_classes_are_distinct_and_only_one_is_a_defect() {
 async fn an_unreferenced_lib_node_is_collected_and_a_referenced_one_survives() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("libgc_{}", uuid::Uuid::new_v4())).await;
-    let src =
-        s.upsert_node(&fid, "file", "a.rs", "a.rs", None, None, Some(1), Some(9)).await.unwrap();
+    let src = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "file",
+        "a.rs",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(9),
+    )
+    .await
+    .unwrap();
 
     // Referenced: a lib symbol with an edge pointing at it.
     let kept = s
