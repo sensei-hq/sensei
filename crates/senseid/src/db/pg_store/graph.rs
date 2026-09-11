@@ -2794,7 +2794,7 @@ impl PgStore {
             "DELETE FROM sensei.nodes s
                USING sensei.folders sf
               WHERE s.folder_id = sf.id
-                AND sf.kind IN ('folder'::sensei.folder_kind, 'workspace_member'::sensei.folder_kind)
+                AND sf.kind IN ('folder'::sensei.folder_kind, 'module'::sensei.folder_kind)
                 AND sf.root_id = $1
                 AND EXISTS (
                   SELECT 1

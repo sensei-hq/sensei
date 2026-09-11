@@ -85,8 +85,10 @@ mod tests {
             std::fs::create_dir_all(dir.join(".git")).unwrap();
         }
         let abs_path = dir.to_string_lossy().to_string();
-        let fid =
-            pg.upsert_folder(root_id, "git", name, name, &abs_path, None, None).await.unwrap();
+        let fid = pg
+            .upsert_folder(root_id, "git", name, name, &abs_path, None, None, None)
+            .await
+            .unwrap();
         sqlx_core::query::query(
             "UPDATE sensei.folders SET status = $2::sensei.folder_status WHERE id = $1",
         )
