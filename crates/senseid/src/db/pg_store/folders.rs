@@ -463,12 +463,32 @@ impl PgStore {
         project_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            // `kind` IS refreshed on conflict. It is DERIVED — from whether an
+            // ancestor manifest declares this directory (03 S1) — so a folder
+            // that leaves a workspace's member list must stop reading as a
+            // member. Leaving it stale was why every folder here kept the
+            // `workspace_member` an earlier run wrote, and the derivation
+            // silently had no effect.
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, parent_id, project_id)
              VALUES($1, $2::sensei.folder_kind, $3, $4, $5, $6, $7)
-             ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name, project_id = COALESCE(EXCLUDED.project_id, folders.project_id), modified_at = now()
-             RETURNING id"
-        ).bind(root_id).bind(kind).bind(name).bind(path).bind(abs_path).bind(parent_id).bind(project_id)
-            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+             ON CONFLICT(abs_path) DO UPDATE SET
+               kind = EXCLUDED.kind,
+               name = EXCLUDED.name,
+               parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
+               project_id = COALESCE(EXCLUDED.project_id, folders.project_id),
+               modified_at = now()
+             RETURNING id",
+        )
+        .bind(root_id)
+        .bind(kind)
+        .bind(name)
+        .bind(path)
+        .bind(abs_path)
+        .bind(parent_id)
+        .bind(project_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
@@ -930,9 +950,8 @@ impl PgStore {
     /// resume: `discovered` (scan ran, ProcessGitFolder hadn't started),
     /// `queued` (enqueued, not started), `indexing` (a scan was in-flight when
     /// the daemon stopped — its in-memory task was lost, D6a), and `failed`
-    /// (errored, should retry). `indexed`, `deferred` (intentionally not indexed
-    /// — sibling/standalone), and `archived` (directory gone) are terminal and
-    /// excluded.
+    /// (errored, should retry). `indexed` (done) and `archived` (directory
+    /// gone, history kept) are terminal and excluded.
     ///
     /// Called once at daemon startup to rebuild the in-memory queue, which
     /// otherwise loses every task on restart. Re-enqueuing an already-running

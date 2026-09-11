@@ -22,6 +22,8 @@ set search_path to sensei, extensions;
 --
 --   focus, version_range   skill + agent
 --   tokens, generated_at   skill only (null until skill-gen runs)
+--   package_name           any kind, but in practice pages: WHICH published
+--                          package this documents. NULL = library-level.
 --   url, local_path        page only — where it was fetched from
 --   description, component page only
 --   source_type            page only — the fetch route (llms.txt|http|local)
@@ -47,6 +49,31 @@ create table if not exists library_content (
   -- skill only
 , tokens                   integer
 , generated_at             timestamptz
+  -- WHICH PACKAGE this documents, when it documents one.
+  --
+  -- Skills and agents are library-level: rokkit's "styling" skill is about
+  -- rokkit. DOCS are not. `rokkit` publishes `@rokkit/ui`, `@rokkit/core`,
+  -- `@rokkit/actions` …, and the `List` page documents `@rokkit/ui`
+  -- specifically. Without this column a reference to `@rokkit/ui` resolves to
+  -- the library and then to ALL of its pages, and picking the right one falls
+  -- back to matching `component` against a symbol name — a guess (R4).
+  --
+  -- NULL means library-level, which is a real and common state: an overview,
+  -- a getting-started guide, an architecture page. NULL is "applies to the
+  -- whole library", never "we don't know".
+  --
+  -- TEXT, and deliberately NOT a foreign key to `library_packages`. A page can
+  -- name a package that has not been grouped yet, and an FK would either
+  -- reject the page or force a phantom `library_packages` row — the
+  -- get-or-create failure R13 forbids one table over. Join opportunistically;
+  -- a miss is an honest "we hold no grouping for this package".
+  --
+  -- INVARIANT, not enforceable by a single FK: the named package must belong
+  -- to the SAME library as this row's version. `library_packages.library_id`
+  -- and `library_versions.library_id` must agree. A page claiming a package of
+  -- a different library is a manifest conflict and gets REPORTED (02b §4),
+  -- never silently resolved.
+, package_name             text
   -- page only
 , url                      text
 , local_path               text
@@ -61,13 +88,41 @@ create table if not exists library_content (
 , scope                    entity_scope  not null default 'local'
 , origin                   entity_origin not null default 'imported'
 , modified_at              timestamptz not null default now()
-  -- `kind` is IN the key. A library may legitimately ship a skill and a page
-  -- both called "routing"; without the discriminator one would evict the other.
-, unique (library_version_id, kind, name)
+  -- `kind` is IN the key: a library may legitimately ship a skill and a page
+  -- both called "routing", and without the discriminator one would evict the
+  -- other.
+  --
+  -- `package_name` is in it for the same reason one level down. `rokkit`
+  -- publishes both `@rokkit/ui` and `@rokkit/chart`, and each can document a
+  -- component called `List`. Keyed without the package, the second `List`
+  -- page upserts over the first and one of them is simply lost.
+  --
+  -- Declared as a standalone index below, NOT as an inline constraint: the
+  -- NULLS NOT DISTINCT clause is load-bearing and an inline
+  -- `unique nulls not distinct (...)` is silently reduced to a plain unique
+  -- by the schema tool, which is exactly the kind of quiet downgrade that
+  -- looks applied and is not.
 );
+
+-- THE IDENTITY OF A PIECE OF CONTENT.
+--
+-- NULLS NOT DISTINCT is the load-bearing part. Postgres treats NULLs as
+-- DISTINCT in a unique key by default, so the library-level rows — every
+-- overview and guide, which are precisely the ones with no package — would not
+-- be constrained at all, and re-ingesting a manifest would insert another
+-- "Getting started" on every run instead of updating the one that exists.
+create unique index if not exists library_content_identity_uq
+    on library_content (library_version_id, kind, package_name, name)
+       nulls not distinct;
 
 create index if not exists library_content_version_kind_idx
     on library_content(library_version_id, kind);
+
+-- The G1 lookup: a node references `@rokkit/ui`, and this is what turns that
+-- into the pages documenting that package rather than the whole library's.
+create index if not exists library_content_package_idx
+    on library_content(package_name, kind)
+ where package_name is not null;
 
 create index if not exists library_content_kind_idx
     on library_content(kind);
@@ -92,7 +147,12 @@ release it described.
 Kind-specific columns are nullable BY DESIGN. Each belongs to exactly one kind
 — focus/version_range to skills and agents, tokens/generated_at to skills,
 url/local_path/description/component/source_type/embedding/fetched_at to pages
-— so a null means "not applicable to this kind", never "unknown".';
+— so a null means "not applicable to this kind", never "unknown".
+
+package_name is the exception that is NOT kind-specific: it records WHICH of a
+library''s published packages a row documents. Skills and agents are
+library-level; docs are often package-level (rokkit''s List page documents
+@rokkit/ui). NULL means library-level, which is a real state, not a gap.';
 
 comment on column library_content.id
      is 'Surrogate primary key (UUID).';
@@ -116,6 +176,10 @@ comment on column library_content.tokens
      is 'Approximate token size. Skills only; null until skill-gen runs.';
 comment on column library_content.generated_at
      is 'When auto-generated. Skills only; null for manifest-declared content.';
+comment on column library_content.package_name
+     is 'Which published package this row documents, as a dependency file spells it (@rokkit/ui) — matching library_packages.package_name, so resolution is an equality join. NULL means library-level: an overview or guide that is about the library as a whole, which is a real state and not a missing value. Plain TEXT, not an FK: a page can name a package not yet grouped, and an FK would force a phantom library_packages row. The named package MUST belong to the same library as this row''s version; a cross-library claim is a conflict to report, not to resolve.';
+comment on column library_content.component
+     is 'Sub-topic within a page set ("routing", "List"). Orthogonal to package_name: package_name says WHICH PACKAGE, component says WHICH TOPIC within it. Pages only.';
 comment on column library_content.url
      is 'Remote URL a page was fetched from (http or llms.txt route). Pages only.';
 comment on column library_content.local_path

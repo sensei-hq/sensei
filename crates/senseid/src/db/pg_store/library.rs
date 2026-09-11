@@ -54,9 +54,11 @@ impl PgStore {
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<String>,
         )> = sqlx_core::query_as::query_as(
             "SELECT c.name, c.component, c.description, c.body,
-                        COALESCE(c.url, c.local_path) AS location, c.source_type::text
+                        COALESCE(c.url, c.local_path) AS location, c.source_type::text,
+                        c.package_name
                    FROM sensei.library_content c
                    JOIN sensei.library_versions lv ON lv.id = c.library_version_id AND lv.is_latest
                    JOIN sensei.libraries l ON l.id = lv.library_id
@@ -72,11 +74,16 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(title, component, description, content, location, source_type)| {
+            .map(|(title, component, description, content, location, source_type, package)| {
                 serde_json::json!({
                     "title": title, "component": component,
                     "description": description, "content": content,
                     "location": location, "source": source_type,
+                    // WHICH package this page documents. Null = library-level.
+                    // A caller resolving `@rokkit/ui` picks the pages naming
+                    // it and falls back to the library-level ones, instead of
+                    // matching a component string against a symbol name.
+                    "package": package,
                 })
             })
             .collect())
@@ -414,7 +421,7 @@ impl PgStore {
         const UPSERT: &str = "INSERT INTO sensei.library_content(
                  library_version_id, kind, name, focus, body, source, source_path, version_range)
              VALUES($1, $2::sensei.library_content_kind, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT(library_version_id, kind, name) DO UPDATE SET
+             ON CONFLICT(library_version_id, kind, package_name, name) DO UPDATE SET
                focus=EXCLUDED.focus, body=EXCLUDED.body, source=EXCLUDED.source,
                source_path=EXCLUDED.source_path, version_range=EXCLUDED.version_range,
                modified_at=now()";
@@ -975,18 +982,26 @@ impl PgStore {
         content: Option<&str>,
         source_type: &str,
         component: Option<&str>,
+        package_name: Option<&str>,
     ) -> Result<uuid::Uuid, String> {
         // Pages hang off a VERSION (S7b). This writer is not told which one, so
-        // it lands on 'latest' — the honest key for "we fetched the current
-        // docs" — rather than a fabricated version string.
+        // it lands on the current release rather than a fabricated version.
+        //
+        // `package_name` says WHICH of the library's published packages this
+        // page documents — `rokkit`'s List page is about `@rokkit/ui`, not
+        // about rokkit as a whole. `None` means library-level (an overview, a
+        // guide), which is a real state. Today every caller passes `None`
+        // because no route reports a page's package yet; 02b S1's manifest
+        // read is what will supply it. `None` is the honest "not stated",
+        // never a guess from the page title.
         let version_id = self.current_or_new_library_version(library_id).await?;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.library_content(
                  library_version_id, kind, name, url, local_path, description, body,
-                 source_type, component, source, fetched_at)
+                 source_type, component, package_name, source, fetched_at)
              VALUES($1, 'page'::sensei.library_content_kind, $2, $3, $4, $5, $6,
-                    $7::sensei.library_source_type, $8, $7, now())
-             ON CONFLICT(library_version_id, kind, name) DO UPDATE SET
+                    $7::sensei.library_source_type, $8, $9, $7, now())
+             ON CONFLICT(library_version_id, kind, package_name, name) DO UPDATE SET
                url = COALESCE(EXCLUDED.url, sensei.library_content.url),
                local_path = COALESCE(EXCLUDED.local_path, sensei.library_content.local_path),
                description = COALESCE(EXCLUDED.description, sensei.library_content.description),
@@ -1004,6 +1019,7 @@ impl PgStore {
         .bind(content)
         .bind(source_type)
         .bind(component)
+        .bind(package_name)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| e.to_string())?;

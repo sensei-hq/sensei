@@ -200,6 +200,35 @@ Three consequences to carry into the migration:
   one table over. Join opportunistically; a miss is an honest "no docs for
   this version".
 
+**DOCS ARE PACKAGE-LEVEL; SKILLS AND AGENTS ARE LIBRARY-LEVEL.** A library
+publishes several packages, and a page usually documents ONE of them —
+`rokkit`'s `List` page is about `@rokkit/ui`, not about rokkit as a whole. Its
+skills and agents genuinely are about the library. So `library_content` carries
+`package_name`:
+
+- NULL = library-level. An overview, a guide, an architecture page. A real
+  state, not a gap, and what every skill and agent has.
+- set = documents that published package, spelled as a dependency file spells
+  it (`@rokkit/ui`), so resolving it against `library_packages.package_name` is
+  an equality join.
+
+It is TEXT and deliberately not an FK: a page can name a package not yet
+grouped, and an FK would either reject the page or force a phantom
+`library_packages` row — the get-or-create failure R13 forbids one table over.
+
+**The unique key is `(library_version_id, kind, package_name, name)` NULLS NOT
+DISTINCT.** Both halves are load-bearing. Without `package_name`, `@rokkit/ui`'s
+`List` page and `@rokkit/chart`'s `List` page collide and one silently evicts
+the other. Without NULLS NOT DISTINCT, Postgres treats the library-level rows —
+precisely the ones with no package — as mutually distinct, so re-ingesting a
+manifest inserts another "Getting started" every run instead of updating one.
+MEASURED: four identical library-level rows accumulated under the plain key
+before this was caught.
+
+Note for the schema tool: an inline `unique nulls not distinct (...)` table
+constraint is silently reduced to a plain unique. It must be a standalone
+`create unique index ... nulls not distinct`.
+
 **`library_packages` stays at the LIBRARY level, not the version.** Grouping is
 about identity, and the node -> package -> library chain (R10.7g) resolves from
 an fqn that carries NO version, so a version-keyed grouping could not be walked

@@ -45,8 +45,8 @@ create index if not exists folders_repository_id_idx
 
 comment on table folders is
 'Content: discovered filesystem tree. Every entry was found by scanning a watched root.
-- kind: git (repository), workspace_member (monorepo member), subtree (nested git repo), sibling (non-git sibling of git folders), standalone (non-git, no git siblings)
-- status: discovered (found), queued (files counted), indexing (in progress), indexed (complete), failed, deferred (not indexed — sibling/standalone)
+- kind: git (repository), workspace_member (a package a workspace root DECLARES), package (holds a manifest, declared by nothing), subtree (nested git repo), sibling (non-git sibling of git folders), standalone (non-git, no git siblings), folder (ordinary directory, no manifest)
+- status: discovered (found), queued (files counted), indexing (in progress), indexed (complete), failed, archived (directory gone, history kept)
 - stack: detected technology stack ["rust", "typescript", "svelte"] — set by ProcessGitFolder
 - path: relative to the watch root
 - abs_path: absolute path on disk (unique across all roots)
@@ -62,9 +62,13 @@ comment on column folders.parent_id
 comment on column folders.project_id
      is 'Foreign key to projects — groups this folder into a project. Nullable.';
 comment on column folders.kind
-     is 'Folder classification: git (repository), workspace_member (monorepo member), subtree (nested git repo), sibling (non-git sibling), standalone (non-git, no git siblings).';
+     is 'Folder classification: git (repository), workspace_member (a package a workspace root DECLARES), package (holds a manifest but no workspace declares it — a build unit that is not a member of anything), subtree (nested git repo), sibling (non-git sibling), standalone (non-git, no git siblings), folder (an ordinary directory inside a repo, no manifest).
+
+workspace_member vs package is the DECLARED/UNDECLARED distinction, derived from the ancestor manifest''s member list — never from the directory''s position or name. Labelling an undeclared package a member would assert a relationship no manifest states.';
 comment on column folders.status
-     is 'Indexing lifecycle: discovered → queued → indexing → indexed. Or deferred (not indexed — sibling/standalone). Or failed.';
+     is 'Indexing lifecycle: discovered → queued → indexing → indexed, or failed. Or archived, when the directory is gone but its history is worth keeping.
+
+There is no "not indexed" state. A folders row exists only for a repo root or a manifest-bearing directory, and every one of those is indexed; a directory we do not index has no row at all.';
 comment on column folders.stack
      is 'Detected technology stack as JSON array: ["rust", "typescript"]. Set by ProcessGitFolder from config files (Cargo.toml, package.json, etc.).';
 comment on column folders.role

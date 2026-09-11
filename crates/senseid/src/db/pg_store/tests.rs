@@ -966,6 +966,97 @@ async fn a_lib_node_records_the_language_that_minted_it() {
 }
 
 #[tokio::test]
+async fn two_packages_of_one_library_can_each_document_the_same_component() {
+    // A library publishes several packages, and docs are PACKAGE-level while
+    // skills and agents are library-level. `rokkit` ships both `@rokkit/ui`
+    // and `@rokkit/chart`, and each can have a `List` page. Keyed without the
+    // package, the second upserts over the first and one is simply lost.
+    let s = pg_store().await;
+    let lib =
+        s.upsert_library("_test:pagekey", "npm", Some("1.0.0"), None, None, None).await.unwrap();
+
+    let ui = s
+        .upsert_library_page(
+            &lib,
+            "List",
+            None,
+            None,
+            None,
+            Some("ui list docs"),
+            "local",
+            Some("List"),
+            Some("@_test/ui"),
+        )
+        .await
+        .unwrap();
+    let chart = s
+        .upsert_library_page(
+            &lib,
+            "List",
+            None,
+            None,
+            None,
+            Some("chart list docs"),
+            "local",
+            Some("List"),
+            Some("@_test/chart"),
+        )
+        .await
+        .unwrap();
+    assert_ne!(ui, chart, "two packages, two rows — not one evicting the other");
+
+    // A LIBRARY-LEVEL page (no package) is a third, distinct row.
+    let overview = s
+        .upsert_library_page(
+            &lib,
+            "List",
+            None,
+            None,
+            None,
+            Some("overview"),
+            "local",
+            Some("List"),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_ne!(overview, ui);
+    assert_ne!(overview, chart);
+
+    // ...but NULLS NOT DISTINCT means re-ingesting it UPDATES rather than
+    // inserting a duplicate. Postgres treats NULLs as distinct by default, so
+    // without that clause every re-ingest would add another overview row.
+    let overview_again = s
+        .upsert_library_page(
+            &lib,
+            "List",
+            None,
+            None,
+            None,
+            Some("overview v2"),
+            "local",
+            Some("List"),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(overview, overview_again, "library-level pages are still constrained");
+
+    let n: (i64,) = sqlx_core::query_as::query_as(
+        "SELECT count(*) FROM sensei.library_content c
+           JOIN sensei.library_versions v ON v.id = c.library_version_id
+          WHERE v.library_id = $1 AND c.kind = 'page'::sensei.library_content_kind",
+    )
+    .bind(lib)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(n.0, 3, "two package pages plus one library-level page");
+
+    s.delete_library(&lib).await.unwrap();
+}
+
+#[tokio::test]
 async fn folder_completeness_propagates_incompleteness_up_the_tree() {
     // The whole point of the view: a folder is complete only when everything
     // BENEATH it is too. One unfinished file deep in a subtree must keep every
@@ -2968,7 +3059,6 @@ async fn list_pending_folders_returns_only_non_terminal_status() {
         ("indexing", "c"),
         ("indexed", "d"),
         ("failed", "e"),
-        ("deferred", "f"),
         ("archived", "g"),
     ] {
         let name = format!("repo_{}", suffix);
@@ -2986,8 +3076,9 @@ async fn list_pending_folders_returns_only_non_terminal_status() {
     // Recoverable = non-terminal. `discovered`/`queued` never started;
     // `indexing`/`failed` are a scan interrupted mid-flight or errored —
     // its in-memory task was lost on restart (D6a marks `indexing` at scan
-    // start), so resume MUST re-enqueue them. `indexed`/`deferred`/`archived`
-    // are terminal and never resumed.
+    // start), so resume MUST re-enqueue them. `indexed`/`archived` are
+    // terminal and never resumed. (`deferred` was removed: v2 stores no
+    // folder it does not index.)
     let statuses: std::collections::BTreeSet<&str> =
         ours.iter().map(|r| r["status"].as_str().unwrap()).collect();
     assert_eq!(
