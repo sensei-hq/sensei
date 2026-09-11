@@ -20,8 +20,7 @@ select n.id
      , n.parent_id
      , n.kind
      , n.name
-     , case when f.kind = 'git' then fi.file_path
-            else f.path || '/' || fi.file_path end as file_path
+     , np.file_path
      , n.signature
      , n.description
      , n.docstring
@@ -33,7 +32,7 @@ select n.id
      , n.props
      , n.modified_at
   from nodes n
-  left join files fi on fi.id = n.file_id
+  left join node_paths np on np.node_id = n.id
   join folders  f on f.id = n.folder_id
   left join projects p on p.id = f.project_id
  where n.kind not in ('file', 'section', 'rationale');

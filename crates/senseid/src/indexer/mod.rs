@@ -120,6 +120,28 @@ pub(crate) fn package_of(path: &str) -> String {
     panic!("{path} sits under no manifest");
 }
 
+/// A corpus path made relative to the workspace root — the grain a real walk
+/// produces and the grain `sensei.files` is keyed by.
+///
+/// [`corpus_rust_sources`] yields ABSOLUTE paths because [`package_of`] has to
+/// find the nearest `Cargo.toml` on disk. A fixture that then hands those same
+/// absolute strings to the persist path is not reproducing a scan: the walk
+/// records a file relative to its folder, and a lookup resolves a leading `/`
+/// against `folders.abs_path` instead.
+#[cfg(test)]
+pub(crate) fn workspace_relative(path: &str) -> String {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("the crate sits two levels below the workspace root");
+    std::path::Path::new(path)
+        .strip_prefix(root)
+        .map(|p| p.display().to_string())
+        // Not a silent fallback: a path outside the workspace is not a corpus
+        // path, and this is test-only code whose one caller reads the corpus.
+        .unwrap_or_else(|_| panic!("{path} does not sit under {}", root.display()))
+}
+
 /// A file's package-relative module path. A crate root and a `mod.rs` name
 /// the directory they sit in, not themselves.
 #[cfg(test)]
