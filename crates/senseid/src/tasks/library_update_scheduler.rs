@@ -187,11 +187,19 @@ pub(crate) async fn tick(
         let latest = match fresh {
             Some(v) => Some(v), // within TTL — reuse cache, no network
             None => match src.latest(ecosystem, name, local_path.as_deref()).await {
-                Some(v) => {
-                    if let Err(e) = pg.set_library_latest_cache(lib_id, &v, now).await {
+                Some(info) => {
+                    if let Err(e) = pg.set_library_latest_cache(lib_id, &info.version, now).await {
                         tracing::warn!(error = %e, lib = %name, "library_update_scheduler: cache write failed");
                     }
-                    Some(v)
+                    // The URLs rode in on the SAME response (02b S8). Persisted
+                    // here because this is where the body already is; a
+                    // separate pass would be a second fetch for a body we had.
+                    if !info.urls.is_empty()
+                        && let Err(e) = pg.set_library_urls(lib_id, &info.urls).await
+                    {
+                        tracing::warn!(error = %e, lib = %name, "library_update_scheduler: url write failed");
+                    }
+                    Some(info.version)
                 }
                 None => {
                     tracing::debug!(lib = %name, "library_update_scheduler: no latest resolved — skip (fail-closed)");
@@ -302,8 +310,13 @@ mod tests {
     struct Stub(Option<String>);
     #[async_trait::async_trait]
     impl VersionSource for Stub {
-        async fn latest(&self, _e: &str, _n: &str, _l: Option<&str>) -> Option<String> {
-            self.0.clone()
+        async fn latest(
+            &self,
+            _e: &str,
+            _n: &str,
+            _l: Option<&str>,
+        ) -> Option<crate::libraries::registry::LatestInfo> {
+            self.0.clone().map(crate::libraries::registry::LatestInfo::version_only)
         }
     }
 
