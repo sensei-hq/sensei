@@ -76,6 +76,6 @@ comment on column library_versions.docs_url
 comment on column library_versions.local_path
      is 'On-disk location of this version''s docs, when source_type is local.';
 comment on column library_versions.page_count
-     is 'Denormalised count of this version''s library_pages — per version, not per library.';
+     is 'Denormalised count of this version''s library_content rows of kind ''page'' — per version, not per library.';
 comment on column library_versions.fetched_at
      is 'When this version''s content was last fetched. Migrated from libraries.indexed_at.';

@@ -201,6 +201,12 @@ Enum "sensei"."inference_role" {
   "default_fallback"
 }
 
+Enum "sensei"."library_content_kind" {
+  "skill"
+  "agent"
+  "page"
+}
+
 Enum "sensei"."library_ecosystem" {
   "npm"
   "pypi"
@@ -371,8 +377,6 @@ Enum "sensei"."node_kind" {
   "hook"
   "doc"
   "extension"
-  "lib_symbol"
-  "lib_package"
   "trait"
   "static"
   "macro"
@@ -1257,14 +1261,8 @@ Table "sensei"."libraries" {
   "kind" library_kind [not null, default: 'detected', note: 'Library classification: detected (from package manifests) or imported (manually registered).']
   "name" text [not null, note: 'Package name within the ecosystem (e.g. "react", "tokio", "@lumen/icons").']
   "ecosystem" library_ecosystem [not null, note: 'Package registry: npm, pypi, cargo, go, or docs (pure documentation source).']
-  "version" text [note: 'Pinned or latest-known version string.']
   "description" text [note: 'Human-readable description of the library.']
-  "source_type" library_source_type [note: 'How documentation pages are sourced: llms.txt, http, or local.']
-  "base_url" text [note: 'Root URL for fetching documentation when source_type is http or llms.txt.']
-  "local_path" text [note: 'Local filesystem path for reading documentation when source_type is local.']
   "homepage_url" text [note: 'URL of the library homepage or repository.']
-  "docs_url" text [note: 'URL of the library primary documentation site.']
-  "page_count" int [not null, default: 0, note: 'Denormalized count of library_pages rows for this library.']
   "embedding" vector(384) [note: '384-dimensional vector embedding on description for similarity search.']
   "icons" jsonb [not null, default: '{}', note: 'Display icons: {emoji, devicon, kanji, custom}.']
   "props" jsonb [not null, default: '{}', note: 'Extensible metadata: {llms_txt, llms_txt_fetched_at, skill_path, skill_generated_at, ...}.']
@@ -1279,12 +1277,16 @@ Table "sensei"."libraries" {
   }
 
   Note: '''
-Libraries — known packages and documentation sources.
+Libraries — the IDENTITY of a known package or documentation source.
+S7b moved every VERSION-SCOPED fact to library_versions: source_type, base_url,
+docs_url, local_path, page_count and version itself. A website documents one
+version, so its docs URL is wrong for an older pin; a repo homepage is not, so
+homepage_url stays here.
 Consolidates the former libraries, lib_meta, and shared_libs tables.
 - kind: detected (from Cargo.toml, package.json) or imported (manual, internal SDKs, llms.txt)
 - ecosystem: npm, pypi, cargo, go, or docs (for pure documentation sources)
 - source_type: how pages are fetched — llms.txt, http, or local
-- page_count: denormalized count of library_pages rows
+- page_count: denormalized count of library_content rows of kind 'page'
 - props: extensible — {llms_txt, llms_txt_fetched_at, skill_path, skill_generated_at, ...}
 - embedding: 384-dim vector on description for similarity search
 '''
@@ -2185,29 +2187,6 @@ Content: discovered filesystem tree. Every entry was found by scanning a watched
 '''
 }
 
-Table "sensei"."library_agents" {
-  "id" uuid [pk, not null, default: `gen_random_uuid()`]
-  "library_id" uuid [not null, note: 'FK to libraries — which library ships this agent.']
-  "name" text [not null, note: 'Agent name — unique within a library.']
-  "focus" text [not null, note: 'What the agent reviews (e.g. "config+palette+component review").']
-  "body" text [note: 'The agent markdown, fetched from the manifest path at ingest so reads are self-contained.']
-  "source" text [not null, default: 'manifest', note: 'Provenance: manifest (declared in sensei.library.json).']
-  "source_path" text [note: 'Manifest-relative path the body was read from (provenance).']
-  "version_range" text [note: 'Semver range (from the manifest) this agent applies to. Free text in v1.']
-  "modified_at" timestamptz [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
-  "scope" entity_scope [not null, default: 'local']
-  "origin" entity_origin [not null, default: 'imported']
-
-  indexes {
-    library_id [name: 'library_agents_library_id_idx']
-  }
-
-  Note: '''
-Review agents a library provides via its sensei.library.json manifest (workstream D).
-Surfaced for any project depending on the library. Unique on (library_id, name).
-'''
-}
-
 Table "sensei"."library_enablement" {
   "library_id" uuid [not null]
   "project_id" uuid
@@ -2249,60 +2228,34 @@ someone else. Keyed on package_name because a package belongs to one library.
 '''
 }
 
-Table "sensei"."library_pages" {
-  "id" uuid [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
-  "library_id" uuid [not null, note: 'Foreign key to libraries — which library this page belongs to.']
-  "title" text [not null, note: 'Title of this documentation page/section.']
-  "url" text [note: 'Remote URL this page was fetched from, if sourced over HTTP or llms.txt.']
-  "local_path" text [note: 'Local filesystem path this page was read from, if sourced locally.']
-  "description" text [note: 'Short summary of this page content.']
-  "content" text [note: 'Full text content of this documentation page.']
-  "source_type" library_source_type [not null, note: 'How this page was obtained: llms.txt, http, or local.']
-  "component" text [note: 'Optional sub-component or topic label within the library.']
-  "embedding" vector(768) [note: '768-dimensional vector embedding for semantic search.']
-  "fetched_at" timestamptz [note: 'Timestamp when this page content was last fetched or refreshed.']
-  "modified_at" timestamptz [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
-
-  indexes {
-    (library_id, title) [unique, name: 'library_pages_library_title_uq']
-    library_id [name: 'library_pages_library_id_idx']
-    embedding [name: 'library_pages_embedding_hnsw']
-  }
-
-  Note: '''
-Documentation pages/sections for libraries.
-Consolidates the former lib_doc_sections, shared_lib_sections, and lib_docs tables.
-- One row per content page fetched from a library source (llms.txt, HTTP, or local)
-- url: the remote URL if fetched over HTTP (absolute URL or path from llms.txt)
-- local_path: filesystem path if sourced locally
-- component: sub-topic within the library (e.g. "routing", "middleware")
-- embedding: 768-dim vector for semantic search
-'''
-}
-
-Table "sensei"."library_skills" {
+Table "sensei"."library_versions" {
   "id" uuid [pk, not null, default: `gen_random_uuid()`]
-  "library_id" uuid [not null, note: 'FK to libraries — which library ships this skill.']
-  "name" text [not null, note: 'Skill name — unique within a library.']
-  "focus" text [not null, note: 'Short topic key (e.g. "styling") — the selector arg to get_library_skill.']
-  "body" text [note: 'The skill markdown, fetched from the manifest path at ingest so reads are self-contained.']
-  "source" text [not null, default: 'manifest', note: 'Provenance: manifest (declared in sensei.library.json) | generated (auto-generated).']
-  "source_path" text [note: 'Manifest-relative path the body was read from (provenance). Null for generated.']
-  "version_range" text [note: 'Semver range (from the manifest) these capabilities apply to. Free text in v1; not enforced-matched.']
-  "tokens" int [note: 'Approx token size — library-intelligence.md field; null until skill-gen.']
-  "generated_at" timestamptz [note: 'When auto-generated — library-intelligence.md field; null for manifest skills.']
-  "modified_at" timestamptz [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
-  "scope" entity_scope [not null, default: 'local']
-  "origin" entity_origin [not null, default: 'imported']
+  "library_id" uuid [not null]
+  "version" text [not null, note: 'An ACTUAL version, or \'unknown\' when it has not been established. NEVER \'latest\' — latest is a TAG (is_latest), not a version. Keying content on \'latest\' fabricates: at migration rokkit\'s 94 pages were keyed that way while its real version, 1.4.1, was readable from package.json on disk.']
+  "resolved_version" text [note: 'The concrete version a fetch resolved to when the request was for a moving target. NULL when unknown. This is what makes "is our latest still latest?" answerable — the question library_update_scheduler asks.']
+  "source_type" sensei.library_source_type [note: 'How THIS version\'s pages were fetched: llms.txt | http | local.']
+  "base_url" text [note: 'Docs root for this version. Version-scoped: a website documents one version and its URL is wrong for older pins.']
+  "docs_url" text [note: 'Docs entry point for this version. See base_url.']
+  "local_path" text [note: 'On-disk location of this version\'s docs, when source_type is local.']
+  "page_count" int [not null, default: 0, note: 'Denormalised count of this version\'s library_content rows of kind \'page\' — per version, not per library.']
+  "is_latest" boolean [not null, default: false, note: 'Whether this is the library\'s current version — a movable TAG, at most one per library (partial unique index). Separate from `version` deliberately: "which version is this" and "is this the current one" are different questions, and answering the first with the second is how a stale row starts claiming to be current.']
+  "fetched_at" timestamptz [note: 'When this version\'s content was last fetched. Migrated from libraries.indexed_at.']
+  "props" jsonb [not null, default: '{}']
+  "modified_at" timestamptz [not null, default: `now()`]
 
   indexes {
-    library_id [name: 'library_skills_library_id_idx']
+    library_id [name: 'library_versions_library_id_idx']
+    library_id [unique, name: 'library_versions_one_latest']
   }
 
   Note: '''
-Skills a library provides — from its sensei.library.json manifest (source=manifest,
-workstream D) or auto-generated by sensei (source=generated, library-intelligence.md).
-Surfaced for any project depending on the library. Unique on (library_id, name).
+One fetched version of a library's documentation (S7b). Pages, skills and
+agents reference a VERSION so docs can be version-specific; a project pinned at
+1.2 must not be served a website's latest-only docs as though they matched.
+The fetch columns (source_type, base_url, docs_url, local_path, page_count)
+live here rather than on libraries because they are version-scoped — a docs URL
+goes stale for older pins, while a repo homepage does not, which is why
+libraries.homepage_url stays put.
 '''
 }
 
@@ -2855,6 +2808,7 @@ Table "sensei"."files" {
   "content_hash" text [not null, note: 'SHA-256 hash of the file content used to confirm whether it has changed since last index.']
   "skip_reason" sensei.scan_skip_reason [note: 'Null when the file was indexed. Non-null records why it was examined but deliberately not indexed (unsupported format, binary content, invalid UTF-8, parse error, excluded by config). Recording the fingerprint alongside the reason is what stops a skipped file from being re-enqueued on every reconcile; because the skip is keyed to the fingerprint, fixing the file re-triggers indexing automatically.']
   "skip_detail" text [note: 'The parser\'s VERBATIM error with file, line and column, when the grammar produced one (R10.9). skip_reason is the code; this is the text. An agent handed "x.rs:142: expected `}`" can fix the file; one handed "parse_error" can only shrug. Null when there is no detail to record.']
+  "parsed_at" timestamptz [note: 'When a parse outcome was last recorded for this file. NULL means the walk created the row and no parse has run yet — the "discovered" state. Together with skip_reason this yields the full file lifecycle: (null, null) discovered; (set, null) parsed; (set, non-null) unparseable or skipped per the reason. It exists because those first two are otherwise indistinguishable, which would make a stalled parse task look identical to a file that parsed and legitimately declared nothing.']
   "indexed_at" timestamptz [not null, default: `now()`, note: 'Timestamp when this file was last examined (indexed, or skipped with a reason).']
   "modified_at" timestamptz [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
@@ -2874,6 +2828,7 @@ A row means the file was EXAMINED at this fingerprint — not necessarily indexe
 - content_hash: sha256 of file content for change detection
 - skip_reason: null = indexed; non-null = examined and deliberately not indexed
 - skip_detail: the parser's verbatim message with location, when there is one
+- parsed_at: null = discovered (no parse outcome yet); set = a parse ran
 - indexed_at: when this file was last examined
 '''
 }
@@ -3004,6 +2959,54 @@ Keychain referenced by credential_ref. D1: url is the Worker tenant base
 the per-membership device token — the same tenant-path + device-token plane the
 artifacts client (dojo_memberships) uses. direction gates push vs pull; last_seq
 is the per-source monotonic pull cursor.
+'''
+}
+
+Table "sensei"."library_content" {
+  "id" uuid [pk, not null, default: `gen_random_uuid()`, note: 'Surrogate primary key (UUID).']
+  "library_version_id" uuid [not null, note: 'The library VERSION this content describes. Cascade-deletes with it.']
+  "kind" library_content_kind [not null, note: 'skill | agent | page. Part of the unique key, because a library may ship a skill and a page under the same name.']
+  "name" text [not null, note: 'Skill/agent name, or a page title. Unique within (version, kind).']
+  "body" text [note: 'The markdown or page content, fetched at ingest so a read is self-contained and survives the source being moved or deleted.']
+  "source" text [not null, default: 'manifest', note: 'PROVENANCE: manifest (declared in sensei.library.json) | generated (auto-generated by skill-gen) | the fetch origin for a page. Distinct from source_type, which is the ROUTE, not the origin.']
+  "source_path" text [note: 'Manifest-relative path the body was read from. Null when generated.']
+  "version_range" text [note: 'Semver range from the manifest that this content applies to. Free text; not enforced-matched.']
+  "focus" text [note: 'Short topic key — the selector for get_library_skill ("styling"), or what an agent reviews. Skills and agents only.']
+  "tokens" int [note: 'Approximate token size. Skills only; null until skill-gen runs.']
+  "generated_at" timestamptz [note: 'When auto-generated. Skills only; null for manifest-declared content.']
+  "url" text [note: 'Remote URL a page was fetched from (http or llms.txt route). Pages only.']
+  "local_path" text [note: 'Filesystem path a page was read from (local route). Pages only.']
+  "description" text [note: 'Short summary of a documentation page. Pages only.']
+  "component" text [note: 'Sub-topic within the library ("routing", "middleware"). Pages only.']
+  "source_type" library_source_type [note: 'The fetch ROUTE: llms.txt | http | local. Pages only. See `source` for the origin — the two are different questions.']
+  "embedding" vector(768) [note: '768-dim vector for semantic search over documentation. Pages only.']
+  "fetched_at" timestamptz [note: 'When this page was last fetched. Pages only; compare against library_versions.fetched_at to spot staleness.']
+  "scope" entity_scope [not null, default: 'local', note: 'Who may see it, and therefore whether it syncs. Shared vocabulary with sensei.entity_scope.']
+  "origin" entity_origin [not null, default: 'imported', note: 'Where it came from, and therefore what a re-import may safely replace. Shared vocabulary with sensei.entity_origin.']
+  "modified_at" timestamptz [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
+
+  indexes {
+    (library_version_id, kind) [name: 'library_content_version_kind_idx']
+    kind [name: 'library_content_kind_idx']
+    embedding [name: 'library_content_embedding_hnsw']
+  }
+
+  Note: '''
+Everything a library VERSION provides — skills, agents and documentation pages
+in one table, discriminated by kind (R12).
+
+Replaces library_skills, library_agents and library_pages, which shared nine
+columns and differed in a handful. A fifth kind of content now costs a row
+rather than a fourth table plus a fourth arm in every UNION.
+
+Keyed to library_versions, not libraries: a library's skills and docs can
+differ between releases, and content hung off the identity could not say which
+release it described.
+
+Kind-specific columns are nullable BY DESIGN. Each belongs to exactly one kind
+— focus/version_range to skills and agents, tokens/generated_at to skills,
+url/local_path/description/component/source_type/embedding/fetched_at to pages
+— so a null means "not applicable to this kind", never "unknown".
 '''
 }
 
@@ -3529,10 +3532,9 @@ Table "sensei"."nodes" {
   "parent_id" uuid [note: 'Self-referencing FK for containment hierarchy. Null = top-level in file.']
   "kind" node_kind [not null, note: 'Node classification. See table comment for full list.']
   "name" text [not null, note: 'Identifier name or heading text.']
-  "file_path" text [note: 'Folder-relative path of the source file. Denormalized for query performance. NULL for reference stubs and external lib_symbol nodes, which have no local file (see resolved/fqn). Non-NULL for every definition and legacy node.']
   "file_id" uuid
   "fqn" text [note: 'Fully-qualified name (SCIP/LSIF moniker). Definitions and references get-or-create the same node by (folder_id, fqn) so call edges resolve at emit. NULL for legacy / not-yet-migrated nodes, which fall back to bare-name matching.']
-  "resolved" boolean [not null, default: false, note: 'True once a definition has been seen for this fqn (file_path/signature/line filled). False for a reference-first stub awaiting its definition. lib_symbol nodes are resolved=true (the external symbol IS the definition; nothing to enrich).']
+  "resolved" boolean [not null, default: false, note: 'True once a definition has been seen for this fqn (file_id/signature/line filled). False for a reference-first stub awaiting its definition. External `lib·` nodes are resolved=true (the external symbol IS the definition; nothing to enrich).']
   "language" text [note: 'Language slug (rust/python/typescript/…) derived from the file extension at write time. Scopes the bare-name fallback to same-language candidates during the per-language FQN rollout so a co-resident un-migrated language never cross-matches.']
   "signature" text [note: 'Abbreviated type signature (L0 level). For code symbols.']
   "description" text [note: 'Human-readable description (L1 level). For code symbols or doc summary.']
@@ -3541,7 +3543,7 @@ Table "sensei"."nodes" {
   "line_start" int [note: 'One-based line number where this node begins in the source file.']
   "line_end" int [note: 'One-based line number where this node ends.']
   "is_exported" boolean [not null, default: false, note: 'True when the symbol is exported from its file. Only meaningful for code symbols.']
-  "is_test" boolean [not null, default: false, note: 'True when this node belongs to a test file (path-convention: tests/ dirs, *.test.*/*.spec.*, *_test.*, test_*.py, *Test.java, …; see languages::is_test_path). Lets the UI filter tests out when focusing on production code. lib_symbol/lib_package (external deps) are never test. Reference stubs inherit it from their definition.']
+  "is_test" boolean [not null, default: false, note: 'True when this node belongs to a test file (path-convention: tests/ dirs, *.test.*/*.spec.*, *_test.*, test_*.py, *Test.java, …; see languages::is_test_path). Lets the UI filter tests out when focusing on production code. External `lib·` nodes are never test. Reference stubs inherit it from their definition.']
   "community_id" int [note: 'Leiden community cluster ID. Batch-computed. Null until computed.']
   "embedding" vector(384) [note: '384-dim vector embedding for semantic search. Computed by local model during indexing. HNSW indexed.']
   "tags" text[] [not null, default: '{}', note: 'Array of tag strings for filtering.']
@@ -3549,13 +3551,12 @@ Table "sensei"."nodes" {
   "modified_at" timestamptz [not null, default: `now()`, note: 'Timestamp of the last modification to this row.']
 
   indexes {
-    (folder_id, file_path, kind, name, parent_id, line_start) [unique, name: 'nodes_unique_identity']
+    (folder_id, file_id, kind, name, parent_id, line_start) [unique, name: 'nodes_unique_identity']
     (folder_id, fqn) [unique, name: 'nodes_unique_fqn']
     file_id [name: 'nodes_file_id_idx']
     folder_id [name: 'nodes_folder_id_idx']
     parent_id [name: 'nodes_parent_id_idx']
     kind [name: 'nodes_kind_idx']
-    (folder_id, file_path) [name: 'nodes_file_path_idx']
     (folder_id, name) [name: 'nodes_name_idx']
     (folder_id, is_exported) [name: 'nodes_exported_idx']
     community_id [name: 'nodes_community_id_idx']
@@ -3583,7 +3584,9 @@ Node kinds:
   section — documentation heading (level stored in props)
   rationale — extracted from NOTE/WHY/HACK/TODO/IMPORTANT comments
 
-file_path is denormalized on every node for fast file-scoped queries.
+file_id references the files table (R13) — a key, not a repeated path, so a
+rename rewrites one row instead of every node in the file, and a node naming an
+untracked file is UNREPRESENTABLE rather than merely wrong.
 Relationships between nodes are stored in the edges table.
 '''
 }
@@ -3751,12 +3754,10 @@ Ref: "sensei"."folders"."root_id" > "sensei"."folders_to_watch"."id" [delete: ca
 Ref: "sensei"."folders"."parent_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."folders"."project_id" > "sensei"."projects"."id" [delete: set null]
 Ref: "sensei"."folders"."repository_id" > "sensei"."repositories"."id" [delete: set null]
-Ref: "sensei"."library_agents"."library_id" > "sensei"."libraries"."id" [delete: cascade]
 Ref: "sensei"."library_enablement"."library_id" > "sensei"."libraries"."id" [delete: cascade]
 Ref: "sensei"."library_enablement"."project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "sensei"."library_packages"."library_id" > "sensei"."libraries"."id" [delete: cascade]
-Ref: "sensei"."library_pages"."library_id" > "sensei"."libraries"."id" [delete: cascade]
-Ref: "sensei"."library_skills"."library_id" > "sensei"."libraries"."id" [delete: cascade]
+Ref: "sensei"."library_versions"."library_id" > "sensei"."libraries"."id" [delete: cascade]
 Ref: "sensei"."mcp_servers"."project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "sensei"."memory_share_batches"."project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "sensei"."metric_deactivations"."repository_id" > "sensei"."repositories"."id" [delete: cascade]
@@ -3796,6 +3797,7 @@ Ref: "sensei"."folder_namespaces"."namespace_id" > "sensei"."namespaces"."id" [d
 Ref: "sensei"."folder_path_aliases"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."index_errors"."folder_id" > "sensei"."folders"."id" [delete: cascade]
 Ref: "sensei"."knowledge_sources"."namespace_id" > "sensei"."namespaces"."id" [delete: set null]
+Ref: "sensei"."library_content"."library_version_id" > "sensei"."library_versions"."id" [delete: cascade]
 Ref: "sensei"."mcp_tool_manifests"."server_id" > "sensei"."mcp_servers"."id" [delete: cascade]
 Ref: "sensei"."memories"."project_id" > "sensei"."projects"."id" [delete: cascade]
 Ref: "sensei"."memories"."namespace_id" > "sensei"."namespaces"."id" [delete: set null]

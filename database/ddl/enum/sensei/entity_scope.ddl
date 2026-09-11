@@ -9,8 +9,7 @@ set search_path to sensei, extensions;
 --   consolidated_rulesets.scope  global         ← same word, unrelated text column
 --   rule_packs.source      'OWASP · sensei'     ← a CITATION wearing the name
 --   playbooks.source       builtin              ← provenance
---   library_skills.source  manifest             ← provenance, different vocabulary
---   library_agents.source  manifest
+--   library_content.source manifest             ← provenance, different vocabulary
 --   intake_guide.source    builtin
 --   playbook_rules.source  builtin
 --   federated_memories     (nothing at all)

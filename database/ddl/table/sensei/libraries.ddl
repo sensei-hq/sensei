@@ -37,7 +37,7 @@ Consolidates the former libraries, lib_meta, and shared_libs tables.
 - kind: detected (from Cargo.toml, package.json) or imported (manual, internal SDKs, llms.txt)
 - ecosystem: npm, pypi, cargo, go, or docs (for pure documentation sources)
 - source_type: how pages are fetched — llms.txt, http, or local
-- page_count: denormalized count of library_pages rows
+- page_count: denormalized count of library_content rows of kind ''page''
 - props: extensible — {llms_txt, llms_txt_fetched_at, skill_path, skill_generated_at, ...}
 - embedding: 384-dim vector on description for similarity search';
 

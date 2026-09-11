@@ -342,7 +342,7 @@ fn parse_markdown(content: &str, lib_name: &str, _url: &str) -> Vec<ParsedDoc> {
 
 // ── Component-derivation & multi-source llms ingestion ──────────────────────
 //
-// Populates `library_pages` with PER-COMPONENT pages so `get_lib_docs(name,
+// Populates `library_content` (kind `page`) with PER-COMPONENT pages so `get_lib_docs(name,
 // component)` resolves to the right page. Two layouts are supported:
 //   1. per-file `components/<name>.txt` + top-level `.txt` (e.g. rokkit)
 //   2. single-file `llms-full.txt` with `##`/`### <lib> <cmd>` sections (dbd)
