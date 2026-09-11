@@ -58,20 +58,35 @@ fn worker_count() -> usize {
 }
 
 /// Resolve the daemon's TCP bind host. **Loopback-only (`127.0.0.1`) by
-/// default** — the daemon's control-plane routes (`/hook/*`, `/api/runs*`)
-/// carry no auth, so a non-loopback bind would expose them to LAN-adjacent
-/// hosts (spurious gate prompts / inert run rows — see
-/// `docs/plan/decisions.md`). The app, CLI, and MCP all connect over loopback,
-/// so this is transparent to them. `SENSEI_BIND_HOST` opts into a specific host
-/// (e.g. `0.0.0.0`) for a deliberate non-loopback deployment — which MUST add
-/// route auth first. Returns `(host, is_loopback)`.
-fn resolve_bind_host(env_host: Option<String>) -> (String, bool) {
+/// default and enforced** — the daemon's control-plane routes (`/hook/*`,
+/// `/api/runs*`, `/api/gateway/*`, `/api/config/*`, `/api/share-review/*`, and
+/// others) carry no authentication or authorization, so a non-loopback bind
+/// would expose privileged operations (configuration mutation, gateway key
+/// storage, installer filesystem operations, library indexing, repository state
+/// changes, collective preference updates, and upstream publication using stored
+/// credentials) to any client able to reach the daemon. The app, CLI, and MCP
+/// all connect over loopback, so this enforcement is transparent to them.
+/// `SENSEI_BIND_HOST` is rejected if it specifies a non-loopback address.
+/// Returns `Ok(host)` for loopback addresses, or `Err(msg)` for non-loopback.
+fn resolve_bind_host(env_host: Option<String>) -> Result<String, String> {
     let host = env_host
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "127.0.0.1".to_string());
     let is_loopback = matches!(host.as_str(), "127.0.0.1" | "::1" | "localhost");
-    (host, is_loopback)
+    if is_loopback {
+        Ok(host)
+    } else {
+        Err(format!(
+            "SENSEI_BIND_HOST='{}' is rejected — only loopback addresses (127.0.0.1, ::1, localhost) are permitted. \
+            The daemon exposes unauthenticated privileged APIs (configuration, gateway keys, installer operations, \
+            library indexing, repository mutations, collective preferences, and share-review publication with stored \
+            upstream credentials). Binding to a non-loopback address would expose these operations to any network-reachable \
+            client. If remote access is required, use an authenticated reverse proxy (e.g., nginx with client certificates, \
+            Tailscale, or a VPN) in front of a loopback-bound daemon.",
+            host
+        ))
+    }
 }
 
 pub async fn start_server(port: u16) -> std::io::Result<()> {
@@ -81,12 +96,18 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
     // serve /api/health so the frontend can show the actual cause — old
     // behaviour was to exit, leaving the client to guess "connection
     // refused" with no diagnostic.
-    let (bind_host, is_loopback) = resolve_bind_host(std::env::var("SENSEI_BIND_HOST").ok());
-    if !is_loopback {
-        tracing::warn!(
-            "senseid binding non-loopback host '{bind_host}' (SENSEI_BIND_HOST) — /hook/* and /api/runs* have NO auth and are now network-exposed; add route auth before any real deployment (see docs/plan/decisions.md)"
-        );
-    }
+    let bind_host = match resolve_bind_host(std::env::var("SENSEI_BIND_HOST").ok()) {
+        Ok(host) => host,
+        Err(msg) => {
+            let full_msg = format!("[senseid] {}", msg);
+            eprintln!("{}", full_msg);
+            write_startup_error(&full_msg);
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                msg,
+            ));
+        }
+    };
     let listener = match tokio::net::TcpListener::bind(format!("{bind_host}:{port}")).await {
         Ok(l) => l,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
@@ -729,24 +750,30 @@ mod bind_host_tests {
 
     #[test]
     fn defaults_to_loopback_when_unset_or_blank() {
-        assert_eq!(resolve_bind_host(None), ("127.0.0.1".to_string(), true));
-        assert_eq!(resolve_bind_host(Some(String::new())), ("127.0.0.1".to_string(), true));
-        assert_eq!(resolve_bind_host(Some("   ".to_string())), ("127.0.0.1".to_string(), true));
+        assert_eq!(resolve_bind_host(None), Ok("127.0.0.1".to_string()));
+        assert_eq!(resolve_bind_host(Some(String::new())), Ok("127.0.0.1".to_string()));
+        assert_eq!(resolve_bind_host(Some("   ".to_string())), Ok("127.0.0.1".to_string()));
     }
 
     #[test]
-    fn loopback_aliases_are_flagged_loopback() {
-        assert!(resolve_bind_host(Some("127.0.0.1".to_string())).1);
-        assert!(resolve_bind_host(Some("::1".to_string())).1);
-        assert!(resolve_bind_host(Some("localhost".to_string())).1);
+    fn loopback_aliases_are_accepted() {
+        assert_eq!(resolve_bind_host(Some("127.0.0.1".to_string())), Ok("127.0.0.1".to_string()));
+        assert_eq!(resolve_bind_host(Some("::1".to_string())), Ok("::1".to_string()));
+        assert_eq!(resolve_bind_host(Some("localhost".to_string())), Ok("localhost".to_string()));
     }
 
     #[test]
-    fn non_loopback_override_is_used_and_flagged() {
-        assert_eq!(resolve_bind_host(Some("0.0.0.0".to_string())), ("0.0.0.0".to_string(), false));
-        let (host, is_loopback) = resolve_bind_host(Some(" 192.168.1.5 ".to_string()));
-        assert_eq!(host, "192.168.1.5");
-        assert!(!is_loopback, "a LAN host must be flagged non-loopback so the warning fires");
+    fn non_loopback_override_is_rejected() {
+        let result = resolve_bind_host(Some("0.0.0.0".to_string()));
+        assert!(result.is_err(), "0.0.0.0 must be rejected");
+        assert!(result.unwrap_err().contains("0.0.0.0"));
+        assert!(result.unwrap_err().contains("loopback"));
+
+        let result = resolve_bind_host(Some(" 192.168.1.5 ".to_string()));
+        assert!(result.is_err(), "LAN addresses must be rejected");
+        let err = result.unwrap_err();
+        assert!(err.contains("192.168.1.5"), "error must mention the rejected host");
+        assert!(err.contains("unauthenticated"), "error must explain the security risk");
     }
 }
 
