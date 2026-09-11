@@ -7,6 +7,7 @@
 //! HTTP handlers) and `crate::adapters::manifest` (per-ecosystem dependency parsing).
 
 pub mod advisory;
+pub mod docs_source;
 pub mod manifest;
 pub mod registry;
 pub mod version;

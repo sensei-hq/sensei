@@ -35,7 +35,8 @@ Retire v1, implement v2. Stage 0 (all DDL) is applied to `sensei`,
 | **2b S1/S2 — libraries POPULATED** | `76e24bab` |
 | **2b S7b — local pages + staleness signal** | `48db4934` |
 | **2b S8 — registry URLs** | `fd4cac06` |
-| **2 S8/S11 — dependency edges + projects** | this commit |
+| **2 S8/S11 — dependency edges + projects** | `b6fde6bd` |
+| **2b S9 — source precedence + mismatch label** | this commit |
 | 3 S4b/S4c — derived folder `kind`, `deferred` dropped | this commit |
 | 2b — `library_content.package_name` | this commit |
 
@@ -82,13 +83,11 @@ it — the type must be recreated by hand), and silently reduces an inline
 
 ## Remaining
 
-- **2b S9 — source precedence.** S1/S2/S7b/S8 are done. What remains: pick
-  the highest-precedence source THAT CAN SERVE THE PINNED VERSION
-  (website > github > local, inverted when the version does not match), and
-  LABEL any doc served for a version the project does not pin. An unlabelled
-  wrong-version answer is the R4 failure.
-- **The github and website routes** are now unblocked (S8 supplies the URL)
-  but not built — `index_library` still needs a task carrying one.
+- **The github and website routes** are unblocked (S8 supplies the URL) but
+  not built — `index_library` still needs a task carrying one. Until then
+  every candidate S9 ranks is `local`, so the precedence order is correct and
+  untested against a real multi-route library.
+- **STAGE 2b IS COMPLETE.** S1/S2/S7b/S8/S9 all landed and are exercised.
 - **4–7** — parse, fqn, persist, reconcile. This IS the rest of v1 retirement.
 - **8–10** — commands, incremental, cutover.
 
