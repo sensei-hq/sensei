@@ -152,6 +152,20 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Check if a namespace exists by its id. Used for authorization checks to
+    /// verify that a caller-supplied namespace_id is valid before allowing
+    /// operations that target it.
+    pub async fn namespace_exists(&self, namespace_id: &uuid::Uuid) -> Result<bool, String> {
+        let row: Option<(bool,)> = sqlx_core::query_as::query_as(
+            "SELECT EXISTS(SELECT 1 FROM sensei.namespaces WHERE id = $1)",
+        )
+        .bind(namespace_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.map(|(exists,)| exists).unwrap_or(false))
+    }
+
     /// Self-healing reconcile: tag discovery projects with no member folders as
     /// `orphaned` (for the user to resolve), and clear the tag from any that
     /// regained folders. Never deletes. Returns rows changed.

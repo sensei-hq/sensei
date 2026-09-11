@@ -536,6 +536,24 @@ pub(crate) async fn promote_memory(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let sid =
         uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad memory id"))?;
+    
+    // Authorization: verify the source memory exists and retrieve its project/namespace context
+    let source_memory = state
+        .pg
+        .get_memory(&sid)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "source memory not found"))?;
+    
+    // Verify the source memory is in a promotable state before proceeding
+    let source_status = source_memory["status"].as_str().unwrap_or("");
+    if !matches!(source_status, "active" | "reinforced" | "battle_tested") {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "source memory is not promotable (must be active/reinforced/battle_tested)",
+        ));
+    }
+    
     let target = resolve_target_namespace(
         &state,
         body.namespace_id.as_deref(),
@@ -544,6 +562,22 @@ pub(crate) async fn promote_memory(
         body.project.as_deref(),
     )
     .await?;
+    
+    // Authorization: when promoting to a specific namespace, verify it exists and is valid
+    if let Some(target_ns) = target {
+        let ns_exists = state
+            .pg
+            .namespace_exists(&target_ns)
+            .await
+            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+        if !ns_exists {
+            return Err(err(
+                StatusCode::FORBIDDEN,
+                "target namespace does not exist or is not accessible",
+            ));
+        }
+    }
+    
     let new_id = state
         .pg
         .promote_memory(sid, target, body.enforcement.as_deref().filter(|s| !s.is_empty()))
@@ -945,6 +979,47 @@ pub(crate) async fn accept_proposal(
     Json(_body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let mid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
+    
+    // Authorization: verify the proposal exists and retrieve its context before accepting
+    let proposal = state
+        .pg
+        .get_memory(&mid)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "proposal not found"))?;
+    
+    // Verify it's actually a proposal
+    let status = proposal["status"].as_str().unwrap_or("");
+    if status != "proposed" {
+        return Err(err(StatusCode::CONFLICT, "memory is not in 'proposed' state"));
+    }
+    
+    // Authorization: if the proposal has a namespace_id, verify it exists and is valid
+    if let Some(ns_value) = proposal.get("namespace_id") {
+        if !ns_value.is_null() {
+            let ns_uuid = if let Some(ns_str) = ns_value.as_str() {
+                uuid::Uuid::parse_str(ns_str)
+                    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "invalid namespace_id format"))?
+            } else {
+                // Handle case where serde_json might deserialize UUID directly
+                serde_json::from_value(ns_value.clone())
+                    .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "invalid namespace_id format"))?
+            };
+            
+            let ns_exists = state
+                .pg
+                .namespace_exists(&ns_uuid)
+                .await
+                .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+            if !ns_exists {
+                return Err(err(
+                    StatusCode::FORBIDDEN,
+                    "proposal's namespace does not exist or is not accessible",
+                ));
+            }
+        }
+    }
+    
     let new_status = state
         .pg
         .set_memory_status(mid, "active", &["proposed"])
@@ -975,6 +1050,21 @@ pub(crate) async fn reject_proposal(
     Json(body): Json<RejectBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let mid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
+    
+    // Authorization: verify the proposal exists before rejecting
+    let proposal = state
+        .pg
+        .get_memory(&mid)
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "proposal not found"))?;
+    
+    // Verify it's actually a proposal
+    let status = proposal["status"].as_str().unwrap_or("");
+    if status != "proposed" {
+        return Err(err(StatusCode::CONFLICT, "memory is not in 'proposed' state"));
+    }
+    
     if let Some(reason) = body.reason.as_deref().filter(|s| !s.trim().is_empty()) {
         tracing::info!(memory_id = %mid, reason, "proposal rejected");
     }
