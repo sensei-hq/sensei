@@ -45,6 +45,14 @@ pub struct RepoResult {
     /// Why the docs walk found nothing, when it did (S7b.2). Distinct from a
     /// library that legitimately ships none.
     pub library_docs_error: Option<String>,
+    /// folder -> library edges written (`referenced_libraries`).
+    pub external_deps: u32,
+    /// folder -> folder edges written for first-party siblings.
+    pub local_deps: u32,
+    /// How many of `external_deps` got a version from the LOCKFILE that
+    /// differs from the manifest's range floor — the measure of what reading
+    /// lockfiles actually buys.
+    pub deps_pinned_by_lockfile: u32,
     pub errors: Vec<String>,
 }
 
@@ -163,14 +171,30 @@ async fn write_one_repo(pg: &PgStore, root: &RepoRoot, root_id: &uuid::Uuid) -> 
         Err(e) => out.errors.push(format!("upsert_repository: {e}")),
     }
 
-    let folder_id =
-        match pg.upsert_folder(root_id, "git", &name, &abs, &abs, None, None, None).await {
-            Ok(id) => id,
-            Err(e) => {
-                out.errors.push(format!("upsert_folder(root): {e}"));
-                return out;
-            }
-        };
+    // A repo gets a PROJECT, 1:1, as `folders.project_id` documents. Without it
+    // every folder had project_id NULL, and the chain that answers "which
+    // projects use this library" — and everything keyed on it, including the
+    // update scheduler and therefore the registry-URL extraction — had no input
+    // at all. Matched by name, so the 147 projects predating this scan are
+    // reused rather than duplicated.
+    let project_id = match pg.get_or_create_project_by_name(&name).await {
+        Ok((id, _created)) => Some(id),
+        Err(e) => {
+            out.errors.push(format!("get_or_create_project_by_name({name}): {e}"));
+            None
+        }
+    };
+
+    let folder_id = match pg
+        .upsert_folder(root_id, "git", &name, &abs, &abs, None, project_id.as_ref(), None)
+        .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            out.errors.push(format!("upsert_folder(root): {e}"));
+            return out;
+        }
+    };
     out.folder_id = Some(folder_id);
     out.folders += 1;
 
@@ -194,14 +218,151 @@ async fn write_one_repo(pg: &PgStore, root: &RepoRoot, root_id: &uuid::Uuid) -> 
     // stop the scan: the other roots are independent and their structure is
     // still correct. `out.errors` non-empty is how a caller tells the
     // difference between "this repo has no files" and "this repo failed".
-    if let Err(e) = write_structure(pg, root_id, &root.abs_path, &folder_id, &scan, &mut out).await
+    let folder_ids = match write_structure(
+        pg,
+        root_id,
+        &root.abs_path,
+        &folder_id,
+        project_id.as_ref(),
+        &scan,
+        &mut out,
+    )
+    .await
     {
-        out.errors.push(e);
-    }
+        Ok(ids) => ids,
+        Err(e) => {
+            out.errors.push(e);
+            BTreeMap::new()
+        }
+    };
+
+    // ── Stage 2 S8/S11: the dependency edges ─────────────────────────────
+    write_dependencies(pg, &root.abs_path, &scan, &folder_ids, &mut out).await;
 
     // ── Stage 2b: this repo may BE a library ─────────────────────────────
     ingest_library(pg, &root.abs_path, &scan, &mut out).await;
     out
+}
+
+/// Write each manifest's dependency edges: folder -> library for externals,
+/// folder -> folder for local siblings (02 S8, 02b S11).
+///
+/// THE MISSING WRITER. `referenced_libraries` is how "which projects use this
+/// library" and every version-drift question are answered, and nothing in v2
+/// wrote it — `extract_deps` does, but only as a separate task handler that
+/// the v2 scan never invokes. Without it there are no folder -> library edges
+/// at all, and `library_update_scheduler` (the only consumer of the registry
+/// URLs) has nothing to tick over.
+///
+/// **The version recorded is the LOCKFILE PIN, not the manifest's range.**
+/// `clean_version` strips the operator, so `^2.60.1` becomes `2.60.1` — a
+/// range FLOOR indistinguishable from a pin once stored. Measured over this
+/// machine's repos, 128 of 219 direct deps get a different, correct version
+/// from the lockfile. The manifest selects WHICH packages; the lockfile
+/// supplies WHICH version, looked up by name so the transitive tree stays out.
+async fn write_dependencies(
+    pg: &PgStore,
+    repo_root: &std::path::Path,
+    scan: &RepoScan,
+    folder_ids: &BTreeMap<std::path::PathBuf, uuid::Uuid>,
+    out: &mut RepoResult,
+) {
+    for (manifest, ecosystem) in &scan.manifests {
+        let Some(dir) = manifest.parent() else { continue };
+        // Facts belong to the folder that holds the manifest (D11). A manifest
+        // in a directory with no folder row is a `plan_folders` disagreement,
+        // not something to attach to the repo root as a guess.
+        let Some(folder_id) = folder_ids.get(dir).copied() else { continue };
+        let Some(adapter) = crate::adapters::manifest::registered_adapters()
+            .iter()
+            .find(|a| a.ecosystem() == *ecosystem)
+        else {
+            continue;
+        };
+        let Ok(content) = std::fs::read_to_string(manifest) else {
+            out.errors.push(format!("read manifest {}: unreadable", manifest.display()));
+            continue;
+        };
+
+        // The nearest lockfile AT OR ABOVE this manifest, stopping at the repo
+        // root (02 S6c). Not the repo root's: `tools/session-report` has its
+        // own Cargo.lock and they genuinely disagree.
+        let pins = scan_repo::nearest_lockfile(
+            dir,
+            repo_root,
+            adapter.lockfile_filenames(),
+            &scan.lockfiles,
+        )
+        .and_then(|lock| {
+            let name = lock.file_name()?.to_str()?.to_string();
+            let content = std::fs::read_to_string(&lock).ok()?;
+            Some(scan_repo::pins_by_name(ecosystem, &name, &content))
+        })
+        .unwrap_or_default();
+
+        for dep in adapter.parse_dependencies(&content) {
+            // A `link:`/`workspace:`/`file:`/`path=` dep is a FIRST-PARTY
+            // sibling, not a library. It becomes a folder -> folder edge and
+            // must never reach `libraries`, or a monorepo's own packages get
+            // registered as external dependencies of themselves.
+            if let Some(target) = &dep.local_source {
+                let protocol = crate::tasks::handlers::libraries::local_source_protocol(
+                    &dep.source,
+                    &dep.raw_version,
+                );
+                let Some(abs) = crate::tasks::handlers::libraries::resolve_local_target(
+                    &dir.to_string_lossy(),
+                    protocol,
+                    target,
+                ) else {
+                    continue;
+                };
+                let Some(to_id) = folder_ids.get(&abs).copied() else {
+                    continue; // target is outside this repo, or has no row yet
+                };
+                if to_id == folder_id {
+                    continue; // the table's CHECK forbids a self-edge
+                }
+                if let Err(e) = pg
+                    .upsert_folder_dependency(
+                        &folder_id,
+                        &to_id,
+                        protocol,
+                        &dep.source,
+                        Some(target),
+                    )
+                    .await
+                {
+                    out.errors.push(format!("upsert_folder_dependency({}): {e}", dep.lib_name));
+                } else {
+                    out.local_deps += 1;
+                }
+                continue;
+            }
+
+            let version = scan_repo::resolve_pin(&pins, &dep.lib_name, &dep.version);
+            let lib_id = match pg
+                .upsert_library(&dep.lib_name, ecosystem, Some(&version), None, None, None)
+                .await
+            {
+                Ok(id) => id,
+                Err(e) => {
+                    out.errors.push(format!("upsert_library({}): {e}", dep.lib_name));
+                    continue;
+                }
+            };
+            if let Err(e) =
+                pg.upsert_referenced_library(&folder_id, &lib_id, Some(&version), None).await
+            {
+                out.errors.push(format!("upsert_referenced_library({}): {e}", dep.lib_name));
+                continue;
+            }
+            out.external_deps += 1;
+            if version != dep.version {
+                out.deps_pinned_by_lockfile += 1;
+            }
+        }
+    }
 }
 
 /// If this repo ships a `sensei.library.json` at its root, register the
@@ -342,17 +503,18 @@ async fn write_structure(
     root_id: &uuid::Uuid,
     repo_root: &std::path::Path,
     root_folder_id: &uuid::Uuid,
+    project_id: Option<&uuid::Uuid>,
     scan: &RepoScan,
     out: &mut RepoResult,
-) -> Result<(), String> {
+) -> Result<BTreeMap<std::path::PathBuf, uuid::Uuid>, String> {
     let declared = declared_workspace_members(repo_root);
     let fplan = structure::plan_folders(repo_root, &scan.manifest_dirs(), &declared, &scan.files);
 
     // Folders first, parents before children — `plan_folders` guarantees that
     // ordering, and it is what lets `parent_id` be resolved from the map
     // rather than created on the fly, which would hide an ordering bug.
-    let mut ids: BTreeMap<&std::path::Path, uuid::Uuid> = BTreeMap::new();
-    ids.insert(repo_root, *root_folder_id);
+    let mut ids: BTreeMap<std::path::PathBuf, uuid::Uuid> = BTreeMap::new();
+    ids.insert(repo_root.to_path_buf(), *root_folder_id);
     for f in &fplan.folders {
         if f.abs_path == repo_root {
             continue; // written by `write_one_repo` as kind `git`
@@ -377,12 +539,14 @@ async fn write_structure(
                 &rel.to_string_lossy(),
                 &f.abs_path.to_string_lossy(),
                 Some(&parent),
-                None,
+                // A module belongs to its repo's project — the 1:1 rule, with
+                // the modules inheriting rather than each minting its own.
+                project_id,
                 ws_root.as_ref(),
             )
             .await
             .map_err(|e| format!("upsert_folder({}): {e}", rel.display()))?;
-        ids.insert(f.abs_path.as_path(), id);
+        ids.insert(f.abs_path.clone(), id);
         out.folders += 1;
     }
 
@@ -439,7 +603,7 @@ async fn write_structure(
             .await
             .map_err(|e| format!("set_folder_expected_files({folder_abs:?}): {e}"))?;
     }
-    Ok(())
+    Ok(ids)
 }
 
 #[cfg(test)]
@@ -531,6 +695,11 @@ mod corpus {
         println!("folders written {}", summary.total_folders());
         println!("files written   {}", summary.total_files());
         println!("manifests       {}", summary.total_manifests());
+        let ext: u32 = summary.repos.iter().map(|r| r.external_deps).sum();
+        let loc: u32 = summary.repos.iter().map(|r| r.local_deps).sum();
+        let pinned: u32 = summary.repos.iter().map(|r| r.deps_pinned_by_lockfile).sum();
+        println!("external deps   {ext} ({pinned} corrected by a lockfile)");
+        println!("local deps      {loc}");
         let libs: Vec<&RepoResult> = summary.repos.iter().filter(|r| r.library.is_some()).collect();
         println!("libraries       {}", libs.len());
         for l in &libs {
