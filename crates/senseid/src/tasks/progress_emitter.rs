@@ -278,7 +278,6 @@ fn kind_from_str(s: &str) -> FolderKind {
     match s {
         "module" => FolderKind::Module,
         "subtree" => FolderKind::Subtree,
-        "sibling" => FolderKind::Sibling,
         "standalone" => FolderKind::Standalone,
         _ => FolderKind::Git,
     }
