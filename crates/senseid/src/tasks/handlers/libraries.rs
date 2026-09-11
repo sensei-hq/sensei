@@ -322,6 +322,7 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
                 // page documents yet — 02b S1's manifest read supplies it.
                 // `None` is "not stated", never inferred from the title.
                 None,
+                None,
             )
             .await
         {
@@ -409,7 +410,10 @@ pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, S
             Some(content),
             "http",
             None,
-            None, // package_name: the http route does not state one (02b S1)
+            // package_name: the http route does not state one (02b S1)
+            None,
+            // version: this path is handed a URL with no release attached.
+            None,
         )
         .await
         .map_err(|e| format!("upsert_library_page failed: {}", e))?;

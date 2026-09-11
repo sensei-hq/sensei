@@ -404,10 +404,17 @@ impl PgStore {
         library_id: &uuid::Uuid,
         version: Option<&str>,
     ) -> Result<uuid::Uuid, String> {
-        let key = version
-            .map(str::trim)
-            .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("latest"))
-            .unwrap_or("unknown");
+        // `latest` IS a version and is kept as one (02b S11). It was being
+        // folded into `unknown`, which threw the information away: the website
+        // route says "this documents whatever is current", and `unknown` says
+        // "we have no idea" — different facts, and the second is the one that
+        // cannot be reasoned about. MEASURED: every page fetched from a
+        // published site landed under `unknown` alongside genuinely
+        // version-less rows.
+        //
+        // `unknown` remains for a caller that states nothing at all, which is
+        // a real and distinct state.
+        let key = version.map(str::trim).filter(|v| !v.is_empty()).unwrap_or("unknown");
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.library_versions(library_id, version, resolved_version, is_latest)
              VALUES($1, $2, $3, NOT EXISTS(
@@ -1154,6 +1161,7 @@ impl PgStore {
         source_type: &str,
         component: Option<&str>,
         package_name: Option<&str>,
+        version: Option<&str>,
     ) -> Result<uuid::Uuid, String> {
         // Pages hang off a VERSION (S7b). This writer is not told which one, so
         // it lands on the current release rather than a fabricated version.
@@ -1165,7 +1173,26 @@ impl PgStore {
         // because no route reports a page's package yet; 02b S1's manifest
         // read is what will supply it. `None` is the honest "not stated",
         // never a guess from the page title.
-        let version_id = self.current_or_new_library_version(library_id).await?;
+        // WHICH release these pages describe. `Some(v)` is the github route
+        // fetching a version TAG — its whole point is that the docs are tied to
+        // a release. `None` is the local walk, which reads a working tree and
+        // can only speak for whatever is checked out.
+        let version_id = match version {
+            Some(v) => self.ensure_library_version(library_id, Some(v)).await?,
+            None => self.current_or_new_library_version(library_id).await?,
+        };
+        // The VERSION's source_type is what S9 ranks routes by — the content
+        // row's copy describes one page, not where the release came from.
+        sqlx_core::query::query(
+            "UPDATE sensei.library_versions
+                SET source_type = $2::sensei.library_source_type, modified_at = now()
+              WHERE id = $1",
+        )
+        .bind(version_id)
+        .bind(source_type)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("upsert_library_page: version source_type: {e}"))?;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.library_content(
                  library_version_id, kind, name, url, local_path, description, body,

@@ -244,6 +244,11 @@ async fn write_one_repo(pg: &PgStore, root: &RepoRoot, root_id: &uuid::Uuid) -> 
     out
 }
 
+/// Version prefixes that mark a FIRST-PARTY dep rather than a release.
+/// Mirrors the protocols `local_source_protocol` understands; a version
+/// starting with one of these is a pointer, not a version.
+const LOCAL_PROTOCOLS: &[&str] = &["link:", "workspace:", "file:", "path:", "portal:"];
+
 /// Write each manifest's dependency edges: folder -> library for externals,
 /// folder -> folder for local siblings (02 S8, 02b S11).
 ///
@@ -340,6 +345,15 @@ async fn write_dependencies(
                 continue;
             }
 
+            // `link:kavach` is a PROTOCOL, not a release. `local_source` is
+            // unset when the payload is a bare name rather than a path, so the
+            // dep reached here looking external and its "version" was stored
+            // verbatim — producing a `library_versions` row keyed
+            // `link:kavach` that no pin can ever match. A protocol-shaped
+            // version means the dep is first-party; it is not a library.
+            if LOCAL_PROTOCOLS.iter().any(|p| dep.version.starts_with(p)) {
+                continue;
+            }
             let version = scan_repo::resolve_pin(&pins, &dep.lib_name, &dep.version);
             let lib_id = match pg
                 .upsert_library(&dep.lib_name, ecosystem, Some(&version), None, None, None)
@@ -363,6 +377,18 @@ async fn write_dependencies(
             }
         }
     }
+}
+
+/// A Cargo root's `[workspace.package] version`, for a package that writes
+/// `version.workspace = true`.
+///
+/// `parse_manifest` reads `package.version` and gets a TABLE rather than a
+/// string there, so it returns `None` — and dbd's docs landed under `unknown`
+/// as a result. The inherited value is in the same file for a workspace root,
+/// which is the only manifest this is asked about.
+fn workspace_inherited_version(content: &str) -> Option<String> {
+    let v: toml::Value = content.parse().ok()?;
+    v.get("workspace")?.get("package")?.get("version")?.as_str().map(str::to_string)
 }
 
 /// If this repo ships a `sensei.library.json` at its root, register the
@@ -400,14 +426,29 @@ async fn ingest_library(
         return;
     };
 
-    let library_id =
-        match pg.upsert_library(&m.library, ecosystem, Some(&m.version), None, None, None).await {
-            Ok(id) => id,
-            Err(e) => {
-                out.errors.push(format!("upsert_library({}): {e}", m.library));
-                return;
-            }
-        };
+    // The library's OWN version, from the package manifest at the repo root —
+    // rokkit's package.json says 1.4.1. NOT `m.version`, which is the
+    // sensei.library.json's applies-to RANGE (`>=1.3`): a range is not a
+    // release, and storing one as a version key produced rows like `>=1.3`
+    // holding the local pages, which no pin can ever match.
+    let own_version =
+        scan.manifests.iter().find(|(p, _)| p.parent() == Some(repo_root)).and_then(|(p, eco)| {
+            let content = std::fs::read_to_string(p).ok()?;
+            let a = crate::adapters::manifest::registered_adapters()
+                .iter()
+                .find(|a| a.ecosystem() == *eco)?;
+            a.parse_manifest(&content).version.or_else(|| workspace_inherited_version(&content))
+        });
+    let library_id = match pg
+        .upsert_library(&m.library, ecosystem, own_version.as_deref(), None, None, None)
+        .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            out.errors.push(format!("upsert_library({}): {e}", m.library));
+            return;
+        }
+    };
 
     match crate::libraries::ingest_manifest_at(pg, &library_id, repo_root).await {
         Some((_, _, np)) => out.library_packages = np,
@@ -474,6 +515,7 @@ async fn ingest_library_pages(
                 // membership — nothing in `docs/llms/list.txt` says it
                 // documents `@rokkit/ui`. `None` is "not stated"; inferring it
                 // from the component name would be the R4 guess.
+                None,
                 None,
             )
             .await
@@ -658,6 +700,158 @@ mod corpus {
         .await
         .expect("create watch root");
         id
+    }
+
+    /// The THREE INGESTION ROUTES, against the real rokkit / kavach / dbd —
+    /// local, github AT A VERSION TAG, and the published website (02b §3b).
+    ///
+    /// `#[ignore]`: network + database. Every library indexed so far arrived by
+    /// the LOCAL route, so S9's precedence had never ranked more than one
+    /// candidate. This is what puts three real routes in the table at once.
+    ///
+    /// The github arm is the one worth proving: `LibSource::GitHubTree`'s
+    /// `branch` field goes straight into the contents API's `?ref=`, which
+    /// resolves a TAG as readily as a branch — so docs can be pinned to the
+    /// release they describe rather than to whatever `develop` holds today.
+    ///
+    /// `cargo test -p senseid --bin senseid three_routes -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn three_routes_ingest_the_same_libraries() {
+        use crate::indexer::lib_indexer::{LibSource, resolve_library_pages};
+
+        let pg = PgStore::connect_test().await.expect("connect");
+
+        // (library, ecosystem, owner, repo, tag, website llms URL)
+        // rokkit's site publishes no llms.txt — measured, it 404s — so it has
+        // no website arm. That is a real state, not a gap to paper over.
+        let libs: &[(&str, &str, &str, &str, &str, Option<&str>)] = &[
+            ("rokkit", "npm", "jerrythomas", "rokkit", "v1.4.1", None),
+            (
+                "kavach",
+                "npm",
+                "jerrythomas",
+                "kavach",
+                "v1.1.3",
+                Some("https://kavach.vercel.app/llms.txt"),
+            ),
+            (
+                "dbd",
+                "cargo",
+                "sensei-hq",
+                "dbd",
+                "v0.12.6",
+                Some("https://dbd.sensei-hq.com/llms.txt"),
+            ),
+        ];
+
+        for (name, eco, owner, repo, tag, site) in libs {
+            let lib_id = pg
+                .upsert_library(name, eco, None, None, None, None)
+                .await
+                .unwrap_or_else(|e| panic!("{name}: upsert_library: {e}"));
+
+            // ── github, AT THE VERSION TAG ───────────────────────────────
+            let src = LibSource::GitHubTree {
+                owner: (*owner).to_string(),
+                repo: (*repo).to_string(),
+                branch: (*tag).to_string(),
+                path: "docs/llms".to_string(),
+            };
+            // The version these docs describe IS the tag, minus the `v`.
+            let version = tag.trim_start_matches('v');
+            match resolve_library_pages(&src, name).await {
+                Ok(pages) => {
+                    let mut n = 0;
+                    for page in &pages {
+                        if pg
+                            .upsert_library_page(
+                                &lib_id,
+                                &page.doc.title,
+                                Some(page.location.as_str()),
+                                None,
+                                Some(&page.doc.summary),
+                                Some(&page.doc.content),
+                                page.source_type,
+                                page.doc.component.as_deref(),
+                                None,
+                                Some(version),
+                            )
+                            .await
+                            .is_ok()
+                        {
+                            n += 1;
+                        }
+                    }
+                    println!("  {name:8} github @{tag:10} -> {n:4} pages (version {version})");
+                    assert!(n > 0, "{name}: the tag yielded no pages");
+                }
+                Err(e) => panic!("{name}: github @{tag} failed: {e}"),
+            }
+
+            // ── website ──────────────────────────────────────────────────
+            let Some(url) = site else {
+                println!("  {name:8} website              -- publishes no llms.txt");
+                continue;
+            };
+            match resolve_library_pages(&LibSource::Website((*url).to_string()), name).await {
+                Ok(pages) => {
+                    let mut n = 0;
+                    for page in &pages {
+                        if pg
+                            .upsert_library_page(
+                                &lib_id,
+                                &page.doc.title,
+                                Some(page.location.as_str()),
+                                None,
+                                Some(&page.doc.summary),
+                                Some(&page.doc.content),
+                                page.source_type,
+                                page.doc.component.as_deref(),
+                                None,
+                                // A site documents whatever is current. S11:
+                                // `latest` IS a version, and recording it as
+                                // one keeps the dedup key total.
+                                Some("latest"),
+                            )
+                            .await
+                            .is_ok()
+                        {
+                            n += 1;
+                        }
+                    }
+                    println!("  {name:8} website              -> {n:4} pages (version latest)");
+                    assert!(n > 0, "{name}: the website yielded no pages");
+                }
+                Err(e) => panic!("{name}: website {url} failed: {e}"),
+            }
+        }
+
+        // ── S9 across THREE REAL ROUTES ──────────────────────────────────
+        // Until now every library arrived by the local route, so the
+        // precedence had never ranked more than one candidate. dbd now holds
+        // 0.13.0 (local, its working tree), 0.12.6 (github, the tag) and
+        // `latest` (website) — three sources, three versions.
+        use crate::libraries::docs_source::{DocCandidate, DocRoute, VersionFit, choose_docs};
+        let dbd = [
+            DocCandidate { route: DocRoute::Local, version: Some("0.13.0".into()) },
+            DocCandidate { route: DocRoute::GitHub, version: Some("0.12.6".into()) },
+            DocCandidate { route: DocRoute::Website, version: Some("latest".into()) },
+        ];
+
+        // A project ON the released version gets the GITHUB tag — not the
+        // website, which outranks it, and not the local tree that is ahead.
+        // This is the inversion the whole rule exists for.
+        let pinned = choose_docs("0.12.6", &dbd).unwrap();
+        println!("\n  S9  pin 0.12.6 -> {:?} {:?}", pinned.route, pinned.fit);
+        assert_eq!(pinned.route, DocRoute::GitHub);
+        assert_eq!(pinned.fit, VersionFit::Exact);
+
+        // A project on a version NOBODY holds gets the closest, LABELLED.
+        let other = choose_docs("0.12.0", &dbd).unwrap();
+        println!("  S9  pin 0.12.0 -> {:?} {:?}", other.route, other.fit.label());
+        assert_eq!(other.route, DocRoute::GitHub, "0.12.6 is closer than 0.13.0");
+        assert!(other.fit.label().is_some(), "a wrong-version answer must say so");
     }
 
     /// Run stages 1-3 against THIS repository and write the structure.
