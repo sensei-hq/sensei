@@ -727,6 +727,17 @@ fn collect_txt_files(dir: &std::path::Path, is_component: bool, out: &mut Vec<So
 
 /// Fetch website llms docs: parse the index for `.txt` links; when links exist,
 /// fetch each as a component page; otherwise treat the index as a single file.
+/// The `llms-full.txt` that conventionally sits beside an `llms.txt`.
+///
+/// `None` for any other URL — this is the ONE documented pairing, and deriving
+/// speculative siblings from arbitrary paths would be guessing at URLs to
+/// fetch. Already pointing at the full text yields `None` too: there is
+/// nothing further to reach for.
+pub fn sibling_full_text_url(index_url: &str) -> Option<String> {
+    let (base, _) = index_url.rsplit_once("/llms.txt")?;
+    Some(format!("{base}/llms-full.txt"))
+}
+
 pub async fn fetch_website_source_files(index_url: &str) -> Result<Vec<SourceFile>, String> {
     let index = fetch_lib_url_with_timeout(index_url, 15).await?;
     let links = extract_doc_links(&index);
@@ -734,12 +745,36 @@ pub async fn fetch_website_source_files(index_url: &str) -> Result<Vec<SourceFil
 
     if links.is_empty() {
         // Single-file: index IS the content (llms.txt / llms-full.txt).
-        return Ok(vec![SourceFile {
+        let mut files = vec![SourceFile {
             stem: if index_stem.is_empty() { "index".into() } else { index_stem },
-            content: index,
+            content: index.clone(),
             location: index_url.to_string(),
             is_component_file: false,
-        }]);
+        }];
+        // The llms.txt convention publishes a SUMMARY (`llms.txt`) beside the
+        // full text (`llms-full.txt`), and they are not the same document.
+        // MEASURED on dbd: the summary derives 1 page, the full text 43 — the
+        // same 43 the local walk and the github tag produce. A caller naming
+        // the natural `/llms.txt` would otherwise get the summary and have no
+        // way to tell it was not the content.
+        //
+        // The local route already reads both (`resolve_local_llms_root` looks
+        // for either); this is the website route catching up, not a new
+        // convention. A 404 means the site publishes only the one file, which
+        // is normal — and identical content is deduped, because kavach serves
+        // both from the same source and two copies would be two pages.
+        if let Some(full_url) = sibling_full_text_url(index_url)
+            && let Ok(full) = fetch_lib_url_with_timeout(&full_url, 15).await
+            && full.trim() != index.trim()
+        {
+            files.push(SourceFile {
+                stem: "llms-full".into(),
+                content: full,
+                location: full_url,
+                is_component_file: false,
+            });
+        }
+        return Ok(files);
     }
 
     let mut files = vec![SourceFile {
@@ -1268,6 +1303,27 @@ Use --dry-run to preview.
     }
 
     // ── GitHub / website URL parsing (pure, no network) ─────────────────────
+
+    #[test]
+    fn the_full_text_sibling_is_derived_only_for_the_documented_pairing() {
+        // MEASURED on dbd: /llms.txt derives 1 page, /llms-full.txt derives 43
+        // — the same 43 the local walk and the github tag give. Naming the
+        // natural URL must not silently return the summary.
+        assert_eq!(
+            sibling_full_text_url("https://dbd.sensei-hq.com/llms.txt").as_deref(),
+            Some("https://dbd.sensei-hq.com/llms-full.txt")
+        );
+        assert_eq!(
+            sibling_full_text_url("https://x.dev/docs/llms/llms.txt").as_deref(),
+            Some("https://x.dev/docs/llms/llms-full.txt")
+        );
+        // Already the full text — nothing further to reach for.
+        assert_eq!(sibling_full_text_url("https://x.dev/llms-full.txt"), None);
+        // Any other path: no speculative sibling. Guessing URLs to fetch is
+        // how a route starts 404ing its way around a site.
+        assert_eq!(sibling_full_text_url("https://x.dev/docs/index.txt"), None);
+        assert_eq!(sibling_full_text_url("https://x.dev/"), None);
+    }
 
     #[test]
     fn parse_github_tree_url_ok() {
