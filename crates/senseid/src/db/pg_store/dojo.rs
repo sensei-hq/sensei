@@ -93,6 +93,10 @@ impl PgStore {
     /// Create a new `proposed` memory-share batch with the given memory ids.
     /// Rejects an empty member list — a batch with nothing to share is a
     /// caller-side bug. Returns the new batch id on success.
+    ///
+    /// **Security invariant**: All supplied memory IDs MUST belong to the
+    /// specified project. Cross-project memory inclusion is rejected before
+    /// any persistent work occurs.
     pub async fn create_memory_share_batch(
         &self,
         project_id: &uuid::Uuid,
@@ -103,6 +107,32 @@ impl PgStore {
             return Err("memory_ids must be non-empty".into());
         }
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+
+        // Enforce project ownership: verify that every supplied memory belongs
+        // to the target project. This guard prevents cross-project memory
+        // inclusion in share batches, which would allow unauthorized content
+        // to enter a project's federation publication workflow.
+        let (foreign_count,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*)::bigint
+               FROM unnest($1::uuid[]) AS candidate(memory_id)
+              WHERE NOT EXISTS (
+                SELECT 1 FROM sensei.memories m
+                 WHERE m.id = candidate.memory_id
+                   AND m.project_id = $2
+              )",
+        )
+        .bind(memory_ids)
+        .bind(project_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if foreign_count > 0 {
+            return Err(format!(
+                "{} memory id(s) do not belong to project {}",
+                foreign_count, project_id
+            ));
+        }
 
         let (batch_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.memory_share_batches (project_id, note)

@@ -7845,6 +7845,81 @@ async fn dojo_outbox_and_batch_items_roundtrip() {
 }
 
 #[tokio::test]
+async fn create_memory_share_batch_rejects_cross_project_memories() {
+    let Ok(pg) = PgStore::connect_test().await else {
+        return;
+    };
+
+    // Two distinct projects, each with its own memory.
+    let proj_a = pg.create_project("_test:dojo:batch_a", None, None).await.unwrap();
+    let proj_b = pg.create_project("_test:dojo:batch_b", None, None).await.unwrap();
+
+    let mem_a = pg
+        .insert_memory(&InsertMemory {
+            project_id: Some(proj_a),
+            scope: "project".into(),
+            scope_filter: None,
+            mtype: "convention".into(),
+            title: "memory A".into(),
+            content: "belongs to project A".into(),
+            impact: None,
+            tags: vec![],
+            triage_signal: None,
+            status: "active".into(),
+            namespace_id: None,
+            enforcement: None,
+            origin: Some("learned".into()),
+            source_id: None,
+            spine_slot: None,
+            feature: None,
+        })
+        .await
+        .unwrap();
+
+    let mem_b = pg
+        .insert_memory(&InsertMemory {
+            project_id: Some(proj_b),
+            scope: "project".into(),
+            scope_filter: None,
+            mtype: "convention".into(),
+            title: "memory B".into(),
+            content: "belongs to project B".into(),
+            impact: None,
+            tags: vec![],
+            triage_signal: None,
+            status: "active".into(),
+            namespace_id: None,
+            enforcement: None,
+            origin: Some("learned".into()),
+            source_id: None,
+            spine_slot: None,
+            feature: None,
+        })
+        .await
+        .unwrap();
+
+    // Attempting to create a batch for project A with memory B must fail.
+    let result = pg.create_memory_share_batch(&proj_a, &[mem_b], None).await;
+    assert!(result.is_err(), "cross-project memory inclusion must be rejected");
+    assert!(
+        result.unwrap_err().contains("do not belong to project"),
+        "error message must indicate project ownership violation"
+    );
+
+    // Attempting to create a batch with a mix of owned and foreign memories must fail.
+    let result_mixed = pg.create_memory_share_batch(&proj_a, &[mem_a, mem_b], None).await;
+    assert!(result_mixed.is_err(), "batch with mixed ownership must be rejected");
+
+    // A batch containing only project A's memory must succeed.
+    let batch_ok = pg.create_memory_share_batch(&proj_a, &[mem_a], None).await;
+    assert!(batch_ok.is_ok(), "batch with only owned memories must succeed");
+
+    // Cleanup.
+    pg.delete_project(&proj_a).await.unwrap();
+    pg.delete_project(&proj_b).await.unwrap();
+}
+
+#[tokio::test]
 async fn dojo_inbox_upsert_apply_and_state_roundtrip() {
     let Ok(pg) = PgStore::connect_test().await else {
         return;
