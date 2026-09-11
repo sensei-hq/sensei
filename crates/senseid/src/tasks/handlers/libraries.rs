@@ -624,7 +624,7 @@ async fn extract_and_persist_commands(
 /// - `link` / `file` → filesystem path relative to the declaring folder (npm).
 /// - `workspace` → name lookup inside the same monorepo (intra-project by
 ///   design — no cross-project edge).
-fn local_source_protocol(source: &str, raw_version: &str) -> &'static str {
+pub(crate) fn local_source_protocol(source: &str, raw_version: &str) -> &'static str {
     if source == "Cargo.toml" {
         return "path";
     }
@@ -652,7 +652,7 @@ fn local_source_protocol(source: &str, raw_version: &str) -> &'static str {
 /// to exist and follows symlinks in a way that surprises the caller when the
 /// folder is symlinked. Lexical normalization is enough for looking up in
 /// `sensei.folders` by `abs_path`, which itself stores the pre-canonical path.
-fn resolve_local_target(
+pub(crate) fn resolve_local_target(
     from_abs_path: &str,
     protocol: &str,
     target: &str,

@@ -294,6 +294,46 @@ mod tests {
         assert!(registry_latest_url("docs", "x").is_none());
     }
 
+    /// The WHOLE S8 path against a live registry: fetch, extract, persist.
+    ///
+    /// `#[ignore]` — network + database. The unit tests cover the parse and the
+    /// writer separately; this is the one that proves they are connected, which
+    /// is the failure mode this plan keeps hitting (a capability built and
+    /// never reached).
+    ///
+    /// `cargo test -p senseid --bin senseid s8_end_to_end -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn s8_end_to_end_a_real_lookup_persists_a_repository_url() {
+        let pg = crate::db::pg_store::PgStore::connect_test().await.expect("connect");
+        let lib = pg
+            .upsert_library("_test:s8", "cargo", Some("1.0.0"), None, None, None)
+            .await
+            .expect("library");
+
+        // The production source, no stub: one real request to crates.io.
+        let info = HttpVersionSource
+            .latest("cargo", "serde", None)
+            .await
+            .expect("crates.io returned nothing — network down, or the shape moved");
+        assert!(!info.version.is_empty());
+        assert!(info.urls.repository.is_some(), "the response carried no repository URL");
+
+        pg.set_library_urls(&lib, &info.urls).await.expect("persist");
+
+        let row: (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+            "SELECT repository_url, homepage_url FROM sensei.libraries WHERE id = $1",
+        )
+        .bind(lib)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        println!("persisted repository_url={:?} homepage_url={:?}", row.0, row.1);
+        assert_eq!(row.0, info.urls.repository);
+
+        pg.delete_library(&lib).await.ok();
+    }
+
     /// Fetch the three registries FOR REAL and check the shapes still hold.
     ///
     /// `#[ignore]` because it needs network. The unit tests above assert
