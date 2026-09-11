@@ -1,3 +1,4 @@
+use super::graph_seed::SeedGraph;
 use super::*;
 use crate::languages::fqn::ReceiverHint;
 use crate::tasks::test_support::{SCHEDULE_EDIT_GATE, TEST_SCHEDULE_PREFIX, test_schedule_name};
@@ -436,7 +437,7 @@ async fn tag_file_nodes_by_framework_kind_aggregates_symbol_kinds() {
 
     // A .svelte file that defines a component and uses a hook.
     let widget = s
-        .upsert_node(&fid, "file", "Widget.svelte", "src/Widget.svelte", None, None, None, None)
+        .seed_node(&fid, "file", "Widget.svelte", "src/Widget.svelte", None, None, None, None)
         .await
         .unwrap();
     crate::tasks::test_support::seed_node(
@@ -466,10 +467,8 @@ async fn tag_file_nodes_by_framework_kind_aggregates_symbol_kinds() {
     .await
     .unwrap();
     // A plain file with only a function → no framework tag.
-    let util = s
-        .upsert_node(&fid, "file", "util.rs", "src/util.rs", None, None, None, None)
-        .await
-        .unwrap();
+    let util =
+        s.seed_node(&fid, "file", "util.rs", "src/util.rs", None, None, None, None).await.unwrap();
     crate::tasks::test_support::seed_node(
         &s,
         &fid,
@@ -487,7 +486,7 @@ async fn tag_file_nodes_by_framework_kind_aggregates_symbol_kinds() {
     // File-role by path convention (no symbols needed): SvelteKit routes +
     // middleware, and a Next-style middleware file.
     let page = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "file",
             "+page.svelte",
@@ -500,24 +499,15 @@ async fn tag_file_nodes_by_framework_kind_aggregates_symbol_kinds() {
         .await
         .unwrap();
     let endpoint = s
-        .upsert_node(
-            &fid,
-            "file",
-            "+server.ts",
-            "src/routes/api/+server.ts",
-            None,
-            None,
-            None,
-            None,
-        )
+        .seed_node(&fid, "file", "+server.ts", "src/routes/api/+server.ts", None, None, None, None)
         .await
         .unwrap();
     let hooks = s
-        .upsert_node(&fid, "file", "hooks.server.ts", "src/hooks.server.ts", None, None, None, None)
+        .seed_node(&fid, "file", "hooks.server.ts", "src/hooks.server.ts", None, None, None, None)
         .await
         .unwrap();
     let mw = s
-        .upsert_node(&fid, "file", "middleware.ts", "middleware.ts", None, None, None, None)
+        .seed_node(&fid, "file", "middleware.ts", "middleware.ts", None, None, None, None)
         .await
         .unwrap();
 
@@ -808,12 +798,10 @@ async fn rank_bm25_empty_folder() {
 async fn node_upsert_and_query() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("node_{}", uuid::Uuid::new_v4())).await;
-    let file_id = s
-        .upsert_node(&fid, "file", "main.rs", "src/main.rs", None, None, None, None)
-        .await
-        .unwrap();
+    let file_id =
+        s.seed_node(&fid, "file", "main.rs", "src/main.rs", None, None, None, None).await.unwrap();
     let fn_id = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "function",
             "main",
@@ -907,14 +895,10 @@ async fn semantic_search_nodes_ranks_by_cosine() {
     let mut e_beta = vec![0.0f32; dim];
     e_beta[1] = 1.0;
 
-    let id_alpha = s
-        .upsert_node(&fid, "function", "alpha", "a.rs", None, None, Some(1), Some(9))
-        .await
-        .unwrap();
-    let id_beta = s
-        .upsert_node(&fid, "function", "beta", "b.rs", None, None, Some(1), Some(9))
-        .await
-        .unwrap();
+    let id_alpha =
+        s.seed_node(&fid, "function", "alpha", "a.rs", None, None, Some(1), Some(9)).await.unwrap();
+    let id_beta =
+        s.seed_node(&fid, "function", "beta", "b.rs", None, None, Some(1), Some(9)).await.unwrap();
     s.set_node_embedding(&id_alpha, &e_alpha).await.unwrap();
     s.set_node_embedding(&id_beta, &e_beta).await.unwrap();
 
@@ -1345,6 +1329,54 @@ async fn a_repo_relative_path_resolves_to_a_file_in_a_MODULE_folder() {
     s.remove_watch_root(&rid).await.ok();
 }
 
+/// When two folders hold a row for the SAME file, the caller's own folder wins.
+///
+/// A nested duplicate checkout is a real, deliberate state — it is what
+/// `contained_duplicate_folders` reports on — and both folders legitimately
+/// carry a `files` row for the same file on disk. Resolving purely by absolute
+/// path matches both and picks whichever the planner returns first, so a node in
+/// the inner folder can end up keyed to the OUTER folder's row.
+///
+/// Nothing errors when that happens. The node reads back with a path assembled
+/// from the wrong folder's prefix — `crates/member/crates/member/src/lib.rs`,
+/// which is how this was found — and a plausible-looking wrong path is exactly
+/// the wrong answer R4 ranks below no answer at all.
+///
+/// Asserted from BOTH anchors, because a rule that resolves an ambiguity has to
+/// resolve it the same way for each side or it has only moved the ambiguity.
+#[tokio::test]
+async fn a_file_two_folders_both_track_resolves_to_the_callers_own_folder() {
+    let s = pg_store().await;
+    let base = format!("/tmp/fidtwo_{}", uuid::Uuid::new_v4());
+    let rid = s.add_watch_root(&base, "fidtwo", &serde_json::json!([])).await.unwrap();
+
+    let outer =
+        s.upsert_folder(&rid, "git", "outer", &base, &base, None, None, None).await.unwrap();
+    let inner_abs = format!("{base}/vendored");
+    let inner = s
+        .upsert_folder(&rid, "git", "vendored", "vendored", &inner_abs, Some(&outer), None, None)
+        .await
+        .unwrap();
+
+    // One file on disk, tracked by both folders at their own grains.
+    let outer_row = s.upsert_file_row(&outer, "vendored/src/lib.rs", 1, "h", None).await.unwrap();
+    let inner_row = s.upsert_file_row(&inner, "src/lib.rs", 1, "h", None).await.unwrap();
+    assert_ne!(outer_row, inner_row, "the fixture must really create two rows");
+
+    assert_eq!(
+        s.file_id_for(&inner, "src/lib.rs").await.unwrap(),
+        Some(inner_row),
+        "the inner folder's own row wins for the inner folder"
+    );
+    assert_eq!(
+        s.file_id_for(&outer, "vendored/src/lib.rs").await.unwrap(),
+        Some(outer_row),
+        "the outer folder's own row wins for the outer folder"
+    );
+
+    s.remove_watch_root(&rid).await.ok();
+}
+
 #[tokio::test]
 async fn folder_completeness_propagates_incompleteness_up_the_tree() {
     // The whole point of the view: a folder is complete only when everything
@@ -1542,10 +1574,8 @@ async fn semantic_search_nodes_drops_neighbours_beyond_the_distance_bound() {
     let mut e_far = vec![0.0f32; dim];
     e_far[1] = 1.0;
 
-    let id_near = s
-        .upsert_node(&fid, "function", "near", "n.rs", None, None, Some(1), Some(9))
-        .await
-        .unwrap();
+    let id_near =
+        s.seed_node(&fid, "function", "near", "n.rs", None, None, Some(1), Some(9)).await.unwrap();
     let id_far = crate::tasks::test_support::seed_node(
         &s,
         &fid,
@@ -1764,15 +1794,15 @@ async fn replace_communities_for_folder_kills_stale_and_orphans() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("comm_{}", uuid::Uuid::new_v4())).await;
     let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
     let b = s
-        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
+        .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
     let c = s
-        .upsert_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(5), Some(6))
+        .seed_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(5), Some(6))
         .await
         .unwrap();
 
@@ -1840,11 +1870,11 @@ async fn replace_communities_reruns_change_zero_rows() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("comm_norerun_{}", uuid::Uuid::new_v4())).await;
     let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
     let b = s
-        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
+        .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
     let assignment = vec![CommunityAssignment {
@@ -1898,16 +1928,7 @@ async fn detect_communities_assigns_deterministic_ids_by_natural_key() {
     let mut n = std::collections::HashMap::new();
     for (name, line) in [("a", 10), ("b", 20), ("c", 30), ("d", 40), ("e", 50), ("f", 60)] {
         let id = s
-            .upsert_node(
-                &fid,
-                "function",
-                name,
-                "a.rs",
-                None,
-                Some("()"),
-                Some(line),
-                Some(line + 1),
-            )
+            .seed_node(&fid, "function", name, "a.rs", None, Some("()"), Some(line), Some(line + 1))
             .await
             .unwrap();
         n.insert(name, id);
@@ -1998,7 +2019,7 @@ async fn community_coverage_full_singletons_inherit_file_community() {
     let fid = create_test_folder(&s, &format!("commcov_{}", uuid::Uuid::new_v4())).await;
     // A file with a struct + two methods, and NO edges between any of them.
     let file = s
-        .upsert_node(&fid, "file", "widget.rs", "src/widget.rs", None, None, Some(1), Some(99))
+        .seed_node(&fid, "file", "widget.rs", "src/widget.rs", None, None, Some(1), Some(99))
         .await
         .unwrap();
     crate::tasks::test_support::seed_node(
@@ -2084,20 +2105,11 @@ async fn community_adjacency_includes_extends() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("commext_{}", uuid::Uuid::new_v4())).await;
     let base = s
-        .upsert_node(
-            &fid,
-            "class",
-            "Base",
-            "src/base.rs",
-            None,
-            Some("class Base"),
-            Some(1),
-            Some(5),
-        )
+        .seed_node(&fid, "class", "Base", "src/base.rs", None, Some("class Base"), Some(1), Some(5))
         .await
         .unwrap();
     let derived = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "class",
             "Derived",
@@ -2148,19 +2160,19 @@ async fn god_node_ids_rank_by_adjacency_not_by_a_stored_column() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("godnode_{}", uuid::Uuid::new_v4())).await;
     let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
     let b = s
-        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
+        .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
     let c = s
-        .upsert_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(5), Some(6))
+        .seed_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(5), Some(6))
         .await
         .unwrap();
     let hub = s
-        .upsert_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(9), Some(10))
+        .seed_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(9), Some(10))
         .await
         .unwrap();
     // a→hub, b→hub, c→hub, a→b. Adjacency degrees: hub=3, a=2, b=2, c=1.
@@ -2194,11 +2206,11 @@ async fn community_description_authoritative_write_is_honest_null() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("commdesc_{}", uuid::Uuid::new_v4())).await;
     let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
     let b = s
-        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
+        .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
     s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
@@ -2230,13 +2242,11 @@ async fn graph_nodes_returns_community_and_structural_edges() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("gscope_{}", uuid::Uuid::new_v4())).await;
     let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
-    let b = s
-        .upsert_node(&fid, "class", "B", "a.rs", None, Some("()"), Some(3), Some(4))
-        .await
-        .unwrap();
+    let b =
+        s.seed_node(&fid, "class", "B", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
     sqlx_core::query::query("UPDATE sensei.nodes SET community_id=5 WHERE id=$1")
         .bind(a)
         .execute(s.pool())
@@ -2272,15 +2282,15 @@ async fn communities_info_uses_live_membership() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("livecomm_{}", uuid::Uuid::new_v4())).await;
     let n1 = s
-        .upsert_node(&fid, "function", "n1", "a.rs", None, Some("()"), Some(1), Some(2))
+        .seed_node(&fid, "function", "n1", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
     let n2 = s
-        .upsert_node(&fid, "function", "n2", "a.rs", None, Some("()"), Some(3), Some(4))
+        .seed_node(&fid, "function", "n2", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
     let n3 = s
-        .upsert_node(&fid, "function", "n3", "a.rs", None, Some("()"), Some(5), Some(6))
+        .seed_node(&fid, "function", "n3", "a.rs", None, Some("()"), Some(5), Some(6))
         .await
         .unwrap();
     // Community 1 has 2 live members, community 2 has 1 — but seed a STALE count.
@@ -2319,7 +2329,7 @@ async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change()
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("nodeid_{}", uuid::Uuid::new_v4())).await;
     let id1 = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "function",
             "foo",
@@ -2345,7 +2355,7 @@ async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change()
 
     // Re-upsert SAME line, SAME signature, only line_end grew → id kept, all preserved.
     let id2 = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "function",
             "foo",
@@ -2372,7 +2382,7 @@ async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change()
 
     // Re-upsert SAME line, CHANGED signature → id kept, community kept, embedding RE-NULLED.
     let id3 = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "function",
             "foo",
@@ -2396,7 +2406,7 @@ async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change()
 
     // A DIFFERENT line is a new identity ⇒ a new node (a moved symbol churns).
     let id4 = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "function",
             "foo",
@@ -2447,7 +2457,7 @@ async fn upsert_node_by_fqn_adopts_row_when_only_the_fqn_changed() {
 
     // Indexed once under the original fqn.
     let first = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             "typescript·@sensei/desktop·lib/components/MetricSparkline",
             "module",
@@ -2460,7 +2470,7 @@ async fn upsert_node_by_fqn_adopts_row_when_only_the_fqn_changed() {
 
     // Same structural identity, DIFFERENT fqn — this used to be a hard error.
     let second = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             "svelte·@sensei/desktop·lib/components/MetricSparkline",
             "module",
@@ -2478,8 +2488,9 @@ async fn upsert_node_by_fqn_adopts_row_when_only_the_fqn_changed() {
 
     // Exactly one row, now carrying the new fqn.
     let (count, fqn): (i64, Option<String>) = query_as(
-        "SELECT count(*) OVER (), fqn FROM sensei.nodes
-             WHERE folder_id=$1 AND file_path=$2 AND kind='module'::sensei.node_kind",
+        "SELECT count(*) OVER (), n.fqn FROM sensei.nodes n
+             JOIN sensei.node_paths np ON np.node_id = n.id
+             WHERE n.folder_id=$1 AND np.file_path=$2 AND n.kind='module'::sensei.node_kind",
     )
     .bind(fid)
     .bind(file_path)
@@ -2539,20 +2550,13 @@ async fn upsert_node_by_fqn_resolves_two_files_declaring_one_fqn() {
 
     // Variant A claims the fqn.
     let a = s
-        .upsert_node_by_fqn(
-            &fid,
-            shared,
-            "const",
-            "colorPrimary",
-            Some("kotlin"),
-            Some(def(panama)),
-        )
+        .seed_node_by_fqn(&fid, shared, "const", "colorPrimary", Some("kotlin"), Some(def(panama)))
         .await
         .unwrap();
 
     // Variant B already exists under its own (earlier) fqn — the state that
     // turns the collision into a hard error rather than a plain ON CONFLICT.
-    s.upsert_node_by_fqn(
+    s.seed_node_by_fqn(
         &fid,
         "kotlin·com.acme.theme·colorPrimary·ecuador",
         "const",
@@ -2565,14 +2569,7 @@ async fn upsert_node_by_fqn_resolves_two_files_declaring_one_fqn() {
 
     // Now B is re-derived onto the SHARED fqn. This used to be Err.
     let b = s
-        .upsert_node_by_fqn(
-            &fid,
-            shared,
-            "const",
-            "colorPrimary",
-            Some("kotlin"),
-            Some(def(ecuador)),
-        )
+        .seed_node_by_fqn(&fid, shared, "const", "colorPrimary", Some("kotlin"), Some(def(ecuador)))
         .await
         .expect("a second file declaring one fqn must resolve, not fail the folder");
 
@@ -2606,9 +2603,9 @@ async fn upsert_node_by_fqn_merges_ref_and_def() {
     let fqn = "rust·senseid·widget·Widget·new";
 
     // 1. Reference-first → a stub.
-    let stub = s.upsert_node_by_fqn(&fid, fqn, "method", "new", Some("rust"), None).await.unwrap();
+    let stub = s.seed_node_by_fqn(&fid, fqn, "method", "new", Some("rust"), None).await.unwrap();
     let (resolved, fp): (bool, Option<String>) =
-        query_as("SELECT resolved, file_path FROM sensei.nodes WHERE id=$1")
+        query_as("SELECT n.resolved, np.file_path FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id=$1")
             .bind(stub)
             .fetch_one(s.pool())
             .await
@@ -2618,7 +2615,7 @@ async fn upsert_node_by_fqn_merges_ref_and_def() {
 
     // 2. The definition enriches the SAME node in place.
     let def = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             fqn,
             "method",
@@ -2636,9 +2633,21 @@ async fn upsert_node_by_fqn_merges_ref_and_def() {
         .await
         .unwrap();
     assert_eq!(stub, def, "the definition get-or-creates the SAME node as the reference");
-    let (resolved2, fp2, sig, ls, exported): (bool, Option<String>, Option<String>, Option<i32>, bool) =
-            query_as("SELECT resolved, file_path, signature, line_start, is_exported FROM sensei.nodes WHERE id=$1")
-            .bind(def).fetch_one(s.pool()).await.unwrap();
+    let (resolved2, fp2, sig, ls, exported): (
+        bool,
+        Option<String>,
+        Option<String>,
+        Option<i32>,
+        bool,
+    ) = query_as(
+        "SELECT n.resolved, np.file_path, n.signature, n.line_start, n.is_exported \
+                        FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id \
+                       WHERE n.id=$1",
+    )
+    .bind(def)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     assert!(resolved2, "the node is resolved once its definition is seen");
     assert_eq!(fp2.as_deref(), Some("src/widget.rs"));
     assert_eq!(sig.as_deref(), Some("fn new() -> Self"));
@@ -2646,10 +2655,10 @@ async fn upsert_node_by_fqn_merges_ref_and_def() {
     assert!(exported, "the definition's is_exported is written");
 
     // 3. A second reference shares the one node and does NOT downgrade it.
-    let ref2 = s.upsert_node_by_fqn(&fid, fqn, "method", "new", Some("rust"), None).await.unwrap();
+    let ref2 = s.seed_node_by_fqn(&fid, fqn, "method", "new", Some("rust"), None).await.unwrap();
     assert_eq!(ref2, def, "a later reference resolves to the same node");
     let (still_resolved, still_fp): (bool, Option<String>) =
-        query_as("SELECT resolved, file_path FROM sensei.nodes WHERE id=$1")
+        query_as("SELECT n.resolved, np.file_path FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id=$1")
             .bind(def)
             .fetch_one(s.pool())
             .await
@@ -2705,7 +2714,7 @@ async fn node_return_type_survives_the_stub_then_definition_merge() {
     };
 
     // 1. The CALL SITE is scanned first → an unresolved stub carrying nothing.
-    let stub = s.upsert_node_by_fqn(&fid, fqn, "method", "pg", Some("rust"), None).await.unwrap();
+    let stub = s.seed_node_by_fqn(&fid, fqn, "method", "pg", Some("rust"), None).await.unwrap();
     assert_eq!(
         s.node_return_type(&stub).await.unwrap(),
         None,
@@ -2727,7 +2736,7 @@ async fn node_return_type_survives_the_stub_then_definition_merge() {
 
     // 4. THE MERGE: the defining file is scanned and enriches the same row.
     let node =
-        s.upsert_node_by_fqn(&fid, fqn, "method", "pg", Some("rust"), Some(def())).await.unwrap();
+        s.seed_node_by_fqn(&fid, fqn, "method", "pg", Some("rust"), Some(def())).await.unwrap();
     assert_eq!(stub, node, "the definition enriches the SAME node the reference stubbed");
     let (resolved, marker): (bool, Option<String>) =
         query_as("SELECT resolved, props->>'marker' FROM sensei.nodes WHERE id=$1")
@@ -2744,7 +2753,7 @@ async fn node_return_type_survives_the_stub_then_definition_merge() {
     );
 
     // 5. A LATER reference (another caller file) must not erase it either.
-    s.upsert_node_by_fqn(&fid, fqn, "method", "pg", Some("rust"), None).await.unwrap();
+    s.seed_node_by_fqn(&fid, fqn, "method", "pg", Some("rust"), None).await.unwrap();
     assert_eq!(
         s.node_return_type(&node).await.unwrap().as_deref(),
         Some("&crate::db::pg_store::PgStore"),
@@ -2780,8 +2789,7 @@ async fn set_node_return_type_clears_the_key_when_the_function_returns_nothing()
     let fid = create_test_folder(&s, &format!("rettype_unit_{}", uuid::Uuid::new_v4())).await;
     let fqn = "rust·senseid·tasks::executor·TaskContext·reset";
 
-    let node =
-        s.upsert_node_by_fqn(&fid, fqn, "method", "reset", Some("rust"), None).await.unwrap();
+    let node = s.seed_node_by_fqn(&fid, fqn, "method", "reset", Some("rust"), None).await.unwrap();
     s.set_node_props(&node, &serde_json::json!({"marker": "pre-existing"})).await.unwrap();
     s.set_node_return_type(&node, "&crate::db::pg_store::PgStore").await.unwrap();
 
@@ -2849,7 +2857,7 @@ async fn node_return_type_survives_the_fqn_shape_adoption() {
     };
 
     let first = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             "rust·senseid·db::pg_store·PgStore·pool",
             "method",
@@ -2863,7 +2871,7 @@ async fn node_return_type_survives_the_fqn_shape_adoption() {
 
     // Same structural identity, DIFFERENT fqn — the adoption path.
     let second = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             "rust·senseid·db::pg_store::graph·PgStore·pool",
             "method",
@@ -2885,7 +2893,7 @@ async fn node_return_type_survives_the_fqn_shape_adoption() {
 
 #[tokio::test]
 async fn lib_node_by_fqn() {
-    // An external reference get-or-creates a first-class `lib_symbol` node:
+    // An external reference get-or-creates a first-class external node:
     // resolved=true (the external symbol IS its own definition — nothing to
     // enrich), NULL file_path (no local file), grouped by package in props.
     // Stable id across repeated references.
@@ -2896,13 +2904,15 @@ async fn lib_node_by_fqn() {
     let a =
         s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json", Some("rust")).await.unwrap();
     let (kind, resolved, fp, pkg): (String, bool, Option<String>, Option<String>) = query_as(
-        "SELECT kind::text, resolved, file_path, props->>'package' FROM sensei.nodes WHERE id=$1",
+        "SELECT n.kind::text, n.resolved, np.file_path, n.props->>'package' FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id=$1",
     )
     .bind(a)
     .fetch_one(s.pool())
     .await
     .unwrap();
-    assert_eq!(kind, "lib_symbol");
+    // D12: the kind says WHAT, and an import names a thing without saying what
+    // KIND of thing — so `unknown`. The `lib·` fqn prefix is what says external.
+    assert_eq!(kind, "unknown");
     assert!(resolved, "a lib symbol is its own definition — resolved");
     assert_eq!(fp, None, "a lib symbol has no local file");
     assert_eq!(pkg.as_deref(), Some("serde_json"), "grouped by package in props");
@@ -2911,9 +2921,15 @@ async fn lib_node_by_fqn() {
     let b =
         s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json", Some("rust")).await.unwrap();
     assert_eq!(a, b, "repeated external references share one lib node");
-    let (n,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='lib_symbol'::sensei.node_kind")
-            .bind(fid).fetch_one(s.pool()).await.unwrap();
+    let (n,): (i64,) = query_as(&format!(
+        "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 \
+              AND {ext} AND kind <> 'package'::sensei.node_kind",
+        ext = crate::languages::fqn::sql_is_external("fqn")
+    ))
+    .bind(fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     assert_eq!(n, 1);
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
@@ -2930,11 +2946,11 @@ async fn graph_nodes_and_tree_expose_fqn_and_containers() {
 
     // file → struct container → method(fqn), nested by parent_id (Phase 5 shape).
     let file_id = s
-        .upsert_node(&fid, "file", "lib.rs", "src/lib.rs", None, None, Some(1), Some(9))
+        .seed_node(&fid, "file", "lib.rs", "src/lib.rs", None, None, Some(1), Some(9))
         .await
         .unwrap();
     let type_id = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "struct",
             "Widget",
@@ -2948,7 +2964,7 @@ async fn graph_nodes_and_tree_expose_fqn_and_containers() {
         .unwrap();
     let method_fqn = "rust·pkg·lib·Widget·render";
     let method_id = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             method_fqn,
             "method",
@@ -3016,11 +3032,11 @@ async fn two_same_name_stubs_do_not_merge() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("stubmerge_{}", uuid::Uuid::new_v4())).await;
     let a = s
-        .upsert_node_by_fqn(&fid, "rust·pkg·a·A·foo", "method", "foo", Some("rust"), None)
+        .seed_node_by_fqn(&fid, "rust·pkg·a·A·foo", "method", "foo", Some("rust"), None)
         .await
         .unwrap();
     let b = s
-        .upsert_node_by_fqn(&fid, "rust·pkg·b·B·foo", "method", "foo", Some("rust"), None)
+        .seed_node_by_fqn(&fid, "rust·pkg·b·B·foo", "method", "foo", Some("rust"), None)
         .await
         .unwrap();
     assert_ne!(a, b, "same simple name, different fqn → two distinct stub nodes");
@@ -3076,18 +3092,18 @@ async fn legacy_upsert_sets_language_from_extension() {
 
 #[tokio::test]
 async fn node_locations_tolerates_stub_rows() {
-    // file_path is now nullable (reference stubs + lib_symbol nodes have none).
+    // file_id is nullable (reference stubs + external `lib·` nodes have none).
     // node_locations decodes file_path as a required String, so a stub id among
     // the requested ids must NOT error the whole fetch — the stub (no location)
     // is simply omitted while the real node still resolves.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("nodeloc_{}", uuid::Uuid::new_v4())).await;
     let real = s
-        .upsert_node(&fid, "function", "real", "a.rs", None, Some("fn real()"), Some(3), Some(9))
+        .seed_node(&fid, "function", "real", "a.rs", None, Some("fn real()"), Some(3), Some(9))
         .await
         .unwrap();
     let stub = s
-        .upsert_node_by_fqn(&fid, "rust·pkg·m·Missing·gone", "method", "gone", Some("rust"), None)
+        .seed_node_by_fqn(&fid, "rust·pkg·m·Missing·gone", "method", "gone", Some("rust"), None)
         .await
         .unwrap();
 
@@ -3107,15 +3123,15 @@ async fn prune_file_nodes_deletes_vanished_and_unresolves_inbound() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("prune_{}", uuid::Uuid::new_v4())).await;
     let keep = s
-        .upsert_node(&fid, "function", "keep", "a.rs", None, Some("()"), Some(1), Some(5))
+        .seed_node(&fid, "function", "keep", "a.rs", None, Some("()"), Some(1), Some(5))
         .await
         .unwrap();
     let gone = s
-        .upsert_node(&fid, "function", "gone", "a.rs", None, Some("()"), Some(6), Some(9))
+        .seed_node(&fid, "function", "gone", "a.rs", None, Some("()"), Some(6), Some(9))
         .await
         .unwrap();
     let caller = s
-        .upsert_node(&fid, "function", "caller", "b.rs", None, Some("()"), Some(1), Some(3))
+        .seed_node(&fid, "function", "caller", "b.rs", None, Some("()"), Some(1), Some(3))
         .await
         .unwrap();
     // A resolved inbound edge b.rs::caller → a.rs::gone, carrying target_name.
@@ -3159,11 +3175,11 @@ async fn delete_edges_from_sources_clears_a_files_out_edges() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("outedge_{}", uuid::Uuid::new_v4())).await;
     let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(5))
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(5))
         .await
         .unwrap();
     let b = s
-        .upsert_node(&fid, "function", "b", "b.rs", None, Some("()"), Some(1), Some(5))
+        .seed_node(&fid, "function", "b", "b.rs", None, Some("()"), Some(1), Some(5))
         .await
         .unwrap();
     s.insert_edge(&fid, &a, None, Some("x"), None, "calls").await.unwrap(); // a's out-edge
@@ -5326,7 +5342,7 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
         .await
         .unwrap();
     let node_id = s
-        .upsert_node(&crate_fid, "struct", "DojoStore", "src/store.rs", None, None, None, None)
+        .seed_node(&crate_fid, "struct", "DojoStore", "src/store.rs", None, None, None, None)
         .await
         .unwrap();
     // Its `files` rows too. The heal dropped nodes and re-classified the folder but
@@ -5425,20 +5441,10 @@ async fn list_indexed_files_excludes_modules_and_empties() {
         .await
         .unwrap();
     // A module node records an ABSOLUTE dir path — must be excluded so it never
-    // pollutes the rel-path comparison in prune_vanished.
-    crate::tasks::test_support::seed_node(
-        &s,
-        &fid,
-        "module",
-        "src",
-        &format!("{repo_abs}/src"),
-        None,
-        None,
-        None,
-        None,
-    )
-    .await
-    .unwrap();
+    // pollutes the rel-path comparison in prune_vanished. It names a DIRECTORY,
+    // which has no `files` row and never will (R13), so it takes the directory
+    // writer rather than the file one.
+    s.upsert_dir_node(&fid, "module", "src", &format!("{repo_abs}/src")).await.unwrap();
 
     let mut files = s.list_indexed_files(&fid).await.unwrap();
     files.sort();
@@ -9445,7 +9451,7 @@ async fn scoped_search_and_count_across_child_folder() {
 
     // Insert a function node in the CHILD folder.
     let fn_id = s
-        .upsert_node(
+        .seed_node(
             &child_id,
             "function",
             "widget_builder",
@@ -9459,7 +9465,7 @@ async fn scoped_search_and_count_across_child_folder() {
         .unwrap();
     // Insert a callee node (target) in child folder.
     let tgt_id = s
-        .upsert_node(
+        .seed_node(
             &child_id,
             "function",
             "render_widget",
@@ -10863,11 +10869,7 @@ async fn a_nested_folder_whose_files_are_indexed_twice_is_reported_but_a_healed_
             .unwrap();
     }
     // ...only the module container the heal leaves behind.
-    crate::tasks::test_support::seed_node(
-        &s, &healed, "module", "healed", "", None, None, None, None,
-    )
-    .await
-    .unwrap();
+    s.upsert_dir_node(&healed, "module", "healed", "").await.unwrap();
 
     let dups = s.contained_duplicate_folders().await.unwrap();
     let mine: Vec<_> = dups.iter().filter(|(o, _, _, _)| o.contains(&tag.to_string())).collect();
@@ -12791,7 +12793,7 @@ async fn signing_out_matches_the_slot_however_the_caller_cased_the_persona() {
 // the writer already set.
 
 /// Three-valued on purpose. A boolean would bin the 85,530 nodes that have
-/// neither a `file_path` nor `lib_symbol` kind as external and reproduce exactly
+/// neither a file nor an external fqn as external and reproduce exactly
 /// the false positives this view exists to kill. `unknown` makes them countable,
 /// which is what turns "stub count → 0" into a query.
 #[tokio::test]
@@ -12801,15 +12803,15 @@ async fn graph_nodes_locality_is_three_valued_not_boolean() {
 
     // A definition in a local file.
     let internal = s
-        .upsert_node(&fid, "function", "compute", "src/lib.rs", None, None, Some(1), Some(9))
+        .seed_node(&fid, "function", "compute", "src/lib.rs", None, None, Some(1), Some(9))
         .await
         .unwrap();
-    // A dependency's symbol: the writer records this as `lib_symbol`.
+    // A dependency's symbol: the writer records this with the `lib·` prefix.
     let external = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             "lib·axum·axum::response·Json",
-            "lib_symbol",
+            "unknown",
             "Json",
             Some("rust"),
             None,
@@ -12818,7 +12820,7 @@ async fn graph_nodes_locality_is_three_valued_not_boolean() {
         .unwrap();
     // A reference the parser could not resolve: no file, not a lib_symbol.
     let stub = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             "rust·senseid·codebase·HashMap·get",
             "function",
@@ -12858,14 +12860,14 @@ async fn graph_nodes_locality_does_not_depend_on_resolved() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("locres_{}", uuid::Uuid::new_v4())).await;
     let unresolved_but_local = s
-        .upsert_node(&fid, "section", "Overview", "docs/design.md", None, None, Some(1), Some(3))
+        .seed_node(&fid, "section", "Overview", "docs/design.md", None, None, Some(1), Some(3))
         .await
         .unwrap();
     let unresolved_lib = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             "lib·serde·serde·Serialize",
-            "lib_symbol",
+            "unknown",
             "Serialize",
             Some("rust"),
             None,
@@ -12900,20 +12902,11 @@ async fn graph_nodes_exposes_the_parent_for_grouping() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("locpar_{}", uuid::Uuid::new_v4())).await;
     let class = s
-        .upsert_node(&fid, "class", "Widget", "src/widget.rs", None, None, Some(1), Some(40))
+        .seed_node(&fid, "class", "Widget", "src/widget.rs", None, None, Some(1), Some(40))
         .await
         .unwrap();
     let method = s
-        .upsert_node(
-            &fid,
-            "method",
-            "render",
-            "src/widget.rs",
-            Some(&class),
-            None,
-            Some(5),
-            Some(9),
-        )
+        .seed_node(&fid, "method", "render", "src/widget.rs", Some(&class), None, Some(5), Some(9))
         .await
         .unwrap();
 
@@ -12947,14 +12940,14 @@ async fn graph_nodes_makes_dependency_counting_a_query() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("locdep_{}", uuid::Uuid::new_v4())).await;
     let caller = s
-        .upsert_node(&fid, "function", "handler", "src/api.rs", None, None, Some(1), Some(9))
+        .seed_node(&fid, "function", "handler", "src/api.rs", None, None, Some(1), Some(9))
         .await
         .unwrap();
     let lib_a = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             "lib·axum·axum::response·Json",
-            "lib_symbol",
+            "unknown",
             "Json",
             Some("rust"),
             None,
@@ -12962,10 +12955,10 @@ async fn graph_nodes_makes_dependency_counting_a_query() {
         .await
         .unwrap();
     let lib_b = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             "lib·serde·serde·to_string",
-            "lib_symbol",
+            "unknown",
             "to_string",
             Some("rust"),
             None,
@@ -12975,7 +12968,7 @@ async fn graph_nodes_makes_dependency_counting_a_query() {
     // A stub — an internal reference the parser failed to resolve. The OLD rule
     // counted this as a dependency; the new one must not.
     let stub = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             "rust·senseid·api·HashMap·get",
             "function",
@@ -13131,7 +13124,7 @@ async fn doc_coverage_cannot_hold_a_stale_pairing() {
     .await
     .unwrap();
     let code = s
-        .upsert_node(&fid, "file", "auth", "src/auth.rs", None, None, Some(1), Some(1))
+        .seed_node(&fid, "file", "auth", "src/auth.rs", None, None, Some(1), Some(1))
         .await
         .unwrap();
 
@@ -13140,11 +13133,16 @@ async fn doc_coverage_cannot_hold_a_stale_pairing() {
     assert_eq!(drift[0]["codeFile"], "src/auth.rs");
 
     // Rename the file out from under the doc. No task runs; no edge is rewritten.
-    sqlx_core::query::query("UPDATE sensei.nodes SET file_path = 'src/renamed.rs' WHERE id = $1")
-        .bind(code)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    // Renaming is a `files` edit now, not a node edit (R13): the node keys on
+    // the file's id, so the path it reports changes when the FILE's does.
+    sqlx_core::query::query(
+        "UPDATE sensei.files SET file_path = 'src/renamed.rs'
+          WHERE id = (SELECT file_id FROM sensei.nodes WHERE id = $1)",
+    )
+    .bind(code)
+    .execute(s.pool())
+    .await
+    .unwrap();
 
     let drift = s.get_doc_drift(&suffix).await.unwrap();
     assert!(drift.is_empty(), "the pairing is gone the instant the stem stops matching: {drift:?}");
@@ -13162,11 +13160,11 @@ async fn re_detect_preserves_the_model_authored_description() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("desckeep_{}", uuid::Uuid::new_v4())).await;
     let n1 = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
     let n2 = s
-        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
+        .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
     s.insert_edge(&fid, &n1, Some(&n2), None, None, "calls").await.unwrap();
@@ -13214,11 +13212,11 @@ async fn re_detect_discards_a_description_whose_cluster_changed() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("descdrop_{}", uuid::Uuid::new_v4())).await;
     let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
     let b = s
-        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
+        .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
     s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
@@ -13237,11 +13235,11 @@ async fn re_detect_discards_a_description_whose_cluster_changed() {
 
     // Grow the graph so the hubs change: c becomes the hub of that community.
     let c = s
-        .upsert_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(5), Some(6))
+        .seed_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(5), Some(6))
         .await
         .unwrap();
     let d = s
-        .upsert_node(&fid, "function", "d", "a.rs", None, Some("()"), Some(7), Some(8))
+        .seed_node(&fid, "function", "d", "a.rs", None, Some("()"), Some(7), Some(8))
         .await
         .unwrap();
     for src in [a, b, d] {
@@ -13279,28 +13277,28 @@ async fn prune_orphan_stubs_collects_unreferenced_stubs_only() {
 
     // Garbage: a stub nothing references.
     let orphan = s
-        .upsert_node_by_fqn(&fid, "rust·p·m·Orphan·gone", "function", "gone", Some("rust"), None)
+        .seed_node_by_fqn(&fid, "rust·p·m·Orphan·gone", "function", "gone", Some("rust"), None)
         .await
         .unwrap();
     // Live: a stub that an edge still points at — a caller has not been reindexed
     // yet, and dropping it would lose the fact that the reference exists.
     let referenced = s
-        .upsert_node_by_fqn(&fid, "rust·p·m·Kept·held", "function", "held", Some("rust"), None)
+        .seed_node_by_fqn(&fid, "rust·p·m·Kept·held", "function", "held", Some("rust"), None)
         .await
         .unwrap();
     let caller = s
-        .upsert_node(&fid, "function", "caller", "src/a.rs", None, None, Some(1), Some(2))
+        .seed_node(&fid, "function", "caller", "src/a.rs", None, None, Some(1), Some(2))
         .await
         .unwrap();
     s.insert_edge(&fid, &caller, Some(&referenced), None, None, "calls").await.unwrap();
     // Must survive: a real local definition.
     let real = s
-        .upsert_node(&fid, "function", "real", "src/b.rs", None, None, Some(1), Some(2))
+        .seed_node(&fid, "function", "real", "src/b.rs", None, None, Some(1), Some(2))
         .await
         .unwrap();
     // Must survive: an external symbol is not a stub.
     let lib = s
-        .upsert_node_by_fqn(&fid, "lib·axum·axum·Json", "lib_symbol", "Json", Some("rust"), None)
+        .seed_node_by_fqn(&fid, "lib·axum·axum·Json", "unknown", "Json", Some("rust"), None)
         .await
         .unwrap();
 
@@ -13334,11 +13332,11 @@ async fn prune_orphan_stubs_never_cascades_onto_real_children() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("gckids_{}", uuid::Uuid::new_v4())).await;
     let stub_parent = s
-        .upsert_node_by_fqn(&fid, "java·p·StubClass", "class", "StubClass", Some("java"), None)
+        .seed_node_by_fqn(&fid, "java·p·StubClass", "class", "StubClass", Some("java"), None)
         .await
         .unwrap();
     let child = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "method",
             "setId",
@@ -13439,11 +13437,11 @@ async fn prune_orphan_stubs_removes_communities_it_emptied() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("gccom_{}", uuid::Uuid::new_v4())).await;
     let stub = s
-        .upsert_node_by_fqn(&fid, "rust·p·m·Ghost·gone", "function", "gone", Some("rust"), None)
+        .seed_node_by_fqn(&fid, "rust·p·m·Ghost·gone", "function", "gone", Some("rust"), None)
         .await
         .unwrap();
     let real = s
-        .upsert_node(&fid, "function", "real", "src/a.rs", None, None, Some(1), Some(2))
+        .seed_node(&fid, "function", "real", "src/a.rs", None, None, Some(1), Some(2))
         .await
         .unwrap();
     // Community 1 is stub-only (emptied by GC); community 2 keeps a real member.
@@ -13514,15 +13512,15 @@ async fn get_callers_by_name_finds_a_caller_through_an_unresolved_edge() {
     // indexed before the definition, which is the normal steady state for 35% of
     // this graph). Both are real callers and both must be reported.
     let resolved_caller = s
-        .upsert_node(&fid, "function", "login", "src/login.rs", None, None, Some(1), Some(5))
+        .seed_node(&fid, "function", "login", "src/login.rs", None, None, Some(1), Some(5))
         .await
         .unwrap();
     let unresolved_caller = s
-        .upsert_node(&fid, "function", "middleware", "src/mw.rs", None, None, Some(1), Some(5))
+        .seed_node(&fid, "function", "middleware", "src/mw.rs", None, None, Some(1), Some(5))
         .await
         .unwrap();
     let target_id = s
-        .upsert_node(&fid, "function", "handleAuth", "src/auth.rs", None, None, Some(10), Some(20))
+        .seed_node(&fid, "function", "handleAuth", "src/auth.rs", None, None, Some(10), Some(20))
         .await
         .unwrap();
     s.insert_edge(&fid, &resolved_caller, Some(&target_id), None, None, "calls").await.unwrap();
@@ -13569,7 +13567,7 @@ async fn symbol_definitions_does_not_count_a_stub_as_a_definition() {
     .await
     .unwrap();
     // A stub: named, but no file_path — an unresolved reference, not a definition.
-    s.upsert_node_by_fqn(
+    s.seed_node_by_fqn(
         &fid,
         "rust·p·m·Stub·ghostThing",
         "function",
@@ -13607,11 +13605,11 @@ async fn call_coverage_reports_unresolved_separately_per_direction() {
     let fid = create_test_folder(&s, &format!("cov_{}", uuid::Uuid::new_v4())).await;
 
     let target = s
-        .upsert_node(&fid, "function", "target", "src/t.rs", None, None, Some(1), Some(2))
+        .seed_node(&fid, "function", "target", "src/t.rs", None, None, Some(1), Some(2))
         .await
         .unwrap();
     let caller = s
-        .upsert_node(&fid, "function", "caller", "src/c.rs", None, None, Some(1), Some(2))
+        .seed_node(&fid, "function", "caller", "src/c.rs", None, None, Some(1), Some(2))
         .await
         .unwrap();
     s.insert_edge(&fid, &caller, Some(&target), None, None, "calls").await.unwrap();
@@ -13644,20 +13642,20 @@ async fn get_callees_by_name_labels_locality_from_graph_nodes() {
     let fid = create_test_folder(&s, &folder).await;
 
     let caller = s
-        .upsert_node(&fid, "function", "extract_deps", "src/deps.rs", None, None, Some(1), Some(9))
+        .seed_node(&fid, "function", "extract_deps", "src/deps.rs", None, None, Some(1), Some(9))
         .await
         .unwrap();
     // internal: a local definition.
     let local = s
-        .upsert_node(&fid, "function", "parse_cargo", "src/cargo.rs", None, None, Some(3), Some(8))
+        .seed_node(&fid, "function", "parse_cargo", "src/cargo.rs", None, None, Some(3), Some(8))
         .await
         .unwrap();
     // external: the writer recorded a dependency's symbol.
     let lib = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             "lib·serde·serde·from_str",
-            "lib_symbol",
+            "unknown",
             "from_str",
             Some("rust"),
             None,
@@ -13709,8 +13707,7 @@ async fn node_id_by_fqn_looks_up_without_creating_and_is_folder_scoped() {
     let b = create_test_folder(&s, &format!("fqnlook_b_{}", uuid::Uuid::new_v4())).await;
 
     let fqn = "typescript·app·lib/util";
-    let id =
-        s.upsert_node_by_fqn(&a, fqn, "module", "util", Some("typescript"), None).await.unwrap();
+    let id = s.seed_node_by_fqn(&a, fqn, "module", "util", Some("typescript"), None).await.unwrap();
 
     assert_eq!(s.node_id_by_fqn(&a, fqn).await.unwrap(), Some(id), "finds the node in its folder");
     assert_eq!(
@@ -13755,7 +13752,7 @@ async fn sole_definition_by_name_returns_none_when_ambiguous() {
 
     // Unambiguous: exactly one definition.
     let only = s
-        .upsert_node(&fid, "function", "uniqueThing", "src/a.rs", None, None, Some(1), Some(2))
+        .seed_node(&fid, "function", "uniqueThing", "src/a.rs", None, None, Some(1), Some(2))
         .await
         .unwrap();
     assert_eq!(s.sole_definition_id_by_name(&fid, "uniqueThing").await.unwrap(), Some(only));
@@ -13798,7 +13795,7 @@ async fn sole_definition_by_name_returns_none_when_ambiguous() {
 
     // A STUB is not a definition: a doc mention must land on real code, not on
     // another unresolved reference to the same name.
-    s.upsert_node_by_fqn(&fid, "rust·p·m·Ghost·stubbed", "function", "stubbed", Some("rust"), None)
+    s.seed_node_by_fqn(&fid, "rust·p·m·Ghost·stubbed", "function", "stubbed", Some("rust"), None)
         .await
         .unwrap();
     assert_eq!(
@@ -13818,10 +13815,8 @@ async fn file_node_lookup_matches_the_repo_relative_path() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("fileref_{}", uuid::Uuid::new_v4())).await;
 
-    let f = s
-        .upsert_node(&fid, "file", "main.rs", "src/main.rs", None, None, None, None)
-        .await
-        .unwrap();
+    let f =
+        s.seed_node(&fid, "file", "main.rs", "src/main.rs", None, None, None, None).await.unwrap();
     assert_eq!(s.file_node_id_by_path(&fid, "src/main.rs").await.unwrap(), Some(f));
     assert_eq!(
         s.file_node_id_by_path(&fid, "/abs/root/src/main.rs").await.unwrap(),
@@ -14548,7 +14543,7 @@ async fn rt_def_at(
     language: &str,
     file_path: &str,
 ) -> uuid::Uuid {
-    s.upsert_node_by_fqn(
+    s.seed_node_by_fqn(
         fid,
         fqn,
         kind,
@@ -14692,7 +14687,7 @@ async fn every_failed_hop_in_the_receiver_chain_yields_unresolved() {
 /// TODAY: `persist_edge_fact`'s `CreateStub` passes no parent, so the 18,408
 /// live fn/method stubs are all parentless and the parent join already skips
 /// them (measured: 0 stubs with a parent). That is a property of the current
-/// writers, not of this lookup. The `file_path IS NOT NULL` filter is what
+/// writers, not of this lookup. The `file_id IS NOT NULL` filter is what
 /// keeps the property from depending on them — re-parent stubs once (an
 /// index-audit repair, a dedup pass) and without it every ghost becomes a
 /// resolution target.
@@ -14702,7 +14697,7 @@ async fn a_stub_is_never_the_answer_to_a_receiver_hop() {
     let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
     let ghost = rt_def(&s, &fid, "rust·recv·other·PgStore", "struct", "PgStore", None).await;
     let (stub,): (uuid::Uuid,) = query_as(
-        "INSERT INTO sensei.nodes (folder_id, fqn, kind, name, language, parent_id, file_path)
+        "INSERT INTO sensei.nodes (folder_id, fqn, kind, name, language, parent_id, file_id)
          VALUES ($1, 'rust·recv·other·PgStore·only_stubbed',
                  'function'::sensei.node_kind, 'only_stubbed', 'rust', $2, NULL)
          RETURNING id",

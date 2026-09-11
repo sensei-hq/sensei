@@ -347,6 +347,7 @@ fn brake(
 
 #[cfg(test)]
 mod tests {
+    use crate::db::pg_store::graph_seed::SeedGraph;
     use std::collections::{BTreeMap, BTreeSet};
 
     use super::*;
@@ -379,6 +380,29 @@ mod tests {
         create_test_folder(store, &format!("v2_reconcile_{test}_{}", uuid::Uuid::new_v4())).await
     }
 
+    /// Reconcile the way the pipeline does — barrier first.
+    ///
+    /// Stage 3 is a BARRIER (R14): every `files` row for a folder exists before
+    /// any parse task for that folder runs, so the writers LOOK THE FILE UP AND
+    /// FAIL CLOSED (R13) rather than minting one. A fixture calling `reconcile`
+    /// directly skipped that step — not a different contract, just a
+    /// precondition production establishes and the test did not.
+    ///
+    /// Seeded only for a PARSED file. `Stated::Gone` means the file was observed
+    /// to be absent, and creating a row saying it exists would be the fixture
+    /// asserting the opposite of what it is testing.
+    async fn reconciled(
+        store: &PgStore,
+        folder: &uuid::Uuid,
+        stated: &Stated,
+        again: &dyn Fn() -> Result<Stated, String>,
+    ) -> Result<Reconciled, String> {
+        if let Stated::Parsed(facts) = stated {
+            store.seed_only_file(folder, &facts.path).await?;
+        }
+        reconcile(store, folder, stated, again).await
+    }
+
     /// A second read that must never be asked for.
     ///
     /// Passed wherever the diff is not the shape R10.3's brake guards, so a
@@ -401,9 +425,16 @@ mod tests {
         folder: &uuid::Uuid,
         claimed_by: Option<&str>,
     ) -> Vec<serde_json::Value> {
+        // `file_id` OUT, `file_path` IN. The id is a per-row uuid, so two runs of
+        // the same fixture over different folders disagree on it by
+        // construction — an R6 order-independence comparison over whole rows
+        // would fail on an identity that says nothing about the graph. The path
+        // is the fact the assertion is about.
         let rows: Vec<(serde_json::Value,)> = sqlx_core::query_as::query_as(
-            "SELECT to_jsonb(n) - 'id' - 'folder_id' - 'embedding'
+            "SELECT (to_jsonb(n) - 'id' - 'folder_id' - 'embedding' - 'file_id')
+                    || jsonb_build_object('file_path', to_jsonb(np.file_path))
                FROM sensei.nodes n
+               LEFT JOIN sensei.node_paths np ON np.node_id = n.id
               WHERE n.folder_id = $1 AND ($2::text IS NULL OR n.props -> 'claims' ? $2)
               ORDER BY n.fqn, n.name",
         )
@@ -448,9 +479,16 @@ mod tests {
         folder: &uuid::Uuid,
         fqn: &str,
     ) -> Option<serde_json::Value> {
+        // `file_path` is projected back onto the row from `sensei.node_paths`
+        // (R13 moved it off `nodes` and onto `files`). LEFT JOINed, so a stub —
+        // which HAS no file by construction — still reads back as a JSON null
+        // rather than vanishing from the row.
         let row: Option<(serde_json::Value,)> = sqlx_core::query_as::query_as(
-            "SELECT to_jsonb(n) - 'id' - 'folder_id' - 'embedding'
-               FROM sensei.nodes n WHERE n.folder_id = $1 AND n.fqn = $2",
+            "SELECT (to_jsonb(n) - 'id' - 'folder_id' - 'embedding' - 'file_id')
+                    || jsonb_build_object('file_path', to_jsonb(np.file_path))
+               FROM sensei.nodes n
+               LEFT JOIN sensei.node_paths np ON np.node_id = n.id
+              WHERE n.folder_id = $1 AND n.fqn = $2",
         )
         .bind(folder)
         .bind(fqn)
@@ -471,7 +509,7 @@ mod tests {
         let folder = a_folder(&store, "call_removed").await;
         let toll = "rust·senseid·bell·toll·item";
 
-        reconcile(
+        reconciled(
             &store,
             &folder,
             &stated("bell", "src/bell.rs", "pub fn toll() {}\npub fn ring() { toll(); }"),
@@ -480,7 +518,7 @@ mod tests {
         .await
         .expect("the first index");
 
-        let done = reconcile(
+        let done = reconciled(
             &store,
             &folder,
             &stated("bell", "src/bell.rs", "pub fn toll() {}\npub fn ring() {}"),
@@ -526,7 +564,7 @@ mod tests {
         let folder = a_folder(&store, "decl_removed").await;
         let gone = "rust·senseid·bell·gone·item";
 
-        reconcile(
+        reconciled(
             &store,
             &folder,
             &stated("bell", "src/bell.rs", "pub fn kept() {}\npub fn gone() {}"),
@@ -535,7 +573,7 @@ mod tests {
         .await
         .expect("the first index");
 
-        let done = reconcile(
+        let done = reconciled(
             &store,
             &folder,
             &stated("bell", "src/bell.rs", "pub fn kept() {}"),
@@ -590,7 +628,7 @@ mod tests {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "source_removed").await;
 
-        reconcile(
+        reconciled(
             &store,
             &folder,
             &stated("bell", "src/bell.rs", "pub fn kept() {}\npub fn gone() { kept(); }"),
@@ -604,7 +642,7 @@ mod tests {
             "the fixture must actually produce the edge, or the assertion below is vacuous"
         );
 
-        reconcile(
+        reconciled(
             &store,
             &folder,
             &stated("bell", "src/bell.rs", "pub fn kept() {}"),
@@ -635,7 +673,7 @@ mod tests {
         let import = "use std::collections::BTreeMap;\n";
 
         for path in ["src/first.rs", "src/second.rs"] {
-            reconcile(
+            reconciled(
                 &store,
                 &folder,
                 &stated(
@@ -659,7 +697,7 @@ mod tests {
              {both:#?}"
         );
 
-        reconcile(
+        reconciled(
             &store,
             &folder,
             &stated("shared", "src/first.rs", "pub fn a() -> u32 { 1 }"),
@@ -699,7 +737,7 @@ mod tests {
         let folder = a_folder(&store, "truncated").await;
         let whole = "pub fn toll() {}\npub fn ring() { toll(); }";
 
-        reconcile(&store, &folder, &stated("bell", "src/bell.rs", whole), &never_again)
+        reconciled(&store, &folder, &stated("bell", "src/bell.rs", whole), &never_again)
             .await
             .expect("the first index");
         let nodes = node_rows(&store, &folder, None).await;
@@ -709,7 +747,7 @@ mod tests {
         // error, and no declarations.
         let truncated = stated("bell", "src/bell.rs", "pub fn toll(");
         let intact = || Ok(stated("bell", "src/bell.rs", whole));
-        let done = reconcile(&store, &folder, &truncated, &intact)
+        let done = reconciled(&store, &folder, &truncated, &intact)
             .await
             .expect("reconcile runs; it just must not apply anything");
 
@@ -735,7 +773,7 @@ mod tests {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "unreadable").await;
 
-        reconcile(
+        reconciled(
             &store,
             &folder,
             &stated("bell", "src/bell.rs", "pub fn toll() {}"),
@@ -746,7 +784,7 @@ mod tests {
         let nodes = node_rows(&store, &folder, None).await;
 
         let done =
-            reconcile(&store, &folder, &stated("bell", "src/bell.rs", "//! nothing"), &|| {
+            reconciled(&store, &folder, &stated("bell", "src/bell.rs", "//! nothing"), &|| {
                 Err("permission denied".to_string())
             })
             .await
@@ -767,7 +805,7 @@ mod tests {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "emptied").await;
 
-        reconcile(
+        reconciled(
             &store,
             &folder,
             &stated("bell", "src/bell.rs", "pub fn toll() {}"),
@@ -777,7 +815,7 @@ mod tests {
         .expect("the first index");
 
         let empty = "//! moved to bar.rs";
-        let done = reconcile(&store, &folder, &stated("bell", "src/bell.rs", empty), &|| {
+        let done = reconciled(&store, &folder, &stated("bell", "src/bell.rs", empty), &|| {
             Ok(stated("bell", "src/bell.rs", empty))
         })
         .await
@@ -803,7 +841,7 @@ mod tests {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "deleted").await;
 
-        reconcile(
+        reconciled(
             &store,
             &folder,
             &stated("bell", "src/bell.rs", "pub fn toll() {}\npub fn ring() { toll(); }"),
@@ -812,7 +850,7 @@ mod tests {
         .await
         .expect("the first index");
 
-        let done = reconcile(
+        let done = reconciled(
             &store,
             &folder,
             &Stated::Gone(Located {
@@ -852,12 +890,12 @@ mod tests {
         let shared = "rust·senseid·shared·twice·item";
 
         for path in ["src/first.rs", "src/second.rs"] {
-            reconcile(&store, &folder, &stated("shared", path, "pub fn twice() {}"), &never_again)
+            reconciled(&store, &folder, &stated("shared", path, "pub fn twice() {}"), &never_again)
                 .await
                 .unwrap_or_else(|e| panic!("{path} indexes: {e}"));
         }
 
-        let done = reconcile(
+        let done = reconciled(
             &store,
             &folder,
             &stated("shared", "src/first.rs", "pub fn other() {}"),
@@ -894,7 +932,7 @@ mod tests {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "parent_module").await;
 
-        reconcile(
+        reconciled(
             &store,
             &folder,
             &stated("", "src/lib.rs", "pub mod child;\npub fn top() {}"),
@@ -902,7 +940,7 @@ mod tests {
         )
         .await
         .expect("the parent indexes");
-        reconcile(
+        reconciled(
             &store,
             &folder,
             &stated(
@@ -930,7 +968,7 @@ mod tests {
              node the parent declared: {child_edges:#?}"
         );
 
-        reconcile(&store, &folder, &stated("", "src/lib.rs", "pub fn top() {}"), &never_again)
+        reconciled(&store, &folder, &stated("", "src/lib.rs", "pub fn top() {}"), &never_again)
             .await
             .expect("the parent is re-indexed without the `mod` declaration");
 
@@ -948,7 +986,7 @@ mod tests {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "clause_b").await;
 
-        reconcile(
+        reconciled(
             &store,
             &folder,
             &stated("one", "src/one.rs", "pub struct A { pub v: u32 }\npub fn a() -> u32 { 1 }"),
@@ -956,7 +994,7 @@ mod tests {
         )
         .await
         .expect("the first indexes");
-        reconcile(
+        reconciled(
             &store,
             &folder,
             &stated("two", "src/two.rs", "pub struct B { pub w: u32 }\npub fn b() -> u32 { 2 }"),
@@ -972,7 +1010,7 @@ mod tests {
             "the other file must have some"
         );
 
-        reconcile(
+        reconciled(
             &store,
             &folder,
             &stated("one", "src/one.rs", "pub fn a() -> u32 { 1 }"),
@@ -1008,7 +1046,7 @@ mod tests {
                     impl Gadget { pub fn new() -> Gadget { Gadget { width: 1 } } }\n\
                     pub fn widest(a: u32) -> u32 { a }";
 
-        reconcile(&store, &folder, &stated("gadget", "src/gadget.rs", text), &never_again)
+        reconciled(&store, &folder, &stated("gadget", "src/gadget.rs", text), &never_again)
             .await
             .expect("the first index");
         let nodes = node_rows(&store, &folder, None).await;
@@ -1022,7 +1060,7 @@ mod tests {
             .collect();
 
         let done =
-            reconcile(&store, &folder, &stated("gadget", "src/gadget.rs", text), &never_again)
+            reconciled(&store, &folder, &stated("gadget", "src/gadget.rs", text), &never_again)
                 .await
                 .expect("the re-index");
 
@@ -1088,7 +1126,7 @@ mod tests {
                     impl Gadget { pub fn new() -> Gadget { Gadget { width: 1 } } }";
 
         let facts = walk_of("gadget", "src/gadget.rs", text);
-        reconcile(&store, &folder, &Stated::Parsed(facts.clone()), &never_again)
+        reconciled(&store, &folder, &Stated::Parsed(facts.clone()), &never_again)
             .await
             .expect("the index");
 
@@ -1127,7 +1165,7 @@ mod tests {
             let folder =
                 create_test_folder(&store, &format!("v2_move_{}", uuid::Uuid::new_v4())).await;
             // `moved` starts in `first.rs`.
-            reconcile(
+            reconciled(
                 &store,
                 &folder,
                 &stated("shared", "src/first.rs", "pub fn moved() {}"),
@@ -1138,7 +1176,7 @@ mod tests {
 
             for file in order {
                 let text = if file == "src/first.rs" { "//! it left" } else { "pub fn moved() {}" };
-                reconcile(&store, &folder, &stated("shared", file, text), &|| {
+                reconciled(&store, &folder, &stated("shared", file, text), &|| {
                     Ok(stated("shared", "src/first.rs", "//! it left"))
                 })
                 .await
@@ -1189,10 +1227,14 @@ mod tests {
 
         let mut indexed: Vec<(String, String, String)> = Vec::new();
         for (path, text) in &sources {
+            // The package is found on DISK, from the absolute path; everything
+            // else uses the folder-relative one, which is the grain a real walk
+            // produces and `sensei.files` is keyed by (R13).
             let package = crate::indexer::package_of(path);
+            let path = &crate::indexer::workspace_relative(path);
             let module = crate::indexer::module_of(path);
             let facts = walk_of(&module, path, text);
-            reconcile(&store, &folder, &Stated::Parsed(facts), &never_again)
+            reconciled(&store, &folder, &Stated::Parsed(facts), &never_again)
                 .await
                 .unwrap_or_else(|e| panic!("{path}: {e}"));
             indexed.push((package, module, path.clone()));

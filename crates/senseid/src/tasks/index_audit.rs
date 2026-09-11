@@ -407,6 +407,7 @@ async fn audit_pass(pg: &PgStore) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::pg_store::graph_seed::SeedGraph;
 
     #[test]
     fn samples_are_capped() {
@@ -439,8 +440,8 @@ mod tests {
         let fid =
             pg.upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy()).await.unwrap();
         // live.rs exists on disk; gone.rs does not.
-        pg.upsert_node(&fid, "function", "a", "live.rs", None, None, None, None).await.unwrap();
-        pg.upsert_node(&fid, "struct", "Gone", "gone.rs", None, None, None, None).await.unwrap();
+        pg.seed_node(&fid, "function", "a", "live.rs", None, None, None, None).await.unwrap();
+        pg.seed_node(&fid, "struct", "Gone", "gone.rs", None, None, None, None).await.unwrap();
 
         // READ-ONLY first: detects the orphan without mutating.
         let doctor = audit_index_integrity(&pg, std::slice::from_ref(&root), false).await;
@@ -501,7 +502,7 @@ mod tests {
             )
             .await
             .unwrap();
-        pg.upsert_node(&gone_fid, "struct", "Ghost", "gone/x.rs", None, None, None, None)
+        pg.seed_node(&gone_fid, "struct", "Ghost", "gone/x.rs", None, None, None, None)
             .await
             .unwrap();
 
@@ -687,12 +688,8 @@ mod tests {
             )
             .await
             .unwrap();
-        pg.upsert_node(&repo_fid, "function", "a", "live.rs", None, None, None, None)
-            .await
-            .unwrap();
-        pg.upsert_node(&repo_fid, "struct", "Gone", "gone.rs", None, None, None, None)
-            .await
-            .unwrap();
+        pg.seed_node(&repo_fid, "function", "a", "live.rs", None, None, None, None).await.unwrap();
+        pg.seed_node(&repo_fid, "struct", "Gone", "gone.rs", None, None, None, None).await.unwrap();
 
         // (b) ghost subfolder (dir absent) with a node (ghost-folder class).
         let ghost_dir = repo.join("ghost"); // never created on disk
@@ -707,7 +704,7 @@ mod tests {
             )
             .await
             .unwrap();
-        pg.upsert_node(&ghost_fid, "struct", "Ghost", "ghost/x.rs", None, None, None, None)
+        pg.seed_node(&ghost_fid, "struct", "Ghost", "ghost/x.rs", None, None, None, None)
             .await
             .unwrap();
 

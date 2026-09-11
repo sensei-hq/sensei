@@ -29,7 +29,10 @@ set search_path to sensei, extensions;
 -- is a MOVE, not a copy: the `Path::file_stem()` call in `build_connections` is
 -- gone, so exactly one implementation exists and there is nothing to drift from.
 --
--- The expression below reproduces `Path::file_stem()` exactly — verified against
+-- The repo-relative reconstruction is `sensei.repo_relative_path()`, the one
+-- owner of that rule — this view held a hand-copy of it, as did three others.
+--
+-- The stem expression below reproduces `Path::file_stem()` exactly — verified against
 -- all 45,186 distinct `file_path` values in the live DB, zero disagreements,
 -- including the leading-dot case (`.gitignore` is entirely its own stem) and the
 -- double-extension case (`appstate.svelte.ts` → `appstate.svelte`).
@@ -50,26 +53,23 @@ with stems as (
        , n.folder_id
        , n.kind
        , n.name
-       , case when fo.kind = 'git' then fi.file_path
-            else fo.path || '/' || fi.file_path end as file_path
+       , np.file_path
        , n.modified_at
          -- Path::file_stem(): the file name minus its final extension; a name that
          -- begins with `.` and has no other dot is entirely the stem.
        , case
-           when position('.' in substring(regexp_replace(fi.file_path, '^.*/', '') from 2)) = 0
-           then regexp_replace(fi.file_path, '^.*/', '')
+           when position('.' in substring(regexp_replace(np.file_path, '^.*/', '') from 2)) = 0
+           then regexp_replace(np.file_path, '^.*/', '')
            else substring(
-                  regexp_replace(fi.file_path, '^.*/', '') from 1
-                  for length(regexp_replace(fi.file_path, '^.*/', ''))
-                    - position('.' in reverse(regexp_replace(fi.file_path, '^.*/', '')))
+                  regexp_replace(np.file_path, '^.*/', '') from 1
+                  for length(regexp_replace(np.file_path, '^.*/', ''))
+                    - position('.' in reverse(regexp_replace(np.file_path, '^.*/', '')))
                 )
          end as stem
     from nodes n
-    left join files fi on fi.id = n.file_id
-    -- The file's OWN folder, for the repo-relative reconstruction. The later
-    -- `folders f` join is outside this CTE.
-    left join folders fo on fo.id = fi.folder_id
-   where fi.file_path is not null
+    -- `node_paths` owns the files/folders join and the grain rule.
+    join node_paths np on np.node_id = n.id
+   where np.file_path is not null
      and n.kind in ('doc', 'file')
 )
 select d.folder_id

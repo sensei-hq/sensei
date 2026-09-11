@@ -534,6 +534,7 @@ pub fn create_degraded_router(db_url: String, error: String) -> Router {
 mod tests {
     use super::*;
     use crate::api::state::SharedState;
+    use crate::db::pg_store::graph_seed::SeedGraph;
     use crate::tasks::queue::TaskQueue;
     use crate::tasks::{Task, TaskKind};
     use axum::body::Body;
@@ -1074,7 +1075,7 @@ mod tests {
         // One of each shape, so the breakdown has something known to report.
         let src = state
             .pg
-            .upsert_node(&fid, "file", "src/probe.ts", "src/probe.ts", None, None, None, None)
+            .seed_node(&fid, "file", "src/probe.ts", "src/probe.ts", None, None, None, None)
             .await
             .unwrap();
         for target in ["node:fs", "java.util.List", "./sibling", "$lib/x", "crate::db", "@/alias"] {
@@ -2474,7 +2475,7 @@ mod tests {
         // Insert a function only in the child folder.
         state
             .pg
-            .upsert_node(
+            .seed_node(
                 &child_fid,
                 "function",
                 &fn_name,
@@ -3296,7 +3297,7 @@ mod tests {
         let fn_name = format!("contract_fn_{short}");
         state
             .pg
-            .upsert_node(
+            .seed_node(
                 &folder_id,
                 "function",
                 &fn_name,
@@ -3311,7 +3312,7 @@ mod tests {
         let struct_name = format!("ContractType{short}");
         state
             .pg
-            .upsert_node(
+            .seed_node(
                 &folder_id,
                 "struct",
                 &struct_name,
@@ -3328,7 +3329,7 @@ mod tests {
         let file_path = "src/widget.rs".to_string();
         let file_id = state
             .pg
-            .upsert_node(&folder_id, "file", "widget.rs", &file_path, None, None, None, None)
+            .seed_node(&folder_id, "file", "widget.rs", &file_path, None, None, None, None)
             .await
             .unwrap();
         let tag = "route";

@@ -34,6 +34,12 @@ pub enum CallDirection {
 }
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+use crate::languages::fqn::{sql_is_external, sql_is_not_external};
+
+/// `(id, kind, name, parent_id, line_start)` — one node as
+/// [`PgStore::get_nodes_by_file`] projects it, before it becomes JSON.
+type NodeOutline = (uuid::Uuid, String, String, Option<uuid::Uuid>, Option<i32>);
+
 impl PgStore {
     /// BM25-style keyword ranking: matches nodes by name/signature/docstring.
     pub async fn rank_bm25(
@@ -146,9 +152,15 @@ impl PgStore {
         folder_id: &uuid::Uuid,
         file_path: &str,
     ) -> Result<(), String> {
-        sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2")
+        // An untracked file owns no nodes, so there is nothing to delete and
+        // saying so is not a failure — a caller deleting a file the walk never
+        // recorded has already got what it asked for.
+        let Some(file_id) = self.file_id_for(folder_id, file_path).await? else {
+            return Ok(());
+        };
+        sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_id = $2")
             .bind(folder_id)
-            .bind(file_path)
+            .bind(file_id)
             .execute(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -162,8 +174,9 @@ impl PgStore {
     /// net to find nodes whose file no longer exists on disk.
     pub async fn list_indexed_files(&self, folder_id: &uuid::Uuid) -> Result<Vec<String>, String> {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT DISTINCT file_path FROM sensei.nodes
-              WHERE folder_id = $1 AND kind::text <> 'module' AND file_path <> ''",
+            "SELECT DISTINCT np.file_path FROM sensei.nodes n
+               JOIN sensei.node_paths np ON np.node_id = n.id
+              WHERE n.folder_id = $1 AND n.kind::text <> 'module' AND np.file_path <> ''",
         )
         .bind(folder_id)
         .fetch_all(&self.pool)
@@ -460,14 +473,14 @@ impl PgStore {
                JOIN sensei.nodes t
                  ON t.folder_id = ANY($1)
                 AND t.language = 'rust'
-                AND t.file_path IS NOT NULL
+                AND t.file_id IS NOT NULL
                 AND t.kind::text IN ('struct', 'enum', 'class', 'interface')
                 AND ((w.tfqn IS NULL AND t.name = w.tname) OR t.fqn = w.tfqn)
                LEFT JOIN sensei.nodes m
                  ON m.parent_id = t.id
                 AND m.folder_id = ANY($1)
                 AND m.language = 'rust'
-                AND m.file_path IS NOT NULL
+                AND m.file_id IS NOT NULL
                 AND m.kind::text IN ('method', 'function')
                 AND m.name = w.mname
               GROUP BY w.tfqn, w.tname, w.mname",
@@ -506,6 +519,46 @@ impl PgStore {
             folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, false,
         )
         .await
+    }
+
+    /// A node that names a DIRECTORY rather than a file — the structural
+    /// `module` node the folder pass writes, one per source directory.
+    ///
+    /// Separate from [`Self::upsert_node`] because the two name different KINDS
+    /// of thing and only the caller knows which. R13 made `nodes.file_id` a
+    /// foreign key into `sensei.files`; a directory has no `files` row and never
+    /// will, so a directory-named node carries `file_id = NULL`. Routing it
+    /// through the file writer would make that writer either fail on a correct
+    /// call or stop failing closed on an incorrect one — and the second is how
+    /// an untracked file gets a node again.
+    ///
+    /// The directory is kept in `props.dir`. It was the `file_path` column
+    /// before, so dropping it would lose the one fact that tells two structural
+    /// module nodes apart when their names collide across a monorepo.
+    pub async fn upsert_dir_node(
+        &self,
+        folder_id: &uuid::Uuid,
+        kind: &str,
+        name: &str,
+        dir: &str,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.nodes(folder_id, kind, name, props)
+             VALUES($1, $2::sensei.node_kind, $3, jsonb_build_object('dir', $4::text))
+             ON CONFLICT (folder_id, kind, name) WHERE file_id IS NULL AND fqn IS NULL
+             DO UPDATE
+               SET props = sensei.nodes.props || jsonb_build_object('dir', $4::text),
+                   modified_at = now()
+             RETURNING id",
+        )
+        .bind(folder_id)
+        .bind(kind)
+        .bind(name)
+        .bind(dir)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("upsert_dir_node({name}): {e}"))?;
+        Ok(row.0)
     }
 
     /// Upsert a node carrying `is_exported` (the code-symbol path passes the
@@ -605,17 +658,19 @@ impl PgStore {
     /// points at. `None` when the path names nothing indexed.
     ///
     /// Repo-relative on purpose: a doc reference is written relative to the repo
-    /// and `nodes.file_path` is stored the same way, so the two match directly.
-    /// (7,418 of 673,929 `file_path` rows are absolute — a separate
-    /// inconsistency; those simply will not match, which is honest.)
+    /// and [`sensei.node_paths`] reports the same grain, so the two match
+    /// directly. A path that names nothing indexed simply will not match, which
+    /// is the correct answer rather than a failure.
     pub async fn file_node_id_by_path(
         &self,
         folder_id: &uuid::Uuid,
         rel_path: &str,
     ) -> Result<Option<uuid::Uuid>, String> {
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
-            "SELECT id FROM sensei.nodes
-              WHERE folder_id = $1 AND file_path = $2 AND kind = 'file'::sensei.node_kind
+            "SELECT n.id FROM sensei.nodes n
+               JOIN sensei.node_paths np ON np.node_id = n.id
+              WHERE n.folder_id = $1 AND np.file_path = $2
+                AND n.kind = 'file'::sensei.node_kind
               LIMIT 1",
         )
         .bind(folder_id)
@@ -644,13 +699,14 @@ impl PgStore {
         folder_id: &uuid::Uuid,
         name: &str,
     ) -> Result<Option<uuid::Uuid>, String> {
-        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(&format!(
             "SELECT id FROM sensei.nodes
-              WHERE folder_id = $1 AND name = $2 AND file_path IS NOT NULL
-                AND kind NOT IN ('file'::sensei.node_kind, 'section'::sensei.node_kind,
-                                 'lib_symbol'::sensei.node_kind, 'lib_package'::sensei.node_kind)
+              WHERE folder_id = $1 AND name = $2 AND file_id IS NOT NULL
+                AND kind NOT IN ('file'::sensei.node_kind, 'section'::sensei.node_kind)
+                AND {ext}
               LIMIT 2",
-        )
+            ext = sql_is_not_external("fqn"),
+        ))
         .bind(folder_id)
         .bind(name)
         .fetch_all(&self.pool)
@@ -663,9 +719,9 @@ impl PgStore {
 
     /// Get-or-create a node by its fully-qualified name (SCIP/LSIF moniker model).
     /// A REFERENCE (`def = None`) creates — or returns — an unresolved STUB
-    /// (`resolved=false`, NULL `file_path`). A DEFINITION (`def = Some`) creates or
+    /// (`resolved=false`, NULL `file_id`). A DEFINITION (`def = Some`) creates or
     /// ENRICHES the same `(folder_id, fqn)` node in place: flips `resolved=true` and
-    /// fills `file_path`/`signature`/`line_start`/`line_end`/`is_exported`/`parent_id`.
+    /// fills `file_id`/`signature`/`line_start`/`line_end`/`is_exported`/`parent_id`.
     ///
     /// Monotone + idempotent: a reference NEVER downgrades an already-resolved node
     /// (`resolved = OLD OR NEW`; def-only columns are kept unless the incoming row is
@@ -683,7 +739,19 @@ impl PgStore {
         def: Option<FqnDef<'_>>,
     ) -> Result<uuid::Uuid, String> {
         let resolved = def.is_some();
-        let file_path = def.as_ref().map(|d| d.file_path);
+        // A DEFINITION must name a tracked file (R13, 06 S6) — resolved here and
+        // FAILING CLOSED. A REFERENCE has no file by construction: it is the
+        // unresolved stub, and `file_id` NULL is what makes it one.
+        let file_id = match def.as_ref() {
+            Some(d) => Some(self.file_id_for(folder_id, d.file_path).await?.ok_or_else(|| {
+                format!(
+                    "upsert_node_by_fqn({fqn}): no files row for {} — a definition cannot \
+                     name an untracked file",
+                    d.file_path
+                )
+            })?),
+            None => None,
+        };
         let signature = def.as_ref().and_then(|d| d.signature);
         let line_start = def.as_ref().and_then(|d| d.line_start);
         let line_end = def.as_ref().and_then(|d| d.line_end);
@@ -693,12 +761,12 @@ impl PgStore {
         let inserted: Result<(uuid::Uuid,), sqlx_core::error::Error> = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes
                  (folder_id, fqn, kind, name, language, resolved,
-                  file_path, signature, line_start, line_end, is_exported, parent_id)
+                  file_id, signature, line_start, line_end, is_exported, parent_id)
              VALUES($1, $2, $3::sensei.node_kind, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
                SET resolved    = nodes.resolved OR EXCLUDED.resolved,
                    kind        = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.kind ELSE nodes.kind END,
-                   file_path   = COALESCE(EXCLUDED.file_path, nodes.file_path),
+                   file_id     = COALESCE(EXCLUDED.file_id, nodes.file_id),
                    signature   = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.signature ELSE nodes.signature END,
                    line_start  = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.line_start ELSE nodes.line_start END,
                    line_end    = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.line_end ELSE nodes.line_end END,
@@ -712,7 +780,7 @@ impl PgStore {
              RETURNING id"
         )
         .bind(folder_id).bind(fqn).bind(kind).bind(name).bind(language).bind(resolved)
-        .bind(file_path).bind(signature).bind(line_start).bind(line_end).bind(is_exported).bind(parent_id)
+        .bind(file_id).bind(signature).bind(line_start).bind(line_end).bind(is_exported).bind(parent_id)
         .fetch_one(&self.pool).await;
 
         let row: (uuid::Uuid,) = match inserted {
@@ -721,7 +789,7 @@ impl PgStore {
                 // The row already exists under a DIFFERENT fqn: `ON CONFLICT
                 // (folder_id, fqn)` above can't see it, so the insert fell through
                 // to a raw INSERT and hit `nodes_unique_identity`
-                // (folder_id, file_path, kind, name, parent_id, line_start).
+                // (folder_id, file_id, kind, name, parent_id, line_start).
                 //
                 // This happens whenever a node's fqn SHAPE changes for a file that
                 // was already indexed — e.g. the module container's fqn language
@@ -742,7 +810,7 @@ impl PgStore {
                         name,
                         language,
                         resolved,
-                        file_path,
+                        file_id,
                         signature,
                         line_start,
                         line_end,
@@ -803,7 +871,7 @@ impl PgStore {
         name: &str,
         language: Option<&str>,
         resolved: bool,
-        file_path: Option<&str>,
+        file_id: Option<uuid::Uuid>,
         signature: Option<&str>,
         line_start: Option<i32>,
         line_end: Option<i32>,
@@ -823,7 +891,7 @@ impl PgStore {
                                     THEN NULL ELSE embedding END,
                  modified_at = now()
                WHERE folder_id = $1
-                 AND file_path  IS NOT DISTINCT FROM $7
+                 AND file_id    IS NOT DISTINCT FROM $7
                  AND kind       = $3::sensei.node_kind
                  AND name       = $4
                  AND parent_id  IS NOT DISTINCT FROM $12
@@ -836,7 +904,7 @@ impl PgStore {
         .bind(name)
         .bind(language)
         .bind(resolved)
-        .bind(file_path)
+        .bind(file_id)
         .bind(signature)
         .bind(line_start)
         .bind(line_end)
@@ -903,12 +971,16 @@ impl PgStore {
         package: &str,
         language: Option<&str>,
     ) -> Result<uuid::Uuid, String> {
-        // One `lib_package` container per dependency (fqn = `lib·<package>`).
+        // One `package` container per dependency (fqn = `lib·<package>`).
+        //
+        // D12: the kind says WHAT — a package is a package whether it is ours or
+        // a dependency's. The `lib·` fqn prefix is what says it came from
+        // outside, and `fqn::SQL_IS_EXTERNAL` is the one test for that.
         let pkg_fqn = format!("lib{}{}", crate::languages::fqn::SEP, package);
         let container: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes
                  (folder_id, fqn, kind, name, resolved, props, language)
-             VALUES($1, $2, 'lib_package'::sensei.node_kind, $3, true,
+             VALUES($1, $2, 'package'::sensei.node_kind, $3, true,
                     jsonb_build_object('package', $3::text), $4)
              ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
                SET resolved = true,
@@ -925,10 +997,16 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
 
         // The symbol, parented under its package container.
+        //
+        // `unknown` and not a guessed kind (D12): this mints a node for an
+        // import target that resolved to nothing first-party, and an import
+        // names a thing without saying what KIND of thing it is. `unknown` is a
+        // value that MEANS not-yet-known; reusing a real kind here would state
+        // something the use site never revealed.
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes
                  (folder_id, fqn, kind, name, resolved, parent_id, props, language)
-             VALUES($1, $2, 'lib_symbol'::sensei.node_kind, $3, true, $4,
+             VALUES($1, $2, 'unknown'::sensei.node_kind, $3, true, $4,
                     jsonb_build_object('package', $5::text), $6)
              ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
                SET resolved    = true,
@@ -959,17 +1037,20 @@ impl PgStore {
         &self,
         folder_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
+        let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(&format!(
             "SELECT p.name, count(s.id)
                FROM sensei.nodes p
                LEFT JOIN sensei.nodes s
                  ON s.folder_id = p.folder_id
                 AND s.parent_id = p.id
-                AND s.kind = 'lib_symbol'::sensei.node_kind
-              WHERE p.folder_id = $1 AND p.kind = 'lib_package'::sensei.node_kind
+                AND {symbol_ext}
+              WHERE p.folder_id = $1 AND {package_ext}
+                AND p.kind = 'package'::sensei.node_kind
               GROUP BY p.name
               ORDER BY count(s.id) DESC, p.name",
-        )
+            symbol_ext = sql_is_external("s.fqn"),
+            package_ext = sql_is_external("p.fqn"),
+        ))
         .bind(folder_id)
         .fetch_all(&self.pool)
         .await
@@ -997,15 +1078,15 @@ impl PgStore {
     ) -> Result<Vec<(uuid::Uuid, String, String, Option<String>, String)>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>, String)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, kind::text, name, signature, file_path
-                   FROM sensei.nodes
-                  WHERE folder_id = $1
-                    AND embedding IS NULL
-                    AND file_path IS NOT NULL
-                    AND kind IN ('file','function','method','class','interface',
-                                 'type','const','enum','enum_variant','section',
-                                 'struct','component','hook','doc','extension')
-                  ORDER BY file_path, line_start
+                "SELECT n.id, n.kind::text, n.name, n.signature, np.file_path
+                   FROM sensei.nodes n
+                   JOIN sensei.node_paths np ON np.node_id = n.id
+                  WHERE n.folder_id = $1
+                    AND n.embedding IS NULL
+                    AND n.kind IN ('file','function','method','class','interface',
+                                   'type','const','enum','enum_variant','section',
+                                   'struct','component','hook','doc','extension')
+                  ORDER BY np.file_path, n.line_start
                   LIMIT $2",
             )
             .bind(folder_id)
@@ -1069,14 +1150,15 @@ impl PgStore {
         let kind_strs: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
         let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>, f64)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, name, file_path, signature, line_start,
-                        (embedding <=> $2::vector)::float8 AS distance
-                   FROM sensei.nodes
-                  WHERE folder_id = ANY($1::uuid[])
-                    AND kind::text = ANY($3::text[])
-                    AND embedding IS NOT NULL
-                    AND (embedding <=> $2::vector) <= $5
-                  ORDER BY embedding <=> $2::vector
+                "SELECT n.id, n.name, np.file_path, n.signature, n.line_start,
+                        (n.embedding <=> $2::vector)::float8 AS distance
+                   FROM sensei.nodes n
+                   LEFT JOIN sensei.node_paths np ON np.node_id = n.id
+                  WHERE n.folder_id = ANY($1::uuid[])
+                    AND n.kind::text = ANY($3::text[])
+                    AND n.embedding IS NOT NULL
+                    AND (n.embedding <=> $2::vector) <= $5
+                  ORDER BY n.embedding <=> $2::vector
                   LIMIT $4",
             )
             .bind(folder_ids)
@@ -1138,14 +1220,14 @@ impl PgStore {
             return Ok(Vec::new());
         }
         sqlx_core::query_as::query_as(
-            "SELECT n.id, f.abs_path, n.file_path,
+            "SELECT n.id, f.abs_path, np.file_path,
                     COALESCE(n.line_start, 1),
                     COALESCE(n.line_end, n.line_start, 1),
                     n.kind::text, n.name, n.signature
                FROM sensei.nodes n
+               JOIN sensei.node_paths np ON np.node_id = n.id
                JOIN sensei.folders f ON f.id = n.folder_id
-              WHERE n.id = ANY($1::uuid[])
-                AND n.file_path IS NOT NULL",
+              WHERE n.id = ANY($1::uuid[])",
         )
         .bind(ids)
         .fetch_all(&self.pool)
@@ -1168,16 +1250,18 @@ impl PgStore {
         let max_distance = 1.0 - min_similarity;
         let rows: Vec<(String, String, Option<i32>, String, String, Option<i32>, f64)> =
             sqlx_core::query_as::query_as(
-                "SELECT a.name, a.file_path, a.line_start,
-                        b.name, b.file_path, b.line_start,
+                "SELECT a.name, pa.file_path, a.line_start,
+                        b.name, pb.file_path, b.line_start,
                         1 - (a.embedding <=> b.embedding) AS similarity
                    FROM sensei.nodes a
+                   JOIN sensei.node_paths pa ON pa.node_id = a.id
                    JOIN sensei.nodes b
                      ON b.folder_id = a.folder_id
                     AND a.id < b.id
                     AND b.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
                     AND b.embedding IS NOT NULL
                     AND (b.line_end - b.line_start) >= 3
+                   JOIN sensei.node_paths pb ON pb.node_id = b.id
                   WHERE a.folder_id = $1
                     AND a.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
                     AND a.embedding IS NOT NULL
@@ -1228,16 +1312,18 @@ impl PgStore {
         let max_distance = 1.0 - min_similarity;
         let rows: Vec<(String, String, Option<i32>, String, String, Option<i32>, f64)> =
             sqlx_core::query_as::query_as(
-                "SELECT a.name, a.file_path, a.line_start,
-                        b.name, b.file_path, b.line_start,
+                "SELECT a.name, pa.file_path, a.line_start,
+                        b.name, pb.file_path, b.line_start,
                         1 - (a.embedding <=> b.embedding) AS similarity
                    FROM sensei.nodes a
+                   JOIN sensei.node_paths pa ON pa.node_id = a.id
                    JOIN sensei.nodes b
                      ON a.id < b.id
                     AND b.folder_id = ANY($1::uuid[])
                     AND b.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
                     AND b.embedding IS NOT NULL
                     AND (b.line_end - b.line_start) >= 3
+                   JOIN sensei.node_paths pb ON pb.node_id = b.id
                   WHERE a.folder_id = ANY($1::uuid[])
                     AND a.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
                     AND a.embedding IS NOT NULL
@@ -1273,7 +1359,7 @@ impl PgStore {
                FROM sensei.nodes n
                JOIN sensei.folders f ON f.id = n.folder_id
               WHERE n.embedding IS NULL
-                AND n.file_path IS NOT NULL
+                AND n.file_id IS NOT NULL
                 AND n.kind IN ('file','function','method','class','interface',
                                'type','const','enum','enum_variant','section',
                                'struct','component','hook','doc','extension')",
@@ -1289,9 +1375,18 @@ impl PgStore {
         folder_id: &uuid::Uuid,
         file_path: &str,
     ) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, Option<uuid::Uuid>, Option<i32>)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, parent_id, line_start FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2 ORDER BY line_start"
-        ).bind(folder_id).bind(file_path).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let rows: Vec<NodeOutline> = sqlx_core::query_as::query_as(
+            "SELECT n.id, n.kind::text, n.name, n.parent_id, n.line_start
+               FROM sensei.nodes n
+               JOIN sensei.node_paths np ON np.node_id = n.id
+              WHERE n.folder_id = $1 AND np.file_path = $2
+              ORDER BY n.line_start",
+        )
+        .bind(folder_id)
+        .bind(file_path)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, kind, name, pid, ls)| {
             serde_json::json!({ "id": id, "kind": kind, "name": name, "parent_id": pid, "line_start": ls })
         }).collect())
@@ -1721,32 +1816,36 @@ impl PgStore {
             return Ok(0); // genuine: no folders in scope
         }
         // Symbols with no edge in either direction and no children.
-        let symbols = sqlx_core::query::query(
+        let symbols = sqlx_core::query::query(&format!(
             "DELETE FROM sensei.nodes n
               WHERE n.folder_id = ANY($1)
-                AND n.kind = 'lib_symbol'::sensei.node_kind
+                AND {ext}
+                AND n.kind <> 'package'::sensei.node_kind
                 AND NOT EXISTS (
                     SELECT 1 FROM sensei.edges e
                      WHERE e.target_id = n.id OR e.source_id = n.id)
                 AND NOT EXISTS (
                     SELECT 1 FROM sensei.nodes c WHERE c.parent_id = n.id)",
-        )
+            ext = sql_is_external("n.fqn"),
+        ))
         .bind(folder_ids)
         .execute(&self.pool)
         .await
         .map_err(|e| format!("prune_unreferenced_lib_nodes (symbols): {e}"))?;
 
         // Containers left with no children and no edges of their own.
-        let containers = sqlx_core::query::query(
+        let containers = sqlx_core::query::query(&format!(
             "DELETE FROM sensei.nodes n
               WHERE n.folder_id = ANY($1)
-                AND n.kind = 'lib_package'::sensei.node_kind
+                AND {ext}
+                AND n.kind = 'package'::sensei.node_kind
                 AND NOT EXISTS (
                     SELECT 1 FROM sensei.nodes c WHERE c.parent_id = n.id)
                 AND NOT EXISTS (
                     SELECT 1 FROM sensei.edges e
                      WHERE e.target_id = n.id OR e.source_id = n.id)",
-        )
+            ext = sql_is_external("n.fqn"),
+        ))
         .bind(folder_ids)
         .execute(&self.pool)
         .await
@@ -1762,17 +1861,18 @@ impl PgStore {
         if folder_ids.is_empty() {
             return Ok(0); // genuine: no folders in scope, nothing to collect
         }
-        let res = sqlx_core::query::query(
+        let res = sqlx_core::query::query(&format!(
             "DELETE FROM sensei.nodes n
               WHERE n.folder_id = ANY($1)
-                AND n.file_path IS NULL
-                AND n.kind NOT IN ('lib_symbol'::sensei.node_kind, 'lib_package'::sensei.node_kind)
+                AND n.file_id IS NULL
+                AND {ext}
                 AND NOT EXISTS (
                     SELECT 1 FROM sensei.edges e
                      WHERE e.target_id = n.id OR e.source_id = n.id)
                 AND NOT EXISTS (
                     SELECT 1 FROM sensei.nodes c WHERE c.parent_id = n.id)",
-        )
+            ext = sql_is_not_external("n.fqn"),
+        ))
         .bind(folder_ids)
         .execute(&self.pool)
         .await
@@ -1820,6 +1920,15 @@ impl PgStore {
         file_path: &str,
         kept_ids: &[uuid::Uuid],
     ) -> Result<u64, String> {
+        // Resolved ONCE, outside the transaction, and the id keys both
+        // statements — so the unresolve and the delete cannot disagree about
+        // which file they are pruning (R13).
+        //
+        // A file the walk never recorded owns no nodes: nothing to prune, and 0
+        // is the true count rather than a swallowed failure.
+        let Some(file_id) = self.file_id_for(folder_id, file_path).await? else {
+            return Ok(0);
+        };
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
         sqlx_core::query::query(
             "UPDATE sensei.edges SET target_id = NULL, modified_at = now()
@@ -1827,19 +1936,19 @@ impl PgStore {
                 AND target_name IS NOT NULL
                 AND target_id IN (
                     SELECT id FROM sensei.nodes
-                     WHERE folder_id = $1 AND file_path = $2 AND id <> ALL($3))",
+                     WHERE folder_id = $1 AND file_id = $2 AND id <> ALL($3))",
         )
         .bind(folder_id)
-        .bind(file_path)
+        .bind(file_id)
         .bind(kept_ids)
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
         let res = sqlx_core::query::query(
-            "DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2 AND id <> ALL($3)",
+            "DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_id = $2 AND id <> ALL($3)",
         )
         .bind(folder_id)
-        .bind(file_path)
+        .bind(file_id)
         .bind(kept_ids)
         .execute(&mut *tx)
         .await
@@ -1883,12 +1992,23 @@ impl PgStore {
         folder_id: &uuid::Uuid,
         file_path: &str,
     ) -> Result<u64, String> {
+        // No `files` row means no nodes for that file, so no edge can point at
+        // one — 0 unresolved is the true count (R13).
+        let Some(file_id) = self.file_id_for(folder_id, file_path).await? else {
+            return Ok(0);
+        };
         let res = sqlx_core::query::query(
             "UPDATE sensei.edges SET target_id = NULL, modified_at = now()
               WHERE folder_id = $1
-                AND target_id IN (SELECT id FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2)
-                AND target_name IS NOT NULL"
-        ).bind(folder_id).bind(file_path).execute(&self.pool).await.map_err(|e| e.to_string())?;
+                AND target_id IN (SELECT id FROM sensei.nodes
+                                   WHERE folder_id = $1 AND file_id = $2)
+                AND target_name IS NOT NULL",
+        )
+        .bind(folder_id)
+        .bind(file_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 
@@ -1916,10 +2036,11 @@ impl PgStore {
         name: &str,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(String, String, Option<i32>)> = sqlx_core::query_as::query_as(
-            "SELECT kind::text, file_path, line_start
-               FROM sensei.nodes
-              WHERE folder_id = ANY($1) AND name = $2 AND file_path IS NOT NULL
-              ORDER BY file_path, line_start LIMIT 20",
+            "SELECT n.kind::text, np.file_path, n.line_start
+               FROM sensei.nodes n
+               JOIN sensei.node_paths np ON np.node_id = n.id
+              WHERE n.folder_id = ANY($1) AND n.name = $2
+              ORDER BY np.file_path, n.line_start LIMIT 20",
         )
         .bind(folder_ids)
         .bind(name)
@@ -2243,14 +2364,17 @@ impl PgStore {
         self.count_edges_scoped(&[*folder_id]).await
     }
 
-    /// Delete nodes whose file_path starts with a given prefix (for folder deletion).
+    /// Delete nodes whose repo-relative path starts with a prefix (folder deletion).
     pub async fn delete_nodes_by_path_prefix(
         &self,
         folder_id: &uuid::Uuid,
         prefix: &str,
     ) -> Result<u64, String> {
         let result = sqlx_core::query::query(
-            "DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path LIKE $2 || '%'",
+            "DELETE FROM sensei.nodes n
+              WHERE n.folder_id = $1
+                AND EXISTS (SELECT 1 FROM sensei.node_paths np
+                             WHERE np.node_id = n.id AND np.file_path LIKE $2 || '%')",
         )
         .bind(folder_id)
         .bind(prefix)
@@ -2282,9 +2406,9 @@ impl PgStore {
     /// all of a file's nodes (file/symbol/section/rationale/fqn-def) share it — so
     /// this runs once per file after emit rather than threading a param through
     /// every upsert. Guarded by `IS DISTINCT FROM` so a steady-state re-scan
-    /// changes 0 rows (cheap) while a test↔prod rename flips them. `lib_symbol`/
-    /// `lib_package` nodes (file_path NULL) are never matched (external deps aren't
-    /// test). Returns rows changed.
+    /// changes 0 rows (cheap) while a test↔prod rename flips them. External
+    /// (`lib·`) nodes carry no `file_id`, so they are never matched — a
+    /// dependency is not test code. Returns rows changed.
     /// Correct the language stamp for one file's nodes.
     ///
     /// `upsert_node_ex` derives `language` from the file EXTENSION at write time,
@@ -2305,12 +2429,16 @@ impl PgStore {
         file_path: &str,
         language: &str,
     ) -> Result<u64, String> {
+        // An untracked file has no nodes to correct — 0 changed, which is true.
+        let Some(file_id) = self.file_id_for(folder_id, file_path).await? else {
+            return Ok(0);
+        };
         let res = sqlx_core::query::query(
             "UPDATE sensei.nodes SET language = $3, modified_at = now()
-              WHERE folder_id = $1 AND file_path = $2 AND language IS DISTINCT FROM $3",
+              WHERE folder_id = $1 AND file_id = $2 AND language IS DISTINCT FROM $3",
         )
         .bind(folder_id)
-        .bind(file_path)
+        .bind(file_id)
         .bind(language)
         .execute(&self.pool)
         .await
@@ -2324,12 +2452,16 @@ impl PgStore {
         file_path: &str,
         is_test: bool,
     ) -> Result<u64, String> {
+        // An untracked file has no nodes to stamp — 0 changed, which is true.
+        let Some(file_id) = self.file_id_for(folder_id, file_path).await? else {
+            return Ok(0);
+        };
         let res = sqlx_core::query::query(
             "UPDATE sensei.nodes SET is_test = $3, modified_at = now()
-              WHERE folder_id = $1 AND file_path = $2 AND is_test IS DISTINCT FROM $3",
+              WHERE folder_id = $1 AND file_id = $2 AND is_test IS DISTINCT FROM $3",
         )
         .bind(folder_id)
-        .bind(file_path)
+        .bind(file_id)
         .bind(is_test)
         .execute(&self.pool)
         .await
@@ -2611,8 +2743,9 @@ impl PgStore {
         #[allow(clippy::type_complexity)]
         let doc_rows: Vec<(uuid::Uuid, uuid::Uuid, String, String)> =
             sqlx_core::query_as::query_as(
-                "SELECT n.id, n.folder_id, f.abs_path, n.file_path
+                "SELECT n.id, n.folder_id, f.abs_path, np.file_path
                FROM sensei.nodes n
+               JOIN sensei.node_paths np ON np.node_id = n.id
                JOIN sensei.folders f ON f.id = n.folder_id
               WHERE f.project_id = $1
                 AND n.kind = 'doc'
@@ -2822,9 +2955,25 @@ impl PgStore {
                      AND (g.name = s.name
                           OR right(g.name, char_length(s.name) + 1)
                              = ('/' || s.name))
-                     AND (g.file_path = s.file_path
-                          OR right(g.file_path, char_length(s.file_path) + 1)
-                             = ('/' || s.file_path)))",
+                     -- Where each node LIVES, whichever way it records that.
+                     -- A file-backed node reports it through `node_paths`; a
+                     -- structural `module` node names a DIRECTORY and keeps it
+                     -- in `props.dir`, because a directory has no `files` row to
+                     -- key on (R13). Both are compared the same way: equal, or
+                     -- the member's path is a suffix of the root's.
+                     AND EXISTS (
+                       SELECT 1 FROM (
+                         SELECT COALESCE((SELECT gp.file_path FROM sensei.node_paths gp
+                                           WHERE gp.node_id = g.id),
+                                         g.props ->> 'dir') AS root_at
+                              , COALESCE((SELECT sp.file_path FROM sensei.node_paths sp
+                                           WHERE sp.node_id = s.id),
+                                         s.props ->> 'dir') AS member_at
+                       ) at
+                        WHERE at.root_at IS NOT NULL AND at.member_at IS NOT NULL
+                          AND (at.root_at = at.member_at
+                               OR right(at.root_at, char_length(at.member_at) + 1)
+                                  = ('/' || at.member_at))))",
         )
         .bind(root_id)
         .execute(&self.pool)
@@ -2869,20 +3018,21 @@ impl PgStore {
                            SELECT s.kind::text AS tag
                              FROM sensei.nodes s
                             WHERE s.folder_id = fn.folder_id
-                              AND s.file_path = fn.file_path
+                              AND s.file_id = fn.file_id
                               AND s.kind IN ('hook','component')
                            UNION ALL
                            SELECT 'route'
-                            WHERE fn.file_path ~ '(^|/)\+(page|layout|server|error)\.'
-                               OR fn.file_path ~ '(^|/)(page|route)\.(tsx?|jsx?)$'
+                            WHERE fp.file_path ~ '(^|/)\+(page|layout|server|error)\.'
+                               OR fp.file_path ~ '(^|/)(page|route)\.(tsx?|jsx?)$'
                            UNION ALL
                            SELECT 'middleware'
-                            WHERE fn.file_path ~ '(^|/)hooks\.(server|client)\.(tsx?|jsx?)$'
-                               OR fn.file_path ~ '(^|/)hooks\.(tsx?|jsx?)$'
-                               OR fn.file_path ~ '(^|/)middleware\.(tsx?|jsx?)$'
+                            WHERE fp.file_path ~ '(^|/)hooks\.(server|client)\.(tsx?|jsx?)$'
+                               OR fp.file_path ~ '(^|/)hooks\.(tsx?|jsx?)$'
+                               OR fp.file_path ~ '(^|/)middleware\.(tsx?|jsx?)$'
                          ) src
                        ), '{}') AS tags
                   FROM sensei.nodes fn
+                  JOIN sensei.node_paths fp ON fp.node_id = fn.id
                   JOIN sensei.folders f ON f.id = fn.folder_id
                  WHERE f.root_id = $1
                    AND fn.kind = 'file'
@@ -2907,11 +3057,11 @@ impl PgStore {
         query: &str,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)> = sqlx_core::query_as::query_as(
-            "SELECT id, name, file_path, signature, line_start FROM sensei.nodes
-             WHERE folder_id = ANY($1) AND kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
-             AND file_path IS NOT NULL
-             AND (name ILIKE '%' || $2 || '%' OR signature ILIKE '%' || $2 || '%')
-             ORDER BY name LIMIT 50"
+            "SELECT n.id, n.name, np.file_path, n.signature, n.line_start FROM sensei.nodes n
+             JOIN sensei.node_paths np ON np.node_id = n.id
+             WHERE n.folder_id = ANY($1) AND n.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
+             AND (n.name ILIKE '%' || $2 || '%' OR n.signature ILIKE '%' || $2 || '%')
+             ORDER BY n.name LIMIT 50"
         ).bind(folder_ids).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, name, fp, sig, line)| {
             serde_json::json!({ "id": id, "name": name, "file_path": fp, "signature": sig, "line_start": line })
@@ -2925,11 +3075,11 @@ impl PgStore {
         query: &str,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<i32>)> = sqlx_core::query_as::query_as(
-            "SELECT id, name, file_path, line_start FROM sensei.nodes
-             WHERE folder_id = ANY($1) AND kind IN ('class'::sensei.node_kind, 'struct'::sensei.node_kind, 'interface'::sensei.node_kind, 'enum'::sensei.node_kind, 'type'::sensei.node_kind)
-             AND file_path IS NOT NULL
-             AND name ILIKE '%' || $2 || '%'
-             ORDER BY name LIMIT 50"
+            "SELECT n.id, n.name, np.file_path, n.line_start FROM sensei.nodes n
+             JOIN sensei.node_paths np ON np.node_id = n.id
+             WHERE n.folder_id = ANY($1) AND n.kind IN ('class'::sensei.node_kind, 'struct'::sensei.node_kind, 'interface'::sensei.node_kind, 'enum'::sensei.node_kind, 'type'::sensei.node_kind)
+             AND n.name ILIKE '%' || $2 || '%'
+             ORDER BY n.name LIMIT 50"
         ).bind(folder_ids).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, name, fp, line)| {
             serde_json::json!({ "id": id, "name": name, "file_path": fp, "line_start": line })
@@ -2990,7 +3140,9 @@ impl PgStore {
         // moniker and distinguish enriched defs from reference stubs. `fqn` is NULL
         // for pre-FQN/legacy rows; `resolved` is NOT NULL (defaults false).
         let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid, Option<String>, Option<String>, bool, bool)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, community_id, folder_id, language, fqn, resolved, is_test FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start, parent_id, id"
+            "SELECT n.id, n.kind::text, n.name, np.file_path, n.parent_id, n.line_start, n.line_end, n.community_id, n.folder_id, n.language, n.fqn, n.resolved, n.is_test \
+               FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id \
+              WHERE n.folder_id = ANY($1) ORDER BY np.file_path, n.line_start, n.parent_id, n.id"
         ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, community_id, folder_id, language, fqn, resolved, is_test)| {
             serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "community_id": community_id, "folder_id": folder_id, "language": language, "fqn": fqn, "resolved": resolved, "is_test": is_test })
