@@ -38,7 +38,8 @@ Retire v1, implement v2. Stage 0 (all DDL) is applied to `sensei`,
 | **2 S8/S11 — dependency edges + projects** | `b6fde6bd` |
 | **2b S9 — source precedence + mismatch label** | `1857da82` |
 | **2b §3b — all three routes verified live** | `ea89b23a` |
-| **2b — markdown fence fidelity in the splitter** | this commit |
+| **2b — markdown fence fidelity in the splitter** | `c82e4eec` |
+| **2b — one parse, three discoverers (verified)** | this commit |
 | 3 S4b/S4c — derived folder `kind`, `deferred` dropped | this commit |
 | 2b — `library_content.package_name` | this commit |
 
@@ -102,8 +103,24 @@ it — the type must be recreated by hand), and silently reduces an inline
 
   **How llms content is parsed:** headings only, by LINE PREFIX (`#`/`##`/`###`)
   — not a markdown parser. No AST, no link resolution inside content, no
-  inline formatting. Fenced blocks are now respected so code is stored
-  verbatim; anything beyond headings + fences is unhandled by design.
+  inline formatting. Fenced blocks are respected so code is stored verbatim;
+  anything beyond headings + fences is unhandled by design.
+
+  **ONE parse, three discoverers — VERIFIED, not assumed.** Only enumeration
+  differs (filesystem walk / contents API / follow index links);
+  `docs_from_source_files`, `parse_single_file`, `make_doc` and `pages_from`
+  are shared. dbd ingested by all three yields the SAME 43 page titles and the
+  same 42 component assignments — identical hash. Its github body hash differs
+  only because the v0.12.6 tag genuinely differs from the working tree (4+/3-
+  lines), which is content, not parsing.
+
+  The `.txt` eligibility rule is now `is_llms_doc_file`, one predicate for all
+  three. It was three separate checks that agreed by coincidence; adding `.md`
+  to any one would have made the same library yield different pages by route.
+
+  Inherent asymmetry, stated: the website route can only find what the index
+  LINKS to — HTTP has no directory listing — while local and github walk the
+  tree. A site publishing unlinked components is under-discovered by design.
 
   S9 now ranks three real candidates: a pin of 0.12.6 picks GITHUB over the
   higher-precedence website and the newer local tree — the inversion the rule
