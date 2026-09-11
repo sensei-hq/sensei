@@ -416,7 +416,19 @@ pub fn daemon_request_for(
 
         // ── Everything else → the daemon mcp proxy ──────────────────────────
         _ => {
-            let params = build_daemon_params(args, repo_id);
+            let mut params = build_daemon_params(args, repo_id);
+            // `get_lib_docs` matches docs to the version the ASKING folder
+            // pins (02b S9), so it needs to know which folder is asking. The
+            // model rarely thinks to say, and cwd is the answer it would give
+            // — default it here rather than serve the latest docs to a project
+            // on an older release and call that an answer.
+            if tool == "get_lib_docs"
+                && args["folder"].as_str().filter(|s| !s.is_empty()).is_none()
+                && !cwd.is_empty()
+                && let Some(obj) = params.as_object_mut()
+            {
+                obj.insert("folder".into(), json!(cwd));
+            }
             Some(DaemonRequest::post_json(
                 "/api/mcp/call",
                 json!({ "tool": map_daemon_tool(tool), "params": params }),
@@ -578,6 +590,7 @@ pub fn handle_list_tools() -> Value {
                 ("name", "string", "Library name (e.g. 'bits-ui', 'rokkit', 'hono')"),
             ], &[
                 ("component", "string", "Specific component name to get docs for (e.g. 'list', 'select', 'button'). Omit for the library index."),
+                ("folder", "string", "Absolute path of the project folder asking. Defaults to the current project. Used to serve docs matching the version YOUR project pins, and to label the answer when none match."),
             ]),
             tool("search_lib_docs", "Search across all indexed library documentation. Use when looking for how to use a feature.", &[
                 ("query", "string", "What to search for in library docs"),
@@ -1491,6 +1504,31 @@ mod tests {
         assert_eq!(p["outcome"], "completed");
         assert_eq!(p["query"], "", "no query/name/pattern → empty search term");
         assert_eq!(p["q"], "");
+    }
+
+    #[test]
+    fn get_lib_docs_defaults_the_asking_folder_to_cwd() {
+        // S9 matches docs to the version the asking folder pins. Without a
+        // folder the daemon serves the latest and cannot label a mismatch, so
+        // an omitted folder is the difference between a right answer and a
+        // confident wrong one.
+        let r = daemon_request_for("get_lib_docs", &json!({ "name": "rokkit" }), "/repo/app", None)
+            .unwrap();
+        assert_eq!(r.body.as_ref().unwrap()["params"]["folder"], json!("/repo/app"));
+
+        // An explicit folder is never overridden.
+        let r2 = daemon_request_for(
+            "get_lib_docs",
+            &json!({ "name": "rokkit", "folder": "/elsewhere" }),
+            "/repo/app",
+            None,
+        )
+        .unwrap();
+        assert_eq!(r2.body.as_ref().unwrap()["params"]["folder"], json!("/elsewhere"));
+
+        // Other tools are untouched.
+        let r3 = daemon_request_for("search", &json!({ "query": "x" }), "/repo/app", None).unwrap();
+        assert!(r3.body.as_ref().unwrap()["params"].get("folder").is_none());
     }
 
     #[test]

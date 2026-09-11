@@ -182,10 +182,15 @@ pub(crate) async fn mcp_call_tool(
         "get_lib_docs" => {
             let name = params["name"].as_str().filter(|s| !s.is_empty()).unwrap_or(query);
             let component = params["component"].as_str().filter(|s| !s.is_empty());
-            let pages = state.pg.get_library_pages(name, component).await.map_err(|e| {
-                tracing::warn!(error = %e, name, "mcp get_lib_docs: get_library_pages failed");
+            // The asking folder, so the answer can be matched to the version
+            // this project actually pins (02b S9). Absent, the latest is served
+            // and no caveat is invented — there is no pin to miss.
+            let folder = params["folder"].as_str().filter(|s| !s.is_empty());
+            let docs = state.pg.get_library_docs(name, component, folder).await.map_err(|e| {
+                tracing::warn!(error = %e, name, "mcp get_lib_docs: get_library_docs failed");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
+            let pages = docs.pages;
             if pages.is_empty() {
                 serde_json::json!({
                     "library": name,
@@ -198,7 +203,14 @@ pub(crate) async fn mcp_call_tool(
                 })
             } else if component.is_some() {
                 // Specific component → return its page content.
-                serde_json::json!({ "library": name, "component": component, "pages": pages })
+                serde_json::json!({
+                    "library": name, "component": component, "pages": pages,
+                    "version": docs.served_version, "pinned": docs.pinned_version,
+                    // The S9 label. Present ONLY when the served docs describe
+                    // a version this folder does not pin — an unlabelled
+                    // wrong-version answer is the R4 failure.
+                    "version_note": docs.version_note,
+                })
             } else {
                 // No component → the overview (null-component pages) + the list of
                 // available components so the caller can drill in.
@@ -208,7 +220,11 @@ pub(crate) async fn mcp_call_tool(
                     .iter()
                     .filter_map(|p| p["component"].as_str().map(str::to_string))
                     .collect();
-                serde_json::json!({ "library": name, "overview": overview, "components": components })
+                serde_json::json!({
+                    "library": name, "overview": overview, "components": components,
+                    "version": docs.served_version, "pinned": docs.pinned_version,
+                    "version_note": docs.version_note,
+                })
             }
         }
         "list_projects" => {

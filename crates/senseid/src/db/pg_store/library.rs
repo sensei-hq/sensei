@@ -1,5 +1,21 @@
 use super::*;
 
+/// Documentation served for a library, with the S9 verdict attached.
+///
+/// `version_note` is the load-bearing field: an answer for a version the caller
+/// does not pin is useful LABELLED and wrong unlabelled (R4). `None` means the
+/// answer matches the pin, or there was no pin to miss.
+#[derive(Debug, Clone, Default)]
+pub struct LibraryDocs {
+    pub pages: Vec<serde_json::Value>,
+    /// The version the served pages describe.
+    pub served_version: Option<String>,
+    /// What the asking folder pins, when it states one.
+    pub pinned_version: Option<String>,
+    /// The mismatch label, when the served version is not the pinned one.
+    pub version_note: Option<String>,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// Search libraries by name (ILIKE).
@@ -87,6 +103,161 @@ impl PgStore {
                 })
             })
             .collect())
+    }
+
+    /// Documentation for a library, CHOSEN and LABELLED against the version the
+    /// asking folder actually pins (02b S9).
+    ///
+    /// `get_library_pages` serves whatever is marked latest. That is fine when
+    /// the caller has no version in play and WRONG the moment they do: a
+    /// project on 1.2 handed 3.0's docs gets a confident answer about an API it
+    /// does not have. This resolves the pin from `referenced_libraries`, lets
+    /// [`choose_docs`](crate::libraries::docs_source::choose_docs) pick the
+    /// source that can actually serve it, and returns the label when it cannot.
+    ///
+    /// `folder_abs` is the asking folder. `None` means the caller stated no
+    /// context — then there is no pin to mismatch against, the latest version
+    /// is served, and NO label is invented.
+    pub async fn get_library_docs(
+        &self,
+        name: &str,
+        component: Option<&str>,
+        folder_abs: Option<&str>,
+    ) -> Result<LibraryDocs, String> {
+        use crate::libraries::docs_source::{DocCandidate, DocRoute, choose_docs};
+
+        let Some(lib_id) = self.library_id_for(name).await? else {
+            return Ok(LibraryDocs::default());
+        };
+
+        // Every version we actually HOLD pages for. A version row with no
+        // pages cannot serve anything, and offering it would be a choice the
+        // caller could not use.
+        let rows: Vec<(uuid::Uuid, String, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT v.id, v.version, v.source_type::text
+               FROM sensei.library_versions v
+              WHERE v.library_id = $1
+                AND EXISTS (SELECT 1 FROM sensei.library_content c
+                             WHERE c.library_version_id = v.id
+                               AND c.kind = 'page'::sensei.library_content_kind)",
+        )
+        .bind(lib_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("get_library_docs: versions: {e}"))?;
+        if rows.is_empty() {
+            return Ok(LibraryDocs::default());
+        }
+
+        // The pin, from the asking folder. Absent context and absent pin are
+        // the same thing here: nothing to compare against.
+        let pinned: Option<String> = match folder_abs {
+            Some(abs) => sqlx_core::query_as::query_as(
+                "SELECT rl.version_used
+                   FROM sensei.referenced_libraries rl
+                   JOIN sensei.folders f ON f.id = rl.folder_id
+                  WHERE rl.library_id = $1 AND f.abs_path = $2
+                    AND rl.version_used IS NOT NULL AND rl.version_used <> ''",
+            )
+            .bind(lib_id)
+            .bind(abs)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| format!("get_library_docs: pin: {e}"))?
+            .map(|r: (String,)| r.0),
+            None => None,
+        };
+
+        let (version_id, served_version, note) = match &pinned {
+            Some(pin) => {
+                let candidates: Vec<DocCandidate> = rows
+                    .iter()
+                    .map(|(_, version, st)| DocCandidate {
+                        route: match st.as_deref() {
+                            Some("llms.txt") => DocRoute::Website,
+                            Some("http") => DocRoute::GitHub,
+                            _ => DocRoute::Local,
+                        },
+                        version: Some(version.clone()),
+                    })
+                    .collect();
+                let choice = choose_docs(pin, &candidates)
+                    .ok_or_else(|| "get_library_docs: no candidate".to_string())?;
+                // Map the chosen route+version back to its row.
+                let picked = rows
+                    .iter()
+                    .find(|(_, v, st)| {
+                        let route = match st.as_deref() {
+                            Some("llms.txt") => DocRoute::Website,
+                            Some("http") => DocRoute::GitHub,
+                            _ => DocRoute::Local,
+                        };
+                        route == choice.route
+                            && match &choice.fit {
+                                crate::libraries::docs_source::VersionFit::Mismatch {
+                                    serves,
+                                    ..
+                                } => v == serves,
+                                _ => true,
+                            }
+                    })
+                    .ok_or_else(|| "get_library_docs: choice did not map back".to_string())?;
+                (picked.0, Some(picked.1.clone()), choice.fit.label())
+            }
+            // No pin: serve the latest, and do NOT invent a caveat.
+            None => {
+                let latest: Option<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+                    "SELECT id, version FROM sensei.library_versions
+                      WHERE library_id = $1
+                      ORDER BY is_latest DESC, modified_at DESC LIMIT 1",
+                )
+                .bind(lib_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| format!("get_library_docs: latest: {e}"))?;
+                match latest {
+                    Some((id, v)) => (id, Some(v), None),
+                    None => return Ok(LibraryDocs::default()),
+                }
+            }
+        };
+
+        let pages: Vec<(
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )> = sqlx_core::query_as::query_as(
+            "SELECT c.name, c.component, c.description, c.body,
+                        COALESCE(c.url, c.local_path), c.package_name
+                   FROM sensei.library_content c
+                  WHERE c.library_version_id = $1
+                    AND c.kind = 'page'::sensei.library_content_kind
+                    AND ($2::text IS NULL OR c.component = $2)
+                  ORDER BY (c.component IS NULL) DESC, c.component, c.name",
+        )
+        .bind(version_id)
+        .bind(component)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("get_library_docs: pages: {e}"))?;
+
+        Ok(LibraryDocs {
+            pages: pages
+                .into_iter()
+                .map(|(title, comp, desc, body, loc, pkg)| {
+                    serde_json::json!({
+                        "title": title, "component": comp, "description": desc,
+                        "content": body, "location": loc, "package": pkg,
+                    })
+                })
+                .collect(),
+            served_version,
+            pinned_version: pinned,
+            version_note: note,
+        })
     }
 
     /// Search library pages by title / component / content (ILIKE). Returns
