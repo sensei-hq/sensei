@@ -1026,6 +1026,51 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Record — or clear — why a library version has no current docs (02b S7b.2).
+    ///
+    /// `read_local_source_files` errors when the llms root holds no `.txt`
+    /// files, and THAT ERROR IS THE STALENESS SIGNAL. dbd served 36 pages for
+    /// two months pointing at a directory that had been deleted, and nothing
+    /// registered it as a gap, because the failure only ever reached a task
+    /// log. Recorded against the version, it is queryable:
+    ///
+    ///     SELECT * FROM sensei.library_versions WHERE props ? 'docs_error';
+    ///
+    /// Lives in `props` rather than a dedicated column: it is the documented
+    /// extensible slot, and this is the `files.skip_detail` analogue — a
+    /// verbatim reason, not a code anything branches on.
+    ///
+    /// `None` CLEARS it, so a library whose docs come back stops reporting
+    /// stale without anyone intervening. `docs_checked_at` is written either
+    /// way, because "checked and fine" and "never checked" are different
+    /// states and only one of them is a gap.
+    ///
+    /// Does NOT touch the pages themselves (S7b.3). Stale content is the last
+    /// known-true content; deleting it on a read error trades a stale answer
+    /// for no answer.
+    pub async fn record_library_docs_error(
+        &self,
+        library_id: &uuid::Uuid,
+        error: Option<&str>,
+    ) -> Result<(), String> {
+        let version_id = self.current_or_new_library_version(library_id).await?;
+        sqlx_core::query::query(
+            "UPDATE sensei.library_versions
+                SET props = CASE
+                      WHEN $2::text IS NULL THEN (props - 'docs_error')
+                      ELSE props || jsonb_build_object('docs_error', $2::text)
+                    END || jsonb_build_object('docs_checked_at', now()),
+                    modified_at = now()
+              WHERE id = $1",
+        )
+        .bind(version_id)
+        .bind(error)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("record_library_docs_error: {e}"))?;
+        Ok(())
+    }
+
     /// Refresh the denormalised page count on each of a library's versions.
     ///
     /// ONE statement, at the VERSION level. There used to be a second writing
