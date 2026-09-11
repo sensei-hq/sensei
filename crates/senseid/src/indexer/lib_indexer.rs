@@ -464,7 +464,42 @@ pub fn parse_single_file(content: &str, lib_name: &str) -> Vec<ParsedDoc> {
         docs.push(make_doc(heading.trim().to_string(), content, component));
     };
 
+    // Inside a fenced block NOTHING is markdown. This is a line scan, not a
+    // parser, so without the guard a `#` shell comment reads as a title and is
+    // dropped, and a `## ` in a fenced markdown sample starts a page.
+    //
+    // MEASURED on dbd's llms-full.txt: 7 such lines. Three code examples lost
+    // the comments labelling them and four lines documenting --no-cache /
+    // --clear-cache disappeared — while the page still looked complete, which
+    // is what made it worth fixing rather than noting (R4).
+    let mut in_fence = false;
+
     for line in content.lines() {
+        // ``` or ~~~, allowing the leading indentation a nested list gives.
+        let t = line.trim_start();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            in_fence = !in_fence;
+            if cur_heading.is_some() {
+                cur_body.push_str(line);
+                cur_body.push('\n');
+            } else {
+                preamble.push_str(line);
+                preamble.push('\n');
+            }
+            continue;
+        }
+        if in_fence {
+            // Verbatim, whatever it looks like.
+            if cur_heading.is_some() {
+                cur_body.push_str(line);
+                cur_body.push('\n');
+            } else {
+                preamble.push_str(line);
+                preamble.push('\n');
+            }
+            continue;
+        }
+
         // Section boundary: `## ` or `### ` (but not `#### `+).
         let is_section = (line.starts_with("## ") && !line.starts_with("### "))
             || (line.starts_with("### ") && !line.starts_with("#### "));
@@ -1303,6 +1338,36 @@ Use --dry-run to preview.
     }
 
     // ── GitHub / website URL parsing (pure, no network) ─────────────────────
+
+    #[test]
+    fn a_hash_comment_inside_a_code_fence_survives() {
+        // MEASURED on dbd's llms-full.txt: the splitter scans lines and treats
+        // any `# ` as a markdown title, then CONTINUEs — so every shell comment
+        // inside a ```sh block was silently deleted. Three code examples lost
+        // the labels distinguishing them and four lines documenting
+        // --no-cache/--clear-cache vanished. The page still looked complete.
+        let content = "# dbd\n\nIntro.\n\n## GitHub source\n\n```sh\n# Shorthand\ndbd inspect --source a/b\n\n# With branch/tag\ndbd apply --source a/b@v2.1\n```\n";
+        let docs = parse_single_file(content, "dbd");
+        let sec = docs.iter().find(|d| d.title == "GitHub source").expect("section");
+        assert!(sec.content.contains("# Shorthand"), "comment dropped: {:?}", sec.content);
+        assert!(sec.content.contains("# With branch/tag"), "comment dropped: {:?}", sec.content);
+    }
+
+    #[test]
+    fn a_heading_inside_a_code_fence_does_not_start_a_new_page() {
+        // The same scan would split a document on a `## ` that is sample
+        // markdown inside a fence, inventing a page from an example.
+        let content =
+            "# lib\n\nIntro.\n\n## Usage\n\n```md\n## Not A Real Section\nexample\n```\n\nafter\n";
+        let docs = parse_single_file(content, "lib");
+        assert!(
+            !docs.iter().any(|d| d.title == "Not A Real Section"),
+            "a fenced example became a page: {:?}",
+            docs.iter().map(|d| &d.title).collect::<Vec<_>>()
+        );
+        let usage = docs.iter().find(|d| d.title == "Usage").expect("Usage");
+        assert!(usage.content.contains("## Not A Real Section"), "fenced sample lost");
+    }
 
     #[test]
     fn the_full_text_sibling_is_derived_only_for_the_documented_pairing() {
