@@ -36,7 +36,8 @@ Retire v1, implement v2. Stage 0 (all DDL) is applied to `sensei`,
 | **2b S7b — local pages + staleness signal** | `48db4934` |
 | **2b S8 — registry URLs** | `fd4cac06` |
 | **2 S8/S11 — dependency edges + projects** | `b6fde6bd` |
-| **2b S9 — source precedence + mismatch label** | this commit |
+| **2b S9 — source precedence + mismatch label** | `1857da82` |
+| **2b §3b — all three routes verified live** | this commit |
 | 3 S4b/S4c — derived folder `kind`, `deferred` dropped | this commit |
 | 2b — `library_content.package_name` | this commit |
 
@@ -83,11 +84,24 @@ it — the type must be recreated by hand), and silently reduces an inline
 
 ## Remaining
 
-- **The github and website routes** are unblocked (S8 supplies the URL) but
-  not built — `index_library` still needs a task carrying one. Until then
-  every candidate S9 ranks is `local`, so the precedence order is correct and
-  untested against a real multi-route library.
-- **STAGE 2b IS COMPLETE.** S1/S2/S7b/S8/S9 all landed and are exercised.
+- **STAGE 2b IS COMPLETE**, and all three ingestion routes are verified
+  against live sources:
+
+  | library | local | github @ tag | website |
+  |---|---|---|---|
+  | rokkit | 94 (1.4.1) | **94 @ v1.4.1** | — site publishes no llms.txt |
+  | kavach | 15 (1.1.3) | **15 @ v1.1.3** | 1 (`latest`) |
+  | dbd | 43 (0.13.0) | **43 @ v0.12.6** | 43 (`latest`) |
+
+  github resolves a VERSION TAG: `LibSource::GitHubTree`'s `branch` goes into
+  the contents API's `?ref=`, which takes a tag as readily as a branch, so docs
+  pin to the release they describe. dbd is the informative case — its working
+  tree (0.13.0) is ahead of its tag (0.12.6), so the routes produce genuinely
+  different versions rather than merging.
+
+  S9 now ranks three real candidates: a pin of 0.12.6 picks GITHUB over the
+  higher-precedence website and the newer local tree — the inversion the rule
+  exists for — and a pin of 0.12.0 gets the closest, labelled.
 - **4–7** — parse, fqn, persist, reconcile. This IS the rest of v1 retirement.
 - **8–10** — commands, incremental, cutover.
 

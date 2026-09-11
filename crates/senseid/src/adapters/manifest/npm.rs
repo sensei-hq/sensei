@@ -495,6 +495,20 @@ fn jsonc_to_json(src: &str) -> String {
 /// list them in (R6/A6). Callers index by name so nothing depends on the
 /// order functionally, which is exactly why an unstable one would go
 /// unnoticed until two runs of the same input produced different output.
+/// A lockfile entry whose "version" is a PROTOCOL, not a release.
+///
+/// bun records a workspace member as `kavach@link:kavach`, so splitting on the
+/// last `@` yields `link:kavach` — which then travels as a pin and lands in
+/// `library_versions` as a version key no dependency can ever match. MEASURED:
+/// exactly that row existed.
+///
+/// These entries are first-party siblings, which `local_source` already routes
+/// to `folder_dependencies`; they are not registry releases and do not belong
+/// in a pin table at all.
+fn is_protocol_not_a_version(v: &str) -> bool {
+    ["link:", "workspace:", "file:", "portal:", "npm:", "patch:"].iter().any(|p| v.starts_with(p))
+}
+
 fn sort_pins(pins: &mut [PinnedVersion]) {
     pins.sort_by(|a, b| a.name.cmp(&b.name).then(a.version.cmp(&b.version)));
 }
@@ -512,6 +526,9 @@ fn parse_bun_lock(content: &str) -> Vec<PinnedVersion> {
         .filter_map(|(_, entry)| {
             let spec = entry.as_array()?.first()?.as_str()?;
             let (name, version) = split_name_at_version(spec)?;
+            if is_protocol_not_a_version(&version) {
+                return None;
+            }
             Some(PinnedVersion { name, version })
         })
         .collect();
@@ -633,6 +650,18 @@ mod lockfile_tests {
         let lock =
             r#"{"packages": {"node_modules/a": {}, "node_modules/b": {"version": "1.0.0"}}}"#;
         assert_eq!(npm(lock), vec![PinnedVersion { name: "b".into(), version: "1.0.0".into() }]);
+    }
+
+    #[test]
+    fn a_workspace_entry_is_not_a_pin_because_its_version_is_a_protocol() {
+        // bun writes `kavach@link:kavach` for a workspace member. Split on the
+        // last `@` that reads as version `link:kavach`, which then travels as
+        // a pin into `library_versions` — a version key nothing can match.
+        let lock = r#"{"packages": {
+            "kavach": ["kavach@link:kavach", "", {}, ""],
+            "real":   ["real@1.2.3", "", {}, "sha"]
+        }}"#;
+        assert_eq!(bun(lock), vec![PinnedVersion { name: "real".into(), version: "1.2.3".into() }]);
     }
 
     #[test]

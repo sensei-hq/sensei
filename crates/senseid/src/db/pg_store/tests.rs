@@ -1095,6 +1095,7 @@ async fn a_docs_read_failure_is_recorded_as_a_gap_and_never_deletes_the_pages() 
         "local",
         Some("overview"),
         None,
+        None,
     )
     .await
     .unwrap();
@@ -1159,6 +1160,7 @@ async fn two_packages_of_one_library_can_each_document_the_same_component() {
             "local",
             Some("List"),
             Some("@_test/ui"),
+            None,
         )
         .await
         .unwrap();
@@ -1173,6 +1175,7 @@ async fn two_packages_of_one_library_can_each_document_the_same_component() {
             "local",
             Some("List"),
             Some("@_test/chart"),
+            None,
         )
         .await
         .unwrap();
@@ -1189,6 +1192,7 @@ async fn two_packages_of_one_library_can_each_document_the_same_component() {
             Some("overview"),
             "local",
             Some("List"),
+            None,
             None,
         )
         .await
@@ -1209,6 +1213,7 @@ async fn two_packages_of_one_library_can_each_document_the_same_component() {
             Some("overview v2"),
             "local",
             Some("List"),
+            None,
             None,
         )
         .await
