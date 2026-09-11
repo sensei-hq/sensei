@@ -1,7 +1,8 @@
 # Checkpoint — indexer v2
 
 **State: STAGES 0–3 LANDED AND RUN. Folders and files are in the DB and have
-been inspected. Stage 2b (libraries) is next, then v1 retirement.**
+been inspected. Lockfile pins and the library SHAPE are done; library
+POPULATION (2b S1–S8) is next, then the parse half of v1 retirement.**
 
 Read in this order:
 1. `docs/plans/indexer-v2-sequence.md` — the master plan, 12 stages
@@ -26,17 +27,32 @@ Retire v1, implement v2. Stage 0 (all DDL) is applied to `sensei`,
 | 2 — scan repo (pure, then walk) | `45ffd35f`, `1991d258` |
 | 3 — structure planner | `ffa27e06` |
 | 1–3 IO half, run against this repo | `a969758f` |
+| 2 S6b/S6c/S6d — lockfile readers | `674af40b` |
+| 2b R12/S10 — `library_content` collapse | `52f9f0af` |
 
 Measured against this repo and written to `sensei`: **1 repository, 18
 folders, 2,305 files.** Cold 3.0s, warm 0.44s — the mtime gate skips all 2,305
 sha256 reads on a re-run, which changes no row. `folder_completeness` reports
 expected=731 / decided=0 / incomplete, because nothing is parsed yet.
 
+Lockfiles: **128 of 219 direct external deps get a corrected version** —
+`serde = "1"` cleans to `1` and resolves to `1.0.228`. Readers for
+`Cargo.lock`, `bun.lock`, `package-lock.json`; `yarn.lock`/`pnpm-lock.yaml`
+deliberately unclaimed (they fall back to the manifest range, a named gap).
+
+Libraries: the SHAPE is settled and the store layer is rebuilt on it —
+`library_content` (one table, `kind` discriminator) under `library_versions`.
+No library rows are WRITTEN by the v2 pipeline yet.
+
 ## Remaining
 
-- **2b — libraries.** The inspection checkpoint is folders + files +
-  libraries; the first two are done.
-- **4–7** — parse, fqn, persist, reconcile. This IS the v1 retirement.
+- **2b S1–S8 — populate libraries.** The shape, the store and the version
+  pins are ready; what is missing is the discovery: read `sensei.library.json`
+  from deps (S1), fill `library_packages` from workspace members (S2), and
+  extract repo/homepage URLs from registry responses already being fetched
+  (S8). `library_packages` is still 0 rows, so the
+  node → package → library → content chain is still unwalkable.
+- **4–7** — parse, fqn, persist, reconcile. This IS the rest of v1 retirement.
 - **8–10** — commands, incremental, cutover.
 
 ## Next command
@@ -51,11 +67,14 @@ expected=731 / decided=0 / incomplete, because nothing is parsed yet.
 
 ## Known-broken
 
-**33 `indexer::reconcile` tests, plus the wider v1 suite, fail on
-`column "file_path" does not exist`.** Expected: stage 0 dropped
-`nodes.file_path` for `file_id`, and v1's `graph.rs` store functions still
-reference it. Stages 4–7 resolve this — it is the retirement itself, not a
-regression. Stages 1–3 are green (37 tests).
+**senseid: 2,821 passing / 167 failing** (was 192). Every remaining failure is
+one of stage 0's two drops:
+- `nodes.file_path`, replaced by `file_id` (R13) — v1's `graph.rs` still
+  references it;
+- `node_kind`'s removed `lib_symbol` / `lib_package` values (D12).
+
+Both are stages 4–7 — the retirement itself, not a regression. Stages 1–3 and
+the whole library layer are green.
 
 ## Known-wrong IN THE COMMITTED v1 CODE — do not build on
 
@@ -70,11 +89,11 @@ regression. Stages 1–3 are green (37 tests).
 
 ## Open questions
 
-- `library_content` shape — should `skill|agent|page|package` collapse into one
-  table with a discriminator? **Decide BEFORE stage 2b populates
-  `library_packages`**, or it becomes a migration of 146+ live rows.
-- `sensei.libraries` holds 1,121 PACKAGE rows, all `detected`. What happens to
-  them when the library level above them appears.
+- ~~`library_content` shape~~ — DECIDED 2026-09-11: collapse into one table
+  with a `kind` discriminator. `library_packages` stays out: it is a grouping,
+  not content, and R10.7g resolves it from a version-less fqn.
+- ~~The 1,121 package-level `libraries` rows~~ — moot: stage 0's wipe emptied
+  the table. `libraries` is now identity-only and rebuilds as such.
 - Every non-root folder is written `kind = 'workspace_member'`. The enum has no
   value for "holds a manifest but is not a declared member" — `marketplace/`
   and two fixtures under `crates/senseid/tests/fixtures/` are in that class,

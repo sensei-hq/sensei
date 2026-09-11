@@ -215,12 +215,27 @@ The rejected option, recorded so it is not re-proposed:
 | A — version column on content | add `version` to `library_pages`, `library_skills`, `library_agents` | 3 tables, and `libraries.version` becomes ambiguous — is it "latest known" or "the one we hold"? |
 | B — a `library_versions` level | `libraries -> library_versions -> pages/skills/agents` | one more join; `libraries` becomes purely the identity and `version` moves off it, which is cleaner but touches more |
 
-**Decide this together with R12's `library_content` question** — whether
-`skill | agent | page | package` collapse into one table with a type
-discriminator. Both questions are "what sits between a library and its
-content", answering them separately risks two migrations over the same
-146+ rows, and R12 already says the shape should be settled BEFORE
-`library_packages` is populated.
+**DECIDED (2026-09-11) together with R12's `library_content` question:
+COLLAPSE.** `library_skills`, `library_agents` and `library_pages` became one
+`library_content` table discriminated by `kind` (`skill | agent | page`),
+keyed to `library_version_id`. The three shared nine columns and the agent
+table's own comment described it as "mirrors library_skills minus the
+generation fields"; a fifth kind cost a fourth table and a fourth arm in every
+"everything about library X" query, and now costs a row.
+
+Kind-specific columns are nullable BY DESIGN, each documented with its owning
+kind, so a null reads as "not applicable to this kind" and never as "unknown".
+
+`library_packages` is deliberately NOT folded in. It is a GROUPING — package
+name to library — not content, it carries no body, and R10.7g resolves it from
+an fqn that has no version. Putting it under a version-keyed content table
+would make the node → package → library chain unwalkable.
+
+**The 146-row migration this section warned about did not happen: stage 0's
+wipe had already emptied all three tables**, verified in `sensei`,
+`sensei_test` and `sensei_e2e` before dropping. Note for the next time a table
+is retired: `dbd reconcile` does NOT drop a table whose DDL file was deleted —
+`0 pruned` — so the DROP has to be explicit.
 
 Recommendation: **B**, because A puts the same version string on three tables
 and nothing keeps them consistent — the drift R10.7e names. But it is the
@@ -417,12 +432,10 @@ Populating the grouping does not mean deleting those rows — it means a
 package-level rows before writing the migration; leaving both levels in one
 table with no discriminator is how the next reader gets it wrong.
 
-**`library_skills` and `library_agents` are near-identical** (`library_id, name,
-focus, body, source, source_path, version_range, origin, scope`; skills add
-`tokens`/`generated_at`). R12 notes that a single `library_content` with a type
-discriminator would make a fifth kind cost a row rather than a table. **Decide
-that shape BEFORE populating `library_packages`**, because after this stage
-there is live data in the pattern and it becomes a migration of 146+ rows.
+**RESOLVED — `library_skills` / `library_agents` / `library_pages` are now one
+`library_content` table** discriminated by `kind`, keyed to
+`library_version_id`. See S10 above for the decision and what it cost (nothing
+— the tables were already empty). A fifth kind of content is now a row.
 
 ## 7. Definition of done
 
@@ -433,9 +446,9 @@ there is live data in the pattern and it becomes a migration of 146+ rows.
   the run.
 - No prefix inference exists anywhere in the stage — verified by a test, not by
   reading.
-- The `library_content` shape question is answered in writing, either way —
-  **together with S10's versioning shape**, since both decide what sits
-  between a library and its content.
+- [x] The `library_content` shape question is answered in writing — COLLAPSE,
+  together with S10's versioning shape (option B, `library_versions`). Both
+  are implemented; see S10.
 - `repository`/`homepage` extracted from registry responses already being
   fetched (S8); the 2-of-1,121 URL count moves, and it is measured.
 - Source precedence recorded per library, with the version-mismatch label
