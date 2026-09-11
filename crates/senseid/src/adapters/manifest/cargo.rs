@@ -110,6 +110,13 @@ impl ManifestAdapter for CargoManifestAdapter {
         None
     }
 
+    fn root_package(&self, repo_root: &Path) -> Option<PackageInfo> {
+        // `cargo_toml_member` with an empty relative path IS the root, and it
+        // already applies `publish = false` / `publish = []`. Reusing it is
+        // what stops a second, divergent notion of "publishable".
+        cargo_toml_member(repo_root, "")
+    }
+
     fn detect_workspace_members(&self, repo_root: &Path) -> Vec<PackageInfo> {
         let mut members = Vec::new();
         let mut declared_member_paths: std::collections::HashSet<String> =

@@ -146,6 +146,22 @@ pub trait ManifestAdapter: Send + Sync {
         Vec::new()
     }
 
+    /// The workspace ROOT's own package, when the root manifest declares one.
+    /// Default: none.
+    ///
+    /// A workspace root is often a package in its own right and is NOT in its
+    /// own member list, so [`Self::detect_workspace_members`] never returns it.
+    /// Measured: `dbd`'s root is `dbd-cli`, publishable, named differently from
+    /// the library — so a dependency on `dbd-cli` reached no library at all.
+    ///
+    /// Returns the same `PackageInfo` shape as a member, `private` included,
+    /// which is what keeps the answer right for the other two roots on this
+    /// machine: rokkit's root is `rokkit` with `"private": true` and kavach's
+    /// is `kavach-workspace`, also private — container names, never published.
+    fn root_package(&self, _repo_root: &Path) -> Option<PackageInfo> {
+        None
+    }
+
     /// Discoverable named commands the ecosystem exposes for this manifest
     /// (#83 T1 commands surface). Feeds `sensei.folder_commands` so the
     /// project window's action buttons + the future `get_commands` MCP

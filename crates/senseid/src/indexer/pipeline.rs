@@ -35,6 +35,11 @@ pub struct RepoResult {
     pub changed: usize,
     pub unchanged: usize,
     pub removed: usize,
+    /// The library this repo declares itself to be, if it ships a
+    /// `sensei.library.json` at its root.
+    pub library: Option<String>,
+    /// Package names grouped under that library (02b S2).
+    pub library_packages: u64,
     pub errors: Vec<String>,
 }
 
@@ -188,7 +193,60 @@ async fn write_one_repo(pg: &PgStore, root: &RepoRoot, root_id: &uuid::Uuid) -> 
     {
         out.errors.push(e);
     }
+
+    // ── Stage 2b: this repo may BE a library ─────────────────────────────
+    ingest_library(pg, &root.abs_path, &scan, &mut out).await;
     out
+}
+
+/// If this repo ships a `sensei.library.json` at its root, register the
+/// library and group the packages it publishes (02b S1, S2).
+///
+/// THE MISSING TRIGGER. Every piece of this was already built —
+/// `read_manifest`, `ingest_manifest_at`, `replace_library_packages` — and
+/// `library_packages` still had zero rows, because the only two callers were a
+/// manual API endpoint and a task that requires a URL. Nothing ran it during a
+/// scan, so a library sitting on disk was never noticed.
+async fn ingest_library(
+    pg: &PgStore,
+    repo_root: &std::path::Path,
+    scan: &RepoScan,
+    out: &mut RepoResult,
+) {
+    let Some(m) = crate::libraries::read_manifest(repo_root) else {
+        return; // not a library. The common case, and not an error.
+    };
+    out.library = Some(m.library.clone());
+
+    // The ecosystem comes from the manifest AT THE REPO ROOT — rokkit's
+    // package.json makes it npm, dbd's Cargo.toml makes it cargo. It is never
+    // guessed from the name: `libraries` is keyed `(ecosystem, name)`, so a
+    // wrong ecosystem mints a second identity for one library and the grouping
+    // attaches to the wrong row. No root manifest means no answer, and this
+    // says so rather than picking one.
+    let Some(ecosystem) =
+        scan.manifests.iter().find(|(p, _)| p.parent() == Some(repo_root)).map(|(_, eco)| *eco)
+    else {
+        out.errors.push(format!(
+            "library {}: no manifest at the repo root, so its ecosystem is unknown — not registered",
+            m.library
+        ));
+        return;
+    };
+
+    let library_id =
+        match pg.upsert_library(&m.library, ecosystem, Some(&m.version), None, None, None).await {
+            Ok(id) => id,
+            Err(e) => {
+                out.errors.push(format!("upsert_library({}): {e}", m.library));
+                return;
+            }
+        };
+
+    match crate::libraries::ingest_manifest_at(pg, &library_id, repo_root).await {
+        Some((_, _, np)) => out.library_packages = np,
+        None => out.errors.push(format!("ingest_manifest_at({}): returned nothing", m.library)),
+    }
 }
 
 /// The barrier (S1): every folder row, then every file row, then stop.
@@ -391,6 +449,15 @@ mod corpus {
         println!("folders written {}", summary.total_folders());
         println!("files written   {}", summary.total_files());
         println!("manifests       {}", summary.total_manifests());
+        let libs: Vec<&RepoResult> = summary.repos.iter().filter(|r| r.library.is_some()).collect();
+        println!("libraries       {}", libs.len());
+        for l in &libs {
+            println!(
+                "  library {:14} packages={}",
+                l.library.as_deref().unwrap_or(""),
+                l.library_packages
+            );
+        }
         for r in &summary.repos {
             println!(
                 "  {} -> repo={:?} folders={} files={} manifests={} lockfiles={} submodules={} \
