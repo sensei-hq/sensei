@@ -966,6 +966,70 @@ async fn a_lib_node_records_the_language_that_minted_it() {
 }
 
 #[tokio::test]
+async fn a_docs_read_failure_is_recorded_as_a_gap_and_never_deletes_the_pages() {
+    // 02b S7b.2/S7b.3. dbd served 36 pages for two months pointing at a
+    // directory that had been deleted, and nothing registered it as a gap —
+    // the failure only ever reached a task log. Two properties here:
+    //   1. the error is RECORDED against the version, so it is queryable;
+    //   2. the pages SURVIVE it. Stale content is the last known-true content,
+    //      and dropping it on a read error trades a stale answer for no answer.
+    let s = pg_store().await;
+    let lib =
+        s.upsert_library("_test:stale", "npm", Some("1.0.0"), None, None, None).await.unwrap();
+    s.upsert_library_page(
+        &lib,
+        "Overview",
+        None,
+        Some("/gone/llms/overview.txt"),
+        None,
+        Some("body"),
+        "local",
+        Some("overview"),
+        None,
+    )
+    .await
+    .unwrap();
+
+    const COUNT_PAGES: &str = "SELECT count(*) FROM sensei.library_content c
+           JOIN sensei.library_versions v ON v.id = c.library_version_id
+          WHERE v.library_id = $1 AND c.kind = 'page'::sensei.library_content_kind";
+    let n: (i64,) =
+        sqlx_core::query_as::query_as(COUNT_PAGES).bind(lib).fetch_one(s.pool()).await.unwrap();
+    assert_eq!(n.0, 1);
+
+    // The source vanishes.
+    s.record_library_docs_error(&lib, Some("llms root not a directory: /gone/llms")).await.unwrap();
+
+    let (err, checked): (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT props->>'docs_error', props->>'docs_checked_at'
+           FROM sensei.library_versions WHERE library_id = $1 AND is_latest",
+    )
+    .bind(lib)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(err.as_deref(), Some("llms root not a directory: /gone/llms"));
+    assert!(checked.is_some(), "checked-and-fine differs from never-checked");
+    let n: (i64,) =
+        sqlx_core::query_as::query_as(COUNT_PAGES).bind(lib).fetch_one(s.pool()).await.unwrap();
+    assert_eq!(n.0, 1, "the last known-true content survives the failure");
+
+    // The docs come back. The gap clears itself — nobody has to intervene.
+    s.record_library_docs_error(&lib, None).await.unwrap();
+    let err2: (Option<String>,) = sqlx_core::query_as::query_as(
+        "SELECT props->>'docs_error' FROM sensei.library_versions
+          WHERE library_id = $1 AND is_latest",
+    )
+    .bind(lib)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(err2.0, None, "a recovered library stops reporting stale");
+
+    s.delete_library(&lib).await.unwrap();
+}
+
+#[tokio::test]
 async fn two_packages_of_one_library_can_each_document_the_same_component() {
     // A library publishes several packages, and docs are PACKAGE-level while
     // skills and agents are library-level. `rokkit` ships both `@rokkit/ui`
