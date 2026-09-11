@@ -101,7 +101,7 @@ impl PgStore {
         name: &str,
         abs_path: &str,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_folder(root_id, "git", name, name, abs_path, None, None).await
+        self.upsert_folder(root_id, "git", name, name, abs_path, None, None, None).await
     }
 
     /// Register a project root with an explicit folder kind — `git` for real
@@ -150,11 +150,12 @@ impl PgStore {
     }
 
     /// Upsert a structural subfolder with an explicit `kind` — `folder` (the
-    /// navigable filesystem-tree row) or `workspace_member` (a monorepo member,
-    /// D5a). Status is terminal (`indexed`) — these rows model the tree, not scan
-    /// progress. On conflict the kind is relabelled ONLY between the two
-    /// structural kinds (`folder`↔`workspace_member`); a path that is actually a
-    /// (nested) project ROOT (`git`/`standalone`/`subtree`) is never reclassified.
+    /// navigable filesystem-tree row) or `module` (a manifest-bearing build
+    /// unit, D5a). Status is terminal (`indexed`) — these rows model the tree,
+    /// not scan progress. On conflict the kind is relabelled ONLY between the
+    /// two structural kinds (`folder`↔`module`); a path that is actually a
+    /// (nested) project ROOT (`git`/`standalone`/`subtree`) is never
+    /// reclassified.
     pub async fn upsert_subfolder_kind(
         &self,
         root_id: &uuid::Uuid,
@@ -169,7 +170,7 @@ impl PgStore {
             "INSERT INTO sensei.folders(root_id, kind, status, name, path, abs_path, parent_id, project_id)
              VALUES($1, $2::sensei.folder_kind, 'indexed'::sensei.folder_status, $3, $4, $5, $6, $7)
              ON CONFLICT(abs_path) DO UPDATE SET
-                kind = CASE WHEN folders.kind IN ('folder'::sensei.folder_kind, 'workspace_member'::sensei.folder_kind)
+                kind = CASE WHEN folders.kind IN ('folder'::sensei.folder_kind, 'module'::sensei.folder_kind)
                             THEN EXCLUDED.kind ELSE folders.kind END,
                 name = EXCLUDED.name,
                 parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
@@ -461,6 +462,7 @@ impl PgStore {
         abs_path: &str,
         parent_id: Option<&uuid::Uuid>,
         project_id: Option<&uuid::Uuid>,
+        workspace_root_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             // `kind` IS refreshed on conflict. It is DERIVED — from whether an
@@ -469,13 +471,17 @@ impl PgStore {
             // member. Leaving it stale was why every folder here kept the
             // `workspace_member` an earlier run wrote, and the derivation
             // silently had no effect.
-            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, parent_id, project_id)
-             VALUES($1, $2::sensei.folder_kind, $3, $4, $5, $6, $7)
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, parent_id, project_id, workspace_root_id)
+             VALUES($1, $2::sensei.folder_kind, $3, $4, $5, $6, $7, $8)
              ON CONFLICT(abs_path) DO UPDATE SET
                kind = EXCLUDED.kind,
                name = EXCLUDED.name,
                parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
                project_id = COALESCE(EXCLUDED.project_id, folders.project_id),
+               -- ASSIGNED, not COALESCEd. Membership is derived, so a module
+               -- dropped from a `workspaces` array must stop reading as a
+               -- member; COALESCE would pin the first answer forever.
+               workspace_root_id = EXCLUDED.workspace_root_id,
                modified_at = now()
              RETURNING id",
         )
@@ -486,6 +492,7 @@ impl PgStore {
         .bind(abs_path)
         .bind(parent_id)
         .bind(project_id)
+        .bind(workspace_root_id)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| e.to_string())?;

@@ -845,7 +845,7 @@ mod tests {
         // the file/doc nodes; a class has a method child; a doc has a section child.
         let folders = vec![
             json!({"id":"fol_root","name":"repo","kind":"git","role":null,"parent_id":null}),
-            json!({"id":"fol_pkg","name":"pkg","kind":"workspace_member","role":"library","parent_id":"fol_root"}),
+            json!({"id":"fol_pkg","name":"pkg","kind":"module","role":"library","parent_id":"fol_root"}),
         ];
         let nodes = vec![
             // A code file with a class → method (parent_id chain).
@@ -864,7 +864,7 @@ mod tests {
         // subfolder nested by parent_id, carrying kind + role.
         let subs = root["folders"].as_array().unwrap();
         assert_eq!(subs.len(), 1);
-        assert_eq!(subs[0]["kind"], "workspace_member");
+        assert_eq!(subs[0]["kind"], "module");
         assert_eq!(subs[0]["role"], "library");
         // the file + doc are root-level nodes of fol_root.
         let fnodes = root["nodes"].as_array().unwrap();

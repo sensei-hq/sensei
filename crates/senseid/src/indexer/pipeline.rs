@@ -153,13 +153,14 @@ async fn write_one_repo(pg: &PgStore, root: &RepoRoot, root_id: &uuid::Uuid) -> 
         Err(e) => out.errors.push(format!("upsert_repository: {e}")),
     }
 
-    let folder_id = match pg.upsert_folder(root_id, "git", &name, &abs, &abs, None, None).await {
-        Ok(id) => id,
-        Err(e) => {
-            out.errors.push(format!("upsert_folder(root): {e}"));
-            return out;
-        }
-    };
+    let folder_id =
+        match pg.upsert_folder(root_id, "git", &name, &abs, &abs, None, None, None).await {
+            Ok(id) => id,
+            Err(e) => {
+                out.errors.push(format!("upsert_folder(root): {e}"));
+                return out;
+            }
+        };
     out.folder_id = Some(folder_id);
     out.folders += 1;
 
@@ -223,6 +224,11 @@ async fn write_structure(
         let rel = f.abs_path.strip_prefix(repo_root).map_err(|e| e.to_string())?;
         let name =
             f.abs_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        // The workspace that DECLARES this module, resolved from its path to
+        // the folder id. `plan_folders` names WHICH root rather than a bare
+        // flag, so this is a map lookup — and it stays correct if a nested
+        // workspace root is ever detected.
+        let ws_root = f.workspace_root.as_ref().and_then(|w| ids.get(w.as_path())).copied();
         let id = pg
             .upsert_folder(
                 root_id,
@@ -232,6 +238,7 @@ async fn write_structure(
                 &f.abs_path.to_string_lossy(),
                 Some(&parent),
                 None,
+                ws_root.as_ref(),
             )
             .await
             .map_err(|e| format!("upsert_folder({}): {e}", rel.display()))?;
