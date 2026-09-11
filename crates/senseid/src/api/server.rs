@@ -4,7 +4,7 @@ use crate::tasks::executor::{TaskContext, spawn_workers};
 use crate::tasks::queue::TaskQueue;
 use axum::http::Method;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 
 /// Write a single-line startup error to `<sensei_dir>/startup-error.log` so
 /// users can find it without scraping launchd / brew-services log paths.
@@ -115,8 +115,23 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
     // server hit. Curl and Chrome accept the wildcard, which is why this only
     // bit in the Tauri app. List the methods we actually serve; same fix for
     // headers since Safari has the same wildcard-rejection there.
+    //
+    // SECURITY: Restrict allowed origins to the Tauri app and localhost
+    // development origins only. The daemon exposes unauthenticated endpoints
+    // (MCP tools, runs, hooks) that return local project data and permit
+    // mutations. Loopback binding is NOT an authentication boundary for
+    // browser-originated requests from the same host — a hostile web origin
+    // can POST to 127.0.0.1 and read the response if CORS permits it. The
+    // wildcard `allow_origin(Any)` made every unauthenticated route readable
+    // cross-origin. Restricting to the Tauri app origin (`tauri://localhost`)
+    // and localhost dev origins prevents hostile origins from reading responses
+    // while preserving legitimate access from the desktop app, CLI, and MCP.
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin([
+            "tauri://localhost".parse::<axum::http::HeaderValue>().unwrap(),
+            "http://localhost:5173".parse::<axum::http::HeaderValue>().unwrap(),
+            "http://127.0.0.1:5173".parse::<axum::http::HeaderValue>().unwrap(),
+        ])
         .allow_methods([
             Method::GET,
             Method::POST,
