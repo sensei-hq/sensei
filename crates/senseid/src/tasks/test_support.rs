@@ -906,3 +906,44 @@ pub(crate) async fn daily_project_metric_rows(
 // `module_metric_rows` (per-module folder_id-set rows) was removed with the repo-grain
 // cutover: no computer writes per-module rows anymore (folder_id is not part of the
 // `project_metrics_identity` key), so the helper had no callers.
+
+/// Write a node the way production does: the FILE ROW FIRST, then the node.
+///
+/// Stage 3's barrier creates every `files` row before any parse task exists
+/// (R14), so in production a node always names a file that is already tracked
+/// and `upsert_node` can FAIL CLOSED on a miss (R13, 06 S6). A fixture that
+/// writes a node without its file is not modelling production — it is
+/// modelling the state R13 exists to make impossible.
+///
+/// This exists so ~90 fixtures model the barrier in one place rather than each
+/// remembering to. `upsert_file_row` is idempotent, so repeated calls for the
+/// same path are free.
+pub async fn seed_node(
+    pg: &crate::db::pg_store::PgStore,
+    folder_id: &uuid::Uuid,
+    kind: &str,
+    name: &str,
+    file_path: &str,
+    parent_id: Option<&uuid::Uuid>,
+    signature: Option<&str>,
+    line_start: Option<i32>,
+    line_end: Option<i32>,
+) -> Result<uuid::Uuid, String> {
+    seed_file(pg, folder_id, file_path).await?;
+    pg.upsert_node(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end)
+        .await
+}
+
+/// The barrier half on its own, for fixtures that write nodes by raw SQL.
+///
+/// Resolves against the folder the caller names. A path that belongs to a
+/// DESCENDANT folder is recorded against the caller's folder here, which is
+/// fine for a fixture: `file_id_for` anchors on the absolute path, so the node
+/// finds it either way.
+pub async fn seed_file(
+    pg: &crate::db::pg_store::PgStore,
+    folder_id: &uuid::Uuid,
+    file_path: &str,
+) -> Result<uuid::Uuid, String> {
+    pg.upsert_file_row(folder_id, file_path, 1, "seed", None).await
+}

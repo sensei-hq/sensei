@@ -1262,6 +1262,45 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Resolve a caller's `(folder, path)` to the `files.id` that `nodes.file_id`
+    /// needs — FAILING CLOSED (06 S6, R13).
+    ///
+    /// `None` means no such file is tracked. The caller must treat that as an
+    /// error, never as licence to create one: a get-or-create here would mint a
+    /// `files` row with no mtime, no hash and no parse outcome, which is the
+    /// 8,147-ORPHANED problem one table over and worse, because the foreign key
+    /// would then certify it.
+    ///
+    /// **Resolution is by ABSOLUTE path, and that is not incidental.** A caller
+    /// holding the REPO folder and a repo-relative path (`crates/senseid/src/lib.rs`)
+    /// is naming a file that belongs to the `crates/senseid` MODULE folder under
+    /// the folder-relative `src/lib.rs`. Matching on `(folder_id, file_path)`
+    /// directly would miss every file in a module — 17 of this repo's 18 folders
+    /// — while looking like an ordinary "not indexed" answer. Anchoring both
+    /// sides to the absolute path makes the two grains meet.
+    pub async fn file_id_for(
+        &self,
+        folder_id: &uuid::Uuid,
+        path: &str,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "WITH anchor AS (SELECT abs_path FROM sensei.folders WHERE id = $1)
+             SELECT fi.id
+               FROM sensei.files fi
+               JOIN sensei.folders fo ON fo.id = fi.folder_id
+              WHERE fo.abs_path || '/' || fi.file_path =
+                    CASE WHEN $2 LIKE '/%' THEN $2
+                         ELSE (SELECT abs_path FROM anchor) || '/' || $2 END
+              LIMIT 1",
+        )
+        .bind(folder_id)
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("file_id_for({path}): {e}"))?;
+        Ok(row.map(|r| r.0))
+    }
+
     /// Record that a parse RAN for this file and succeeded (03 S4).
     ///
     /// This is the only thing that moves a file from `discovered` to `parsed`,

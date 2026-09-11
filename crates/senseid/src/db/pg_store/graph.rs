@@ -525,12 +525,12 @@ impl PgStore {
         line_end: Option<i32>,
         is_exported: bool,
     ) -> Result<uuid::Uuid, String> {
-        // ON CONFLICT targets nodes_unique_identity (folder_id, file_path, kind, name,
+        // ON CONFLICT targets nodes_unique_identity (folder_id, file_id, kind, name,
         // parent_id, line_start NULLS NOT DISTINCT). DO UPDATE keeps the row STABLE on
         // re-scans — same UUID whether just inserted or pre-existing (D3 upsert-then-
         // prune) — preserving community_id and degree. It refreshes signature/line_end,
         // and re-nulls `embedding` ONLY when the signature changed: `embed_text` is a
-        // function of (kind, name, signature, file_path), and on a same-identity
+        // function of (kind, name, signature, file), and on a same-identity
         // conflict the first three-of-four are fixed by the key, so `signature` is the
         // only embed input that can change — nulling on that (and preserving it
         // otherwise) keeps embeddings fresh without a separate content_hash column.
@@ -540,10 +540,24 @@ impl PgStore {
         // transition — is what gives the same-language bare-name fallback (plan 0.8)
         // something to filter on. COALESCE on conflict backfills pre-existing rows.
         let language = crate::languages::language_for_path(file_path);
+        // R13 / 06 S6: the file row is LOOKED UP and this FAILS CLOSED. A node
+        // naming an untracked file is a pipeline bug — stage 3's barrier creates
+        // every file row before any parse task exists — and get-or-creating here
+        // would mint a `files` row with no mtime, no hash and no parse outcome
+        // that the foreign key then certifies.
+        //
+        // The path stays the parameter because that is what every caller holds;
+        // `file_id_for` handles the repo-relative/folder-relative grain change.
+        let Some(file_id) = self.file_id_for(folder_id, file_path).await? else {
+            return Err(format!(
+                "upsert_node({name}): no files row for {file_path} — the walk never \
+                 recorded it, so a node naming it cannot be written"
+            ));
+        };
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.nodes(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, is_exported, language)
+            "INSERT INTO sensei.nodes(folder_id, kind, name, file_id, parent_id, signature, line_start, line_end, is_exported, language)
              VALUES($1, $2::sensei.node_kind, $3, $4, $5, $6, $7, $8, $9, $10)
-             ON CONFLICT (folder_id, file_path, kind, name, parent_id, line_start) WHERE file_path IS NOT NULL DO UPDATE
+             ON CONFLICT (folder_id, file_id, kind, name, parent_id, line_start) WHERE file_id IS NOT NULL DO UPDATE
                SET signature   = EXCLUDED.signature,
                    line_end    = EXCLUDED.line_end,
                    is_exported = EXCLUDED.is_exported,
@@ -552,7 +566,7 @@ impl PgStore {
                                       THEN NULL ELSE nodes.embedding END,
                    modified_at = now()
              RETURNING id"
-        ).bind(folder_id).bind(kind).bind(name).bind(file_path)
+        ).bind(folder_id).bind(kind).bind(name).bind(file_id)
             .bind(parent_id).bind(signature).bind(line_start).bind(line_end).bind(is_exported).bind(language)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
