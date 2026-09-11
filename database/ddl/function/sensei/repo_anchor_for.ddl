@@ -10,7 +10,7 @@ set search_path to sensei, extensions;
 -- get_folder_ids_by_path — that disagreed on kind, alias-awareness, and ancestor-walk).
 --
 -- Repo-anchor kinds (D1/D6): git + subtree (real repos), plus a standalone dir that is a
--- tracked project root (project_id set). workspace_member / sibling / folder are NOT anchors —
+-- tracked project root (project_id set). module / folder are NOT anchors —
 -- a monorepo package rolls up to its enclosing git root, a plain folder to its repo.
 -- Alias-aware (move/rename): a path recorded before a move resolves via folder_path_aliases
 -- to the current repo, so history is never lost. Resolution: the DEEPEST matching anchor
