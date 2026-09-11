@@ -1,244 +1,52 @@
 # Checkpoint — indexer v2
 
-**State: STAGES 0–3 LANDED AND RUN. Folders and files are in the DB and have
-been inspected. Lockfile pins and the library SHAPE are done; library
-POPULATION (2b S1–S8) is next, then the parse half of v1 retirement.**
+**State: STAGES 0–7 LANDED. The suite is GREEN — 3030 passing, 0 failing, fmt
+clean, no clippy finding in the diff. v1's `nodes.file_path` and the `lib_*`
+kinds are gone from every reader. Stages 8–10 remain.**
 
-Read in this order:
-1. `docs/plans/indexer-v2-sequence.md` — the master plan, 12 stages
-2. `docs/spec/indexer/02b-library-discovery.md` — the next thing to build
-3. `docs/design/indexer-v2.md` — the whole-system spec, when a stage cites it
-
-`docs/plans/indexer-v2-rust.md` is SUPERSEDED — it inverts the DDL ordering
-and builds demotion. Marked at the top of the file.
+Read in order: `docs/plans/indexer-v2-sequence.md` (master plan, 12 stages),
+then the stage spec under `docs/spec/indexer/`, then `docs/design/indexer-v2.md`.
+`docs/plans/indexer-v2-rust.md` is SUPERSEDED (marked at its top).
 
 ## Slice
 
-Retire v1, implement v2. Stage 0 (all DDL) is applied to `sensei`,
-`sensei_test` and `sensei_e2e` — the three are in sync. Pre-release project:
-`dbd reconcile`, never hand-written migrations.
+Retire v1, implement v2. Pre-release: `dbd reconcile`, never hand-written
+migrations. DDL is applied to `sensei` and `sensei_test`.
 
-## Done
+## Done / remaining
 
-| stage | commit |
+| | |
 |---|---|
-| 0 — all DDL, code graph wiped | `9e6be200` |
-| 1 — scan root | `2a2b15c2` |
-| 2 — scan repo (pure, then walk) | `45ffd35f`, `1991d258` |
-| 3 — structure planner | `ffa27e06` |
-| 1–3 IO half, run against this repo | `a969758f` |
-| 2 S6b/S6c/S6d — lockfile readers | `674af40b` |
-| 2b R12/S10 — `library_content` collapse | `52f9f0af` |
-| 3 S4b/S4c — derived kind, `deferred` dropped | `4cc905f1` |
-| 3 — one `module` kind + `workspace_root_id` | `be3faff0` |
-| 3 — `sibling` dropped | `5dd169c7` |
-| **2b S1/S2 — libraries POPULATED** | `76e24bab` |
-| **2b S7b — local pages + staleness signal** | `48db4934` |
-| **2b S8 — registry URLs** | `fd4cac06` |
-| **2 S8/S11 — dependency edges + projects** | `b6fde6bd` |
-| **2b S9 — source precedence + mismatch label** | `1857da82` |
-| **2b §3b — all three routes verified live** | `ea89b23a` |
-| **2b — markdown fence fidelity in the splitter** | `c82e4eec` |
-| **2b — one parse, three discoverers (verified)** | `fb02ada8` |
-| **2b — reject HTML for a text fetch; manifest-declared URLs** | `91673e09` |
-| **4–7 groundwork — repo-relative path reconstruction** | `e81d58cc` |
-| **4–7 increment 1 — `upsert_node` on `file_id`** | this commit |
-| 3 S4b/S4c — derived folder `kind`, `deferred` dropped | this commit |
-| 2b — `library_content.package_name` | this commit |
-
-Measured against this repo and written to `sensei`: **1 repository, 18
-folders, 2,305 files.** Cold 3.0s, warm 0.44s — the mtime gate skips all 2,305
-sha256 reads on a re-run, which changes no row. `folder_completeness` reports
-expected=731 / decided=0 / incomplete, because nothing is parsed yet.
-
-Dependencies: **3,806 `referenced_libraries` edges across 353 folders, 1,222
-libraries, 47 folder→folder edges** — and **697 of the 3,830 versions written
-came from a LOCKFILE**, not the manifest's range floor. All 510 folders now
-carry a `project_id` (238 projects), which is what gives
-`library_update_scheduler` its 3,806 pins — it had none, so the S8 registry-URL
-path could never fire. Proven end to end against a live registry.
-
-Lockfiles: **128 of 219 direct external deps get a corrected version** —
-`serde = "1"` cleans to `1` and resolves to `1.0.228`. Readers for
-`Cargo.lock`, `bun.lock`, `package-lock.json`; `yarn.lock`/`pnpm-lock.yaml`
-deliberately unclaimed (they fall back to the manifest range, a named gap).
-
-Libraries: POPULATED. Scanning `~/Developer` (129 repos, 510 folders, 56,899
-files, 467 manifests) finds 3 libraries and writes **30 `library_packages`
-rows and 16 `library_content` rows** — rokkit 14 packages / 5 skills / 3
-agents, kavach 14 / 4 / 2, dbd 2 / 1 / 1. The G1 chain answers:
-
-    @rokkit/ui -> rokkit -> its 5 skills and 3 agents
-
-which was unanswerable before. `library_packages` had ZERO rows.
-
-Pages are in: **152** across the three (rokkit 94, dbd 43, kavach 15). The
-acceptance test in 02b §5 passes —
-
-    @rokkit/ui -> rokkit -> the `list` page, with its content
-
-`library_content.package_name` still has no writer: neither the manifest nor
-the local walk states which package a page documents, and inferring it from
-the component name would be the R4 guess.
-
-Two schema-tool limitations found and worked around, worth remembering:
-`dbd reconcile` does not drop a table whose DDL file was deleted, does not
-remove an enum VALUE (it reports the drift in `dbd diff` but will not apply
-it — the type must be recreated by hand), and silently reduces an inline
-`unique nulls not distinct (...)` to a plain unique.
-
-## Remaining
-
-- **STAGE 2b IS COMPLETE**, and all three ingestion routes are verified
-  against live sources:
-
-  | library | local | github @ tag | website |
-  |---|---|---|---|
-  | rokkit | 94 (1.4.1) | **94 @ v1.4.1** | 102 (`latest`) |
-  | kavach | 15 (1.1.3) | **15 @ v1.1.3** | 15 (`latest`) |
-  | dbd | 43 (0.13.0) | **43 @ v0.12.6** | 43 (`latest`) |
-
-  Website URLs come from each library's OWN `sensei.library.json` under
-  `llms.index` — never a guessed `/llms.txt`, never GitHub's `homepage` field.
-  All three publish that manifest at `/` and `/.well-known/`; rokkit and kavach
-  declare an `llms` block, dbd does not. dbd and kavach agree byte-for-byte
-  across routes; rokkit's site carries 12 guides (`accessibility`,
-  `getting-started`, `theming`, …) that are not in `docs/llms` at the tag — a
-  content difference, not a parsing one.
-
-  github resolves a VERSION TAG: `LibSource::GitHubTree`'s `branch` goes into
-  the contents API's `?ref=`, which takes a tag as readily as a branch, so docs
-  pin to the release they describe. dbd is the informative case — its working
-  tree (0.13.0) is ahead of its tag (0.12.6), so the routes produce genuinely
-  different versions rather than merging.
-
-  **How llms content is parsed:** headings only, by LINE PREFIX (`#`/`##`/`###`)
-  — not a markdown parser. No AST, no link resolution inside content, no
-  inline formatting. Fenced blocks are respected so code is stored verbatim;
-  anything beyond headings + fences is unhandled by design.
-
-  **ONE parse, three discoverers — VERIFIED, not assumed.** Only enumeration
-  differs (filesystem walk / contents API / follow index links);
-  `docs_from_source_files`, `parse_single_file`, `make_doc` and `pages_from`
-  are shared. dbd ingested by all three yields the SAME 43 page titles and the
-  same 42 component assignments — identical hash. Its github body hash differs
-  only because the v0.12.6 tag genuinely differs from the working tree (4+/3-
-  lines), which is content, not parsing.
-
-  The `.txt` eligibility rule is now `is_llms_doc_file`, one predicate for all
-  three. It was three separate checks that agreed by coincidence; adding `.md`
-  to any one would have made the same library yield different pages by route.
-
-  Inherent asymmetry, stated: the website route can only find what the index
-  LINKS to — HTTP has no directory listing — while local and github walk the
-  tree. A site publishing unlinked components is under-discovered by design.
-
-  S9 now ranks three real candidates: a pin of 0.12.6 picks GITHUB over the
-  higher-precedence website and the newer local tree — the inversion the rule
-  exists for — and a pin of 0.12.0 gets the closest, labelled.
-- **4–7** — parse, fqn, persist, reconcile. This IS the rest of v1 retirement,
-  and the whole of the 167 failures. SCOPED: **47 functions / 119 sites in
-  `graph.rs`** reference the dropped `nodes.file_path`, in four shapes —
-  16 SELECT (display), 12 `file_path =` (key lookup), 14 `file_path IS NOT NULL`
-  (the COMPLETE-vs-PARTIAL predicate, R10.7d, now `file_id IS NOT NULL`), and
-  5 regex matches.
-
-  **IN PROGRESS — 167 → 149 failing.** Landed: `file_id_for` (fail-closed
-  path→file_id resolution that bridges the repo-relative/folder-relative grain),
-  `upsert_node_ex` writing `file_id` against the already-re-keyed
-  `nodes_unique_identity`, and `test_support::seed_node`/`seed_file` so ~90
-  fixtures model stage 3's barrier in one place. Remaining failures are
-  **75 `column file_path`** (functions not yet migrated — `prune_file_nodes` is
-  next) and **66 `no files row`** (fixtures still skipping the barrier). Each
-  migration moves a failure to the next unmigrated function, which is the
-  expected shape.
-
-  **NOT a mechanical swap.** v1's `nodes.file_path` was REPO-relative;
-  `files.file_path` is FOLDER-relative. They coincide only at a repo root —
-  17 of this repo's 18 folders are modules. The four views exposing it
-  (`symbols`, `graph_nodes`, `doc_coverage`, `file_tags`) now reconstruct the
-  repo-relative form, so the Rust migration can read paths from the views
-  rather than each site re-deriving the join.
-- **8–10** — commands, incremental, cutover.
+| 0–3 structure, 2b libraries | see `git log --grep='indexer-v2'` |
+| **4–7 — the whole graph reads through `file_id`** | `6b5fe44f` |
+| 8 — commands | TODO |
+| 9 — incremental | TODO |
+| 10 — cutover (v1 paths deleted) | TODO |
 
 ## Next command
 
-    cat docs/spec/indexer/02b-library-discovery.md
+    cat docs/plans/indexer-v2-sequence.md      # stage 8
+    cargo test -p senseid --bin senseid         # the baseline to keep green
 
-    # re-run the structure write (defaults to sensei_test):
-    TEST_DATABASE_URL="postgresql://localhost:5432/sensei" \
-      cargo test -p senseid --bin senseid indexer::pipeline::corpus \
-      -- --ignored --nocapture
-    # SENSEI_SCAN_DIR=~/Developer scans every repo, not just this one.
+## Known-broken / known-wrong — do not build on
 
-## Known-broken
-
-**senseid: 2,821 passing / 167 failing** (was 192). Every remaining failure is
-one of stage 0's two drops:
-- `nodes.file_path`, replaced by `file_id` (R13) — v1's `graph.rs` still
-  references it;
-- `node_kind`'s removed `lib_symbol` / `lib_package` values (D12).
-
-Both are stages 4–7 — the retirement itself, not a regression. Stages 1–3 and
-the whole library layer are green.
-
-## Known-wrong IN THE COMMITTED v1 CODE — do not build on
-
-1. **`demote_v2_symbol`** — keeps a node, nulls `file_path`, so `target_id`
-   stays non-null and every consumer reads it as resolved. 67,839 such edges
-   measured. Fixed by `07-reconcile.md` S3-S6 (delete + unresolve, ordered).
-2. **`v2_edges_contributed_by`** narrows with
-   `AND (s.fqn = ANY($3) OR s.resolved = false)` — an edge whose source this
-   file deleted, resolving elsewhere, is never revisited. Fixed by S7.
-3. **11 self-verifying column mappings**, 6 in `v2_symbol_unchanged`. Fixed as
-   a class in `06-persist.md`.
+- **`folder_kind.standalone`** is dead in v2's model but v1 scan paths still
+  write it (`scan.rs` ×4, `project_detail.rs`). It goes in stage 10.
+- **`demote_v2_symbol`** keeps a node and nulls its file, so `target_id` stays
+  non-null and consumers read it as resolved (67,839 edges measured). Fixed by
+  `07-reconcile.md` S3–S6.
+- **`v2_edges_contributed_by`** narrows with `AND (s.fqn = ANY($3) OR
+  s.resolved = false)`, so an edge whose source this file deleted, resolving
+  elsewhere, is never revisited. Fixed by S7.
+- **`library_content.package_name`** has no writer: nothing states which package
+  a page documents, and inferring it from the component name is the R4 guess.
+- **`sensei_test` accumulates fixture rows.** Nothing cleans `_test:` metrics or
+  `test/` repositories, and `metric_status` cross-joins them — it reached 88M
+  rows and a summary query failed on disk. `DELETE FROM sensei.metrics WHERE key
+  LIKE '\_test:%'` + the same for `repositories.repo_key LIKE 'test/%'`.
+- Clippy is not clean on `develop` (80 findings, all in v2 modules with no
+  caller yet — stage 10 wires them). None are in the stage 4–7 diff.
 
 ## Open questions
 
-- ~~`library_content` shape~~ — DECIDED 2026-09-11: collapse into one table
-  with a `kind` discriminator. `library_packages` stays out: it is a grouping,
-  not content, and R10.7g resolves it from a version-less fqn.
-- ~~The 1,121 package-level `libraries` rows~~ — moot: stage 0's wipe emptied
-  the table. `libraries` is now identity-only and rebuilds as such.
-- ~~Every non-root folder is written `kind = 'workspace_member'`~~ — RESOLVED
-  2026-09-11: added the `package` enum value and DERIVED the distinction from
-  declared workspace membership. This repo now reads 8 `workspace_member`
-  (the crates the root Cargo.toml declares) and 9 `package`.
-- ~~`folder_status.deferred`~~ — REMOVED 2026-09-11. v2 stores no folder it
-  does not index, so the value described an unreachable state; it had no
-  writer anywhere in the tree.
-- ~~`folder_kind.sibling`~~ — REMOVED 2026-09-11, same reasoning: v2's
-  `folders` holds repo roots and manifest-bearing modules, so a non-git
-  sibling never gets a row. Zero writers; zero rows in any database.
-- **`folder_kind.standalone` is next, but NOT yet.** v1 scan paths still write
-  it (`scan.rs` x4, `project_detail.rs`). It is dead in v2's model and goes
-  when those paths do, in stages 4-7. Dropping it today breaks running code.
-
-## Measured facts the design rests on
-
-| | |
-|---|---:|
-| this repo: repositories / folders / files | 1 / 18 / 2,305 |
-| pre-wipe `files` rows / indexed / skipped | 48,665 / 48,646 / 19 |
-| pre-wipe nodes COMPLETE / PARTIAL / EXTERNAL / **ORPHANED** | 346,506 / 18,450 / 21,928 / **8,147** |
-| repositories kept through the wipe | 68 |
-| commands / folders / repositories | 572 / 58 / 36 |
-| `library_packages` | **0 rows** |
-| libraries with any URL | **2 of 1,121** |
-| field + enum-variant nodes, any language | **0** (the enum HAS both values — the walk never emitted them) |
-
-## The rules that produced this design
-
-- Mint identity from what the CALL SITE can see. Broke twice before believed.
-- A WRONG edge is worse than a MISSING one (R4).
-- Absence is not evidence — it is scan-order dependent (R6).
-- Defer WORK, never discard EVIDENCE (R11).
-- Derived beats stored: derived state cannot drift from what it derives from.
-- Structure before work: create the rows, then enqueue the tasks (R14).
-- Measure against the live corpus; ASSERT against a fixture.
-- **Inventory what exists before specifying it as new work** — the file entity,
-  the library level, manifest extraction and gitignore handling were each
-  specified as new and each already existed, wired.
-- **A green test may be green for the wrong reason.** `folder_completeness`
-  had a passing test while its `decided` predicate was a tautology; only
-  looking at real data exposed it.
+None blocking. Every earlier one is resolved in the git history.
