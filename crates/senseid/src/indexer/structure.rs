@@ -20,7 +20,7 @@
 //! incremental path needs (09 S4) — one implementation, so a full scan and an
 //! incremental update cannot disagree about what changed.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// What the walk observed about one file. `hash` is the content fingerprint
@@ -97,6 +97,10 @@ pub struct PlannedFolder {
     pub abs_path: PathBuf,
     /// `None` only for the repo root, whose parent is the watch root.
     pub parent: Option<PathBuf>,
+    /// A `sensei.folder_kind` value: `git` for the repo root,
+    /// `workspace_member` for a manifest directory an ancestor DECLARES, and
+    /// `package` for one nothing declares.
+    pub kind: &'static str,
 }
 
 /// One file row to write: which folder owns it, and its path relative to that
@@ -142,7 +146,12 @@ impl FolderPlan {
 /// relative to that folder. That is what makes the recursive rollup in
 /// `sensei.folder_completeness` mean something: a workspace member's progress
 /// is its own, and the repo's is the sum.
-pub fn plan_folders(repo_root: &Path, manifest_dirs: &[PathBuf], files: &[PathBuf]) -> FolderPlan {
+pub fn plan_folders(
+    repo_root: &Path,
+    manifest_dirs: &[PathBuf],
+    declared_members: &BTreeSet<String>,
+    files: &[PathBuf],
+) -> FolderPlan {
     // The repo root always has a row; a manifest sitting AT the root must not
     // produce a second one (folders.abs_path is UNIQUE, and two rows for one
     // directory would split its files across two owners).
@@ -161,6 +170,7 @@ pub fn plan_folders(repo_root: &Path, manifest_dirs: &[PathBuf], files: &[PathBu
         .map(|d| PlannedFolder {
             abs_path: d.clone(),
             parent: if d == repo_root { None } else { deepest_owner(d, &dirs, true) },
+            kind: folder_kind(repo_root, d, declared_members),
         })
         .collect();
 
@@ -175,6 +185,31 @@ pub fn plan_folders(repo_root: &Path, manifest_dirs: &[PathBuf], files: &[PathBu
     files.sort_by(|a, b| a.abs_path.cmp(&b.abs_path));
 
     FolderPlan { folders, files }
+}
+
+/// Classify one folder row against the repo's DECLARED workspace members.
+///
+/// The repo root is the repository itself. Every other row here holds a
+/// manifest, so the only question is whether something declares it:
+///
+/// - **`workspace_member`** — its repo-relative path is in the member list an
+///   ancestor manifest publishes (`package.json` `workspaces`, `Cargo.toml`
+///   `[workspace] members`).
+/// - **`package`** — it has a manifest and nothing declares it. A real build
+///   unit that belongs to no workspace; `marketplace/` in this repo is one.
+///
+/// Matching is on PATH, never on the directory's name or its position in the
+/// tree. `detect_workspace_members` reports repo-relative paths, and matching
+/// on the last segment would make any directory called `one` read as the
+/// declared `packages/one`. Asserting membership nothing declared is the R4
+/// fabrication — a plausible relationship a caller cannot tell from a real one.
+fn folder_kind(repo_root: &Path, dir: &Path, declared_members: &BTreeSet<String>) -> &'static str {
+    if dir == repo_root {
+        return "git";
+    }
+    let Ok(rel) = dir.strip_prefix(repo_root) else { return "package" };
+    let rel = rel.to_string_lossy();
+    if declared_members.contains(rel.as_ref()) { "workspace_member" } else { "package" }
 }
 
 /// The deepest directory in `dirs` that contains `path`.
@@ -355,7 +390,8 @@ mod folder_plan_tests {
 
     #[test]
     fn a_repo_with_no_manifests_is_one_folder_owning_every_file() {
-        let plan = plan_folders(Path::new("/r"), &[], &[p("/r/a.rs"), p("/r/src/b.rs")]);
+        let plan =
+            plan_folders(Path::new("/r"), &[], &BTreeSet::new(), &[p("/r/a.rs"), p("/r/src/b.rs")]);
 
         assert_eq!(folder_names(&plan), vec![("/r".to_string(), None)]);
         assert_eq!(
@@ -372,6 +408,7 @@ mod folder_plan_tests {
         let plan = plan_folders(
             Path::new("/r"),
             &[p("/r/crates/one")],
+            &BTreeSet::new(),
             &[p("/r/README.md"), p("/r/crates/one/src/lib.rs")],
         );
 
@@ -394,6 +431,7 @@ mod folder_plan_tests {
         let plan = plan_folders(
             Path::new("/r"),
             &[p("/r/app"), p("/r/app/plugin")],
+            &BTreeSet::new(),
             &[p("/r/app/x.ts"), p("/r/app/plugin/y.ts")],
         );
 
@@ -419,17 +457,81 @@ mod folder_plan_tests {
         // `/r/Cargo.toml` puts the repo root in manifest_dirs. It already has a
         // folder row; a second one would violate folders.abs_path UNIQUE and,
         // worse, split one directory's files across two owners.
-        let plan = plan_folders(Path::new("/r"), &[p("/r")], &[p("/r/a.rs")]);
+        let plan = plan_folders(Path::new("/r"), &[p("/r")], &BTreeSet::new(), &[p("/r/a.rs")]);
 
         assert_eq!(folder_names(&plan), vec![("/r".to_string(), None)]);
         assert_eq!(owners(&plan), vec![("/r".into(), "a.rs".into())]);
     }
 
     #[test]
+    fn a_declared_member_is_a_workspace_member_and_an_undeclared_one_is_a_package() {
+        // The distinction the `package` enum value exists for. Both hold a
+        // manifest; only one is DECLARED by an ancestor workspace root.
+        // Calling the undeclared one a member asserts a relationship no
+        // manifest states (R4) — `marketplace/` in this repo is exactly that.
+        let declared: BTreeSet<String> = ["crates/one".to_string()].into_iter().collect();
+        let plan = plan_folders(
+            Path::new("/r"),
+            &[p("/r/crates/one"), p("/r/marketplace")],
+            &declared,
+            &[],
+        );
+
+        let kinds: Vec<(String, &str)> = plan
+            .folders
+            .iter()
+            .map(|f| (f.abs_path.to_string_lossy().to_string(), f.kind))
+            .collect();
+        // Shallowest first, so `marketplace` precedes `crates/one`.
+        assert_eq!(
+            kinds,
+            vec![
+                ("/r".to_string(), "git"),
+                ("/r/marketplace".to_string(), "package"),
+                ("/r/crates/one".to_string(), "workspace_member"),
+            ]
+        );
+    }
+
+    #[test]
+    fn membership_is_matched_on_PATH_not_on_the_directory_name() {
+        // `detect_workspace_members` reports repo-relative PATHS. Matching on
+        // the last segment would make any directory called `one` anywhere in
+        // the tree read as the declared member.
+        let declared: BTreeSet<String> = ["packages/one".to_string()].into_iter().collect();
+        let plan = plan_folders(Path::new("/r"), &[p("/r/vendor/one")], &declared, &[]);
+
+        assert_eq!(plan.folders[1].kind, "package", "same name, different path");
+    }
+
+    #[test]
+    fn with_no_declared_members_every_manifest_dir_is_a_package() {
+        // A repo whose root manifest declares no workspace. Nothing is a
+        // member, and saying so is the honest answer.
+        let plan = plan_folders(Path::new("/r"), &[p("/r/a"), p("/r/b")], &BTreeSet::new(), &[]);
+        assert!(plan.folders[1..].iter().all(|f| f.kind == "package"));
+    }
+
+    #[test]
+    fn the_repo_root_is_always_git_even_when_it_declares_itself() {
+        // A root Cargo.toml that is both the workspace root and a package puts
+        // "" or "." in the member set. The root's row is the REPOSITORY.
+        let declared: BTreeSet<String> = ["".to_string(), ".".to_string()].into_iter().collect();
+        let plan = plan_folders(Path::new("/r"), &[p("/r")], &declared, &[]);
+        assert_eq!(plan.folders.len(), 1);
+        assert_eq!(plan.folders[0].kind, "git");
+    }
+
+    #[test]
     fn folders_are_emitted_parents_before_children() {
         // apply_structure sets parent_id at INSERT, so a child written before
         // its parent has no id to point at. Emission order is the guarantee.
-        let plan = plan_folders(Path::new("/r"), &[p("/r/a/b/c"), p("/r/a"), p("/r/a/b")], &[]);
+        let plan = plan_folders(
+            Path::new("/r"),
+            &[p("/r/a/b/c"), p("/r/a"), p("/r/a/b")],
+            &BTreeSet::new(),
+            &[],
+        );
 
         let depths: Vec<usize> =
             plan.folders.iter().map(|f| f.abs_path.components().count()).collect();
@@ -442,7 +544,12 @@ mod folder_plan_tests {
     fn a_file_outside_the_repo_root_is_dropped_not_misattributed() {
         // R4: a wrong owner is worse than a missing row. A path that does not
         // live under the root cannot be made relative to any folder here.
-        let plan = plan_folders(Path::new("/r"), &[], &[p("/elsewhere/a.rs"), p("/r/b.rs")]);
+        let plan = plan_folders(
+            Path::new("/r"),
+            &[],
+            &BTreeSet::new(),
+            &[p("/elsewhere/a.rs"), p("/r/b.rs")],
+        );
 
         assert_eq!(owners(&plan), vec![("/r".into(), "b.rs".into())]);
     }
@@ -453,11 +560,13 @@ mod folder_plan_tests {
         let a = plan_folders(
             Path::new("/r"),
             &[p("/r/z"), p("/r/a")],
+            &BTreeSet::new(),
             &[p("/r/z/1.rs"), p("/r/a/2.rs")],
         );
         let b = plan_folders(
             Path::new("/r"),
             &[p("/r/a"), p("/r/z")],
+            &BTreeSet::new(),
             &[p("/r/a/2.rs"), p("/r/z/1.rs")],
         );
         assert_eq!(folder_names(&a), folder_names(&b));

@@ -12,7 +12,7 @@
 //! It writes repositories, folders and files. It writes NO nodes and NO
 //! edges, and enqueues no parse task: stage 3's barrier ends here (R14).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::scan_repo::{self, RepoScan};
 use super::scan_root::{self, RepoRoot, RootExclusions};
@@ -101,6 +101,24 @@ fn file_facts(path: &std::path::Path, previous: Option<&FileFacts>) -> Option<Fi
     Some(FileFacts { mtime, hash })
 }
 
+/// Every workspace member this repo DECLARES, as repo-relative paths.
+///
+/// Asks every registered adapter, because one repo can declare members in more
+/// than one ecosystem — this one has a Cargo workspace AND npm workspaces, and
+/// taking only the first adapter's answer would label the other's members
+/// `package`.
+///
+/// Reads the filesystem (each adapter opens the root manifest and resolves its
+/// globs), which is why it lives here in the IO half rather than inside
+/// [`structure::plan_folders`], which stays pure and is handed the result.
+fn declared_workspace_members(repo_root: &std::path::Path) -> BTreeSet<String> {
+    crate::adapters::manifest::registered_adapters()
+        .iter()
+        .flat_map(|a| a.detect_workspace_members(repo_root))
+        .map(|m| m.path)
+        .collect()
+}
+
 /// Run stages 1-3 over `scan_dir` and write the structure.
 ///
 /// `root_id` is the `folders_to_watch` row every folder hangs off.
@@ -186,7 +204,8 @@ async fn write_structure(
     scan: &RepoScan,
     out: &mut RepoResult,
 ) -> Result<(), String> {
-    let fplan = structure::plan_folders(repo_root, &scan.manifest_dirs(), &scan.files);
+    let declared = declared_workspace_members(repo_root);
+    let fplan = structure::plan_folders(repo_root, &scan.manifest_dirs(), &declared, &scan.files);
 
     // Folders first, parents before children — `plan_folders` guarantees that
     // ordering, and it is what lets `parent_id` be resolved from the map
@@ -207,7 +226,7 @@ async fn write_structure(
         let id = pg
             .upsert_folder(
                 root_id,
-                "workspace_member",
+                f.kind,
                 &name,
                 &rel.to_string_lossy(),
                 &f.abs_path.to_string_lossy(),
