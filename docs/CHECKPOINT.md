@@ -29,6 +29,8 @@ Retire v1, implement v2. Stage 0 (all DDL) is applied to `sensei`,
 | 1–3 IO half, run against this repo | `a969758f` |
 | 2 S6b/S6c/S6d — lockfile readers | `674af40b` |
 | 2b R12/S10 — `library_content` collapse | `52f9f0af` |
+| 3 S4b/S4c — derived folder `kind`, `deferred` dropped | this commit |
+| 2b — `library_content.package_name` | this commit |
 
 Measured against this repo and written to `sensei`: **1 repository, 18
 folders, 2,305 files.** Cold 3.0s, warm 0.44s — the mtime gate skips all 2,305
@@ -41,8 +43,16 @@ Lockfiles: **128 of 219 direct external deps get a corrected version** —
 deliberately unclaimed (they fall back to the manifest range, a named gap).
 
 Libraries: the SHAPE is settled and the store layer is rebuilt on it —
-`library_content` (one table, `kind` discriminator) under `library_versions`.
-No library rows are WRITTEN by the v2 pipeline yet.
+`library_content` (one table, `kind` discriminator) under `library_versions`,
+with `package_name` so a page can say WHICH published package it documents
+(skills and agents are library-level; docs usually are not). No library rows
+are WRITTEN by the v2 pipeline yet.
+
+Two schema-tool limitations found and worked around, worth remembering:
+`dbd reconcile` does not drop a table whose DDL file was deleted, does not
+remove an enum VALUE (it reports the drift in `dbd diff` but will not apply
+it — the type must be recreated by hand), and silently reduces an inline
+`unique nulls not distinct (...)` to a plain unique.
 
 ## Remaining
 
@@ -94,10 +104,13 @@ the whole library layer are green.
   not content, and R10.7g resolves it from a version-less fqn.
 - ~~The 1,121 package-level `libraries` rows~~ — moot: stage 0's wipe emptied
   the table. `libraries` is now identity-only and rebuilds as such.
-- Every non-root folder is written `kind = 'workspace_member'`. The enum has no
-  value for "holds a manifest but is not a declared member" — `marketplace/`
-  and two fixtures under `crates/senseid/tests/fixtures/` are in that class,
-  and `standalone` means non-git, so it does not fit. Asserted, not derived.
+- ~~Every non-root folder is written `kind = 'workspace_member'`~~ — RESOLVED
+  2026-09-11: added the `package` enum value and DERIVED the distinction from
+  declared workspace membership. This repo now reads 8 `workspace_member`
+  (the crates the root Cargo.toml declares) and 9 `package`.
+- ~~`folder_status.deferred`~~ — REMOVED 2026-09-11. v2 stores no folder it
+  does not index, so the value described an unreachable state; it had no
+  writer anywhere in the tree.
 
 ## Measured facts the design rests on
 

@@ -318,6 +318,10 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
                 Some(&page.doc.content),
                 page.source_type,
                 page.doc.component.as_deref(),
+                // package_name: no ingestion route reports which package a
+                // page documents yet — 02b S1's manifest read supplies it.
+                // `None` is "not stated", never inferred from the title.
+                None,
             )
             .await
         {
@@ -396,7 +400,17 @@ pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let summary = &summary[..summary.len().min(200)];
 
     ctx.pg()
-        .upsert_library_page(&lib_id, title, url, None, Some(summary), Some(content), "http", None)
+        .upsert_library_page(
+            &lib_id,
+            title,
+            url,
+            None,
+            Some(summary),
+            Some(content),
+            "http",
+            None,
+            None, // package_name: the http route does not state one (02b S1)
+        )
         .await
         .map_err(|e| format!("upsert_library_page failed: {}", e))?;
 

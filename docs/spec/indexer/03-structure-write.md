@@ -41,6 +41,30 @@ about. That split is what makes the barrier testable without a database.
 - **S4** (R13). Every file row starts at lifecycle `discovered`. A file row
   with no successor state is a parse task that never ran, and that must be
   distinguishable from a file that does not exist.
+- **S4b.** **`kind` is DERIVED from declared workspace membership, and
+  refreshed on every scan.** A manifest-bearing directory is a
+  `workspace_member` only when an ancestor manifest's member list names it
+  (`package.json` `workspaces`, `Cargo.toml` `[workspace] members`);
+  otherwise it is a `package` — a real build unit that belongs to no
+  workspace. Measured here: 8 declared members under `crates/`, and 9
+  undeclared packages (`app`, `app/src-tauri`, `dojo`, `website`,
+  `marketplace`, `packages/sumi-palette`, `tools/session-report`, two test
+  fixtures). Matching is on the repo-relative PATH, never the directory name.
+
+  Calling an undeclared package a member asserts a relationship no manifest
+  states (R4). The enum previously had no value for it, so every such folder
+  was labelled `workspace_member` by assertion.
+
+  The upsert MUST refresh `kind` on conflict. It is derived, so a folder that
+  leaves a workspace's member list has to stop reading as a member — and a
+  stale `kind` is how the derivation silently had no effect on the first run.
+
+- **S4c.** **There is no "not indexed" folder state.** `folder_status` lost
+  `deferred` ("intentionally not indexed — sibling/standalone"): a `folders`
+  row exists only for a repo root or a manifest-bearing directory, and every
+  one of those IS indexed. A directory we do not index has no row. The value
+  had no writer anywhere in the tree.
+
 - **S5** (R10.7b). Folder status rolls up through `sensei.folder_completeness`,
   the recursive view that already exists. Extend it to carry unparseable
   counts; do not add a second rollup mechanism, and do not write a status
@@ -66,6 +90,9 @@ about. That split is what makes the barrier testable without a database.
 | `expected_files` equals the file count at the barrier | compute it with a second query later |
 | a removed file goes to reconcile, not to `DELETE` | replace the reconcile call with a delete |
 | every new file row is at `discovered` | default the lifecycle to `parsed` |
+| a manifest dir no workspace declares is `package`, not `workspace_member` | label every manifest dir a member |
+| membership matches on PATH, not on the directory's name | match on the last segment — `vendor/one` then reads as the declared `packages/one` |
+| a folder that leaves the member list stops being a `workspace_member` on re-scan | omit `kind` from the upsert's ON CONFLICT |
 | `folder_completeness` returns the new counts with no new column on `folders` | add a status column |
 | re-running the whole stage changes no row | make any write non-idempotent |
 
