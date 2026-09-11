@@ -81,7 +81,9 @@ pub enum FolderKind {
     /// workspace declares a module is a relationship, not what the folder is.
     Module,
     Subtree,
-    Sibling,
+    /// Non-git, no git siblings. Written only by v1 scan paths and retiring
+    /// with them. `Sibling` was alongside it until `sensei.folder_kind` lost
+    /// the value — nothing produced it, so nothing could deserialise into it.
     Standalone,
 }
 

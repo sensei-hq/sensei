@@ -9,11 +9,17 @@ set search_path to sensei, extensions;
 --               package, a Go module. Whether a workspace DECLARES it is a
 --               separate fact; see workspace_root_id.
 --   subtree     a nested git repo / git subtree
---   sibling     non-git, sits beside a repo
---   standalone  non-git, with no git siblings
+--   standalone  non-git, with no git siblings. v1 scan paths still write it;
+--               v2 does not, and it goes when those paths do (stages 4-7).
 --   folder      an ordinary directory inside a repo, holding no manifest.
 --               Written by heal_nested_standalone_roots when a directory
 --               wrongly registered as its own root is demoted back.
+--
+-- `sibling` WAS here, meaning "a non-git directory sitting beside git
+-- folders". Removed: v2's `folders` holds repo roots and manifest-bearing
+-- modules, so a non-git sibling never gets a row. It had NO WRITER anywhere in
+-- the tree — only a wire-enum variant and the parser arm that would have
+-- deserialised it — so it named a value the system could not produce.
 --
 -- `workspace_member` and `package` WERE two values here, splitting modules by
 -- whether an ancestor manifest declared them. Merged into `module`: that split
@@ -24,4 +30,4 @@ set search_path to sensei, extensions;
 -- Cargo.toml declares members and there is no root package.json, which is an
 -- accident of layout and not a rule.
 create type folder_kind
-    as enum ('git', 'module', 'subtree', 'sibling', 'standalone', 'folder');
+    as enum ('git', 'module', 'subtree', 'standalone', 'folder');
