@@ -14,7 +14,7 @@ mod embed;
 mod generate;
 pub(crate) mod helpers;
 mod learn_playbooks;
-mod libraries;
+pub(crate) mod libraries;
 pub(crate) mod metrics;
 mod model_insight;
 mod process;

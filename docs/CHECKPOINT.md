@@ -34,7 +34,8 @@ Retire v1, implement v2. Stage 0 (all DDL) is applied to `sensei`,
 | 3 — `sibling` dropped | `5dd169c7` |
 | **2b S1/S2 — libraries POPULATED** | `76e24bab` |
 | **2b S7b — local pages + staleness signal** | `48db4934` |
-| **2b S8 — registry URLs** | this commit |
+| **2b S8 — registry URLs** | `fd4cac06` |
+| **2 S8/S11 — dependency edges + projects** | this commit |
 | 3 S4b/S4c — derived folder `kind`, `deferred` dropped | this commit |
 | 2b — `library_content.package_name` | this commit |
 
@@ -42,6 +43,13 @@ Measured against this repo and written to `sensei`: **1 repository, 18
 folders, 2,305 files.** Cold 3.0s, warm 0.44s — the mtime gate skips all 2,305
 sha256 reads on a re-run, which changes no row. `folder_completeness` reports
 expected=731 / decided=0 / incomplete, because nothing is parsed yet.
+
+Dependencies: **3,806 `referenced_libraries` edges across 353 folders, 1,222
+libraries, 47 folder→folder edges** — and **697 of the 3,830 versions written
+came from a LOCKFILE**, not the manifest's range floor. All 510 folders now
+carry a `project_id` (238 projects), which is what gives
+`library_update_scheduler` its 3,806 pins — it had none, so the S8 registry-URL
+path could never fire. Proven end to end against a live registry.
 
 Lockfiles: **128 of 219 direct external deps get a corrected version** —
 `serde = "1"` cleans to `1` and resolves to `1.0.228`. Readers for
@@ -81,11 +89,6 @@ it — the type must be recreated by hand), and silently reduces an inline
   wrong-version answer is the R4 failure.
 - **The github and website routes** are now unblocked (S8 supplies the URL)
   but not built — `index_library` still needs a task carrying one.
-- **`referenced_libraries` has no v2 writer.** Dependency detection is not
-  wired into the v2 scan, so no folder → library edges exist, and
-  `library_update_scheduler` (the only caller of the S8 path) has nothing to
-  tick over. The extraction is tested live; it is not yet exercised end to end
-  by a scan.
 - **4–7** — parse, fqn, persist, reconcile. This IS the rest of v1 retirement.
 - **8–10** — commands, incremental, cutover.
 
