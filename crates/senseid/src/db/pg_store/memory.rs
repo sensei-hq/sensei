@@ -40,9 +40,9 @@ impl PgStore {
     }
 
     pub async fn get_memory(&self, id: &uuid::Uuid) -> Result<Option<serde_json::Value>, String> {
-        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, String, String, Option<String>, f64, String, chrono::DateTime<chrono::Utc>)> =
+        let row: Option<(uuid::Uuid, Option<uuid::Uuid>, String, Option<String>, String, String, String, Option<String>, f64, String, chrono::DateTime<chrono::Utc>, Option<uuid::Uuid>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, project_id, scope::text, scope_filter, type::text, title, content, impact, strength::float8, status::text, modified_at FROM sensei.memories WHERE id = $1"
+                "SELECT id, project_id, scope::text, scope_filter, type::text, title, content, impact, strength::float8, status::text, modified_at, namespace_id FROM sensei.memories WHERE id = $1"
             ).bind(id).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.map(
             |(
@@ -57,11 +57,13 @@ impl PgStore {
                 strength,
                 status,
                 modified,
+                namespace_id,
             )| {
                 serde_json::json!({
                     "id": id, "project_id": pid, "scope": scope, "scope_filter": filter,
                     "type": mtype, "title": title, "content": content, "impact": impact,
                     "strength": strength, "status": status, "modified_at": modified.to_rfc3339(),
+                    "namespace_id": namespace_id,
                 })
             },
         ))
