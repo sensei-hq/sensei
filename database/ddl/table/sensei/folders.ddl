@@ -66,7 +66,7 @@ create index if not exists folders_workspace_root_id_idx
 
 comment on table folders is
 'Content: discovered filesystem tree. Every entry was found by scanning a watched root.
-- kind: git (repository), module (a manifest-bearing build unit inside a repo), subtree (nested git repo), sibling (non-git sibling of git folders), standalone (non-git, no git siblings), folder (ordinary directory, no manifest)
+- kind: git (repository), module (a manifest-bearing build unit inside a repo), subtree (nested git repo), standalone (non-git, no git siblings), folder (ordinary directory, no manifest)
 - workspace_root_id: which workspace declares this module; null = declared by nothing
 - status: discovered (found), queued (files counted), indexing (in progress), indexed (complete), failed, archived (directory gone, history kept)
 - stack: detected technology stack ["rust", "typescript", "svelte"] — set by ProcessGitFolder
@@ -84,7 +84,7 @@ comment on column folders.parent_id
 comment on column folders.project_id
      is 'Foreign key to projects — groups this folder into a project. Nullable.';
 comment on column folders.kind
-     is 'What this folder IS: git (repository), module (a manifest-bearing build unit inside a repo — a crate, an npm package, a Go module), subtree (nested git repo), sibling (non-git sibling), standalone (non-git, no git siblings), folder (an ordinary directory inside a repo, no manifest).
+     is 'What this folder IS: git (repository), module (a manifest-bearing build unit inside a repo — a crate, an npm package, a Go module), subtree (nested git repo), standalone (non-git, no git siblings — written only by v1 scan paths, retiring with them), folder (an ordinary directory inside a repo, no manifest).
 
 It does NOT say who claims the folder. Whether a workspace declares a module is a relationship and lives in workspace_root_id. `workspace_member` and `package` were once two values here; merged, because that split flips for several folders the moment a `workspaces` array is added — nothing about the directory changes — and a kind that moves under an unrelated edit describes the wrong thing.';
 comment on column folders.workspace_root_id

@@ -111,6 +111,12 @@ the whole library layer are green.
 - ~~`folder_status.deferred`~~ — REMOVED 2026-09-11. v2 stores no folder it
   does not index, so the value described an unreachable state; it had no
   writer anywhere in the tree.
+- ~~`folder_kind.sibling`~~ — REMOVED 2026-09-11, same reasoning: v2's
+  `folders` holds repo roots and manifest-bearing modules, so a non-git
+  sibling never gets a row. Zero writers; zero rows in any database.
+- **`folder_kind.standalone` is next, but NOT yet.** v1 scan paths still write
+  it (`scan.rs` x4, `project_detail.rs`). It is dead in v2's model and goes
+  when those paths do, in stages 4-7. Dropping it today breaks running code.
 
 ## Measured facts the design rests on
 
