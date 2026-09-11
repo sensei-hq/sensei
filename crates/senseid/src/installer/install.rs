@@ -54,9 +54,24 @@ const HOOK_FILES: &[&str] =
     &["session-start", "user-prompt", "pre-compact", "pre-tool", "post-tool", "run-hook.cmd"];
 
 /// Install hook scripts by downloading from the marketplace GitHub repo.
+/// 
+/// Security: Hooks are executable code invoked by Claude on lifecycle events.
+/// This function:
+/// 1. Fetches the catalog to determine the pinned marketplace version
+/// 2. Downloads hooks from that specific git tag (not the mutable main branch)
+/// 3. Validates that downloads succeed before writing to disk
+/// 4. Sets executable permissions only after successful write
 fn install_hooks() -> Result<u32, String> {
     let hooks_dir = plugin_dir().join("hooks");
     fs::create_dir_all(&hooks_dir).map_err(|e| e.to_string())?;
+
+    // Fetch catalog first to ensure we have a pinned version.
+    // This also clears stale cache entries if the version changed.
+    let catalog = fetch_catalog()?;
+    let version = catalog.version.as_deref().unwrap_or("");
+    if version.is_empty() {
+        return Err("marketplace catalog has no version — refusing to install hooks from unpinned source".to_string());
+    }
 
     let cache = cache_dir();
     let mut count = 0u32;
@@ -64,6 +79,12 @@ fn install_hooks() -> Result<u32, String> {
     for name in HOOK_FILES {
         let repo_path = format!("plugins/sensei/hooks/{}", name);
         let content = super::catalog::load_or_download(&cache, &repo_path)?;
+        
+        // Validate content is non-empty before writing executable files
+        if content.trim().is_empty() {
+            return Err(format!("{}: downloaded content is empty", name));
+        }
+        
         let path = hooks_dir.join(name);
         fs::write(&path, &content).map_err(|e| format!("{}: {}", name, e))?;
         #[cfg(unix)]
@@ -75,6 +96,13 @@ fn install_hooks() -> Result<u32, String> {
         }
         count += 1;
     }
+    
+    tracing::info!(
+        version = %version,
+        hooks = count,
+        "installed hooks from pinned marketplace version"
+    );
+    
     Ok(count)
 }
 
