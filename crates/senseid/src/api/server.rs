@@ -4,7 +4,7 @@ use crate::tasks::executor::{TaskContext, spawn_workers};
 use crate::tasks::queue::TaskQueue;
 use axum::http::Method;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 
 /// Write a single-line startup error to `<sensei_dir>/startup-error.log` so
 /// users can find it without scraping launchd / brew-services log paths.
@@ -115,22 +115,71 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
     // server hit. Curl and Chrome accept the wildcard, which is why this only
     // bit in the Tauri app. List the methods we actually serve; same fix for
     // headers since Safari has the same wildcard-rejection there.
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods([
-            Method::GET,
-            Method::POST,
-            Method::PUT,
-            Method::PATCH,
-            Method::DELETE,
-            Method::OPTIONS,
-            Method::HEAD,
-        ])
-        .allow_headers([
-            axum::http::header::CONTENT_TYPE,
-            axum::http::header::ACCEPT,
-            axum::http::header::AUTHORIZATION,
-        ]);
+    //
+    // Security: restrict CORS origins to loopback addresses only when binding to
+    // loopback. This prevents browser-based attacks where a malicious website
+    // makes requests to the local daemon (e.g., to enumerate MCP servers with
+    // their environment variables). Non-loopback deployments use permissive CORS
+    // but emit a warning that network-level protection is required.
+    let cors = if is_loopback {
+        // Loopback binding: restrict to loopback origins only. The Tauri app,
+        // CLI, and MCP server all connect from localhost, so this is transparent
+        // to legitimate clients while blocking cross-origin browser requests from
+        // arbitrary websites. Use a predicate to allow any port on loopback hosts.
+        CorsLayer::new()
+            .allow_origin(tower_http::cors::AllowOrigin::predicate(
+                |origin: &axum::http::HeaderValue, _parts: &axum::http::request::Parts| {
+                    origin
+                        .to_str()
+                        .ok()
+                        .and_then(|s| s.parse::<axum::http::Uri>().ok())
+                        .and_then(|uri| uri.host().map(|h| h.to_string()))
+                        .map(|host| {
+                            matches!(
+                                host.as_str(),
+                                "localhost" | "127.0.0.1" | "[::1]" | "::1" | "tauri"
+                            )
+                        })
+                        .unwrap_or(false)
+                },
+            ))
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::PATCH,
+                Method::DELETE,
+                Method::OPTIONS,
+                Method::HEAD,
+            ])
+            .allow_headers([
+                axum::http::header::CONTENT_TYPE,
+                axum::http::header::ACCEPT,
+                axum::http::header::AUTHORIZATION,
+            ])
+    } else {
+        // Non-loopback binding: use permissive CORS. The operator has explicitly
+        // opted into network exposure via SENSEI_BIND_HOST and must provide
+        // network-level protection (firewall, VPN, etc.). The warning above
+        // documents this requirement.
+        use tower_http::cors::Any;
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::PATCH,
+                Method::DELETE,
+                Method::OPTIONS,
+                Method::HEAD,
+            ])
+            .allow_headers([
+                axum::http::header::CONTENT_TYPE,
+                axum::http::header::ACCEPT,
+                axum::http::header::AUTHORIZATION,
+            ])
+    };
 
     // Connect to the DB, retrying briefly so a cold-boot race — the daemon
     // coming up before Postgres accepts connections (both start together as
