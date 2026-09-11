@@ -41,23 +41,39 @@ about. That split is what makes the barrier testable without a database.
 - **S4** (R13). Every file row starts at lifecycle `discovered`. A file row
   with no successor state is a parse task that never ran, and that must be
   distinguishable from a file that does not exist.
-- **S4b.** **`kind` is DERIVED from declared workspace membership, and
-  refreshed on every scan.** A manifest-bearing directory is a
-  `workspace_member` only when an ancestor manifest's member list names it
-  (`package.json` `workspaces`, `Cargo.toml` `[workspace] members`);
-  otherwise it is a `package` — a real build unit that belongs to no
-  workspace. Measured here: 8 declared members under `crates/`, and 9
-  undeclared packages (`app`, `app/src-tauri`, `dojo`, `website`,
-  `marketplace`, `packages/sumi-palette`, `tools/session-report`, two test
-  fixtures). Matching is on the repo-relative PATH, never the directory name.
+- **S4b.** **`kind` says WHAT a folder is; membership is a RELATIONSHIP.**
+  Every manifest-bearing directory inside a repo is a `module` — a crate, an
+  npm package, a Go module. Whether a workspace declares it is recorded
+  separately, in `folders.workspace_root_id`: the folder whose manifest lists
+  it, or NULL when nothing does.
 
-  Calling an undeclared package a member asserts a relationship no manifest
-  states (R4). The enum previously had no value for it, so every such folder
-  was labelled `workspace_member` by assertion.
+  `workspace_member` and `package` were briefly two `kind` values. Merged,
+  because the split flips for several folders the moment someone adds a
+  `workspaces` array — nothing about any directory changes — and a `kind` that
+  moves under an unrelated edit is describing the wrong thing. It also read as
+  "Rust vs Node" in this repo purely because the root `Cargo.toml` declares
+  members and there is NO root `package.json`, which is an accident of layout,
+  not a rule.
 
-  The upsert MUST refresh `kind` on conflict. It is derived, so a folder that
-  leaves a workspace's member list has to stop reading as a member — and a
-  stale `kind` is how the derivation silently had no effect on the first run.
+  Storing WHICH root rather than a boolean makes "the members of this
+  workspace" one indexed lookup, and leaves room for nested workspace roots
+  without a schema change.
+
+  Measured here: 17 modules, 8 declared by the repo root (`crates/*`), 9
+  undeclared (`app`, `app/src-tauri`, `dojo`, `website`, `marketplace`,
+  `packages/sumi-palette`, `tools/session-report`, two test fixtures).
+
+  Derivation matches on the repo-relative PATH, never the directory name.
+  Asserting membership no manifest states is the R4 fabrication.
+
+  Both `kind` and `workspace_root_id` are REFRESHED on the upsert — assigned,
+  not COALESCEd. They are derived, so a module dropped from a `workspaces`
+  array has to stop reading as a member. A stale value is how the derivation
+  silently had no effect on its first run.
+
+  KNOWN GAP: only the repo root's manifest is read (`detect_workspace_members`
+  takes a repo root), so a nested workspace root's members resolve as
+  undeclared. Named, not silent.
 
 - **S4c.** **There is no "not indexed" folder state.** `folder_status` lost
   `deferred` ("intentionally not indexed — sibling/standalone"): a `folders`
@@ -90,9 +106,10 @@ about. That split is what makes the barrier testable without a database.
 | `expected_files` equals the file count at the barrier | compute it with a second query later |
 | a removed file goes to reconcile, not to `DELETE` | replace the reconcile call with a delete |
 | every new file row is at `discovered` | default the lifecycle to `parsed` |
-| a manifest dir no workspace declares is `package`, not `workspace_member` | label every manifest dir a member |
+| every manifest dir is `module`, declared or not | reintroduce a second kind for membership |
+| a declared module names WHICH workspace root; an undeclared one names none | store a boolean instead of the root |
 | membership matches on PATH, not on the directory's name | match on the last segment — `vendor/one` then reads as the declared `packages/one` |
-| a folder that leaves the member list stops being a `workspace_member` on re-scan | omit `kind` from the upsert's ON CONFLICT |
+| a module that leaves the member list loses `workspace_root_id` on re-scan | COALESCE it in the upsert's ON CONFLICT |
 | `folder_completeness` returns the new counts with no new column on `folders` | add a status column |
 | re-running the whole stage changes no row | make any write non-idempotent |
 

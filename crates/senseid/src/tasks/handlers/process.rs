@@ -882,7 +882,7 @@ pub async fn reconcile_repo_identity(
                 .pg()
                 .upsert_subfolder_kind(
                     &root_id,
-                    "workspace_member",
+                    "module",
                     &name,
                     &rel,
                     &sub_abs,
@@ -2102,15 +2102,15 @@ mod tests {
         // structural `folder`), keeping its inferred role.
         assert_eq!(
             kind_of(&ctx, &root.join("crates/mylib").to_string_lossy()).await.as_deref(),
-            Some("workspace_member")
+            Some("module")
         );
         assert_eq!(
             kind_of(&ctx, &root.join("crates/mytool").to_string_lossy()).await.as_deref(),
-            Some("workspace_member")
+            Some("module")
         );
         assert_eq!(
             kind_of(&ctx, &root.join("site").to_string_lossy()).await.as_deref(),
-            Some("workspace_member")
+            Some("module")
         );
 
         ctx.pg().remove_watch_root(&root_id).await.ok();

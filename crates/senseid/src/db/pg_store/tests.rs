@@ -3035,7 +3035,16 @@ async fn folder_upsert_and_list() {
     let path = format!("/_test/folder_root_{}", uuid::Uuid::new_v4());
     let rid = s.add_watch_root(&path, "test_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "myrepo", "myrepo", &format!("{}/myrepo", path), None, None)
+        .upsert_folder(
+            &rid,
+            "git",
+            "myrepo",
+            "myrepo",
+            &format!("{}/myrepo", path),
+            None,
+            None,
+            None,
+        )
         .await
         .unwrap();
     let folders = s.list_folders_by_root(&rid).await.unwrap();
@@ -3063,7 +3072,8 @@ async fn list_pending_folders_returns_only_non_terminal_status() {
     ] {
         let name = format!("repo_{}", suffix);
         let abs_path = format!("{}/{}", root_path, name);
-        let fid = s.upsert_folder(&rid, "git", &name, &name, &abs_path, None, None).await.unwrap();
+        let fid =
+            s.upsert_folder(&rid, "git", &name, &name, &abs_path, None, None, None).await.unwrap();
         s.update_folder_status(&fid, status).await.unwrap();
     }
 
@@ -3108,7 +3118,7 @@ async fn update_folder_status_round_trips() {
     let root_path = format!("/_test/status_{}", uuid::Uuid::new_v4().simple());
     let rid = s.add_watch_root(&root_path, "status_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None)
+        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None, None)
         .await
         .unwrap();
 
@@ -3134,7 +3144,7 @@ async fn get_folder_status_reads_back_status_and_is_none_for_missing() {
     let root_path = format!("/_test/getstatus_{}", uuid::Uuid::new_v4().simple());
     let rid = s.add_watch_root(&root_path, "getstatus_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None)
+        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None, None)
         .await
         .unwrap();
 
@@ -6223,7 +6233,7 @@ async fn repo_anchor_rolls_monorepo_member_to_git_root() {
     let s = pg_store().await;
     let b = "/_test/anchor_mono";
     let root = mk_anchor_folder(&s, &format!("{b}/mono"), "git", None).await;
-    mk_anchor_folder(&s, &format!("{b}/mono/packages/pkg"), "workspace_member", None).await;
+    mk_anchor_folder(&s, &format!("{b}/mono/packages/pkg"), "module", None).await;
     let a = s.resolve_repo_anchor(&format!("{b}/mono/packages/pkg/lib.ts")).await.unwrap().unwrap();
     assert_eq!(a.repo_folder_id, root, "monorepo member rolls up to the git root, not the member");
 }
@@ -7160,7 +7170,7 @@ async fn get_project_repos_excludes_subfolder_tree() {
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) VALUES
                ('00000000-0000-0000-0000-000000000001','git'::sensei.folder_kind,'the-repo','the-repo',$1,$3),
                ('00000000-0000-0000-0000-000000000001','folder'::sensei.folder_kind,'subdir','subdir',$2,$3),
-               ('00000000-0000-0000-0000-000000000001','workspace_member'::sensei.folder_kind,'member','member',$4,$3)"
+               ('00000000-0000-0000-0000-000000000001','module'::sensei.folder_kind,'member','member',$4,$3)"
         ).bind(&git_abs).bind(&sub_abs).bind(pid).bind(&mem_abs).execute(s.pool()).await.unwrap();
 
     let repos = s.get_project_repos(&pid).await.unwrap();
@@ -7170,10 +7180,7 @@ async fn get_project_repos_excludes_subfolder_tree() {
     assert!(!kinds.iter().any(|k| k == "folder"), "kind=folder subfolders excluded: {kinds:?}");
     // D5a: monorepo members are the structural tree, NOT separate repos — else
     // a monorepo with N members regresses to an N+1-repo project (#62).
-    assert!(
-        !kinds.iter().any(|k| k == "workspace_member"),
-        "kind=workspace_member excluded from repos: {kinds:?}"
-    );
+    assert!(!kinds.iter().any(|k| k == "module"), "kind=module excluded from repos: {kinds:?}");
 
     sqlx_core::query::query("DELETE FROM sensei.folders WHERE project_id = $1")
         .bind(pid)
@@ -7214,17 +7221,13 @@ async fn upsert_subfolder_kind_relabels_structural_but_preserves_root() {
     let a = format!("/_test/sfk-a-{}", uuid::Uuid::new_v4());
     s.upsert_subfolder(&rid, "a", "a", &a, None, None).await.unwrap();
     assert_eq!(kind_at(&s, a.clone()).await, "folder", "first upsert is a plain folder");
-    s.upsert_subfolder_kind(&rid, "workspace_member", "a", "a", &a, None, None).await.unwrap();
-    assert_eq!(
-        kind_at(&s, a.clone()).await,
-        "workspace_member",
-        "relabelled folder → workspace_member"
-    );
+    s.upsert_subfolder_kind(&rid, "module", "a", "a", &a, None, None).await.unwrap();
+    assert_eq!(kind_at(&s, a.clone()).await, "module", "relabelled folder → workspace_member");
 
     // A nested project root (subtree) must NOT be reclassified by a member upsert.
     let b = format!("/_test/sfk-b-{}", uuid::Uuid::new_v4());
     s.upsert_repo_kind(&rid, "subtree", "b", &b).await.unwrap();
-    s.upsert_subfolder_kind(&rid, "workspace_member", "b", "b", &b, None, None).await.unwrap();
+    s.upsert_subfolder_kind(&rid, "module", "b", "b", &b, None, None).await.unwrap();
     assert_eq!(
         kind_at(&s, b.clone()).await,
         "subtree",
@@ -7641,20 +7644,40 @@ async fn list_projects_under_filters_by_folder_path_boundary() {
 
     // A: folder strictly beneath `under`.
     let a = s.ensure_test_project(&format!("fpu-a-{short}")).await.unwrap();
-    s.upsert_folder(&root, "git", "a", "x/a", &format!("{under}/a"), None, Some(&a)).await.unwrap();
+    s.upsert_folder(&root, "git", "a", "x/a", &format!("{under}/a"), None, Some(&a), None)
+        .await
+        .unwrap();
     // B: folder exactly equal to `under` (boundary: abs_path == under).
     let b = s.ensure_test_project(&format!("fpu-b-{short}")).await.unwrap();
-    s.upsert_folder(&root, "git", "b", "x", &under, None, Some(&b)).await.unwrap();
+    s.upsert_folder(&root, "git", "b", "x", &under, None, Some(&b), None).await.unwrap();
     // C: folder elsewhere under base but outside `under`.
     let c = s.ensure_test_project(&format!("fpu-c-{short}")).await.unwrap();
-    s.upsert_folder(&root, "git", "c", "elsewhere", &format!("{base}/elsewhere"), None, Some(&c))
-        .await
-        .unwrap();
+    s.upsert_folder(
+        &root,
+        "git",
+        "c",
+        "elsewhere",
+        &format!("{base}/elsewhere"),
+        None,
+        Some(&c),
+        None,
+    )
+    .await
+    .unwrap();
     // D: sibling sharing the `under` prefix textually but across a path boundary.
     let d = s.ensure_test_project(&format!("fpu-d-{short}")).await.unwrap();
-    s.upsert_folder(&root, "git", "d", "x-other", &format!("{under}-other/z"), None, Some(&d))
-        .await
-        .unwrap();
+    s.upsert_folder(
+        &root,
+        "git",
+        "d",
+        "x-other",
+        &format!("{under}-other/z"),
+        None,
+        Some(&d),
+        None,
+    )
+    .await
+    .unwrap();
 
     let scoped: Vec<String> = s
         .list_projects_under(Some(&under))
@@ -7712,13 +7735,22 @@ async fn list_root_folders_excludes_nested_folder_descendants() {
     let p = s.ensure_test_project(&format!("rootf-{short}")).await.unwrap();
 
     // One git repo root …
-    s.upsert_folder(&root, "git", "repo", "repo", &format!("{base}/repo"), None, Some(&p))
+    s.upsert_folder(&root, "git", "repo", "repo", &format!("{base}/repo"), None, Some(&p), None)
         .await
         .unwrap();
     // … plus one standalone root …
-    s.upsert_folder(&root, "standalone", "lib", "lib", &format!("{base}/lib"), None, Some(&p))
-        .await
-        .unwrap();
+    s.upsert_folder(
+        &root,
+        "standalone",
+        "lib",
+        "lib",
+        &format!("{base}/lib"),
+        None,
+        Some(&p),
+        None,
+    )
+    .await
+    .unwrap();
     // … plus many nested `kind:'folder'` descendants (the bloat).
     for i in 0..30 {
         s.upsert_folder(
@@ -7729,6 +7761,7 @@ async fn list_root_folders_excludes_nested_folder_descendants() {
             &format!("{base}/repo/src/d{i}"),
             None,
             Some(&p),
+            None,
         )
         .await
         .unwrap();

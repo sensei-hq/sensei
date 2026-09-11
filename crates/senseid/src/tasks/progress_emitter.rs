@@ -276,7 +276,7 @@ async fn run(
 
 fn kind_from_str(s: &str) -> FolderKind {
     match s {
-        "workspace_member" => FolderKind::WorkspaceMember,
+        "module" => FolderKind::Module,
         "subtree" => FolderKind::Subtree,
         "sibling" => FolderKind::Sibling,
         "standalone" => FolderKind::Standalone,
