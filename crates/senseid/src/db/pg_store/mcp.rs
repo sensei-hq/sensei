@@ -353,6 +353,10 @@ impl PgStore {
     /// `command`/`args`/`env`/`config_source`/`last_seen_at` refreshed, but
     /// `enabled` is preserved (a user's manual toggle survives a re-scan).
     ///
+    /// **Security**: Project-scope servers default to `enabled=false` to
+    /// establish a trust boundary — repository-controlled MCP configuration
+    /// must not execute without explicit user approval.
+    ///
     /// Args:
     /// - `acp_family`  — 'claude' | 'zed' | 'cursor' | 'codex' | 'opencode' | 'other'
     /// - `mcp_key`     — key in the ACP config, e.g. 'sensei', 'postgres'
@@ -425,10 +429,12 @@ impl PgStore {
             .map_err(|e| e.to_string())?;
             existing_id
         } else {
+            // Project-scope servers default to disabled; user-scope default to enabled.
+            let default_enabled = project_id.is_none();
             let (new_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
                 "INSERT INTO sensei.mcp_servers
-                    (acp_family, mcp_key, scope, project_id, config_source, command, args, env)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    (acp_family, mcp_key, scope, project_id, config_source, command, args, env, enabled)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                  RETURNING id",
             )
             .bind(acp_family)
@@ -439,6 +445,7 @@ impl PgStore {
             .bind(command)
             .bind(args)
             .bind(env)
+            .bind(default_enabled)
             .fetch_one(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;

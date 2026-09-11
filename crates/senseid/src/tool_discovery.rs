@@ -287,6 +287,12 @@ pub async fn run_capture(pg: &PgStore) -> Result<CaptureCounts, String> {
         let Some(id) = s["id"].as_str().and_then(|x| uuid::Uuid::parse_str(x).ok()) else {
             continue;
         };
+        // Security: Only probe enabled servers. Project-scope servers default to
+        // disabled, establishing a trust boundary for repository-controlled config.
+        let enabled = s["enabled"].as_bool().unwrap_or(false);
+        if !enabled {
+            continue;
+        }
         let family = s["acp_family"].as_str().unwrap_or("claude").to_string();
         let mcp_key = s["mcp_key"].as_str().unwrap_or("").to_string();
         let command = s["command"].as_str().unwrap_or("").to_string();

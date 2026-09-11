@@ -118,6 +118,16 @@ pub(crate) async fn get_tools(
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "mcp server not found"))?;
 
+    // Security: Only probe enabled servers. Project-scope servers default to
+    // disabled, establishing a trust boundary for repository-controlled config.
+    let enabled = server.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !enabled {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "server is disabled; enable it before probing",
+        ));
+    }
+
     let command = server.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let args: Vec<String> = server
         .get("args")
