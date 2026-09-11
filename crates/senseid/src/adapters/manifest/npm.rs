@@ -133,6 +133,13 @@ impl ManifestAdapter for NpmManifestAdapter {
         None
     }
 
+    fn root_package(&self, repo_root: &Path) -> Option<PackageInfo> {
+        // Same reuse as cargo: `package_json_member` already reads
+        // `"private": true`, which is what excludes rokkit's and kavach's
+        // roots while keeping a publishable one.
+        package_json_member(repo_root, "")
+    }
+
     fn detect_workspace_members(&self, repo_root: &Path) -> Vec<PackageInfo> {
         let mut members = Vec::new();
 

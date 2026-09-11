@@ -125,13 +125,48 @@ pub async fn ingest_manifest_at(
         }
     };
 
-    let np = match pg.replace_library_packages(library_id, "manifest", &m.packages).await {
+    // THE GROUPING, from two sources with DISTINCT provenance (S2, S4).
+    //
+    // `source` is not decoration: a manifest is the library speaking about
+    // itself, a `workspaces` array is the same repo declaring it elsewhere,
+    // and a user grouping is a local judgement. They differ in authority and
+    // must stay distinguishable forever. `replace_library_packages` is
+    // whole-set PER SOURCE, so the two coexist without clobbering.
+    let mut np = match pg.replace_library_packages(library_id, "manifest", &m.packages).await {
         Ok(n) => n,
         Err(e) => {
             tracing::warn!(error = %e, root = %root.display(), "ingest_manifest: replace_library_packages failed");
             0
         }
     };
+
+    // Measured: none of rokkit's, kavach's or dbd's manifests declares
+    // `packages`, so without this the grouping stays empty and the
+    // node -> package -> library chain is unwalkable. Asked unconditionally
+    // rather than only when the manifest is silent: a member added to the
+    // workspace after the manifest was written should still group, and the
+    // per-source replace keeps the manifest's own claims intact.
+    // Members PLUS the workspace root's own package. A root is not in its own
+    // member list, so without this `dbd-cli` — publishable and named unlike
+    // its library — grouped under nothing and a dependency on it reached no
+    // library at all. `private` still decides: rokkit's root (`rokkit`) and
+    // kavach's (`kavach-workspace`) are both private container names and stay
+    // out.
+    let mut members = crate::config::detector::detect_workspace_members(root);
+    members.extend(
+        crate::adapters::manifest::registered_adapters()
+            .iter()
+            .filter_map(|a| a.root_package(root)),
+    );
+    let from_workspace = group_from_workspace(&members);
+    if !from_workspace.is_empty() {
+        match pg.replace_library_packages(library_id, "workspace", &from_workspace).await {
+            Ok(n) => np += n,
+            Err(e) => {
+                tracing::warn!(error = %e, root = %root.display(), "ingest_manifest: replace_library_packages(workspace) failed");
+            }
+        }
+    }
 
     Some((ns, na, np))
 }
@@ -299,5 +334,111 @@ mod tests {
     fn no_manifest_is_none() {
         let dir = tempfile::tempdir().unwrap();
         assert!(read_manifest(dir.path()).is_none());
+    }
+}
+
+/// The packages a library publishes, derived from its WORKSPACE MEMBERS (02b S2).
+/// PURE.
+///
+/// The manifest is the first source of this list, and measured against the
+/// three real `sensei.library.json` files on this machine — rokkit, kavach,
+/// dbd — **not one of them declares `packages`**. So the manifest alone leaves
+/// `library_packages` empty, and with it the whole
+/// node → package → library → content chain.
+///
+/// A `workspaces` array IS a declaration; it is simply stated in a different
+/// file. `rokkit/package.json` lists `./packages/*`, which resolves to the 14
+/// published `@rokkit/*` names that dependency detection already records — the
+/// two identities meet with nothing inferred.
+///
+/// PRIVATE MEMBERS ARE EXCLUDED. `@rokkit/learn` is `apps/learn` with
+/// `"private": true` — a first-party app, never published, so no dependency
+/// file can ever name it. The grouping key is the package name a REFERENCE can
+/// see (02b §4), and a name nothing can reference is not one.
+///
+/// NEVER a prefix rule (S3). `@rokkit/*` → rokkit is tempting and it is a
+/// guess: `@types/node` belongs to no "types" library, and gateway's crates
+/// share no prefix at all. An invented grouping is a fabricated fact about a
+/// dependency, and it would be believed.
+pub fn group_from_workspace(members: &[crate::types::PackageInfo]) -> Vec<String> {
+    let mut names: Vec<String> = members
+        .iter()
+        .filter(|m| !m.private)
+        .map(|m| m.name.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .collect();
+    // Sorted and deduped so the grouping cannot depend on the order the
+    // adapters happened to yield members in (R6).
+    names.sort();
+    names.dedup();
+    names
+}
+
+#[cfg(test)]
+mod grouping_tests {
+    use super::*;
+    use crate::types::PackageInfo;
+
+    fn pkg(name: &str, private: bool) -> PackageInfo {
+        PackageInfo {
+            name: name.to_string(),
+            path: format!("packages/{name}"),
+            version: None,
+            pkg_type: "npm_workspace".into(),
+            private,
+        }
+    }
+
+    #[test]
+    fn the_published_members_become_the_librarys_packages() {
+        let got = group_from_workspace(&[
+            pkg("@rokkit/ui", false),
+            pkg("@rokkit/core", false),
+            pkg("@rokkit/actions", false),
+        ]);
+        assert_eq!(got, vec!["@rokkit/actions", "@rokkit/core", "@rokkit/ui"]);
+    }
+
+    #[test]
+    fn a_private_member_is_not_a_package_anything_can_reference() {
+        // `@rokkit/learn` is apps/learn with "private": true — a first-party
+        // app, never published, so no dependency file can name it. Grouping it
+        // would add a row no reference can ever reach.
+        let got = group_from_workspace(&[pkg("@rokkit/ui", false), pkg("@rokkit/learn", true)]);
+        assert_eq!(got, vec!["@rokkit/ui"]);
+    }
+
+    #[test]
+    fn packages_sharing_no_prefix_still_group_when_a_workspace_declares_them() {
+        // S3's counterpart: grouping is DECLARED, so it works for libraries
+        // whose packages are not named after them. A prefix rule fails here.
+        let got = group_from_workspace(&[
+            pkg("dbd-core", false),
+            pkg("@jerrythomas/adapters", false),
+            pkg("totally-unrelated", false),
+        ]);
+        assert_eq!(got.len(), 3, "no prefix agreement required");
+    }
+
+    #[test]
+    fn the_order_members_arrive_in_cannot_change_the_grouping() {
+        // R6/A6. Adapters are asked in registry order; that must not leak.
+        let a = group_from_workspace(&[pkg("z", false), pkg("a", false), pkg("m", false)]);
+        let b = group_from_workspace(&[pkg("a", false), pkg("m", false), pkg("z", false)]);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn one_package_declared_by_two_adapters_yields_one_row() {
+        // A repo with both a Cargo workspace and npm workspaces is asked of
+        // every adapter, and the lists can overlap.
+        let got = group_from_workspace(&[pkg("dup", false), pkg("dup", false)]);
+        assert_eq!(got, vec!["dup"]);
+    }
+
+    #[test]
+    fn a_repo_with_no_workspace_groups_nothing_and_that_is_not_an_error() {
+        // S5: an ungrouped package stays ungrouped. COMPLETE, not wrong.
+        assert!(group_from_workspace(&[]).is_empty());
     }
 }
