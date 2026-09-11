@@ -32,7 +32,8 @@ Retire v1, implement v2. Stage 0 (all DDL) is applied to `sensei`,
 | 3 S4b/S4c — derived kind, `deferred` dropped | `4cc905f1` |
 | 3 — one `module` kind + `workspace_root_id` | `be3faff0` |
 | 3 — `sibling` dropped | `5dd169c7` |
-| **2b S1/S2 — libraries POPULATED** | this commit |
+| **2b S1/S2 — libraries POPULATED** | `76e24bab` |
+| **2b S7b — local pages + staleness signal** | this commit |
 | 3 S4b/S4c — derived folder `kind`, `deferred` dropped | this commit |
 | 2b — `library_content.package_name` | this commit |
 
@@ -55,9 +56,14 @@ agents, kavach 14 / 4 / 2, dbd 2 / 1 / 1. The G1 chain answers:
 
 which was unanswerable before. `library_packages` had ZERO rows.
 
-Pages are still absent — the local-route trigger (02b S7b.1) is the remaining
-piece, and `library_content.package_name` has no writer until a route reports
-which package a page documents.
+Pages are in: **152** across the three (rokkit 94, dbd 43, kavach 15). The
+acceptance test in 02b §5 passes —
+
+    @rokkit/ui -> rokkit -> the `list` page, with its content
+
+`library_content.package_name` still has no writer: neither the manifest nor
+the local walk states which package a page documents, and inferring it from
+the component name would be the R4 guess.
 
 Two schema-tool limitations found and worked around, worth remembering:
 `dbd reconcile` does not drop a table whose DDL file was deleted, does not
@@ -67,12 +73,12 @@ it — the type must be recreated by hand), and silently reduces an inline
 
 ## Remaining
 
-- **2b S7b/S8 — pages, and registry URLs.** S1/S2 are done. What remains:
-  the local-route trigger that walks `docs/llms/*.txt` (S7b.1 — kavach has 15
-  `.txt` files and zero pages purely because nothing enqueued the walk), the
-  staleness signal (S7b.2 — dbd's 36 pages pointed at a deleted directory),
-  and extracting repo/homepage URLs from registry responses already being
-  fetched (S8).
+- **2b S8/S9 — registry URLs and source precedence.** S1/S2/S7b are done.
+  What remains: extracting repo/homepage URLs from registry responses already
+  being fetched and thrown away (S8 — 2 of 1,121 library rows carried any URL),
+  which is the prerequisite for the github and website routes and for R11.2's
+  deferred upstreaming; then source precedence with the version-mismatch label
+  (S9).
 - **4–7** — parse, fqn, persist, reconcile. This IS the rest of v1 retirement.
 - **8–10** — commands, incremental, cutover.
 

@@ -40,6 +40,11 @@ pub struct RepoResult {
     pub library: Option<String>,
     /// Package names grouped under that library (02b S2).
     pub library_packages: u64,
+    /// Documentation pages walked from its local `docs/llms/` corpus (S7b.1).
+    pub library_pages: u32,
+    /// Why the docs walk found nothing, when it did (S7b.2). Distinct from a
+    /// library that legitimately ships none.
+    pub library_docs_error: Option<String>,
     pub errors: Vec<String>,
 }
 
@@ -247,6 +252,83 @@ async fn ingest_library(
         Some((_, _, np)) => out.library_packages = np,
         None => out.errors.push(format!("ingest_manifest_at({}): returned nothing", m.library)),
     }
+
+    ingest_library_pages(pg, &library_id, repo_root, &m.library, out).await;
+}
+
+/// Walk a library's LOCAL docs corpus and store its pages (02b S7b.1).
+///
+/// The local route's trigger. `resolve_library_pages` has implemented this arm
+/// all along; nothing called it during a scan, so kavach sat with 15 `.txt`
+/// files in `docs/llms/` and ZERO pages — the content was already on disk and
+/// the system knew where it was.
+///
+/// Offline by construction: `LibSource::LocalDir` reads the filesystem, so this
+/// runs in the scan without putting network I/O anywhere near it.
+async fn ingest_library_pages(
+    pg: &PgStore,
+    library_id: &uuid::Uuid,
+    repo_root: &std::path::Path,
+    lib_name: &str,
+    out: &mut RepoResult,
+) {
+    use crate::indexer::lib_indexer::{LibSource, resolve_library_pages};
+
+    let source = LibSource::LocalDir(repo_root.to_string_lossy().to_string());
+    let pages = match resolve_library_pages(&source, lib_name).await {
+        Ok(p) => p,
+        Err(e) => {
+            // S7b.2/S7b.3. The error IS the staleness signal — recorded against
+            // the version so it is queryable, NOT swallowed into a log. Any
+            // pages already held are left alone: they are the last known-true
+            // content, and dropping them on a read error trades a stale answer
+            // for no answer.
+            //
+            // S7b.4: the local convention is `docs/llms/*.txt`, not markdown.
+            // A library with a rich `docs/` tree and no `docs/llms/` lands
+            // here, which is correct and confusing — so the recorded reason is
+            // the resolver's verbatim message, naming the path it looked in.
+            if let Err(e2) = pg.record_library_docs_error(library_id, Some(&e)).await {
+                out.errors.push(format!("record_library_docs_error({lib_name}): {e2}"));
+            }
+            out.library_docs_error = Some(e);
+            return;
+        }
+    };
+
+    for page in &pages {
+        // A local page's location is a filesystem path, so it belongs in
+        // `local_path`; `url` stays null rather than holding a path.
+        match pg
+            .upsert_library_page(
+                library_id,
+                &page.doc.title,
+                None,
+                Some(page.location.as_str()),
+                Some(&page.doc.summary),
+                Some(&page.doc.content),
+                page.source_type,
+                page.doc.component.as_deref(),
+                // package_name: the local walk sees files, not package
+                // membership — nothing in `docs/llms/list.txt` says it
+                // documents `@rokkit/ui`. `None` is "not stated"; inferring it
+                // from the component name would be the R4 guess.
+                None,
+            )
+            .await
+        {
+            Ok(_) => out.library_pages += 1,
+            Err(e) => out.errors.push(format!("upsert_library_page({}): {e}", page.doc.title)),
+        }
+    }
+
+    if let Err(e) = pg.update_library_page_count(library_id).await {
+        out.errors.push(format!("update_library_page_count({lib_name}): {e}"));
+    }
+    // Docs are current: clear any staleness recorded by an earlier run.
+    if let Err(e) = pg.record_library_docs_error(library_id, None).await {
+        out.errors.push(format!("record_library_docs_error({lib_name}): {e}"));
+    }
 }
 
 /// The barrier (S1): every folder row, then every file row, then stop.
@@ -453,9 +535,11 @@ mod corpus {
         println!("libraries       {}", libs.len());
         for l in &libs {
             println!(
-                "  library {:14} packages={}",
+                "  library {:14} packages={:<4} pages={:<5} {}",
                 l.library.as_deref().unwrap_or(""),
-                l.library_packages
+                l.library_packages,
+                l.library_pages,
+                l.library_docs_error.as_deref().unwrap_or("")
             );
         }
         for r in &summary.repos {
