@@ -29,6 +29,10 @@ Retire v1, implement v2. Stage 0 (all DDL) is applied to `sensei`,
 | 1–3 IO half, run against this repo | `a969758f` |
 | 2 S6b/S6c/S6d — lockfile readers | `674af40b` |
 | 2b R12/S10 — `library_content` collapse | `52f9f0af` |
+| 3 S4b/S4c — derived kind, `deferred` dropped | `4cc905f1` |
+| 3 — one `module` kind + `workspace_root_id` | `be3faff0` |
+| 3 — `sibling` dropped | `5dd169c7` |
+| **2b S1/S2 — libraries POPULATED** | this commit |
 | 3 S4b/S4c — derived folder `kind`, `deferred` dropped | this commit |
 | 2b — `library_content.package_name` | this commit |
 
@@ -42,11 +46,18 @@ Lockfiles: **128 of 219 direct external deps get a corrected version** —
 `Cargo.lock`, `bun.lock`, `package-lock.json`; `yarn.lock`/`pnpm-lock.yaml`
 deliberately unclaimed (they fall back to the manifest range, a named gap).
 
-Libraries: the SHAPE is settled and the store layer is rebuilt on it —
-`library_content` (one table, `kind` discriminator) under `library_versions`,
-with `package_name` so a page can say WHICH published package it documents
-(skills and agents are library-level; docs usually are not). No library rows
-are WRITTEN by the v2 pipeline yet.
+Libraries: POPULATED. Scanning `~/Developer` (129 repos, 510 folders, 56,899
+files, 467 manifests) finds 3 libraries and writes **30 `library_packages`
+rows and 16 `library_content` rows** — rokkit 14 packages / 5 skills / 3
+agents, kavach 14 / 4 / 2, dbd 2 / 1 / 1. The G1 chain answers:
+
+    @rokkit/ui -> rokkit -> its 5 skills and 3 agents
+
+which was unanswerable before. `library_packages` had ZERO rows.
+
+Pages are still absent — the local-route trigger (02b S7b.1) is the remaining
+piece, and `library_content.package_name` has no writer until a route reports
+which package a page documents.
 
 Two schema-tool limitations found and worked around, worth remembering:
 `dbd reconcile` does not drop a table whose DDL file was deleted, does not
@@ -56,12 +67,12 @@ it — the type must be recreated by hand), and silently reduces an inline
 
 ## Remaining
 
-- **2b S1–S8 — populate libraries.** The shape, the store and the version
-  pins are ready; what is missing is the discovery: read `sensei.library.json`
-  from deps (S1), fill `library_packages` from workspace members (S2), and
-  extract repo/homepage URLs from registry responses already being fetched
-  (S8). `library_packages` is still 0 rows, so the
-  node → package → library → content chain is still unwalkable.
+- **2b S7b/S8 — pages, and registry URLs.** S1/S2 are done. What remains:
+  the local-route trigger that walks `docs/llms/*.txt` (S7b.1 — kavach has 15
+  `.txt` files and zero pages purely because nothing enqueued the walk), the
+  staleness signal (S7b.2 — dbd's 36 pages pointed at a deleted directory),
+  and extracting repo/homepage URLs from registry responses already being
+  fetched (S8).
 - **4–7** — parse, fqn, persist, reconcile. This IS the rest of v1 retirement.
 - **8–10** — commands, incremental, cutover.
 
