@@ -520,6 +520,8 @@ pub(crate) use repo_key::normalize_repo_key;
 pub(crate) use schedules::{SchedulePatch, StoredSchedule};
 
 #[cfg(test)]
+pub(crate) mod graph_seed;
+#[cfg(test)]
 mod knowledge_tests;
 #[cfg(test)]
 mod pack_resolution_tests;

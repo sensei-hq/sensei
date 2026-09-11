@@ -178,7 +178,7 @@ fn natural_key(node: &serde_json::Value) -> (String, i64, String, String, String
 ///
 /// False only for an import of an EXTERNAL package. Two files that both
 /// `import node:fs` are not one module — they share a dependency, not a
-/// structure. Admitting those would make one `lib_symbol` a hub: `node:test`
+/// structure. Admitting those would make one external node a hub: `node:test`
 /// alone has 3,365 importers and `java.util.List` 2,641, so resolving external
 /// imports would merge thousands of unrelated files into single communities.
 ///
@@ -190,8 +190,15 @@ fn natural_key(node: &serde_json::Value) -> (String, i64, String, String, String
 /// Landed while measurably INERT: zero import edges point at a lib node today,
 /// so this changes nothing now and prevents a regression the moment externals
 /// start resolving.
-fn admits_to_adjacency(edge_kind: &str, target_kind: &str) -> bool {
-    !(edge_kind == "imports" && matches!(target_kind, "lib_symbol" | "lib_package"))
+///
+/// Keyed on the target's FQN, not its kind. D12 removed `lib_symbol` and
+/// `lib_package` from `sensei.node_kind` — kind says WHAT a node is, the FQN's
+/// `lib` prefix says WHERE it came from ([`fqn::is_external`]). Left on the kind
+/// this would have gone on compiling and silently stopped excluding anything,
+/// which for a filter is the worst failure available: no error, and every
+/// community quietly different.
+fn admits_to_adjacency(edge_kind: &str, target_fqn: Option<&str>) -> bool {
+    !(edge_kind == "imports" && target_fqn.is_some_and(crate::languages::fqn::is_external))
 }
 
 const COMMUNITY_EDGE_KINDS: &[&str] = &["calls", "imports", "extends", "references", "implements"];
@@ -228,10 +235,10 @@ async fn build_adjacency(
             };
 
             if let (Some(&si), Some(&ti)) = (id_to_idx.get(src), id_to_idx.get(tgt)) {
-                // The target's kind is already projected by `get_nodes_scoped`,
+                // The target's fqn is already projected by `get_nodes_scoped`,
                 // so this costs no extra query.
-                let tk = nodes[ti]["kind"].as_str().unwrap_or("");
-                if !admits_to_adjacency(kind, tk) {
+                let tfqn = nodes[ti]["fqn"].as_str();
+                if !admits_to_adjacency(kind, tfqn) {
                     continue;
                 }
                 adj[si].push(ti);
@@ -508,7 +515,7 @@ mod adjacency_policy_tests {
 
     /// An external import is a DEPENDENCY tie, not a structural one.
     ///
-    /// Without this, resolving external imports makes one `lib_symbol` a hub:
+    /// Without this, resolving external imports makes one external node a hub:
     /// `node:test` has 3,365 importers and `java.util.List` 2,641, so thousands
     /// of unrelated files would merge into single communities the moment
     /// externals start resolving.
@@ -517,8 +524,8 @@ mod adjacency_policy_tests {
     /// unconditionally.
     #[test]
     fn an_external_import_is_not_a_structural_tie() {
-        assert!(!admits_to_adjacency("imports", "lib_symbol"));
-        assert!(!admits_to_adjacency("imports", "lib_package"));
+        assert!(!admits_to_adjacency("imports", Some("lib·node:fs··readFile")));
+        assert!(!admits_to_adjacency("imports", Some("lib·serde")));
     }
 
     /// The exclusion is NARROW on purpose, and this is what stops it widening.
@@ -531,10 +538,11 @@ mod adjacency_policy_tests {
     /// regardless of edge kind.
     #[test]
     fn a_call_into_a_library_is_still_a_structural_tie() {
-        assert!(admits_to_adjacency("calls", "lib_symbol"));
-        assert!(admits_to_adjacency("references", "lib_symbol"));
+        assert!(admits_to_adjacency("calls", Some("lib·node:fs··readFile")));
+        assert!(admits_to_adjacency("references", Some("lib·node:fs··readFile")));
         // And a local import is unaffected.
-        assert!(admits_to_adjacency("imports", "module"));
-        assert!(admits_to_adjacency("imports", "file"));
+        assert!(admits_to_adjacency("imports", Some("rust·senseid·api·routes")));
+        // A node with no fqn cannot be external — a legacy row, not a dependency.
+        assert!(admits_to_adjacency("imports", None));
     }
 }
