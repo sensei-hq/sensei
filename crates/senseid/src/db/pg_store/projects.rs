@@ -865,17 +865,21 @@ impl PgStore {
         &self,
         project_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
-        // Only project ROOTS are repos. `kind='folder'` (navigable subfolder tree)
-        // AND `kind='workspace_member'` (monorepo members, D5a) are the structural
-        // tree, NOT separate repos — listing them makes a single-repo monorepo with
-        // N members render as an N+1-repo "multi-repo" project (#62). The data is
-        // correct; this read path was projecting the subfolder tree as repos.
+        // Only project ROOTS are repos. `kind='folder'` (navigable subfolder
+        // tree) AND `kind='module'` (manifest-bearing build units, D5a) are the
+        // structural tree, NOT separate repos — listing them makes a
+        // single-repo monorepo with N members render as an N+1-repo
+        // "multi-repo" project (#62). The data is correct; this read path was
+        // projecting the subfolder tree as repos.
         let rows: Vec<(uuid::Uuid, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
                 "SELECT id, name, abs_path, kind::text FROM sensei.folders
-                 WHERE project_id = $1 AND kind::text NOT IN ('folder', 'workspace_member') ORDER BY name"
-            ).bind(project_id)
-            .fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+                 WHERE project_id = $1 AND kind::text NOT IN ('folder', 'module') ORDER BY name",
+            )
+            .bind(project_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
 
         Ok(rows.into_iter().map(|(id, name, path, kind)| {
             serde_json::json!({ "id": id, "name": name, "path": path, "kind": kind })

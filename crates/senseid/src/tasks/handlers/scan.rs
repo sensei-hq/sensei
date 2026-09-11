@@ -545,7 +545,7 @@ pub(crate) async fn detect_vanished_folders(
     for r in &recorded {
         // Only structural subfolders (`folder` + the monorepo-member `workspace_member`,
         // D5a); project ROOTS (git/standalone/subtree) are owned by reconcile_roots.
-        if !matches!(r["kind"].as_str(), Some("folder") | Some("workspace_member")) {
+        if !matches!(r["kind"].as_str(), Some("folder") | Some("module")) {
             continue;
         }
         let Some(abs) = r["abs_path"].as_str() else { continue };
@@ -1427,7 +1427,7 @@ mod tests {
 
         // A subtree must NOT be clobbered by a root re-registration.
         let p2 = tmp.path().join("b").to_string_lossy().to_string();
-        ctx.pg().upsert_folder(&root_id, "subtree", "b", "b", &p2, None, None).await.unwrap();
+        ctx.pg().upsert_folder(&root_id, "subtree", "b", "b", &p2, None, None, None).await.unwrap();
         ctx.pg().upsert_repo_kind(&root_id, "git", "b", &p2).await.unwrap();
         assert_eq!(ctx.pg().get_repo_by_path(&p2).await.unwrap().unwrap()["kind"], "subtree");
     }
@@ -1708,7 +1708,7 @@ mod tests {
 
     #[tokio::test]
     async fn prune_vanished_folders_drops_ghost_workspace_member() {
-        // D5a: a monorepo member (kind='workspace_member') whose dir vanished is
+        // D5a: a monorepo member (kind='module') whose dir vanished is
         // ghost-pruned like a structural `folder` — detect_vanished_folders was
         // extended to include workspace_member so a deleted member doesn't linger.
         let ctx = make_ctx().await;
@@ -1733,7 +1733,7 @@ mod tests {
         ctx.pg()
             .upsert_subfolder_kind(
                 &root_id,
-                "workspace_member",
+                "module",
                 "live",
                 "packages/live",
                 &live.to_string_lossy(),
@@ -1746,7 +1746,7 @@ mod tests {
         ctx.pg()
             .upsert_subfolder_kind(
                 &root_id,
-                "workspace_member",
+                "module",
                 "gone",
                 "packages/gone",
                 &gone.to_string_lossy(),

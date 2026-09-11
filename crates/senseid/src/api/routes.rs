@@ -3031,7 +3031,7 @@ mod tests {
             state.pg.add_watch_root(&abs_path, "mcp-seam", &serde_json::json!([])).await.unwrap();
         state
             .pg
-            .upsert_folder(&root_id, "git", "repo", "repo", &abs_path, None, Some(&pid))
+            .upsert_folder(&root_id, "git", "repo", "repo", &abs_path, None, Some(&pid), None)
             .await
             .unwrap();
 
@@ -3235,7 +3235,7 @@ mod tests {
         // Folder name == project name: get_file_tags looks up folders.name.
         let folder_id = state
             .pg
-            .upsert_folder(&root_id, "git", &name, "repo", &abs_path, None, Some(&pid))
+            .upsert_folder(&root_id, "git", &name, "repo", &abs_path, None, Some(&pid), None)
             .await
             .unwrap();
 
@@ -3599,7 +3599,7 @@ mod tests {
             .unwrap();
         state
             .pg
-            .upsert_folder(&root, "git", &name, "repo", &under, None, Some(&pid))
+            .upsert_folder(&root, "git", &name, "repo", &under, None, Some(&pid), None)
             .await
             .unwrap();
 
@@ -3736,7 +3736,16 @@ mod tests {
         // One git repo root + many nested `kind:'folder'` descendants.
         state
             .pg
-            .upsert_folder(&root, "git", &pname, "repo", &format!("{base}/repo"), None, Some(&pid))
+            .upsert_folder(
+                &root,
+                "git",
+                &pname,
+                "repo",
+                &format!("{base}/repo"),
+                None,
+                Some(&pid),
+                None,
+            )
             .await
             .unwrap();
         for i in 0..40 {
@@ -3750,6 +3759,7 @@ mod tests {
                     &format!("{base}/repo/src/d{i}"),
                     None,
                     Some(&pid),
+                    None,
                 )
                 .await
                 .unwrap();

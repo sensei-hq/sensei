@@ -563,6 +563,7 @@ mod tests {
             &repo.to_string_lossy(),
             None,
             Some(&gpid),
+            None,
         )
         .await
         .unwrap();
@@ -580,6 +581,7 @@ mod tests {
                 &nested.to_string_lossy(),
                 None,
                 Some(&spid),
+                None,
             )
             .await
             .unwrap();
@@ -625,6 +627,7 @@ mod tests {
             &repo.to_string_lossy(),
             None,
             Some(&survivor),
+            None,
         )
         .await
         .unwrap();
@@ -680,6 +683,7 @@ mod tests {
                 &repo.to_string_lossy(),
                 None,
                 Some(&gpid),
+                None,
             )
             .await
             .unwrap();
@@ -722,6 +726,7 @@ mod tests {
             &nested.to_string_lossy(),
             None,
             Some(&spid),
+            None,
         )
         .await
         .unwrap();
@@ -739,6 +744,7 @@ mod tests {
             &extra_repo.to_string_lossy(),
             None,
             Some(&survivor),
+            None,
         )
         .await
         .unwrap();

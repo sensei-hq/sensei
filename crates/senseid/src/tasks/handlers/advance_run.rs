@@ -897,9 +897,18 @@ mod tests {
             .add_watch_root(&format!("/_test/drive/{uniq}"), "drive_root", &serde_json::json!([]))
             .await
             .unwrap();
-        pg.upsert_folder(&root_id, "standalone", "repo", "repo", &abs, None, Some(&project_id))
-            .await
-            .unwrap();
+        pg.upsert_folder(
+            &root_id,
+            "standalone",
+            "repo",
+            "repo",
+            &abs,
+            None,
+            Some(&project_id),
+            None,
+        )
+        .await
+        .unwrap();
         (project_id, root_id, dir)
     }
 

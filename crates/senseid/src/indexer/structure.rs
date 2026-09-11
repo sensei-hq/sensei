@@ -97,10 +97,18 @@ pub struct PlannedFolder {
     pub abs_path: PathBuf,
     /// `None` only for the repo root, whose parent is the watch root.
     pub parent: Option<PathBuf>,
-    /// A `sensei.folder_kind` value: `git` for the repo root,
-    /// `workspace_member` for a manifest directory an ancestor DECLARES, and
-    /// `package` for one nothing declares.
+    /// A `sensei.folder_kind` value: `git` for the repo root, `module` for
+    /// every manifest-bearing directory under it. It says WHAT the folder is
+    /// and nothing about who claims it.
     pub kind: &'static str,
+    /// The folder whose manifest DECLARES this one as a workspace member, or
+    /// `None` when nothing declares it.
+    ///
+    /// Membership is a relationship, so it is modelled as one rather than as
+    /// a second `kind` value. It can change — adding a `workspaces` array
+    /// makes four folders members without altering a single directory — and a
+    /// `kind` that moves under an unrelated edit is describing the wrong thing.
+    pub workspace_root: Option<PathBuf>,
 }
 
 /// One file row to write: which folder owns it, and its path relative to that
@@ -170,7 +178,8 @@ pub fn plan_folders(
         .map(|d| PlannedFolder {
             abs_path: d.clone(),
             parent: if d == repo_root { None } else { deepest_owner(d, &dirs, true) },
-            kind: folder_kind(repo_root, d, declared_members),
+            kind: if d == repo_root { "git" } else { "module" },
+            workspace_root: declaring_workspace(repo_root, d, declared_members),
         })
         .collect();
 
@@ -187,29 +196,34 @@ pub fn plan_folders(
     FolderPlan { folders, files }
 }
 
-/// Classify one folder row against the repo's DECLARED workspace members.
+/// Which workspace root DECLARES `dir`, if any.
 ///
-/// The repo root is the repository itself. Every other row here holds a
-/// manifest, so the only question is whether something declares it:
-///
-/// - **`workspace_member`** — its repo-relative path is in the member list an
-///   ancestor manifest publishes (`package.json` `workspaces`, `Cargo.toml`
-///   `[workspace] members`).
-/// - **`package`** — it has a manifest and nothing declares it. A real build
-///   unit that belongs to no workspace; `marketplace/` in this repo is one.
+/// `Some(repo_root)` when `dir`'s repo-relative path appears in the member
+/// list an ancestor manifest publishes (`package.json` `workspaces`,
+/// `Cargo.toml` `[workspace] members`); `None` when nothing declares it,
+/// which is a real state — `marketplace/` here is a genuine build unit that
+/// no workspace lists.
 ///
 /// Matching is on PATH, never on the directory's name or its position in the
 /// tree. `detect_workspace_members` reports repo-relative paths, and matching
 /// on the last segment would make any directory called `one` read as the
 /// declared `packages/one`. Asserting membership nothing declared is the R4
 /// fabrication — a plausible relationship a caller cannot tell from a real one.
-fn folder_kind(repo_root: &Path, dir: &Path, declared_members: &BTreeSet<String>) -> &'static str {
+///
+/// The declarer is always the REPO ROOT today, because that is the only
+/// manifest `detect_workspace_members` reads, so a nested workspace root's
+/// members resolve as undeclared. Returning WHICH root rather than a bare
+/// `true` is what lets that be fixed without a schema change.
+fn declaring_workspace(
+    repo_root: &Path,
+    dir: &Path,
+    declared_members: &BTreeSet<String>,
+) -> Option<PathBuf> {
     if dir == repo_root {
-        return "git";
+        return None;
     }
-    let Ok(rel) = dir.strip_prefix(repo_root) else { return "package" };
-    let rel = rel.to_string_lossy();
-    if declared_members.contains(rel.as_ref()) { "workspace_member" } else { "package" }
+    let rel = dir.strip_prefix(repo_root).ok()?.to_string_lossy().to_string();
+    declared_members.contains(&rel).then(|| repo_root.to_path_buf())
 }
 
 /// The deepest directory in `dirs` that contains `path`.
@@ -464,11 +478,12 @@ mod folder_plan_tests {
     }
 
     #[test]
-    fn a_declared_member_is_a_workspace_member_and_an_undeclared_one_is_a_package() {
-        // The distinction the `package` enum value exists for. Both hold a
-        // manifest; only one is DECLARED by an ancestor workspace root.
-        // Calling the undeclared one a member asserts a relationship no
-        // manifest states (R4) — `marketplace/` in this repo is exactly that.
+    fn every_manifest_dir_is_a_module_and_membership_is_a_separate_fact() {
+        // `kind` says WHAT a folder is; it does not say who claims it. Both of
+        // these hold a manifest and both are modules. Only one is DECLARED —
+        // and that is recorded as a relationship, because it can change (add a
+        // `workspaces` array and the other becomes a member) without anything
+        // about either directory changing.
         let declared: BTreeSet<String> = ["crates/one".to_string()].into_iter().collect();
         let plan = plan_folders(
             Path::new("/r"),
@@ -477,19 +492,19 @@ mod folder_plan_tests {
             &[],
         );
 
-        let kinds: Vec<(String, &str)> = plan
+        // Shallowest first, so `marketplace` precedes `crates/one`.
+        let kinds: Vec<&str> = plan.folders.iter().map(|f| f.kind).collect();
+        assert_eq!(kinds, vec!["git", "module", "module"], "one kind for every build unit");
+
+        let ws: Vec<Option<String>> = plan
             .folders
             .iter()
-            .map(|f| (f.abs_path.to_string_lossy().to_string(), f.kind))
+            .map(|f| f.workspace_root.as_ref().map(|p| p.to_string_lossy().to_string()))
             .collect();
-        // Shallowest first, so `marketplace` precedes `crates/one`.
         assert_eq!(
-            kinds,
-            vec![
-                ("/r".to_string(), "git"),
-                ("/r/marketplace".to_string(), "package"),
-                ("/r/crates/one".to_string(), "workspace_member"),
-            ]
+            ws,
+            vec![None, None, Some("/r".to_string())],
+            "only the declared one names a workspace root — and it names WHICH"
         );
     }
 
@@ -501,15 +516,18 @@ mod folder_plan_tests {
         let declared: BTreeSet<String> = ["packages/one".to_string()].into_iter().collect();
         let plan = plan_folders(Path::new("/r"), &[p("/r/vendor/one")], &declared, &[]);
 
-        assert_eq!(plan.folders[1].kind, "package", "same name, different path");
+        assert_eq!(plan.folders[1].kind, "module");
+        assert_eq!(plan.folders[1].workspace_root, None, "same name, different path");
     }
 
     #[test]
-    fn with_no_declared_members_every_manifest_dir_is_a_package() {
-        // A repo whose root manifest declares no workspace. Nothing is a
-        // member, and saying so is the honest answer.
+    fn with_no_declared_members_nothing_names_a_workspace_root() {
+        // A repo whose root manifest declares no workspace — this one, in
+        // fact: there is no root package.json, so every JS build unit here is
+        // undeclared. They are still modules.
         let plan = plan_folders(Path::new("/r"), &[p("/r/a"), p("/r/b")], &BTreeSet::new(), &[]);
-        assert!(plan.folders[1..].iter().all(|f| f.kind == "package"));
+        assert!(plan.folders[1..].iter().all(|f| f.kind == "module"));
+        assert!(plan.folders.iter().all(|f| f.workspace_root.is_none()));
     }
 
     #[test]
@@ -520,6 +538,7 @@ mod folder_plan_tests {
         let plan = plan_folders(Path::new("/r"), &[p("/r")], &declared, &[]);
         assert_eq!(plan.folders.len(), 1);
         assert_eq!(plan.folders[0].kind, "git");
+        assert_eq!(plan.folders[0].workspace_root, None, "a repo is not its own member");
     }
 
     #[test]
