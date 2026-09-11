@@ -644,7 +644,7 @@ pub fn extract_doc_links(index: &str) -> Vec<String> {
             }
             if j <= bytes.len() {
                 let href = &index[start..j.min(index.len())];
-                if href.ends_with(".txt") && !href.starts_with("http") {
+                if is_llms_doc_file(&href) && !href.starts_with("http") {
                     links.push(href.to_string());
                 }
             }
@@ -711,6 +711,21 @@ pub fn resolve_local_llms_root(path: &str) -> std::path::PathBuf {
     }
     p.join("docs").join("llms")
 }
+/// Whether a discovered file is part of an llms corpus.
+///
+/// ONE rule, three discoverers. Local walks a directory, github calls the
+/// contents API, and the website follows links from an index — but what
+/// COUNTS as a doc must not depend on how it was found, or the same library
+/// yields different pages by route. This was three separate `.txt` checks that
+/// happened to agree; nothing made them.
+///
+/// `.txt` only, deliberately: the llms convention is `docs/llms/*.txt`, and a
+/// library with a rich `docs/` tree and no `docs/llms/` yields nothing — which
+/// is correct and confusing, so 02b S7b.4 asks that it be SAID rather than
+/// silently widened to markdown.
+pub fn is_llms_doc_file(name: &str) -> bool {
+    name.ends_with(".txt")
+}
 
 /// Read `.txt` files from a local llms root (top level + `components/`).
 pub fn read_local_source_files(root: &std::path::Path) -> Result<Vec<SourceFile>, String> {
@@ -742,7 +757,7 @@ fn collect_txt_files(dir: &std::path::Path, is_component: bool, out: &mut Vec<So
         if !path.is_file() {
             continue;
         }
-        if path.extension().and_then(|e| e.to_str()) != Some("txt") {
+        if !path.file_name().and_then(|n| n.to_str()).is_some_and(is_llms_doc_file) {
             continue;
         }
         let stem = path.file_stem().and_then(|s| s.to_str()).map(slug).unwrap_or_default();
@@ -890,7 +905,7 @@ async fn fetch_github_dir(
             continue;
         }
         let name = entry["name"].as_str().unwrap_or("");
-        if !name.ends_with(".txt") {
+        if !is_llms_doc_file(name) {
             continue;
         }
         let Some(download_url) = entry["download_url"].as_str() else { continue };
@@ -1338,6 +1353,23 @@ Use --dry-run to preview.
     }
 
     // ── GitHub / website URL parsing (pure, no network) ─────────────────────
+
+    #[test]
+    fn all_three_routes_agree_on_what_counts_as_a_doc() {
+        // The rule used to be written three times — a filesystem extension
+        // check, a github filename check, a website href check. They agreed by
+        // coincidence, and adding `.md` to any one would have made the same
+        // library yield different pages depending on how it was discovered.
+        assert!(is_llms_doc_file("index.txt"));
+        assert!(is_llms_doc_file("components/list.txt"));
+        assert!(is_llms_doc_file("https://x.dev/docs/llms/llms-full.txt"));
+        // Markdown is NOT part of the corpus (02b S7b.4). rokkit ships
+        // `docs/llms/component-blueprint.md` and no route ingests it —
+        // verified against the live data, all three agree on zero.
+        assert!(!is_llms_doc_file("component-blueprint.md"));
+        assert!(!is_llms_doc_file("README.md"));
+        assert!(!is_llms_doc_file("notes"));
+    }
 
     #[test]
     fn a_hash_comment_inside_a_code_fence_survives() {
