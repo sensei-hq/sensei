@@ -50,7 +50,8 @@ with stems as (
        , n.folder_id
        , n.kind
        , n.name
-       , fi.file_path
+       , case when fo.kind = 'git' then fi.file_path
+            else fo.path || '/' || fi.file_path end as file_path
        , n.modified_at
          -- Path::file_stem(): the file name minus its final extension; a name that
          -- begins with `.` and has no other dot is entirely the stem.
@@ -65,6 +66,9 @@ with stems as (
          end as stem
     from nodes n
     left join files fi on fi.id = n.file_id
+    -- The file's OWN folder, for the repo-relative reconstruction. The later
+    -- `folders f` join is outside this CTE.
+    left join folders fo on fo.id = fi.folder_id
    where fi.file_path is not null
      and n.kind in ('doc', 'file')
 )
