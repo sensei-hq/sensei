@@ -954,9 +954,7 @@ pub async fn process_folder(ctx: &TaskContext, task: &Task) -> Result<u32, Strin
     if let Some(ref fid) = folder_id {
         let mod_name =
             if rel_dir.is_empty() { "(root)".to_string() } else { rel_dir.replace('\\', "/") };
-        if let Err(e) =
-            ctx.pg().upsert_node(fid, "module", &mod_name, &task.path, None, None, None, None).await
-        {
+        if let Err(e) = ctx.pg().upsert_dir_node(fid, "module", &mod_name, &task.path).await {
             tracing::warn!(folder_id = %fid, module = %mod_name, error = %e, "upsert_node (module) failed");
         }
     }
@@ -1921,7 +1919,35 @@ mod role_reconciliation_tests {
 
 #[cfg(test)]
 mod tests {
+    /// Drive `process_file` the way the pipeline does — barrier first.
+    ///
+    /// Stage 3 is a BARRIER (R14): the scan writes every `files` row for a
+    /// folder BEFORE enqueuing a single `ProcessFile` task, so by the time this
+    /// handler runs its file is already tracked and the writers can LOOK IT UP
+    /// AND FAIL CLOSED (R13) instead of minting a row on a write path.
+    ///
+    /// A fixture calling `process_file` directly skipped the scan, so it skipped
+    /// the barrier. This performs that one step and then runs the real handler —
+    /// the handler is still what is under test.
+    ///
+    /// The folder is resolved the same way `process_file` resolves it (by
+    /// `folder_path`), so the seeded row lands under the folder the handler will
+    /// look in rather than one the fixture guessed at.
+    async fn processed(ctx: &TaskContext, repo_path: &str, abs: &str) -> Result<u32, String> {
+        let folder = ctx
+            .pg()
+            .get_repo_by_path(repo_path)
+            .await?
+            .ok_or_else(|| format!("processed: no folder at {repo_path}"))?;
+        let folder_id = crate::api::util::json_uuid(&folder["id"])
+            .ok_or_else(|| format!("processed: the folder at {repo_path} carries no id"))?;
+        let rel = abs.strip_prefix(repo_path).map(|r| r.trim_start_matches('/')).unwrap_or(abs);
+        ctx.pg().seed_only_file(&folder_id, rel).await?;
+        process_file(ctx, &Task::for_file(TaskKind::ProcessFile, repo_path, abs)).await
+    }
+
     use super::*;
+    use crate::db::pg_store::graph_seed::SeedGraph;
 
     use crate::tasks::{Task, TaskKind};
 
@@ -2312,7 +2338,7 @@ mod tests {
         // Process ONLY the file — deliberately NO resolve_edges. Edges must be
         // resolved at emit for this to pass.
         let abs = repo.join("src/lib.rs").to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        processed(&ctx, &repo_path, &abs).await.unwrap();
 
         // Defs carry their canonical fqn + language.
         let (compute_id, compute_fqn, compute_lang): (uuid::Uuid, Option<String>, Option<String>) =
@@ -2394,9 +2420,7 @@ mod tests {
         // CALLER FIRST. Neither definition exists when the call is emitted.
         for f in ["src/work.rs", "src/executor.rs", "src/db/pg_store.rs"] {
             let abs = repo.join(f).to_string_lossy().to_string();
-            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
-                .await
-                .unwrap();
+            processed(&ctx, &repo_path, &abs).await.unwrap();
         }
 
         // 1. The definition's return type reached its node, VERBATIM.
@@ -2516,7 +2540,7 @@ mod tests {
         )
         .unwrap();
         let abs = repo.join("src/executor.rs").to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        processed(&ctx, &repo_path, &abs).await.unwrap();
         assert_eq!(
             ctx.pg().node_return_type(&pg_id).await.unwrap(),
             None,
@@ -2562,14 +2586,19 @@ mod tests {
 
         // Caller first.
         let abs_caller = repo.join("src/caller.rs").to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs_caller))
-            .await
-            .unwrap();
+        processed(&ctx, &repo_path, &abs_caller).await.unwrap();
 
         // `run` is a STUB awaiting its definition.
-        let (run_id, run_resolved, run_file): (uuid::Uuid, bool, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT id, resolved, file_path FROM sensei.nodes WHERE folder_id=$1 AND fqn='rust·twofile·callee·run'")
-            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (run_id, run_resolved, run_file): (uuid::Uuid, bool, Option<String>) =
+            sqlx_core::query_as::query_as(
+                "SELECT n.id, n.resolved, np.file_path FROM sensei.nodes n \
+               LEFT JOIN sensei.node_paths np ON np.node_id = n.id \
+              WHERE n.folder_id=$1 AND n.fqn='rust·twofile·callee·run'",
+            )
+            .bind(fid)
+            .fetch_one(ctx.pg().pool())
+            .await
+            .unwrap();
         assert!(!run_resolved, "callee target is an unresolved stub before its def is indexed");
         assert_eq!(run_file, None, "a stub has no file");
 
@@ -2588,13 +2617,18 @@ mod tests {
 
         // Now index the callee — the SAME node is enriched.
         let abs_callee = repo.join("src/callee.rs").to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs_callee))
+        processed(&ctx, &repo_path, &abs_callee).await.unwrap();
+
+        let (run_id2, run_resolved2, run_file2): (uuid::Uuid, bool, Option<String>) =
+            sqlx_core::query_as::query_as(
+                "SELECT n.id, n.resolved, np.file_path FROM sensei.nodes n \
+               LEFT JOIN sensei.node_paths np ON np.node_id = n.id \
+              WHERE n.folder_id=$1 AND n.fqn='rust·twofile·callee·run'",
+            )
+            .bind(fid)
+            .fetch_one(ctx.pg().pool())
             .await
             .unwrap();
-
-        let (run_id2, run_resolved2, run_file2): (uuid::Uuid, bool, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT id, resolved, file_path FROM sensei.nodes WHERE folder_id=$1 AND fqn='rust·twofile·callee·run'")
-            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
         assert_eq!(run_id2, run_id, "the definition enriches the SAME node (stable id)");
         assert!(run_resolved2, "the node is resolved once its def is seen");
         assert_eq!(run_file2.as_deref(), Some("src/callee.rs"), "file filled in on enrich");
@@ -2648,7 +2682,7 @@ mod tests {
         let fid = ctx.pg().upsert_repo_kind(&rid, "git", "cont", &repo_path).await.unwrap();
         ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
         let abs = repo.join("src/lib.rs").to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        processed(&ctx, &repo_path, &abs).await.unwrap();
 
         let extends: Vec<(Option<String>,)> = sqlx_core::query_as::query_as(
             "SELECT e.target_name FROM sensei.edges e
@@ -2689,7 +2723,7 @@ mod tests {
     /// local-vs-external, NOT from re-classifying the string here. Both halves
     /// matter:
     ///
-    /// - External miss -> `lib_symbol`. This is the 109,944 edges (99.2% of
+    /// - External miss -> an external (`lib·`) node. 109,944 edges (99.2% of
     ///   unresolved imports) that name nothing local. `java.util.List` is a
     ///   complete fact about a dependency, and a lib node makes it answerable.
     /// - Local miss -> `module` stub, UNCHANGED. A relative import whose file
@@ -2728,7 +2762,7 @@ mod tests {
         let fid = ctx.pg().upsert_repo_kind(&rid, "git", "mint", &repo_path).await.unwrap();
         ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
         let abs = repo.join("src/a.ts").to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        processed(&ctx, &repo_path, &abs).await.unwrap();
 
         let kinds: Vec<(Option<String>, Option<String>)> = sqlx_core::query_as::query_as(
             "SELECT t.kind::text, t.fqn FROM sensei.edges e
@@ -2742,9 +2776,9 @@ mod tests {
 
         // The external one is a lib symbol under a lib package.
         assert!(
-            kinds.iter().any(|(k, f)| k.as_deref() == Some("lib_symbol")
+            kinds.iter().any(|(k, f)| k.as_deref() == Some("unknown")
                 && f.as_deref().is_some_and(|f| f.starts_with("lib·node:fs"))),
-            "`node:fs` must mint a lib_symbol: {kinds:?}"
+            "`node:fs` must mint an external node whose kind the use site never stated: {kinds:?}"
         );
         // The relative one still stubs as a module — order-independence.
         assert!(
@@ -2801,7 +2835,7 @@ mod tests {
 
         crate::graph_facts::arm_tally::reset();
         let abs = repo.join("src/caller.rs").to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        processed(&ctx, &repo_path, &abs).await.unwrap();
         let fired = crate::graph_facts::arm_tally::take();
 
         assert!(!fired.is_empty(), "no arms fired — calls are not going through the persister");
@@ -2880,9 +2914,7 @@ mod tests {
         crate::graph_facts::arm_tally::reset();
         for f in ["src/widget.rs", "src/pair.rs"] {
             let abs = repo.join(f).to_string_lossy().to_string();
-            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
-                .await
-                .unwrap();
+            processed(&ctx, &repo_path, &abs).await.unwrap();
         }
         let fired = crate::graph_facts::arm_tally::take();
 
@@ -2938,9 +2970,7 @@ mod tests {
         // SUBTYPE FIRST — its parent does not exist in the graph yet.
         for f in ["src/widget.rs", "src/greet.rs"] {
             let abs = repo.join(f).to_string_lossy().to_string();
-            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
-                .await
-                .unwrap();
+            processed(&ctx, &repo_path, &abs).await.unwrap();
         }
 
         // (target_id, target_name, props.relation, resolved target's name)
@@ -3018,9 +3048,7 @@ mod tests {
 
         for f in ["src/Widget.kt", "src/util.c", "src/Thing.swift"] {
             let abs = repo.join(f).to_string_lossy().to_string();
-            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
-                .await
-                .unwrap();
+            processed(&ctx, &repo_path, &abs).await.unwrap();
         }
 
         for (lang, sym) in [("kotlin", "Widget"), ("c", "compute"), ("swift", "Thing")] {
@@ -3069,16 +3097,15 @@ mod tests {
 
         for f in ["src/b.ts", "src/a.ts"] {
             let abs = repo.join(f).to_string_lossy().to_string();
-            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
-                .await
-                .unwrap();
+            processed(&ctx, &repo_path, &abs).await.unwrap();
         }
 
         let (tid, tname): (Option<uuid::Uuid>, Option<String>) = sqlx_core::query_as::query_as(
             "SELECT e.target_id, e.target_name FROM sensei.edges e
                JOIN sensei.nodes n ON n.id = e.source_id
               WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind
-                AND n.file_path = 'src/a.ts'",
+                AND EXISTS (SELECT 1 FROM sensei.node_paths np
+                            WHERE np.node_id = n.id AND np.file_path = 'src/a.ts')",
         )
         .bind(fid)
         .fetch_one(ctx.pg().pool())
@@ -3091,7 +3118,7 @@ mod tests {
         );
 
         let (kind, file): (String, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT kind::text, file_path FROM sensei.nodes WHERE id = $1",
+            "SELECT n.kind::text, np.file_path FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id = $1",
         )
         .bind(tid.unwrap())
         .fetch_one(ctx.pg().pool())
@@ -3140,7 +3167,7 @@ mod tests {
         // Candidate 1 (`typescript·tsfan·src/lib/x`) is deliberately absent.
         let real = ctx
             .pg()
-            .upsert_node_by_fqn(
+            .seed_node_by_fqn(
                 &fid,
                 "typescript·tsfan·lib/x",
                 "module",
@@ -3159,12 +3186,13 @@ mod tests {
             .unwrap();
 
         let abs = repo.join("src/routes/page.ts").to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        processed(&ctx, &repo_path, &abs).await.unwrap();
 
         let (tid,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
             "SELECT e.target_id FROM sensei.edges e JOIN sensei.nodes n ON n.id = e.source_id
               WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind
-                AND n.file_path = 'src/routes/page.ts'",
+                AND EXISTS (SELECT 1 FROM sensei.node_paths np
+                            WHERE np.node_id = n.id AND np.file_path = 'src/routes/page.ts')",
         )
         .bind(fid)
         .fetch_one(ctx.pg().pool())
@@ -3217,16 +3245,15 @@ mod tests {
 
         for f in ["src/b.rs", "src/a.rs"] {
             let abs = repo.join(f).to_string_lossy().to_string();
-            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
-                .await
-                .unwrap();
+            processed(&ctx, &repo_path, &abs).await.unwrap();
         }
 
         let (tid, tname): (Option<uuid::Uuid>, Option<String>) = sqlx_core::query_as::query_as(
             "SELECT e.target_id, e.target_name FROM sensei.edges e
                JOIN sensei.nodes n ON n.id = e.source_id
               WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind
-                AND n.file_path = 'src/a.rs'",
+                AND EXISTS (SELECT 1 FROM sensei.node_paths np
+                            WHERE np.node_id = n.id AND np.file_path = 'src/a.rs')",
         )
         .bind(fid)
         .fetch_one(ctx.pg().pool())
@@ -3238,7 +3265,7 @@ mod tests {
         // It lands on something REAL in b.rs — either b's module or the `Thing`
         // item inside it; both are correct answers to `use crate::b::Thing`.
         let (fqn, file): (Option<String>, Option<String>) =
-            sqlx_core::query_as::query_as("SELECT fqn, file_path FROM sensei.nodes WHERE id = $1")
+            sqlx_core::query_as::query_as("SELECT n.fqn, np.file_path FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id = $1")
                 .bind(tid.unwrap())
                 .fetch_one(ctx.pg().pool())
                 .await
@@ -3288,16 +3315,15 @@ mod tests {
         // Code first, so the doc has something to resolve against.
         for f in ["src/lib.rs", "src/a.rs", "src/b.rs", "README.md"] {
             let abs = repo.join(f).to_string_lossy().to_string();
-            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
-                .await
-                .unwrap();
+            processed(&ctx, &repo_path, &abs).await.unwrap();
         }
 
         let rows: Vec<(Option<uuid::Uuid>, Option<String>)> = sqlx_core::query_as::query_as(
             "SELECT e.target_id, e.target_name FROM sensei.edges e
                JOIN sensei.nodes n ON n.id = e.source_id
               WHERE e.folder_id = $1 AND e.kind = 'references'::sensei.edge_kind
-                AND n.file_path = 'README.md'",
+                AND EXISTS (SELECT 1 FROM sensei.node_paths np
+                            WHERE np.node_id = n.id AND np.file_path = 'README.md')",
         )
         .bind(fid)
         .fetch_all(ctx.pg().pool())
@@ -3310,7 +3336,7 @@ mod tests {
         let mut hit_lib = false;
         for t in &resolved_files {
             let (kind, fp): (String, Option<String>) = sqlx_core::query_as::query_as(
-                "SELECT kind::text, file_path FROM sensei.nodes WHERE id = $1",
+                "SELECT n.kind::text, np.file_path FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id = $1",
             )
             .bind(t)
             .fetch_one(ctx.pg().pool())
@@ -3380,14 +3406,13 @@ mod tests {
 
         // IMPORTER FIRST — its target does not exist yet.
         let abs_a = repo.join("src/a.ts").to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs_a))
-            .await
-            .unwrap();
+        processed(&ctx, &repo_path, &abs_a).await.unwrap();
 
         let (tid,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
             "SELECT e.target_id FROM sensei.edges e JOIN sensei.nodes n ON n.id = e.source_id
               WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind
-                AND n.file_path = 'src/a.ts'",
+                AND EXISTS (SELECT 1 FROM sensei.node_paths np
+                            WHERE np.node_id = n.id AND np.file_path = 'src/a.ts')",
         )
         .bind(fid)
         .fetch_one(ctx.pg().pool())
@@ -3395,7 +3420,7 @@ mod tests {
         .unwrap();
         let stub_id = tid.expect("resolved to a stub even though the target is not indexed yet");
         let (resolved, file): (bool, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT resolved, file_path FROM sensei.nodes WHERE id = $1",
+            "SELECT n.resolved, np.file_path FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id = $1",
         )
         .bind(stub_id)
         .fetch_one(ctx.pg().pool())
@@ -3405,12 +3430,10 @@ mod tests {
         assert_eq!(file, None, "a stub has no file");
 
         let abs_b = repo.join("src/b.ts").to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs_b))
-            .await
-            .unwrap();
+        processed(&ctx, &repo_path, &abs_b).await.unwrap();
 
         let (resolved2, file2): (bool, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT resolved, file_path FROM sensei.nodes WHERE id = $1",
+            "SELECT n.resolved, np.file_path FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id = $1",
         )
         .bind(stub_id)
         .fetch_one(ctx.pg().pool())
@@ -3428,8 +3451,8 @@ mod tests {
 
     #[tokio::test]
     async fn external_calls_link_to_lib_nodes() {
-        // Phase 4: a call into a dependency links to a first-class `lib_symbol` node
-        // grouped (props.package + parent_id) under a per-package `lib_package`
+        // Phase 4: a call into a dependency links to a first-class external node
+        // grouped (props.package + parent_id) under a per-package `package`
         // container, and the dependency is queryable per repo. No external call dropped.
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
@@ -3451,18 +3474,25 @@ mod tests {
         ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
 
         let abs = repo.join("src/lib.rs").to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        processed(&ctx, &repo_path, &abs).await.unwrap();
 
         // The external symbol is a `lib_symbol`, grouped by package.
         let (sym_id, sym_pkg, parent): (uuid::Uuid, Option<String>, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
-            "SELECT id, props->>'package', parent_id FROM sensei.nodes WHERE folder_id=$1 AND kind='lib_symbol'::sensei.node_kind AND name='from_str'")
+            "SELECT id, props->>'package', parent_id FROM sensei.nodes WHERE folder_id=$1 AND kind='unknown'::sensei.node_kind AND name='from_str'")
             .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
         assert_eq!(sym_pkg.as_deref(), Some("serde_json"), "lib symbol grouped by package");
 
         // …under a per-package `lib_package` container.
-        let (container_id, container_name): (uuid::Uuid, String) = sqlx_core::query_as::query_as(
-            "SELECT id, name FROM sensei.nodes WHERE folder_id=$1 AND kind='lib_package'::sensei.node_kind")
-            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
+        let (container_id, container_name): (uuid::Uuid, String) =
+            sqlx_core::query_as::query_as(&format!(
+                "SELECT id, name FROM sensei.nodes WHERE folder_id=$1 \
+              AND kind='package'::sensei.node_kind AND {ext}",
+                ext = crate::languages::fqn::sql_is_external("fqn")
+            ))
+            .bind(fid)
+            .fetch_one(ctx.pg().pool())
+            .await
+            .unwrap();
         assert_eq!(container_name, "serde_json", "a lib_package container per dependency");
         assert_eq!(
             parent,
@@ -3515,9 +3545,7 @@ mod tests {
 
         for rel in ["src/lib.rs", "tests/it.rs"] {
             let abs = repo.join(rel).to_string_lossy().to_string();
-            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
-                .await
-                .unwrap();
+            processed(&ctx, &repo_path, &abs).await.unwrap();
         }
 
         let count = |sql: &'static str| {
@@ -3529,20 +3557,24 @@ mod tests {
             }
         };
         // Every node of the test file is flagged; none left unflagged.
-        assert!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND file_path='tests/it.rs' AND is_test").await >= 1,
+        assert!(count("SELECT count(*) FROM sensei.nodes n JOIN sensei.node_paths np ON np.node_id = n.id \
+              WHERE n.folder_id=$1 AND np.file_path='tests/it.rs' AND n.is_test").await >= 1,
             "test-file nodes are is_test=true");
-        assert_eq!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND file_path='tests/it.rs' AND NOT is_test").await, 0,
+        assert_eq!(count("SELECT count(*) FROM sensei.nodes n JOIN sensei.node_paths np ON np.node_id = n.id \
+              WHERE n.folder_id=$1 AND np.file_path='tests/it.rs' AND NOT n.is_test").await, 0,
             "no test-file node left unflagged");
         // Production file nodes exist and are NOT flagged.
         assert!(
             count(
-                "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND file_path='src/lib.rs'"
+                "SELECT count(*) FROM sensei.nodes n JOIN sensei.node_paths np ON np.node_id = n.id \
+              WHERE n.folder_id=$1 AND np.file_path='src/lib.rs'"
             )
             .await
                 >= 1,
             "prod file produced nodes"
         );
-        assert_eq!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND file_path='src/lib.rs' AND is_test").await, 0,
+        assert_eq!(count("SELECT count(*) FROM sensei.nodes n JOIN sensei.node_paths np ON np.node_id = n.id \
+              WHERE n.folder_id=$1 AND np.file_path='src/lib.rs' AND n.is_test").await, 0,
             "production-file nodes are not is_test");
 
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
@@ -3571,7 +3603,7 @@ mod tests {
         ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
 
         let abs = repo.join("src/widget.rs").to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        processed(&ctx, &repo_path, &abs).await.unwrap();
 
         async fn node(
             ctx: &TaskContext,
@@ -3635,7 +3667,7 @@ mod tests {
         ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
 
         let abs = repo.join("src/util.ts").to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        processed(&ctx, &repo_path, &abs).await.unwrap();
 
         let (compute_id, compute_fqn, compute_lang): (uuid::Uuid, Option<String>, Option<String>) =
             sqlx_core::query_as::query_as(
@@ -3769,9 +3801,7 @@ mod tests {
         ) {
             for rel in rels {
                 let abs = repo.join(rel).to_string_lossy().to_string();
-                process_file(ctx, &Task::for_file(TaskKind::ProcessFile, repo_path, &abs))
-                    .await
-                    .unwrap();
+                processed(ctx, repo_path, &abs).await.unwrap();
             }
             crate::tasks::handlers::detect_communities(
                 ctx,
@@ -3872,7 +3902,8 @@ mod tests {
             uuid::Uuid,
         > = {
             let rows: Vec<(String, String, String, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
-                "SELECT file_path, kind::text, name, line_start, id FROM sensei.nodes WHERE folder_id=$1")
+                "SELECT np.file_path, n.kind::text, n.name, n.line_start, n.id FROM sensei.nodes n \
+                   JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.folder_id=$1")
                 .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap();
             rows.into_iter().map(|(fp, k, n, ls, id)| ((fp, k, n, ls), id)).collect()
         };
@@ -3883,7 +3914,8 @@ mod tests {
             uuid::Uuid,
         > = {
             let rows: Vec<(String, String, String, Option<i32>, uuid::Uuid)> = sqlx_core::query_as::query_as(
-                "SELECT file_path, kind::text, name, line_start, id FROM sensei.nodes WHERE folder_id=$1")
+                "SELECT np.file_path, n.kind::text, n.name, n.line_start, n.id FROM sensei.nodes n \
+                   JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.folder_id=$1")
                 .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap();
             rows.into_iter().map(|(fp, k, n, ls, id)| ((fp, k, n, ls), id)).collect()
         };
@@ -3944,7 +3976,8 @@ mod tests {
         // {(file_path,kind,name,line_start) → community_id} + per-kind edge counts.
         async fn snapshot(ctx: &TaskContext, fid: uuid::Uuid) -> GraphSnap {
             let node_rows: Vec<NodeRow> = sqlx_core::query_as::query_as(
-                "SELECT file_path, kind::text, name, line_start, community_id FROM sensei.nodes WHERE folder_id=$1")
+                "SELECT np.file_path, n.kind::text, n.name, n.line_start, n.community_id FROM sensei.nodes n \
+                   JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.folder_id=$1")
                 .bind(fid).fetch_all(ctx.pg().pool()).await.unwrap();
             let nodes =
                 node_rows.into_iter().map(|(fp, k, n, ls, cid)| ((fp, k, n, ls), cid)).collect();
@@ -3974,9 +4007,7 @@ mod tests {
             let (_rid, fid, repo_path) = seed_indexing_repo(ctx, root, name).await;
             for rel in order {
                 let abs = root.join("repo").join(rel).to_string_lossy().to_string();
-                process_file(ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
-                    .await
-                    .unwrap();
+                processed(ctx, &repo_path, &abs).await.unwrap();
             }
             crate::indexer::community::detect_communities_for_folder(ctx.pg(), &fid).await.unwrap();
             fid
@@ -4039,8 +4070,7 @@ mod tests {
 
         let abs = file.to_string_lossy().to_string();
         super::fault::fail_for(&abs);
-        let task = Task::for_file(TaskKind::ProcessFile, &repo_path, &abs);
-        let res = process_file(&ctx, &task).await;
+        let res = processed(&ctx, &repo_path, &abs).await;
         super::fault::clear(&abs);
 
         assert!(res.is_err(), "a fatal DB write propagates as Err, not Ok");
@@ -4049,8 +4079,17 @@ mod tests {
             Some("failed"),
             "the folder is left `failed` (fail-closed)"
         );
+        // The row EXISTS — stage 3's barrier (R14) creates one for every file
+        // before any parse task runs, and `processed` reproduces that. What must
+        // not happen is the fingerprint ADVANCING: that is the handler's record
+        // of "this file was processed", and a fatally-failed file has not been.
         assert!(
-            ctx.pg().list_scan_state(&fid).await.unwrap().is_empty(),
+            ctx.pg()
+                .list_scan_state(&fid)
+                .await
+                .unwrap()
+                .iter()
+                .all(|(_, mtime)| *mtime == crate::db::pg_store::graph_seed::BARRIER_MTIME),
             "the `files` row is NOT advanced for a fatally-failed file"
         );
 
@@ -4108,14 +4147,11 @@ mod tests {
 
         let bad_abs = bad.to_string_lossy().to_string();
         super::fault::fail_for(&bad_abs);
-        let bad_res =
-            process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &bad_abs)).await;
+        let bad_res = processed(&ctx, &repo_path, &bad_abs).await;
         super::fault::clear(&bad_abs);
         // The sibling processes independently and succeeds.
         let good_abs = good.to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &good_abs))
-            .await
-            .unwrap();
+        processed(&ctx, &repo_path, &good_abs).await.unwrap();
 
         assert!(bad_res.is_err(), "the bad file fails fatally");
         assert_eq!(
@@ -4123,14 +4159,24 @@ mod tests {
             Some("failed"),
             "the folder is `failed` because one of its files failed"
         );
+        // Both files have a row (stage 3's barrier, R14). Only one has a real
+        // fingerprint — advancing past `BARRIER_MTIME` is what "processed" means.
         let scan = ctx.pg().list_scan_state(&fid).await.unwrap();
-        assert_eq!(scan.len(), 1, "only the healthy sibling advanced its `files` row");
+        let advanced: Vec<&(String, i64)> = scan
+            .iter()
+            .filter(|(_, mtime)| *mtime != crate::db::pg_store::graph_seed::BARRIER_MTIME)
+            .collect();
+        assert_eq!(
+            advanced.len(),
+            1,
+            "only the healthy sibling advanced its `files` row: {scan:?}"
+        );
         assert!(
-            scan.iter().any(|(p, _)| p.ends_with("good.rs")),
+            advanced.iter().any(|(p, _)| p.ends_with("good.rs")),
             "the sibling's fingerprint is recorded"
         );
         assert!(
-            !scan.iter().any(|(p, _)| p.ends_with("bad.rs")),
+            !advanced.iter().any(|(p, _)| p.ends_with("bad.rs")),
             "the failed file did NOT advance its `files` row"
         );
 
@@ -4440,7 +4486,7 @@ mod tests {
         let ctx = make_ctx().await;
         let (rid, fid, repo_path) = seed_indexing_repo(&ctx, root, "isexp").await;
         let abs = file.to_string_lossy().to_string();
-        process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs)).await.unwrap();
+        processed(&ctx, &repo_path, &abs).await.unwrap();
 
         let exported = |name: &str| {
             let pool = ctx.pg().pool().clone();
@@ -4697,12 +4743,12 @@ mod tests {
         // path that preserves target_name for later re-resolution (D1).
         let node_a = ctx
             .pg()
-            .upsert_node(&fid, "function", "funcA", "a.rs", None, None, None, None)
+            .seed_node(&fid, "function", "funcA", "a.rs", None, None, None, None)
             .await
             .unwrap();
         let node_b = ctx
             .pg()
-            .upsert_node(&fid, "function", "funcB", "b.rs", None, None, None, None)
+            .seed_node(&fid, "function", "funcB", "b.rs", None, None, None, None)
             .await
             .unwrap();
         let edge =
@@ -4772,8 +4818,7 @@ mod tests {
             ctx.pg().add_watch_root(&repo_path, "cg", &serde_json::json!([])).await.unwrap();
         let fid = ctx.pg().upsert_repo(&root_id, "cg-repo", &repo_path).await.unwrap();
 
-        let task = Task::for_file(TaskKind::ProcessFile, &repo_path, &file_abs.to_string_lossy());
-        process_file(&ctx, &task).await.unwrap();
+        processed(&ctx, &repo_path, &file_abs.to_string_lossy()).await.unwrap();
 
         let nodes = ctx.pg().get_nodes_by_folder(&fid).await.unwrap();
         let caller_id = nodes

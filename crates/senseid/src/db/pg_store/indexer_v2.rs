@@ -141,7 +141,7 @@ impl PgStore {
     /// `parent_id` is a parameter and not a field of [`NodeColumns`] for the
     /// reason `folder_id` is: it is a row id the CALLER resolved, not something
     /// the walk read. It is also not optional in spirit —
-    /// `nodes_unique_identity` is `(folder_id, file_path, kind, name, parent_id,
+    /// `nodes_unique_identity` is `(folder_id, file_id, kind, name, parent_id,
     /// line_start)` with NULLS NOT DISTINCT, so leaving it null collapses two
     /// same-named members of two types written on one line into one row, and
     /// the collapse happens BELOW the fqn where nothing counts it. `None` means
@@ -279,8 +279,18 @@ impl PgStore {
         } = columns;
         // Compared, not defaulted: a definition with no file is not one, and the
         // caller refuses it a line later. Nothing here may decide that a row
-        // whose `file_path` is unknown matches the one on disk.
+        // whose file is unknown matches the one on disk.
         let Some(file_path) = file_path.as_deref() else {
+            return Ok(None);
+        };
+        // The identity comparison moves to `file_id`; the CLAIM key stays a
+        // PATH (D9) — claims are keyed by the file that declared an identity,
+        // and that vocabulary is the path, not a row id.
+        //
+        // An untracked file cannot match anything, so "unchanged" is false
+        // rather than an error: the caller proceeds to the write, which fails
+        // closed with the reason. Deciding it here would report the wrong one.
+        let Some(file_id) = self.file_id_for(folder_id, file_path).await? else {
             return Ok(None);
         };
 
@@ -291,7 +301,7 @@ impl PgStore {
                 AND kind = $3::sensei.node_kind
                 AND name = $4
                 AND language IS NOT DISTINCT FROM $5
-                AND file_path IS NOT DISTINCT FROM $6
+                AND file_id IS NOT DISTINCT FROM $6
                 AND signature IS NULL
                 AND line_start IS NOT DISTINCT FROM $7
                 AND line_end IS NOT DISTINCT FROM $8
@@ -308,7 +318,7 @@ impl PgStore {
         .bind(kind)
         .bind(name)
         .bind(language.as_deref())
-        .bind(file_path)
+        .bind(file_id)
         .bind(line_start)
         .bind(line_end)
         .bind(is_exported)
@@ -448,7 +458,7 @@ impl PgStore {
             "UPDATE sensei.nodes
                 SET resolved = false,
                     kind = $2::sensei.node_kind,
-                    file_path = NULL,
+                    file_id = NULL,
                     line_start = NULL,
                     line_end = NULL,
                     signature = NULL,
@@ -469,21 +479,26 @@ impl PgStore {
 
     /// Every DEFINITION node of a folder — the rows a v2 symbol write produced.
     ///
-    /// `file_path IS NOT NULL` is what separates them from the two node shapes
+    /// `file_id IS NOT NULL` is what separates them from the two node shapes
     /// that legitimately have no file: the reference stubs a call to a
-    /// not-yet-indexed definition creates, and the `lib_symbol`/`lib_package`
-    /// nodes an external reference mints (R5). Both are edges' business, not
-    /// symbols'.
+    /// not-yet-indexed definition creates, and the external (`lib·`) nodes an
+    /// external reference mints (R5). Both are edges' business, not symbols'.
+    ///
+    /// The path is JOINED back from `sensei.files` rather than read off the node
+    /// (R13). It is the same string the caller wrote — `files` is keyed
+    /// `(folder_id, file_path)` and the writer resolved the id from exactly that
+    /// value — so the round trip this feeds still compares like with like.
     pub async fn v2_definition_nodes(
         &self,
         folder_id: &uuid::Uuid,
     ) -> Result<Vec<NodeColumns>, String> {
         let rows: Vec<NodeProjection> = sqlx_core::query_as::query_as(
-            "SELECT fqn, kind::text, name, file_path, language, line_start, line_end,
-                    is_exported, docstring, props
-               FROM sensei.nodes
-              WHERE folder_id = $1 AND file_path IS NOT NULL
-              ORDER BY fqn",
+            "SELECT n.fqn, n.kind::text, n.name, fi.file_path, n.language,
+                    n.line_start, n.line_end, n.is_exported, n.docstring, n.props
+               FROM sensei.nodes n
+               JOIN sensei.files fi ON fi.id = n.file_id
+              WHERE n.folder_id = $1
+              ORDER BY n.fqn",
         )
         .bind(folder_id)
         .fetch_all(&self.pool)
@@ -535,15 +550,15 @@ impl PgStore {
     /// line that derives the package left the whole suite green while every
     /// dependency in the graph was filed under the wrong name.
     pub async fn v2_lib_nodes(&self, folder_id: &uuid::Uuid) -> Result<Vec<LibColumns>, String> {
-        let rows: Vec<LibProjection> = sqlx_core::query_as::query_as(
+        let rows: Vec<LibProjection> = sqlx_core::query_as::query_as(&format!(
             "SELECT n.fqn, n.kind::text, n.name, n.props ->> 'package', p.fqn
                        FROM sensei.nodes n
                   LEFT JOIN sensei.nodes p ON p.id = n.parent_id
                       WHERE n.folder_id = $1
-                        AND n.kind IN ('lib_package'::sensei.node_kind,
-                                       'lib_symbol'::sensei.node_kind)
+                        AND {ext}
                    ORDER BY n.kind, n.fqn",
-        )
+            ext = crate::languages::fqn::sql_is_external("n.fqn"),
+        ))
         .bind(folder_id)
         .fetch_all(&self.pool)
         .await

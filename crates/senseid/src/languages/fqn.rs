@@ -21,6 +21,46 @@ use crate::types::SymbolKind;
 /// FQN segment separator — U+00B7 MIDDLE DOT.
 pub const SEP: char = '·';
 
+/// What every external node's FQN starts with: the `lib` segment plus the
+/// separator.
+///
+/// D12 removed `lib_symbol` and `lib_package` from `sensei.node_kind`. Kind says
+/// WHAT a node is; this prefix says WHERE it came from. Collapsing the two
+/// destroyed the real kind on 18,240 rows to re-state a fact the FQN already
+/// carried, so the marker moved here and the kind went back to meaning itself.
+///
+/// One definition because the alternative is a hand-copied `lib·` literal in
+/// every query that asks the question, and a marker with eight copies is a
+/// marker that drifts.
+pub const LIB_PREFIX: &str = "lib·";
+
+/// The SQL test for "this node came from outside the repo", for the queries
+/// that used to ask `kind IN ('lib_symbol','lib_package')`.
+///
+/// A function rather than a constant because every call site qualifies the
+/// column differently (`n.fqn`, `s.fqn`, `p.fqn`) — a bare constant would have
+/// been unusable at most of them, which is how nine hand-written copies of the
+/// pattern appeared while the constant meant to prevent them sat unused.
+pub fn sql_is_external(column: &str) -> String {
+    format!("{column} LIKE '{LIB_PREFIX}%'")
+}
+
+/// The negation, NULL-safe.
+///
+/// Its own function because `NOT LIKE` on a NULL yields NULL, not true, so the
+/// naive negation silently drops every legacy node that carries no fqn at all.
+/// Two call sites had to spell the `IS NULL OR` guard by hand to get this right;
+/// one that forgot would filter out rows nobody meant to exclude and report a
+/// smaller answer with no error.
+pub fn sql_is_not_external(column: &str) -> String {
+    format!("({column} IS NULL OR {column} NOT LIKE '{LIB_PREFIX}%')")
+}
+
+/// Does this FQN name something outside the repo?
+pub fn is_external(fqn: &str) -> bool {
+    fqn.starts_with(LIB_PREFIX)
+}
+
 /// A definition carrying its canonical FQN — the language-agnostic shape every
 /// per-language producer emits. Phase 3 turns each into an `upsert_node_by_fqn`
 /// definition (enrich) call.
@@ -263,6 +303,34 @@ pub fn lib(package: &str, path: &str, member: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The prefix and the builder must not be able to disagree.
+    ///
+    /// `LIB_PREFIX` is a literal because SQL needs one, and a literal that
+    /// restates `SEP` is exactly the kind of copy that drifts when the
+    /// separator moves. This is what makes moving it a compile-and-test
+    /// failure rather than a silent mismatch in which every external node
+    /// stops being recognised as external.
+    #[test]
+    fn the_external_marker_agrees_with_the_builder() {
+        assert_eq!(LIB_PREFIX, format!("lib{SEP}"), "the prefix must be `lib` + SEP");
+        assert!(is_external(&lib("serde", "de", "Deserialize")));
+        assert!(is_external(&lib("node:fs", "", "")));
+        assert!(sql_is_external("n.fqn").contains(LIB_PREFIX), "the SQL test uses the same prefix");
+        assert_eq!(sql_is_external("n.fqn"), format!("n.fqn LIKE '{LIB_PREFIX}%'"));
+        // NULL-safe: `NOT LIKE` on a NULL is NULL, not true, so the guard has to
+        // be part of the expression rather than remembered at each call site.
+        assert!(sql_is_not_external("n.fqn").contains("IS NULL OR"));
+    }
+
+    /// A first-party FQN whose package merely BEGINS with `lib` is not external
+    /// — `rust·libc·…` is a dependency named libc, matched on the separator.
+    #[test]
+    fn a_package_named_lib_something_is_not_external() {
+        assert!(!is_external("rust·libc·ffi·open"));
+        assert!(!is_external("rust·library·mod·f"));
+        assert!(!is_external("libfoo·bar"));
+    }
 
     #[test]
     fn sep_is_middot() {

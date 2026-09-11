@@ -797,8 +797,12 @@ impl PgStore {
             // self-cross-product over every folder row — measured 70s against a
             // test database holding 107,230 folders, where the live index's 9,131
             // hid the cost entirely.
+            // The paths come from `sensei.node_paths`, the one owner of the
+            // files/folders join and the repo-relative grain rule (R13). Asking
+            // `nodes` for a path directly is what this used to do, and the
+            // column is gone — the FACT it named now needs the view.
             "WITH nf AS (SELECT DISTINCT folder_id FROM sensei.nodes \
-                          WHERE file_path IS NOT NULL), \
+                          WHERE file_id IS NOT NULL), \
                   f AS (SELECT fo.id, fo.abs_path FROM sensei.folders fo \
                           JOIN nf ON nf.folder_id = fo.id), \
                   pair AS ( \
@@ -807,13 +811,13 @@ impl PgStore {
                   FROM f o JOIN f i \
                     ON i.id <> o.id AND starts_with(i.abs_path, o.abs_path || '/')) \
              SELECT p.opath, p.ipath, \
-                    count(DISTINCT ni.file_path) AS files_both, \
-                    (SELECT count(DISTINCT n2.file_path) FROM sensei.nodes n2 \
-                      WHERE n2.folder_id = p.iid AND n2.file_path IS NOT NULL) AS inner_files \
+                    count(DISTINCT npi.file_path) AS files_both, \
+                    (SELECT count(DISTINCT np2.file_path) FROM sensei.node_paths np2 \
+                      WHERE np2.folder_id = p.iid) AS inner_files \
                FROM pair p \
-               JOIN sensei.nodes ni ON ni.folder_id = p.iid AND ni.file_path IS NOT NULL \
-               JOIN sensei.nodes no2 ON no2.folder_id = p.oid \
-                                    AND no2.file_path = p.rel || '/' || ni.file_path \
+               JOIN sensei.node_paths npi ON npi.folder_id = p.iid \
+               JOIN sensei.node_paths npo ON npo.folder_id = p.oid \
+                                    AND npo.file_path = p.rel || '/' || npi.file_path \
               GROUP BY p.opath, p.ipath, p.iid \
               ORDER BY files_both DESC, p.ipath",
         )
@@ -1271,26 +1275,52 @@ impl PgStore {
     /// 8,147-ORPHANED problem one table over and worse, because the foreign key
     /// would then certify it.
     ///
-    /// **Resolution is by ABSOLUTE path, and that is not incidental.** A caller
-    /// holding the REPO folder and a repo-relative path (`crates/senseid/src/lib.rs`)
-    /// is naming a file that belongs to the `crates/senseid` MODULE folder under
-    /// the folder-relative `src/lib.rs`. Matching on `(folder_id, file_path)`
-    /// directly would miss every file in a module — 17 of this repo's 18 folders
-    /// — while looking like an ordinary "not indexed" answer. Anchoring both
-    /// sides to the absolute path makes the two grains meet.
+    /// **The caller's OWN folder wins, then the absolute path.** Two rules, in
+    /// that order, and the order is the whole of it.
+    ///
+    /// The absolute-path rule exists because the two sides use different grains:
+    /// a caller holding the REPO folder and a repo-relative path
+    /// (`crates/senseid/src/lib.rs`) is naming a file that belongs to the
+    /// `crates/senseid` MODULE folder under the folder-relative `src/lib.rs`.
+    /// Matching `(folder_id, file_path)` alone would miss every file in a module
+    /// — 17 of this repo's 18 folders — while looking like an ordinary "not
+    /// indexed" answer. Anchoring both sides to the absolute path makes the two
+    /// grains meet.
+    ///
+    /// But that rule ALONE resolves across folders, and two folders can hold a
+    /// row for the same file on purpose: a nested duplicate checkout is exactly
+    /// the state [`Self::contained_duplicate_folders`] reports on. Absolute-path
+    /// matching then picks either row arbitrarily, and a node in the inner
+    /// folder ends up keyed to the outer folder's file — after which the node
+    /// reports a path assembled from the wrong folder. MEASURED: a node in
+    /// `crates/member` read back as `crates/member/crates/member/src/lib.rs`.
+    ///
+    /// Trying the caller's own folder first removes the arbitrariness without
+    /// giving up the grain bridge: an exact `(folder_id, file_path)` hit is the
+    /// most specific answer there is, and it is also the cheapest (it is the
+    /// table's unique key). The absolute-path rule stays as the fallback, which
+    /// is the only case it was ever for.
     pub async fn file_id_for(
         &self,
         folder_id: &uuid::Uuid,
         path: &str,
     ) -> Result<Option<uuid::Uuid>, String> {
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
-            "WITH anchor AS (SELECT abs_path FROM sensei.folders WHERE id = $1)
-             SELECT fi.id
-               FROM sensei.files fi
-               JOIN sensei.folders fo ON fo.id = fi.folder_id
-              WHERE fo.abs_path || '/' || fi.file_path =
-                    CASE WHEN $2 LIKE '/%' THEN $2
-                         ELSE (SELECT abs_path FROM anchor) || '/' || $2 END
+            "WITH anchor AS (SELECT abs_path FROM sensei.folders WHERE id = $1),
+                  own AS (SELECT id FROM sensei.files
+                           WHERE folder_id = $1 AND file_path = $2),
+                  anywhere AS (
+                    SELECT fi.id
+                      FROM sensei.files fi
+                      JOIN sensei.folders fo ON fo.id = fi.folder_id
+                     WHERE fo.abs_path || '/' || fi.file_path =
+                           CASE WHEN $2 LIKE '/%' THEN $2
+                                ELSE (SELECT abs_path FROM anchor) || '/' || $2 END)
+             SELECT id FROM (
+               SELECT id, 0 AS rank FROM own
+               UNION ALL
+               SELECT id, 1 AS rank FROM anywhere) candidates
+              ORDER BY rank
               LIMIT 1",
         )
         .bind(folder_id)

@@ -722,6 +722,7 @@ mod tests {
     use super::super::super::executor::TaskContext;
     use super::*;
     use crate::api::state::SharedState;
+    use crate::db::pg_store::graph_seed::SeedGraph;
     use crate::tasks::Task;
     use crate::tasks::queue::TaskQueue;
     use std::sync::Arc;
@@ -838,7 +839,7 @@ mod tests {
         // a `file` node (whose `name` IS the repo-relative path).
         let root_twin = ctx
             .pg()
-            .upsert_node(
+            .seed_node(
                 &repo_fid,
                 "function",
                 "run_task",
@@ -852,7 +853,7 @@ mod tests {
             .unwrap();
         let root_file = ctx
             .pg()
-            .upsert_node(
+            .seed_node(
                 &repo_fid,
                 "file",
                 "crates/member/src/lib.rs",
@@ -883,20 +884,20 @@ mod tests {
         // A duplicate of the git-root symbol → pruned (name equal, path-suffix twin).
         let dup = ctx
             .pg()
-            .upsert_node(&member_fid, "function", "run_task", "src/lib.rs", None, None, None, None)
+            .seed_node(&member_fid, "function", "run_task", "src/lib.rs", None, None, None, None)
             .await
             .unwrap();
         // A duplicate `file` node → pruned via NAME path-suffix ("src/lib.rs" ⊂
         // "crates/member/src/lib.rs"), the case a name-EQUAL rule would miss.
         let dup_file = ctx
             .pg()
-            .upsert_node(&member_fid, "file", "src/lib.rs", "src/lib.rs", None, None, None, None)
+            .seed_node(&member_fid, "file", "src/lib.rs", "src/lib.rs", None, None, None, None)
             .await
             .unwrap();
         // A symbol the root does NOT hold → KEPT (never lose a unique).
         let unique = ctx
             .pg()
-            .upsert_node(
+            .seed_node(
                 &member_fid,
                 "function",
                 "orphan_only",
@@ -911,7 +912,7 @@ mod tests {
         // A `file` node the root does NOT hold → KEPT (guard protects unique files too).
         let unique_file = ctx
             .pg()
-            .upsert_node(&member_fid, "file", "src/gone.rs", "src/gone.rs", None, None, None, None)
+            .seed_node(&member_fid, "file", "src/gone.rs", "src/gone.rs", None, None, None, None)
             .await
             .unwrap();
 
@@ -999,7 +1000,7 @@ mod tests {
 
         // The canonical root copy, and the structural duplicate the dedup removes.
         ctx.pg()
-            .upsert_node(
+            .seed_node(
                 &repo_fid,
                 "function",
                 "run_task",
@@ -1013,7 +1014,7 @@ mod tests {
             .unwrap();
         let dup = ctx
             .pg()
-            .upsert_node(&member_fid, "function", "run_task", "src/lib.rs", None, None, None, None)
+            .seed_node(&member_fid, "function", "run_task", "src/lib.rs", None, None, None, None)
             .await
             .unwrap();
 
@@ -1022,7 +1023,7 @@ mod tests {
         // edge is gone and it is garbage.
         let stub = ctx
             .pg()
-            .upsert_node_by_fqn(
+            .seed_node_by_fqn(
                 &member_fid,
                 "rust·p·m·Ghost·vanishes",
                 "function",
@@ -1147,7 +1148,7 @@ mod tests {
             .unwrap();
         ctx.pg().set_folder_project(&repo_fid, &live, "root", None).await.unwrap();
         ctx.pg()
-            .upsert_node(&repo_fid, "function", "f", "live/lib.rs", None, None, None, None)
+            .seed_node(&repo_fid, "function", "f", "live/lib.rs", None, None, None, None)
             .await
             .unwrap();
 
@@ -1505,9 +1506,9 @@ mod tests {
 
         // Two indexed files: a.rs (still on disk) and a moved-away b.rs (orphan),
         // plus a module node (abs dir path) that must never be pruned.
-        ctx.pg().upsert_node(&fid, "file", "a.rs", "a.rs", None, None, None, None).await.unwrap();
+        ctx.pg().seed_node(&fid, "file", "a.rs", "a.rs", None, None, None, None).await.unwrap();
         ctx.pg()
-            .upsert_node(
+            .seed_node(
                 &fid,
                 "struct",
                 "Gone",
@@ -1519,10 +1520,7 @@ mod tests {
             )
             .await
             .unwrap();
-        ctx.pg()
-            .upsert_node(&fid, "module", "src", &format!("{repo_path}/src"), None, None, None, None)
-            .await
-            .unwrap();
+        ctx.pg().upsert_dir_node(&fid, "module", "src", &format!("{repo_path}/src")).await.unwrap();
         ctx.pg().upsert_scan_state(&fid, "crates/hive-mind/src/config.rs", 1, "h").await.unwrap();
 
         // Live working-tree set: only a.rs survives.
@@ -1576,7 +1574,7 @@ mod tests {
             .unwrap();
         let live_node = ctx
             .pg()
-            .upsert_node(&live_fid, "struct", "Kept", "live/mod.rs", None, None, None, None)
+            .seed_node(&live_fid, "struct", "Kept", "mod.rs", None, None, None, None)
             .await
             .unwrap();
 
@@ -1610,30 +1608,12 @@ mod tests {
             .unwrap();
         let ghost_a = ctx
             .pg()
-            .upsert_node(
-                &gone_fid,
-                "struct",
-                "HiveConfig",
-                "gone/config.rs",
-                None,
-                None,
-                None,
-                None,
-            )
+            .seed_node(&gone_fid, "struct", "HiveConfig", "config.rs", None, None, None, None)
             .await
             .unwrap();
         let ghost_b = ctx
             .pg()
-            .upsert_node(
-                &sub_fid,
-                "struct",
-                "HiveStore",
-                "gone/sub/store.rs",
-                None,
-                None,
-                None,
-                None,
-            )
+            .seed_node(&sub_fid, "struct", "HiveStore", "store.rs", None, None, None, None)
             .await
             .unwrap();
         let ghost_edge = ctx
@@ -1800,7 +1780,7 @@ mod tests {
             .unwrap();
         let node = ctx
             .pg()
-            .upsert_node(&sub_fid, "struct", "Untouched", "src/lib.rs", None, None, None, None)
+            .seed_node(&sub_fid, "struct", "Untouched", "src/lib.rs", None, None, None, None)
             .await
             .unwrap();
 

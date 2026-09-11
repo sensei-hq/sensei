@@ -300,10 +300,14 @@ async fn find_duplicates_scoped_surfaces_same_folder_pairs() {
     // Two near-identical function nodes in the SAME folder (identical 384-dim
     // embedding → similarity 1.0). The old cross-folder-only predicate hid these.
     let emb = "(select '['||string_agg('0.1',',')||']' from generate_series(1,384))::vector";
+    // The `files` row first — stage 3's barrier (R14). `nodes.file_id` is a
+    // foreign key now (R13), so a raw fixture insert has to establish the same
+    // precondition the pipeline does.
+    let file = pg.upsert_file_row(&fid, "x.rs", 0, "x.rs", None).await.unwrap();
     for n in ["_dupfn_a", "_dupfn_b"] {
         pg.execute_raw(&format!(
-                "INSERT INTO sensei.nodes(folder_id, kind, name, file_path, line_start, line_end, embedding) \
-                 VALUES('{fid}','function'::sensei.node_kind,'{n}','/_dup/{u}/x.rs',1,10,{emb})"
+                "INSERT INTO sensei.nodes(folder_id, kind, name, file_id, line_start, line_end, embedding) \
+                 VALUES('{fid}','function'::sensei.node_kind,'{n}','{file}',1,10,{emb})"
             )).await.unwrap();
     }
     let dups = pg.find_duplicates_scoped(&[fid], 0.9, 50).await.unwrap();
@@ -328,7 +332,9 @@ async fn patterns_for_symbol_matches_by_file_and_is_honest_empty() {
     let fid = uuid::Uuid::new_v4();
     pg.execute_raw(&format!("INSERT INTO sensei.folders(id, root_id, kind, name, path, abs_path, project_id) VALUES('{fid}','00000000-0000-0000-0000-000000000003','git'::sensei.folder_kind,'_pfs_{u}','_pfs','/_pfs/{u}','{pid}')")).await.unwrap();
     // A node 'my_handler' at a repo-RELATIVE path; a project pattern whose instance is its ABSOLUTE form.
-    pg.execute_raw(&format!("INSERT INTO sensei.nodes(folder_id, kind, name, file_path, line_start, line_end) VALUES('{fid}','function'::sensei.node_kind,'my_handler','src/routes/x.rs',1,10)")).await.unwrap();
+    let file =
+        pg.upsert_file_row(&fid, "src/routes/x.rs", 0, "src/routes/x.rs", None).await.unwrap();
+    pg.execute_raw(&format!("INSERT INTO sensei.nodes(folder_id, kind, name, file_id, line_start, line_end) VALUES('{fid}','function'::sensei.node_kind,'my_handler','{file}',1,10)")).await.unwrap();
     pg.execute_raw(&format!("INSERT INTO inference.detected_patterns(project_id, name, family, instance_count, instances) VALUES('{pid}','route-handler','route',1,'[{{\"file\":\"/_pfs/{u}/src/routes/x.rs\",\"line\":1}}]'::jsonb)")).await.unwrap();
     // The symbol's file IS in the pattern's instances (abs↔rel reconciled) → match.
     let hit = pg.patterns_for_symbol(&pid, &[fid], "my_handler").await.unwrap();

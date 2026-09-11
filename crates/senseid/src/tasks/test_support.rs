@@ -549,18 +549,14 @@ pub(crate) async fn seed_detected_pattern(
 /// Insert one file-kind `sensei.nodes` row — a "project file" for the
 /// `rework_density` denominator (# project files = # `kind = 'file'` nodes in the
 /// project's folders). `file_path` doubles as the node name and must be unique per
-/// folder (governed by `nodes_unique_identity`); `ON CONFLICT DO NOTHING` keeps
-/// re-seeds idempotent.
+/// folder (governed by `nodes_unique_identity`); re-seeds are idempotent.
+///
+/// The `files` row comes first (R13/R14): a node's file is a FOREIGN KEY now, and
+/// stage 3's barrier is what makes it present before any node write. Seeding it
+/// here is that barrier, not a workaround for it.
 pub(crate) async fn seed_file_node(pg: &PgStore, folder_id: &uuid::Uuid, file_path: &str) {
-    sqlx_core::query::query(
-        "INSERT INTO sensei.nodes (folder_id, kind, name, file_path) \
-         VALUES ($1, 'file'::sensei.node_kind, $2, $2) ON CONFLICT DO NOTHING",
-    )
-    .bind(folder_id)
-    .bind(file_path)
-    .execute(pg.pool())
-    .await
-    .unwrap();
+    use crate::db::pg_store::graph_seed::SeedGraph;
+    pg.seed_node(folder_id, "file", file_path, file_path, None, None, None, None).await.unwrap();
 }
 
 /// Insert one `sensei.memories` row for the `memory_promotion` numerator

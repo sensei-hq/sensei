@@ -67,6 +67,26 @@ create unique index if not exists nodes_unique_fqn
     on nodes (folder_id, fqn)
  where fqn is not null;
 
+-- Structural identity: the nodes that name a DIRECTORY, not a file.
+--
+-- The folder pass writes one `module` node per source directory. A directory has
+-- no `files` row and never will, so these carry `file_id` NULL — which puts them
+-- outside `nodes_unique_identity` (partial on `file_id is not null`), and they
+-- carry no fqn either, so they are outside `nodes_unique_fqn` as well. Without
+-- this index they are governed by nothing and duplicate on every scan.
+--
+-- Before R13 the identity index covered them, because the directory was written
+-- into the `file_path` column — the column then meant two different things
+-- depending on the row, which is exactly what moving to a `files` foreign key
+-- ends. The directory now lives in `props.dir` and identity is `(folder, kind,
+-- name)`, which is what distinguishes two structural nodes anyway.
+--
+-- `fqn is null` is load-bearing: a reference stub also has no file, and merging
+-- a stub into a directory node on a name collision would be a false merge.
+create unique index if not exists nodes_unique_structural
+    on nodes (folder_id, kind, name)
+ where file_id is null and fqn is null;
+
 create index if not exists nodes_file_id_idx
     on nodes(file_id);
 

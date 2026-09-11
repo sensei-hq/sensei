@@ -853,7 +853,7 @@ impl PgStore {
     /// Patterns a symbol participates in — FILE-level membership. `detected_patterns`
     /// records file `instances`, not per-symbol members, so we match the symbol's
     /// file: resolve nodes named `symbol` in the project's folders, then return the
-    /// project's patterns whose `instances[].file` is that node's file. `nodes.file_path`
+    /// project's patterns whose `instances[].file` is that node's file. The path
     /// is repo-RELATIVE and `instances[].file` is ABSOLUTE, so the match is an
     /// equality-or-path-suffix. `[]` when the symbol's file is in no pattern
     /// (honest-empty, NOT the old always-null mask that read a nonexistent `members`).
@@ -873,9 +873,10 @@ impl PgStore {
                   WHERE p.project_id = $1
                     AND EXISTS (
                         SELECT 1 FROM sensei.nodes n
+                        JOIN sensei.node_paths np ON np.node_id = n.id
                         JOIN jsonb_array_elements(p.instances) e
-                          ON (e->>'file' = n.file_path OR e->>'file' LIKE '%/' || n.file_path)
-                        WHERE n.folder_id = ANY($2::uuid[]) AND n.name = $3 AND n.file_path <> ''
+                          ON (e->>'file' = np.file_path OR e->>'file' LIKE '%/' || np.file_path)
+                        WHERE n.folder_id = ANY($2::uuid[]) AND n.name = $3 AND np.file_path <> ''
                     )
                   ORDER BY p.instance_count DESC",
             )

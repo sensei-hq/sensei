@@ -1117,27 +1117,28 @@ pub(crate) fn file_identity_of(
 ///
 /// [`Reach::Item`] is every path-reachable declaration at once — a type, a
 /// trait, a function, a const, an enum variant — so an `item` stub's kind is
-/// genuinely NOT KNOWN until the declaration is indexed. Two rules meet here
-/// and both are stated rather than hidden.
+/// genuinely NOT KNOWN until the declaration is indexed.
 ///
 /// The reference's [`RefKind`] must not fill the gap. "`Constructs`, therefore
 /// a type" is precisely the inference that produced the identity break spec
 /// §2.1 records, and a guess written into a row outlives the guess whenever no
 /// declaration ever arrives.
 ///
-/// The column is `not null` and `sensei.node_kind` has no value meaning "not
-/// yet known", so it holds a PLACEHOLDER — chosen once here, never per use
-/// site. `parameter` and not a plausible `type` or `function`, because a
-/// plausible one is a value no caller can tell from a real reading, which is
-/// the one thing a failure path may not produce. This one can be told apart
-/// two ways: v2 never mints `parameter` for any declaration (a parameter is a
-/// typed prop on its function, D2), and no query in this tree selects it, so
-/// nothing counts a stub as a classification it does not have. The row is also
-/// marked as a stub by the schema's own means — `upsert_node_by_fqn` writes it
-/// `resolved = false` with a null `file_path` — and replaces `kind` wholesale
-/// the moment the declaration lands. Widening the enum is step 9's decision,
-/// on the table the shipped indexer writes.
-const KIND_NOT_YET_KNOWN: &str = "parameter";
+/// This used to be `parameter` — a PLACEHOLDER, chosen because the column is
+/// `not null` and the enum had no value meaning "not yet known". The doc that
+/// stood here said so, and said widening the enum was step 9's decision. Step 9
+/// made it: `sensei.node_kind` now carries `unknown`, a value that MEANS not
+/// yet known rather than one borrowed from something that means something else.
+///
+/// That matters beyond tidiness. A borrowed value is only distinguishable while
+/// nothing else mints it and no query selects it — two conditions held by
+/// convention, checkable nowhere, and false the moment someone writes the
+/// obvious query for parameters. `unknown` is distinguishable by construction:
+/// no declaration can ever produce it. The row stays marked as a stub by the
+/// schema's own means too — `upsert_node_by_fqn` writes it `resolved = false`
+/// with a null `file_id` — and `kind` is replaced wholesale the moment the
+/// declaration lands.
+const KIND_NOT_YET_KNOWN: &str = "unknown";
 
 /// The node kind and name a placeholder for `fqn` carries.
 ///
@@ -1147,11 +1148,16 @@ const KIND_NOT_YET_KNOWN: &str = "parameter";
 /// reference looked like. Where the reach states no kind, this says so — see
 /// [`KIND_NOT_YET_KNOWN`].
 ///
-/// [`Reach::Macro`] has no `node_kind` of its own — the enum has no `macro` —
-/// so it takes the one a macro is invoked like. That is a collapse and not a
-/// guess: the identity DOES state that the target is a macro, and only the
-/// column cannot spell it. Named here rather than hidden, and it disappears
-/// when step 9 decides the enum.
+/// [`Reach::Macro`] is `macro`. It used to collapse onto `function` because the
+/// enum had no value for it — the identity always stated the target was a
+/// macro and only the column could not spell it. Step 9 added the value, so the
+/// collapse is gone and a macro reads back as one.
+///
+/// [`Origin::Lib`] is `unknown`, not a kind of its own (D12). An external
+/// reference names a thing without saying what KIND of thing it is, and the
+/// external prefix on the fqn already carries WHERE it came from — see
+/// [`fqn::LIB_PREFIX`], which owns that spelling. A node's kind says WHAT it
+/// is, so an external whose kind the use site never revealed says exactly that.
 pub(crate) fn stub_kind_and_name(fqn: &str) -> Result<(&'static str, String), String> {
     let parsed = fqn::parse(fqn).map_err(|e| format!("{fqn} is not an fqn: {e:?}"))?;
     let name = parsed
@@ -1160,10 +1166,10 @@ pub(crate) fn stub_kind_and_name(fqn: &str) -> Result<(&'static str, String), St
         .map(|segment| segment.rsplit("::").next().unwrap_or(segment).to_string())
         .unwrap_or_else(|| parsed.package.to_string());
     let kind = match parsed.origin {
-        Origin::Lib => "lib_symbol",
+        Origin::Lib => KIND_NOT_YET_KNOWN,
         Origin::Local { reach: Reach::Item, .. } => KIND_NOT_YET_KNOWN,
         Origin::Local { reach: Reach::Field, .. } => "field",
-        Origin::Local { reach: Reach::Macro, .. } => "function",
+        Origin::Local { reach: Reach::Macro, .. } => "macro",
         Origin::Local { reach: Reach::Mod, .. } => "module",
     };
     Ok((kind, name))
@@ -1496,6 +1502,7 @@ fn params_from_props(props: &serde_json::Value) -> Option<Vec<Param>> {
 
 #[cfg(test)]
 mod tests {
+    use crate::db::pg_store::graph_seed::SeedGraph;
     use std::collections::BTreeSet;
 
     use crate::db::pg_store::PgStore;
@@ -1573,6 +1580,26 @@ pub fn widest(a: u32) -> u32 {
         create_test_folder(store, &format!("v2_persist_{test}_{}", uuid::Uuid::new_v4())).await
     }
 
+    /// Write the facts the way the pipeline does — barrier first.
+    ///
+    /// `persist::write` is STAGE 4 work. Stage 3 is a BARRIER (R14): every
+    /// `files` row for a folder exists before any parse task for that folder
+    /// runs, so the writer LOOKS THE ROW UP AND FAILS CLOSED (R13) rather than
+    /// minting one. A fixture that called `persist::write` directly skipped the
+    /// barrier — not a different contract, just a step production performs
+    /// first and the test did not.
+    ///
+    /// Keyed on `facts.path` so a folder given several files gets a row for
+    /// each, which is what the multi-file fixtures need.
+    async fn persisted(
+        store: &PgStore,
+        folder: &uuid::Uuid,
+        facts: &FileFacts,
+    ) -> Result<persist::Written, String> {
+        store.seed_only_file(folder, &facts.path).await?;
+        persist::write(store, folder, facts).await
+    }
+
     /// R3, at the seam that lost data before. Every field of every [`Symbol`]
     /// the walk produced is read back OUT OF POSTGRES and compared to what went
     /// in. The `let Symbol { .. }` destructure is what keeps the list complete:
@@ -1583,7 +1610,7 @@ pub fn widest(a: u32) -> u32 {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "symbols").await;
 
-        persist::write(&store, &folder, &facts).await.expect("the facts persist");
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
 
         assert_eq!(
@@ -1627,7 +1654,7 @@ pub fn widest(a: u32) -> u32 {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "declared_type").await;
 
-        persist::write(&store, &folder, &facts).await.expect("the facts persist");
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
 
         let stated = |fqn: &str| -> DeclaredType {
@@ -1729,7 +1756,7 @@ pub fn widest(a: u32) -> u32 {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "references").await;
 
-        persist::write(&store, &folder, &facts).await.expect("the facts persist");
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
 
         let expected: Vec<persist::ReferenceRow> =
@@ -1748,7 +1775,7 @@ pub fn widest(a: u32) -> u32 {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "unresolved").await;
 
-        persist::write(&store, &folder, &facts).await.expect("the facts persist");
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
 
         let misses: Vec<&persist::ReferenceRow> = stored
@@ -1801,7 +1828,7 @@ pub fn widest(a: u32) -> u32 {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "relations").await;
 
-        persist::write(&store, &folder, &facts).await.expect("the facts persist");
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
 
         let expected: Vec<persist::RelationRow> =
@@ -1839,7 +1866,7 @@ pub fn widest(a: u32) -> u32 {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "imports").await;
 
-        persist::write(&store, &folder, &facts).await.expect("the facts persist");
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
 
         let expected: Vec<persist::ImportRow> = facts
@@ -1861,7 +1888,7 @@ pub fn widest(a: u32) -> u32 {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "counts").await;
 
-        persist::write(&store, &folder, &facts).await.expect("the facts persist");
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
 
         assert_eq!(
@@ -1892,7 +1919,7 @@ pub fn widest(a: u32) -> u32 {
         let facts = walked();
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "coexist").await;
-        persist::write(&store, &folder, &facts).await.expect("the facts persist");
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
         let v2_only = persist::read_back(&store, &folder).await.expect("the rows read back");
 
         // A v1 edge: the shipped indexer's shape — no props, a bare target name.
@@ -2011,7 +2038,7 @@ pub fn widest(a: u32) -> u32 {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "collide").await;
 
-        let written = persist::write(&store, &folder, &facts).await.expect("the facts persist");
+        let written = persisted(&store, &folder, &facts).await.expect("the facts persist");
 
         assert_eq!(
             written.collisions,
@@ -2282,7 +2309,17 @@ pub fn widest(a: u32) -> u32 {
         let mut imports = Vec::new();
         let mut collisions = 0usize;
         for (path, text) in &sample {
+            // The package comes off the ABSOLUTE path — `package_of` finds the
+            // nearest `Cargo.toml` on disk, which a relative path cannot reach
+            // from the crate directory cargo runs the test in.
             let package = crate::indexer::package_of(path);
+            // Everything else uses the FOLDER-RELATIVE path, which is the grain
+            // a real walk produces and the grain `sensei.files` is keyed by
+            // (R13). Feeding the absolute path here made the fixture's file rows
+            // unreachable to `file_id_for`, which resolves a leading `/` against
+            // `folders.abs_path` — a fixture that never looked like a scan.
+            let path = crate::indexer::workspace_relative(path);
+            let path = path.as_str();
             let module = crate::indexer::module_of(path);
             let facts = rust::read(&Source { package: &package, module: &module, path, text })
                 .unwrap_or_else(|e| panic!("{path}: {e:?}"));
@@ -2300,9 +2337,8 @@ pub fn widest(a: u32) -> u32 {
             relations.extend(facts.relations.iter().map(persist::RelationRow::of));
             imports.extend(facts.imports.iter().map(|i| persist::ImportRow::of(i, &file)));
 
-            let written = persist::write(&store, &folder, &facts)
-                .await
-                .unwrap_or_else(|e| panic!("{path}: {e}"));
+            let written =
+                persisted(&store, &folder, &facts).await.unwrap_or_else(|e| panic!("{path}: {e}"));
             collisions += written.collisions.iter().map(|c| c.declarations - 1).sum::<usize>();
             // Occurrences are keyed by file, so two FILES on one edge is no
             // longer a loss. Two of ONE file's groups on one row still would be
@@ -2342,7 +2378,7 @@ pub fn widest(a: u32) -> u32 {
         );
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "twice").await;
-        persist::write(&store, &folder, &facts).await.expect("the facts persist");
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
 
         let edges: Vec<_> = store
             .v2_edges(&folder)
@@ -2393,8 +2429,8 @@ pub fn widest(a: u32) -> u32 {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "two_files").await;
 
-        persist::write(&store, &folder, &first).await.expect("the first persists");
-        persist::write(&store, &folder, &second).await.expect("the second persists");
+        persisted(&store, &folder, &first).await.expect("the first persists");
+        persisted(&store, &folder, &second).await.expect("the second persists");
 
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
         let lines: Vec<u32> = ordered(
@@ -2427,8 +2463,8 @@ pub fn widest(a: u32) -> u32 {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "two_roots").await;
 
-        persist::write(&store, &folder, &lib).await.expect("the lib root persists");
-        persist::write(&store, &folder, &main).await.expect("the bin root persists");
+        persisted(&store, &folder, &lib).await.expect("the lib root persists");
+        persisted(&store, &folder, &main).await.expect("the bin root persists");
 
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
         let owners: Vec<String> = ordered(
@@ -2460,11 +2496,11 @@ pub fn widest(a: u32) -> u32 {
 
         let before =
             walk_of("rescan", "src/rescan.rs", "pub fn once() {}\npub fn caller() { once(); }");
-        persist::write(&store, &folder, &before).await.expect("the first scan");
+        persisted(&store, &folder, &before).await.expect("the first scan");
         // The same file, with the call one line further down.
         let after =
             walk_of("rescan", "src/rescan.rs", "pub fn once() {}\n\npub fn caller() { once(); }");
-        persist::write(&store, &folder, &after).await.expect("the re-scan");
+        persisted(&store, &folder, &after).await.expect("the re-scan");
 
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
         let lines: Vec<u32> = ordered(
@@ -2500,7 +2536,7 @@ pub fn widest(a: u32) -> u32 {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "merge").await;
 
-        persist::write(&store, &folder, &walk_of("caller", "src/caller.rs", caller))
+        persisted(&store, &folder, &walk_of("caller", "src/caller.rs", caller))
             .await
             .expect("the caller persists");
         let after_reference = store
@@ -2527,12 +2563,12 @@ pub fn widest(a: u32) -> u32 {
         }
         assert_eq!(
             kind_of(&store, &folder, "before").await,
-            "parameter",
+            "unknown",
             "an `item` stub must not claim a kind the identity does not state; `parameter` is \
              the placeholder v2 never mints for a declaration (D2), so it cannot be read as one"
         );
 
-        persist::write(&store, &folder, &walk_of("bell", "src/bell.rs", callee))
+        persisted(&store, &folder, &walk_of("bell", "src/bell.rs", callee))
             .await
             .expect("the callee persists");
         let after_definition = store
@@ -2597,7 +2633,7 @@ pub fn widest(a: u32) -> u32 {
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "twins").await;
 
-        let written = persist::write(&store, &folder, &facts).await.expect("the facts persist");
+        let written = persisted(&store, &folder, &facts).await.expect("the facts persist");
         assert_eq!(
             written.collisions,
             vec![],
@@ -2634,7 +2670,7 @@ pub fn widest(a: u32) -> u32 {
         let facts = walked();
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "containment").await;
-        persist::write(&store, &folder, &facts).await.expect("the facts persist");
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
 
         let containment: std::collections::BTreeMap<String, Option<String>> = store
             .v2_containment(&folder)
@@ -2694,18 +2730,18 @@ pub fn widest(a: u32) -> u32 {
         let facts = walked();
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "externals").await;
-        persist::write(&store, &folder, &facts).await.expect("the facts persist");
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
 
         let lib = store.v2_lib_nodes(&folder).await.expect("the external rows read back");
         let container = lib
             .iter()
-            .find(|row| row.kind == "lib_package")
+            .find(|row| row.fqn == "lib·std" && row.parent_fqn.is_none())
             .expect("an external reference mints a package container");
         assert_eq!(
             *container,
             LibColumns {
                 fqn: "lib·std".to_string(),
-                kind: "lib_package".to_string(),
+                kind: "package".to_string(),
                 name: "std".to_string(),
                 package: Some("std".to_string()),
                 parent_fqn: None,
@@ -2719,13 +2755,13 @@ pub fn widest(a: u32) -> u32 {
         // construction edge reach the same symbol.
         let symbol = lib
             .iter()
-            .find(|row| row.kind == "lib_symbol" && row.name == "BTreeMap")
+            .find(|row| row.name == "BTreeMap")
             .unwrap_or_else(|| panic!("the fixture's external symbol reached no row: {lib:?}"));
         assert_eq!(
             *symbol,
             LibColumns {
                 fqn: "lib·std·collections::BTreeMap".to_string(),
-                kind: "lib_symbol".to_string(),
+                kind: "unknown".to_string(),
                 name: "BTreeMap".to_string(),
                 package: Some("std".to_string()),
                 parent_fqn: Some("lib·std".to_string()),
