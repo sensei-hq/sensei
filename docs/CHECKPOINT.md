@@ -37,7 +37,8 @@ Retire v1, implement v2. Stage 0 (all DDL) is applied to `sensei`,
 | **2b S8 — registry URLs** | `fd4cac06` |
 | **2 S8/S11 — dependency edges + projects** | `b6fde6bd` |
 | **2b S9 — source precedence + mismatch label** | `1857da82` |
-| **2b §3b — all three routes verified live** | this commit |
+| **2b §3b — all three routes verified live** | `ea89b23a` |
+| **2b — markdown fence fidelity in the splitter** | this commit |
 | 3 S4b/S4c — derived folder `kind`, `deferred` dropped | this commit |
 | 2b — `library_content.package_name` | this commit |
 
@@ -98,6 +99,11 @@ it — the type must be recreated by hand), and silently reduces an inline
   pin to the release they describe. dbd is the informative case — its working
   tree (0.13.0) is ahead of its tag (0.12.6), so the routes produce genuinely
   different versions rather than merging.
+
+  **How llms content is parsed:** headings only, by LINE PREFIX (`#`/`##`/`###`)
+  — not a markdown parser. No AST, no link resolution inside content, no
+  inline formatting. Fenced blocks are now respected so code is stored
+  verbatim; anything beyond headings + fences is unhandled by design.
 
   S9 now ranks three real candidates: a pin of 0.12.6 picks GITHUB over the
   higher-precedence website and the newer local tree — the inversion the rule
