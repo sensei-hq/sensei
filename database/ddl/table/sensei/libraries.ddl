@@ -6,6 +6,20 @@ create table if not exists libraries (
 , name                     text         not null
 , ecosystem                library_ecosystem not null
 , description              text
+  -- Where the library's SOURCE lives, from the registry's own record of it
+  -- (02b S8). The input the github docs route needs, and what R11.2's
+  -- upstreaming has to file against — blocked until now because only 2 of
+  -- 1,121 rows carried any URL at all.
+  --
+  -- On `libraries`, not `library_versions`: a library's repository is part of
+  -- its identity and does not change per release. Where a given release's DOCS
+  -- were fetched from is a different question and lives on the version
+  -- (`base_url` / `docs_url`).
+  --
+  -- NULL means the registry did not state one. NEVER derived from the package
+  -- name — `github.com/<name>/<name>` is wrong far more often than right, and
+  -- a fabricated URL is worse than none because something will fetch it.
+, repository_url           text
 , homepage_url             text
 , embedding                vector(384)
 , icons                    jsonb        not null default '{}'
@@ -51,6 +65,8 @@ comment on column libraries.ecosystem
      is 'Package registry: npm, pypi, cargo, go, or docs (pure documentation source).';
 comment on column libraries.description
      is 'Human-readable description of the library.';
+comment on column libraries.repository_url
+     is 'Where the library''s source lives, taken from the registry''s own record (npm repository.url, crates.io crate.repository, pypi project_urls Source). Unwrapped of packaging — a leading git+ and a trailing .git are removed — but never rewritten: an ssh:// remote stays ssh://. NULL means the registry stated none; it is never derived from the package name. Identity-level, so it sits here rather than on library_versions, which carries where a given release''s docs were fetched from.';
 comment on column libraries.homepage_url
      is 'URL of the library homepage or repository.';
 comment on column libraries.embedding

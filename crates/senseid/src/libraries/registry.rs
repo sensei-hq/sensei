@@ -11,12 +11,36 @@
 
 use async_trait::async_trait;
 
+/// What one registry lookup yielded: the latest version, and the URLs the SAME
+/// response carried (02b S8).
+///
+/// Returned together because they arrive together. Fetching the version and
+/// then fetching the URLs would be two calls for one body — and the reason
+/// 1,119 of 1,121 library rows had no URL is precisely that this response was
+/// already being downloaded and the URLs thrown away.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LatestInfo {
+    pub version: String,
+    pub urls: RegistryUrls,
+}
+
+impl LatestInfo {
+    /// A version with no URLs — what a local manifest read yields.
+    pub fn version_only(version: String) -> Self {
+        Self { version, urls: RegistryUrls::default() }
+    }
+}
+
 /// Resolves the latest published version of a library. A trait so the scheduler can
 /// be driven by a stub in tests. `None` = couldn't determine (→ no notice).
 #[async_trait]
 pub trait VersionSource: Send + Sync {
-    async fn latest(&self, ecosystem: &str, name: &str, local_path: Option<&str>)
-    -> Option<String>;
+    async fn latest(
+        &self,
+        ecosystem: &str,
+        name: &str,
+        local_path: Option<&str>,
+    ) -> Option<LatestInfo>;
 }
 
 /// The registry endpoint returning the latest version for `ecosystem`/`name`, or
@@ -67,6 +91,132 @@ pub fn extract_latest(ecosystem: &str, body: &str) -> Option<String> {
     if s.is_empty() { None } else { Some(s.to_string()) }
 }
 
+/// The URLs a registry response carries about a package (02b S8).
+///
+/// Every field is `Option` and a miss is `None` — NEVER a URL derived from the
+/// package name. `github.com/<name>/<name>` is wrong far more often than it is
+/// right, and a fabricated URL is worse than none because something will fetch
+/// it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RegistryUrls {
+    /// Where the source lives. The input the github docs route needs.
+    pub repository: Option<String>,
+    pub homepage: Option<String>,
+    pub docs: Option<String>,
+}
+
+impl RegistryUrls {
+    pub fn is_empty(&self) -> bool {
+        self.repository.is_none() && self.homepage.is_none() && self.docs.is_none()
+    }
+}
+
+/// Unwrap a registry's PACKAGING of a URL: a leading `git+` and a trailing
+/// `.git`.
+///
+/// npm returns `git+https://github.com/sveltejs/svelte.git` — measured, not
+/// assumed. Those two affixes are packaging around an otherwise-valid URL, so
+/// removing them is unwrapping, not rewriting. Everything else is left
+/// verbatim: an `ssh://` remote stays `ssh://` rather than being "helpfully"
+/// converted to https, which would be inventing a URL that may not serve.
+///
+/// npm's `github:user/repo` shorthand is NOT expanded here. It is unambiguous
+/// and could be, but the github route that would consume it is not built yet
+/// (S9); recording it verbatim keeps the evidence without guessing what to do
+/// with it.
+fn unwrap_scm_url(raw: &str) -> Option<String> {
+    let s = raw.trim().trim_start_matches("git+");
+    let s = s.strip_suffix(".git").unwrap_or(s);
+    let s = s.trim();
+    if s.is_empty() { None } else { Some(s.to_string()) }
+}
+
+fn non_empty(v: Option<&str>) -> Option<String> {
+    let s = v?.trim();
+    if s.is_empty() { None } else { Some(s.to_string()) }
+}
+
+/// Case-insensitive lookup over pypi's `project_urls`, which is a free-form map
+/// whose keys authors capitalise however they like — measured on `requests`:
+/// `{"Documentation": ..., "Source": ...}`, with `home_page` NULL.
+fn project_url<'a>(map: &'a serde_json::Value, keys: &[&str]) -> Option<&'a str> {
+    let obj = map.as_object()?;
+    for want in keys {
+        for (k, v) in obj {
+            if k.eq_ignore_ascii_case(want) {
+                if let Some(s) = v.as_str() {
+                    return Some(s);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extract the repository / homepage / docs URLs from a registry JSON body.
+/// Pure; a shape miss yields `None` per field (02b S8).
+///
+/// **These responses are already being downloaded and thrown away.**
+/// [`registry_latest_url`] fetches exactly these bodies for the update
+/// scheduler and reads one field out of each. Measured before this: 2 of 1,121
+/// `libraries` rows carried any URL at all, which is why the github route, the
+/// website route's trigger and R11.2's upstreaming were all blocked — there
+/// was nothing to file against for 1,119 of them.
+///
+/// Shapes are MEASURED against live responses, not assumed:
+/// - npm    `repository` is an OBJECT `{url: "git+https://….git"}` (it may also
+///          be a bare string), `homepage` a plain string, no docs field.
+/// - cargo  `crate.repository` / `.homepage` / `.documentation`, clean URLs.
+/// - pypi   `info.project_urls` — a MAP with author-chosen capitalisation.
+///          `info.home_page` is deprecated and was NULL on `requests`, so
+///          reading it alone would have silently returned nothing.
+/// - go     the proxy's `@latest` returns `Version`/`Time` only. No URLs, and
+///          saying so beats inventing one.
+pub fn extract_urls(ecosystem: &str, body: &str) -> RegistryUrls {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return RegistryUrls::default();
+    };
+    match ecosystem {
+        "npm" => {
+            let repo = v.get("repository").and_then(|r| {
+                // Object form `{type, url}` first, bare-string form second.
+                r.get("url").and_then(|u| u.as_str()).or_else(|| r.as_str())
+            });
+            RegistryUrls {
+                repository: repo.and_then(unwrap_scm_url),
+                homepage: non_empty(v.get("homepage").and_then(|x| x.as_str())),
+                docs: None,
+            }
+        }
+        "cargo" => {
+            let c = v.get("crate");
+            RegistryUrls {
+                repository: c
+                    .and_then(|c| c.get("repository"))
+                    .and_then(|x| x.as_str())
+                    .and_then(unwrap_scm_url),
+                homepage: non_empty(c.and_then(|c| c.get("homepage")).and_then(|x| x.as_str())),
+                docs: non_empty(c.and_then(|c| c.get("documentation")).and_then(|x| x.as_str())),
+            }
+        }
+        "pypi" => {
+            let info = v.get("info");
+            let urls = info.and_then(|i| i.get("project_urls"));
+            let pick = |keys: &[&str]| urls.and_then(|m| project_url(m, keys)).map(str::to_string);
+            RegistryUrls {
+                repository: pick(&["Source", "Repository", "Source Code", "Code"])
+                    .as_deref()
+                    .and_then(unwrap_scm_url),
+                homepage: pick(&["Homepage", "Home"]).or_else(|| {
+                    non_empty(info.and_then(|i| i.get("home_page")).and_then(|x| x.as_str()))
+                }),
+                docs: pick(&["Documentation", "Docs"]),
+            }
+        }
+        _ => RegistryUrls::default(),
+    }
+}
+
 /// Read a local library's own version by parsing the first known manifest in its
 /// source dir — reuses the `ManifestAdapter` parsers. `None` if no parseable manifest.
 pub fn local_latest(local_path: &str) -> Option<String> {
@@ -94,11 +244,13 @@ impl VersionSource for HttpVersionSource {
         ecosystem: &str,
         name: &str,
         local_path: Option<&str>,
-    ) -> Option<String> {
+    ) -> Option<LatestInfo> {
+        // A local manifest gives a version and no URLs — it is the library's
+        // own file, not the registry's record of it.
         if let Some(lp) = local_path
             && let Some(v) = local_latest(lp)
         {
-            return Some(v);
+            return Some(LatestInfo::version_only(v));
         }
         let url = registry_latest_url(ecosystem, name)?;
         let client = reqwest::Client::builder().build().ok()?;
@@ -107,7 +259,11 @@ impl VersionSource for HttpVersionSource {
             return None;
         }
         let body = resp.text().await.ok()?;
-        extract_latest(ecosystem, &body)
+        // ONE body, BOTH answers (S8). The URLs were being discarded here.
+        Some(LatestInfo {
+            version: extract_latest(ecosystem, &body)?,
+            urls: extract_urls(ecosystem, &body),
+        })
     }
 }
 
@@ -136,6 +292,124 @@ mod tests {
         );
         assert!(registry_latest_url("maven", "x").is_none(), "deferred ecosystem → None");
         assert!(registry_latest_url("docs", "x").is_none());
+    }
+
+    /// Fetch the three registries FOR REAL and check the shapes still hold.
+    ///
+    /// `#[ignore]` because it needs network. The unit tests above assert
+    /// against bodies copied from these exact endpoints, and a registry
+    /// changing its response shape would leave those passing while production
+    /// silently extracted nothing — this is what catches that.
+    ///
+    /// `cargo test -p senseid --bin senseid registry_shapes -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn registry_shapes_are_still_what_the_unit_tests_assume() {
+        let client = reqwest::Client::new();
+        for (eco, name) in [("npm", "svelte"), ("cargo", "serde"), ("pypi", "requests")] {
+            let url = registry_latest_url(eco, name).unwrap();
+            let body = client
+                .get(&url)
+                .header("User-Agent", "sensei-daemon")
+                .send()
+                .await
+                .expect("fetch")
+                .text()
+                .await
+                .expect("body");
+            let u = extract_urls(eco, &body);
+            println!("{eco:6} {name:10} repo={:?}", u.repository);
+            println!("{:24} home={:?} docs={:?}", "", u.homepage, u.docs);
+            assert!(u.repository.is_some(), "{eco}: no repository URL — the response shape moved");
+            assert!(
+                !u.repository.as_deref().unwrap().starts_with("git+"),
+                "{eco}: packaging left unwrapped"
+            );
+            assert!(
+                !u.repository.as_deref().unwrap().ends_with(".git"),
+                "{eco}: packaging left unwrapped"
+            );
+        }
+    }
+
+    #[test]
+    fn npm_repository_is_an_object_whose_url_is_git_wrapped() {
+        // MEASURED against registry.npmjs.org/svelte/latest. Reading
+        // `repository` as a string returns nothing; keeping the `git+` prefix
+        // and `.git` suffix yields a URL nothing can fetch.
+        let body = r#"{"version":"5.57.0",
+            "repository":{"url":"git+https://github.com/sveltejs/svelte.git","type":"git"},
+            "homepage":"https://svelte.dev"}"#;
+        let u = extract_urls("npm", body);
+        assert_eq!(u.repository.as_deref(), Some("https://github.com/sveltejs/svelte"));
+        assert_eq!(u.homepage.as_deref(), Some("https://svelte.dev"));
+        assert_eq!(u.docs, None, "npm has no documentation field");
+    }
+
+    #[test]
+    fn npm_also_accepts_the_bare_string_repository_form() {
+        let u = extract_urls("npm", r#"{"repository":"https://github.com/a/b.git"}"#);
+        assert_eq!(u.repository.as_deref(), Some("https://github.com/a/b"));
+    }
+
+    #[test]
+    fn an_ssh_remote_is_unwrapped_but_not_rewritten_to_https() {
+        // Removing `git+`/`.git` is unwrapping packaging. Converting the scheme
+        // would invent a URL that may not serve (R4).
+        let u = extract_urls("npm", r#"{"repository":{"url":"git+ssh://git@github.com/a/b.git"}}"#);
+        assert_eq!(u.repository.as_deref(), Some("ssh://git@github.com/a/b"));
+    }
+
+    #[test]
+    fn cargo_carries_all_three_urls_unwrapped() {
+        // MEASURED against crates.io/api/v1/crates/serde.
+        let body = r#"{"crate":{"repository":"https://github.com/serde-rs/serde",
+            "homepage":"https://serde.rs","documentation":"https://docs.rs/serde"}}"#;
+        let u = extract_urls("cargo", body);
+        assert_eq!(u.repository.as_deref(), Some("https://github.com/serde-rs/serde"));
+        assert_eq!(u.homepage.as_deref(), Some("https://serde.rs"));
+        assert_eq!(u.docs.as_deref(), Some("https://docs.rs/serde"));
+    }
+
+    #[test]
+    fn pypi_reads_project_urls_because_home_page_is_null() {
+        // MEASURED against pypi.org/pypi/requests/json: `home_page` is NULL and
+        // the real URLs live in `project_urls` under author-chosen keys. An
+        // implementation reading `home_page` returns nothing and looks correct.
+        let body = r#"{"info":{"home_page":null,"project_urls":{
+            "Documentation":"https://requests.readthedocs.io",
+            "Source":"https://github.com/psf/requests"}}}"#;
+        let u = extract_urls("pypi", body);
+        assert_eq!(u.repository.as_deref(), Some("https://github.com/psf/requests"));
+        assert_eq!(u.docs.as_deref(), Some("https://requests.readthedocs.io"));
+        assert_eq!(u.homepage, None, "this package declares none — not invented");
+    }
+
+    #[test]
+    fn pypi_project_url_keys_are_matched_case_insensitively() {
+        // Authors capitalise these however they like; the map is free-form.
+        let u = extract_urls(
+            "pypi",
+            r#"{"info":{"project_urls":{"source":"https://x/y","HOMEPAGE":"https://h"}}}"#,
+        );
+        assert_eq!(u.repository.as_deref(), Some("https://x/y"));
+        assert_eq!(u.homepage.as_deref(), Some("https://h"));
+    }
+
+    #[test]
+    fn go_and_unknown_ecosystems_yield_nothing_rather_than_a_guess() {
+        // The go proxy's @latest returns Version/Time only. Saying so beats
+        // deriving `github.com/<name>` from the module path.
+        assert!(extract_urls("go", r#"{"Version":"v1.2.3","Time":"t"}"#).is_empty());
+        assert!(extract_urls("maven", r#"{"anything":1}"#).is_empty());
+    }
+
+    #[test]
+    fn a_shape_miss_or_bad_json_is_empty_never_partial_garbage() {
+        assert!(extract_urls("npm", "not json").is_empty());
+        assert!(extract_urls("npm", r#"{"nope":1}"#).is_empty());
+        // An empty-string field is a miss, not a URL.
+        assert!(extract_urls("cargo", r#"{"crate":{"repository":"   "}}"#).is_empty());
     }
 
     #[test]

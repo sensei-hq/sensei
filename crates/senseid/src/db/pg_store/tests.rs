@@ -966,6 +966,59 @@ async fn a_lib_node_records_the_language_that_minted_it() {
 }
 
 #[tokio::test]
+async fn registry_urls_land_on_the_right_level_and_a_later_silence_does_not_wipe_them() {
+    // 02b S8. repository/homepage are identity-level; docs_url describes where
+    // a RELEASE's documentation lives. And registries disagree about what they
+    // expose — npm has no documentation field — so a response that omits a URL
+    // means "this one did not say", never "there is none".
+    use crate::libraries::registry::RegistryUrls;
+    let s = pg_store().await;
+    let lib =
+        s.upsert_library("_test:urls", "cargo", Some("1.0.0"), None, None, None).await.unwrap();
+
+    s.set_library_urls(
+        &lib,
+        &RegistryUrls {
+            repository: Some("https://github.com/serde-rs/serde".into()),
+            homepage: Some("https://serde.rs".into()),
+            docs: Some("https://docs.rs/serde".into()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let row: (Option<String>, Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT l.repository_url, l.homepage_url, v.docs_url
+           FROM sensei.libraries l
+           JOIN sensei.library_versions v ON v.library_id = l.id AND v.is_latest
+          WHERE l.id = $1",
+    )
+    .bind(lib)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(row.0.as_deref(), Some("https://github.com/serde-rs/serde"));
+    assert_eq!(row.1.as_deref(), Some("https://serde.rs"));
+    assert_eq!(row.2.as_deref(), Some("https://docs.rs/serde"), "docs live on the VERSION");
+
+    // A second lookup from a registry that states none of them.
+    s.set_library_urls(&lib, &RegistryUrls::default()).await.unwrap();
+    let row2: (Option<String>, Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT l.repository_url, l.homepage_url, v.docs_url
+           FROM sensei.libraries l
+           JOIN sensei.library_versions v ON v.library_id = l.id AND v.is_latest
+          WHERE l.id = $1",
+    )
+    .bind(lib)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(row2, row, "silence does not wipe what an earlier response established");
+
+    s.delete_library(&lib).await.unwrap();
+}
+
+#[tokio::test]
 async fn a_docs_read_failure_is_recorded_as_a_gap_and_never_deletes_the_pages() {
     // 02b S7b.2/S7b.3. dbd served 36 pages for two months pointing at a
     // directory that had been deleted, and nothing registered it as a gap —

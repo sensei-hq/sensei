@@ -33,7 +33,8 @@ Retire v1, implement v2. Stage 0 (all DDL) is applied to `sensei`,
 | 3 — one `module` kind + `workspace_root_id` | `be3faff0` |
 | 3 — `sibling` dropped | `5dd169c7` |
 | **2b S1/S2 — libraries POPULATED** | `76e24bab` |
-| **2b S7b — local pages + staleness signal** | this commit |
+| **2b S7b — local pages + staleness signal** | `48db4934` |
+| **2b S8 — registry URLs** | this commit |
 | 3 S4b/S4c — derived folder `kind`, `deferred` dropped | this commit |
 | 2b — `library_content.package_name` | this commit |
 
@@ -73,12 +74,18 @@ it — the type must be recreated by hand), and silently reduces an inline
 
 ## Remaining
 
-- **2b S8/S9 — registry URLs and source precedence.** S1/S2/S7b are done.
-  What remains: extracting repo/homepage URLs from registry responses already
-  being fetched and thrown away (S8 — 2 of 1,121 library rows carried any URL),
-  which is the prerequisite for the github and website routes and for R11.2's
-  deferred upstreaming; then source precedence with the version-mismatch label
-  (S9).
+- **2b S9 — source precedence.** S1/S2/S7b/S8 are done. What remains: pick
+  the highest-precedence source THAT CAN SERVE THE PINNED VERSION
+  (website > github > local, inverted when the version does not match), and
+  LABEL any doc served for a version the project does not pin. An unlabelled
+  wrong-version answer is the R4 failure.
+- **The github and website routes** are now unblocked (S8 supplies the URL)
+  but not built — `index_library` still needs a task carrying one.
+- **`referenced_libraries` has no v2 writer.** Dependency detection is not
+  wired into the v2 scan, so no folder → library edges exist, and
+  `library_update_scheduler` (the only caller of the S8 path) has nothing to
+  tick over. The extraction is tested live; it is not yet exercised end to end
+  by a scan.
 - **4–7** — parse, fqn, persist, reconcile. This IS the rest of v1 retirement.
 - **8–10** — commands, incremental, cutover.
 
