@@ -4,7 +4,7 @@ use crate::tasks::executor::{TaskContext, spawn_workers};
 use crate::tasks::queue::TaskQueue;
 use axum::http::Method;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 
 /// Write a single-line startup error to `<sensei_dir>/startup-error.log` so
 /// users can find it without scraping launchd / brew-services log paths.
@@ -108,15 +108,38 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
 
     let cfg = sensei_bootstrap::SenseiConfig::from_env();
     let database_url = cfg.db_url.clone();
-    // CORS: WKWebView (Safari) does NOT honour `Access-Control-Allow-Methods: *`
-    // — it requires an explicit method list, otherwise the preflight for any
+    // CORS: restrict to trusted origins only. The daemon has no authentication,
+    // so wildcard CORS would allow any malicious webpage to invoke the full API
+    // (config reads, session enumeration, filesystem scans, share-review
+    // publication, daemon shutdown). Loopback bind limits network reachability
+    // but does NOT provide a browser authorization boundary — a webpage opened
+    // while the daemon is running can send cross-origin requests to 127.0.0.1.
+    //
+    // Allowed origins:
+    //   • tauri://localhost — the Tauri desktop app (WKWebView on macOS)
+    //   • null — same-origin loopback requests (CLI, MCP, direct curl)
+    //
+    // WKWebView (Safari) does NOT honour `Access-Control-Allow-Methods: *` —
+    // it requires an explicit method list, otherwise the preflight for any
     // non-simple request (PUT/DELETE/PATCH, or POST with JSON Content-Type)
     // is treated as blocked and the in-app fetch throws "Load failed" with no
-    // server hit. Curl and Chrome accept the wildcard, which is why this only
-    // bit in the Tauri app. List the methods we actually serve; same fix for
-    // headers since Safari has the same wildcard-rejection there.
+    // server hit. Curl and Chrome accept the wildcard. List the methods we
+    // actually serve; same fix for headers since Safari has the same
+    // wildcard-rejection there.
+    use tower_http::cors::AllowOrigin;
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(AllowOrigin::predicate(|origin: &axum::http::HeaderValue, _parts: &axum::http::request::Parts| {
+            // Allow Tauri app origin
+            if origin.as_bytes() == b"tauri://localhost" {
+                return true;
+            }
+            // Allow null origin (same-origin loopback requests, CLI, MCP)
+            if origin.as_bytes() == b"null" {
+                return true;
+            }
+            // Reject all other origins
+            false
+        }))
         .allow_methods([
             Method::GET,
             Method::POST,
