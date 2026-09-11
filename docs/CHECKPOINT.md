@@ -41,7 +41,8 @@ Retire v1, implement v2. Stage 0 (all DDL) is applied to `sensei`,
 | **2b — markdown fence fidelity in the splitter** | `c82e4eec` |
 | **2b — one parse, three discoverers (verified)** | `fb02ada8` |
 | **2b — reject HTML for a text fetch; manifest-declared URLs** | `91673e09` |
-| **4–7 groundwork — repo-relative path reconstruction** | this commit |
+| **4–7 groundwork — repo-relative path reconstruction** | `e81d58cc` |
+| **4–7 increment 1 — `upsert_node` on `file_id`** | this commit |
 | 3 S4b/S4c — derived folder `kind`, `deferred` dropped | this commit |
 | 2b — `library_content.package_name` | this commit |
 
@@ -141,6 +142,16 @@ it — the type must be recreated by hand), and silently reduces an inline
   16 SELECT (display), 12 `file_path =` (key lookup), 14 `file_path IS NOT NULL`
   (the COMPLETE-vs-PARTIAL predicate, R10.7d, now `file_id IS NOT NULL`), and
   5 regex matches.
+
+  **IN PROGRESS — 167 → 149 failing.** Landed: `file_id_for` (fail-closed
+  path→file_id resolution that bridges the repo-relative/folder-relative grain),
+  `upsert_node_ex` writing `file_id` against the already-re-keyed
+  `nodes_unique_identity`, and `test_support::seed_node`/`seed_file` so ~90
+  fixtures model stage 3's barrier in one place. Remaining failures are
+  **75 `column file_path`** (functions not yet migrated — `prune_file_nodes` is
+  next) and **66 `no files row`** (fixtures still skipping the barrier). Each
+  migration moves a failure to the next unmigrated function, which is the
+  expected shape.
 
   **NOT a mechanical swap.** v1's `nodes.file_path` was REPO-relative;
   `files.file_path` is FOLDER-relative. They coincide only at a repo root —
