@@ -1,8 +1,9 @@
 # Checkpoint — indexer v2
 
-**State: STAGES 0–9 LANDED (9 is its pure half; its DoD is met bar one item
-blocked on 10). Suite GREEN — 3052 passing, 0 failing, fmt clean, no clippy
-finding in any of the three commits. Stage 10, the cutover, is what remains.**
+**State: STAGES 0–9 LANDED. Stage 10's GATE IS BUILT AND RUN, AND IT BLOCKS:
+777 regressions over 380 rust files. Do not cut over until they are dispositioned
+— that decision is the next thing needed and it is a judgement call, not code.
+Suite GREEN: 3058 passing, 0 failing, fmt clean.**
 
 Read in order: `docs/plans/indexer-v2-sequence.md` (master plan), then
 `docs/spec/indexer/10-cutover.md`, then `docs/design/indexer-v2.md`.
@@ -21,18 +22,49 @@ migrations. DDL is applied to `sensei` and `sensei_test`.
 | **4–7 — the graph reads through `file_id`** | `6b5fe44f` |
 | **8 — the v2 stages reach the progress stream** | `c13ae29c` |
 | **9 — incremental, pure half** | `68c88f8f` |
-| 10 — cutover: wire the v2 pipeline, delete v1 | TODO |
+| **10 S1/S2 — the differential gate, run** | `5aa79e60` |
+| 10 S3–S7 — switch rust, re-index, retire v1 | BLOCKED on the gate |
 
 ## Next command
 
-    cat docs/spec/indexer/10-cutover.md
-    cargo test -p senseid --bin senseid          # the baseline to keep green
+    # re-run the gate (~15s after a warm build):
+    cargo test -p senseid --bin senseid -- --ignored --nocapture --exact \
+      "indexer::differential::corpus::v1_and_v2_over_this_repos_rust"
+
+## THE GATE BLOCKS — the open decision
+
+    IMPROVEMENT 7,805 | REGRESSION 777 | EXPLAINED 3,861 | UNCLASSIFIED 0
+    v1 resolved 7,899 -> v2 resolved 11,066
+    v2 also emits 72,063 UNRESOLVED-with-reason that v1 dropped silently.
+
+Of the 777, measured (not assumed — the module-path hypothesis was tested and
+explains only 42):
+
+    486  ReceiverTypeUnknown   v2 saw the call, could not name the receiver
+    146  NoImportInScope       v2 saw the name, no import placed it
+      1  Denylisted
+    144  the name appears at NO v2 use site   <- the genuinely open class
+
+For the 633 v2 SAW and declined, the question is whether v1's edge was CORRECT.
+R4 says a wrong edge is worse than a missing one, so if v1 was guessing these
+are improvements in disguise; if v1 was right, v2 has lost reach. The harness
+deliberately does not decide that. Sampling a dozen by hand answers it.
+
+The 144 v2 never saw are a different question: a use-site form its walk does not
+emit.
 
 ## Known-broken / known-wrong — do not build on
 
 - **`delete_folder` issues a path-prefix `DELETE`** (`process.rs`), which 09 S7
   forbids. The fix is N file RECONCILES; blocked on stage 10 wiring v2's
   reconcile. This is stage 9's one unmet DoD item.
+- **S4b's wipe is MOOT and the spec's premise is stale.** The code graph is
+  already empty — nodes 0, edges 0, embeddings 0, all 510 folders `discovered`
+  — because stage 0 wiped it and nothing has re-indexed since. So "the existing
+  indexer keeps running until the switch, so the graph never goes stale" (10 §1)
+  is false, and the 326,716 embeddings S4b budgets were spent at stage 0.
+  BEFORE-numbers (S6), recorded: repositories 364, folders 510, files 56,907,
+  libraries 1,222, library_content 371, commands 0.
 - **The watcher has no manifest/lockfile branch.** A changed `Cargo.lock` is
   enqueued as a plain `ProcessFile`, parses as nothing, and the graph keeps
   yesterday's dependency set until a full re-scan runs (09 S9, live today).
