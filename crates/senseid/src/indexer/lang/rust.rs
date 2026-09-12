@@ -1467,11 +1467,47 @@ fn simple_type_name(text: &str) -> Option<String> {
     // ambiguity: `&T` declares no inherent members of its own.
     let t = text.trim().trim_start_matches('&').trim_start();
     let t = t.strip_prefix("mut ").unwrap_or(t).trim();
-    let ok = !t.is_empty()
-        && t.chars().next().is_some_and(char::is_uppercase)
-        && t.chars().all(|c| c.is_alphanumeric() || c == '_');
-    ok.then(|| t.to_string())
+
+    // A GENERIC is typed by its head: `Vec<Config>::push` is `Vec`'s method, and
+    // the type argument does not change which type OWNS the member. Refusing the
+    // whole spelling reported the type as unknown when it was written down.
+    let head = t.split_once('<').map_or(t, |(head, _)| head).trim();
+
+    // ...EXCEPT a deref wrapper, where the member may be on the INNER type.
+    // `arc.method()` is `Arc::method` or `Config::method` and the source does
+    // not say which, so taking the head would mint a wrong identity on every
+    // call that is really on the inner one (R4). A short, named list rather
+    // than a guess: these are the std types whose whole purpose is to be
+    // transparent.
+    if head != t && DEREF_WRAPPERS.contains(&head) {
+        return None;
+    }
+
+    let ok = !head.is_empty()
+        && head.chars().next().is_some_and(char::is_uppercase)
+        && head.chars().all(|c| c.is_alphanumeric() || c == '_');
+    ok.then(|| head.to_string())
 }
+
+/// Types that deref to their parameter, so a member call on one is ambiguous
+/// between the wrapper and the inner type. See [`simple_type_name`].
+const DEREF_WRAPPERS: &[&str] = &[
+    "Arc",
+    "Rc",
+    "Box",
+    "RefCell",
+    "Cell",
+    "Mutex",
+    "RwLock",
+    "Ref",
+    "RefMut",
+    "Cow",
+    "Pin",
+    "MutexGuard",
+    "RwLockReadGuard",
+    "RwLockWriteGuard",
+    "ManuallyDrop",
+];
 
 /// Columns are tree-sitter's, which counts BYTES within the line rather than
 /// characters. Recorded because two references on one line are told apart by
@@ -1689,9 +1725,11 @@ mod tests {
         assert_eq!(simple_type_name("&&Config"), Some("Config".to_string()));
         assert_eq!(simple_type_name("Config"), Some("Config".to_string()));
 
-        for refused in
-            ["Arc<Config>", "Box<Config>", "Vec<Config>", "crate::a::Config", "u32", "&str"]
-        {
+        // `Vec<Config>` is NOT here any more. It used to be, on the reasoning
+        // that a generic spelling is not a mintable identity — but the question
+        // a receiver asks is which type OWNS the member, and that is `Vec`.
+        // See `a_generic_receiver_is_typed_by_the_type_that_owns_the_member`.
+        for refused in ["Arc<Config>", "Box<Config>", "crate::a::Config", "u32", "&str"] {
             assert_eq!(simple_type_name(refused), None, "{refused} must not be recorded");
         }
     }
@@ -1705,6 +1743,47 @@ mod tests {
              let _ = r.content_hash; }\n",
         ) {
             println!("  {n:24} -> {t}");
+        }
+    }
+
+    /// A GENERIC receiver is typed by its head, so a call on it is classified
+    /// rather than called unknown.
+    ///
+    /// `Vec<Config>::push` is `Vec`'s method — the type argument does not change
+    /// which type OWNS the member. Refusing the whole spelling left 82% of the
+    /// attributable unresolved receivers (7,785 of 9,534, measured) reported as
+    /// "type unknown" when the type was written down and simply was not ours.
+    /// "We do not know" and "we know, and it is out of scope" are different
+    /// facts, and only the second is true here.
+    #[test]
+    fn a_generic_receiver_is_typed_by_the_type_that_owns_the_member() {
+        assert_eq!(simple_type_name("Vec<Config>"), Some("Vec".to_string()));
+        assert_eq!(simple_type_name("Option<String>"), Some("Option".to_string()));
+        assert_eq!(simple_type_name("HashMap<String, u32>"), Some("HashMap".to_string()));
+        assert_eq!(simple_type_name("&Vec<Config>"), Some("Vec".to_string()));
+        // A first-party generic works the same way — the rule is about the
+        // grammar, not about who owns the crate.
+        assert_eq!(simple_type_name("Wrapper<T>"), Some("Wrapper".to_string()));
+    }
+
+    /// A DEREF wrapper is still refused, and that is the one exception.
+    ///
+    /// `Arc<Config>` derefs to `Config`, so `arc.method()` may be `Arc::method`
+    /// OR `Config::method` and the source does not say which. Taking the head
+    /// would mint `Arc·method` for every call that is really on the inner type —
+    /// a wrong identity, on the half of the cases the rule guesses wrong (R4).
+    ///
+    /// `Vec` and friends do not have this problem: the member is on the
+    /// container, and nothing is being unwrapped.
+    #[test]
+    fn a_deref_wrapper_is_refused_because_the_member_may_be_on_the_inner_type() {
+        for wrapper in ["Arc<Config>", "Rc<Config>", "Box<Config>", "Mutex<Config>", "Cow<Config>"]
+        {
+            assert_eq!(simple_type_name(wrapper), None, "{wrapper} is ambiguous under Deref");
+        }
+        // Still refused: no type is named at all.
+        for refused in ["u32", "&str", "crate::a::Config", "[u8; 4]"] {
+            assert_eq!(simple_type_name(refused), None, "{refused}");
         }
     }
 
