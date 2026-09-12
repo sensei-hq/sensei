@@ -921,6 +921,7 @@ mod reach {
         let mut ours = 0usize;
         let mut theirs = 0usize;
         let mut untypable = 0usize;
+        let mut ours_sample: Vec<String> = Vec::new();
 
         let mut by_route: std::collections::BTreeMap<&str, usize> = Default::default();
         let mut total = 0usize;
@@ -952,7 +953,15 @@ mod reach {
                 // states for this name — `Vec<Config>` -> `Vec`, `&Path` ->
                 // `Path` — and ask whether the corpus declares it.
                 match stated_type_head(receiver, text) {
-                    Some(head) if first_party_types.contains(&head) => ours += 1,
+                    Some(head) if first_party_types.contains(&head) => {
+                        ours += 1;
+                        if ours_sample.len() < 10 {
+                            ours_sample.push(format!(
+                                "{rel}:{} — {receiver}.{}   [{receiver}: {head}]",
+                                r.at.start_line, evidence.name
+                            ));
+                        }
+                    }
                     Some(_) => theirs += 1,
                     None => untypable += 1,
                 }
@@ -969,6 +978,9 @@ mod reach {
         let typed = ours + theirs;
         println!("\n\n════ whose type is the receiver? ════");
         println!("  {ours:>6}  declared by THIS CORPUS — a first-party edge we are missing");
+        for e in &ours_sample {
+            println!("             {e}");
+        }
         println!("  {theirs:>6}  NOT ours (std, a crate) — an EXTERNAL call, not a missing edge");
         println!("  {untypable:>6}  the source states no type for this name at all");
         if typed > 0 {
