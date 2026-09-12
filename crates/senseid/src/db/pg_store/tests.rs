@@ -1491,6 +1491,59 @@ async fn folder_completeness_counts_a_deliberate_skip_as_decided() {
     s.remove_watch_root(&root_id).await.ok();
 }
 
+/// `decided` is a SUM of two different outcomes, and progress must be able to
+/// tell them apart (08 S3).
+///
+/// "40 of 100 decided" reads as work done. If 35 of those 40 are files that can
+/// never be indexed, the folder is not 40% understood — it is 5% understood and
+/// 35% skipped, and only the breakdown says so. A single total is the shape of
+/// count that has produced real defects in this design's history: correct over
+/// the wrong population, with nothing to disagree with.
+///
+/// The two are kept as separate columns rather than one ratio, because a
+/// consumer that wants the ratio can divide and a consumer that wants the counts
+/// cannot un-divide.
+#[tokio::test]
+async fn folder_completeness_separates_a_parse_from_a_skip() {
+    let s = pg_store().await;
+    let root_path = format!("/tmp/fcsplit_{}", uuid::Uuid::new_v4());
+    let root_id = s.add_watch_root(&root_path, "fcsplit", &serde_json::json!([])).await.unwrap();
+    let f = s.upsert_repo(&root_id, "fcsplit-f", &root_path).await.unwrap();
+
+    // Three files, one of each state — so a column that reported the wrong one
+    // cannot coincide with the right answer.
+    s.set_folder_expected_files(&f, 3).await.unwrap();
+    sqlx_core::query::query(
+        "INSERT INTO sensei.files (folder_id, file_path, mtime, content_hash, skip_reason, parsed_at)
+         VALUES ($1, 'a.rs',    1, 'h', NULL,             now())
+              , ($1, 'logo.png',1, 'h', 'binary_content', NULL)
+              , ($1, 'b.rs',    1, 'h', NULL,             NULL)",
+    )
+    .bind(f)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let (expected, decided, parsed, skipped, complete): (i64, i64, i64, i64, bool) =
+        sqlx_core::query_as::query_as(
+            "SELECT expected, decided, parsed, skipped, subtree_complete
+               FROM sensei.folder_completeness WHERE id = $1",
+        )
+        .bind(f)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(expected, 3, "the denominator is the barrier's count");
+    assert_eq!(parsed, 1, "one file actually reached a parse");
+    assert_eq!(skipped, 1, "one can never be parsed and said so");
+    assert_eq!(decided, 2, "a verdict is either of those");
+    assert_eq!(decided, parsed + skipped, "and is exactly their sum — no third way to decide");
+    assert!(!complete, "the third file has no verdict at all, so the folder is not done");
+
+    s.remove_watch_root(&root_id).await.ok();
+}
+
 #[tokio::test]
 async fn folder_expected_files_round_trips_and_is_the_completeness_denominator() {
     // The denominator for folder completeness, persisted at walk time.
