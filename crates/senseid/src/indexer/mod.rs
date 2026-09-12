@@ -9,6 +9,15 @@ pub mod llms_indexer;
 // `crate::languages` keeps producing the graph until the rust cutover in step 9
 // of the plan; wiring these in before then would put two producers with
 // different rules on the same tables.
+/// The cutover gate (stage 10 S1/S2).
+///
+/// `#[cfg(test)]` because it IS a test-runner tool: it is invoked with
+/// `cargo test -- --ignored` and its output is read by a person deciding
+/// whether to cut over. Compiling it into the shipped binary would make it
+/// eight more "never used" findings claiming to be production code, which is
+/// the pattern this design has hit ten times already.
+#[cfg(test)]
+pub mod differential;
 pub mod facts;
 pub mod fqn;
 pub mod incremental;
