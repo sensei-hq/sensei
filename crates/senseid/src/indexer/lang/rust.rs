@@ -275,6 +275,74 @@ pub fn file_fqn(package: &str, module: &str, path: &str) -> Result<Fqn, FqnError
     fqn::define(&Form::Item { lang: Language::Rust, package, module: parent, name, reach: MODULE })
 }
 
+/// A file's crate-relative MODULE PATH, from its path alone — Rust's
+/// file-as-module rule (09 S5, and the missing producer for
+/// [`Source::module`](crate::indexer::facts::Source)).
+///
+/// Relative to `<crate_root>/src` (or the crate root itself), drop the
+/// extension, drop a trailing `mod`/`lib`/`main`:
+///
+/// | file | module |
+/// |---|---|
+/// | `crates/x/src/lib.rs` | `""` (crate root) |
+/// | `crates/x/src/a/b.rs` | `a::b` |
+/// | `crates/x/src/a/mod.rs` | `a` |
+///
+/// THE ONE OWNER of this rule, and it had three. A private
+/// `rust_module_path` in v1's `languages::rust_lang`, a `#[cfg(test)]`
+/// `indexer::module_of` that guessed the crate root by looking for `/src/`
+/// instead of being told it, and nothing at all in v2's production path. The
+/// test helper now delegates here; v1's copy retires with v1 at stage 10.
+///
+/// It matters beyond tidiness: this string is a SEGMENT OF EVERY FQN the file
+/// declares, so two implementations that disagree by one segment mint two
+/// identities for one declaration — which is the identity break spec §2 exists
+/// to prevent, arriving from the least likely direction.
+pub fn module_path(file: &str, crate_root: &str) -> String {
+    let file = std::path::Path::new(file);
+    let root = std::path::Path::new(crate_root);
+    let src = root.join("src");
+    let rel = file.strip_prefix(&src).or_else(|_| file.strip_prefix(root)).unwrap_or(file);
+
+    let mut segments: Vec<String> =
+        rel.components().filter_map(|c| c.as_os_str().to_str().map(str::to_string)).collect();
+    if let Some(last) = segments.last_mut()
+        && let Some(stem) = std::path::Path::new(last.as_str()).file_stem().and_then(|s| s.to_str())
+    {
+        *last = stem.to_string();
+    }
+    // A crate root and a `mod.rs` name the DIRECTORY they sit in, not
+    // themselves — that is the whole file-as-module rule, and dropping the
+    // segment is what makes `a/mod.rs` and `a.rs` the same module.
+    if segments.last().is_some_and(|s| s == "mod" || s == "lib" || s == "main") {
+        segments.pop();
+    }
+    segments.join("::")
+}
+
+/// Does renaming `from` to `to` re-mint the identities the file declares?
+/// (09 S5.)
+///
+/// A rename is NOT always free of re-parsing, and the reason is a property of
+/// the FQN GRAMMAR rather than of the storage. The module path is a segment of
+/// every fqn a Rust file declares, so a rename that changes it re-mints every
+/// declaration in the file even though the bytes are identical — and one that
+/// does not is a `files` row update and nothing more.
+///
+/// Both paths are resolved against the SAME crate root. A move between crates
+/// changes the package too, which is a bigger re-mint than this answers; the
+/// caller compares packages separately, because the package comes from a
+/// manifest and not from the path.
+///
+/// Worth noting against the spec's own example: it offers "a case-only change"
+/// as a rename that does NOT re-mint. For Rust that is wrong — module names are
+/// case-sensitive, so `a.rs` -> `A.rs` changes module `a` to module `A`. The
+/// genuinely free rename is `a/mod.rs` <-> `a.rs`, which this returns `false`
+/// for. The RULE is what is implemented; the example was mistaken.
+pub fn rename_remints_identity(from: &str, to: &str, crate_root: &str) -> bool {
+    module_path(from, crate_root) != module_path(to, crate_root)
+}
+
 /// The name a CRATE ROOT is identified by: its own file stem.
 ///
 /// Every other file is named by the `mod x;` that declares it, and its identity
@@ -1266,6 +1334,93 @@ fn span(node: Node<'_>) -> crate::indexer::facts::Span {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The file-as-module rule, on the cases that distinguish it from a naive
+    /// "path minus extension".
+    #[test]
+    fn a_files_module_path_follows_rusts_file_as_module_rule() {
+        let root = "/w/crates/x";
+        for (file, want) in [
+            ("/w/crates/x/src/lib.rs", ""),
+            ("/w/crates/x/src/main.rs", ""),
+            ("/w/crates/x/src/a.rs", "a"),
+            ("/w/crates/x/src/a/b.rs", "a::b"),
+            // A `mod.rs` names its DIRECTORY, not itself — the case a naive
+            // rule gets wrong, and the one that makes a rename free below.
+            ("/w/crates/x/src/a/mod.rs", "a"),
+            ("/w/crates/x/src/a/b/mod.rs", "a::b"),
+            // Outside `src/`: relative to the crate root instead. `build` and
+            // NOT `""` — only `mod`/`lib`/`main` name their directory, and a
+            // build script is not one of them. Cargo does compile `build.rs` as
+            // its own crate, so an argument exists for `""`; this PROMOTED an
+            // existing rule and changing behaviour while moving it would be a
+            // change smuggled into a refactor.
+            ("/w/crates/x/build.rs", "build"),
+        ] {
+            assert_eq!(module_path(file, root), want, "{file}");
+        }
+    }
+
+    /// 09 S5. A rename re-mints identity exactly when it moves the module path.
+    ///
+    /// Both directions are asserted. A rule that only ever returned `true`
+    /// would pass a test that checked the re-minting cases alone, and it is the
+    /// FREE rename — the one where re-parsing is the waste R14 exists to avoid
+    /// — that such a rule gets wrong.
+    #[test]
+    fn a_rename_remints_identity_exactly_when_the_module_path_moves() {
+        let root = "/w/crates/x";
+
+        assert!(
+            rename_remints_identity("/w/crates/x/src/a.rs", "/w/crates/x/src/b.rs", root),
+            "module a -> b renames every declaration in the file"
+        );
+        assert!(
+            rename_remints_identity("/w/crates/x/src/a.rs", "/w/crates/x/src/d/a.rs", root),
+            "a -> d::a likewise, even though the file name did not change"
+        );
+        // Rust module names are CASE-SENSITIVE, so this is a real re-mint —
+        // contradicting the spec's own example, which offers a case-only change
+        // as a free rename. The rule decides; the example was wrong.
+        assert!(
+            rename_remints_identity("/w/crates/x/src/a.rs", "/w/crates/x/src/A.rs", root),
+            "a -> A is a different module in Rust"
+        );
+
+        assert!(
+            !rename_remints_identity("/w/crates/x/src/a/mod.rs", "/w/crates/x/src/a.rs", root),
+            "both spell module `a` — the bytes moved, the identities did not"
+        );
+        assert!(
+            !rename_remints_identity("/w/crates/x/src/lib.rs", "/w/crates/x/src/main.rs", root),
+            "both are the crate root, whose module path is empty"
+        );
+    }
+
+    /// The module path is a SEGMENT OF THE FQN, which is why the rename
+    /// question is answered by comparing module paths at all.
+    ///
+    /// Asserted through `file_fqn` rather than by reading the string, so a
+    /// change that stopped threading the module into the identity fails here
+    /// instead of leaving the rename rule correct about a value nothing uses.
+    #[test]
+    fn the_module_path_is_what_file_fqn_is_built_from() {
+        let root = "/w/crates/x";
+        let a = file_fqn("x", &module_path("/w/crates/x/src/a.rs", root), "/w/crates/x/src/a.rs")
+            .expect("a module file has an identity");
+        let b = file_fqn("x", &module_path("/w/crates/x/src/b.rs", root), "/w/crates/x/src/b.rs")
+            .expect("a module file has an identity");
+        assert_ne!(a.as_str(), b.as_str(), "two modules, two identities");
+
+        let via_mod = module_path("/w/crates/x/src/a/mod.rs", root);
+        let via_file = module_path("/w/crates/x/src/a.rs", root);
+        assert_eq!(
+            file_fqn("x", &via_mod, "/w/crates/x/src/a/mod.rs").unwrap().as_str(),
+            file_fqn("x", &via_file, "/w/crates/x/src/a.rs").unwrap().as_str(),
+            "and the free rename really does land on the same identity"
+        );
+    }
+
     use crate::indexer::facts::{
         Binding, ImportOrigin, Observation, Reason, RefKind, RelationKind, Resolution, SymbolKind,
     };

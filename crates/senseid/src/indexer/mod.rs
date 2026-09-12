@@ -11,6 +11,7 @@ pub mod llms_indexer;
 // different rules on the same tables.
 pub mod facts;
 pub mod fqn;
+pub mod incremental;
 pub mod lang;
 pub mod persist;
 pub mod pipeline;
@@ -142,19 +143,23 @@ pub(crate) fn workspace_relative(path: &str) -> String {
         .unwrap_or_else(|_| panic!("{path} does not sit under {}", root.display()))
 }
 
-/// A file's package-relative module path. A crate root and a `mod.rs` name
-/// the directory they sit in, not themselves.
+/// A file's package-relative module path, for a corpus path whose crate root
+/// is not separately known.
+///
+/// The RULE lives in [`lang::rust::module_path`] and this only supplies the
+/// missing argument: the crate root, recovered by splitting at `/src/`. That
+/// split is a GUESS and is why this stays test-only — the corpus walks real
+/// paths and the guess holds for them, while a production caller knows the
+/// crate root for real (it found the manifest) and must pass it.
+///
+/// It used to reimplement the rule instead of delegating, which made two
+/// spellings of a string that is a SEGMENT OF EVERY FQN a file declares.
 #[cfg(test)]
 pub(crate) fn module_of(path: &str) -> String {
-    let Some((_, tail)) = path.split_once("/src/") else {
-        return String::new();
-    };
-    let tail = tail.strip_suffix(".rs").unwrap_or(tail);
-    let mut segments: Vec<&str> = tail.split('/').collect();
-    if matches!(segments.last(), Some(&"lib") | Some(&"main") | Some(&"mod")) {
-        segments.pop();
+    match path.split_once("/src/") {
+        Some((crate_root, _)) => lang::rust::module_path(path, crate_root),
+        None => String::new(),
     }
-    segments.join("::")
 }
 
 /// The part of a v2 source file that is NOT its test module.
