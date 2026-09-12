@@ -48,8 +48,18 @@ pub enum ChangeKind {
     TouchedOnly,
     /// Unchanged in every respect.
     Unchanged,
-    /// Gone from disk. Handed to reconcile (R10.8), NEVER a prefix DELETE.
-    Removed,
+    // A `Removed` variant stood here and NOTHING EVER CONSTRUCTED IT. Removal
+    // is not a verdict about an observed file — it is the absence of one — so it
+    // cannot be produced by a function that classifies `(old, new)` pairs where
+    // a `new` exists. `StructurePlan::removed` is the live representation, and
+    // it is a list of paths precisely because a removed file has no current
+    // facts to carry.
+    //
+    // Deleted rather than kept "for completeness": a variant no writer mints is
+    // a second way to say a thing, and whichever of the two a reader checks
+    // decides whether they see removals at all. 09 S4's table lists removal as a
+    // row, which is what made it look like it needed a variant; it needs a
+    // representation, and it has one.
 }
 
 impl ChangeKind {

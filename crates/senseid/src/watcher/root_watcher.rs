@@ -169,11 +169,18 @@ pub(crate) fn watcher_is_stalled(
 }
 
 /// The registered watch root that contains `path` (longest matching prefix), or
-/// `None` if `path` is outside every root. Uses component-wise `Path::starts_with`
-/// (so `/a/proj` is NOT treated as a prefix of `/a/project`). Pure — reused by
-/// the branch-switch and rescan reconcile paths to pick which root to re-scan.
+/// `None` if `path` is outside every root. Pure — reused by the branch-switch
+/// and rescan reconcile paths to pick which root to re-scan.
+///
+/// Delegates to [`incremental::owning_root`](crate::indexer::incremental::owning_root),
+/// which owns the longest-prefix rule. Two root sets, one rule: this answers
+/// "which WATCH root" and stage 9 answers "which REPOSITORY", and the sets
+/// genuinely differ — a watch root holds many repos. What must not differ is
+/// what "longest prefix" means, and a second copy of six words of iterator is
+/// exactly how that drifts. The component-wise `Path::starts_with` that stops
+/// `/a/proj` matching `/a/project` lives there too, tested there.
 pub(crate) fn watch_root_for_path(path: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
-    roots.iter().filter(|r| path.starts_with(r)).max_by_key(|r| r.as_os_str().len()).cloned()
+    crate::indexer::incremental::owning_root(path, roots).cloned()
 }
 
 /// The path to reconcile after a branch switch: the REPOSITORY whose `.git/HEAD`
