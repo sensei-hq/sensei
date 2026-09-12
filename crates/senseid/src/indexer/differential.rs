@@ -746,3 +746,142 @@ mod why {
         println!("REAL LOSS OF REACH     {}", real_loss.len());
     }
 }
+
+/// WHAT WOULD FIX IT — how far a binding map gets, measured (not estimated).
+///
+/// v2's walk resolves a receiver's type in exactly one case: `self`/`Self`
+/// inside a type's own body. It never visits a `let` declaration, so
+/// `let cfg = SenseiConfig::from_env(); cfg.method()` is a
+/// `ReceiverTypeUnknown` even though the type is stated one line above.
+///
+/// This counts, over the real corpus, how each unresolved receiver COULD be
+/// typed — so the decision about what to build is made against numbers rather
+/// than an impression of which shapes are common.
+#[cfg(test)]
+mod reach {
+    use super::*;
+    use crate::indexer::facts::{Observation, Resolution};
+    use crate::indexer::lang::rust::{self, Source};
+    use crate::indexer::resolve::{World, resolve};
+
+    /// How a receiver's type could be learned, cheapest first.
+    #[derive(PartialEq, Eq, PartialOrd, Ord)]
+    enum Route {
+        /// `let x: T = …` — the type is written at the binding.
+        LetAnnotation,
+        /// `let x = T::assoc(…)` — the initialiser's path names the type.
+        LetInitialiserPath,
+        /// `x: T` in the enclosing fn signature.
+        Parameter,
+        /// `a.b().c()` — needs the inner call's RETURN type first.
+        ChainedCall,
+        /// A receiver that is not a plain identifier and not a chain.
+        Other,
+    }
+
+    impl Route {
+        fn label(&self) -> &'static str {
+            match self {
+                Self::LetAnnotation => "let x: T          (annotation at the binding)",
+                Self::LetInitialiserPath => "let x = T::f()    (initialiser names the type)",
+                Self::Parameter => "fn(x: T)          (enclosing signature)",
+                Self::ChainedCall => "a.b().c()         (needs the inner RETURN type)",
+                Self::Other => "other             (not a plain identifier)",
+            }
+        }
+    }
+
+    fn route_for(receiver: &str, text: &str) -> Route {
+        // A chain is decided by shape alone.
+        if receiver.contains('.') || receiver.contains('(') {
+            return Route::ChainedCall;
+        }
+        if !receiver.chars().all(|c| c.is_alphanumeric() || c == '_') || receiver.is_empty() {
+            return Route::Other;
+        }
+        // Deliberately TEXTUAL and file-wide, not scope-aware. This is an upper
+        // bound on what each route reaches, and it is labelled as one — a
+        // scope-aware count needs the walk itself, which is the thing being
+        // sized. Over-counting here is visible; under-counting would hide reach.
+        let annotated = format!("let {receiver}: ");
+        let annotated_mut = format!("let mut {receiver}: ");
+        if text.contains(&annotated) || text.contains(&annotated_mut) {
+            return Route::LetAnnotation;
+        }
+        for prefix in [format!("let {receiver} = "), format!("let mut {receiver} = ")] {
+            if let Some(i) = text.find(&prefix) {
+                let rest = &text[i + prefix.len()..];
+                let init = rest.lines().next().unwrap_or("");
+                // `T::f(` with T capitalised — an associated function or
+                // constructor, whose first segment names the type.
+                if let Some((head, _)) = init.split_once("::")
+                    && head.chars().next().is_some_and(char::is_uppercase)
+                {
+                    return Route::LetInitialiserPath;
+                }
+                return Route::Other;
+            }
+        }
+        if text.contains(&format!("{receiver}: ")) {
+            return Route::Parameter;
+        }
+        Route::Other
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn how_each_unknown_receiver_could_be_typed() {
+        let sources = crate::indexer::corpus_rust_sources();
+        let first_party: std::collections::BTreeSet<String> =
+            sources.iter().map(|(path, _)| crate::indexer::package_of(path)).collect();
+        let scanned = std::collections::BTreeSet::new();
+        let world = World { first_party: &first_party, scanned: &scanned };
+
+        let mut by_route: std::collections::BTreeMap<&str, usize> = Default::default();
+        let mut total = 0usize;
+        let mut examples: std::collections::BTreeMap<&str, Vec<String>> = Default::default();
+
+        for (abs, text) in &sources {
+            let package = crate::indexer::package_of(abs);
+            let rel = crate::indexer::workspace_relative(abs);
+            let module = crate::indexer::module_of(&rel);
+            let Ok(facts) =
+                rust::read(&Source { package: &package, module: &module, path: &rel, text })
+            else {
+                continue;
+            };
+            let facts = resolve(facts, &rust::GRAMMAR, &world);
+
+            for r in &facts.references {
+                let Resolution::Unresolved { reason, evidence } = &r.target else { continue };
+                if !matches!(reason, crate::indexer::facts::Reason::ReceiverTypeUnknown) {
+                    continue;
+                }
+                let receiver = evidence.saw.iter().find_map(|o| match o {
+                    Observation::Receiver(s) => Some(s.as_str()),
+                    _ => None,
+                });
+                let Some(receiver) = receiver else { continue };
+                total += 1;
+                let route = route_for(receiver, text);
+                *by_route.entry(route.label()).or_default() += 1;
+                let ex = examples.entry(route.label()).or_default();
+                if ex.len() < 3 {
+                    ex.push(format!("{rel}:{} — {receiver}.{}", r.at.start_line, evidence.name));
+                }
+            }
+        }
+
+        println!("\n\n════ how {total} ReceiverTypeUnknown receivers COULD be typed ════");
+        println!("(upper bound — the match is textual and file-wide, not scope-aware)\n");
+        let mut rows: Vec<_> = by_route.iter().collect();
+        rows.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+        for (label, n) in rows {
+            let pct = (*n as f64) * 100.0 / (total.max(1) as f64);
+            println!("  {n:>6}  {pct:>5.1}%  {label}");
+            for e in examples.get(label).into_iter().flatten() {
+                println!("                     e.g. {e}");
+            }
+        }
+    }
+}

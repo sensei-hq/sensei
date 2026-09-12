@@ -234,6 +234,30 @@ impl<'a> Ladder<'a> {
             return Resolution::Resolved(fqn);
         }
         let wanted = self.wanted(evidence);
+        // A FIELD is reachable through no path, so no path rung may serve one.
+        //
+        // `Type::field` is not a path Rust admits — that is exactly why
+        // `Reach::Field` is its own reach — and an import binds a path head. So
+        // a field access must never be answered by an import, a glob, or a
+        // package root: those all prove "a path with this head reaches that
+        // item", which is not the question a field asks.
+        //
+        // MEASURED, and it is not hypothetical. `federation/mod.rs` does
+        // `use dojo_protocol::{PublishedRule, content_hash}` and then reads the
+        // FIELD `pr.content_hash`. Without this guard the import rung answers
+        // with the imported FUNCTION's identity carrying the FIELD's reach,
+        // where the declaration carries the ITEM reach — so the use site and the
+        // declaration never merge, and the edge points at a real node that is
+        // the wrong one (R4).
+        //
+        // Only the OWNING TYPE places a field, which `declared_here` above
+        // already does when the file declares it.
+        if wanted.reach == Reach::Field {
+            return Resolution::Unresolved {
+                reason: self.filtered(Reason::NoImportInScope, evidence),
+                evidence: evidence.clone(),
+            };
+        }
         if let Placed::Proven(fqn) = self.through_an_import(&wanted, at) {
             return Resolution::Resolved(fqn);
         }
@@ -832,7 +856,11 @@ mod tests {
     /// lets a reader drop it without dropping those.
     #[test]
     fn plumbing_is_filtered_into_its_own_reason_rather_than_a_genuine_miss() {
-        let facts = ladder("m", "fn f(x: &Thing, y: &Thing) { x.clone(); y.width(); }");
+        // `let y = helper();` and NOT `y: &Thing`: a parameter's type is
+        // STATED, so the walk now reads it off the signature and the receiver is
+        // no longer unknown. A fixture that kept the old spelling would be
+        // asserting about a reason it no longer reaches.
+        let facts = ladder("m", "fn f(x: &Thing) { let y = helper(); x.clone(); y.width(); }");
         let got = targets(&facts);
         assert!(
             got.iter().any(|t| t == "Denylisted(clone)"),
@@ -878,7 +906,9 @@ mod tests {
             (
                 Reason::ReceiverTypeUnknown,
                 "a member access whose receiver this file states no type for",
-                "fn f(x: &Thing) { x.width(); }",
+                // The receiver's type must be genuinely unstated — a parameter
+                // or a typed `let` is read now, so neither reaches this reason.
+                "fn f() { let y = helper(); y.width(); }",
             ),
             (
                 Reason::UnhandledForm,
