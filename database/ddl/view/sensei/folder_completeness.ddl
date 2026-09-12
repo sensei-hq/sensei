@@ -1,6 +1,12 @@
 set search_path to sensei, extensions;
 
-create or replace view folder_completeness as
+-- Dropped rather than replaced: `create or replace view` can only APPEND
+-- columns, and `parsed`/`skipped` belong beside the `decided` they sum to
+-- rather than tacked past `drifted`. Verified safe — `pg_depend` shows no view
+-- reading this one, and no DDL or frontend references it.
+drop view if exists folder_completeness;
+
+create view folder_completeness as
 with recursive local as (
     -- Per-folder facts ONLY. `expected_files` is written by the walk that
     -- counted them (the sole point that knows the number); `decided` counts the
@@ -20,6 +26,18 @@ with recursive local as (
          , count(s.*) filter (
                where s.parsed_at is not null or s.skip_reason is not null
            ) as decided
+         -- `decided` split into the two things it sums (08 S3). "40 of 100
+         -- decided" reads as work done; if 35 of those can never be indexed the
+         -- folder is 5% understood, not 40%, and only the breakdown says so.
+         --
+         -- A file can be BOTH — parsed on an earlier pass, then re-fingerprinted
+         -- as unparseable — so `parsed` excludes a row carrying a skip reason.
+         -- Without that the two would sum to more than `decided` and the
+         -- identity a consumer checks against would quietly not hold.
+         , count(s.*) filter (
+               where s.parsed_at is not null and s.skip_reason is null
+           ) as parsed
+         , count(s.*) filter (where s.skip_reason is not null) as skipped
       from folders f
       left join files s on s.folder_id = f.id
      group by f.id, f.parent_id, f.status, (f.props->>'expected_files')::bigint
@@ -47,6 +65,8 @@ select l.id
      , l.parent_id
      , l.expected
      , l.decided
+     , l.parsed
+     , l.skipped
      , (i.id is null)                     as subtree_complete
      , l.status                           as stored_status
      , (l.status = 'indexed') is distinct from (i.id is null) as drifted
@@ -62,4 +82,8 @@ A folder is complete when every file it owns has reached a verdict AND every fol
 
 A verdict is `parsed_at is not null or skip_reason is not null`. It is NOT `indexed_at`: that column is NOT NULL DEFAULT now(), so testing it is a tautology that counts every walked file as decided and makes the whole view report 100% before any parsing has run.
 
+`decided` is split into `parsed` and `skipped`, which sum to it. A folder whose progress is mostly skips is not mostly understood, and one total cannot say so.
+
 `drifted` compares the stored status against the derived answer, so disagreement is directly queryable instead of being inferred from a suspiciously short result.';
+comment on column folder_completeness.parsed is 'Files that reached a real parse — `parsed_at` set and no skip reason.';
+comment on column folder_completeness.skipped is 'Files that can never be indexed (binary, invalid UTF-8). A verdict, not a failure — but not comprehension either.';
