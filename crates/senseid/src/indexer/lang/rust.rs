@@ -15,6 +15,8 @@
 
 use tree_sitter::Node;
 
+use std::collections::BTreeMap;
+
 use crate::indexer::facts::{
     Binding, DeclaredType, Evidence, FileFacts, Fqn, Import, ImportOrigin, Language, Observation,
     Param, Reason, RefKind, Reference, Relation, RelationKind, Resolution, Symbol, SymbolKind,
@@ -232,6 +234,9 @@ pub fn read(source: &Source<'_>) -> Result<FileFacts, ReadError> {
         from: file_fqn(source.package, source.module, source.path)
             .map_err(ReadError::NoFileIdentity)?,
         owner: Owner::Nobody,
+        // The file scope binds nothing: a `let` lives in a block, and the file
+        // level has none.
+        bindings: BTreeMap::new(),
     };
     let mut walk = Walk {
         src: source.text,
@@ -387,6 +392,23 @@ struct Scope {
     from: Fqn,
     /// The type a declaration found here is a member of, as an IDENTITY.
     owner: Owner,
+    /// Local name -> the TYPE it is bound to, for the names in scope here.
+    ///
+    /// A member's identity is `…·<Type>·<member>`, so the receiver's type is a
+    /// segment of the key a use site has to mint. Without this the walk knew a
+    /// receiver's type in exactly one case — `self` inside a type's own body —
+    /// and every other member call was `ReceiverTypeUnknown` even where the
+    /// source states the type one line above.
+    ///
+    /// Only what the source STATES is recorded. A binding whose type is not
+    /// written stays absent, and its uses stay unresolved: a guessed receiver
+    /// type mints a wrong identity, which R4 ranks below no identity at all.
+    ///
+    /// Carried on the scope rather than on the walk so it obeys block
+    /// structure for free — a scope is already cloned per body, so a binding
+    /// cannot outlive the block that introduced it or be seen before its own
+    /// `let`.
+    bindings: BTreeMap<String, String>,
 }
 
 /// The parent side of every ownership relation (spec §3.3, R8's Facade row).
@@ -472,6 +494,71 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// A block, walked in ORDER so each `let` types the statements after it.
+    ///
+    /// Order is the whole of it. The binding is recorded AFTER its own
+    /// initialiser is walked — so `let x = x.foo()` reads the OUTER `x` — and
+    /// before the next statement, so the following lines see it. The scope is
+    /// a clone, so nothing recorded here escapes the block.
+    ///
+    /// Shadowing works by construction: a second `let x` overwrites the first
+    /// from that point on, which is what Rust does.
+    fn block(&mut self, node: Node<'_>, scope: &Scope) {
+        let mut scope = scope.clone();
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            self.node(child, &scope);
+            if child.kind() == "let_declaration"
+                && let Some((name, ty)) = self.binding_of(child)
+            {
+                scope.bindings.insert(name, ty);
+            }
+        }
+    }
+
+    /// The `(name, type)` a `let` STATES, or `None` when it states none.
+    ///
+    /// Two shapes are read, and deliberately only two:
+    ///
+    /// - `let x: T = …` — the annotation.
+    /// - `let x = T::assoc(…)` / `let x = T { … }` — an initialiser whose path
+    ///   begins with the type.
+    ///
+    /// Everything else returns `None`. `let x = helper()` names no type;
+    /// inferring one from the function's return type is a different capability
+    /// (it needs the graph, not the file) and guessing is not an option — the
+    /// type becomes a SEGMENT of the identity, so a wrong one mints a wrong key
+    /// and every edge built on it points somewhere real but incorrect.
+    ///
+    /// The type must be a SIMPLE name. `Vec<Config>` is rejected rather than
+    /// truncated to `Vec`: a member of `Vec` is not a first-party identity this
+    /// grammar can mint, and `Vec<Config>` is not a name any declaration
+    /// carries. Both spellings would be wrong, so neither is recorded.
+    fn binding_of(&self, node: Node<'_>) -> Option<(String, String)> {
+        // Only a plain `let x`. A destructuring pattern binds several names of
+        // several types, and attributing the whole type to each is false.
+        let pattern = node.child_by_field_name("pattern")?;
+        if pattern.kind() != "identifier" {
+            return None;
+        }
+        let name = self.text(pattern).to_string();
+
+        if let Some(ty) = node.child_by_field_name("type") {
+            return simple_type_name(self.text(ty)).map(|t| (name, t));
+        }
+
+        let value = node.child_by_field_name("value")?;
+        let path = match value.kind() {
+            // `T::assoc(…)`
+            "call_expression" => self.field_text(value, "function")?,
+            // `T { … }`
+            "struct_expression" => self.field_text(value, "name")?,
+            _ => return None,
+        };
+        let head = path.split("::").next()?;
+        simple_type_name(head).map(|t| (name, t))
+    }
+
     /// The one dispatch. Every arm either records a declaration and walks its
     /// body, or walks children unchanged; no arm returns early without walking.
     fn node(&mut self, node: Node<'_>, scope: &Scope) {
@@ -499,6 +586,9 @@ impl<'a> Walk<'a> {
             "macro_definition" => self.plain(node, scope, SymbolKind::Macro, Reach::Macro),
             "mod_item" => self.module_item(node, scope),
             "impl_item" => self.impl_block(node, scope),
+            // A block is the unit a `let` is scoped to, so it is walked in
+            // order rather than as an unordered bag of children.
+            "block" => self.block(node, scope),
 
             _ => {
                 self.use_site(node, scope);
@@ -601,8 +691,42 @@ impl<'a> Walk<'a> {
             s.params = self.params(node);
             s
         });
-        let inner = self.push(symbol, scope);
+        let mut inner = self.push(symbol, scope);
+        // A parameter's type is STATED in the signature, so the body knows the
+        // type of every name the signature binds. Same rule as a `let`, one
+        // level up — and the same refusal to guess: a parameter whose type is
+        // not a simple name records nothing.
+        //
+        // Bound on `inner`, the body's scope, so it cannot leak to a sibling
+        // function; and set BEFORE the body is walked, because unlike a `let`
+        // a parameter is in scope from the body's first statement.
+        inner.bindings.extend(self.param_bindings(node));
         self.children(node, &inner);
+    }
+
+    /// The `(name, type)` each parameter STATES, for the ones that state a
+    /// simple type. `self` is deliberately absent: its type comes from the
+    /// enclosing `impl`, which [`Walk::name_member`] already reads off the
+    /// container — recording it here would be a second source for one fact.
+    fn param_bindings(&self, node: Node<'_>) -> BTreeMap<String, String> {
+        let Some(list) = node.child_by_field_name("parameters") else {
+            return BTreeMap::new();
+        };
+        let mut cursor = list.walk();
+        list.named_children(&mut cursor)
+            .filter(|p| p.kind() == "parameter")
+            .filter_map(|p| {
+                let pattern = p.child_by_field_name("pattern")?;
+                // Only a plain name. A destructuring parameter binds several
+                // names of several types, and giving each the whole type is
+                // false.
+                if pattern.kind() != "identifier" {
+                    return None;
+                }
+                let ty = p.child_by_field_name("type")?;
+                simple_type_name(self.text(ty)).map(|t| (self.text(pattern).to_string(), t))
+            })
+            .collect()
     }
 
     /// A struct, union, enum or trait: a named type whose body declares members
@@ -867,10 +991,12 @@ impl<'a> Walk<'a> {
             return Miss::unhandled(node, self.text(node), reach);
         };
 
+        // `self` inside a type's body, or a local whose type the source STATED.
+        // Nothing else: a receiver the file does not type is reported as such.
         let self_type = match (&scope.container, receiver) {
             (Container::Type(ty), "self" | "Self") => Some(ty.as_str()),
             (Container::TraitImpl { ty, .. }, "self" | "Self") => Some(ty.as_str()),
-            _ => None,
+            _ => scope.bindings.get(receiver).map(String::as_str),
         };
         let Some(ty) = self_type else {
             return Miss {
@@ -1316,6 +1442,37 @@ fn import_origin(path: &str) -> ImportOrigin {
     }
 }
 
+/// A type spelled as a SIMPLE name, or `None`.
+///
+/// `Config` yes, and `&Config`/`&mut Config` yes — a reference has the
+/// referent's methods. `Vec<Config>`, `crate::a::Config`, `[u8; 4]`,
+/// `Arc<Config>` no.
+///
+/// Rejecting rather than truncating is the point. A member of `Vec` is not an
+/// identity this grammar mints, and `Vec<Config>` is not a name any declaration
+/// carries — so both the truncated and the verbatim spelling would be wrong,
+/// and a wrong receiver type mints a wrong key (R4). The narrow rule is what
+/// keeps every type this records one a declaration could actually have minted.
+fn simple_type_name(text: &str) -> Option<String> {
+    // A REFERENCE is stripped, because `&Config` has `Config`'s methods —
+    // Rust auto-derefs the receiver, so `cfg.script()` on a `&Config` calls
+    // `Config::script`. This is a fact about the language, not an inference,
+    // and it is most of the reach here: parameters in this workspace are
+    // overwhelmingly taken by reference, so without it the signature route
+    // reached 57 of 3,873 receivers.
+    //
+    // `Arc<T>`/`Box<T>` deref too and are deliberately NOT stripped. There the
+    // member could belong to the smart pointer OR to `T`, and picking one is a
+    // guess that mints a wrong identity half the time (R4). `&` has no such
+    // ambiguity: `&T` declares no inherent members of its own.
+    let t = text.trim().trim_start_matches('&').trim_start();
+    let t = t.strip_prefix("mut ").unwrap_or(t).trim();
+    let ok = !t.is_empty()
+        && t.chars().next().is_some_and(char::is_uppercase)
+        && t.chars().all(|c| c.is_alphanumeric() || c == '_');
+    ok.then(|| t.to_string())
+}
+
 /// Columns are tree-sitter's, which counts BYTES within the line rather than
 /// characters. Recorded because two references on one line are told apart by
 /// column, and a reader comparing these against a character offset would find
@@ -1334,6 +1491,222 @@ fn span(node: Node<'_>) -> crate::indexer::facts::Span {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every reference's target, as `name -> resolution`.
+    fn targets(text: &str) -> Vec<(String, String)> {
+        let facts = read(&Source { package: "p", module: "m", path: "src/m.rs", text })
+            .expect("the fixture parses");
+        // RESOLVED, not just read. `read` mints a candidate identity; the
+        // ladder is what places it against a declaration. A helper that stopped
+        // at `read` would report every candidate as `Unplaced` and could not
+        // tell "the walk minted nothing" from "the walk minted the right thing
+        // and nothing looked it up" — which is exactly the distinction these
+        // tests are about.
+        let first_party = std::collections::BTreeSet::from(["p".to_string()]);
+        let scanned = std::collections::BTreeSet::new();
+        let facts = crate::indexer::resolve::resolve(
+            facts,
+            &GRAMMAR,
+            &crate::indexer::resolve::World { first_party: &first_party, scanned: &scanned },
+        );
+        facts
+            .references
+            .iter()
+            .map(|r| {
+                let shown = match &r.target {
+                    crate::indexer::facts::Resolution::Resolved(f) => f.as_str().to_string(),
+                    crate::indexer::facts::Resolution::Unresolved { reason, evidence } => {
+                        format!("UNRESOLVED({reason:?}) {}", evidence.name)
+                    }
+                };
+                let name = match &r.target {
+                    crate::indexer::facts::Resolution::Resolved(f) => {
+                        f.as_str().rsplit('\u{00B7}').nth(1).unwrap_or("").to_string()
+                    }
+                    crate::indexer::facts::Resolution::Unresolved { evidence, .. } => {
+                        evidence.name.clone()
+                    }
+                };
+                (name, shown)
+            })
+            .collect()
+    }
+
+    /// A `let` binding states the receiver's type, and the walk must read it.
+    ///
+    /// The member's identity is `…·<Type>·<member>`, so the TYPE is a segment of
+    /// the key — `brew_install_script` alone is not an identity, and guessing by
+    /// name alone is what `Reason::AmbiguousCandidates` exists to refuse.
+    ///
+    /// Before this, the walk resolved a receiver's type in exactly ONE case:
+    /// `self`/`Self` inside a type's own body. It never visited a `let`
+    /// declaration, so `let cfg = SenseiConfig::from_env(); cfg.method()` was
+    /// `ReceiverTypeUnknown` with the answer written one line above. Measured on
+    /// this workspace: 33,047 unresolved receivers, of which 1,908 are bound by
+    /// an initialiser that names its type and 1,851 by an annotation.
+    #[test]
+    fn a_let_binding_gives_the_receiver_its_type() {
+        let resolved: Vec<String> = targets(
+            "pub struct Config;\n\
+             impl Config {\n\
+               pub fn from_env() -> Self { Config }\n\
+               pub fn script(&self) -> u32 { 1 }\n\
+             }\n\
+             pub fn go() -> u32 {\n\
+               let cfg = Config::from_env();\n\
+               cfg.script()\n\
+             }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "script")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(
+            resolved,
+            vec!["rust·p·m·Config·script·item".to_string()],
+            "the initialiser names the type one line above the call"
+        );
+    }
+
+    /// The same, from an ANNOTATION rather than an initialiser.
+    #[test]
+    fn a_type_annotation_gives_the_receiver_its_type() {
+        let resolved: Vec<String> = targets(
+            "pub struct Config;\n\
+             impl Config { pub fn script(&self) -> u32 { 1 } }\n\
+             pub fn go(make: impl Fn() -> Config) -> u32 {\n\
+               let cfg: Config = make();\n\
+               cfg.script()\n\
+             }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "script")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(resolved, vec!["rust·p·m·Config·script·item".to_string()]);
+    }
+
+    /// A binding the walk cannot type stays UNRESOLVED. It does not fall back to
+    /// the enclosing type, and it does not guess from the member name — a wrong
+    /// receiver type mints a wrong identity, and R4 ranks that below no answer.
+    #[test]
+    fn a_binding_whose_type_is_not_stated_stays_unresolved() {
+        let shown: Vec<String> = targets(
+            "pub fn go(x: u32) -> u32 {\n\
+               let thing = helper(x);\n\
+               thing.script()\n\
+             }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "script")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(
+            shown,
+            vec!["UNRESOLVED(ReceiverTypeUnknown) script".to_string()],
+            "`helper(x)` names no type, so the receiver has none — and inventing one is worse \
+             than saying so"
+        );
+    }
+
+    /// A binding is visible only AFTER its `let`, and only inside its block.
+    ///
+    /// Both halves matter. Recording it too early types a use of an OUTER
+    /// binding with the inner one's type; leaking it past the block types a
+    /// later, unrelated `cfg` the same way. Either is a wrong identity that
+    /// nothing downstream can tell from a right one.
+    #[test]
+    fn a_binding_does_not_escape_its_block_or_precede_its_own_let() {
+        let shown: Vec<String> = targets(
+            "pub struct Config;\n\
+             impl Config { pub fn script(&self) -> u32 { 1 } }\n\
+             pub fn go() -> u32 {\n\
+               { let cfg = Config::from_env(); cfg.script(); }\n\
+               cfg.script()\n\
+             }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "script")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(
+            shown,
+            vec![
+                "rust·p·m·Config·script·item".to_string(),
+                "UNRESOLVED(ReceiverTypeUnknown) script".to_string(),
+            ],
+            "inside the block it is typed; outside it the name is not bound and must not be"
+        );
+    }
+
+    /// A parameter's type is stated in the signature, and the body knows it.
+    ///
+    /// Measured on this workspace before the fix: 3,873 unresolved receivers are
+    /// plain identifiers the enclosing signature types.
+    #[test]
+    fn a_parameter_gives_the_receiver_its_type() {
+        let shown: Vec<String> = targets(
+            "pub struct Config;\n\
+             impl Config { pub fn script(&self) -> u32 { 1 } }\n\
+             pub fn go(cfg: Config) -> u32 { cfg.script() }\n\
+             pub fn other(cfg: u32) -> u32 { cfg.script() }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "script")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(
+            shown,
+            vec![
+                "rust·p·m·Config·script·item".to_string(),
+                // `u32` is not a type this grammar can mint a member of, and
+                // `simple_type_name` takes only capitalised names — so nothing
+                // is recorded and the receiver's type stays genuinely UNKNOWN.
+                // Not `Unplaced`, which would mean a candidate was minted and
+                // not found: no candidate exists, and the reason says so.
+                "UNRESOLVED(ReceiverTypeUnknown) script".to_string(),
+            ],
+            "the signature types the first receiver; the second names a primitive"
+        );
+    }
+
+    /// `&T` and `&mut T` carry `T`'s methods; `Arc<T>` is refused.
+    ///
+    /// The split is not squeamishness. Rust auto-derefs a reference receiver, so
+    /// `(&Config).script()` IS `Config::script` — a language fact. A smart
+    /// pointer derefs too, but it also has inherent members of its own, so
+    /// `arc.clone()` could be `Arc::clone` or `Config::clone` and choosing is a
+    /// coin flip that mints a wrong identity half the time (R4).
+    #[test]
+    fn a_reference_receiver_carries_the_referents_methods() {
+        assert_eq!(simple_type_name("&Config"), Some("Config".to_string()));
+        assert_eq!(simple_type_name("&mut Config"), Some("Config".to_string()));
+        assert_eq!(simple_type_name("&&Config"), Some("Config".to_string()));
+        assert_eq!(simple_type_name("Config"), Some("Config".to_string()));
+
+        for refused in
+            ["Arc<Config>", "Box<Config>", "Vec<Config>", "crate::a::Config", "u32", "&str"]
+        {
+            assert_eq!(simple_type_name(refused), None, "{refused} must not be recorded");
+        }
+    }
+
+    #[test]
+    fn repro_content_hash() {
+        for (n, t) in targets(
+            "pub fn content_hash(c: &str) -> String { c.into() }\n\
+             pub struct PublishedRule { pub content_hash: String }\n\
+             pub fn go() { let r = PublishedRule { content_hash: content_hash(\"x\") }; \
+             let _ = r.content_hash; }\n",
+        ) {
+            println!("  {n:24} -> {t}");
+        }
+    }
 
     /// The file-as-module rule, on the cases that distinguish it from a naive
     /// "path minus extension".
