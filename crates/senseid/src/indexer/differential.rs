@@ -773,7 +773,11 @@ mod reach {
         LetInitialiserPath,
         /// `x: T` in the enclosing fn signature.
         Parameter,
-        /// `a.b().c()` — needs the inner call's RETURN type first.
+        /// `self.m().c()` — the inner call resolves already; only `m`'s
+        /// RETURN type is missing, and `m` is declared on this same type.
+        ChainedOnSelf,
+        /// `a.b().c()` — needs the inner call's RETURN type, and the inner
+        /// receiver is not `self`, so the declaration may be anywhere.
         ChainedCall,
         /// A receiver that is not a plain identifier and not a chain.
         Other,
@@ -785,16 +789,65 @@ mod reach {
                 Self::LetAnnotation => "let x: T          (annotation at the binding)",
                 Self::LetInitialiserPath => "let x = T::f()    (initialiser names the type)",
                 Self::Parameter => "fn(x: T)          (enclosing signature)",
+                Self::ChainedOnSelf => "self.m().c()      (inner resolves; needs m's RETURN type)",
                 Self::ChainedCall => "a.b().c()         (needs the inner RETURN type)",
                 Self::Other => "other             (not a plain identifier)",
             }
         }
     }
 
+    /// The HEAD of whatever type the source states for `name`, if it states one.
+    ///
+    /// Deliberately looser than `simple_type_name`: that one decides what is
+    /// safe to RECORD as an identity, this one only asks whose type it is. So
+    /// `Vec<Config>` yields `Vec` and `&Path` yields `Path` — neither is
+    /// mintable, both are answerable.
+    fn stated_type_head(name: &str, text: &str) -> Option<String> {
+        if !name.chars().all(|c| c.is_alphanumeric() || c == '_') || name.is_empty() {
+            return None;
+        }
+        let after = |prefix: String| -> Option<String> {
+            let i = text.find(&prefix)?;
+            let rest = &text[i + prefix.len()..];
+            let head: String = rest
+                .trim_start()
+                .trim_start_matches('&')
+                .trim_start()
+                .trim_start_matches("mut ")
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            (!head.is_empty()).then_some(head)
+        };
+        after(format!("let {name}: "))
+            .or_else(|| after(format!("let mut {name}: ")))
+            .or_else(|| after(format!("{name}: ")))
+            .or_else(|| {
+                // `let x = T::f()` / `let x = T { … }`
+                let i = text.find(&format!("let {name} = "))?;
+                let init = text[i..].lines().next()?;
+                let (_, rhs) = init.split_once(" = ")?;
+                let head: String =
+                    rhs.trim().chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                (!head.is_empty() && head.chars().next().is_some_and(char::is_uppercase))
+                    .then_some(head)
+            })
+    }
+
     fn route_for(receiver: &str, text: &str) -> Route {
         // A chain is decided by shape alone.
         if receiver.contains('.') || receiver.contains('(') {
-            return Route::ChainedCall;
+            // Split out the case where the chain's INNER receiver is `self`.
+            // That inner call already resolves — the walk knows `self`'s type
+            // from the container — so the only missing fact is the inner
+            // method's RETURN type, and a method of `self` is declared on the
+            // same type, overwhelmingly in the same file the walk is holding.
+            // No graph needed for those; a same-file declaration lookup does it.
+            return if receiver.starts_with("self.") {
+                Route::ChainedOnSelf
+            } else {
+                Route::ChainedCall
+            };
         }
         if !receiver.chars().all(|c| c.is_alphanumeric() || c == '_') || receiver.is_empty() {
             return Route::Other;
@@ -837,6 +890,38 @@ mod reach {
         let scanned = std::collections::BTreeSet::new();
         let world = World { first_party: &first_party, scanned: &scanned };
 
+        // Every TYPE the corpus declares. The question below is whether an
+        // unresolved receiver's type is one of ours at all — because a call on
+        // a std type is not a first-party edge we are failing to make, it is an
+        // external call, and the two are different findings.
+        let mut first_party_types: std::collections::BTreeSet<String> = Default::default();
+        for (abs, text) in &sources {
+            let package = crate::indexer::package_of(abs);
+            let rel = crate::indexer::workspace_relative(abs);
+            let module = crate::indexer::module_of(&rel);
+            if let Ok(f) =
+                rust::read(&Source { package: &package, module: &module, path: &rel, text })
+            {
+                first_party_types.extend(
+                    f.symbols
+                        .iter()
+                        .filter(|s| {
+                            matches!(
+                                s.kind,
+                                crate::indexer::facts::SymbolKind::Struct
+                                    | crate::indexer::facts::SymbolKind::Enum
+                                    | crate::indexer::facts::SymbolKind::Trait
+                                    | crate::indexer::facts::SymbolKind::TypeAlias
+                            )
+                        })
+                        .map(|s| s.name.clone()),
+                );
+            }
+        }
+        let mut ours = 0usize;
+        let mut theirs = 0usize;
+        let mut untypable = 0usize;
+
         let mut by_route: std::collections::BTreeMap<&str, usize> = Default::default();
         let mut total = 0usize;
         let mut examples: std::collections::BTreeMap<&str, Vec<String>> = Default::default();
@@ -863,6 +948,15 @@ mod reach {
                 });
                 let Some(receiver) = receiver else { continue };
                 total += 1;
+                // Whose type is it? Take the head of whatever the source
+                // states for this name — `Vec<Config>` -> `Vec`, `&Path` ->
+                // `Path` — and ask whether the corpus declares it.
+                match stated_type_head(receiver, text) {
+                    Some(head) if first_party_types.contains(&head) => ours += 1,
+                    Some(_) => theirs += 1,
+                    None => untypable += 1,
+                }
+
                 let route = route_for(receiver, text);
                 *by_route.entry(route.label()).or_default() += 1;
                 let ex = examples.entry(route.label()).or_default();
@@ -870,6 +964,18 @@ mod reach {
                     ex.push(format!("{rel}:{} — {receiver}.{}", r.at.start_line, evidence.name));
                 }
             }
+        }
+
+        let typed = ours + theirs;
+        println!("\n\n════ whose type is the receiver? ════");
+        println!("  {ours:>6}  declared by THIS CORPUS — a first-party edge we are missing");
+        println!("  {theirs:>6}  NOT ours (std, a crate) — an EXTERNAL call, not a missing edge");
+        println!("  {untypable:>6}  the source states no type for this name at all");
+        if typed > 0 {
+            println!(
+                "  -> of the {typed} we can attribute, {:.0}% are external",
+                (theirs as f64) * 100.0 / (typed as f64)
+            );
         }
 
         println!("\n\n════ how {total} ReceiverTypeUnknown receivers COULD be typed ════");
