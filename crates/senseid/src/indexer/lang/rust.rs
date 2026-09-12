@@ -237,6 +237,7 @@ pub fn read(source: &Source<'_>) -> Result<FileFacts, ReadError> {
         // The file scope binds nothing: a `let` lives in a block, and the file
         // level has none.
         bindings: BTreeMap::new(),
+        returns: BTreeMap::new(),
     };
     let mut walk = Walk {
         src: source.text,
@@ -392,6 +393,18 @@ struct Scope {
     from: Fqn,
     /// The type a declaration found here is a member of, as an IDENTITY.
     owner: Owner,
+    /// Method name -> the TYPE it returns, for the methods of the CURRENT impl
+    /// block.
+    ///
+    /// Only `self.m().member` needs it: the inner call already resolves (the
+    /// container types `self`), so the one missing fact is `m`'s return type —
+    /// and `m` is a method of this same type, declared right here.
+    ///
+    /// Collected in a PRE-PASS over the impl block, because a method may be
+    /// declared after the call that uses it and a single-pass walk would not
+    /// have seen it yet. Scoped to the block, so it cannot type a call on some
+    /// other type's identically-named method.
+    returns: BTreeMap<String, String>,
     /// Local name -> the TYPE it is bound to, for the names in scope here.
     ///
     /// A member's identity is `…·<Type>·<member>`, so the receiver's type is a
@@ -553,6 +566,14 @@ impl<'a> Walk<'a> {
             "call_expression" => self.field_text(value, "function")?,
             // `T { … }`
             "struct_expression" => self.field_text(value, "name")?,
+            // `let p = MacOSProvider;` — a UNIT STRUCT names its own type.
+            //
+            // `simple_type_name` requires a capitalised head, which is what
+            // keeps a `let x = some_fn;` out. A `const` in PascalCase would slip
+            // through, but Rust names consts in SCREAMING_SNAKE by convention
+            // and the resolver refuses a candidate that matches no declaration
+            // anyway — so the failure mode is a miss, not a wrong edge.
+            "identifier" | "scoped_identifier" => self.text(value),
             _ => return None,
         };
         let head = path.split("::").next()?;
@@ -702,6 +723,26 @@ impl<'a> Walk<'a> {
         // a parameter is in scope from the body's first statement.
         inner.bindings.extend(self.param_bindings(node));
         self.children(node, &inner);
+    }
+
+    /// Every method this impl block declares, with the TYPE it returns, for the
+    /// ones that state a simple type. See [`Scope::returns`].
+    fn method_returns(&self, impl_node: Node<'_>) -> BTreeMap<String, String> {
+        let Some(body) = impl_node.child_by_field_name("body") else {
+            return BTreeMap::new();
+        };
+        let mut cursor = body.walk();
+        body.named_children(&mut cursor)
+            .filter(|c| c.kind() == "function_item")
+            .filter_map(|f| {
+                let name = self.field_text(f, "name")?;
+                let ret = self.field_text(f, "return_type")?;
+                // `Self` names the type the impl is about, which the container
+                // already states — resolved at the use site rather than here, so
+                // there is one place that knows what `Self` means.
+                simple_type_name(ret).map(|t| (name.to_string(), t))
+            })
+            .collect()
     }
 
     /// The `(name, type)` each parameter STATES, for the ones that state a
@@ -872,6 +913,11 @@ impl<'a> Walk<'a> {
             .and_then(|raw| fqn::type_segment(raw).ok());
 
         let mut inner = scope.clone();
+        // A PRE-PASS over this block's methods, before any body is walked: a
+        // method may be called before it is declared, and a single-pass walk
+        // would not have its return type yet. `returns` is REPLACED rather than
+        // extended, so an outer impl's methods cannot type a call here.
+        inner.returns = self.method_returns(node);
         inner.container = match tr {
             Some(tr) => Container::TraitImpl { ty: ty.clone(), tr },
             None => Container::Type(ty.clone()),
@@ -996,7 +1042,28 @@ impl<'a> Walk<'a> {
         let self_type = match (&scope.container, receiver) {
             (Container::Type(ty), "self" | "Self") => Some(ty.as_str()),
             (Container::TraitImpl { ty, .. }, "self" | "Self") => Some(ty.as_str()),
-            _ => scope.bindings.get(receiver).map(String::as_str),
+            // A local whose type the source stated.
+            _ => scope.bindings.get(receiver).map(String::as_str).or_else(|| {
+                // `self.m().member` — the inner call resolves already, so the
+                // only missing fact is what `m` RETURNS, and `m` is a method of
+                // this same type. Measured: 351 of 28,001 unresolved receivers.
+                //
+                // Only `self.` and only a bare method name: a deeper chain
+                // (`self.a().b().c()`) needs the return type of something this
+                // block does not declare, and guessing there is how a wrong
+                // identity gets minted (R4).
+                let inner = receiver.strip_prefix("self.")?;
+                let method = inner.strip_suffix("()")?;
+                if !method.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    return None;
+                }
+                let returned = scope.returns.get(method)?;
+                // `Self` is this type — the container already knows which.
+                Some(match (returned.as_str(), &scope.container) {
+                    ("Self", Container::Type(ty) | Container::TraitImpl { ty, .. }) => ty.as_str(),
+                    _ => returned.as_str(),
+                })
+            }),
         };
         let Some(ty) = self_type else {
             return Miss {
@@ -1471,6 +1538,12 @@ fn simple_type_name(text: &str) -> Option<String> {
     // A GENERIC is typed by its head: `Vec<Config>::push` is `Vec`'s method, and
     // the type argument does not change which type OWNS the member. Refusing the
     // whole spelling reported the type as unknown when it was written down.
+    // A PATH names its type in the last segment: `crate::a::Config` owns
+    // `Config`'s members, and the module path in front says where it is
+    // declared, not what it is. Taken before the generic split so
+    // `crate::a::Config<T>` works too.
+    let t = t.rsplit("::").next().unwrap_or(t).trim();
+
     let head = t.split_once('<').map_or(t, |(head, _)| head).trim();
 
     // ...EXCEPT a deref wrapper, where the member may be on the INNER type.
@@ -1725,11 +1798,17 @@ mod tests {
         assert_eq!(simple_type_name("&&Config"), Some("Config".to_string()));
         assert_eq!(simple_type_name("Config"), Some("Config".to_string()));
 
+        // A PATH is typed by its last segment: the module path says where the
+        // type is declared, not what it is.
+        assert_eq!(simple_type_name("crate::a::Config"), Some("Config".to_string()));
+        assert_eq!(simple_type_name("&std::path::PathBuf"), Some("PathBuf".to_string()));
+        assert_eq!(simple_type_name("a::b::Wrapper<T>"), Some("Wrapper".to_string()));
+
         // `Vec<Config>` is NOT here any more. It used to be, on the reasoning
         // that a generic spelling is not a mintable identity — but the question
         // a receiver asks is which type OWNS the member, and that is `Vec`.
         // See `a_generic_receiver_is_typed_by_the_type_that_owns_the_member`.
-        for refused in ["Arc<Config>", "Box<Config>", "crate::a::Config", "u32", "&str"] {
+        for refused in ["Arc<Config>", "Box<Config>", "u32", "&str"] {
             assert_eq!(simple_type_name(refused), None, "{refused} must not be recorded");
         }
     }
@@ -1781,10 +1860,62 @@ mod tests {
         {
             assert_eq!(simple_type_name(wrapper), None, "{wrapper} is ambiguous under Deref");
         }
-        // Still refused: no type is named at all.
-        for refused in ["u32", "&str", "crate::a::Config", "[u8; 4]"] {
+        // Still refused: no type this grammar can own a member of is named.
+        // `crate::a::Config` moved OUT of this list — a path is typed by its
+        // last segment, which is the type; the module path in front says where
+        // it is declared, not what it is.
+        for refused in ["u32", "&str", "[u8; 4]"] {
             assert_eq!(simple_type_name(refused), None, "{refused}");
         }
+    }
+
+    /// `self.m().member` — the inner call resolves; only `m`'s RETURN type is
+    /// missing, and `m` is a method of this same type.
+    ///
+    /// Declared AFTER the call on purpose: a single-pass walk would not have
+    /// seen `dir` yet, which is why the return types are collected in a pre-pass
+    /// over the impl block. Move the pre-pass and this fails.
+    #[test]
+    fn a_chained_call_on_self_is_typed_by_what_the_method_returns() {
+        let shown: Vec<String> = targets(
+            "pub struct Holder;\n\
+             pub struct Cfg;\n\
+             impl Cfg { pub fn script(&self) -> u32 { 1 } }\n\
+             impl Holder {\n\
+               pub fn go(&self) -> u32 { self.dir().script() }\n\
+               pub fn dir(&self) -> Cfg { Cfg }\n\
+             }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "script")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(
+            shown,
+            vec!["rust·p·m·Cfg·script·item".to_string()],
+            "`dir` returns Cfg, so `.script()` is Cfg's — even though `dir` is declared below"
+        );
+    }
+
+    /// A chain DEEPER than one hop is not guessed at.
+    ///
+    /// `self.a().b().c()` needs the return type of `b`, which this impl block
+    /// does not declare. Reaching for the enclosing type there would mint a
+    /// member on the wrong one (R4), so it stays unresolved and says why.
+    #[test]
+    fn a_chain_deeper_than_one_hop_stays_unresolved() {
+        let shown: Vec<String> = targets(
+            "pub struct Cfg;\n\
+             impl Cfg { pub fn one(&self) -> Cfg { Cfg } }\n\
+             impl Cfg { pub fn go(&self) -> u32 { self.one().one().script() } }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "script")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(shown, vec!["UNRESOLVED(ReceiverTypeUnknown) script".to_string()]);
     }
 
     /// The file-as-module rule, on the cases that distinguish it from a naive
