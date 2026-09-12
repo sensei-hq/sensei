@@ -486,3 +486,263 @@ mod corpus {
         );
     }
 }
+
+/// WHY the gate blocks — the investigation behind the 777, with source.
+///
+/// The gate says "v1 resolved this and v2 does not". That is a true statement
+/// and an insufficient one, because it does not say whether v1 was RIGHT. This
+/// answers that, by asking of every disputed target the one question that
+/// settles it:
+///
+/// **Does the thing v1 pointed at exist?**
+///
+/// Three outcomes, and they mean opposite things:
+///
+/// - the target exists in NEITHER producer's definitions -> v1 resolved to a
+///   GHOST. Nothing in the corpus declares it. v1's edge pointed at a node
+///   minted only because a reference asked for it, and R4 ranks that below no
+///   edge at all. Not a regression.
+/// - it exists in v1's definitions but not v2's -> the two DISAGREE ON IDENTITY,
+///   not on reach. A minting difference, which the normalisation should have
+///   covered and did not.
+/// - it exists in BOTH -> v2 HAS the definition and still did not connect the
+///   reference to it. The only class that is a real loss of reach.
+///
+/// `#[ignore]` for the same reason as the gate: it parses the corpus twice.
+#[cfg(test)]
+mod why {
+    use super::*;
+    use crate::indexer::lang::rust::{self, Source};
+    use crate::indexer::resolve::{World, resolve};
+    use crate::languages::LanguageAdapter;
+
+    /// One disputed target, with everything needed to judge it by hand.
+    struct Disputed {
+        key: String,
+        file: String,
+        reason: String,
+        /// What v1 and v2 each DECLARE under this member name, so the two
+        /// spellings can be read side by side instead of inferred.
+        v1_declares: Vec<String>,
+        v2_declares: Vec<String>,
+        /// The use site's line, and the source text of it.
+        line: u32,
+        source_line: String,
+        /// The bare name the use site saw.
+        saw: String,
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn what_the_disputed_targets_actually_are() {
+        let sources = crate::indexer::corpus_rust_sources();
+        let first_party: std::collections::BTreeSet<String> =
+            sources.iter().map(|(path, _)| crate::indexer::package_of(path)).collect();
+        let scanned = std::collections::BTreeSet::new();
+        let world = World { first_party: &first_party, scanned: &scanned };
+
+        // Pass 1: every DEFINITION both producers mint, normalised. This is what
+        // "does the target exist?" is asked against.
+        let mut v1_defs: std::collections::BTreeSet<String> = Default::default();
+        let mut v2_defs: std::collections::BTreeSet<String> = Default::default();
+        let mut parsed: Vec<(String, String, crate::indexer::facts::FileFacts)> = Vec::new();
+        let mut v1_by_file: std::collections::BTreeMap<
+            String,
+            crate::languages::fqn::FqnFileOutput,
+        > = Default::default();
+
+        for (abs, text) in &sources {
+            let Some(v1) = crate::languages::rust_lang::RustAdapter.fqn_output(abs, "", text)
+            else {
+                continue;
+            };
+            v1_defs.extend(v1.defs.iter().map(|d| identity_key(&d.fqn)));
+
+            let package = crate::indexer::package_of(abs);
+            let rel = crate::indexer::workspace_relative(abs);
+            let module = crate::indexer::module_of(&rel);
+            let Ok(facts) =
+                rust::read(&Source { package: &package, module: &module, path: &rel, text })
+            else {
+                continue;
+            };
+            let facts = resolve(facts, &rust::GRAMMAR, &world);
+            v2_defs.extend(facts.symbols.iter().map(|s| identity_key(s.fqn.as_str())));
+            v1_by_file.insert(rel.clone(), v1);
+            parsed.push((rel, text.clone(), facts));
+        }
+
+        // Pass 2: for every disputed target, classify it by whether it EXISTS.
+        let mut ghost = Vec::new();
+        let mut trait_qualified = Vec::new();
+        let mut identity_disagreement = Vec::new();
+        let mut real_loss = Vec::new();
+
+        for (rel, text, v2) in &parsed {
+            let Some(v1) = v1_by_file.get(rel) else { continue };
+            let report = differential(v1, v2);
+
+            for d in report.differences.iter().filter(|d| d.verdict == Verdict::Regression) {
+                // The use site v2 declined, matched by the bare name.
+                let leaf = d.key.rsplit('\u{00B7}').next().unwrap_or("").to_string();
+                let declined = v2.references.iter().find_map(|r| match &r.target {
+                    crate::indexer::facts::Resolution::Unresolved { reason, evidence }
+                        if evidence.name == leaf =>
+                    {
+                        Some((format!("{reason:?}"), evidence.name.clone(), r.at.start_line))
+                    }
+                    _ => None,
+                });
+                let (reason, saw, line) = declined.unwrap_or_else(|| {
+                    ("(v2 emitted no reference for this name)".into(), leaf.clone(), 0)
+                });
+                // Line 0 means NO use site was matched, so there is no source
+                // to show. Printing line 1 there — which an earlier version of
+                // this did — puts a file's opening comment under a finding it
+                // has nothing to do with, and a reader would reasonably believe
+                // the two were related.
+                let source_line = if line == 0 {
+                    "(no use site matched this name in v2's references)".to_string()
+                } else {
+                    text.lines()
+                        .nth(line as usize - 1)
+                        .unwrap_or("")
+                        .trim()
+                        .chars()
+                        .take(110)
+                        .collect::<String>()
+                };
+
+                // Match on the LAST TWO segments (`Type·member`), not the
+                // member alone. `·failed` alone matches every `failed` in the
+                // workspace, and a `.take(3)` over an alphabetical set then
+                // shows three unrelated ones while hiding the relevant
+                // declaration — a truncated search presented as an answer.
+                let tail = {
+                    let segs: Vec<&str> = d.key.split('\u{00B7}').collect();
+                    if segs.len() >= 2 {
+                        format!("\u{00B7}{}", segs[segs.len() - 2..].join("\u{00B7}"))
+                    } else {
+                        format!("\u{00B7}{leaf}")
+                    }
+                };
+                let declares = |defs: &std::collections::BTreeSet<String>| -> Vec<String> {
+                    let hits: Vec<String> =
+                        defs.iter().filter(|k| k.ends_with(&tail)).cloned().collect();
+                    if hits.is_empty() {
+                        // Fall back to the member alone, and SAY that is what
+                        // happened — "no declaration of Type::member" and "no
+                        // declaration of member anywhere" are different facts.
+                        let member = format!("\u{00B7}{leaf}");
+                        let loose: Vec<String> =
+                            defs.iter().filter(|k| k.ends_with(&member)).take(3).cloned().collect();
+                        if loose.is_empty() {
+                            vec![format!("(nothing declares ·{leaf})")]
+                        } else {
+                            std::iter::once(format!("(no ...{tail}; other ·{leaf}:)"))
+                                .chain(loose)
+                                .collect()
+                        }
+                    } else {
+                        hits.into_iter().take(3).collect()
+                    }
+                };
+                let item = Disputed {
+                    key: d.key.clone(),
+                    file: rel.clone(),
+                    reason,
+                    v1_declares: declares(&v1_defs),
+                    v2_declares: declares(&v2_defs),
+                    line,
+                    source_line,
+                    saw,
+                };
+                match (v1_defs.contains(&d.key), v2_defs.contains(&d.key)) {
+                    (_, true) => real_loss.push(item),
+                    (true, false) => identity_disagreement.push(item),
+                    (false, false) => {
+                        // Is the SAME member declared on the SAME type under a
+                        // LONGER identity? v1's grammar qualifies a trait-impl
+                        // method with its trait (`…·Type·Trait·member`) while a
+                        // call site cannot know which trait, so it mints
+                        // `…·Type·member`. If a longer key exists, v1's own two
+                        // sides disagree, and the "ghost" is that disagreement
+                        // rather than a missing declaration.
+                        let sep = '\u{00B7}';
+                        let qualified = d.key.rsplit_once(sep).is_some_and(|(head, member)| {
+                            let head = format!("{head}{sep}");
+                            let member = format!("{sep}{member}");
+                            v1_defs.iter().any(|k| k.starts_with(&head) && k.ends_with(&member))
+                        });
+                        if qualified {
+                            trait_qualified.push(item);
+                        } else {
+                            ghost.push(item);
+                        }
+                    }
+                }
+            }
+        }
+
+        let show = |label: &str, items: &[Disputed], n: usize| {
+            println!("\n\n══ {label}: {} ══", items.len());
+            for d in items.iter().take(n) {
+                println!("\n  target v1 claimed : {}", d.key);
+                println!("  use site          : {}:{}", d.file, d.line);
+                println!("  source            : {}", d.source_line);
+                println!("  v2 saw the name   : {}", d.saw);
+                println!("  v2 declined because: {}", d.reason);
+                println!("  v1 DECLARES       : {:?}", d.v1_declares);
+                println!("  v2 DECLARES       : {:?}", d.v2_declares);
+            }
+        };
+
+        println!("\n\n════════ WHY THE GATE BLOCKS ════════");
+        println!("v1 definitions {} | v2 definitions {}", v1_defs.len(), v2_defs.len());
+        show(
+            "V1 DISAGREES WITH ITSELF — its definition side spells this member with a trait \
+             qualifier and its reference side without one, so the edge points at an identity \
+             v1's own parser never declares",
+            &trait_qualified,
+            5,
+        );
+        show("GHOST — nothing declares this under ANY identity", &ghost, 5);
+        show(
+            "IDENTITY DISAGREEMENT — v1 declares it, v2 mints the declaration differently",
+            &identity_disagreement,
+            6,
+        );
+        show(
+            "REAL LOSS — v2 HAS the definition and still did not connect the reference",
+            &real_loss,
+            8,
+        );
+
+        // What v2 SAID, per class. This is the number that says what one fix
+        // would buy: a class dominated by a single reason has a single cause.
+        fn by_reason(items: &[Disputed]) -> std::collections::BTreeMap<&str, usize> {
+            let mut m: std::collections::BTreeMap<&str, usize> = Default::default();
+            for d in items {
+                *m.entry(d.reason.as_str()).or_default() += 1;
+            }
+            m
+        }
+        for (label, items) in [
+            ("v1 self-disagreement", &trait_qualified),
+            ("ghost", &ghost),
+            ("identity disagreement", &identity_disagreement),
+            ("REAL LOSS", &real_loss),
+        ] {
+            println!("\n{label} — v2's reason:");
+            for (reason, n) in by_reason(items) {
+                println!("  {n:>5}  {reason}");
+            }
+        }
+
+        println!("\n\n──── verdict ────");
+        println!("v1 self-disagreement   {}", trait_qualified.len());
+        println!("ghost, no declaration  {}", ghost.len());
+        println!("identity disagreement  {}", identity_disagreement.len());
+        println!("REAL LOSS OF REACH     {}", real_loss.len());
+    }
+}
