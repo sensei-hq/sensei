@@ -166,7 +166,12 @@ async fn run(
 
     while let Ok(evt) = task_events.recv().await {
         match evt {
-            TaskEvent::FolderQueued { folder_path, files_total } => {
+            // `files_total` and NOT `files_expected`: this tracker's numerator
+            // counts `process_file` COMPLETIONS, so only the task-grain count
+            // reaches 100%. The barrier's file-grain count travels on the event
+            // for consumers that divide by files — `folder_completeness` does —
+            // and taking it here would leave a warm re-scan's bar stuck.
+            TaskEvent::FolderQueued { folder_path, files_total, .. } => {
                 if let Some(t) = build_tracker(&pg, &folder_path, files_total).await {
                     if scan_start.is_none() {
                         scan_start = Some(Instant::now());

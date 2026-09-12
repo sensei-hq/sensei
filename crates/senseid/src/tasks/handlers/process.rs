@@ -523,10 +523,30 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         }
     }
 
-    // Emit FolderQueued event with file count so UI can show accurate progress
+    // Both denominators, each named for what it measures (08 S2). The queued
+    // count comes from the enqueue itself; the barrier's count is READ BACK from
+    // the row stage 3 wrote rather than recomputed here, so the bar and
+    // `folder_completeness` cannot disagree about the folder's size.
+    //
+    // A read failure is not a zero. `expected_files` absent and `expected_files`
+    // unreadable are different facts, and reporting either as 0 would say "this
+    // folder has no files" (R4) — so the error is logged and the field stays
+    // `None`, which means "not known here".
+    let files_expected = match folder_uuid {
+        Some(ref fid) => match ctx.pg().folder_expected_files(fid).await {
+            Ok(n) => n.map(|n| n as u32),
+            Err(e) => {
+                tracing::warn!(folder = %task.folder_path, error = %e,
+                    "folder_expected_files failed — FolderQueued carries no barrier count");
+                None
+            }
+        },
+        None => None,
+    };
     let _ = ctx.queue.sender().send(crate::tasks::progress::TaskEvent::FolderQueued {
         folder_path: task.folder_path.clone(),
         files_total: all_file_task_ids.len() as u32,
+        files_expected,
     });
 
     // Folder-level barriers (edge/lib resolution, connections, embeddings) only
@@ -2201,6 +2221,102 @@ mod tests {
         assert!(has_detect, "process_git_folder chains DetectCommunities as the terminal barrier");
 
         ctx.pg().remove_watch_root(&rid).await.unwrap();
+    }
+
+    /// The progress bar's denominator must name WHICH denominator it is.
+    ///
+    /// 08 S2 says `FolderQueued.files_total` comes from the barrier's
+    /// `folders.props.expected_files` "never from a recount", and gives as its
+    /// reason that a recomputed denominator "can disagree with the work
+    /// actually queued". Those two halves pull opposite ways, because the two
+    /// numbers answer different questions and are measured at different grains:
+    ///
+    /// - `files_total` is TASK-grain — the files this scan enqueued. It is what
+    ///   `progress_emitter`'s numerator counts (`files_completed` increments
+    ///   once per `process_file` completion), so the bar reaches 100% only if
+    ///   the denominator is this one. On a warm re-scan of this repo it is 3,
+    ///   not 2,305.
+    /// - `files_expected` is FILE-grain — every file the folder owns, written
+    ///   once at the barrier (R14). It is what `folder_completeness` divides by,
+    ///   whose numerator counts every file that has reached a verdict, not every
+    ///   task that ran.
+    ///
+    /// Substituting one for the other would leave a warm re-scan's bar stuck at
+    /// 3/2305 forever. So BOTH travel, each named for what it measures, and
+    /// neither is recomputed: the queued count comes from the enqueue itself and
+    /// the expected count is read back from the row the barrier wrote.
+    ///
+    /// `files_expected` is `None` when the folder has no `expected_files` —
+    /// which is a real state (a folder the structure walk has not reached), not
+    /// a zero. Reporting 0 there would read as "a folder with no files".
+    #[tokio::test]
+    async fn folder_queued_carries_the_barriers_count_beside_the_queued_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        std::fs::write(root.join("repo/Cargo.toml"), "[package]\nname=\"q\"").unwrap();
+        std::fs::write(root.join("repo/src/lib.rs"), "pub fn a() {}").unwrap();
+        // A file the folder OWNS but no `ProcessFile` task will parse: the walk
+        // takes it by extension, then the skip pass drops it as non-UTF-8 and
+        // fingerprints it with a reason. This is what makes the two denominators
+        // differ in the fixture rather than coincide. (A `.png` would NOT work —
+        // the walk excludes it by extension, so it never enters the plan at all
+        // and both numbers stay equal, which is what the first attempt measured.)
+        std::fs::write(root.join("repo/src/broken.rs"), [0xFFu8, 0xFE, 0x00, 0x80, 0x9F]).unwrap();
+
+        let ctx = make_ctx().await;
+        let repo_path = root.join("repo").to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&root.to_string_lossy(), "fq_root", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "repo", &repo_path).await.unwrap();
+
+        let mut rx = ctx.queue.sender().subscribe();
+        process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, &repo_path))
+            .await
+            .unwrap();
+
+        let mut queued = None;
+        while let Ok(evt) = rx.try_recv() {
+            if let crate::tasks::progress::TaskEvent::FolderQueued {
+                folder_path,
+                files_total,
+                files_expected,
+            } = evt
+                && folder_path == repo_path
+            {
+                queued = Some((files_total, files_expected));
+            }
+        }
+        let (files_total, files_expected) =
+            queued.expect("the folder's file tasks were queued, so the event must be emitted");
+
+        // The barrier's own number, read back independently of the event.
+        let persisted = ctx.pg().folder_expected_files(&fid).await.unwrap();
+        assert_eq!(
+            files_expected.map(i64::from),
+            persisted,
+            "the BARRIER's count travels — read from the row it wrote, not recomputed"
+        );
+
+        // The fixture is chosen so the two DIFFER. The PNG is a file the folder
+        // owns but not one a ProcessFile task parses, so expected = 3 and
+        // queued = 2. A test where they coincide cannot tell the two sources
+        // apart and would pass on an implementation that emits one number twice.
+        assert_eq!(files_expected, Some(3), "every file the folder owns, the PNG included");
+        assert_eq!(
+            files_total, 2,
+            "and the QUEUED count beside it — the PNG is skipped, not parsed, so it is not here"
+        );
+        assert_ne!(
+            Some(files_total),
+            files_expected,
+            "the two denominators are measured at different grains and must not collapse"
+        );
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
     }
 
     #[tokio::test]
