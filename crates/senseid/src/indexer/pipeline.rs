@@ -18,6 +18,7 @@ use super::scan_repo::{self, RepoScan};
 use super::scan_root::{self, RepoRoot, RootExclusions};
 use super::structure::{self, ChangeKind, FileFacts};
 use crate::db::pg_store::PgStore;
+use crate::tasks::progress::StageEvents;
 
 /// What one repo's structure write produced. Counts only — the rows are in
 /// the database, which is where they are inspected.
@@ -144,22 +145,40 @@ pub async fn scan_and_write_structure(
     pg: &PgStore,
     scan_dir: &std::path::Path,
     root_id: &uuid::Uuid,
+    events: StageEvents<'_>,
 ) -> ScanSummary {
     let mut summary = ScanSummary::default();
+    let scan_path = scan_dir.display().to_string();
 
     // ── Stage 1 ──────────────────────────────────────────────────────────
+    let stage = events.begin("scan_root", &scan_path);
     let roots = scan_root::find_git_roots(scan_dir, &RootExclusions::defaults());
     summary.roots_found = roots.roots.len();
     summary.excluded_dirs = roots.excluded;
     summary.unreadable = roots.unreadable.iter().map(|u| u.path.display().to_string()).collect();
+    // S5: an unreadable directory is coverage this scan did NOT have, and
+    // reporting only the roots found would read as having seen everything.
+    if roots.unreadable.is_empty() {
+        stage.completed(roots.roots.len() as u64);
+    } else {
+        stage.completed_capped(
+            roots.roots.len() as u64,
+            &format!("{} directories were unreadable and not descended", roots.unreadable.len()),
+        );
+    }
 
     for root in &roots.roots {
-        summary.repos.push(write_one_repo(pg, root, root_id).await);
+        summary.repos.push(write_one_repo(pg, root, root_id, events).await);
     }
     summary
 }
 
-async fn write_one_repo(pg: &PgStore, root: &RepoRoot, root_id: &uuid::Uuid) -> RepoResult {
+async fn write_one_repo(
+    pg: &PgStore,
+    root: &RepoRoot,
+    root_id: &uuid::Uuid,
+    events: StageEvents<'_>,
+) -> RepoResult {
     let abs = root.abs_path.to_string_lossy().to_string();
     let mut out = RepoResult { abs_path: abs.clone(), ..Default::default() };
     let name =
@@ -206,14 +225,20 @@ async fn write_one_repo(pg: &PgStore, root: &RepoRoot, root_id: &uuid::Uuid) -> 
     }
 
     // ── Stage 2 ──────────────────────────────────────────────────────────
+    let stage = events.begin("scan_repo", &abs);
     if let Ok(text) = std::fs::read_to_string(root.abs_path.join(".gitmodules")) {
         out.submodules = scan_repo::find_submodules(&text).len();
     }
     let scan: RepoScan = scan_repo::scan_repo_files(&root.abs_path);
     out.manifests = scan.manifests.len();
     out.lockfiles = scan.lockfiles.len();
+    // The count is FILES, the thing this stage is here to find. Manifests and
+    // lockfiles are also counted, into `RepoResult`, where a reader can see all
+    // three rather than one number standing in for the others.
+    stage.completed(scan.files.len() as u64);
 
     // ── Stage 3 ──────────────────────────────────────────────────────────
+    let stage = events.begin("structure_write", &abs);
     // One repo's barrier failing is recorded against THAT repo and does not
     // stop the scan: the other roots are independent and their structure is
     // still correct. `out.errors` non-empty is how a caller tells the
@@ -229,8 +254,16 @@ async fn write_one_repo(pg: &PgStore, root: &RepoRoot, root_id: &uuid::Uuid) -> 
     )
     .await
     {
-        Ok(ids) => ids,
+        Ok(ids) => {
+            // The BARRIER's own number, the same one `folder_completeness`
+            // divides by — not a recount (08 S2).
+            stage.completed(out.files as u64);
+            ids
+        }
         Err(e) => {
+            // S4: a stage that fails says so. Silence here is what leaves a UI
+            // showing a scan that stopped running minutes ago.
+            stage.failed(&e);
             out.errors.push(e);
             BTreeMap::new()
         }
@@ -240,7 +273,15 @@ async fn write_one_repo(pg: &PgStore, root: &RepoRoot, root_id: &uuid::Uuid) -> 
     write_dependencies(pg, &root.abs_path, &scan, &folder_ids, &mut out).await;
 
     // ── Stage 2b: this repo may BE a library ─────────────────────────────
+    let stage = events.begin("library_discovery", &abs);
     ingest_library(pg, &root.abs_path, &scan, &mut out).await;
+    match out.library_docs_error.as_deref() {
+        // A docs walk that failed is not an ingestion of zero pages. Saying so
+        // is the difference between "this library ships no docs" and "we could
+        // not read them" (R4).
+        Some(err) => stage.failed(err),
+        None => stage.completed(u64::from(out.library_pages)),
+    }
     out
 }
 
@@ -651,6 +692,7 @@ async fn write_structure(
 #[cfg(test)]
 mod corpus {
     use super::*;
+    use crate::tasks::progress::TaskEvent;
 
     /// What to scan: `SENSEI_SCAN_DIR` if set, else the repo this crate lives
     /// in (`crates/senseid` up two levels). The override is how the same
@@ -715,6 +757,161 @@ mod corpus {
     /// release they describe rather than to whatever `develop` holds today.
     ///
     /// `cargo test -p senseid --bin senseid three_routes -- --ignored --nocapture`
+    /// Every v2 stage is visible in the stream the UI already subscribes to
+    /// (08 S1/S4).
+    ///
+    /// Before this, `scan_and_write_structure` emitted NOTHING — stages 1, 2, 2b
+    /// and 3 ran silently, so a scan could only be waited on, not watched. The
+    /// mechanism was never missing; the stages simply never reached it.
+    ///
+    /// Asserted as START-AND-TERMINAL PER STAGE rather than as a total count:
+    /// "twelve events were emitted" is the kind of tally that is correct over
+    /// the wrong population. A stage that emits a start and never finishes is
+    /// exactly what leaves a UI spinning forever, and only the pairing catches
+    /// it.
+    #[tokio::test]
+    async fn every_v2_stage_reaches_the_progress_stream() {
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname=\"emit\"\nversion=\"0.1.0\"")
+            .unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn a() {}").unwrap();
+
+        let root_id = resolve_watch_root(&pg, tmp.path()).await;
+        let (tx, mut rx) = tokio::sync::broadcast::channel(256);
+        scan_and_write_structure(&pg, tmp.path(), &root_id, StageEvents::to(&tx)).await;
+
+        let mut started: BTreeSet<String> = BTreeSet::new();
+        let mut ended: BTreeSet<String> = BTreeSet::new();
+        while let Ok(evt) = rx.try_recv() {
+            match evt {
+                TaskEvent::StageStarted { stage, .. } => {
+                    started.insert(stage);
+                }
+                TaskEvent::StageCompleted { stage, .. } | TaskEvent::StageFailed { stage, .. } => {
+                    ended.insert(stage);
+                }
+                _ => {}
+            }
+        }
+
+        let expected: BTreeSet<String> =
+            ["scan_root", "scan_repo", "library_discovery", "structure_write"]
+                .into_iter()
+                .map(String::from)
+                .collect();
+        assert_eq!(started, expected, "every stage announces itself");
+        assert_eq!(
+            ended, expected,
+            "and every stage reaches a terminal event — a stage that starts and never ends is \
+             what leaves the UI showing work that is already over"
+        );
+
+        pg.remove_watch_root(&root_id).await.ok();
+    }
+
+    /// **No silent caps** (08 S5). A stage that could not see everything says
+    /// so, in the event, at the one moment it is knowable.
+    ///
+    /// A directory the scan could not descend is coverage it did not have.
+    /// Reporting only "3 roots found" reads as having seen the whole tree, and
+    /// nothing downstream can tell that reading from a complete one — which is
+    /// the shape of wrong answer R4 ranks below no answer.
+    #[tokio::test]
+    async fn a_scan_that_could_not_see_everything_says_so() {
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname=\"cap\"\nversion=\"0.1.0\"")
+            .unwrap();
+
+        let locked = tmp.path().join("locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        // Running as root defeats the fixture — permissions do not apply — and a
+        // test that silently passes because it measured nothing is worse than
+        // one that is absent.
+        if std::fs::read_dir(&locked).is_ok() {
+            return;
+        }
+
+        let root_id = resolve_watch_root(&pg, tmp.path()).await;
+        let (tx, mut rx) = tokio::sync::broadcast::channel(256);
+        scan_and_write_structure(&pg, tmp.path(), &root_id, StageEvents::to(&tx)).await;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).ok();
+        }
+
+        let mut capped = None;
+        while let Ok(evt) = rx.try_recv() {
+            if let TaskEvent::StageCompleted { stage, capped: c, .. } = evt
+                && stage == "scan_root"
+            {
+                capped = Some(c);
+            }
+        }
+        let capped = capped.expect("scan_root completed, so it reported").expect(
+            "a directory it could not descend is a CAP on coverage and must be named in the event",
+        );
+        assert!(
+            capped.contains("unreadable"),
+            "and the cap says what was missed, not merely that something was: {capped}"
+        );
+
+        pg.remove_watch_root(&root_id).await.ok();
+    }
+
+    /// One progress mechanism, not two (08 §2, §5).
+    ///
+    /// An earlier draft of the spec proposed an append-only
+    /// `~/.sensei/scan-progress.jsonl` alongside the SSE stream. It was
+    /// withdrawn, because two mechanisms mean the UI and the daemon can disagree
+    /// about what a scan is doing and neither is wrong. This is what keeps the
+    /// withdrawal from being re-invented by someone who did not read the spec.
+    #[test]
+    fn no_second_progress_channel_exists() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut read = 0;
+        for entry in walkdir::WalkDir::new(&root) {
+            let entry = entry.expect("the source tree must be readable");
+            if entry.path().extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            // Only PRODUCTION code. A test may name the banned thing — this one
+            // does, in its own assertion — and forbidding that would make the
+            // guard unable to say what it guards against. Same split the fqn
+            // guard uses, and the same reason.
+            let body = std::fs::read_to_string(entry.path()).expect("a source file reads");
+            let body = crate::indexer::outside_tests(&body);
+            let relative = entry.path().strip_prefix(&root).unwrap().display().to_string();
+            read += 1;
+            for banned in ["scan-progress", "scan_progress", "progress.jsonl"] {
+                assert!(
+                    !body.contains(banned),
+                    "{relative} names `{banned}` — a second progress channel beside the SSE \
+                     stream. Two mechanisms can disagree about what a scan is doing, which is \
+                     why the JSONL draft was withdrawn; extend `TaskEvent` instead."
+                );
+            }
+        }
+        assert!(read > 100, "the guard read {read} files, so it nearly passed vacuously");
+    }
+
     #[tokio::test]
     #[ignore]
     async fn three_routes_ingest_the_same_libraries() {
@@ -891,7 +1088,7 @@ mod corpus {
         let root_id = resolve_watch_root(&pg, &root).await;
 
         let t = std::time::Instant::now();
-        let summary = scan_and_write_structure(&pg, &root, &root_id).await;
+        let summary = scan_and_write_structure(&pg, &root, &root_id, StageEvents::none()).await;
         let elapsed = t.elapsed();
 
         println!("\n── stages 1-3 over {} ──", root.display());
