@@ -759,7 +759,6 @@ mod why {
 /// than an impression of which shapes are common.
 #[cfg(test)]
 mod reach {
-    use super::*;
     use crate::indexer::facts::{Observation, Resolution};
     use crate::indexer::lang::rust::{self, Source};
     use crate::indexer::resolve::{World, resolve};

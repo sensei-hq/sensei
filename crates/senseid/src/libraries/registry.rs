@@ -143,10 +143,10 @@ fn project_url<'a>(map: &'a serde_json::Value, keys: &[&str]) -> Option<&'a str>
     let obj = map.as_object()?;
     for want in keys {
         for (k, v) in obj {
-            if k.eq_ignore_ascii_case(want) {
-                if let Some(s) = v.as_str() {
-                    return Some(s);
-                }
+            if k.eq_ignore_ascii_case(want)
+                && let Some(s) = v.as_str()
+            {
+                return Some(s);
             }
         }
     }
@@ -164,14 +164,14 @@ fn project_url<'a>(map: &'a serde_json::Value, keys: &[&str]) -> Option<&'a str>
 /// was nothing to file against for 1,119 of them.
 ///
 /// Shapes are MEASURED against live responses, not assumed:
-/// - npm    `repository` is an OBJECT `{url: "git+https://….git"}` (it may also
-///          be a bare string), `homepage` a plain string, no docs field.
-/// - cargo  `crate.repository` / `.homepage` / `.documentation`, clean URLs.
-/// - pypi   `info.project_urls` — a MAP with author-chosen capitalisation.
-///          `info.home_page` is deprecated and was NULL on `requests`, so
-///          reading it alone would have silently returned nothing.
-/// - go     the proxy's `@latest` returns `Version`/`Time` only. No URLs, and
-///          saying so beats inventing one.
+/// - **npm** — `repository` is an OBJECT `{url: "git+https://….git"}` (it may
+///   also be a bare string), `homepage` a plain string, no docs field.
+/// - **cargo** — `crate.repository` / `.homepage` / `.documentation`, clean URLs.
+/// - **pypi** — `info.project_urls`, a MAP with author-chosen capitalisation.
+///   `info.home_page` is deprecated and was NULL on `requests`, so reading it
+///   alone would have silently returned nothing.
+/// - **go** — the proxy's `@latest` returns `Version`/`Time` only. No URLs, and
+///   saying so beats inventing one.
 pub fn extract_urls(ecosystem: &str, body: &str) -> RegistryUrls {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
         return RegistryUrls::default();

@@ -19,6 +19,13 @@
 //! [`plan_structure`] is PURE. It is also the SAME classification stage 9's
 //! incremental path needs (09 S4) — one implementation, so a full scan and an
 //! incremental update cannot disagree about what changed.
+//
+// These stages have no caller on purpose: the shipped indexer under
+// `crate::languages` keeps producing the graph until cutover
+// (`docs/spec/indexer/10-cutover.md`), and wiring them in early would put two
+// producers with different rules on one set of tables. The allow goes when the
+// cutover gives them callers — it is not a licence for genuinely dead code.
+#![allow(dead_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -519,7 +526,7 @@ mod folder_plan_tests {
     }
 
     #[test]
-    fn membership_is_matched_on_PATH_not_on_the_directory_name() {
+    fn membership_is_matched_on_path_not_on_the_directory_name() {
         // `detect_workspace_members` reports repo-relative PATHS. Matching on
         // the last segment would make any directory called `one` anywhere in
         // the tree read as the declared member.

@@ -38,6 +38,7 @@ pub enum DocRoute {
 
 impl DocRoute {
     /// The `sensei.library_source_type` value this route stores as.
+    #[allow(dead_code)]
     pub fn as_source_type(self) -> &'static str {
         match self {
             DocRoute::Website => "llms.txt",
@@ -72,6 +73,7 @@ pub enum VersionFit {
 impl VersionFit {
     /// Whether an answer from this source needs labelling before a caller
     /// should trust it as describing their version.
+    #[allow(dead_code)]
     pub fn needs_label(&self) -> bool {
         !matches!(self, VersionFit::Exact)
     }
@@ -203,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn precedence_INVERTS_when_the_better_route_documents_the_wrong_version() {
+    fn precedence_inverts_when_the_better_route_documents_the_wrong_version() {
         // The heart of S9. The site is the higher-quality source of the WRONG
         // answer; github's tag for the pinned release is the right one. A rule
         // that just ranked routes would serve 3.0 docs to a 1.2 project and
@@ -218,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    fn when_nothing_serves_the_pin_the_closest_is_served_AND_LABELLED() {
+    fn when_nothing_serves_the_pin_the_closest_is_served_and_labelled() {
         // R4: an unlabelled wrong-version answer is the failure, and it is the
         // worst kind — the caller cannot tell.
         let got = choose_docs(
