@@ -17,6 +17,13 @@
 //! `hidden(true)`, so it never yields `.git`. Root discovery is the one walk
 //! that must see hidden entries, which is why it does its own traversal
 //! instead of reusing that one.
+//
+// These stages have no caller on purpose: the shipped indexer under
+// `crate::languages` keeps producing the graph until cutover
+// (`docs/spec/indexer/10-cutover.md`), and wiring them in early would put two
+// producers with different rules on one set of tables. The allow goes when the
+// cutover gives them callers — it is not a licence for genuinely dead code.
+#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 

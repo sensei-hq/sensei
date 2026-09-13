@@ -62,6 +62,7 @@ pub enum TaskEvent {
     /// queue `task_id`. These stages are not queue tasks and have no id;
     /// synthesising one would let a consumer that keys on task ids merge a stage
     /// with a real task, and nothing would report the collision.
+    #[allow(dead_code)]
     StageStarted {
         stage: String,
         /// What the stage ran over — the scan directory for `scan_root`, the
@@ -69,6 +70,7 @@ pub enum TaskEvent {
         path: String,
     },
     /// A stage finished successfully, with the count it produced.
+    #[allow(dead_code)]
     StageCompleted {
         stage: String,
         path: String,
@@ -83,6 +85,7 @@ pub enum TaskEvent {
     },
     /// A stage failed, with the reason. Never silence: a stage that stops
     /// emitting is indistinguishable from one that finished (08 S4).
+    #[allow(dead_code)]
     StageFailed {
         stage: String,
         path: String,
@@ -101,9 +104,13 @@ pub enum TaskEvent {
 /// UI is closed — the spec's failure table says to emit anyway, because a
 /// broadcast with no receiver is not an error. Both cases land here as a send
 /// whose result is deliberately dropped.
+// Built ahead of its caller: the emitter is the pipeline, which cutover (`docs/spec/indexer/10-cutover.md`)
+// gives a caller. Not a licence for genuinely dead code.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Default)]
 pub struct StageEvents<'a>(Option<&'a broadcast::Sender<TaskEvent>>);
 
+#[allow(dead_code)]
 impl<'a> StageEvents<'a> {
     /// Emit to `tx`.
     pub fn to(tx: &'a broadcast::Sender<TaskEvent>) -> Self {
@@ -140,6 +147,7 @@ impl<'a> StageEvents<'a> {
 
 /// One running stage. Reports its outcome exactly once — explicitly if the
 /// stage says so, and from `Drop` if it does not.
+#[allow(dead_code)]
 pub struct Stage<'a> {
     events: StageEvents<'a>,
     stage: String,
@@ -147,6 +155,7 @@ pub struct Stage<'a> {
     reported: bool,
 }
 
+#[allow(dead_code)]
 impl Stage<'_> {
     pub fn completed(mut self, items: u64) {
         self.reported = true;
