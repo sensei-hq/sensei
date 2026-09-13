@@ -4,12 +4,14 @@
 use crate::health::checker::{CheckOutcome, Checker};
 use crate::health::types::ComponentStatus;
 
-pub struct AndChecker(pub Vec<Box<dyn Checker>>);
+pub struct AndChecker {
+    pub checkers: Vec<Box<dyn Checker>>,
+}
 
 impl Checker for AndChecker {
     fn check(&self) -> CheckOutcome {
         let mut version: Option<String> = None;
-        for c in &self.0 {
+        for c in &self.checkers {
             let out = c.check();
             match out.status {
                 ComponentStatus::Failed => return out,
@@ -42,10 +44,9 @@ mod tests {
 
     #[test]
     fn all_ready_yields_ready() {
-        let c = AndChecker(vec![
-            Box::new(AlwaysReady(None)),
-            Box::new(AlwaysReady(Some("1.0".into()))),
-        ]);
+        let c = AndChecker {
+            checkers: vec![Box::new(AlwaysReady(None)), Box::new(AlwaysReady(Some("1.0".into())))],
+        };
         let o = c.check();
         assert!(matches!(o.status, ComponentStatus::Ready));
         assert_eq!(o.version.as_deref(), Some("1.0"));
@@ -53,8 +54,9 @@ mod tests {
 
     #[test]
     fn first_failed_short_circuits() {
-        let c =
-            AndChecker(vec![Box::new(AlwaysFailed("binary missing")), Box::new(AlwaysReady(None))]);
+        let c = AndChecker {
+            checkers: vec![Box::new(AlwaysFailed("binary missing")), Box::new(AlwaysReady(None))],
+        };
         let o = c.check();
         assert!(matches!(o.status, ComponentStatus::Failed));
         assert_eq!(o.detail.as_deref(), Some("binary missing"));
@@ -62,7 +64,7 @@ mod tests {
 
     #[test]
     fn empty_andchecker_is_vacuously_ready() {
-        let c = AndChecker(vec![]);
+        let c = AndChecker { checkers: vec![] };
         let o = c.check();
         assert!(matches!(o.status, ComponentStatus::Ready));
         assert!(o.version.is_none());
@@ -70,11 +72,13 @@ mod tests {
 
     #[test]
     fn version_from_first_versioned_sub() {
-        let c = AndChecker(vec![
-            Box::new(AlwaysReady(None)),
-            Box::new(AlwaysReady(Some("first-version".into()))),
-            Box::new(AlwaysReady(Some("second-version".into()))),
-        ]);
+        let c = AndChecker {
+            checkers: vec![
+                Box::new(AlwaysReady(None)),
+                Box::new(AlwaysReady(Some("first-version".into()))),
+                Box::new(AlwaysReady(Some("second-version".into()))),
+            ],
+        };
         let o = c.check();
         assert_eq!(o.version.as_deref(), Some("first-version"));
     }
