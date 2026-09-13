@@ -238,15 +238,21 @@ pub fn read(source: &Source<'_>) -> Result<FileFacts, ReadError> {
         // level has none.
         bindings: BTreeMap::new(),
         returns: BTreeMap::new(),
+        fields: BTreeMap::new(),
     };
     let mut walk = Walk {
         src: source.text,
         package: source.package,
+        declared_fields: BTreeMap::new(),
         symbols: Vec::new(),
         references: Vec::new(),
         relations: Vec::new(),
         imports: Vec::new(),
     };
+    // Struct fields FIRST, over the whole tree: an `impl` block may appear
+    // before the struct it is about, and a single-pass walk would reach
+    // `self.field` with nothing recorded for it.
+    walk.collect_declared_fields(tree.root_node());
     walk.children(tree.root_node(), &scope);
 
     Ok(FileFacts {
@@ -393,6 +399,12 @@ struct Scope {
     from: Fqn,
     /// The type a declaration found here is a member of, as an IDENTITY.
     owner: Owner,
+    /// Field name -> the TYPE it is declared with, for the CURRENT type.
+    ///
+    /// `for c in &self.checkers` needs the field's type to know the element
+    /// type. Collected in the same pre-pass spirit as [`Scope::returns`] — a
+    /// field can be used before it is declared in source order.
+    fields: BTreeMap<String, String>,
     /// Method name -> the TYPE it returns, for the methods of the CURRENT impl
     /// block.
     ///
@@ -464,6 +476,12 @@ enum Container {
 struct Walk<'a> {
     src: &'a str,
     package: &'a str,
+    /// Type name -> its fields and their declared types.
+    ///
+    /// On the WALK and not on a scope, because an `impl` block needs the fields
+    /// of a struct declared elsewhere in the file — possibly after it. A scope
+    /// only flows downward and could not reach them.
+    declared_fields: BTreeMap<String, BTreeMap<String, String>>,
     symbols: Vec<Symbol>,
     references: Vec<Reference>,
     relations: Vec<Relation>,
@@ -526,6 +544,50 @@ impl<'a> Walk<'a> {
             {
                 scope.bindings.insert(name, ty);
             }
+        }
+    }
+
+    /// `for <pattern> in <collection> { … }` — the pattern is bound to the
+    /// collection's ELEMENT type for the body, and for the body only.
+    ///
+    /// The collection's own type comes from whatever already states it: a field
+    /// of `self`, or a local binding. A collection this walk cannot type yields
+    /// no binding, and the body's member calls stay unresolved — which is the
+    /// honest answer, not a fallback.
+    fn for_expression(&mut self, node: Node<'_>, scope: &Scope) {
+        // The collection is walked in the OUTER scope: `for x in x.iter()` reads
+        // the outer `x`, and binding first would type it as its own element.
+        if let Some(value) = node.child_by_field_name("value") {
+            self.node(value, scope);
+        }
+
+        let mut inner = scope.clone();
+        if let Some(pattern) = node.child_by_field_name("pattern")
+            // Only a plain name. A destructuring pattern binds several names of
+            // several types, and giving each the element type is false.
+            && pattern.kind() == "identifier"
+            && let Some(collection) = node.child_by_field_name("value")
+            && let Some(ty) = self.collection_type(collection, scope)
+            && let Some(element) = element_type(&ty)
+        {
+            inner.bindings.insert(self.text(pattern).to_string(), element);
+        }
+
+        if let Some(body) = node.child_by_field_name("body") {
+            self.node(body, &inner);
+        }
+    }
+
+    /// The declared type of the expression being iterated, when something in
+    /// scope states it.
+    ///
+    /// Two shapes, both already recorded: `self.field` and a local binding.
+    /// Anything else — a call, a chain, a literal — states no type here.
+    fn collection_type(&self, node: Node<'_>, scope: &Scope) -> Option<String> {
+        let text = self.text(node).trim().trim_start_matches('&').trim_start();
+        match text.strip_prefix("self.") {
+            Some(field) => scope.fields.get(field).cloned(),
+            None => scope.bindings.get(text).cloned(),
         }
     }
 
@@ -610,6 +672,9 @@ impl<'a> Walk<'a> {
             // A block is the unit a `let` is scoped to, so it is walked in
             // order rather than as an unordered bag of children.
             "block" => self.block(node, scope),
+            // A `for` binding is a DECLARATION: the collection states the
+            // element type.
+            "for_expression" => self.for_expression(node, scope),
 
             _ => {
                 self.use_site(node, scope);
@@ -773,6 +838,40 @@ impl<'a> Walk<'a> {
     /// A struct, union, enum or trait: a named type whose body declares members
     /// of it. The body is walked with the type as the container, which is what
     /// makes its fields and methods members rather than free items.
+    /// Every field this type declares, with the TYPE it is declared with.
+    /// See [`Scope::fields`].
+    /// Walk the whole tree once for struct field types. See
+    /// [`Walk::declared_fields`].
+    fn collect_declared_fields(&mut self, node: Node<'_>) {
+        if matches!(node.kind(), "struct_item" | "union_item")
+            && let Some(name) = self.field_text(node, "name")
+        {
+            let fields = self.field_types(node);
+            if !fields.is_empty() {
+                self.declared_fields.insert(name.to_string(), fields);
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            self.collect_declared_fields(child);
+        }
+    }
+
+    fn field_types(&self, node: Node<'_>) -> BTreeMap<String, String> {
+        let Some(body) = node.child_by_field_name("body") else {
+            return BTreeMap::new();
+        };
+        let mut cursor = body.walk();
+        body.named_children(&mut cursor)
+            .filter(|c| c.kind() == "field_declaration")
+            .filter_map(|f| {
+                let name = self.field_text(f, "name")?;
+                let ty = self.field_text(f, "type")?;
+                Some((name.to_string(), ty.to_string()))
+            })
+            .collect()
+    }
+
     fn type_with_fields(&mut self, node: Node<'_>, scope: &Scope, kind: SymbolKind) {
         let Some(name) = self.field_text(node, "name") else {
             self.children(node, scope);
@@ -918,6 +1017,11 @@ impl<'a> Walk<'a> {
         // would not have its return type yet. `returns` is REPLACED rather than
         // extended, so an outer impl's methods cannot type a call here.
         inner.returns = self.method_returns(node);
+        // The fields of the type this impl is ABOUT, so `self.field` can be
+        // typed inside its methods. Looked up from what the struct declaration
+        // recorded, which may be anywhere in the file — hence the map on the
+        // walk rather than a scope that only flows downward.
+        inner.fields = self.declared_fields.get(&ty).cloned().unwrap_or_default();
         inner.container = match tr {
             Some(tr) => Container::TraitImpl { ty: ty.clone(), tr },
             None => Container::Type(ty.clone()),
@@ -1546,6 +1650,24 @@ fn simple_type_name(text: &str) -> Option<String> {
 
     let head = t.split_once('<').map_or(t, |(head, _)| head).trim();
 
+    // `dyn Trait` names the TRAIT, which declares the member. The concrete impl
+    // is unknowable — that is what dynamic dispatch means — but WHICH METHOD is
+    // called is not in doubt, and refusing the edge loses that to protect
+    // against a question nobody asked. Who implements it is answered separately
+    // from the `implements` relations the walk already records.
+    //
+    // `Box<dyn Trait>` reduces the same way, and is the ONE `Box` that is not
+    // ambiguous: `Box` declares no inherent method a trait method could be
+    // confused with (`Box::new` is associated, not a member).
+    if let Some(inner) = t.strip_prefix("dyn ") {
+        return simple_type_name(inner.split('+').next().unwrap_or(inner));
+    }
+    if let Some(inner) = t.strip_prefix("Box<").and_then(|r| r.strip_suffix('>'))
+        && inner.trim_start().starts_with("dyn ")
+    {
+        return simple_type_name(inner);
+    }
+
     // ...EXCEPT a deref wrapper, where the member may be on the INNER type.
     // `arc.method()` is `Arc::method` or `Config::method` and the source does
     // not say which, so taking the head would mint a wrong identity on every
@@ -1561,6 +1683,38 @@ fn simple_type_name(text: &str) -> Option<String> {
         && head.chars().all(|c| c.is_alphanumeric() || c == '_');
     ok.then(|| head.to_string())
 }
+
+/// The type an element of `collection` has, when the collection states ONE.
+///
+/// `Vec<Cfg>` yields `Cfg`; `&[Cfg]` yields `Cfg`. A MAP is refused: it yields
+/// `(K, V)` pairs, so the binding is a tuple and attributing either half to it
+/// is false. Anything not on the list is refused too — a `for` over a custom
+/// iterator states its item type on the `Iterator` impl, not here, and guessing
+/// would mint a member on whatever type happened to be inside the angle
+/// brackets (R4).
+fn element_type(collection: &str) -> Option<String> {
+    let t = collection.trim().trim_start_matches('&').trim_start();
+    let t = t.strip_prefix("mut ").unwrap_or(t).trim();
+
+    // A slice or array: `[T]`, `[T; 4]`.
+    if let Some(inner) = t.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+        return simple_type_name(inner.split(';').next().unwrap_or(inner));
+    }
+
+    let (head, inner) = t.split_once('<')?;
+    let inner = inner.strip_suffix('>')?;
+    // ONE type parameter. A pair means a map, and a map's element is a tuple.
+    if inner.contains(',') || !SINGLE_ELEMENT_CONTAINERS.contains(&head.trim()) {
+        return None;
+    }
+    simple_type_name(inner)
+}
+
+/// Collections whose element is their single type parameter. Deliberately a
+/// list: a map yields pairs, and an unknown generic yields whatever its
+/// `Iterator` impl says, which is not stated here.
+const SINGLE_ELEMENT_CONTAINERS: &[&str] =
+    &["Vec", "VecDeque", "HashSet", "BTreeSet", "BinaryHeap", "Option", "Box", "Rc", "Arc"];
 
 /// Types that deref to their parameter, so a member call on one is ambiguous
 /// between the wrapper and the inner type. See [`simple_type_name`].
@@ -1909,6 +2063,96 @@ mod tests {
             "pub struct Cfg;\n\
              impl Cfg { pub fn one(&self) -> Cfg { Cfg } }\n\
              impl Cfg { pub fn go(&self) -> u32 { self.one().one().script() } }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "script")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(shown, vec!["UNRESOLVED(ReceiverTypeUnknown) script".to_string()]);
+    }
+
+    /// A `for` binding is a DECLARATION: the collection states the element type.
+    ///
+    /// It was reaching nothing purely because the walk had no rule for it —
+    /// 1,735 unresolved receivers on this workspace, larger than every route
+    /// built so far except the signature one, and invisible because the
+    /// measurement had no name for it.
+    #[test]
+    fn a_for_binding_is_typed_by_the_collections_element_type() {
+        let shown: Vec<String> = targets(
+            "pub struct Cfg;\n\
+             impl Cfg { pub fn script(&self) -> u32 { 1 } }\n\
+             pub struct Holder { pub items: Vec<Cfg> }\n\
+             impl Holder {\n\
+               pub fn go(&self) { for c in &self.items { c.script(); } }\n\
+             }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "script")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(shown, vec!["rust·p·m·Cfg·script·item".to_string()]);
+    }
+
+    /// `Box<dyn Trait>` resolves to the TRAIT METHOD.
+    ///
+    /// The concrete impl is unknowable — that is what dynamic dispatch means —
+    /// but WHICH METHOD is called is not in doubt, and the trait declares it.
+    /// Refusing the edge loses that fact to protect against a question nobody
+    /// asked. "Who implements it" is answered separately, from the `implements`
+    /// relations the walk already records.
+    #[test]
+    fn a_dyn_receiver_resolves_to_the_trait_method() {
+        let shown: Vec<String> = targets(
+            "pub trait Checker { fn check(&self) -> u32; }\n\
+             pub struct And { pub checkers: Vec<Box<dyn Checker>> }\n\
+             impl And {\n\
+               pub fn go(&self) { for c in &self.checkers { c.check(); } }\n\
+             }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "check")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(
+            shown,
+            vec!["rust·p·m·Checker·check·item".to_string()],
+            "the trait declares `check`; which impl runs is a different question"
+        );
+    }
+
+    /// And a `dyn` PARAMETER works the same way — the rule is about the type,
+    /// not about what bound it.
+    #[test]
+    fn a_dyn_parameter_resolves_to_the_trait_method() {
+        let shown: Vec<String> = targets(
+            "pub trait Checker { fn check(&self) -> u32; }\n\
+             pub fn go(c: &dyn Checker) -> u32 { c.check() }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "check")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(shown, vec!["rust·p·m·Checker·check·item".to_string()]);
+    }
+
+    /// A collection whose element type is NOT single and stated is refused.
+    ///
+    /// A map yields `(K, V)` pairs, so the binding is a tuple and attributing
+    /// either type to it is false. A range yields a primitive this grammar owns
+    /// no members of. Both stay unresolved rather than guessing (R4).
+    #[test]
+    fn a_binding_over_pairs_or_primitives_is_not_typed() {
+        let shown: Vec<String> = targets(
+            "use std::collections::HashMap;\n\
+             pub struct Holder { pub m: HashMap<String, u32> }\n\
+             impl Holder {\n\
+               pub fn go(&self) { for e in &self.m { e.script(); } }\n\
+             }\n",
         )
         .into_iter()
         .filter(|(name, _)| name == "script")
