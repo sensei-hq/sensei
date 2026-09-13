@@ -1,5 +1,54 @@
 use super::*;
 
+// ── row shapes ───────────────────────────────────────────────────────────────
+//
+// `query_as` decodes into a positional tuple, so a wide projection is a wide
+// tuple and the columns are told apart by POSITION alone. Naming each shape
+// once puts the column order in one place: a `SELECT` and its decode target
+// that drift apart still compile, and the failure is a value read out of the
+// wrong column rather than a type error.
+
+/// `(return_type, parent_fqn)` for a method probe — either half may be absent.
+type ReturnAndParent = (Option<String>, Option<String>);
+
+/// `(fqn, return_type, parent_fqn, language)`.
+type MethodHintRow = (String, Option<String>, Option<String>, Option<String>);
+
+/// `(id, name, file_path, signature, line_start)`.
+type FunctionRow = (uuid::Uuid, String, String, Option<String>, Option<i32>);
+
+/// [`FunctionRow`] plus the cosine distance the search ordered by.
+type SemanticNodeRow = (uuid::Uuid, String, String, Option<String>, Option<i32>, f64);
+
+/// `(id, name, file_path, signature, line_start, locality)`.
+type LocatedNodeRow = (uuid::Uuid, String, String, Option<String>, Option<i32>, String);
+
+/// Two sides of a near-duplicate pair — `(name, file_path, line_start)` each —
+/// and the similarity between them.
+type DuplicatePairRow = (String, String, Option<i32>, String, String, Option<i32>, f64);
+
+/// `(id, source_id, target_id, target_name, kind)`.
+type EdgeRow = (uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>, String);
+
+/// The whole-graph projection the Atlas reads: `(id, kind, name, file_path,
+/// parent_id, line_start, line_end, community_id, folder_id, language, fqn,
+/// resolved, is_test)`.
+type AtlasNodeRow = (
+    uuid::Uuid,
+    String,
+    String,
+    Option<String>,
+    Option<uuid::Uuid>,
+    Option<i32>,
+    Option<i32>,
+    Option<i32>,
+    uuid::Uuid,
+    Option<String>,
+    Option<String>,
+    bool,
+    bool,
+);
+
 /// True only for a unique violation on `nodes_unique_identity` — the structural
 /// identity index `(folder_id, file_path, kind, name, parent_id, line_start)`.
 ///
@@ -59,6 +108,11 @@ impl PgStore {
 
     // ── Graph (typed wrappers) ─────────────────────────────────────────
 
+    // The arguments ARE the columns. A struct here would restate the same
+    // names one indirection away without removing a single one; `FqnDef`
+    // above is the case where a struct earned its keep, because that call
+    // has a meaningful default.
+    #[allow(clippy::too_many_arguments)]
     pub async fn merge_function(
         &self,
         folder_id: &uuid::Uuid,
@@ -383,20 +437,19 @@ impl PgStore {
         // The PARENT's fqn, not its name: it is what `Self` means, and naming
         // the type outright is stronger than naming it by a leaf that twenty
         // nodes in one folder can share.
-        let mut hinted: HashMap<String, Option<(Option<String>, Option<String>)>> = HashMap::new();
+        let mut hinted: HashMap<String, Option<ReturnAndParent>> = HashMap::new();
         if !probes.is_empty() {
-            let rows: Vec<(String, Option<String>, Option<String>, Option<String>)> =
-                sqlx_core::query_as::query_as(
-                    "SELECT m.fqn, m.props->>'return_type', t.fqn, m.language
+            let rows: Vec<MethodHintRow> = sqlx_core::query_as::query_as(
+                "SELECT m.fqn, m.props->>'return_type', t.fqn, m.language
                        FROM sensei.nodes m
                        LEFT JOIN sensei.nodes t ON t.id = m.parent_id
                       WHERE m.folder_id = ANY($1) AND m.fqn = ANY($2)",
-                )
-                .bind(folder_ids)
-                .bind(&probes)
-                .fetch_all(&self.pool)
-                .await
-                .map_err(|e| format!("resolve_receiver_calls (hint probe): {e}"))?;
+            )
+            .bind(folder_ids)
+            .bind(&probes)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("resolve_receiver_calls (hint probe): {e}"))?;
             for (fqn, return_type, self_fqn, language) in rows {
                 // The return-type grammar below is Rust's. Reading a TypeScript
                 // or Java return type with it would apply the wrong unwrapping
@@ -504,6 +557,11 @@ impl PgStore {
     /// Upsert a node (default `is_exported = false`). Thin wrapper over
     /// [`Self::upsert_node_ex`] for the many callers that don't carry visibility
     /// (file/section/rationale/module nodes, tests).
+    // The arguments ARE the columns. A struct here would restate the same
+    // names one indirection away without removing a single one; `FqnDef`
+    // above is the case where a struct earned its keep, because that call
+    // has a meaningful default.
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_node(
         &self,
         folder_id: &uuid::Uuid,
@@ -1148,9 +1206,8 @@ impl PgStore {
         }
         let vec_literal = vector_literal(query_embedding);
         let kind_strs: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>, f64)> =
-            sqlx_core::query_as::query_as(
-                "SELECT n.id, n.name, np.file_path, n.signature, n.line_start,
+        let rows: Vec<SemanticNodeRow> = sqlx_core::query_as::query_as(
+            "SELECT n.id, n.name, np.file_path, n.signature, n.line_start,
                         (n.embedding <=> $2::vector)::float8 AS distance
                    FROM sensei.nodes n
                    LEFT JOIN sensei.node_paths np ON np.node_id = n.id
@@ -1160,15 +1217,15 @@ impl PgStore {
                     AND (n.embedding <=> $2::vector) <= $5
                   ORDER BY n.embedding <=> $2::vector
                   LIMIT $4",
-            )
-            .bind(folder_ids)
-            .bind(vec_literal)
-            .bind(kind_strs)
-            .bind(limit)
-            .bind(max_distance)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        )
+        .bind(folder_ids)
+        .bind(vec_literal)
+        .bind(kind_strs)
+        .bind(limit)
+        .bind(max_distance)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
@@ -1248,9 +1305,8 @@ impl PgStore {
         limit: i64,
     ) -> Result<Vec<serde_json::Value>, String> {
         let max_distance = 1.0 - min_similarity;
-        let rows: Vec<(String, String, Option<i32>, String, String, Option<i32>, f64)> =
-            sqlx_core::query_as::query_as(
-                "SELECT a.name, pa.file_path, a.line_start,
+        let rows: Vec<DuplicatePairRow> = sqlx_core::query_as::query_as(
+            "SELECT a.name, pa.file_path, a.line_start,
                         b.name, pb.file_path, b.line_start,
                         1 - (a.embedding <=> b.embedding) AS similarity
                    FROM sensei.nodes a
@@ -1269,13 +1325,13 @@ impl PgStore {
                     AND (a.embedding <=> b.embedding) <= $2
                   ORDER BY similarity DESC
                   LIMIT $3",
-            )
-            .bind(folder_id)
-            .bind(max_distance)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        )
+        .bind(folder_id)
+        .bind(max_distance)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
             .map(|(na, fa, la, nb, fb, lb, sim)| {
@@ -1310,9 +1366,8 @@ impl PgStore {
             return Ok(Vec::new());
         }
         let max_distance = 1.0 - min_similarity;
-        let rows: Vec<(String, String, Option<i32>, String, String, Option<i32>, f64)> =
-            sqlx_core::query_as::query_as(
-                "SELECT a.name, pa.file_path, a.line_start,
+        let rows: Vec<DuplicatePairRow> = sqlx_core::query_as::query_as(
+            "SELECT a.name, pa.file_path, a.line_start,
                         b.name, pb.file_path, b.line_start,
                         1 - (a.embedding <=> b.embedding) AS similarity
                    FROM sensei.nodes a
@@ -1331,13 +1386,13 @@ impl PgStore {
                     AND (a.embedding <=> b.embedding) <= $2
                   ORDER BY similarity DESC
                   LIMIT $3",
-            )
-            .bind(folder_ids)
-            .bind(max_distance)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        )
+        .bind(folder_ids)
+        .bind(max_distance)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
             .map(|(na, fa, la, nb, fb, lb, sim)| {
@@ -1459,6 +1514,11 @@ impl PgStore {
     /// Needed because `implements` carries two distinct facts — Java-style
     /// interface implementation and a Rust trait impl — told apart only by
     /// `props.relation`. Before this, no code path named the column at all.
+    // The arguments ARE the columns. A struct here would restate the same
+    // names one indirection away without removing a single one; `FqnDef`
+    // above is the case where a struct earned its keep, because that call
+    // has a meaningful default.
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert_edge_with_props(
         &self,
         folder_id: &uuid::Uuid,
@@ -2287,15 +2347,14 @@ impl PgStore {
         if ids.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>, String)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, name, kind, file_path, line_start, locality
+        let rows: Vec<LocatedNodeRow> = sqlx_core::query_as::query_as(
+            "SELECT id, name, kind, file_path, line_start, locality
                    FROM sensei.graph_nodes WHERE id = ANY($1)",
-            )
-            .bind(ids)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
             .map(|(id, name, kind, file, line, locality)| {
@@ -3056,7 +3115,7 @@ impl PgStore {
         folder_ids: &[uuid::Uuid],
         query: &str,
     ) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)> = sqlx_core::query_as::query_as(
+        let rows: Vec<FunctionRow> = sqlx_core::query_as::query_as(
             "SELECT n.id, n.name, np.file_path, n.signature, n.line_start FROM sensei.nodes n
              JOIN sensei.node_paths np ON np.node_id = n.id
              WHERE n.folder_id = ANY($1) AND n.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
@@ -3139,7 +3198,7 @@ impl PgStore {
         // `fqn`/`resolved` are projected (7.2) so the Atlas can key symbols by
         // moniker and distinguish enriched defs from reference stubs. `fqn` is NULL
         // for pre-FQN/legacy rows; `resolved` is NOT NULL (defaults false).
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid, Option<String>, Option<String>, bool, bool)> = sqlx_core::query_as::query_as(
+        let rows: Vec<AtlasNodeRow> = sqlx_core::query_as::query_as(
             "SELECT n.id, n.kind::text, n.name, np.file_path, n.parent_id, n.line_start, n.line_end, n.community_id, n.folder_id, n.language, n.fqn, n.resolved, n.is_test \
                FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id \
               WHERE n.folder_id = ANY($1) ORDER BY np.file_path, n.line_start, n.parent_id, n.id"
@@ -3168,16 +3227,15 @@ impl PgStore {
         kinds: &[&str],
     ) -> Result<Vec<serde_json::Value>, String> {
         let kinds_owned: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
-        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>, String)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, source_id, target_id, target_name, kind::text FROM sensei.edges
+        let rows: Vec<EdgeRow> = sqlx_core::query_as::query_as(
+            "SELECT id, source_id, target_id, target_name, kind::text FROM sensei.edges
               WHERE folder_id = ANY($1) AND kind::text = ANY($2)",
-            )
-            .bind(folder_ids)
-            .bind(&kinds_owned)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        )
+        .bind(folder_ids)
+        .bind(&kinds_owned)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, src, tgt, name, kind)| {
             serde_json::json!({ "id": id, "source_id": src, "target_id": tgt, "target_name": name, "kind": kind })
         }).collect())
