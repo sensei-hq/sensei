@@ -66,18 +66,22 @@ impl PlatformProvider for MacOSProvider {
             }
         }
         match id {
-            ComponentId::Postgres => Box::new(AndChecker(vec![
-                Box::new(BinaryChecker::with_version("pg_isready", "--version")),
-                port("postgres", POSTGRES_PORT, retry, POSTGRES_PORT_TIMEOUT),
-            ])),
+            ComponentId::Postgres => Box::new(AndChecker {
+                checkers: vec![
+                    Box::new(BinaryChecker::with_version("pg_isready", "--version")),
+                    port("postgres", POSTGRES_PORT, retry, POSTGRES_PORT_TIMEOUT),
+                ],
+            }),
             ComponentId::Ollama => port("ollama", OLLAMA_PORT, retry, OLLAMA_PORT_TIMEOUT),
             ComponentId::Sensei => {
                 let cfg = SenseiConfig::from_env();
-                Box::new(AndChecker(vec![
-                    Box::new(BinaryChecker::new(cfg.sensei_binary())),
-                    Box::new(BinaryChecker::new(cfg.senseid_binary())),
-                    Box::new(BinaryChecker::new(cfg.sensei_mcp_binary())),
-                ]))
+                Box::new(AndChecker {
+                    checkers: vec![
+                        Box::new(BinaryChecker::new(cfg.sensei_binary())),
+                        Box::new(BinaryChecker::new(cfg.senseid_binary())),
+                        Box::new(BinaryChecker::new(cfg.sensei_mcp_binary())),
+                    ],
+                })
             }
             ComponentId::Database => {
                 Box::new(PostgresDatabaseChecker { db_name: SenseiConfig::from_env().db_name })
