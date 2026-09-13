@@ -24,6 +24,8 @@ migrations. DDL is applied to `sensei` and `sensei_test`.
 | **9 — incremental, pure half** | `68c88f8f` |
 | **10 S1/S2 — the differential gate, run** | `5aa79e60` |
 | 10 S3–S7 — switch rust, re-index, retire v1 | BLOCKED on the gate |
+| receiver typing — every in-file route | `35bdd61a` and before |
+| **4b — the JS walk** | SPEC WRITTEN, not built |
 
 ## Next command
 
@@ -89,6 +91,24 @@ emit.
   caller yet. Stage 10 is where that count should go to ZERO — it is now the
   tenth capability built ahead of its caller, and the pattern is the design's
   most repeated defect.
+
+## Receiver typing — done, and where it stops
+
+`ReceiverTypeUnknown` 33,047 -> 28,058 over eight routes (let-annotation,
+let-initialiser, parameter, `&T`, generic head, path last-segment, unit struct,
+`dyn Trait`, for-binding). v2 resolves 11,434 targets to v1's 7,923.
+
+What is left funnels into ONE question — the return type of a call: 12,724
+chained receivers, 582 for-loops over a call's result, 351 `self.m().c()`.
+Raised as **issue #174**; it needs a lookup that cannot wrong-merge, which is
+why `ReceiverHint::ReturnOf` was deleted rather than kept.
+
+79% of everything attributable is EXTERNAL (std, another crate), so the
+first-party reach still missing is ~1,700, not 28,000.
+
+LESSON, paid for three times: every route built without sizing it first reached
+almost nothing. The `for`-binding route is correct, tested, mutation-verified —
+and moved the corpus by one. Size, then build.
 
 ## Open questions
 
