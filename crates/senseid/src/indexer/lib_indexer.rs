@@ -680,7 +680,7 @@ pub fn extract_doc_links(index: &str) -> Vec<String> {
             }
             if j <= bytes.len() {
                 let href = &index[start..j.min(index.len())];
-                if is_llms_doc_file(&href) && !href.starts_with("http") {
+                if is_llms_doc_file(href) && !href.starts_with("http") {
                     links.push(href.to_string());
                 }
             }

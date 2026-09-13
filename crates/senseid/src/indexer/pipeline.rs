@@ -11,6 +11,13 @@
 //!
 //! It writes repositories, folders and files. It writes NO nodes and NO
 //! edges, and enqueues no parse task: stage 3's barrier ends here (R14).
+//
+// These stages have no caller on purpose: the shipped indexer under
+// `crate::languages` keeps producing the graph until cutover
+// (`docs/spec/indexer/10-cutover.md`), and wiring them in early would put two
+// producers with different rules on one set of tables. The allow goes when the
+// cutover gives them callers — it is not a licence for genuinely dead code.
+#![allow(dead_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -919,14 +926,23 @@ mod corpus {
 
         let pg = PgStore::connect_test().await.expect("connect");
 
-        // (library, ecosystem, owner, repo, tag, website llms URL)
-        //
+        /// One library to ingest by all three routes:
+        /// `(library, ecosystem, owner, repo, tag, website llms URL)`.
+        type SeedLibrary = (
+            &'static str,
+            &'static str,
+            &'static str,
+            &'static str,
+            &'static str,
+            Option<&'static str>,
+        );
+
         // The website URLs are the ones each library's OWN
         // `sensei.library.json` declares under `llms.index` — NOT a guessed
         // `/llms.txt`, and NOT GitHub's `homepage` field. Both of those led
         // somewhere wrong: kavach's repo homepage points at an unrelated
         // application, and `/llms.txt` is not where either library publishes.
-        let libs: &[(&str, &str, &str, &str, &str, Option<&str>)] = &[
+        let libs: &[SeedLibrary] = &[
             (
                 "rokkit",
                 "npm",

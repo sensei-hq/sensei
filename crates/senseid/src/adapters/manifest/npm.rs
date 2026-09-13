@@ -423,6 +423,7 @@ mod tests {
 /// A scoped package starts with `@` (`@rokkit/ui@1.4.1`), so splitting on the
 /// first `@` gives an empty name and `rokkit/ui@1.4.1` as the version. Only
 /// the last `@` separates the two.
+#[allow(dead_code)]
 fn split_name_at_version(spec: &str) -> Option<(String, String)> {
     let at = spec.rfind('@').filter(|i| *i > 0)?;
     Some((spec[..at].to_string(), spec[at + 1..].to_string()))
@@ -435,6 +436,7 @@ fn split_name_at_version(spec: &str) -> Option<(String, String)> {
 /// nothing and every npm version silently stays a manifest range floor —
 /// the failure looks exactly like "this project has no dependencies".
 /// Quote- and escape-aware, so a comma or `//` inside a string survives.
+#[allow(dead_code)]
 fn jsonc_to_json(src: &str) -> String {
     let mut out = String::with_capacity(src.len());
     let mut in_str = false;
@@ -505,15 +507,18 @@ fn jsonc_to_json(src: &str) -> String {
 /// These entries are first-party siblings, which `local_source` already routes
 /// to `folder_dependencies`; they are not registry releases and do not belong
 /// in a pin table at all.
+#[allow(dead_code)]
 fn is_protocol_not_a_version(v: &str) -> bool {
     ["link:", "workspace:", "file:", "portal:", "npm:", "patch:"].iter().any(|p| v.starts_with(p))
 }
 
+#[allow(dead_code)]
 fn sort_pins(pins: &mut [PinnedVersion]) {
     pins.sort_by(|a, b| a.name.cmp(&b.name).then(a.version.cmp(&b.version)));
 }
 
 /// `bun.lock`: `packages` maps a bare name to `[ "name@version", ... ]`.
+#[allow(dead_code)]
 fn parse_bun_lock(content: &str) -> Vec<PinnedVersion> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&jsonc_to_json(content)) else {
         return Vec::new();
@@ -539,6 +544,7 @@ fn parse_bun_lock(content: &str) -> Vec<PinnedVersion> {
 /// `package-lock.json` v2/v3: `packages` maps an INSTALL PATH to an object
 /// carrying `version`. The root project is the empty key and is skipped — it
 /// is not a dependency of itself.
+#[allow(dead_code)]
 fn parse_npm_lock(content: &str) -> Vec<PinnedVersion> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(content) else {
         return Vec::new();

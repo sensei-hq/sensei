@@ -914,6 +914,9 @@ pub(crate) async fn daily_project_metric_rows(
 /// This exists so ~90 fixtures model the barrier in one place rather than each
 /// remembering to. `upsert_file_row` is idempotent, so repeated calls for the
 /// same path are free.
+// Mirrors `upsert_node`'s column list on purpose, so a fixture reads the same
+// as the call it stands in for. 161 call sites; the arguments are the columns.
+#[allow(clippy::too_many_arguments)]
 pub async fn seed_node(
     pg: &crate::db::pg_store::PgStore,
     folder_id: &uuid::Uuid,

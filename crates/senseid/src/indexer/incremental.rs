@@ -12,6 +12,13 @@
 //! database — and it is also what makes it correct, because the root set has to
 //! come from the DATABASE (S2) and a function that fetched its own would be
 //! reading it at the wrong moment.
+//
+// These stages have no caller on purpose: the shipped indexer under
+// `crate::languages` keeps producing the graph until cutover
+// (`docs/spec/indexer/10-cutover.md`), and wiring them in early would put two
+// producers with different rules on one set of tables. The allow goes when the
+// cutover gives them callers — it is not a licence for genuinely dead code.
+#![allow(dead_code)]
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

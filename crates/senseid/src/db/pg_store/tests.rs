@@ -1275,7 +1275,7 @@ async fn two_packages_of_one_library_can_each_document_the_same_component() {
 }
 
 #[tokio::test]
-async fn a_repo_relative_path_resolves_to_a_file_in_a_MODULE_folder() {
+async fn a_repo_relative_path_resolves_to_a_file_in_a_module_folder() {
     // 06 S6 / R13. v1 callers hold the REPO folder and a repo-relative path;
     // the file belongs to a MODULE folder under a folder-relative one. Matching
     // `(folder_id, file_path)` directly misses every file in a module — 17 of

@@ -32,6 +32,10 @@ mod xml;
 /// RANGE — `^2.8.0` — and `clean_version` strips the operator, so the stored
 /// `2.8.0` is a range FLOOR indistinguishable from a pin. Only the lockfile
 /// holds what is actually installed, and that is what this carries.
+// Built ahead of its caller: cutover (`docs/spec/indexer/10-cutover.md`) is
+// what gives this one, and the shipped indexer under `crate::languages` owns
+// the graph until then. Not a licence for genuinely dead code.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinnedVersion {
     pub name: String,
@@ -72,11 +76,13 @@ pub trait ManifestAdapter: Send + Sync {
     /// [`Self::accepts`] must keep answering for manifests only: a lockfile is
     /// a different grammar, and routing one into [`Self::parse_dependencies`]
     /// would parse the wrong thing and quietly return nothing.
+    #[allow(dead_code)]
     fn lockfile_filenames(&self) -> &[&'static str] {
         &[]
     }
 
     /// True when `filename` is a lockfile this adapter reads.
+    #[allow(dead_code)]
     fn accepts_lockfile(&self, filename: &str) -> bool {
         self.lockfile_filenames().contains(&filename)
     }
@@ -95,6 +101,7 @@ pub trait ManifestAdapter: Send + Sync {
     /// chosen direct deps up BY NAME and never enumerates the result — the
     /// manifest selects which packages, the lockfile supplies which version
     /// (02b S11).
+    #[allow(dead_code)]
     fn parse_lockfile(&self, _filename: &str, _content: &str) -> Vec<PinnedVersion> {
         Vec::new()
     }
