@@ -767,6 +767,16 @@ mod reach {
     /// How a receiver's type could be learned, cheapest first.
     #[derive(PartialEq, Eq, PartialOrd, Ord)]
     enum Route {
+        /// `for x in coll` — a loop binding, typed by the collection's ELEMENT
+        /// type. Structurally a declaration; it was being counted as "other"
+        /// only because no `let` or `:` names it.
+        ForBinding,
+        /// The stated type is `dyn Trait` (or `Box<dyn Trait>`). The concrete
+        /// impl is unknowable, but the TRAIT METHOD is a real declaration and is
+        /// the correct target — measured: `Checker::check` is minted as
+        /// `…·Checker·check·item`. Refusing these conflated "which impl runs"
+        /// with "which method is called"; only the first is unanswerable.
+        DynTrait,
         /// `let x: T = …` — the type is written at the binding.
         LetAnnotation,
         /// `let x = T::assoc(…)` — the initialiser's path names the type.
@@ -786,6 +796,8 @@ mod reach {
     impl Route {
         fn label(&self) -> &'static str {
             match self {
+                Self::ForBinding => "for x in coll     (element type of the collection)",
+                Self::DynTrait => "dyn Trait         (the TRAIT METHOD is the target)",
                 Self::LetAnnotation => "let x: T          (annotation at the binding)",
                 Self::LetInitialiserPath => "let x = T::f()    (initialiser names the type)",
                 Self::Parameter => "fn(x: T)          (enclosing signature)",
@@ -834,6 +846,23 @@ mod reach {
             })
     }
 
+    /// The stated type VERBATIM (not just its head), so `dyn` stays visible.
+    fn stated_type_head_raw(name: &str, text: &str) -> Option<String> {
+        for prefix in [format!("let {name}: "), format!("let mut {name}: "), format!("{name}: ")] {
+            if let Some(i) = text.find(&prefix) {
+                let rest = &text[i + prefix.len()..];
+                let upto: String = rest
+                    .chars()
+                    .take_while(|c| !matches!(c, ',' | ';' | ')' | '=' | '\n'))
+                    .collect();
+                if !upto.trim().is_empty() {
+                    return Some(upto.trim().to_string());
+                }
+            }
+        }
+        None
+    }
+
     fn route_for(receiver: &str, text: &str) -> Route {
         // A chain is decided by shape alone.
         if receiver.contains('.') || receiver.contains('(') {
@@ -856,6 +885,20 @@ mod reach {
         // bound on what each route reaches, and it is labelled as one — a
         // scope-aware count needs the walk itself, which is the thing being
         // sized. Over-counting here is visible; under-counting would hide reach.
+        // `dyn Trait` first: the stated type says so outright, whatever bound it.
+        // The concrete impl is unknowable, but the TRAIT METHOD is a real
+        // declaration and is the correct target — `Checker::check` exists.
+        if stated_type_head_raw(receiver, text).is_some_and(|t| t.contains("dyn ")) {
+            return Route::DynTrait;
+        }
+        // A loop binding is structurally a declaration — the collection states
+        // the element type — and was being lumped into "other" because no `let`
+        // or `:` names it.
+        if text.contains(&format!("for {receiver} in "))
+            || text.contains(&format!("for &{receiver} in "))
+        {
+            return Route::ForBinding;
+        }
         let annotated = format!("let {receiver}: ");
         let annotated_mut = format!("let mut {receiver}: ");
         if text.contains(&annotated) || text.contains(&annotated_mut) {
