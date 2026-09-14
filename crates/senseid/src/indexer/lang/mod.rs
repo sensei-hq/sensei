@@ -42,7 +42,9 @@ pub mod javascript;
 pub mod rust;
 pub mod svelte;
 
-use crate::indexer::facts::{FileFacts, Fqn, Language};
+use std::collections::BTreeMap;
+
+use crate::indexer::facts::{FileFacts, Fqn, Language, Symbol, SymbolKind};
 use crate::indexer::fqn::FqnError;
 use crate::indexer::resolve::Grammar;
 
@@ -85,6 +87,121 @@ pub enum ReadError {
     NoFileIdentity(FqnError),
 }
 
+/// Where each type NAME is declared, for the packages being scanned.
+///
+/// **The one fact a walk cannot read out of the file it was handed, and needs.**
+/// A member's identity is `…·<module>·<Type>·<member>`, and `<module>` is the
+/// module the TYPE lives in — `PgStore::upsert_symbol` is reached through
+/// `db::pg_store::PgStore` however many files carry an `impl PgStore`. Rust puts
+/// those impl blocks anywhere; this repo has 24 of them for `PgStore` alone.
+///
+/// Without it the walk fills `<module>` with the module the impl block sits in,
+/// and so does the reference side, so a call resolves only when the caller
+/// happens to share a module with the impl. MEASURED: 634 of 5,186 members sat
+/// under a module their type does not live in, and 2,538 unresolved member
+/// references named a type whose home was elsewhere.
+///
+/// The walk RESOLVES nothing here — it is TOLD. Building the table is a
+/// barrier's job (every file walked before any is anchored), which is what
+/// keeps the answer independent of scan order (R6).
+///
+/// An AMBIGUOUS name — two modules of one package declaring it — is absent, not
+/// guessed at. 354 members are in that case, and picking one of two homes would
+/// mint a wrong identity, which R4 ranks below no identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeHomes {
+    homes: BTreeMap<(String, String), String>,
+}
+
+impl TypeHomes {
+    /// No table at all: every type is treated as living where its impl block
+    /// does. What a caller that has not run the barrier gets, and what the
+    /// walk did before this existed.
+    pub fn unknown() -> Self {
+        Self { homes: BTreeMap::new() }
+    }
+
+    /// Build from every declaration the scan has seen, as
+    /// `(package, symbol)` pairs.
+    ///
+    /// A name declared in two modules of one package is DROPPED rather than
+    /// resolved to the first: two homes is not one home, and the walk must be
+    /// able to tell "I know where this lives" from "I know two places".
+    pub fn of<'a>(declarations: impl IntoIterator<Item = (&'a str, &'a Symbol)>) -> Self {
+        let mut seen: BTreeMap<(String, String), Option<String>> = BTreeMap::new();
+        for (package, symbol) in declarations {
+            if !names_a_type(symbol.kind) {
+                continue;
+            }
+            let Some(module) = module_of_item(symbol.fqn.as_str(), &symbol.name) else {
+                continue;
+            };
+            let key = (package.to_string(), symbol.name.clone());
+            match seen.get(&key) {
+                // A second, DIFFERENT home makes the name ambiguous for good.
+                Some(Some(first)) if *first != module => {
+                    seen.insert(key, None);
+                }
+                Some(_) => {}
+                None => {
+                    seen.insert(key, Some(module));
+                }
+            }
+        }
+        Self { homes: seen.into_iter().filter_map(|(k, v)| Some((k, v?))).collect() }
+    }
+
+    /// The module a type is declared in, or `None` when the scan does not know
+    /// or knows two.
+    pub fn home_of(&self, package: &str, ty: &str) -> Option<&str> {
+        self.homes.get(&(package.to_string(), ty.to_string())).map(String::as_str)
+    }
+
+    /// How many names have ONE known home. For a report; a table that silently
+    /// came out empty would make every anchoring decision a no-op.
+    pub fn len(&self) -> usize {
+        self.homes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.homes.is_empty()
+    }
+}
+
+/// Whether a [`SymbolKind`] names something a member can hang off.
+fn names_a_type(kind: SymbolKind) -> bool {
+    matches!(
+        kind,
+        SymbolKind::Struct
+            | SymbolKind::Enum
+            | SymbolKind::Trait
+            | SymbolKind::Class
+            | SymbolKind::Interface
+    )
+}
+
+/// The module segment of an ITEM identity — `lang·pkg·[module]·name·reach`.
+///
+/// Only the item form is decomposed, and only with the name in hand. The MEMBER
+/// forms differ by one segment while an empty module is dropped, so a
+/// six-segment string is a member-with-module or a trait-member-without-one and
+/// the string cannot say which — see [`crate::indexer::fqn::parse`]. Guessing
+/// there read a trait as a type and would have collapsed every implementation
+/// of a trait onto one identity.
+fn module_of_item(fqn: &str, name: &str) -> Option<String> {
+    let mut segments: Vec<&str> = fqn.split(crate::indexer::fqn::SEPARATOR).collect();
+    // reach
+    segments.pop()?;
+    if segments.pop()? != name {
+        return None;
+    }
+    // lang, package
+    if segments.len() < 2 {
+        return None;
+    }
+    Some(segments[2..].join(&crate::indexer::fqn::SEPARATOR.to_string()))
+}
+
 /// How one language is read (R7). Everything else about it — how a miss is
 /// classified, how an identity is encoded, how a path is climbed — is shared.
 pub trait LanguageAdapter: Send + Sync {
@@ -114,7 +231,7 @@ pub trait LanguageAdapter: Send + Sync {
     /// PURE, and it must stay pure: it takes source TEXT rather than a path to
     /// open, so its whole suite runs on string literals and no database is in
     /// scope.
-    fn read(&self, source: &Source<'_>) -> Result<FileFacts, ReadError>;
+    fn read(&self, source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadError>;
 
     /// The identity of the file itself, which is the identity of the module it
     /// declares.
@@ -320,7 +437,10 @@ mod tests {
             let text = fixture_for(adapter.name());
             let path = format!("src/fixture{}", adapter.extensions()[0]);
             let facts = adapter
-                .read(&Source { package: "pkg", module: "fixture", path: &path, text })
+                .read(
+                    &Source { package: "pkg", module: "fixture", path: &path, text },
+                    &TypeHomes::unknown(),
+                )
                 .unwrap_or_else(|e| {
                     panic!("{} could not read its own fixture: {e:?}", adapter.name())
                 });

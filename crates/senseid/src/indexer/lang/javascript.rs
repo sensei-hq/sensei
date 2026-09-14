@@ -44,7 +44,7 @@ use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType, Span as OxcSpan};
 
 use super::common::{Miss, considered};
-use super::{LanguageAdapter, ReadError, Source};
+use super::{LanguageAdapter, ReadError, Source, TypeHomes};
 use crate::indexer::facts::{
     Binding, DeclaredType, FileFacts, Fqn, Import, ImportOrigin, Language, Observation, Param,
     Reason, RefKind, Reference, Relation, RelationKind, Resolution, Span, Symbol, SymbolKind,
@@ -80,7 +80,12 @@ impl LanguageAdapter for TypeScriptAdapter {
         &GRAMMAR
     }
 
-    fn read(&self, source: &Source<'_>) -> Result<FileFacts, ReadError> {
+    fn read(&self, source: &Source<'_>, _types: &TypeHomes) -> Result<FileFacts, ReadError> {
+        // The table is not consulted, and that is a property of the LANGUAGE
+        // rather than a gap. A class's members are declared inside its own
+        // body, so the module a member is named in is the module the class is
+        // declared in by construction — there is no `impl` block to sit
+        // somewhere else. Rust needs the table; this does not.
         read(source)
     }
 
@@ -114,7 +119,12 @@ impl LanguageAdapter for JavaScriptAdapter {
         &GRAMMAR
     }
 
-    fn read(&self, source: &Source<'_>) -> Result<FileFacts, ReadError> {
+    fn read(&self, source: &Source<'_>, _types: &TypeHomes) -> Result<FileFacts, ReadError> {
+        // The table is not consulted, and that is a property of the LANGUAGE
+        // rather than a gap. A class's members are declared inside its own
+        // body, so the module a member is named in is the module the class is
+        // declared in by construction — there is no `impl` block to sit
+        // somewhere else. Rust needs the table; this does not.
         read(source)
     }
 
@@ -2587,7 +2597,7 @@ mod tests {
             let module = adapter.module_path(&path, ".");
             let source = Source { package: "web", module: &module, path: &path, text: &text };
             files += 1;
-            match adapter.read(&source) {
+            match adapter.read(&source, &TypeHomes::unknown()) {
                 Ok(facts) => {
                     symbols += facts.symbols.len();
                     references += facts.references.len();
@@ -2652,9 +2662,10 @@ mod tests {
             let ext = format!(".{}", path.rsplit('.').next().unwrap_or(""));
             let Some(adapter) = adapter_for_ext(&ext) else { continue };
             let module = adapter.module_path(&path, ".");
-            let Ok(facts) =
-                adapter.read(&Source { package: "web", module: &module, path: &path, text: &text })
-            else {
+            let Ok(facts) = adapter.read(
+                &Source { package: "web", module: &module, path: &path, text: &text },
+                &TypeHomes::unknown(),
+            ) else {
                 continue;
             };
             for reference in &facts.references {

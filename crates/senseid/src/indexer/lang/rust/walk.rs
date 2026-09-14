@@ -10,8 +10,8 @@ use std::collections::BTreeMap;
 
 use tree_sitter::Node;
 
-use super::super::Source;
 use super::super::common::{Miss, considered};
+use super::super::{Source, TypeHomes};
 use super::MODULE;
 use super::types::{element_type, simple_type_name};
 use super::types::{type_path, type_segment};
@@ -43,7 +43,12 @@ pub(super) struct Found {
 }
 
 /// Walk one parsed tree, with the file's identity already minted.
-pub(super) fn walk(source: &Source<'_>, root: Node<'_>, from: Fqn) -> Found {
+pub(super) fn walk<'a>(
+    source: &Source<'a>,
+    types: &'a TypeHomes,
+    root: Node<'_>,
+    from: Fqn,
+) -> Found {
     let scope = Scope {
         module: source.module.to_string(),
         container: Container::File,
@@ -58,6 +63,7 @@ pub(super) fn walk(source: &Source<'_>, root: Node<'_>, from: Fqn) -> Found {
     let mut walk = Walk {
         src: source.text,
         package: source.package,
+        types,
         declared_fields: BTreeMap::new(),
         symbols: Vec::new(),
         references: Vec::new(),
@@ -150,10 +156,17 @@ enum Container {
     /// A free item, at the file level or inside an inline `mod`.
     File,
     /// A struct/enum/union body, a trait body, or an inherent `impl`.
-    Type(String),
+    ///
+    /// Carries the MODULE as well as the name, and that is the whole of the
+    /// anchoring fix: a member's identity is `…·<module>·<Type>·<member>`, and
+    /// `<module>` is where the TYPE is declared. An `impl PgStore` in
+    /// `db::pg_store::personas` declares members of the `PgStore` that lives in
+    /// `db::pg_store`, so
+    /// the block's own module is the wrong answer and was the one being used.
+    Type { module: String, name: String },
     /// An `impl Trait for Type` body. The trait qualifier is what keeps
     /// `Display::fmt` and `Debug::fmt` on one type apart.
-    TraitImpl { ty: String, tr: String },
+    TraitImpl { module: String, ty: String, tr: String },
     /// An `impl` on a type with no name — a tuple, a slice, a unit. Its members
     /// have no identity in this grammar, and naming them as free items of the
     /// module would mint identities no use site could ever mint. A wrong edge is
@@ -165,6 +178,10 @@ enum Container {
 struct Walk<'a> {
     src: &'a str,
     package: &'a str,
+    /// Where each type is declared. See [`TypeHomes`] — the walk is TOLD this,
+    /// never looks it up, and an absent entry leaves the block's own module in
+    /// place rather than producing a guess.
+    types: &'a TypeHomes,
     /// Type name -> its fields and their declared types.
     ///
     /// On the WALK and not on a scope, because an `impl` block needs the fields
@@ -197,10 +214,12 @@ impl<'a> Walk<'a> {
             Container::File => {
                 fqn::define(&Form::Item { lang, package, module, name: member, reach })
             }
-            Container::Type(ty) => {
+            Container::Type { module, name: ty } => {
+                let module = module.as_str();
                 fqn::define(&Form::Member { lang, package, module, ty, member, reach })
             }
-            Container::TraitImpl { ty, tr } => {
+            Container::TraitImpl { module, ty, tr } => {
+                let module = module.as_str();
                 fqn::define(&Form::TraitMember { lang, package, module, ty, tr, member, reach })
             }
             Container::Unnameable { raw } => Err(FqnError::NotATypeName { value: raw.clone() }),
@@ -568,7 +587,9 @@ impl<'a> Walk<'a> {
         };
         let symbol = self.symbol(node, scope, name, kind, Reach::Item, DeclaredType::Unstated);
         let mut inner = self.push_owner(symbol, scope);
-        inner.container = Container::Type(name.to_string());
+        // A type declared HERE is named in this module, so its home is the
+        // scope's own — no table needed and none consulted.
+        inner.container = Container::Type { module: scope.module.clone(), name: name.to_string() };
         if let Owner::Type(child) = &inner.owner {
             self.supertraits(node, scope, child.clone());
         }
@@ -622,8 +643,9 @@ impl<'a> Walk<'a> {
             DeclaredType::Unstated,
         );
         let mut inner = self.push_owner(symbol, scope);
-        if let Container::Type(enum_name) = &scope.container {
-            inner.container = Container::Type(format!("{enum_name}::{name}"));
+        if let Container::Type { module, name: enum_name } = &scope.container {
+            inner.container =
+                Container::Type { module: module.clone(), name: format!("{enum_name}::{name}") };
         }
         self.children(node, &inner);
     }
@@ -700,6 +722,18 @@ impl<'a> Walk<'a> {
             .map(|n| self.text(n))
             .and_then(|raw| type_segment(raw).ok());
 
+        // WHERE THE MEMBERS OF THIS BLOCK ARE NAMED. The type's own module, not
+        // this block's: `impl PgStore` in `db::pg_store::personas` declares
+        // members of the `PgStore` in `db::pg_store`. When the scan has not been told
+        // where the type lives — or has been told two places — the block's own
+        // module stands, which is the previous behaviour and is right whenever
+        // the type is declared here.
+        let home = self
+            .types
+            .home_of(self.package, &ty)
+            .map(str::to_string)
+            .unwrap_or_else(|| scope.module.clone());
+
         let mut inner = scope.clone();
         // A PRE-PASS over this block's methods, before any body is walked: a
         // method may be called before it is declared, and a single-pass walk
@@ -719,8 +753,8 @@ impl<'a> Walk<'a> {
             None => BTreeMap::new(),
         };
         inner.container = match tr {
-            Some(tr) => Container::TraitImpl { ty: ty.clone(), tr },
-            None => Container::Type(ty.clone()),
+            Some(tr) => Container::TraitImpl { module: home.clone(), ty: ty.clone(), tr },
+            None => Container::Type { module: home.clone(), name: ty.clone() },
         };
         inner.owner = Owner::Nobody;
         // A use site in the impl header sits inside no member, so it belongs to
@@ -840,7 +874,7 @@ impl<'a> Walk<'a> {
         // `self` inside a type's body, or a local whose type the source STATED.
         // Nothing else: a receiver the file does not type is reported as such.
         let self_type = match (&scope.container, receiver) {
-            (Container::Type(ty), "self" | "Self") => Some(ty.as_str()),
+            (Container::Type { name: ty, .. }, "self" | "Self") => Some(ty.as_str()),
             (Container::TraitImpl { ty, .. }, "self" | "Self") => Some(ty.as_str()),
             // A local whose type the source stated.
             _ => scope.bindings.get(receiver).map(String::as_str).or_else(|| {
@@ -860,7 +894,10 @@ impl<'a> Walk<'a> {
                 let returned = scope.returns.get(method)?;
                 // `Self` is this type — the container already knows which.
                 Some(match (returned.as_str(), &scope.container) {
-                    ("Self", Container::Type(ty) | Container::TraitImpl { ty, .. }) => ty.as_str(),
+                    (
+                        "Self",
+                        Container::Type { name: ty, .. } | Container::TraitImpl { ty, .. },
+                    ) => ty.as_str(),
                     _ => returned.as_str(),
                 })
             }),
@@ -874,10 +911,15 @@ impl<'a> Walk<'a> {
                 saw: vec![Observation::Receiver(receiver.to_string())],
             };
         };
+        // The type's home, exactly as the declaration side used it. Minting the
+        // USE SITE's module here is what made a call resolve only when the
+        // caller happened to share a module with the impl block — the two sides
+        // agreeing is the merge contract (§2), not an optimisation.
+        let module = self.types.home_of(self.package, ty).unwrap_or(scope.module.as_str());
         let considered = considered(fqn::refer(&Form::Member {
             lang: Language::Rust,
             package: self.package,
-            module: &scope.module,
+            module,
             ty,
             member,
             reach,
@@ -978,7 +1020,8 @@ impl<'a> Walk<'a> {
                 Ok(ty) => considered(fqn::refer(&Form::Member {
                     lang,
                     package,
-                    module,
+                    // The type's home, the same as the declaration side.
+                    module: self.types.home_of(package, &ty).unwrap_or(module),
                     ty: &ty,
                     member,
                     reach,
