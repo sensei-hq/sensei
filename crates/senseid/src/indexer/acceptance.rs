@@ -329,6 +329,68 @@ fn an_import_named_target_resolves() {
     }
 }
 
+/// What `ReceiverTypeUnknown` ACTUALLY is, bucketed by the shape of the
+/// receiver the walk could not type.
+///
+/// It is the largest bucket in the report by a wide margin, and a number that
+/// large is useless until it is decomposed: "53,224 receivers untyped" invites
+/// the guess that the walk is broken, when most of it may be one shape with one
+/// cause. The walk records the receiver verbatim as `Observation::Receiver`, so
+/// this reads what it actually saw rather than inferring.
+#[test]
+#[ignore]
+fn what_the_untyped_receivers_are() {
+    let corpus = read_the_corpus();
+    let mut shapes: BTreeMap<(&str, &str), (usize, Vec<String>)> = BTreeMap::new();
+
+    for read in &corpus {
+        let language = read.facts.language.as_str();
+        for reference in &read.facts.references {
+            let Resolution::Unresolved { reason, evidence } = &reference.target else { continue };
+            if format!("{reason:?}") != "ReceiverTypeUnknown" {
+                continue;
+            }
+            let receiver = evidence.saw.iter().find_map(|o| match o {
+                super::facts::Observation::Receiver(text) => Some(text.as_str()),
+                _ => None,
+            });
+            let Some(receiver) = receiver else { continue };
+            let one_line = receiver.split('\n').next().unwrap_or(receiver).trim();
+            // The shape, not the text: what KIND of expression the walk was
+            // asked to name a type for.
+            let shape = if one_line.ends_with(')') && one_line.contains('(') {
+                "a CALL's result — needs the callee's return type (#174)"
+            } else if one_line.starts_with("self.") || one_line.starts_with("this.") {
+                "a field of self/this whose type is not stated here"
+            } else if one_line.contains('.') {
+                "a longer CHAIN — a.b.c"
+            } else if one_line.contains('[') {
+                "an index or slice"
+            } else if one_line.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '$') {
+                "a BARE NAME the file never typed — usually an import (#174)"
+            } else {
+                "other"
+            };
+            let entry = shapes.entry((language, shape)).or_insert((0, Vec::new()));
+            entry.0 += 1;
+            if entry.1.len() < 3 && !one_line.is_empty() {
+                entry.1.push(format!("{}  —  {one_line}", read.path));
+            }
+        }
+    }
+
+    println!("\n## ReceiverTypeUnknown, by receiver shape\n");
+    let mut ranked: Vec<(&(&str, &str), &(usize, Vec<String>))> = shapes.iter().collect();
+    ranked.sort_by_key(|(_, (n, _))| std::cmp::Reverse(*n));
+    for ((language, shape), (n, examples)) in ranked {
+        println!("{n:>7}  [{language}] {shape}");
+        for example in examples {
+            println!("           {example}");
+        }
+    }
+    assert!(!shapes.is_empty(), "no untyped receiver carried the receiver it saw");
+}
+
 /// **A7. No two declarations mint one identity.**
 ///
 /// The guard §2.1 leans on when it drops the type/value discriminator, and it
