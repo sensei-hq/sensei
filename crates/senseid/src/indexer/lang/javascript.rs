@@ -2558,6 +2558,134 @@ mod tests {
         );
     }
 
+    // ── the real corpus (A2) ─────────────────────────────────────────────
+
+    /// Read every JavaScript, TypeScript and Svelte file this repository's three
+    /// front ends contain, through the adapter the extension dispatches to.
+    ///
+    /// The load-bearing check, and it must run over the REAL corpus: a fixture
+    /// proves the reader handles what its author thought of, and three shipping
+    /// SvelteKit apps are where the unthought-of forms live. What it asserts is
+    /// what R2 promises — every file either produces facts or names why it
+    /// could not, and NOTHING panics on the way.
+    #[test]
+    fn every_real_file_reads_without_panicking_and_says_what_it_saw() {
+        use crate::indexer::lang::adapter_for_ext;
+
+        let mut files = 0usize;
+        let mut symbols = 0usize;
+        let mut references = 0usize;
+        let mut relations = 0usize;
+        let mut imports = 0usize;
+        let mut unreadable: Vec<(String, ReadError)> = Vec::new();
+        let mut by_reason: BTreeMap<String, usize> = BTreeMap::new();
+
+        for (path, text) in crate::indexer::corpus_web_sources() {
+            let ext = format!(".{}", path.rsplit('.').next().unwrap_or(""));
+            let adapter =
+                adapter_for_ext(&ext).unwrap_or_else(|| panic!("{path}: nothing claims {ext}"));
+            let module = adapter.module_path(&path, ".");
+            let source = Source { package: "web", module: &module, path: &path, text: &text };
+            files += 1;
+            match adapter.read(&source) {
+                Ok(facts) => {
+                    symbols += facts.symbols.len();
+                    references += facts.references.len();
+                    relations += facts.relations.len();
+                    imports += facts.imports.len();
+                    for reference in &facts.references {
+                        if let Resolution::Unresolved { reason, .. } = &reference.target {
+                            *by_reason.entry(format!("{reason:?}")).or_default() += 1;
+                        }
+                    }
+                }
+                // A file the reader cannot open is a FACT, collected and
+                // reported — never an empty `FileFacts` and never a panic.
+                Err(e) => unreadable.push((path.clone(), e)),
+            }
+        }
+
+        println!("\n── the JS/TS/Svelte corpus, {files} files ──");
+        println!(
+            "symbols {symbols} | references {references} | relations {relations} | imports {imports}"
+        );
+        println!("unreadable {}", unreadable.len());
+        for (reason, n) in &by_reason {
+            println!("  {n:>6}  {reason}");
+        }
+
+        assert!(symbols > 1_000, "three front ends declare more than {symbols} things");
+        assert!(references > 1_000, "three front ends use more than {references} things");
+        assert!(imports > 500, "three front ends import more than {imports} times");
+        assert!(
+            relations > 0,
+            "`extends`/`implements` are emitted from the same walk (D5), and none appeared"
+        );
+        // A handful of files may genuinely not parse — a `.svelte` using syntax
+        // this build's oxc does not know. What must not happen is a SHARE of
+        // them, which would mean the reader is wrong about the language rather
+        // than about one file.
+        let share = unreadable.len() * 100 / files.max(1);
+        assert!(
+            share < 5,
+            "{} of {files} files did not read ({share}%): {:?}",
+            unreadable.len(),
+            unreadable.iter().take(5).collect::<Vec<_>>()
+        );
+    }
+
+    /// The receiver-typing routes, MEASURED over the corpus rather than
+    /// asserted over a fixture.
+    ///
+    /// 04b S3 sized three routes at 1,736 of 6,406 member calls (27%) before
+    /// any of them was built, and the lesson it records — paid for three times
+    /// on the Rust side — is that a route built without sizing it first reaches
+    /// almost nothing. This is the other end of that: what the routes ACTUALLY
+    /// reached, printed, so the next route is chosen against a number.
+    #[test]
+    fn the_stated_routes_type_a_measurable_share_of_real_receivers() {
+        use crate::indexer::lang::adapter_for_ext;
+
+        let mut typed = 0usize;
+        let mut unknown = 0usize;
+        for (path, text) in crate::indexer::corpus_web_sources() {
+            let ext = format!(".{}", path.rsplit('.').next().unwrap_or(""));
+            let Some(adapter) = adapter_for_ext(&ext) else { continue };
+            let module = adapter.module_path(&path, ".");
+            let Ok(facts) =
+                adapter.read(&Source { package: "web", module: &module, path: &path, text: &text })
+            else {
+                continue;
+            };
+            for reference in &facts.references {
+                match &reference.target {
+                    Resolution::Unresolved { reason: Reason::ReceiverTypeUnknown, .. } => {
+                        unknown += 1
+                    }
+                    // A member the walk NAMED carries the candidate it minted,
+                    // which it can only mint once it has a receiver type.
+                    Resolution::Unresolved { evidence, .. }
+                        if evidence.reach == Reach::Field
+                            && evidence
+                                .saw
+                                .iter()
+                                .any(|o| matches!(o, Observation::Candidate(_))) =>
+                    {
+                        typed += 1
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let receivers = typed + unknown;
+        println!("\nreceivers typed by a STATED route: {typed} of {receivers}");
+        assert!(receivers > 500, "only {receivers} member receivers in three front ends?");
+        assert!(
+            typed > 0,
+            "not one receiver was typed over the whole corpus, so the routes reach nothing real"
+        );
+    }
+
     /// A file identity is the module it declares, minted the way a reference to
     /// the module would mint it.
     #[test]
