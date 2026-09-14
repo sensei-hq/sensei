@@ -350,7 +350,7 @@ fn read_file(source: &Source<'_>, from: Fqn) -> Result<Found, ReadError> {
         reassigned: assigned_in(&parsed.program.body).into_iter().collect(),
         found: Found::empty(),
     };
-    let scope = Scope { from, container: Container::File };
+    let scope = Scope { from, container: Container::File, fn_scope: Vec::new() };
     let mut flow = Flow::empty();
     // No hoisting pass, and that is not an omission: a `new Widget()` types its
     // binding from the NAME it writes, so nothing here has to have seen
@@ -410,7 +410,7 @@ pub(super) fn read_component<'a>(
         reassigned,
         found: Found::empty(),
     };
-    let scope = Scope { from, container: Container::File };
+    let scope = Scope { from, container: Container::File, fn_scope: Vec::new() };
     let mut flow = Flow::empty();
 
     for (block, text, parsed) in &parsed_blocks {
@@ -868,6 +868,24 @@ struct Scope {
     /// The symbol a use site found here sits inside — [`Reference::from`].
     from: Fqn,
     container: Container,
+    /// The chain of FUNCTIONS enclosing this point, outermost first. See the
+    /// Rust walk's `Scope::fn_scope`: the AST carries the parent, `from` was
+    /// already being set from it, and only the naming side was not told — so a
+    /// `const` in a function body minted at module scope and two of them in one
+    /// file became one node.
+    fn_scope: Vec<String>,
+}
+
+impl Scope {
+    /// The module segment a declaration found HERE is named in — the file's
+    /// module, extended by every enclosing function.
+    fn module_here(&self, module: &str) -> String {
+        if self.fn_scope.is_empty() {
+            return module.to_string();
+        }
+        let inner = self.fn_scope.join("/");
+        if module.is_empty() { format!("fn/{inner}") } else { format!("{module}/fn/{inner}") }
+    }
 }
 
 /// What a declaration found here is a member OF. This is the only thing that
@@ -938,7 +956,7 @@ impl Walk<'_> {
             Container::File => fqn::define(&Form::Item {
                 lang,
                 package: self.package,
-                module: self.module,
+                module: &scope.module_here(self.module),
                 name: member,
                 reach,
             }),
@@ -972,7 +990,11 @@ impl Walk<'_> {
                         at: symbol.span,
                     });
                 }
-                let inner = Scope { from: symbol.fqn.clone(), container: scope.container.clone() };
+                let inner = Scope {
+                    from: symbol.fqn.clone(),
+                    container: scope.container.clone(),
+                    fn_scope: scope.fn_scope.clone(),
+                };
                 self.found.symbols.push(symbol);
                 inner
             }
@@ -1249,7 +1271,10 @@ impl Walk<'_> {
                 s.params = self.params(&f.params);
                 s
             });
-        let inner = self.push(symbol, scope);
+        let mut inner = self.push(symbol, scope);
+        // The body is INSIDE this function, and everything it declares is named
+        // so — the same fact the Rust walk records, for the same reason.
+        inner.fn_scope.push(id.name.to_string());
         self.function_body(f, &inner, flow);
     }
 
@@ -1363,6 +1388,7 @@ impl Walk<'_> {
 
         let inner = Scope {
             from: outer.from.clone(),
+            fn_scope: outer.fn_scope.clone(),
             container: Container::Type { module: self.module_of(scope), name: id.name.to_string() },
         };
         for element in &c.body.body {
@@ -1464,6 +1490,7 @@ impl Walk<'_> {
         }
         let inner = Scope {
             from: outer.from.clone(),
+            fn_scope: outer.fn_scope.clone(),
             container: Container::Type {
                 module: self.module_of(scope),
                 name: i.id.name.to_string(),
@@ -1497,6 +1524,7 @@ impl Walk<'_> {
         let outer = self.push(symbol, scope);
         let inner = Scope {
             from: outer.from.clone(),
+            fn_scope: outer.fn_scope.clone(),
             container: Container::Type {
                 module: self.module_of(scope),
                 name: e.id.name.to_string(),
@@ -1539,7 +1567,11 @@ impl Walk<'_> {
         let Some(TSModuleDeclarationBody::TSModuleBlock(block)) = &m.body else {
             return;
         };
-        let inner = Scope { from: outer.from.clone(), container: Container::File };
+        let inner = Scope {
+            from: outer.from.clone(),
+            container: Container::File,
+            fn_scope: outer.fn_scope.clone(),
+        };
         for statement in &block.body {
             self.statement(statement, &inner, flow);
         }
@@ -1620,12 +1652,16 @@ impl Walk<'_> {
                     Expression::ArrowFunctionExpression(a) => {
                         let mut nested = self.captured(flow);
                         self.bind_params(&a.params, &mut nested);
+                        let mut body_scope = inner.clone();
+                        body_scope.fn_scope.push(id.name.to_string());
                         for statement in &a.body.statements {
-                            self.statement(statement, &inner, &mut nested);
+                            self.statement(statement, &body_scope, &mut nested);
                         }
                     }
                     Expression::FunctionExpression(f) => {
-                        self.function_body(f, &inner, flow);
+                        let mut body_scope = inner.clone();
+                        body_scope.fn_scope.push(id.name.to_string());
+                        self.function_body(f, &body_scope, flow);
                     }
                     _ => {}
                 }
@@ -2403,6 +2439,36 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A declaration inside a function body is named under that function.
+    ///
+    /// The same defect the Rust walk had, and the same cause: oxc carries the
+    /// parent, `Scope::from` was already set from it, and only the NAMING side
+    /// was never told it had gone inside a body. Two `const deadline` in two
+    /// functions of one file minted one identity.
+    ///
+    /// MUTATION: drop `body_scope.fn_scope.push(..)` — the two collapse.
+    #[test]
+    fn a_declaration_inside_a_function_body_is_named_under_that_function() {
+        let facts = js_facts(
+            "export function a() { const deadline = 1; return deadline; }\n\
+             export function b() { const deadline = 2; return deadline; }\n\
+             export const deadline = 3;\n",
+        );
+        let minted: Vec<&str> =
+            facts.symbols.iter().filter(|s| s.name == "deadline").map(|s| s.fqn.as_str()).collect();
+        assert_eq!(minted.len(), 3, "three declarations: {minted:?}");
+        let distinct: std::collections::BTreeSet<&&str> = minted.iter().collect();
+        assert_eq!(distinct.len(), 3, "three declarations, three identities: {minted:?}");
+        assert!(
+            minted.iter().any(|f| f.contains("fixture/fn/a")),
+            "the local is named under its function: {minted:?}"
+        );
+        assert!(
+            minted.contains(&"typescript·pkg·lib/fixture·deadline·item"),
+            "and the module-level one is untouched: {minted:?}"
+        );
     }
 
     // ── 04b S1: the most recent assignment wins ──────────────────────────────
