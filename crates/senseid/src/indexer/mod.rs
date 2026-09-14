@@ -137,18 +137,18 @@ fn corpus_rust_sources() -> Vec<(String, String)> {
 /// a defect in a generator rather than in this reader.
 #[cfg(test)]
 fn corpus_web_sources() -> Vec<(String, String)> {
-    const SKIP: &[&str] =
-        &["node_modules", "target", "build", "dist", ".svelte-kit", ".vercel", "coverage"];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|p| p.parent())
         .expect("the crate sits two levels below the workspace root");
     let mut out = Vec::new();
     for top in ["app", "dojo", "website"] {
-        for entry in walkdir::WalkDir::new(root.join(top)).into_iter().filter_entry(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            !SKIP.contains(&name.as_str()) && !name.starts_with('.')
-        }) {
+        // The SAME walker the scan and the fs-watcher use. A hand-written skip
+        // list here was not merely duplication: it let 52 gitignored files —
+        // an i18n compiler's generated messages — into the corpus, so every
+        // number measured over it was a property of the developer's disk
+        // rather than of the source tree.
+        for entry in crate::tasks::handlers::helpers::build_walker(&root.join(top)).build() {
             let Ok(entry) = entry else { continue };
             let path = entry.path();
             let claimed = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
