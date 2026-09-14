@@ -74,9 +74,9 @@ it belongs with `ReceiverHint`'s successor (issue #174), not here.
 
 - **No type annotations in `.js` at all.** The `const x = new T()` route is the
   only in-file one that works there, which is why it leads S3.
-- **`.svelte` files hold three languages.** Script, markup and style. Only the
-  script block is this walk's business; the markup's `{expr}` interpolations are
-  use sites too, and are a separate decision — NOT silently skipped.
+- **`.svelte` files hold three languages.** Script, markup and style. The
+  markup's `{expr}` interpolations are use sites and are READ — §7 records that
+  decision and why.
 - **A module is a value.** `import * as api` then `api.thing()` — the receiver
   is a namespace, not a type, and its members are the module's exports. A
   different lookup from a method on a type, and conflating them mints members on
@@ -89,7 +89,7 @@ it belongs with `ReceiverHint`'s successor (issue #174), not here.
 | `x` reassigned with an untypable value | CLEAR the binding. A stale type is worse than none (R4). |
 | a branch assigns two different types | unknown after the join; not "last arm wins". |
 | `import * as ns` | a namespace, not a type. Members are exports, resolved as such. |
-| a `.svelte` markup expression | a use site. Decide it explicitly; do not skip it silently. |
+| a `.svelte` markup expression | a use site, READ — see §7. |
 | `.js` with no annotations anywhere | the `new T()` route only, and the rest honestly unresolved. |
 
 ## 5. Verification
@@ -103,11 +103,75 @@ it belongs with `ReceiverHint`'s successor (issue #174), not here.
 | a `.js` file with no annotations still resolves `new T()` | gate the route on TS |
 | a namespace import's member is an EXPORT, not a type member | resolve it as a method |
 
-## 6. Definition of done
+## 6. Definition of done — MET
 
 - The three STATED routes ship, with the flow-sensitive binding map beneath
   them.
 - A reassignment is proven to change the answer, and an untypable one to clear
   it.
-- `.svelte` markup expressions have an explicit decision recorded here.
+- `.svelte` markup expressions have an explicit decision recorded here (§7).
 - The cross-file routes are NOT attempted — they wait on #174.
+
+## 7. The decisions this spec left open, made
+
+### `.svelte` markup expressions are READ
+
+`{store.load()}` is a call with the same name, the same receiver and the same
+imports it would have inside the script. In this workspace's three SvelteKit
+applications most components do their work there, so skipping the markup would
+report them inert. So each interpolation is parsed as an expression, in the
+dialect the `<script>` block states, and walked with the script's bindings in
+scope — ONE walk over the blocks and the markup, because two would each start
+from an empty binding map and the markup would type nothing.
+
+What is NOT read is stated as explicitly: a closing tag and a bare `{:else}`
+name nothing and emit nothing; a tag whose contents will not parse emits an
+`UnhandledForm` miss, so the histogram says what was not understood (R2, S8).
+`{#each xs as x}` reads `xs` and CLEARS `x`, because an element type is not
+something this file states.
+
+### A trailing `index` is KEPT in a module path
+
+Dropping it would mirror Rust's `mod.rs` rule and it collides: `src/index.ts`
+and `src/index/index.ts` would both reduce to `index`, and two files claiming
+one identity is the failure §2 exists to prevent. Keeping it costs a MISS
+instead — `import x from './a'`, which Node resolves to `a/index.ts`, mints `a`
+and matches nothing. R4 prefers the miss. Closing it needs the resolver to try
+both spellings, which is the cross-file lookup deferred to #174.
+
+### A closure keeps what the file never reassigns
+
+A nested function can run at any time, so carrying the enclosing binding map
+into it would be exactly the stale type S1 refuses. But a name the file never
+assigns to ANYWHERE cannot have changed, so its type still holds inside the
+closure. That is a proof rather than an optimism, and it is what types Svelte's
+`{() => store.load()}` where `store` is a module-level `const`.
+
+## 8. Measured after building, over 998 real files
+
+`app/`, `dojo/` and `website/`, read through the adapter each extension
+dispatches to:
+
+| | |
+|---:|---|
+| 998 | files, **0 unreadable** |
+| 13,832 | symbols |
+| 60,391 | references |
+| 4,021 | relations |
+| 5,713 | imports |
+| 3,299 of 33,028 | member receivers typed by a STATED route |
+
+The reason histogram: `ReceiverTypeUnknown` 29,729, `Unplaced` 29,133,
+`DynamicDispatch` 1,364, `UnhandledForm` 165.
+
+**Two things to read carefully before sizing the next route.**
+
+The 33,028 is NOT the 6,406 of §2 grown. §2's file-wide regex counted member
+CALLS; this counts every member ACCESS — a read and a write as well as a call.
+The denominators are different populations, so 3,299/33,028 (10%) and §2's
+projected 27% of calls are not the same fraction and must not be compared.
+
+`UnhandledForm` at 165 of 60,391 is the number that says the walk is not
+missing a common shape. `ReceiverTypeUnknown` at 29,729 is the cross-file
+question — §2 already sized it at 45% of member calls between `import { x }`
+and "not bound in this file" — and it is #174's, not this stage's.
