@@ -5,6 +5,14 @@
 //! — and it resolves nothing across files, because resolution is a shared rule
 //! and a shared rule does not live in a language module.
 //!
+//! Three files, three questions:
+//!
+//! | | |
+//! |---|---|
+//! | here | what Rust IS: its identity rules, its vocabulary for the ladder |
+//! | `walk.rs` | what the parser just handed us |
+//! | `types.rs` | what a piece of type source text NAMES |
+//!
 //! Decisions this walk makes about what counts as a declaration and what counts
 //! as a use site are recorded next to the code that makes them, and the
 //! independent counters in the tests are written against the same definitions
@@ -13,53 +21,54 @@
 // This module has no caller on purpose — see the note in `indexer/mod.rs`.
 #![allow(dead_code)]
 
-use tree_sitter::Node;
+mod types;
+mod walk;
 
-use std::collections::BTreeMap;
-
-use crate::indexer::facts::{
-    Binding, DeclaredType, Evidence, FileFacts, Fqn, Import, ImportOrigin, Language, Observation,
-    Param, Reason, RefKind, Reference, Relation, RelationKind, Resolution, Symbol, SymbolKind,
-    Visibility,
-};
+use super::{LanguageAdapter, ReadError, Source};
+use crate::indexer::facts::{FileFacts, Fqn, Language};
 use crate::indexer::fqn::{self, Form, FqnError, Reach};
+use crate::indexer::resolve::{Grammar, Root};
 
-/// One file, plus the two things the file cannot know about itself: which
-/// package owns it and where it sits in that package's module tree. Both are
-/// supplied by the processor from the manifest and the path, because a source
-/// file states neither.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Source<'a> {
-    pub package: &'a str,
-    /// Package-relative module path, `::`-joined, empty at the crate root.
-    pub module: &'a str,
-    /// Where the file is, as the graph records it.
-    ///
-    /// Needed because the module path does not identify a file at the CRATE
-    /// ROOT, where it is empty and one package may have several — see
-    /// [`crate_root`]. Carried on the facts rather than supplied again at write
-    /// time so the identity a use site is filed under and the identity the
-    /// writer hangs imports off cannot be derived from two different strings.
-    pub path: &'a str,
-    pub text: &'a str,
-}
-
-/// Why a file produced no facts at all.
+/// Rust, as the registry sees it.
 ///
-/// Only whole-file failures live here. A single declaration or use site the
-/// walk cannot read is never an error — it is a fact carrying what was seen
-/// (R2, R4).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReadError {
-    /// The tree-sitter grammar could not be loaded — a build problem, not a
-    /// property of the source.
-    GrammarUnavailable(String),
-    /// tree-sitter returned no tree. Distinct from a tree full of ERROR nodes,
-    /// which is a normal thing to walk.
-    NotParsed,
-    /// The file's own identity could not be minted, so nothing inside it could
-    /// be named either.
-    NoFileIdentity(crate::indexer::fqn::FqnError),
+/// A zero-sized type, so the registry holds `&'static dyn LanguageAdapter`
+/// with no allocation and no lifetime to thread. Every method below is a thin
+/// forward to a free function in this module: the FUNCTIONS are the rules, and
+/// the adapter is only how a caller reaches them without a `match`.
+pub struct RustAdapter;
+
+impl LanguageAdapter for RustAdapter {
+    fn language(&self) -> Language {
+        Language::Rust
+    }
+
+    fn name(&self) -> &'static str {
+        "rust"
+    }
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &[".rs"]
+    }
+
+    fn grammar(&self) -> &'static Grammar {
+        &GRAMMAR
+    }
+
+    fn read(&self, source: &Source<'_>) -> Result<FileFacts, ReadError> {
+        read(source)
+    }
+
+    fn file_fqn(&self, package: &str, module: &str, path: &str) -> Result<Fqn, FqnError> {
+        file_fqn(package, module, path)
+    }
+
+    fn module_path(&self, file: &str, package_root: &str) -> String {
+        module_path(file, package_root)
+    }
+
+    fn type_segment(&self, raw: &str) -> Result<String, FqnError> {
+        types::type_segment(raw)
+    }
 }
 
 /// The module segment standing for a file that IS a crate root, where the
@@ -72,12 +81,16 @@ const CRATE_ROOT: &str = "crate";
 /// spelling.
 pub const GRAMMAR: crate::indexer::resolve::Grammar = crate::indexer::resolve::Grammar {
     language: Language::Rust,
-    separator: "::",
-    package_root: CRATE_ROOT,
-    module_self: "self",
-    module_parent: "super",
-    names_the_binding: " as ",
-    wildcard: "*",
+    // Rust spells a use-site path and a module path alike; every other
+    // language here does not, which is why these are two fields.
+    path_separator: "::",
+    module_separator: "::",
+    roots: &[(CRATE_ROOT, Root::Package), ("self", Root::Here), ("super", Root::Up)],
+    // Rust's `self::x` names a member of the module `x` is written in, not
+    // a sibling file.
+    relative_to_directory: false,
+    names_the_binding: Some(" as "),
+    wildcard: Some("*"),
     // Rust lints every type into `CamelCase` and every module into
     // `snake_case`, so the name states which of the two a segment is. See
     // `Grammar::names_a_type` for what a misread costs.
@@ -228,42 +241,21 @@ pub fn read(source: &Source<'_>) -> Result<FileFacts, ReadError> {
         .map_err(|e| ReadError::GrammarUnavailable(e.to_string()))?;
     let tree = parser.parse(source.text, None).ok_or(ReadError::NotParsed)?;
 
-    let scope = Scope {
-        module: source.module.to_string(),
-        container: Container::File,
-        from: file_fqn(source.package, source.module, source.path)
-            .map_err(ReadError::NoFileIdentity)?,
-        owner: Owner::Nobody,
-        // The file scope binds nothing: a `let` lives in a block, and the file
-        // level has none.
-        bindings: BTreeMap::new(),
-        returns: BTreeMap::new(),
-        fields: BTreeMap::new(),
-    };
-    let mut walk = Walk {
-        src: source.text,
-        package: source.package,
-        declared_fields: BTreeMap::new(),
-        symbols: Vec::new(),
-        references: Vec::new(),
-        relations: Vec::new(),
-        imports: Vec::new(),
-    };
-    // Struct fields FIRST, over the whole tree: an `impl` block may appear
-    // before the struct it is about, and a single-pass walk would reach
-    // `self.field` with nothing recorded for it.
-    walk.collect_declared_fields(tree.root_node());
-    walk.children(tree.root_node(), &scope);
+    // The file's own identity is minted HERE and handed down, because it is an
+    // identity rule and the walk owns none.
+    let from =
+        file_fqn(source.package, source.module, source.path).map_err(ReadError::NoFileIdentity)?;
+    let found = walk::walk(source, tree.root_node(), from);
 
     Ok(FileFacts {
         language: Language::Rust,
         package: source.package.to_string(),
         module: source.module.to_string(),
         path: source.path.to_string(),
-        symbols: walk.symbols,
-        references: walk.references,
-        relations: walk.relations,
-        imports: walk.imports,
+        symbols: found.symbols,
+        references: found.references,
+        relations: found.relations,
+        imports: found.imports,
     })
 }
 
@@ -332,29 +324,6 @@ pub fn module_path(file: &str, crate_root: &str) -> String {
     segments.join("::")
 }
 
-/// Does renaming `from` to `to` re-mint the identities the file declares?
-/// (09 S5.)
-///
-/// A rename is NOT always free of re-parsing, and the reason is a property of
-/// the FQN GRAMMAR rather than of the storage. The module path is a segment of
-/// every fqn a Rust file declares, so a rename that changes it re-mints every
-/// declaration in the file even though the bytes are identical — and one that
-/// does not is a `files` row update and nothing more.
-///
-/// Both paths are resolved against the SAME crate root. A move between crates
-/// changes the package too, which is a bigger re-mint than this answers; the
-/// caller compares packages separately, because the package comes from a
-/// manifest and not from the path.
-///
-/// Worth noting against the spec's own example: it offers "a case-only change"
-/// as a rename that does NOT re-mint. For Rust that is wrong — module names are
-/// case-sensitive, so `a.rs` -> `A.rs` changes module `a` to module `A`. The
-/// genuinely free rename is `a/mod.rs` <-> `a.rs`, which this returns `false`
-/// for. The RULE is what is implemented; the example was mistaken.
-pub fn rename_remints_identity(from: &str, to: &str, crate_root: &str) -> bool {
-    module_path(from, crate_root) != module_path(to, crate_root)
-}
-
 /// The name a CRATE ROOT is identified by: its own file stem.
 ///
 /// Every other file is named by the `mod x;` that declares it, and its identity
@@ -389,1370 +358,9 @@ fn crate_root(path: &str) -> &str {
 /// a wrong edge where the collapse would otherwise put one.
 const MODULE: Reach = Reach::Mod;
 
-/// Where the walk currently is, in the terms the fqn grammar needs.
-#[derive(Debug, Clone)]
-struct Scope {
-    /// Module path of the current container, which an inline `mod` extends.
-    module: String,
-    container: Container,
-    /// The symbol a use site found here sits inside — [`Reference::from`].
-    from: Fqn,
-    /// The type a declaration found here is a member of, as an IDENTITY.
-    owner: Owner,
-    /// Field name -> the TYPE it is declared with, for the CURRENT type.
-    ///
-    /// `for c in &self.checkers` needs the field's type to know the element
-    /// type. Collected in the same pre-pass spirit as [`Scope::returns`] — a
-    /// field can be used before it is declared in source order.
-    fields: BTreeMap<String, String>,
-    /// Method name -> the TYPE it returns, for the methods of the CURRENT impl
-    /// block.
-    ///
-    /// Only `self.m().member` needs it: the inner call already resolves (the
-    /// container types `self`), so the one missing fact is `m`'s return type —
-    /// and `m` is a method of this same type, declared right here.
-    ///
-    /// Collected in a PRE-PASS over the impl block, because a method may be
-    /// declared after the call that uses it and a single-pass walk would not
-    /// have seen it yet. Scoped to the block, so it cannot type a call on some
-    /// other type's identically-named method.
-    returns: BTreeMap<String, String>,
-    /// Local name -> the TYPE it is bound to, for the names in scope here.
-    ///
-    /// A member's identity is `…·<Type>·<member>`, so the receiver's type is a
-    /// segment of the key a use site has to mint. Without this the walk knew a
-    /// receiver's type in exactly one case — `self` inside a type's own body —
-    /// and every other member call was `ReceiverTypeUnknown` even where the
-    /// source states the type one line above.
-    ///
-    /// Only what the source STATES is recorded. A binding whose type is not
-    /// written stays absent, and its uses stay unresolved: a guessed receiver
-    /// type mints a wrong identity, which R4 ranks below no identity at all.
-    ///
-    /// Carried on the scope rather than on the walk so it obeys block
-    /// structure for free — a scope is already cloned per body, so a binding
-    /// cannot outlive the block that introduced it or be seen before its own
-    /// `let`.
-    bindings: BTreeMap<String, String>,
-}
-
-/// The parent side of every ownership relation (spec §3.3, R8's Facade row).
-///
-/// Carried next to [`Container`] rather than derived from it. A container names
-/// its type with a string, and an enum variant's container is the string
-/// `Enum::Variant`, which is not the spelling the variant's own identity uses —
-/// re-minting from it would produce an owner no declaration ever minted, which
-/// is a dangling edge (A4). The identity the walk already pushed cannot drift
-/// from the one its members were named under.
-#[derive(Debug, Clone)]
-enum Owner {
-    /// A free item, at the file level or inside an inline `mod`. Owned by no
-    /// type — naming the module as an owner would be an edge the source does
-    /// not state. Also what an unnameable container leaves behind: a type with
-    /// no identity owns nothing, because there is nothing to point at (R4).
-    Nobody,
-    Type(Fqn),
-}
-
-/// What a declaration found here is a member OF. This is the only thing that
-/// decides which fqn form a declaration takes, so the choice is made once.
-#[derive(Debug, Clone)]
-enum Container {
-    /// A free item, at the file level or inside an inline `mod`.
-    File,
-    /// A struct/enum/union body, a trait body, or an inherent `impl`.
-    Type(String),
-    /// An `impl Trait for Type` body. The trait qualifier is what keeps
-    /// `Display::fmt` and `Debug::fmt` on one type apart.
-    TraitImpl { ty: String, tr: String },
-    /// An `impl` on a type with no name — a tuple, a slice, a unit. Its members
-    /// have no identity in this grammar, and naming them as free items of the
-    /// module would mint identities no use site could ever mint. A wrong edge is
-    /// worse than a missing one (R4), so this container names nothing and the
-    /// body is walked for use sites all the same.
-    Unnameable { raw: String },
-}
-
-struct Walk<'a> {
-    src: &'a str,
-    package: &'a str,
-    /// Type name -> its fields and their declared types.
-    ///
-    /// On the WALK and not on a scope, because an `impl` block needs the fields
-    /// of a struct declared elsewhere in the file — possibly after it. A scope
-    /// only flows downward and could not reach them.
-    declared_fields: BTreeMap<String, BTreeMap<String, String>>,
-    symbols: Vec<Symbol>,
-    references: Vec<Reference>,
-    relations: Vec<Relation>,
-    imports: Vec<Import>,
-}
-
-impl<'a> Walk<'a> {
-    fn text(&self, node: Node<'_>) -> &'a str {
-        &self.src[node.byte_range()]
-    }
-
-    fn field_text(&self, node: Node<'_>, field: &str) -> Option<&'a str> {
-        node.child_by_field_name(field).map(|c| self.text(c))
-    }
-
-    /// Mint the identity of a declaration named `member` in the current
-    /// container. One place, so a declaration and a use site of it cannot pick
-    /// different forms.
-    fn declare(&self, scope: &Scope, member: &str, reach: Reach) -> Result<Fqn, FqnError> {
-        let lang = Language::Rust;
-        let package = self.package;
-        let module = scope.module.as_str();
-        match &scope.container {
-            Container::File => {
-                fqn::define(&Form::Item { lang, package, module, name: member, reach })
-            }
-            Container::Type(ty) => {
-                fqn::define(&Form::Member { lang, package, module, ty, member, reach })
-            }
-            Container::TraitImpl { ty, tr } => {
-                fqn::define(&Form::TraitMember { lang, package, module, ty, tr, member, reach })
-            }
-            Container::Unnameable { raw } => Err(FqnError::NotATypeName { value: raw.clone() }),
-        }
-    }
-
-    fn children(&mut self, node: Node<'_>, scope: &Scope) {
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            self.node(child, scope);
-        }
-    }
-
-    /// A block, walked in ORDER so each `let` types the statements after it.
-    ///
-    /// Order is the whole of it. The binding is recorded AFTER its own
-    /// initialiser is walked — so `let x = x.foo()` reads the OUTER `x` — and
-    /// before the next statement, so the following lines see it. The scope is
-    /// a clone, so nothing recorded here escapes the block.
-    ///
-    /// Shadowing works by construction: a second `let x` overwrites the first
-    /// from that point on, which is what Rust does.
-    fn block(&mut self, node: Node<'_>, scope: &Scope) {
-        let mut scope = scope.clone();
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            self.node(child, &scope);
-            if child.kind() == "let_declaration"
-                && let Some((name, ty)) = self.binding_of(child)
-            {
-                scope.bindings.insert(name, ty);
-            }
-        }
-    }
-
-    /// `for <pattern> in <collection> { … }` — the pattern is bound to the
-    /// collection's ELEMENT type for the body, and for the body only.
-    ///
-    /// The collection's own type comes from whatever already states it: a field
-    /// of `self`, or a local binding. A collection this walk cannot type yields
-    /// no binding, and the body's member calls stay unresolved — which is the
-    /// honest answer, not a fallback.
-    fn for_expression(&mut self, node: Node<'_>, scope: &Scope) {
-        // The collection is walked in the OUTER scope: `for x in x.iter()` reads
-        // the outer `x`, and binding first would type it as its own element.
-        if let Some(value) = node.child_by_field_name("value") {
-            self.node(value, scope);
-        }
-
-        let mut inner = scope.clone();
-        if let Some(pattern) = node.child_by_field_name("pattern")
-            // Only a plain name. A destructuring pattern binds several names of
-            // several types, and giving each the element type is false.
-            && pattern.kind() == "identifier"
-            && let Some(collection) = node.child_by_field_name("value")
-            && let Some(ty) = self.collection_type(collection, scope)
-            && let Some(element) = element_type(&ty)
-        {
-            inner.bindings.insert(self.text(pattern).to_string(), element);
-        }
-
-        if let Some(body) = node.child_by_field_name("body") {
-            self.node(body, &inner);
-        }
-    }
-
-    /// The declared type of the expression being iterated, when something in
-    /// scope states it.
-    ///
-    /// Two shapes, both already recorded: `self.field` and a local binding.
-    /// Anything else — a call, a chain, a literal — states no type here.
-    fn collection_type(&self, node: Node<'_>, scope: &Scope) -> Option<String> {
-        let text = self.text(node).trim().trim_start_matches('&').trim_start();
-        match text.strip_prefix("self.") {
-            Some(field) => scope.fields.get(field).cloned(),
-            None => scope.bindings.get(text).cloned(),
-        }
-    }
-
-    /// The `(name, type)` a `let` STATES, or `None` when it states none.
-    ///
-    /// Two shapes are read, and deliberately only two:
-    ///
-    /// - `let x: T = …` — the annotation.
-    /// - `let x = T::assoc(…)` / `let x = T { … }` — an initialiser whose path
-    ///   begins with the type.
-    ///
-    /// Everything else returns `None`. `let x = helper()` names no type;
-    /// inferring one from the function's return type is a different capability
-    /// (it needs the graph, not the file) and guessing is not an option — the
-    /// type becomes a SEGMENT of the identity, so a wrong one mints a wrong key
-    /// and every edge built on it points somewhere real but incorrect.
-    ///
-    /// The type must be a SIMPLE name. `Vec<Config>` is rejected rather than
-    /// truncated to `Vec`: a member of `Vec` is not a first-party identity this
-    /// grammar can mint, and `Vec<Config>` is not a name any declaration
-    /// carries. Both spellings would be wrong, so neither is recorded.
-    fn binding_of(&self, node: Node<'_>) -> Option<(String, String)> {
-        // Only a plain `let x`. A destructuring pattern binds several names of
-        // several types, and attributing the whole type to each is false.
-        let pattern = node.child_by_field_name("pattern")?;
-        if pattern.kind() != "identifier" {
-            return None;
-        }
-        let name = self.text(pattern).to_string();
-
-        if let Some(ty) = node.child_by_field_name("type") {
-            return simple_type_name(self.text(ty)).map(|t| (name, t));
-        }
-
-        let value = node.child_by_field_name("value")?;
-        let path = match value.kind() {
-            // `T::assoc(…)`
-            "call_expression" => self.field_text(value, "function")?,
-            // `T { … }`
-            "struct_expression" => self.field_text(value, "name")?,
-            // `let p = MacOSProvider;` — a UNIT STRUCT names its own type.
-            //
-            // `simple_type_name` requires a capitalised head, which is what
-            // keeps a `let x = some_fn;` out. A `const` in PascalCase would slip
-            // through, but Rust names consts in SCREAMING_SNAKE by convention
-            // and the resolver refuses a candidate that matches no declaration
-            // anyway — so the failure mode is a miss, not a wrong edge.
-            "identifier" | "scoped_identifier" => self.text(value),
-            _ => return None,
-        };
-        let head = path.split("::").next()?;
-        simple_type_name(head).map(|t| (name, t))
-    }
-
-    /// The one dispatch. Every arm either records a declaration and walks its
-    /// body, or walks children unchanged; no arm returns early without walking.
-    fn node(&mut self, node: Node<'_>, scope: &Scope) {
-        match node.kind() {
-            // An attribute's contents are an unparsed token tree, the same as a
-            // macro body: nothing inside is an expression this walk can read, so
-            // claiming facts from it would be invention. The independent
-            // counters skip it on the same grounds.
-            "attribute_item" | "inner_attribute_item" => {}
-            "use_declaration" => self.import(node),
-            "extern_crate_declaration" => self.extern_crate(node),
-
-            "function_item" | "function_signature_item" => self.function(node, scope),
-            "struct_item" | "union_item" => self.type_with_fields(node, scope, SymbolKind::Struct),
-            "enum_item" => self.type_with_fields(node, scope, SymbolKind::Enum),
-            "trait_item" => self.type_with_fields(node, scope, SymbolKind::Trait),
-            "enum_variant" => self.enum_variant(node, scope),
-            "field_declaration" => self.named_field(node, scope),
-            "ordered_field_declaration_list" => self.positional_fields(node, scope),
-            "type_item" | "associated_type" => {
-                self.plain(node, scope, SymbolKind::TypeAlias, Reach::Item)
-            }
-            "const_item" => self.plain(node, scope, SymbolKind::Const, Reach::Item),
-            "static_item" => self.plain(node, scope, SymbolKind::Static, Reach::Item),
-            "macro_definition" => self.plain(node, scope, SymbolKind::Macro, Reach::Macro),
-            "mod_item" => self.module_item(node, scope),
-            "impl_item" => self.impl_block(node, scope),
-            // A block is the unit a `let` is scoped to, so it is walked in
-            // order rather than as an unordered bag of children.
-            "block" => self.block(node, scope),
-            // A `for` binding is a DECLARATION: the collection states the
-            // element type.
-            "for_expression" => self.for_expression(node, scope),
-
-            _ => {
-                self.use_site(node, scope);
-                self.children(node, scope);
-            }
-        }
-    }
-
-    /// Push a symbol and return the scope its body is walked in. Returns the
-    /// scope unchanged when the declaration could not be named, so the body is
-    /// still walked and nothing below it is lost.
-    ///
-    /// This is also the one place ownership is recorded, because it is the one
-    /// place every declaration passes through: a member declared in a type's
-    /// body is owned by that type, whichever arm read it. Doing it per-arm would
-    /// be six chances to forget one.
-    fn push(&mut self, symbol: Result<Symbol, FqnError>, scope: &Scope) -> Scope {
-        match symbol {
-            Ok(symbol) => {
-                if let Owner::Type(owner) = &scope.owner {
-                    self.relations.push(Relation {
-                        kind: RelationKind::Owns,
-                        child: symbol.fqn.clone(),
-                        // Proven, not guessed: this identity was minted by the
-                        // same rule that named the member, from a declaration
-                        // this walk read, so the two sides cannot disagree.
-                        parent: Resolution::Resolved(owner.clone()),
-                        at: symbol.span,
-                    });
-                }
-                let inner = Scope { from: symbol.fqn.clone(), ..scope.clone() };
-                self.symbols.push(symbol);
-                inner
-            }
-            Err(_) => scope.clone(),
-        }
-    }
-
-    /// [`Walk::push`] for a declaration whose own body declares members OF it,
-    /// returning a scope in which those members are owned by it. A declaration
-    /// whose identity could not be minted owns nothing, because there would be
-    /// nothing for the edge to point at (R4).
-    fn push_owner(&mut self, symbol: Result<Symbol, FqnError>, scope: &Scope) -> Scope {
-        let owner = symbol.as_ref().ok().map(|s| s.fqn.clone());
-        let mut inner = self.push(symbol, scope);
-        inner.owner = match owner {
-            Some(fqn) => Owner::Type(fqn),
-            None => Owner::Nobody,
-        };
-        inner
-    }
-
-    fn symbol(
-        &self,
-        node: Node<'_>,
-        scope: &Scope,
-        name: &str,
-        kind: SymbolKind,
-        reach: Reach,
-        declared_type: DeclaredType,
-    ) -> Result<Symbol, FqnError> {
-        Ok(Symbol {
-            fqn: self.declare(scope, name, reach)?,
-            kind,
-            name: name.to_string(),
-            span: span(node),
-            visibility: self.visibility(node),
-            docstring: self.docstring(node),
-            declared_type,
-            params: Vec::new(),
-        })
-    }
-
-    /// A declaration whose whole identity is a `name` field: type alias,
-    /// associated type, const, static, macro definition.
-    fn plain(&mut self, node: Node<'_>, scope: &Scope, kind: SymbolKind, reach: Reach) {
-        let Some(name) = self.field_text(node, "name") else {
-            self.children(node, scope);
-            return;
-        };
-        let declared = self.declared_type(node, "type");
-        let symbol = self.symbol(node, scope, name, kind, reach, declared);
-        let inner = self.push(symbol, scope);
-        self.children(node, &inner);
-    }
-
-    fn function(&mut self, node: Node<'_>, scope: &Scope) {
-        let Some(name) = self.field_text(node, "name") else {
-            self.children(node, scope);
-            return;
-        };
-        // A free `fn` is a function; the same node inside a type's body is a
-        // method. Nothing about the node itself says which — only the container.
-        let kind = match scope.container {
-            Container::File => SymbolKind::Function,
-            _ => SymbolKind::Method,
-        };
-        let declared = self.declared_type(node, "return_type");
-        let symbol = self.symbol(node, scope, name, kind, Reach::Item, declared).map(|mut s| {
-            s.params = self.params(node);
-            s
-        });
-        let mut inner = self.push(symbol, scope);
-        // A parameter's type is STATED in the signature, so the body knows the
-        // type of every name the signature binds. Same rule as a `let`, one
-        // level up — and the same refusal to guess: a parameter whose type is
-        // not a simple name records nothing.
-        //
-        // Bound on `inner`, the body's scope, so it cannot leak to a sibling
-        // function; and set BEFORE the body is walked, because unlike a `let`
-        // a parameter is in scope from the body's first statement.
-        inner.bindings.extend(self.param_bindings(node));
-        self.children(node, &inner);
-    }
-
-    /// Every method this impl block declares, with the TYPE it returns, for the
-    /// ones that state a simple type. See [`Scope::returns`].
-    fn method_returns(&self, impl_node: Node<'_>) -> BTreeMap<String, String> {
-        let Some(body) = impl_node.child_by_field_name("body") else {
-            return BTreeMap::new();
-        };
-        let mut cursor = body.walk();
-        body.named_children(&mut cursor)
-            .filter(|c| c.kind() == "function_item")
-            .filter_map(|f| {
-                let name = self.field_text(f, "name")?;
-                let ret = self.field_text(f, "return_type")?;
-                // `Self` names the type the impl is about, which the container
-                // already states — resolved at the use site rather than here, so
-                // there is one place that knows what `Self` means.
-                simple_type_name(ret).map(|t| (name.to_string(), t))
-            })
-            .collect()
-    }
-
-    /// The `(name, type)` each parameter STATES, for the ones that state a
-    /// simple type. `self` is deliberately absent: its type comes from the
-    /// enclosing `impl`, which [`Walk::name_member`] already reads off the
-    /// container — recording it here would be a second source for one fact.
-    fn param_bindings(&self, node: Node<'_>) -> BTreeMap<String, String> {
-        let Some(list) = node.child_by_field_name("parameters") else {
-            return BTreeMap::new();
-        };
-        let mut cursor = list.walk();
-        list.named_children(&mut cursor)
-            .filter(|p| p.kind() == "parameter")
-            .filter_map(|p| {
-                let pattern = p.child_by_field_name("pattern")?;
-                // Only a plain name. A destructuring parameter binds several
-                // names of several types, and giving each the whole type is
-                // false.
-                if pattern.kind() != "identifier" {
-                    return None;
-                }
-                let ty = p.child_by_field_name("type")?;
-                simple_type_name(self.text(ty)).map(|t| (self.text(pattern).to_string(), t))
-            })
-            .collect()
-    }
-
-    /// A struct, union, enum or trait: a named type whose body declares members
-    /// of it. The body is walked with the type as the container, which is what
-    /// makes its fields and methods members rather than free items.
-    /// Every field this type declares, with the TYPE it is declared with.
-    /// See [`Scope::fields`].
-    /// Walk the whole tree once for struct field types. See
-    /// [`Walk::declared_fields`].
-    fn collect_declared_fields(&mut self, node: Node<'_>) {
-        if matches!(node.kind(), "struct_item" | "union_item")
-            && let Some(name) = self.field_text(node, "name")
-        {
-            let fields = self.field_types(node);
-            if !fields.is_empty() {
-                self.declared_fields.insert(name.to_string(), fields);
-            }
-        }
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            self.collect_declared_fields(child);
-        }
-    }
-
-    fn field_types(&self, node: Node<'_>) -> BTreeMap<String, String> {
-        let Some(body) = node.child_by_field_name("body") else {
-            return BTreeMap::new();
-        };
-        let mut cursor = body.walk();
-        body.named_children(&mut cursor)
-            .filter(|c| c.kind() == "field_declaration")
-            .filter_map(|f| {
-                let name = self.field_text(f, "name")?;
-                let ty = self.field_text(f, "type")?;
-                Some((name.to_string(), ty.to_string()))
-            })
-            .collect()
-    }
-
-    fn type_with_fields(&mut self, node: Node<'_>, scope: &Scope, kind: SymbolKind) {
-        let Some(name) = self.field_text(node, "name") else {
-            self.children(node, scope);
-            return;
-        };
-        let symbol = self.symbol(node, scope, name, kind, Reach::Item, DeclaredType::Unstated);
-        let mut inner = self.push_owner(symbol, scope);
-        inner.container = Container::Type(name.to_string());
-        if let Owner::Type(child) = &inner.owner {
-            self.supertraits(node, scope, child.clone());
-        }
-        self.children(node, &inner);
-    }
-
-    /// `trait Sub: Super` is the one thing Rust states in the shape `extends` is
-    /// stated in: every `Sub` is a `Super`. A struct has no such bound, so this
-    /// fires only where the grammar puts one.
-    ///
-    /// Only the three node kinds that NAME a type are read. A lifetime bound
-    /// (`'a`), a relaxed bound (`?Sized`) and a higher-ranked one bound no
-    /// supertrait, and the first two are not supertraits at all — a relation for
-    /// either would say the opposite of what the source says (R4).
-    fn supertraits(&mut self, node: Node<'_>, scope: &Scope, child: Fqn) {
-        let Some(bounds) = node.child_by_field_name("bounds") else {
-            return;
-        };
-        let mut cursor = bounds.walk();
-        let named: Vec<Node<'_>> = bounds
-            .named_children(&mut cursor)
-            .filter(|b| {
-                matches!(b.kind(), "type_identifier" | "scoped_type_identifier" | "generic_type")
-            })
-            .collect();
-        for bound in named {
-            let parent = self.name_type(bound, scope).resolution();
-            self.relations.push(Relation {
-                kind: RelationKind::Extends,
-                child: child.clone(),
-                parent,
-                at: span(bound),
-            });
-        }
-    }
-
-    /// An enum variant is a member of its enum, reached the way any path leaf
-    /// is, and its own fields are members of the variant. `Enum::Variant` as the
-    /// type segment is what keeps two variants' same-named fields apart.
-    fn enum_variant(&mut self, node: Node<'_>, scope: &Scope) {
-        let Some(name) = self.field_text(node, "name") else {
-            self.children(node, scope);
-            return;
-        };
-        let symbol = self.symbol(
-            node,
-            scope,
-            name,
-            SymbolKind::EnumVariant,
-            Reach::Item,
-            DeclaredType::Unstated,
-        );
-        let mut inner = self.push_owner(symbol, scope);
-        if let Container::Type(enum_name) = &scope.container {
-            inner.container = Container::Type(format!("{enum_name}::{name}"));
-        }
-        self.children(node, &inner);
-    }
-
-    fn named_field(&mut self, node: Node<'_>, scope: &Scope) {
-        let Some(name) = self.field_text(node, "name") else {
-            self.children(node, scope);
-            return;
-        };
-        let declared = self.declared_type(node, "type");
-        let symbol = self.symbol(node, scope, name, SymbolKind::Field, Reach::Field, declared);
-        let inner = self.push(symbol, scope);
-        self.children(node, &inner);
-    }
-
-    /// A tuple-struct or tuple-variant field has no name, so its identity is its
-    /// POSITION, spelled exactly the way a use site spells it (`pair.0`).
-    fn positional_fields(&mut self, node: Node<'_>, scope: &Scope) {
-        let mut cursor = node.walk();
-        let types: Vec<Node<'_>> = node.children_by_field_name("type", &mut cursor).collect();
-        for (position, ty) in types.into_iter().enumerate() {
-            let name = position.to_string();
-            let declared = DeclaredType::Stated(self.text(ty).to_string());
-            let symbol = self.symbol(ty, scope, &name, SymbolKind::Field, Reach::Field, declared);
-            let inner = self.push(symbol, scope);
-            // The type node is dispatched, not descended into: the field's type
-            // is itself a use site and skipping it would lose the edge.
-            self.node(ty, &inner);
-        }
-    }
-
-    /// An inline `mod` extends the module path, so a declaration inside one is
-    /// named the same as if it lived in its own file. Two spellings of one
-    /// symbol would never merge (spec §2).
-    ///
-    /// [`MODULE`] and not [`Reach::Item`], for the reason recorded there — and
-    /// this is the other half of the pair that must move with [`file_fqn`].
-    fn module_item(&mut self, node: Node<'_>, scope: &Scope) {
-        let Some(name) = self.field_text(node, "name") else {
-            self.children(node, scope);
-            return;
-        };
-        let symbol =
-            self.symbol(node, scope, name, SymbolKind::Module, MODULE, DeclaredType::Unstated);
-        let mut inner = self.push(symbol, scope);
-        inner.module = if scope.module.is_empty() {
-            name.to_string()
-        } else {
-            format!("{}::{name}", scope.module)
-        };
-        inner.container = Container::File;
-        // A module is not a type, so what it contains are free items owned by
-        // nothing — even when the `mod` itself sits inside a type's body.
-        inner.owner = Owner::Nobody;
-        self.children(node, &inner);
-    }
-
-    /// An `impl` is not a declaration — it is a container for the ones inside
-    /// it. Which container depends on whether a trait is named.
-    fn impl_block(&mut self, node: Node<'_>, scope: &Scope) {
-        let Some(ty) = node.child_by_field_name("type").map(|n| self.text(n)) else {
-            self.children(node, scope);
-            return;
-        };
-        let Ok(ty) = fqn::type_segment(ty) else {
-            let mut inner = scope.clone();
-            inner.container = Container::Unnameable { raw: ty.to_string() };
-            inner.owner = Owner::Nobody;
-            self.children(node, &inner);
-            return;
-        };
-        let tr = node
-            .child_by_field_name("trait")
-            .map(|n| self.text(n))
-            .and_then(|raw| fqn::type_segment(raw).ok());
-
-        let mut inner = scope.clone();
-        // A PRE-PASS over this block's methods, before any body is walked: a
-        // method may be called before it is declared, and a single-pass walk
-        // would not have its return type yet. `returns` is REPLACED rather than
-        // extended, so an outer impl's methods cannot type a call here.
-        inner.returns = self.method_returns(node);
-        // The fields of the type this impl is ABOUT, so `self.field` can be
-        // typed inside its methods. Looked up from what the struct declaration
-        // recorded, which may be anywhere in the file — hence the map on the
-        // walk rather than a scope that only flows downward.
-        inner.fields = self.declared_fields.get(&ty).cloned().unwrap_or_default();
-        inner.container = match tr {
-            Some(tr) => Container::TraitImpl { ty: ty.clone(), tr },
-            None => Container::Type(ty.clone()),
-        };
-        inner.owner = Owner::Nobody;
-        // A use site in the impl header sits inside no member, so it belongs to
-        // the type the impl is about.
-        if let Ok(owner) = fqn::define(&Form::Item {
-            lang: Language::Rust,
-            package: self.package,
-            module: &scope.module,
-            name: &ty,
-            reach: Reach::Item,
-        }) {
-            inner.from = owner.clone();
-            inner.owner = Owner::Type(owner.clone());
-            self.trait_impl(node, scope, owner);
-        }
-        self.children(node, &inner);
-    }
-
-    /// `impl Trait for Type` states that `Type` IS a `Trait`. An inherent
-    /// `impl Type { }` states no such thing — it only groups members — so it
-    /// reaches here and emits nothing. That distinction is the whole point:
-    /// pattern detection reads an implements edge as real, and an Adapter is
-    /// "implements X and holds an X", so an inheritance edge on every impl block
-    /// would name a large part of any repository an Adapter.
-    fn trait_impl(&mut self, node: Node<'_>, scope: &Scope, child: Fqn) {
-        let Some(named) = node.child_by_field_name("trait") else {
-            return;
-        };
-        // `impl !Send for T` states the OPPOSITE of an implements edge, and the
-        // grammar hands back a `trait` node of `Send` either way — measured by
-        // deleting this guard, which turns `impl !Send for Widget` into
-        // `TraitImpl Widget -> Send`. So the `!` has to be read off the header,
-        // which is everything before the ` for ` that a trait impl always has.
-        if self.text(node).split(" for ").next().is_some_and(|head| head.contains('!')) {
-            return;
-        }
-        let parent = self.name_type(named, scope).resolution();
-        self.relations.push(Relation {
-            kind: RelationKind::TraitImpl,
-            child,
-            parent,
-            at: span(node),
-        });
-    }
-
-    // ── use sites (spec §3.2, R2) ────────────────────────────────────────────
-
-    /// Every use site the plan's step 4 names — call, member access, path use,
-    /// construction — plus a macro invocation, which is a use of the macro.
-    ///
-    /// A bare `identifier` in expression position is deliberately not one.
-    /// Without scope analysis the walk cannot tell a local variable read from a
-    /// const read, and emitting every one of them would bury the graph in
-    /// references that can never resolve. The rung that could tell them apart is
-    /// step 5's.
-    fn use_site(&mut self, node: Node<'_>, scope: &Scope) {
-        if named_by_its_parent(node) || in_path_position(node) {
-            return;
-        }
-        match node.kind() {
-            "call_expression" => self.call(node, scope),
-            "macro_invocation" => self.macro_use(node, scope),
-            "struct_expression" => self.construct(node, scope),
-            "field_expression" => self.member_access(node, scope),
-            "scoped_identifier" => self.path_use(node, scope),
-            "type_identifier" | "scoped_type_identifier" | "generic_type" => {
-                self.type_use(node, scope)
-            }
-            // Not a use site. Distinct from a use site with no rule, which is
-            // the `UnhandledForm` miss the arms above produce — nothing that
-            // reaches here names anything.
-            _ => {}
-        }
-    }
-
-    fn call(&mut self, node: Node<'_>, scope: &Scope) {
-        let miss = match node.child_by_field_name("function") {
-            Some(callee) => self.name_callee(callee, scope, Reach::Item),
-            None => Miss::unhandled(node, self.text(node), Reach::Item),
-        };
-        self.emit(scope, RefKind::Calls, node, miss);
-    }
-
-    /// Whatever stands in callee position. Every shape either names something or
-    /// says which shape defeated it — there is no path out of here that emits
-    /// nothing, which is the defect this rewrite exists to remove.
-    fn name_callee(&self, callee: Node<'_>, scope: &Scope, reach: Reach) -> Miss {
-        match callee.kind() {
-            "identifier" | "scoped_identifier" => {
-                let path = self.text(callee);
-                Miss::unplaced(callee, path, reach, self.considered_path(path, scope, reach))
-            }
-            // A turbofish wraps the real callee; the type arguments are use
-            // sites in their own right and are counted as such.
-            "generic_function" => match callee.child_by_field_name("function") {
-                Some(inner) => self.name_callee(inner, scope, reach),
-                None => Miss::unhandled(callee, self.text(callee), reach),
-            },
-            "field_expression" => self.name_member(callee, scope, Reach::Item),
-            _ => Miss::unhandled(callee, self.text(callee), reach),
-        }
-    }
-
-    /// `receiver.member`, in either callee or read position. The member's
-    /// identity depends on the receiver's TYPE, which the walk only knows when
-    /// the receiver is `self` inside a type's own body — anywhere else that is a
-    /// real, permanent-until-inference miss and is reported as one.
-    fn name_member(&self, node: Node<'_>, scope: &Scope, reach: Reach) -> Miss {
-        // Both children are malformed-source cases, and an empty string in
-        // either would name a member that is not there. Say what was seen.
-        let (Some(member), Some(receiver)) =
-            (self.field_text(node, "field"), self.field_text(node, "value"))
-        else {
-            return Miss::unhandled(node, self.text(node), reach);
-        };
-
-        // `self` inside a type's body, or a local whose type the source STATED.
-        // Nothing else: a receiver the file does not type is reported as such.
-        let self_type = match (&scope.container, receiver) {
-            (Container::Type(ty), "self" | "Self") => Some(ty.as_str()),
-            (Container::TraitImpl { ty, .. }, "self" | "Self") => Some(ty.as_str()),
-            // A local whose type the source stated.
-            _ => scope.bindings.get(receiver).map(String::as_str).or_else(|| {
-                // `self.m().member` — the inner call resolves already, so the
-                // only missing fact is what `m` RETURNS, and `m` is a method of
-                // this same type. Measured: 351 of 28,001 unresolved receivers.
-                //
-                // Only `self.` and only a bare method name: a deeper chain
-                // (`self.a().b().c()`) needs the return type of something this
-                // block does not declare, and guessing there is how a wrong
-                // identity gets minted (R4).
-                let inner = receiver.strip_prefix("self.")?;
-                let method = inner.strip_suffix("()")?;
-                if !method.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    return None;
-                }
-                let returned = scope.returns.get(method)?;
-                // `Self` is this type — the container already knows which.
-                Some(match (returned.as_str(), &scope.container) {
-                    ("Self", Container::Type(ty) | Container::TraitImpl { ty, .. }) => ty.as_str(),
-                    _ => returned.as_str(),
-                })
-            }),
-        };
-        let Some(ty) = self_type else {
-            return Miss {
-                reason: Reason::ReceiverTypeUnknown,
-                name: member.to_string(),
-                node_kind: node.kind().to_string(),
-                reach,
-                saw: vec![Observation::Receiver(receiver.to_string())],
-            };
-        };
-        let considered = considered(fqn::refer(&Form::Member {
-            lang: Language::Rust,
-            package: self.package,
-            module: &scope.module,
-            ty,
-            member,
-            reach,
-        }));
-        Miss::unplaced(node, member, reach, considered)
-    }
-
-    fn member_access(&mut self, node: Node<'_>, scope: &Scope) {
-        // A read and a write of one field are different facts, and pattern
-        // detection reads the difference (R8).
-        let kind = if is_assignment_target(node) { RefKind::Writes } else { RefKind::Reads };
-        let miss = self.name_member(node, scope, Reach::Field);
-        self.emit(scope, kind, node, miss);
-    }
-
-    fn macro_use(&mut self, node: Node<'_>, scope: &Scope) {
-        let miss = match node.child_by_field_name("macro") {
-            Some(name) => {
-                let path = self.text(name);
-                Miss {
-                    node_kind: node.kind().to_string(),
-                    ..Miss::unplaced(
-                        name,
-                        path,
-                        Reach::Macro,
-                        self.considered_path(path, scope, Reach::Macro),
-                    )
-                }
-            }
-            None => Miss::unhandled(node, self.text(node), Reach::Macro),
-        };
-        self.emit(scope, RefKind::MacroInvokes, node, miss);
-    }
-
-    fn construct(&mut self, node: Node<'_>, scope: &Scope) {
-        let miss = match node.child_by_field_name("name") {
-            Some(name) => self.name_type(name, scope),
-            None => Miss::unhandled(node, self.text(node), Reach::Item),
-        };
-        self.emit(scope, RefKind::Constructs, node, miss);
-    }
-
-    fn path_use(&mut self, node: Node<'_>, scope: &Scope) {
-        let path = self.text(node);
-        let miss =
-            Miss::unplaced(node, path, Reach::Item, self.considered_path(path, scope, Reach::Item));
-        self.emit(scope, RefKind::Reads, node, miss);
-    }
-
-    fn type_use(&mut self, node: Node<'_>, scope: &Scope) {
-        let miss = self.name_type(node, scope);
-        self.emit(scope, RefKind::TypeUse, node, miss);
-    }
-
-    /// A type named in a signature, a field, a bound or a construction. The one
-    /// owner of type-text normalisation is `fqn::type_segment`, so the use side
-    /// and the definition side reduce `Widget<T>` and `Widget` the same way.
-    fn name_type(&self, node: Node<'_>, scope: &Scope) -> Miss {
-        let raw = self.text(node);
-        let Ok(path) = fqn::type_path(raw) else {
-            return Miss::unhandled(node, raw, Reach::Item);
-        };
-        let Ok(name) = fqn::type_segment(&path) else {
-            return Miss::unhandled(node, raw, Reach::Item);
-        };
-        let mut saw = considered(fqn::refer(&Form::Item {
-            lang: Language::Rust,
-            package: self.package,
-            module: &scope.module,
-            name: &name,
-            reach: Reach::Item,
-        }));
-        // The name alone cannot say WHICH `Widget` is meant; the path can, and
-        // it is the only place the root word of `crate::db::PgStore` survives
-        // the reduction to a segment. Discarding it here would be discarding
-        // something already parsed.
-        saw.push(Observation::UnplacedType(path));
-        Miss::unplaced(node, &name, Reach::Item, saw)
-    }
-
-    /// The identity a path COULD name if it named something in this module —
-    /// CONSIDERED, never proven, which is why it goes into the evidence and not
-    /// into the resolution. Only the shapes whose reading is unambiguous get
-    /// one; a longer path needs the import table, which is the ladder's.
-    fn considered_path(&self, raw: &str, scope: &Scope, reach: Reach) -> Vec<Observation> {
-        let lang = Language::Rust;
-        let package = self.package;
-        let module = scope.module.as_str();
-        // Turbofish arguments decorate a path without naming a segment of it.
-        let segments: Vec<&str> = raw
-            .split("::")
-            .map(str::trim)
-            .filter(|s| !s.starts_with('<') && !s.is_empty())
-            .collect();
-        match segments.as_slice() {
-            [name] => considered(fqn::refer(&Form::Item { lang, package, module, name, reach })),
-            [ty, member] if !matches!(*ty, "crate" | "self" | "super") => {
-                match fqn::type_segment(ty) {
-                    Ok(ty) => considered(fqn::refer(&Form::Member {
-                        lang,
-                        package,
-                        module,
-                        ty: &ty,
-                        member,
-                        reach,
-                    })),
-                    Err(_) => Vec::new(),
-                }
-            }
-            // A longer path is not a thing this walk can read on its own, and a
-            // candidate it could not justify would be material a later pass
-            // would mistake for an answer.
-            _ => Vec::new(),
-        }
-    }
-
-    fn emit(&mut self, scope: &Scope, kind: RefKind, at: Node<'_>, miss: Miss) {
-        self.references.push(Reference {
-            from: scope.from.clone(),
-            kind,
-            at: span(at),
-            target: miss.resolution(),
-        });
-    }
-
-    // ── imports (spec §2) ────────────────────────────────────────────────────
-
-    fn import(&mut self, node: Node<'_>) {
-        if let Some(argument) = node.child_by_field_name("argument") {
-            self.import_tree(argument, "", node);
-        }
-    }
-
-    /// `extern crate foo;` binds `foo` from outside this source. Rare after the
-    /// 2018 edition, but it is an import and dropping it would lose the binding.
-    fn extern_crate(&mut self, node: Node<'_>) {
-        let Some(name) = self.field_text(node, "name") else {
-            return;
-        };
-        let bound = match self.field_text(node, "alias") {
-            Some(alias) => alias,
-            None => name,
-        };
-        self.imports.push(Import {
-            path: name.to_string(),
-            binds: Binding::Name(bound.to_string()),
-            origin: import_origin(name),
-            at: span(node),
-        });
-    }
-
-    /// A `use` tree flattened into one import per bound name, so that
-    /// `use a::{b, c as d}` says what it binds instead of leaving a caller to
-    /// re-parse the specifier.
-    fn import_tree(&mut self, node: Node<'_>, prefix: &str, at: Node<'_>) {
-        let text = self.text(node);
-        let joined = |segment: &str| {
-            if prefix.is_empty() { segment.to_string() } else { format!("{prefix}::{segment}") }
-        };
-        match node.kind() {
-            "scoped_use_list" => {
-                let (Some(path), Some(list)) =
-                    (self.field_text(node, "path"), node.child_by_field_name("list"))
-                else {
-                    // A half-parsed group binds something this walk cannot name.
-                    return self.bind(joined(text), Binding::Glob, at);
-                };
-                let full = joined(path);
-                let mut cursor = list.walk();
-                for item in list.named_children(&mut cursor) {
-                    self.import_tree(item, &full, at);
-                }
-            }
-            "use_list" => {
-                let mut cursor = node.walk();
-                for item in node.named_children(&mut cursor) {
-                    self.import_tree(item, prefix, at);
-                }
-            }
-            "use_wildcard" => self.bind(joined(text), Binding::Glob, at),
-            "use_as_clause" => match self.field_text(node, "alias") {
-                Some(alias) => self.bind(joined(text), Binding::Name(alias.to_string()), at),
-                // `use a::b as` with nothing after it binds an unknown name.
-                None => self.bind(joined(text), Binding::Glob, at),
-            },
-            "scoped_identifier" | "identifier" | "crate" | "super" | "self" => {
-                let full = joined(text);
-                // `use a::{self}` binds `a`, not a name called `self`.
-                let bound = if text == "self" { prefix } else { full.as_str() };
-                let bound = bound.rsplit("::").next().unwrap_or(bound).to_string();
-                self.bind(full, Binding::Name(bound), at);
-            }
-            // A specifier shape with no rule here binds SOMETHING, and the walk
-            // cannot say what. `Glob` is exactly that statement: it can never
-            // read as proof that a given name came from this import (R4).
-            _ => self.bind(joined(text), Binding::Glob, at),
-        }
-    }
-
-    fn bind(&mut self, path: String, binds: Binding, at: Node<'_>) {
-        self.imports.push(Import { origin: import_origin(&path), path, binds, at: span(at) });
-    }
-
-    fn declared_type(&self, node: Node<'_>, field: &str) -> DeclaredType {
-        // Total on purpose: "the language states no type here" is a fact the
-        // walk read, not an absence it failed to read (R3, spec §5).
-        match self.field_text(node, field) {
-            Some(text) => DeclaredType::Stated(text.to_string()),
-            None => DeclaredType::Unstated,
-        }
-    }
-
-    /// Parameters are typed props on their function, never nodes (D2).
-    fn params(&self, node: Node<'_>) -> Vec<Param> {
-        let Some(list) = node.child_by_field_name("parameters") else {
-            return Vec::new();
-        };
-        let mut cursor = list.walk();
-        list.named_children(&mut cursor)
-            .enumerate()
-            .map(|(position, param)| {
-                let position = position as u32;
-                match param.kind() {
-                    "self_parameter" => Param {
-                        name: "self".to_string(),
-                        position,
-                        // Rust states no type for the receiver at this point; it
-                        // comes from the impl. Reading it off the impl would be
-                        // inference, which is a non-goal (spec §5).
-                        declared_type: DeclaredType::Unstated,
-                    },
-                    _ => Param {
-                        name: self
-                            .field_text(param, "pattern")
-                            .unwrap_or_else(|| self.text(param))
-                            .to_string(),
-                        position,
-                        declared_type: self.declared_type(param, "type"),
-                    },
-                }
-            })
-            .collect()
-    }
-
-    fn visibility(&self, node: Node<'_>) -> Visibility {
-        let mut cursor = node.walk();
-        let modifier = node.named_children(&mut cursor).find(|c| c.kind() == "visibility_modifier");
-        let Some(modifier) = modifier else {
-            return Visibility::Private;
-        };
-        match self.text(modifier) {
-            "pub" => Visibility::Public,
-            "pub(crate)" => Visibility::Crate,
-            // The scope is kept verbatim: narrowing `pub(in a::b)` to a flag
-            // would discard which scope was meant.
-            other => Visibility::Restricted(
-                other.trim_start_matches("pub").trim_matches(['(', ')']).trim().to_string(),
-            ),
-        }
-    }
-
-    /// The doc comment attached to a declaration, if the source carries one.
-    /// Attributes may sit between the comment and the item, so they are stepped
-    /// over rather than treated as the end of the run.
-    fn docstring(&self, node: Node<'_>) -> Option<String> {
-        let mut lines: Vec<&str> = Vec::new();
-        let mut sibling = node.prev_sibling();
-        while let Some(current) = sibling {
-            match current.kind() {
-                "attribute_item" => {}
-                "line_comment" | "block_comment" => {
-                    // A comment node carries its own line ending, so it is
-                    // trimmed before joining: keeping both would put a blank
-                    // line between every two lines of every doc comment.
-                    let text = self.text(current).trim_end();
-                    if !text.starts_with("///") && !text.starts_with("/**") {
-                        break;
-                    }
-                    lines.push(text);
-                }
-                _ => break,
-            }
-            sibling = current.prev_sibling();
-        }
-        if lines.is_empty() {
-            return None;
-        }
-        lines.reverse();
-        Some(lines.join("\n"))
-    }
-}
-
-/// What the walk has to say about a use site it did not place: the bucket, the
-/// name, the node kind that names the bucket in the histogram, and the material
-/// a later pass gets to work with.
-///
-/// Every use-site arm produces one of these and then emits, so there is no path
-/// through this module on which a use site yields nothing.
-struct Miss {
-    reason: Reason,
-    name: String,
-    /// The kind of the node that DEFEATED the walk, which is the anchor's own
-    /// kind when the walk read it fine and the inner node's kind when it did
-    /// not. This is what a reader sees in the histogram.
-    node_kind: String,
-    /// How this use site reaches its target (spec §2.1). Stated by every arm,
-    /// including the ones that could not read the shape: a `call_expression`
-    /// the walk cannot parse is still reached the way a call is, and the arm
-    /// that dispatched on the node kind is the only place that knows it.
-    reach: Reach,
-    saw: Vec<Observation>,
-}
-
-impl Miss {
-    /// The walk read the use site and named it. Placing that name needs the
-    /// shared ladder, which a language module is not (R7).
-    fn unplaced(node: Node<'_>, name: &str, reach: Reach, saw: Vec<Observation>) -> Self {
-        Self {
-            reason: Reason::Unplaced,
-            name: readable(name, node),
-            node_kind: node.kind().to_string(),
-            reach,
-            saw,
-        }
-    }
-
-    /// The walk has no rule for this shape. Named rather than dropped, so the
-    /// histogram says what was not understood instead of saying nothing.
-    ///
-    /// It still states a reach, and that is not a guess: the arm calling this
-    /// dispatched on the node kind, so it knows a call is reached like a call
-    /// and a field access like a field even when the inside of the node
-    /// defeated it.
-    fn unhandled(node: Node<'_>, name: &str, reach: Reach) -> Self {
-        Self {
-            reason: Reason::UnhandledForm,
-            name: readable(name, node),
-            node_kind: node.kind().to_string(),
-            reach,
-            saw: Vec::new(),
-        }
-    }
-
-    /// The unresolved target this miss stands for. One owner, so a reference and
-    /// a relation cannot describe the same failure two different ways — the
-    /// ladder reads both through the same shape.
-    fn resolution(self) -> Resolution {
-        Resolution::Unresolved {
-            reason: self.reason,
-            evidence: Evidence {
-                name: self.name,
-                node_kind: self.node_kind,
-                reach: self.reach,
-                saw: self.saw,
-            },
-        }
-    }
-}
-
-/// An identity the walk CONSIDERED, as evidence — never as a resolution. One
-/// that could not even be minted leaves no observation behind rather than a
-/// placeholder one.
-fn considered(minted: Result<Fqn, FqnError>) -> Vec<Observation> {
-    minted.map(Observation::Candidate).into_iter().collect()
-}
-
-/// Evidence must always name something. In a tree full of ERROR nodes a node's
-/// text can be empty, and an unnameable miss is one nobody can act on, so the
-/// node kind stands in.
-fn readable(name: &str, node: Node<'_>) -> String {
-    let name = name.trim();
-    if name.is_empty() { node.kind().to_string() } else { name.to_string() }
-}
-
-/// True when a node is NAMED BY its parent rather than naming something itself:
-/// the callee of a call, the macro of an invocation, the type of a construction,
-/// the `name` of any declaration. The parent emits the reference; a second one
-/// here would be the same edge twice.
-fn named_by_its_parent(node: Node<'_>) -> bool {
-    let Some(parent) = node.parent() else {
-        return false;
-    };
-    let is_field =
-        |field: &str| parent.child_by_field_name(field).is_some_and(|c| c.id() == node.id());
-    match parent.kind() {
-        "call_expression" | "generic_function" => is_field("function"),
-        "macro_invocation" => is_field("macro"),
-        _ => is_field("name"),
-    }
-}
-
-/// True when a node is a SEGMENT of a longer path rather than a use site of its
-/// own: `crate::db::PgStore::connect` names one thing, not four.
-fn in_path_position(node: Node<'_>) -> bool {
-    node.parent().is_some_and(|parent| {
-        matches!(
-            parent.kind(),
-            "scoped_identifier"
-                | "scoped_type_identifier"
-                | "generic_type"
-                | "qualified_type"
-                | "bracketed_type"
-        )
-    })
-}
-
-fn is_assignment_target(node: Node<'_>) -> bool {
-    node.parent().is_some_and(|parent| {
-        matches!(parent.kind(), "assignment_expression" | "compound_assignment_expr")
-            && parent.child_by_field_name("left").is_some_and(|c| c.id() == node.id())
-    })
-}
-
-/// Which side of the scanned source an import specifier points at (spec §2).
-///
-/// The specifier is the ONLY input, because absence is scan-order dependent and
-/// resolution must not be (R6). One consequence is recorded rather than hidden:
-/// a sibling crate of the same workspace is rooted at its own name, so it lands
-/// here as `External`. Correcting that needs the set of first-party packages,
-/// which the walk is never handed and the processor owns — so the ladder must
-/// consult that set before it turns an `External` import into a library target.
-fn import_origin(path: &str) -> ImportOrigin {
-    match path.split("::").next().map(str::trim) {
-        Some("crate" | "self" | "super") => ImportOrigin::Local,
-        // No head, or an empty one, is malformed source rather than a package.
-        // Claiming External would mint a library node out of nothing.
-        None | Some("") => ImportOrigin::Local,
-        Some(package) => ImportOrigin::External { package: package.to_string() },
-    }
-}
-
-/// A type spelled as a SIMPLE name, or `None`.
-///
-/// `Config` yes, and `&Config`/`&mut Config` yes — a reference has the
-/// referent's methods. `Vec<Config>`, `crate::a::Config`, `[u8; 4]`,
-/// `Arc<Config>` no.
-///
-/// Rejecting rather than truncating is the point. A member of `Vec` is not an
-/// identity this grammar mints, and `Vec<Config>` is not a name any declaration
-/// carries — so both the truncated and the verbatim spelling would be wrong,
-/// and a wrong receiver type mints a wrong key (R4). The narrow rule is what
-/// keeps every type this records one a declaration could actually have minted.
-fn simple_type_name(text: &str) -> Option<String> {
-    // A REFERENCE is stripped, because `&Config` has `Config`'s methods —
-    // Rust auto-derefs the receiver, so `cfg.script()` on a `&Config` calls
-    // `Config::script`. This is a fact about the language, not an inference,
-    // and it is most of the reach here: parameters in this workspace are
-    // overwhelmingly taken by reference, so without it the signature route
-    // reached 57 of 3,873 receivers.
-    //
-    // `Arc<T>`/`Box<T>` deref too and are deliberately NOT stripped. There the
-    // member could belong to the smart pointer OR to `T`, and picking one is a
-    // guess that mints a wrong identity half the time (R4). `&` has no such
-    // ambiguity: `&T` declares no inherent members of its own.
-    let t = text.trim().trim_start_matches('&').trim_start();
-    let t = t.strip_prefix("mut ").unwrap_or(t).trim();
-
-    // A GENERIC is typed by its head: `Vec<Config>::push` is `Vec`'s method, and
-    // the type argument does not change which type OWNS the member. Refusing the
-    // whole spelling reported the type as unknown when it was written down.
-    // A PATH names its type in the last segment: `crate::a::Config` owns
-    // `Config`'s members, and the module path in front says where it is
-    // declared, not what it is. Taken before the generic split so
-    // `crate::a::Config<T>` works too.
-    let t = t.rsplit("::").next().unwrap_or(t).trim();
-
-    let head = t.split_once('<').map_or(t, |(head, _)| head).trim();
-
-    // `dyn Trait` names the TRAIT, which declares the member. The concrete impl
-    // is unknowable — that is what dynamic dispatch means — but WHICH METHOD is
-    // called is not in doubt, and refusing the edge loses that to protect
-    // against a question nobody asked. Who implements it is answered separately
-    // from the `implements` relations the walk already records.
-    //
-    // `Box<dyn Trait>` reduces the same way, and is the ONE `Box` that is not
-    // ambiguous: `Box` declares no inherent method a trait method could be
-    // confused with (`Box::new` is associated, not a member).
-    if let Some(inner) = t.strip_prefix("dyn ") {
-        return simple_type_name(inner.split('+').next().unwrap_or(inner));
-    }
-    if let Some(inner) = t.strip_prefix("Box<").and_then(|r| r.strip_suffix('>'))
-        && inner.trim_start().starts_with("dyn ")
-    {
-        return simple_type_name(inner);
-    }
-
-    // ...EXCEPT a deref wrapper, where the member may be on the INNER type.
-    // `arc.method()` is `Arc::method` or `Config::method` and the source does
-    // not say which, so taking the head would mint a wrong identity on every
-    // call that is really on the inner one (R4). A short, named list rather
-    // than a guess: these are the std types whose whole purpose is to be
-    // transparent.
-    if head != t && DEREF_WRAPPERS.contains(&head) {
-        return None;
-    }
-
-    let ok = !head.is_empty()
-        && head.chars().next().is_some_and(char::is_uppercase)
-        && head.chars().all(|c| c.is_alphanumeric() || c == '_');
-    ok.then(|| head.to_string())
-}
-
-/// The type an element of `collection` has, when the collection states ONE.
-///
-/// `Vec<Cfg>` yields `Cfg`; `&[Cfg]` yields `Cfg`. A MAP is refused: it yields
-/// `(K, V)` pairs, so the binding is a tuple and attributing either half to it
-/// is false. Anything not on the list is refused too — a `for` over a custom
-/// iterator states its item type on the `Iterator` impl, not here, and guessing
-/// would mint a member on whatever type happened to be inside the angle
-/// brackets (R4).
-fn element_type(collection: &str) -> Option<String> {
-    let t = collection.trim().trim_start_matches('&').trim_start();
-    let t = t.strip_prefix("mut ").unwrap_or(t).trim();
-
-    // A slice or array: `[T]`, `[T; 4]`.
-    if let Some(inner) = t.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
-        return simple_type_name(inner.split(';').next().unwrap_or(inner));
-    }
-
-    let (head, inner) = t.split_once('<')?;
-    let inner = inner.strip_suffix('>')?;
-    // ONE type parameter. A pair means a map, and a map's element is a tuple.
-    if inner.contains(',') || !SINGLE_ELEMENT_CONTAINERS.contains(&head.trim()) {
-        return None;
-    }
-    simple_type_name(inner)
-}
-
-/// Collections whose element is their single type parameter. Deliberately a
-/// list: a map yields pairs, and an unknown generic yields whatever its
-/// `Iterator` impl says, which is not stated here.
-const SINGLE_ELEMENT_CONTAINERS: &[&str] =
-    &["Vec", "VecDeque", "HashSet", "BTreeSet", "BinaryHeap", "Option", "Box", "Rc", "Arc"];
-
-/// Types that deref to their parameter, so a member call on one is ambiguous
-/// between the wrapper and the inner type. See [`simple_type_name`].
-const DEREF_WRAPPERS: &[&str] = &[
-    "Arc",
-    "Rc",
-    "Box",
-    "RefCell",
-    "Cell",
-    "Mutex",
-    "RwLock",
-    "Ref",
-    "RefMut",
-    "Cow",
-    "Pin",
-    "MutexGuard",
-    "RwLockReadGuard",
-    "RwLockWriteGuard",
-    "ManuallyDrop",
-];
-
-/// Columns are tree-sitter's, which counts BYTES within the line rather than
-/// characters. Recorded because two references on one line are told apart by
-/// column, and a reader comparing these against a character offset would find
-/// them shifted on any line carrying non-ASCII.
-fn span(node: Node<'_>) -> crate::indexer::facts::Span {
-    let start = node.start_position();
-    let end = node.end_position();
-    crate::indexer::facts::Span {
-        start_line: start.row as u32 + 1,
-        start_col: start.column as u32,
-        end_line: end.row as u32 + 1,
-        end_col: end.column as u32,
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use super::types::simple_type_name;
     use super::*;
 
     /// Every reference's target, as `name -> resolution`.
@@ -2199,27 +807,47 @@ mod tests {
         let root = "/w/crates/x";
 
         assert!(
-            rename_remints_identity("/w/crates/x/src/a.rs", "/w/crates/x/src/b.rs", root),
+            RustAdapter.rename_remints_identity(
+                "/w/crates/x/src/a.rs",
+                "/w/crates/x/src/b.rs",
+                root
+            ),
             "module a -> b renames every declaration in the file"
         );
         assert!(
-            rename_remints_identity("/w/crates/x/src/a.rs", "/w/crates/x/src/d/a.rs", root),
+            RustAdapter.rename_remints_identity(
+                "/w/crates/x/src/a.rs",
+                "/w/crates/x/src/d/a.rs",
+                root
+            ),
             "a -> d::a likewise, even though the file name did not change"
         );
         // Rust module names are CASE-SENSITIVE, so this is a real re-mint —
         // contradicting the spec's own example, which offers a case-only change
         // as a free rename. The rule decides; the example was wrong.
         assert!(
-            rename_remints_identity("/w/crates/x/src/a.rs", "/w/crates/x/src/A.rs", root),
+            RustAdapter.rename_remints_identity(
+                "/w/crates/x/src/a.rs",
+                "/w/crates/x/src/A.rs",
+                root
+            ),
             "a -> A is a different module in Rust"
         );
 
         assert!(
-            !rename_remints_identity("/w/crates/x/src/a/mod.rs", "/w/crates/x/src/a.rs", root),
+            !RustAdapter.rename_remints_identity(
+                "/w/crates/x/src/a/mod.rs",
+                "/w/crates/x/src/a.rs",
+                root
+            ),
             "both spell module `a` — the bytes moved, the identities did not"
         );
         assert!(
-            !rename_remints_identity("/w/crates/x/src/lib.rs", "/w/crates/x/src/main.rs", root),
+            !RustAdapter.rename_remints_identity(
+                "/w/crates/x/src/lib.rs",
+                "/w/crates/x/src/main.rs",
+                root
+            ),
             "both are the crate root, whose module path is empty"
         );
     }
@@ -2249,7 +877,8 @@ mod tests {
     }
 
     use crate::indexer::facts::{
-        Binding, ImportOrigin, Observation, Reason, RefKind, RelationKind, Resolution, SymbolKind,
+        Binding, DeclaredType, ImportOrigin, Observation, Reason, RefKind, RelationKind,
+        Resolution, SymbolKind, Visibility,
     };
 
     /// One of every declaration the plan's step 3 names, in one file, so the
