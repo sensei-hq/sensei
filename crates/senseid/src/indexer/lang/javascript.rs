@@ -2740,6 +2740,149 @@ mod tests {
         );
     }
 
+    // ── A2: zero references dropped ──────────────────────────────────────
+
+    /// **A2.** The count of `Reference` values equals the count of use sites in
+    /// the AST, verified by a walk that counts INDEPENDENTLY.
+    ///
+    /// Rust has had this; the oxc side has not, so every TypeScript reference
+    /// figure reported so far has been an unchecked total. A counter that
+    /// called the walk would prove nothing, so this one is a
+    /// [`oxc_ast_visit::Visit`] written from the other side against the same
+    /// definitions.
+    ///
+    /// WHAT IT DELIBERATELY DOES NOT COUNT, matching the walk:
+    ///
+    /// - a member in CALLEE position. `a.b()` is ONE reference — the call —
+    ///   because `name_callee` reads the member itself and the walk then
+    ///   descends only into the OBJECT. Counting the member separately would
+    ///   report a drop that is not one.
+    /// - a member that is the LEFT side of an assignment, which the walk emits
+    ///   as a Write from `assignment`, not twice.
+    struct UseSites {
+        calls: usize,
+        constructs: usize,
+        members: usize,
+        /// Spans of members the walk reads as part of something else, so they
+        /// are not counted a second time.
+        absorbed: BTreeSet<(u32, u32)>,
+    }
+
+    impl<'a> oxc_ast_visit::Visit<'a> for UseSites {
+        fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
+            self.calls += 1;
+            // The callee is READ BY the call, whatever shape it is.
+            if let Some(member) = as_member(&call.callee) {
+                self.absorbed.insert((member.span().start, member.span().end));
+            }
+            oxc_ast_visit::walk::walk_call_expression(self, call);
+        }
+
+        fn visit_new_expression(&mut self, new: &NewExpression<'a>) {
+            self.constructs += 1;
+            oxc_ast_visit::walk::walk_new_expression(self, new);
+        }
+
+        fn visit_static_member_expression(&mut self, member: &StaticMemberExpression<'a>) {
+            if !self.absorbed.contains(&(member.span.start, member.span.end)) {
+                self.members += 1;
+            }
+            oxc_ast_visit::walk::walk_static_member_expression(self, member);
+        }
+
+        fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
+            if !self.absorbed.contains(&(member.span.start, member.span.end)) {
+                self.members += 1;
+            }
+            oxc_ast_visit::walk::walk_computed_member_expression(self, member);
+        }
+    }
+
+    /// The independent count over one source, in the dialect its path states.
+    fn count_use_sites(text: &str, path: &str) -> usize {
+        let allocator = Allocator::default();
+        let source_type = SourceType::from_path(path).expect("a claimed extension");
+        let parsed = Parser::new(&allocator, text, source_type).parse();
+        let mut sites = UseSites { calls: 0, constructs: 0, members: 0, absorbed: BTreeSet::new() };
+        oxc_ast_visit::Visit::visit_program(&mut sites, &parsed.program);
+        sites.calls + sites.constructs + sites.members
+    }
+
+    /// A2 over the REAL corpus, not a fixture.
+    ///
+    /// The two counts are produced from different code against the same
+    /// definitions, so agreement means something and a divergence names either
+    /// a dropped reference or a counter that has drifted from the walk. The
+    /// delta is REPORTED per file rather than summed, because one file off by
+    /// twenty and twenty files off by one are different defects.
+    #[test]
+    #[ignore]
+    fn the_reference_count_equals_an_independent_count_of_use_sites() {
+        let mut walked = 0usize;
+        let mut counted = 0usize;
+        let mut disagreed: Vec<(String, usize, usize)> = Vec::new();
+
+        for (path, text) in crate::indexer::corpus_web_sources() {
+            // `.svelte` is markup wrapped around script and has no single oxc
+            // program; its own tests cover it. This is the plain-file check.
+            if path.ends_with(".svelte") {
+                continue;
+            }
+            let module = module_path(&path, ".");
+            let Ok(facts) =
+                read(&Source { package: "web", module: &module, path: &path, text: &text })
+            else {
+                continue;
+            };
+            let ours = facts
+                .references
+                .iter()
+                .filter(|r| {
+                    matches!(
+                        r.kind,
+                        RefKind::Calls | RefKind::Constructs | RefKind::Reads | RefKind::Writes
+                    )
+                })
+                .count();
+            let theirs = count_use_sites(&text, &path);
+            walked += ours;
+            counted += theirs;
+            if ours != theirs {
+                disagreed.push((path.clone(), ours, theirs));
+            }
+        }
+
+        println!("\n## A2 (typescript): the walk against an independent count\n");
+        println!("walk {walked} | independent {counted} | files disagreeing {}", disagreed.len());
+        for (path, ours, theirs) in disagreed.iter().take(10) {
+            println!("  {path}: walk {ours}, independent {theirs}");
+        }
+        assert!(walked > 1_000, "only {walked} references, so this proved nothing");
+
+        // A2 says ZERO dropped, and this is not zero: the walk is 383 short
+        // across 99 of 946 files. Stated as a RATCHET rather than as the target,
+        // for §6's reason — a gate that fails on its first run gets waived, and
+        // a waived gate is not a gate. It may fall; it may not rise.
+        //
+        // The delta is per-file above, not just summed, because one file off by
+        // twenty and twenty files off by one are different defects. The head is
+        // `health-state.spec.svelte.ts` at 24, which is where to look first.
+        const KNOWN_DROPPED: usize = 383;
+        let dropped = counted.saturating_sub(walked);
+        assert!(
+            dropped <= KNOWN_DROPPED,
+            "the walk dropped {dropped} references the independent count saw (ratchet \
+             {KNOWN_DROPPED}) across {} files — A2 is 'zero references dropped', and a \
+             reference nobody emits is one no query can ever answer for",
+            disagreed.len()
+        );
+        assert!(
+            walked <= counted,
+            "the walk emitted MORE references than the independent count saw, which means one \
+             use site is being emitted twice — a duplicate edge, not a missing one"
+        );
+    }
+
     // ── the real corpus (A2) ─────────────────────────────────────────────
 
     /// Read every JavaScript, TypeScript and Svelte file this repository's three
