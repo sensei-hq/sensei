@@ -51,6 +51,7 @@ pub(super) fn walk<'a>(
 ) -> Found {
     let scope = Scope {
         module: source.module.to_string(),
+        fn_scope: Vec::new(),
         container: Container::File,
         from,
         owner: Owner::Nobody,
@@ -88,6 +89,18 @@ pub(super) fn walk<'a>(
 struct Scope {
     /// Module path of the current container, which an inline `mod` extends.
     module: String,
+    /// The chain of FUNCTIONS enclosing this point, outermost first.
+    ///
+    /// The AST always had this — the walk is literally inside
+    /// [`Walk::function`] descending into that function's own children — and
+    /// [`Walk::push`] was already recording the enclosing symbol in
+    /// [`Scope::from`], which is why a REFERENCE in a body attributes to its
+    /// function correctly. A DECLARATION did not, because [`Walk::declare`]
+    /// reads [`Scope::container`] and nothing told the container it had gone
+    /// inside a body. So `static RE` in three different `fn`s of one file minted
+    /// ONE identity, and "where is `RE` defined" answered with whichever the
+    /// scan wrote last.
+    fn_scope: Vec<String>,
     container: Container,
     /// The symbol a use site found here sits inside — [`Reference::from`].
     from: Fqn,
@@ -129,6 +142,31 @@ struct Scope {
     /// cannot outlive the block that introduced it or be seen before its own
     /// `let`.
     bindings: BTreeMap<String, String>,
+}
+
+impl Scope {
+    /// The module segment a declaration found HERE is named in.
+    ///
+    /// The file's module, extended by every enclosing function. `fn` is the
+    /// joint because Rust has no module that can be spelled `fn` — it is a
+    /// keyword — so a composed path can never collide with a real one.
+    ///
+    /// A local is not reachable by path from outside, so no OTHER file can mint
+    /// this identity. That is not a reason to leave it at module scope: the
+    /// declaration IS referenced, inside its own body, and both sides compose
+    /// the same way from the same scope — so they merge, and three `RE`s in
+    /// three functions stay three symbols instead of one.
+    fn module_here(&self) -> String {
+        if self.fn_scope.is_empty() {
+            return self.module.clone();
+        }
+        let inner = self.fn_scope.join("::");
+        if self.module.is_empty() {
+            format!("fn::{inner}")
+        } else {
+            format!("{}::fn::{inner}", self.module)
+        }
+    }
 }
 
 /// The parent side of every ownership relation (spec §3.3, R8's Facade row).
@@ -210,7 +248,8 @@ impl<'a> Walk<'a> {
     fn declare(&self, scope: &Scope, member: &str, reach: Reach) -> Result<Fqn, FqnError> {
         let lang = Language::Rust;
         let package = self.package;
-        let module = scope.module.as_str();
+        let composed = scope.module_here();
+        let module = composed.as_str();
         match &scope.container {
             Container::File => {
                 fqn::define(&Form::Item { lang, package, module, name: member, reach })
@@ -496,6 +535,9 @@ impl<'a> Walk<'a> {
         // function; and set BEFORE the body is walked, because unlike a `let`
         // a parameter is in scope from the body's first statement.
         inner.bindings.extend(self.param_bindings(node));
+        // The body is INSIDE this function, and everything it declares is named
+        // so. A nested `fn` extends the chain rather than replacing it.
+        inner.fn_scope.push(name.to_string());
         self.children(node, &inner);
     }
 
@@ -698,6 +740,9 @@ impl<'a> Walk<'a> {
             format!("{}::{name}", scope.module)
         };
         inner.container = Container::File;
+        // A `mod` inside a function body re-roots the path: its contents are
+        // reached as `<module>::<mod>::x`, not through the function.
+        inner.fn_scope.clear();
         // A module is not a type, so what it contains are free items owned by
         // nothing — even when the `mod` itself sits inside a type's body.
         inner.owner = Owner::Nobody;
