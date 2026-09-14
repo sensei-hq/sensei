@@ -370,7 +370,11 @@ mod tests {
         resolve(
             facts,
             &rust::GRAMMAR,
-            &World { first_party: &first_party, scanned: &BTreeSet::new() },
+            &World {
+                first_party: &first_party,
+                first_party_members: &BTreeSet::new(),
+                scanned: &BTreeSet::new(),
+            },
         )
     }
 
