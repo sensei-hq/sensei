@@ -2,9 +2,9 @@
 
 **State: the JS/TS/Svelte reader is BUILT and measured over 998 real files, 0
 unreadable. Stage 4b's done-gate is met. Suite green: 3,468 passing, 0 failing;
-clippy -D warnings and fmt clean. Cutover BLOCKS on 223 rust regressions —
-down from 756 because the gate now knows which of them were the LEGACY producer
-being wrong. The 223 are real and are a number, not a judgement call.**
+clippy -D warnings and fmt clean. Judged against §6 and R8 now, not against the
+legacy producer: A3, R5 and R8 PASS over the real corpus; A7 reports 1,114
+colliding identities with one dominant, named cause.**
 
 Read: `docs/plans/indexer-sequence.md`, then `docs/spec/indexer/04b-walk-js.md`
 (§7 decisions, §8 measurements are new), then `docs/design/indexer.md`.
@@ -24,45 +24,46 @@ legacy indexer at cutover, not before. Pre-release DB: `dbd reconcile`.
 | 4b — the JS/TS/Svelte reader, corpus-verified | `630275d5` |
 | 10 S3–S7 — switch rust, re-index, retire legacy | BLOCKED on the gate |
 
-## The gate: 397, and it went UP when the identities got RIGHT
+## Judged against the GOAL, not against the legacy producer
 
-    resolved  legacy 8,104 -> current 11,859   (was 11,774)
-    IMPROVEMENT 8,448 | REGRESSION 397 | EXPLAINED 4,296 | UNCLASSIFIED 0
+The differential harness is DELETED. "Does this agree with the producer being
+replaced" is a transition question, and letting it set the agenda meant chasing
+a number that says nothing about whether the graph is any good. §6's first line
+was always right: thresholds, not comparisons.
 
-                             before anchoring   after
-    ghost, nothing declares          496         344   <- -152
-    legacy self-disagreement          37          37
-    identity disagreement             46          71   <- +25, NEW, unexplained
-    REAL LOSS OF REACH               177         326   <- +149
-    reported REGRESSION              223         397
+`indexer::acceptance` runs §6 and R8 over the real corpus, every language:
 
-**Read the direction before reading the number.** Anchoring a member to its
-TYPE's module (634 declarations moved) made this indexer DECLARE 152 things it
-previously did not, at the spelling legacy uses. They stop being "legacy
-pointed at nothing" and become honest real losses: we declare it and still do
-not connect the reference. The classifier got more truthful, not the graph
-worse — resolved targets went UP by 85.
+    cargo test -p senseid --bin senseid -- --ignored --nocapture indexer::acceptance
 
-**The +25 identity disagreements are a real new problem.** Anchoring moved 25
-members to a module legacy disagrees with. Small, unexplained, and worth a
-sample before cutover.
+    A3  every miss named, 100% accounted for, both languages   PASS
+        rust       resolved 48,604 | unresolved 72,962
+        typescript resolved 23,347 | unresolved 37,044
+    R5  internal vs external           PASS
+        local 4,479 | external 4,725 across 153 packages | globs 408
+    R8  the seven patterns' facts all emitted, and DERIVED     PASS
+        42 Facades, 62 Adapters, from nodes and edges alone
+    A7  one declaration, one identity  1,114 COLLIDING (ratchet)
 
-**Minting the same string is not the ladder resolving it.** 2,538 references
-now mint what their declaration mints, so they meet by the merge contract (§2)
-at persist time — but the gate counts LADDER-resolved targets only, so that
-gain does not appear here and is UNMEASURED. The ladder has no rung for "a
-member of a type whose home I know"; that rung is what would convert the 326.
+## A7's 1,114 have one head, and it is a real defect
+
+A declaration inside a FUNCTION BODY is minted as if it sat at module scope.
+Three `static RE` in three `fn`s of `adapters/manifest/gradle.rs` mint ONE
+identity, so "where is `RE` defined" answers with whichever was written last.
+Same shape in `provision_status`, `COPY_CAP`, `status_of`, `ARMS`, and
+TypeScript's `deadline` — not a Rust quirk.
+
+The repair is the walk giving a function body its own container. Whether a
+local is named under its function or not emitted at all is a grammar decision
+and is NOT yet made.
 
 ## Next command
 
-    cargo test -p senseid --bin senseid -- --ignored --nocapture \
-      indexer::differential::corpus::legacy_and_current_over_this_repos_rust
+    cargo test -p senseid --bin senseid -- --ignored --nocapture indexer::acceptance
 
 ## Known-broken — do not build on
 
-- **The JS reader has NO differential against the legacy producer.** The rust
-  gate exists; the JS one does not, so "is this better for js/ts" is UNMEASURED.
-  Build it before cutover switches them.
+- **A local declaration is named at module scope** — A7's 1,114, above. The
+  walk needs a container for a function body.
 - `delete_folder` issues a path-prefix `DELETE` (`process.rs`), which 09 S7
   forbids. Fix is N file reconciles; blocked on stage 10 wiring reconcile.
 - The watcher has no manifest/lockfile branch (09 S9), and LOCKFILE PATHS ARE
