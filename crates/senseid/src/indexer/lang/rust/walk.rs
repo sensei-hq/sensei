@@ -158,8 +158,9 @@ enum Container {
     /// A struct/enum/union body, a trait body, or an inherent `impl`.
     ///
     /// Carries the MODULE as well as the name, and that is the whole of the
-    /// anchoring fix: a member's identity is `…·<module>·<Type>·<member>`, and
-    /// `<module>` is where the TYPE is declared. An `impl PgStore` in
+    /// anchoring fix: a member's identity carries the module, then the type,
+    /// then the member — and the MODULE is where the TYPE is declared. An
+    /// `impl PgStore` in
     /// `db::pg_store::personas` declares members of the `PgStore` that lives in
     /// `db::pg_store`, so
     /// the block's own module is the wrong answer and was the one being used.

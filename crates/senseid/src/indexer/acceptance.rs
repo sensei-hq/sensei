@@ -122,7 +122,7 @@ fn read_the_corpus() -> Vec<Read> {
 /// stated as "zero" that fails on its first run gets waived, and a waived gate
 /// is not a gate. The number may fall; it may not rise.
 ///
-/// # 1,114 today, and the head of them has ONE cause
+/// # 708 today, and they are TWO causes, not one
 ///
 /// A declaration inside a FUNCTION BODY is minted as if it sat at module scope.
 ///
@@ -131,16 +131,34 @@ fn read_the_corpus() -> Vec<Read> {
 /// fn plugin_re() -> &'static Regex { static RE: OnceLock<Regex> = OnceLock::new(); .. }
 /// ```
 ///
-/// Both mint `…·adapters::manifest::gradle·RE·item`, as does a third in the
-/// same file. Three unrelated regexes, one node, and "where is `RE` defined"
-/// answers with whichever the scan wrote last. The same shape produces
-/// `provision_status`, `COPY_CAP`, `status_of`, `ARMS` and — in TypeScript —
-/// `deadline`, so it is not a Rust quirk.
+/// Both mint one identity, as does a third in the same file. Three unrelated
+/// regexes, one node, and "where is `RE` defined" answers with whichever the
+/// scan wrote last. `COPY_CAP`, `status_of`, `ARMS` and — in TypeScript —
+/// `deadline` are the same shape, so it is not a Rust quirk.
 ///
 /// The repair is the walk giving a function body its own container, so a local
 /// declaration is either named under its function or not emitted as a
 /// module-level item at all. Which of those is right is a grammar decision and
 /// is not made here; what is settled is that the current answer is wrong.
+///
+/// **A SECOND cause, and it is not function bodies.** A `#[cfg(feature = "x")]`
+/// / `#[cfg(not(feature = "x"))]` pair declares one name twice at MODULE scope
+/// — `provision_status` in `api/handlers/model_provisioning.rs` is exactly
+/// that, and an earlier version of this comment mis-attributed it to the
+/// function-body cause. Only one of the two is compiled, but the walk reads
+/// text and cannot know which; the identity is the same either way, so this may
+/// be a collision the grammar should tolerate rather than repair. Not settled.
+/// `const _` twice in one file (`tasks/handlers/embed.rs`) is a third thing
+/// again: an anonymous name is not a name.
+///
+/// # What this number was before, and why it moved
+///
+/// 1,114 was reported, and 375 of those were ONE declaration emitted TWICE by
+/// the JavaScript walk walking a function initialiser on two paths — a
+/// declaration colliding with itself, not two declarations sharing a scope. A
+/// further 31 were files the shipped scan never reads, which the corpus was
+/// picking up because it restated the ignore policy instead of sharing it.
+/// Both are fixed. The remaining 708 are real.
 #[test]
 #[ignore]
 fn no_two_declarations_mint_one_identity() {
@@ -169,14 +187,41 @@ fn no_two_declarations_mint_one_identity() {
     }
 
     assert!(!minted.is_empty(), "the corpus minted no identities, so this passed vacuously");
+    // PER LANGUAGE, because one total lets a regression in the smaller language
+    // hide under the larger one's headroom: Rust's 13 could triple and the
+    // grand total would still sit under any single number.
+    let mut per_language: BTreeMap<&str, usize> = BTreeMap::new();
+    for (fqn, _) in &collisions {
+        if let Ok(parsed) = super::fqn::parse(fqn)
+            && let super::fqn::Origin::Local { lang, .. } = parsed.origin
+        {
+            *per_language.entry(lang.as_str()).or_default() += 1;
+        }
+    }
+    for (language, n) in &per_language {
+        println!("  {n:>5}  {language}");
+    }
+
     // THE RATCHET. Lower it when a collision is repaired; never raise it to
     // make a run pass.
-    const KNOWN: usize = 1_114;
+    const KNOWN: usize = 708;
+    const KNOWN_RUST: usize = 13;
+    const KNOWN_TYPESCRIPT: usize = 695;
     assert!(
         collisions.len() <= KNOWN,
         "identity collisions rose to {} (ratchet {KNOWN}) — two declarations under one \
          identity are ONE node, and every query about either answers for both",
         collisions.len()
+    );
+    assert!(
+        per_language.get("rust").copied().unwrap_or(0) <= KNOWN_RUST,
+        "rust collisions rose to {:?} (ratchet {KNOWN_RUST})",
+        per_language.get("rust")
+    );
+    assert!(
+        per_language.get("typescript").copied().unwrap_or(0) <= KNOWN_TYPESCRIPT,
+        "typescript collisions rose to {:?} (ratchet {KNOWN_TYPESCRIPT})",
+        per_language.get("typescript")
     );
 }
 

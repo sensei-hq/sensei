@@ -1551,10 +1551,25 @@ impl Walk<'_> {
     /// call graph with no node to point at.
     fn variables(&mut self, v: &VariableDeclaration<'_>, scope: &Scope, flow: &mut Flow) {
         for declarator in &v.declarations {
-            // The INITIALISER is walked first, in the outer state: `const x =
-            // x.foo()` reads the outer `x`, and binding first would type it as
-            // itself.
-            if let Some(init) = &declarator.init {
+            // A function initialiser bound to a PLAIN NAME is walked once, by
+            // the typed arm at the end of this loop, which gives its body the
+            // declaration's own scope. Walking it here as well emitted every
+            // symbol inside it TWICE — measured at 375 duplicate identities,
+            // a third of everything A7 was reporting.
+            //
+            // The `BindingIdentifier` half of the condition is load-bearing: a
+            // destructuring pattern `continue`s below without ever reaching
+            // that arm, so skipping the outer walk for one would lose the whole
+            // body instead of de-duplicating it.
+            let re_walked_below = matches!(declarator.id, BindingPattern::BindingIdentifier(_))
+                && declarator.init.as_ref().is_some_and(is_a_function);
+
+            // Otherwise the INITIALISER is walked first, in the outer state:
+            // `const x = x.foo()` reads the outer `x`, and binding first would
+            // type it as itself.
+            if let Some(init) = &declarator.init
+                && !re_walked_below
+            {
                 self.expression(init, scope, flow);
             }
 
@@ -2126,6 +2141,12 @@ fn import_origin(path: &str) -> ImportOrigin {
     ImportOrigin::External { package }
 }
 
+/// Whether an expression IS a function — the shape that gets a scope of its own
+/// and must therefore be walked exactly once.
+fn is_a_function(expression: &Expression<'_>) -> bool {
+    matches!(expression, Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_))
+}
+
 /// The name a property key STATES. A computed key states none — which member is
 /// declared is not knowable without running it — so it declares nothing rather
 /// than declaring something guessed.
@@ -2333,6 +2354,55 @@ mod tests {
     /// `name -> candidate identity or reason`.
     fn member_targets(facts: &FileFacts) -> Vec<(String, String)> {
         targets(facts)
+    }
+
+    /// A function initialiser is walked ONCE, whichever pattern binds it.
+    ///
+    /// It was walked twice: once as the declarator's initialiser and again by
+    /// the typed arm that gives its body the declaration's own scope. Every
+    /// symbol inside came out twice — MEASURED at 375 duplicate identities,
+    /// about a third of everything A7 was reporting, and each one a declaration
+    /// colliding with itself.
+    ///
+    /// The destructuring cases are here because the obvious fix breaks them: a
+    /// pattern that is not a plain name `continue`s before reaching the typed
+    /// arm, so skipping the outer walk for one loses the whole body rather than
+    /// de-duplicating it.
+    ///
+    /// MUTATION: drop the `BindingIdentifier` half of `re_walked_below` — the
+    /// two destructuring fixtures fall to zero references.
+    #[test]
+    fn a_function_initialiser_is_walked_exactly_once_whatever_the_binding_pattern() {
+        for binding in ["const a =", "const { a } =", "const [a] ="] {
+            for body in
+                ["() => { const t = new T(); t.m(); }", "function () { const t = new T(); t.m(); }"]
+            {
+                let facts = js_facts(&format!("class T {{ m() {{}} }}\n{binding} {body};\n"));
+                let calls: Vec<String> = member_targets(&facts)
+                    .into_iter()
+                    .filter(|(name, _)| name == "m")
+                    .map(|(_, t)| t)
+                    .collect();
+                assert_eq!(
+                    calls.len(),
+                    1,
+                    "`{binding} {body}` produced {} references to `m`, not one",
+                    calls.len()
+                );
+                let declared: Vec<&str> = facts
+                    .symbols
+                    .iter()
+                    .filter(|s| s.name == "t")
+                    .map(|s| s.fqn.as_str())
+                    .collect();
+                assert_eq!(
+                    declared.len(),
+                    1,
+                    "`{binding} {body}` declared `t` {} times: {declared:?}",
+                    declared.len()
+                );
+            }
+        }
     }
 
     // ── 04b S1: the most recent assignment wins ──────────────────────────────
