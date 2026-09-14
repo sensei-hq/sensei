@@ -89,13 +89,14 @@ pub const GRAMMAR: crate::indexer::resolve::Grammar = crate::indexer::resolve::G
     // Rust's `self::x` names a member of the module `x` is written in, not
     // a sibling file.
     relative_to_directory: false,
+    // `serde_json::json!(..)` is a complete use with no `use` anywhere.
+    paths_name_packages: true,
     names_the_binding: Some(" as "),
     wildcard: Some("*"),
     // Rust lints every type into `CamelCase` and every module into
     // `snake_case`, so the name states which of the two a segment is. See
     // `Grammar::names_a_type` for what a misread costs.
     names_a_type: |segment| segment.starts_with(|c: char| c.is_uppercase()),
-    prelude_package: "std",
     prelude: PRELUDE,
     plumbing: PLUMBING,
 };
@@ -107,79 +108,79 @@ pub const GRAMMAR: crate::indexer::resolve::Grammar = crate::indexer::resolve::G
 /// and a file relying on the prelude land on ONE node instead of two. The set is
 /// `std::prelude::v1` plus the standard macros, which are in scope on the same
 /// terms.
-const PRELUDE: &[(&str, &str)] = &[
-    ("Box", "boxed::Box"),
-    ("String", "string::String"),
-    ("ToString", "string::ToString"),
-    ("Vec", "vec::Vec"),
-    ("Option", "option::Option"),
-    ("Some", "option::Option::Some"),
-    ("None", "option::Option::None"),
-    ("Result", "result::Result"),
-    ("Ok", "result::Result::Ok"),
-    ("Err", "result::Result::Err"),
-    ("Clone", "clone::Clone"),
-    ("Copy", "marker::Copy"),
-    ("Send", "marker::Send"),
-    ("Sync", "marker::Sync"),
-    ("Sized", "marker::Sized"),
-    ("Unpin", "marker::Unpin"),
-    ("Drop", "ops::Drop"),
-    ("Fn", "ops::Fn"),
-    ("FnMut", "ops::FnMut"),
-    ("FnOnce", "ops::FnOnce"),
-    ("PartialEq", "cmp::PartialEq"),
-    ("PartialOrd", "cmp::PartialOrd"),
-    ("Eq", "cmp::Eq"),
-    ("Ord", "cmp::Ord"),
-    ("AsRef", "convert::AsRef"),
-    ("AsMut", "convert::AsMut"),
-    ("Into", "convert::Into"),
-    ("From", "convert::From"),
-    ("TryInto", "convert::TryInto"),
-    ("TryFrom", "convert::TryFrom"),
-    ("Iterator", "iter::Iterator"),
-    ("IntoIterator", "iter::IntoIterator"),
-    ("FromIterator", "iter::FromIterator"),
-    ("DoubleEndedIterator", "iter::DoubleEndedIterator"),
-    ("ExactSizeIterator", "iter::ExactSizeIterator"),
-    ("Extend", "iter::Extend"),
-    ("ToOwned", "borrow::ToOwned"),
-    ("drop", "mem::drop"),
-    ("print", "print"),
-    ("println", "println"),
-    ("eprint", "eprint"),
-    ("eprintln", "eprintln"),
-    ("format", "format"),
-    ("format_args", "format_args"),
-    ("vec", "vec"),
-    ("write", "write"),
-    ("writeln", "writeln"),
-    ("panic", "panic"),
-    ("assert", "assert"),
-    ("assert_eq", "assert_eq"),
-    ("assert_ne", "assert_ne"),
-    ("debug_assert", "debug_assert"),
-    ("debug_assert_eq", "debug_assert_eq"),
-    ("debug_assert_ne", "debug_assert_ne"),
-    ("todo", "todo"),
-    ("unimplemented", "unimplemented"),
-    ("unreachable", "unreachable"),
-    ("matches", "matches"),
-    ("dbg", "dbg"),
-    ("include", "include"),
-    ("include_str", "include_str"),
-    ("include_bytes", "include_bytes"),
-    ("concat", "concat"),
-    ("stringify", "stringify"),
-    ("env", "env"),
-    ("option_env", "option_env"),
-    ("line", "line"),
-    ("column", "column"),
-    ("file", "file"),
-    ("module_path", "module_path"),
-    ("cfg", "cfg"),
-    ("compile_error", "compile_error"),
+const PRELUDE: &[(&str, &str, &str)] = &[
+    ("Box", "std", "boxed::Box"),
+    ("String", "std", "string::String"),
+    ("ToString", "std", "string::ToString"),
+    ("Vec", "std", "vec::Vec"),
+    ("Option", "std", "option::Option"),
+    ("Some", "std", "option::Option::Some"),
+    ("None", "std", "option::Option::None"),
+    ("Result", "std", "result::Result"),
+    ("Ok", "std", "result::Result::Ok"),
+    ("Err", "std", "result::Result::Err"),
+    ("Clone", "std", "clone::Clone"),
+    ("Copy", "std", "marker::Copy"),
+    ("Send", "std", "marker::Send"),
+    ("Sync", "std", "marker::Sync"),
+    ("Sized", "std", "marker::Sized"),
+    ("Unpin", "std", "marker::Unpin"),
+    ("Drop", "std", "ops::Drop"),
+    ("Fn", "std", "ops::Fn"),
+    ("FnMut", "std", "ops::FnMut"),
+    ("FnOnce", "std", "ops::FnOnce"),
+    ("PartialEq", "std", "cmp::PartialEq"),
+    ("PartialOrd", "std", "cmp::PartialOrd"),
+    ("Eq", "std", "cmp::Eq"),
+    ("Ord", "std", "cmp::Ord"),
+    ("AsRef", "std", "convert::AsRef"),
+    ("AsMut", "std", "convert::AsMut"),
+    ("Into", "std", "convert::Into"),
+    ("From", "std", "convert::From"),
+    ("TryInto", "std", "convert::TryInto"),
+    ("TryFrom", "std", "convert::TryFrom"),
+    ("Iterator", "std", "iter::Iterator"),
+    ("IntoIterator", "std", "iter::IntoIterator"),
+    ("FromIterator", "std", "iter::FromIterator"),
+    ("DoubleEndedIterator", "std", "iter::DoubleEndedIterator"),
+    ("ExactSizeIterator", "std", "iter::ExactSizeIterator"),
+    ("Extend", "std", "iter::Extend"),
+    ("ToOwned", "std", "borrow::ToOwned"),
+    ("drop", "std", "mem::drop"),
+    ("print", "std", "print"),
+    ("println", "std", "println"),
+    ("eprint", "std", "eprint"),
+    ("eprintln", "std", "eprintln"),
+    ("format", "std", "format"),
+    ("format_args", "std", "format_args"),
+    ("vec", "std", "vec"),
+    ("write", "std", "write"),
+    ("writeln", "std", "writeln"),
+    ("panic", "std", "panic"),
+    ("assert", "std", "assert"),
+    ("assert_eq", "std", "assert_eq"),
+    ("assert_ne", "std", "assert_ne"),
+    ("debug_assert", "std", "debug_assert"),
+    ("debug_assert_eq", "std", "debug_assert_eq"),
+    ("debug_assert_ne", "std", "debug_assert_ne"),
+    ("todo", "std", "todo"),
+    ("unimplemented", "std", "unimplemented"),
+    ("unreachable", "std", "unreachable"),
+    ("matches", "std", "matches"),
+    ("dbg", "std", "dbg"),
+    ("include", "std", "include"),
+    ("include_str", "std", "include_str"),
+    ("include_bytes", "std", "include_bytes"),
+    ("concat", "std", "concat"),
+    ("stringify", "std", "stringify"),
+    ("env", "std", "env"),
+    ("option_env", "std", "option_env"),
+    ("line", "std", "line"),
+    ("column", "std", "column"),
+    ("file", "std", "file"),
+    ("module_path", "std", "module_path"),
+    ("cfg", "std", "cfg"),
+    ("compile_error", "std", "compile_error"),
 ];
 
 /// Members every value has, from a blanket impl or a derive.
@@ -1411,6 +1412,66 @@ pub fn free(w: &Widget) -> u32 { w.width }
             )),
             "a bare identifier read is not a use site today; if that changes, this test is \
              where the other half of the merge gets asserted"
+        );
+    }
+
+    /// A fully-qualified path to another crate resolves with NO import (R5).
+    ///
+    /// `serde_json::json!(..)` is a complete use; requiring a `use` to place it
+    /// is requiring something Rust does not. MEASURED: 268 `serde_json::json`,
+    /// 57 `tracing::warn`, 39 `uuid::Uuid::parse_str` sat unresolved.
+    ///
+    /// MUTATION: set `paths_name_packages: false` — all three go back to
+    /// `NoImportInScope`. The three NEGATIVE cases below are the guard: without
+    /// them the rung mints a library node for a local path, a crate-relative
+    /// one, and a sibling crate this scan owns.
+    #[test]
+    fn a_fully_qualified_path_to_another_crate_needs_no_import() {
+        use crate::indexer::resolve::{World, resolve};
+        let text = "pub fn go() {\n    let _ = serde_json::json!({});\n    tracing::warn!(\"x\");\n\
+                    let _ = crate::helper();\n    let _ = senseid::thing();\n}\n\
+                    pub fn helper() -> u32 { 0 }\n";
+        let facts = read(
+            &Source { package: "sensei-cli", module: "m", path: "src/m.rs", text },
+            &TypeHomes::unknown(),
+        )
+        .expect("it parses");
+        let first_party: BTreeSet<String> =
+            ["sensei-cli".to_string(), "senseid".to_string()].into_iter().collect();
+        let placed = resolve(
+            facts,
+            &GRAMMAR,
+            &World {
+                first_party: &first_party,
+                first_party_members: &BTreeSet::new(),
+                scanned: &BTreeSet::new(),
+            },
+        );
+        let resolved: Vec<String> = placed
+            .references
+            .iter()
+            .filter_map(|r| match &r.target {
+                Resolution::Resolved(fqn) => Some(fqn.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            resolved.iter().any(|f| f == "lib·serde_json·json"),
+            "an external crate path is a complete use: {resolved:?}"
+        );
+        assert!(
+            resolved.iter().any(|f| f == "lib·tracing·warn"),
+            "and so is a macro path: {resolved:?}"
+        );
+        // The guards. A sibling crate THIS SCAN OWNS is not a library, and a
+        // crate-relative path is not one either.
+        assert!(
+            !resolved.iter().any(|f| f.starts_with("lib·senseid")),
+            "a first-party package is ours however it is spelled: {resolved:?}"
+        );
+        assert!(
+            !resolved.iter().any(|f| f.starts_with("lib·crate")),
+            "`crate::` is a root word, not a package: {resolved:?}"
         );
     }
 

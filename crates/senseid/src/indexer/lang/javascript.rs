@@ -155,6 +155,9 @@ pub const GRAMMAR: Grammar = Grammar {
     // directory called `crate` root a path by accident.
     roots: &[(".", Root::Here), ("..", Root::Up)],
     relative_to_directory: true,
+    // A JavaScript module reaches an external ONLY through an import; `a.b` is
+    // a property access, not a package path.
+    paths_name_packages: false,
     // The binding is stated in the import CLAUSE (`import { a as b }`), not in
     // the specifier string, so there is nothing in the path for the ladder to
     // split off.
@@ -166,7 +169,6 @@ pub const GRAMMAR: Grammar = Grammar {
     // same signal Rust's casing gives. A misread here cannot produce a WRONG
     // edge, only a dangling one (see `Grammar::names_a_type`).
     names_a_type: |segment| segment.starts_with(|c: char| c.is_uppercase()),
-    prelude_package: "ecmascript",
     prelude: PRELUDE,
     plumbing: PLUMBING,
 };
@@ -177,50 +179,62 @@ pub const GRAMMAR: Grammar = Grammar {
 /// properties of the global object the language specifies, plus the handful the
 /// host environment always supplies. They are members of something we never
 /// open, like any other external (R5).
-const PRELUDE: &[(&str, &str)] = &[
-    ("Object", "Object"),
-    ("Array", "Array"),
-    ("String", "String"),
-    ("Number", "Number"),
-    ("Boolean", "Boolean"),
-    ("Symbol", "Symbol"),
-    ("BigInt", "BigInt"),
-    ("Math", "Math"),
-    ("JSON", "JSON"),
-    ("Date", "Date"),
-    ("RegExp", "RegExp"),
-    ("Error", "Error"),
-    ("TypeError", "TypeError"),
-    ("RangeError", "RangeError"),
-    ("SyntaxError", "SyntaxError"),
-    ("Promise", "Promise"),
-    ("Map", "Map"),
-    ("Set", "Set"),
-    ("WeakMap", "WeakMap"),
-    ("WeakSet", "WeakSet"),
-    ("Proxy", "Proxy"),
-    ("Reflect", "Reflect"),
-    ("Intl", "Intl"),
-    ("globalThis", "globalThis"),
-    ("console", "console"),
-    ("fetch", "fetch"),
-    ("URL", "URL"),
-    ("URLSearchParams", "URLSearchParams"),
-    ("Request", "Request"),
-    ("Response", "Response"),
-    ("Headers", "Headers"),
-    ("AbortController", "AbortController"),
-    ("setTimeout", "setTimeout"),
-    ("clearTimeout", "clearTimeout"),
-    ("setInterval", "setInterval"),
-    ("clearInterval", "clearInterval"),
-    ("queueMicrotask", "queueMicrotask"),
-    ("structuredClone", "structuredClone"),
-    ("parseInt", "parseInt"),
-    ("parseFloat", "parseFloat"),
-    ("isNaN", "isNaN"),
-    ("encodeURIComponent", "encodeURIComponent"),
-    ("decodeURIComponent", "decodeURIComponent"),
+const PRELUDE: &[(&str, &str, &str)] = &[
+    ("Object", "ecmascript", "Object"),
+    ("Array", "ecmascript", "Array"),
+    ("String", "ecmascript", "String"),
+    ("Number", "ecmascript", "Number"),
+    ("Boolean", "ecmascript", "Boolean"),
+    ("Symbol", "ecmascript", "Symbol"),
+    ("BigInt", "ecmascript", "BigInt"),
+    ("Math", "ecmascript", "Math"),
+    ("JSON", "ecmascript", "JSON"),
+    ("Date", "ecmascript", "Date"),
+    ("RegExp", "ecmascript", "RegExp"),
+    ("Error", "ecmascript", "Error"),
+    ("TypeError", "ecmascript", "TypeError"),
+    ("RangeError", "ecmascript", "RangeError"),
+    ("SyntaxError", "ecmascript", "SyntaxError"),
+    ("Promise", "ecmascript", "Promise"),
+    ("Map", "ecmascript", "Map"),
+    ("Set", "ecmascript", "Set"),
+    ("WeakMap", "ecmascript", "WeakMap"),
+    ("WeakSet", "ecmascript", "WeakSet"),
+    ("Proxy", "ecmascript", "Proxy"),
+    ("Reflect", "ecmascript", "Reflect"),
+    ("Intl", "ecmascript", "Intl"),
+    ("globalThis", "ecmascript", "globalThis"),
+    ("console", "ecmascript", "console"),
+    ("fetch", "ecmascript", "fetch"),
+    ("URL", "ecmascript", "URL"),
+    ("URLSearchParams", "ecmascript", "URLSearchParams"),
+    ("Request", "ecmascript", "Request"),
+    ("Response", "ecmascript", "Response"),
+    ("Headers", "ecmascript", "Headers"),
+    ("AbortController", "ecmascript", "AbortController"),
+    ("setTimeout", "ecmascript", "setTimeout"),
+    ("clearTimeout", "ecmascript", "clearTimeout"),
+    ("setInterval", "ecmascript", "setInterval"),
+    ("clearInterval", "ecmascript", "clearInterval"),
+    ("queueMicrotask", "ecmascript", "queueMicrotask"),
+    ("structuredClone", "ecmascript", "structuredClone"),
+    ("parseInt", "ecmascript", "parseInt"),
+    ("parseFloat", "ecmascript", "parseFloat"),
+    ("isNaN", "ecmascript", "isNaN"),
+    ("encodeURIComponent", "ecmascript", "encodeURIComponent"),
+    ("decodeURIComponent", "ecmascript", "decodeURIComponent"),
+    // SVELTE 5 RUNES. In scope with nothing written, exactly like a prelude
+    // name, and belonging to `svelte` rather than to the language — which is
+    // why a prelude entry carries its own package. MEASURED: `$derived` 466,
+    // `$state` 316, `$props` 256 sat in `NoImportInScope` because nothing
+    // could name them.
+    ("$state", "svelte", "$state"),
+    ("$derived", "svelte", "$derived"),
+    ("$props", "svelte", "$props"),
+    ("$effect", "svelte", "$effect"),
+    ("$bindable", "svelte", "$bindable"),
+    ("$inspect", "svelte", "$inspect"),
+    ("$host", "svelte", "$host"),
 ];
 
 /// Members every value has, from `Object.prototype` or from the two prototypes
@@ -2468,6 +2482,28 @@ mod tests {
         assert!(
             minted.contains(&"typescript·pkg·lib/fixture·deadline·item"),
             "and the module-level one is untouched: {minted:?}"
+        );
+    }
+
+    /// A Svelte 5 RUNE is in scope with nothing written, and names `svelte`.
+    ///
+    /// MEASURED: `$derived` 466, `$state` 316, `$props` 256 sat in
+    /// `NoImportInScope` because no table could name them. They are not
+    /// ECMAScript, which is why a prelude entry carries its own package
+    /// rather than the language having one.
+    ///
+    /// MUTATION: file them under `ecmascript` — the identity then names a
+    /// package that does not define them.
+    #[test]
+    fn a_svelte_rune_is_in_scope_with_nothing_written_and_belongs_to_svelte() {
+        let runes: Vec<&str> =
+            GRAMMAR.prelude.iter().filter(|(_, p, _)| *p == "svelte").map(|(n, _, _)| *n).collect();
+        for rune in ["$state", "$derived", "$props", "$effect"] {
+            assert!(runes.contains(&rune), "{rune} is a rune and is not in the prelude: {runes:?}");
+        }
+        assert!(
+            GRAMMAR.prelude.iter().any(|(n, p, _)| *n == "console" && *p == "ecmascript"),
+            "a real ECMAScript global still names ecmascript"
         );
     }
 

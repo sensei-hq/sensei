@@ -373,7 +373,7 @@ fn what_the_unimported_names_are() {
     for read in &corpus {
         let language = read.facts.language.as_str();
         let grammar = lang::adapter_for(read.facts.language).grammar();
-        let prelude: BTreeSet<&str> = grammar.prelude.iter().map(|(name, _)| *name).collect();
+        let prelude: BTreeSet<&str> = grammar.prelude.iter().map(|(name, _, _)| *name).collect();
         let has_glob = read.facts.imports.iter().any(|i| i.binds == super::facts::Binding::Glob);
 
         for reference in &read.facts.references {
