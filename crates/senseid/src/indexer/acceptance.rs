@@ -391,6 +391,151 @@ fn what_the_untyped_receivers_are() {
     assert!(!shapes.is_empty(), "no untyped receiver carried the receiver it saw");
 }
 
+/// WHERE GOING DEEPER WOULD PAY, and where it would not.
+///
+/// `ReceiverTypeUnknown` is the largest bucket and reads as a gap. Most of it
+/// is not one, and the difference decides whether any more receiver-typing work
+/// is worth doing.
+///
+/// The split is on ONE question a reader actually cares about: could the target
+/// be OURS? A member name that no first-party declaration anywhere in the
+/// corpus carries cannot be a first-party edge, whatever we learn about the
+/// receiver — it is `trim`, `ok`, `unwrap`, `toBeVisible`: a transform on a
+/// library type, at the boundary R5 says we name and never open.
+///
+/// The matching side is an UPPER BOUND, not an answer: a name can coincide
+/// between a library method and one of ours. It is the ceiling on what more
+/// typing could buy, and a ceiling is what a build/do-not-build decision needs.
+#[test]
+#[ignore]
+fn where_going_deeper_would_pay() {
+    let corpus = read_the_corpus();
+
+    // Every member name any first-party type declares.
+    let mut ours: BTreeSet<&str> = BTreeSet::new();
+    for read in &corpus {
+        for symbol in &read.facts.symbols {
+            if matches!(symbol.kind, SymbolKind::Method | SymbolKind::Field | SymbolKind::Property)
+            {
+                ours.insert(symbol.name.as_str());
+            }
+        }
+    }
+
+    let mut could_be_ours: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut boundary: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut top_boundary: BTreeMap<&str, usize> = BTreeMap::new();
+    for read in &corpus {
+        let language = read.facts.language.as_str();
+        for reference in &read.facts.references {
+            let Resolution::Unresolved { reason, evidence } = &reference.target else { continue };
+            if format!("{reason:?}") != "ReceiverTypeUnknown" {
+                continue;
+            }
+            if ours.contains(evidence.name.as_str()) {
+                *could_be_ours.entry(language).or_default() += 1;
+            } else {
+                *boundary.entry(language).or_default() += 1;
+                *top_boundary.entry(evidence.name.as_str()).or_default() += 1;
+            }
+        }
+    }
+
+    println!("\n## ReceiverTypeUnknown: could the target be OURS?\n");
+    println!("| {:<26} | {:>10} | {:>10} |", "", "rust", "typescript");
+    println!("|{}|{}|{}|", "-".repeat(28), "-".repeat(12), "-".repeat(12));
+    let cell = |m: &BTreeMap<&str, usize>, l: &str| m.get(l).copied().unwrap_or(0);
+    println!(
+        "| {:<26} | {:>10} | {:>10} |",
+        "could be ours (CEILING)",
+        cell(&could_be_ours, "rust"),
+        cell(&could_be_ours, "typescript")
+    );
+    println!(
+        "| {:<26} | {:>10} | {:>10} |",
+        "boundary — not ours at all",
+        cell(&boundary, "rust"),
+        cell(&boundary, "typescript")
+    );
+
+    let mut ranked: Vec<(&&str, &usize)> = top_boundary.iter().collect();
+    ranked.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+    println!("\nthe boundary's head — names no first-party type declares:");
+    for (name, n) in ranked.iter().take(15) {
+        println!("  {n:>6}  .{name}()");
+    }
+
+    assert!(!ours.is_empty(), "no first-party member names, so the split proved nothing");
+}
+
+/// Does the graph already carry what an LLM needs per function?
+///
+/// The shape asked for: `A()` lives at `<path>` lines `n:m`, takes these
+/// params, returns this, and calls B, C, D. If every function has that, the
+/// remaining receiver-typing work buys refinement rather than capability, and
+/// the honest answer to "should we go deeper" is no.
+#[test]
+#[ignore]
+fn every_function_carries_what_a_reader_needs() {
+    let corpus = read_the_corpus();
+    let mut per_language: BTreeMap<&str, [usize; 5]> = BTreeMap::new();
+
+    for read in &corpus {
+        let language = read.facts.language.as_str();
+        // Which symbol each reference sits inside — the caller side.
+        let mut calls_from: BTreeMap<&str, usize> = BTreeMap::new();
+        for reference in &read.facts.references {
+            if matches!(reference.kind, RefKind::Calls | RefKind::Constructs) {
+                *calls_from.entry(reference.from.as_str()).or_default() += 1;
+            }
+        }
+        for symbol in &read.facts.symbols {
+            if !matches!(symbol.kind, SymbolKind::Function | SymbolKind::Method) {
+                continue;
+            }
+            let counts = per_language.entry(language).or_insert([0; 5]);
+            counts[0] += 1;
+            // A line RANGE, not a point: `n:m` is what makes the body fetchable.
+            if symbol.span.end_line > symbol.span.start_line {
+                counts[1] += 1;
+            }
+            if !symbol.params.is_empty() {
+                counts[2] += 1;
+            }
+            if matches!(symbol.declared_type, super::facts::DeclaredType::Stated(_)) {
+                counts[3] += 1;
+            }
+            if calls_from.contains_key(symbol.fqn.as_str()) {
+                counts[4] += 1;
+            }
+        }
+    }
+
+    println!("\n## Per function: is the reader's shape already there?\n");
+    println!("| {:<26} | {:>10} | {:>10} |", "", "rust", "typescript");
+    println!("|{}|{}|{}|", "-".repeat(28), "-".repeat(12), "-".repeat(12));
+    let get =
+        |m: &BTreeMap<&str, [usize; 5]>, l: &str, i: usize| m.get(l).map(|c| c[i]).unwrap_or(0);
+    for (i, label) in [
+        "functions and methods",
+        "with a line RANGE",
+        "with params recorded",
+        "with a return type",
+        "with >=1 outgoing call",
+    ]
+    .iter()
+    .enumerate()
+    {
+        println!(
+            "| {:<26} | {:>10} | {:>10} |",
+            label,
+            get(&per_language, "rust", i),
+            get(&per_language, "typescript", i)
+        );
+    }
+    assert!(!per_language.is_empty(), "no functions found, so this proved nothing");
+}
+
 /// **A7. No two declarations mint one identity.**
 ///
 /// The guard §2.1 leans on when it drops the type/value discriminator, and it
