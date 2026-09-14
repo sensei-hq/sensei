@@ -722,6 +722,201 @@ mod corpus {
     }
 }
 
+/// How much would anchoring a member to its TYPE's module move? (Sizing.)
+///
+/// A member's identity is `…·<module>·<Type>·<member>`, and this indexer fills
+/// `<module>` with the module the `impl` BLOCK sits in. Rust's own path does
+/// not: `PgStore::forge_token_rows` is reached through the type, whose path is
+/// `db::pg_store::PgStore` however many files carry an `impl PgStore`.
+///
+/// The reference side has the same rule, so a call resolves only when the
+/// caller happens to sit in the same module as the impl block. `PgStore` has 24
+/// such files.
+///
+/// This measures the move BEFORE anything is built, because the lesson this
+/// design has paid for three times is that a route sized after the fact reaches
+/// almost nothing. It answers three things: how many member identities would
+/// change, how many are AMBIGUOUS (two modules declare the type, so nothing may
+/// move — R4), and how many currently-unresolved references would newly match.
+///
+/// `#[ignore]`: it parses the whole corpus.
+#[cfg(test)]
+mod anchoring {
+    use crate::indexer::facts::{Reason, SymbolKind};
+    use crate::indexer::lang::Source;
+    use crate::indexer::lang::rust;
+    use std::collections::BTreeMap;
+
+    /// Split an ITEM identity — `lang·pkg·[module]·name·reach` — into
+    /// `(module, name)`.
+    ///
+    /// The member forms are deliberately NOT decomposed here, and that is a
+    /// correction rather than a simplification. `Form::Member` and
+    /// `Form::TraitMember` differ by one segment and an empty module is
+    /// DROPPED, so a six-segment string is a member-with-module or a
+    /// trait-member-without-one and the string cannot say which (`fqn::Parsed`
+    /// records exactly this). A first version of this measurement guessed, read
+    /// the TRAIT as the type on every trait impl, and reported that every
+    /// implementation of a trait should collapse onto one identity — the
+    /// wrong-merge the trait qualifier exists to prevent, presented as a fix.
+    ///
+    /// The `Owns` relation carries the type's identity as an unambiguous item,
+    /// so it is read from there instead.
+    fn item_parts(fqn: &str) -> Option<(String, String)> {
+        let sep = '\u{00B7}';
+        let mut segments: Vec<&str> = fqn.split(sep).collect();
+        segments.pop()?;
+        let name = segments.pop()?.to_string();
+        if segments.len() < 2 {
+            return None;
+        }
+        Some((segments[2..].join(&sep.to_string()), name))
+    }
+
+    /// Split a MEMBER reference candidate, which the walk always mints as
+    /// `Form::Member` — never the trait form, because a call site cannot know
+    /// which trait. Knowing `member` makes the split checkable rather than
+    /// guessed: if the segment where `member` should be is not `member`, this
+    /// is a shape the caller does not understand and yields nothing.
+    fn member_parts(fqn: &str, member: &str) -> Option<(String, String)> {
+        let sep = '\u{00B7}';
+        let mut segments: Vec<&str> = fqn.split(sep).collect();
+        segments.pop()?;
+        if segments.pop()? != member {
+            return None;
+        }
+        let ty = segments.pop()?.to_string();
+        if segments.len() < 2 {
+            return None;
+        }
+        Some((segments[2..].join(&sep.to_string()), ty))
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn how_far_a_member_is_from_its_types_module() {
+        let sources = crate::indexer::corpus_rust_sources();
+        let mut all: Vec<crate::indexer::facts::FileFacts> = Vec::new();
+        for (abs, text) in &sources {
+            let package = crate::indexer::package_of(abs);
+            let rel = crate::indexer::workspace_relative(abs);
+            let module = crate::indexer::module_of(&rel);
+            if let Ok(facts) =
+                rust::read(&Source { package: &package, module: &module, path: &rel, text })
+            {
+                all.push(facts);
+            }
+        }
+
+        // Where each type NAME is declared, per package. A name declared in two
+        // modules of one package is AMBIGUOUS and nothing may move for it.
+        let mut homes: BTreeMap<(String, String), std::collections::BTreeSet<String>> =
+            BTreeMap::new();
+        for facts in &all {
+            for symbol in &facts.symbols {
+                let names_a_type = matches!(
+                    symbol.kind,
+                    SymbolKind::Struct
+                        | SymbolKind::Enum
+                        | SymbolKind::Trait
+                        | SymbolKind::Class
+                        | SymbolKind::Interface
+                );
+                if !names_a_type {
+                    continue;
+                }
+                if let Some((module, _)) = item_parts(symbol.fqn.as_str()) {
+                    homes
+                        .entry((facts.package.clone(), symbol.name.clone()))
+                        .or_default()
+                        .insert(module);
+                }
+            }
+        }
+
+        let mut members = 0usize;
+        let mut already_right = 0usize;
+        let mut would_move = 0usize;
+        let mut ambiguous = 0usize;
+        let mut type_not_found = 0usize;
+        let mut moved_types: std::collections::BTreeSet<String> = Default::default();
+
+        for facts in &all {
+            for relation in &facts.relations {
+                if relation.kind != crate::indexer::facts::RelationKind::Owns {
+                    continue;
+                }
+                // The OWNER, which is the type this member belongs to, minted
+                // as an item — so it decomposes without guessing.
+                let crate::indexer::facts::Resolution::Resolved(owner) = &relation.parent else {
+                    continue;
+                };
+                let Some((module, ty)) = item_parts(owner.as_str()) else { continue };
+                members += 1;
+                match homes.get(&(facts.package.clone(), ty.clone())) {
+                    None => type_not_found += 1,
+                    Some(where_declared) if where_declared.len() > 1 => ambiguous += 1,
+                    Some(where_declared) => {
+                        let home = where_declared.iter().next().expect("one entry");
+                        if *home == module {
+                            already_right += 1;
+                        } else {
+                            would_move += 1;
+                            moved_types.insert(format!("{module}·{ty} -> {home}·{ty}"));
+                        }
+                    }
+                }
+            }
+        }
+
+        println!("\n── members, by the type that OWNS them, {} files ──", all.len());
+        println!("owned members          {members}");
+        println!("  module already right {already_right}");
+        println!("  WOULD MOVE           {would_move}");
+        println!("  ambiguous type name  {ambiguous}  (two modules declare it — nothing may move)");
+        println!("  type not in corpus   {type_not_found}  (an impl on an external type)");
+        println!("\ndistinct types whose members would move: {}", moved_types.len());
+        for key in moved_types.iter().take(10) {
+            println!("  {key}");
+        }
+
+        // And the other half of the question: how many MISSES would a matching
+        // reference-side change newly place? Counted as unresolved member
+        // references whose candidate names a type that has ONE home elsewhere.
+        let mut recoverable = 0usize;
+        for facts in &all {
+            for reference in &facts.references {
+                let crate::indexer::facts::Resolution::Unresolved { reason, evidence } =
+                    &reference.target
+                else {
+                    continue;
+                };
+                if !matches!(reason, Reason::Unplaced | Reason::NoImportInScope) {
+                    continue;
+                }
+                for observation in &evidence.saw {
+                    let crate::indexer::facts::Observation::Candidate(candidate) = observation
+                    else {
+                        continue;
+                    };
+                    let Some((module, ty)) = member_parts(candidate.as_str(), &evidence.name)
+                    else {
+                        continue;
+                    };
+                    if let Some(where_declared) = homes.get(&(facts.package.clone(), ty))
+                        && where_declared.len() == 1
+                        && where_declared.iter().next() != Some(&module)
+                    {
+                        recoverable += 1;
+                    }
+                }
+            }
+        }
+        println!("\nunresolved member references whose type has ONE home elsewhere: {recoverable}");
+        assert!(members > 100, "only {members} owned members in this corpus?");
+    }
+}
+
 /// WHY the gate blocks — the investigation behind the 777, with source.
 ///
 /// The gate says "legacy resolved this and current does not". That is a true statement
