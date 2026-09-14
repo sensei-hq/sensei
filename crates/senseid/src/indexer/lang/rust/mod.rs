@@ -24,7 +24,7 @@
 mod types;
 mod walk;
 
-use super::{LanguageAdapter, ReadError, Source};
+use super::{LanguageAdapter, ReadError, Source, TypeHomes};
 use crate::indexer::facts::{FileFacts, Fqn, Language};
 use crate::indexer::fqn::{self, Form, FqnError, Reach};
 use crate::indexer::resolve::{Grammar, Root};
@@ -54,8 +54,8 @@ impl LanguageAdapter for RustAdapter {
         &GRAMMAR
     }
 
-    fn read(&self, source: &Source<'_>) -> Result<FileFacts, ReadError> {
-        read(source)
+    fn read(&self, source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadError> {
+        read(source, types)
     }
 
     fn file_fqn(&self, package: &str, module: &str, path: &str) -> Result<Fqn, FqnError> {
@@ -234,7 +234,7 @@ const PLUMBING: &[&str] = &[
 ];
 
 /// Parse one file once (R1) and return everything that parse saw (spec §3).
-pub fn read(source: &Source<'_>) -> Result<FileFacts, ReadError> {
+pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadError> {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_rust::LANGUAGE.into())
@@ -245,7 +245,7 @@ pub fn read(source: &Source<'_>) -> Result<FileFacts, ReadError> {
     // identity rule and the walk owns none.
     let from =
         file_fqn(source.package, source.module, source.path).map_err(ReadError::NoFileIdentity)?;
-    let found = walk::walk(source, tree.root_node(), from);
+    let found = walk::walk(source, types, tree.root_node(), from);
 
     Ok(FileFacts {
         language: Language::Rust,
@@ -365,8 +365,11 @@ mod tests {
 
     /// Every reference's target, as `name -> resolution`.
     fn targets(text: &str) -> Vec<(String, String)> {
-        let facts = read(&Source { package: "p", module: "m", path: "src/m.rs", text })
-            .expect("the fixture parses");
+        let facts = read(
+            &Source { package: "p", module: "m", path: "src/m.rs", text },
+            &TypeHomes::unknown(),
+        )
+        .expect("the fixture parses");
         // RESOLVED, not just read. `read` mints a candidate identity; the
         // ladder is what places it against a declaration. A helper that stopped
         // at `read` would report every candidate as `Unplaced` and could not
@@ -878,7 +881,7 @@ mod tests {
 
     use crate::indexer::facts::{
         Binding, DeclaredType, ImportOrigin, Observation, Reason, RefKind, RelationKind,
-        Resolution, SymbolKind, Visibility,
+        Resolution, Symbol, SymbolKind, Visibility,
     };
 
     /// One of every declaration the plan's step 3 names, in one file, so the
@@ -928,7 +931,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
 "#;
 
     fn facts(module: &str, text: &str) -> FileFacts {
-        read(&Source { package: "p", module, path: "src/fixture.rs", text })
+        read(&Source { package: "p", module, path: "src/fixture.rs", text }, &TypeHomes::unknown())
             .expect("the fixture parses")
     }
 
@@ -1325,8 +1328,11 @@ pub fn free(w: &Widget) -> u32 { w.width }
     fn the_symbol_count_equals_an_independent_count_of_declaration_nodes() {
         let mut disagreements = Vec::new();
         for (path, text) in repo_rust_sources() {
-            let facts = read(&Source { package: "p", module: "m", path: &path, text: &text })
-                .unwrap_or_else(|e| panic!("{path}: {e:?}"));
+            let facts = read(
+                &Source { package: "p", module: "m", path: &path, text: &text },
+                &TypeHomes::unknown(),
+            )
+            .unwrap_or_else(|e| panic!("{path}: {e:?}"));
             let expected = count_declarations(parse(&text).root_node());
             if facts.symbols.len() != expected {
                 disagreements.push(format!(
@@ -1346,6 +1352,145 @@ pub fn free(w: &Widget) -> u32 { w.width }
 
     // ── step 4: every reference ──────────────────────────────────────────────
 
+    // ── anchoring a member to its type's module ──────────────────────────
+
+    /// The fix, and the defect it replaces, in one test.
+    ///
+    /// `impl PgStore` sits in `db::pg_store::personas`; `PgStore` is declared in
+    /// `db::pg_store`. Rust reaches the method as
+    /// `db::pg_store::PgStore::forge` — the impl block's location is not part of
+    /// the path — so the member is named in the TYPE's module.
+    ///
+    /// MEASURED before this: 634 of 5,186 members sat under a module their type
+    /// does not live in, `PgStore` alone across 24 files, and 2,538 unresolved
+    /// member references named a type whose home was elsewhere.
+    ///
+    /// MUTATION that must break it: use `scope.module` in `impl_block`. Both
+    /// assertions collapse onto the impl block's module, and a call from any
+    /// other file mints an identity the declaration never does.
+    #[test]
+    fn a_member_is_named_in_its_types_module_and_not_in_its_impl_blocks() {
+        const IMPL: &str = "impl PgStore {\n    pub fn forge(&self) -> u32 { 0 }\n}\n\
+                            pub fn caller(pg: &PgStore) -> u32 { pg.forge() }\n";
+
+        let read_with = |types: &TypeHomes| {
+            read(
+                &Source {
+                    package: "senseid",
+                    module: "db::pg_store::personas",
+                    path: "src/db/pg_store/personas.rs",
+                    text: IMPL,
+                },
+                types,
+            )
+            .expect("it parses")
+        };
+
+        // Told nothing, the block's own module stands — the previous behaviour,
+        // kept deliberately so an unknown type is a MISS and never a guess.
+        let untold = read_with(&TypeHomes::unknown());
+        assert!(
+            fqns(&untold).contains(&"rust·senseid·db::pg_store::personas·PgStore·forge·item"),
+            "with no table the member stays where its impl block is: {:?}",
+            fqns(&untold)
+        );
+
+        // Told where `PgStore` lives, both sides move to it.
+        let homes = TypeHomes::of(std::iter::once((
+            "senseid",
+            &Symbol {
+                fqn: fqn::define(&Form::Item {
+                    lang: Language::Rust,
+                    package: "senseid",
+                    module: "db::pg_store",
+                    name: "PgStore",
+                    reach: Reach::Item,
+                })
+                .expect("well formed"),
+                kind: SymbolKind::Struct,
+                name: "PgStore".to_string(),
+                span: crate::indexer::facts::Span {
+                    start_line: 1,
+                    start_col: 0,
+                    end_line: 1,
+                    end_col: 1,
+                },
+                visibility: Visibility::Public,
+                docstring: None,
+                declared_type: DeclaredType::Unstated,
+                params: Vec::new(),
+            },
+        )));
+        assert_eq!(homes.home_of("senseid", "PgStore"), Some("db::pg_store"));
+
+        let told = read_with(&homes);
+        assert!(
+            fqns(&told).contains(&"rust·senseid·db::pg_store·PgStore·forge·item"),
+            "the DECLARATION is named in the type's module: {:?}",
+            fqns(&told)
+        );
+
+        // And the REFERENCE mints the same string, or the two never meet (§2).
+        let candidates: Vec<String> = told
+            .references
+            .iter()
+            .filter_map(|r| match &r.target {
+                Resolution::Unresolved { evidence, .. } if evidence.name == "forge" => {
+                    evidence.saw.iter().find_map(|o| match o {
+                        Observation::Candidate(fqn) => Some(fqn.to_string()),
+                        _ => None,
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            candidates,
+            vec!["rust·senseid·db::pg_store·PgStore·forge·item".to_string()],
+            "the use site mints what the declaration minted"
+        );
+    }
+
+    /// A name two modules of one package declare has NO home, and nothing
+    /// moves. Picking one of two would mint a wrong identity, which R4 ranks
+    /// below no identity — and 354 members of this corpus are in that case.
+    #[test]
+    fn a_type_name_declared_in_two_modules_has_no_home_and_anchors_nothing() {
+        let declare = |module: &str| Symbol {
+            fqn: fqn::define(&Form::Item {
+                lang: Language::Rust,
+                package: "senseid",
+                module,
+                name: "Config",
+                reach: Reach::Item,
+            })
+            .expect("well formed"),
+            kind: SymbolKind::Struct,
+            name: "Config".to_string(),
+            span: crate::indexer::facts::Span {
+                start_line: 1,
+                start_col: 0,
+                end_line: 1,
+                end_col: 1,
+            },
+            visibility: Visibility::Public,
+            docstring: None,
+            declared_type: DeclaredType::Unstated,
+            params: Vec::new(),
+        };
+        let one = declare("a");
+        let two = declare("b");
+        let homes = TypeHomes::of(vec![("senseid", &one), ("senseid", &two)]);
+        assert_eq!(homes.home_of("senseid", "Config"), None, "two homes is not one home");
+        assert!(homes.is_empty(), "an ambiguous name is absent, not resolved to the first");
+
+        // The same name in a DIFFERENT package is a different type and keeps
+        // its home.
+        let elsewhere = TypeHomes::of(vec![("senseid", &one), ("cli", &two)]);
+        assert_eq!(elsewhere.home_of("senseid", "Config"), Some("a"));
+        assert_eq!(elsewhere.home_of("cli", "Config"), Some("b"));
+    }
+
     /// A2, and the load-bearing check of the whole rewrite. The legacy defect was a
     /// catch-all arm that returned early, so a use site it did not understand
     /// left no trace at all and the loss was invisible. This is what makes the
@@ -1356,8 +1501,11 @@ pub fn free(w: &Widget) -> u32 { w.width }
         let mut disagreements = Vec::new();
         let mut total = 0usize;
         for (path, text) in repo_rust_sources() {
-            let facts = read(&Source { package: "p", module: "m", path: &path, text: &text })
-                .unwrap_or_else(|e| panic!("{path}: {e:?}"));
+            let facts = read(
+                &Source { package: "p", module: "m", path: &path, text: &text },
+                &TypeHomes::unknown(),
+            )
+            .unwrap_or_else(|e| panic!("{path}: {e:?}"));
             let expected = count_use_sites(parse(&text).root_node());
             total += expected;
             if facts.references.len() != expected {
@@ -1383,8 +1531,11 @@ pub fn free(w: &Widget) -> u32 { w.width }
     #[test]
     fn every_unresolved_reference_carries_a_reason_and_the_node_kind_it_came_from() {
         for (path, text) in repo_rust_sources().into_iter().take(40) {
-            let facts = read(&Source { package: "p", module: "m", path: &path, text: &text })
-                .unwrap_or_else(|e| panic!("{path}: {e:?}"));
+            let facts = read(
+                &Source { package: "p", module: "m", path: &path, text: &text },
+                &TypeHomes::unknown(),
+            )
+            .unwrap_or_else(|e| panic!("{path}: {e:?}"));
             for reference in &facts.references {
                 let Resolution::Unresolved { evidence, .. } = &reference.target else {
                     continue;
@@ -1450,8 +1601,11 @@ pub fn free(w: &Widget) -> u32 { w.width }
             "fn f() { a.b.c().d[0].e(); }",
             "",
         ] {
-            let facts = read(&Source { package: "p", module: "m", path: "src/m.rs", text })
-                .unwrap_or_else(|e| panic!("`{text}`: {e:?}"));
+            let facts = read(
+                &Source { package: "p", module: "m", path: "src/m.rs", text },
+                &TypeHomes::unknown(),
+            )
+            .unwrap_or_else(|e| panic!("`{text}`: {e:?}"));
             let expected = count_use_sites(parse(text).root_node());
             assert_eq!(
                 facts.references.len(),
@@ -1598,8 +1752,11 @@ fn helper() -> u32 { 0 }
         let mut histogram: BTreeMap<String, usize> = BTreeMap::new();
         let mut total = 0usize;
         for (path, text) in repo_rust_sources() {
-            let facts = read(&Source { package: "p", module: "m", path: &path, text: &text })
-                .unwrap_or_else(|e| panic!("{path}: {e:?}"));
+            let facts = read(
+                &Source { package: "p", module: "m", path: &path, text: &text },
+                &TypeHomes::unknown(),
+            )
+            .unwrap_or_else(|e| panic!("{path}: {e:?}"));
             for reference in &facts.references {
                 total += 1;
                 match &reference.target {
@@ -1765,8 +1922,11 @@ fn helper() -> u32 { 0 }
     fn every_relation_in_this_repos_rust_names_both_of_its_ends() {
         let mut total = 0usize;
         for (path, text) in repo_rust_sources() {
-            let facts = read(&Source { package: "p", module: "m", path: &path, text: &text })
-                .unwrap_or_else(|e| panic!("{path}: {e:?}"));
+            let facts = read(
+                &Source { package: "p", module: "m", path: &path, text: &text },
+                &TypeHomes::unknown(),
+            )
+            .unwrap_or_else(|e| panic!("{path}: {e:?}"));
             for relation in &facts.relations {
                 total += 1;
                 fqn::parse(relation.child.as_str())

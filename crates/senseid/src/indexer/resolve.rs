@@ -714,8 +714,8 @@ mod tests {
 
     use crate::indexer::facts::{FileFacts, RefKind, Reference, Resolution};
     use crate::indexer::fqn;
-    use crate::indexer::lang::Source;
     use crate::indexer::lang::rust;
+    use crate::indexer::lang::{Source, TypeHomes};
     use crate::indexer::resolve::{World, resolve};
     use crate::indexer::{module_of, package_of};
 
@@ -735,8 +735,11 @@ mod tests {
     /// The same, in a scan that owns the source of other packages too. That set
     /// comes from the manifests and never from what has been read so far.
     fn ladder_among(module: &str, text: &str, first_party: &[&str]) -> FileFacts {
-        let facts = rust::read(&Source { package: "p", module, path: "src/fixture.rs", text })
-            .expect("the fixture parses");
+        let facts = rust::read(
+            &Source { package: "p", module, path: "src/fixture.rs", text },
+            &TypeHomes::unknown(),
+        )
+        .expect("the fixture parses");
         let first_party: BTreeSet<String> = first_party.iter().map(|p| (*p).to_string()).collect();
         let scanned = BTreeSet::new();
         resolve(facts, &rust::GRAMMAR, &World { first_party: &first_party, scanned: &scanned })
@@ -1124,7 +1127,8 @@ mod tests {
                     path: &path,
                     text: &text,
                 };
-                let facts = rust::read(&source).unwrap_or_else(|e| panic!("{path}: {e:?}"));
+                let facts = rust::read(&source, &TypeHomes::unknown())
+                    .unwrap_or_else(|e| panic!("{path}: {e:?}"));
                 (path, facts)
             })
             .collect();

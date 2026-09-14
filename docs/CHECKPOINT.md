@@ -24,32 +24,34 @@ legacy indexer at cutover, not before. Pre-release DB: `dbd reconcile`.
 | 4b — the JS/TS/Svelte reader, corpus-verified | `630275d5` |
 | 10 S3–S7 — switch rust, re-index, retire legacy | BLOCKED on the gate |
 
-## The gate: 223, re-measured over 385 files
+## The gate: 397, and it went UP when the identities got RIGHT
 
-    resolved  legacy 8,076 -> current 11,774
-    IMPROVEMENT 8,356 | REGRESSION 223 | EXPLAINED 4,435 | UNCLASSIFIED 0
+    resolved  legacy 8,104 -> current 11,859   (was 11,774)
+    IMPROVEMENT 8,448 | REGRESSION 397 | EXPLAINED 4,296 | UNCLASSIFIED 0
 
-    496  ghost — NOTHING declares what legacy pointed at   } 533 EXPLAINED:
-     37  legacy self-disagreement (trait-qualified)        } legacy was wrong
-     46  identity disagreement — the two grammars MINT differently  } 223 still
-    177  REAL LOSS OF REACH                                        } blocking
+                             before anchoring   after
+    ghost, nothing declares          496         344   <- -152
+    legacy self-disagreement          37          37
+    identity disagreement             46          71   <- +25, NEW, unexplained
+    REAL LOSS OF REACH               177         326   <- +149
+    reported REGRESSION              223         397
 
-`explain_dangling` reclassifies the first two: legacy's reference side derives a
-target's module from the CALL SITE, so those targets name nothing that exists,
-and R4 already says a wrong edge is worse than a missing one. The other two keep
-blocking on purpose — an identity disagreement is THIS indexer's grammar
-differing, and hiding it behind a rule about legacy's mistakes is the failure
-the gate exists to prevent.
+**Read the direction before reading the number.** Anchoring a member to its
+TYPE's module (634 declarations moved) made this indexer DECLARE 152 things it
+previously did not, at the spelling legacy uses. They stop being "legacy
+pointed at nothing" and become honest real losses: we declare it and still do
+not connect the reference. The classifier got more truthful, not the graph
+worse — resolved targets went UP by 85.
 
-**The 177 real losses have a NEW dominant cause.** It was 184-of-205
-`ReceiverTypeUnknown`; the receiver routes cut that to 12. Now:
+**The +25 identity disagreements are a real new problem.** Anchoring moved 25
+members to a module legacy disagrees with. Small, unexplained, and worth a
+sample before cutover.
 
-    145  NoImportInScope   <- the next thing to fix
-     20  no reference emitted at any use site
-     12  ReceiverTypeUnknown
-
-Do not compare a regression count across commits without re-running: the corpus
-is THIS repo's Rust, so every commit that adds Rust moves the denominator.
+**Minting the same string is not the ladder resolving it.** 2,538 references
+now mint what their declaration mints, so they meet by the merge contract (§2)
+at persist time — but the gate counts LADDER-resolved targets only, so that
+gain does not appear here and is UNMEASURED. The ladder has no rung for "a
+member of a type whose home I know"; that rung is what would convert the 326.
 
 ## Next command
 

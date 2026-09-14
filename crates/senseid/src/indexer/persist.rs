@@ -1508,8 +1508,8 @@ mod tests {
     use crate::indexer::facts::{
         DeclaredType, FileFacts, Language, Param, Reason, RelationKind, Symbol,
     };
-    use crate::indexer::lang::Source;
     use crate::indexer::lang::rust;
+    use crate::indexer::lang::{Source, TypeHomes};
     use crate::indexer::persist;
     use crate::indexer::resolve::{World, resolve};
 
@@ -1568,8 +1568,9 @@ pub fn widest(a: u32) -> u32 {
     }
 
     fn walk_of(module: &str, path: &str, text: &str) -> FileFacts {
-        let facts = rust::read(&Source { package: "senseid", module, path, text })
-            .expect("the fixture parses");
+        let facts =
+            rust::read(&Source { package: "senseid", module, path, text }, &TypeHomes::unknown())
+                .expect("the fixture parses");
         let first_party: BTreeSet<String> = ["senseid".to_string()].into_iter().collect();
         let scanned = BTreeSet::new();
         resolve(facts, &rust::GRAMMAR, &World { first_party: &first_party, scanned: &scanned })
@@ -2073,12 +2074,10 @@ pub fn widest(a: u32) -> u32 {
         for (path, text) in crate::indexer::corpus_rust_sources() {
             let package = crate::indexer::package_of(&path);
             let module = crate::indexer::module_of(&path);
-            let facts = rust::read(&Source {
-                package: &package,
-                module: &module,
-                path: &path,
-                text: &text,
-            })
+            let facts = rust::read(
+                &Source { package: &package, module: &module, path: &path, text: &text },
+                &TypeHomes::unknown(),
+            )
             .unwrap_or_else(|e| panic!("{path}: {e:?}"));
             let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
             for symbol in &facts.symbols {
@@ -2151,12 +2150,10 @@ pub fn widest(a: u32) -> u32 {
         for (path, text) in crate::indexer::corpus_rust_sources() {
             let package = crate::indexer::package_of(&path);
             let module = crate::indexer::module_of(&path);
-            let facts = rust::read(&Source {
-                package: &package,
-                module: &module,
-                path: &path,
-                text: &text,
-            })
+            let facts = rust::read(
+                &Source { package: &package, module: &module, path: &path, text: &text },
+                &TypeHomes::unknown(),
+            )
             .unwrap_or_else(|e| panic!("{path}: {e:?}"));
             let file = path.rsplit("crates/").next().unwrap_or(&path).to_string();
             for symbol in &facts.symbols {
@@ -2320,8 +2317,11 @@ pub fn widest(a: u32) -> u32 {
             let path = crate::indexer::workspace_relative(path);
             let path = path.as_str();
             let module = crate::indexer::module_of(path);
-            let facts = rust::read(&Source { package: &package, module: &module, path, text })
-                .unwrap_or_else(|e| panic!("{path}: {e:?}"));
+            let facts = rust::read(
+                &Source { package: &package, module: &module, path, text },
+                &TypeHomes::unknown(),
+            )
+            .unwrap_or_else(|e| panic!("{path}: {e:?}"));
             let facts = resolve(facts, &rust::GRAMMAR, &world);
             let file = rust::file_fqn(&package, &module, path)
                 .unwrap_or_else(|e| panic!("{path}: {e:?}"))
