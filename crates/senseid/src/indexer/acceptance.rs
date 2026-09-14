@@ -344,6 +344,86 @@ fn an_import_named_target_resolves() {
     }
 }
 
+/// What `NoImportInScope` ACTUALLY is.
+///
+/// "A bare name with no local declaration and no import that binds it" — now
+/// the largest bucket, and the same question applies to it as to the untyped
+/// receivers: could the target be OURS? A name no first-party declaration
+/// carries anywhere cannot be an edge we lost.
+///
+/// The split is finer here, because a bare name has more ways to be legitimate:
+/// a glob import in scope can bind it without naming it, and a prelude name is
+/// in scope with nothing written at all.
+#[test]
+#[ignore]
+fn what_the_unimported_names_are() {
+    let corpus = read_the_corpus();
+
+    // EVERY first-party declaration name, not just members: a bare name reaches
+    // a free function or a type, which a member-only set would miss.
+    let mut declared: BTreeSet<&str> = BTreeSet::new();
+    for read in &corpus {
+        for symbol in &read.facts.symbols {
+            declared.insert(symbol.name.as_str());
+        }
+    }
+
+    let mut buckets: BTreeMap<(&str, &str), usize> = BTreeMap::new();
+    let mut head: BTreeMap<&str, usize> = BTreeMap::new();
+    for read in &corpus {
+        let language = read.facts.language.as_str();
+        let grammar = lang::adapter_for(read.facts.language).grammar();
+        let prelude: BTreeSet<&str> = grammar.prelude.iter().map(|(name, _)| *name).collect();
+        let has_glob = read.facts.imports.iter().any(|i| i.binds == super::facts::Binding::Glob);
+
+        for reference in &read.facts.references {
+            let Resolution::Unresolved { reason, evidence } = &reference.target else { continue };
+            if format!("{reason:?}") != "NoImportInScope" {
+                continue;
+            }
+            let name = evidence.name.as_str();
+            let head_segment = name.split(grammar.path_separator).next().unwrap_or(name);
+            let bucket = if prelude.contains(head_segment) {
+                "in the language PRELUDE — external, and already nameable"
+            } else if declared.contains(name) || declared.contains(head_segment) {
+                "a name we DO declare somewhere — a lost first-party edge"
+            } else if has_glob {
+                "a GLOB is in scope, so the binding is unknowable here"
+            } else {
+                "declared nowhere first-party — boundary"
+            };
+            *buckets.entry((language, bucket)).or_default() += 1;
+            if bucket.starts_with("declared nowhere") {
+                *head.entry(name).or_default() += 1;
+            }
+        }
+    }
+
+    println!("\n## NoImportInScope, by what the name IS\n");
+    println!("| {:<48} | {:>8} | {:>10} |", "", "rust", "typescript");
+    println!("|{}|{}|{}|", "-".repeat(50), "-".repeat(10), "-".repeat(12));
+    let mut rows: BTreeSet<&str> = BTreeSet::new();
+    for (_, bucket) in buckets.keys() {
+        rows.insert(bucket);
+    }
+    for bucket in &rows {
+        println!(
+            "| {:<48} | {:>8} | {:>10} |",
+            bucket,
+            buckets.get(&("rust", *bucket)).copied().unwrap_or(0),
+            buckets.get(&("typescript", *bucket)).copied().unwrap_or(0)
+        );
+    }
+
+    let mut ranked: Vec<(&&str, &usize)> = head.iter().collect();
+    ranked.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+    println!("\nthe boundary's head — names nothing first-party declares:");
+    for (name, n) in ranked.iter().take(15) {
+        println!("  {n:>6}  {name}");
+    }
+    assert!(!buckets.is_empty(), "no unimported names, so this proved nothing");
+}
+
 /// `(language, shape)` and the count plus a few examples, ranked for display.
 type Ranked<'a> = (&'a (&'a str, &'a str), &'a (usize, Vec<String>));
 
