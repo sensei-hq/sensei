@@ -198,9 +198,217 @@ pub fn differential(legacy: &FqnFileOutput, current: &FileFacts) -> DiffReport {
     DiffReport { differences, legacy_resolved: a.len(), current_resolved: b.len() }
 }
 
+/// What a disputed target IS, once BOTH producers' declarations are in hand.
+///
+/// The gate cannot answer this per file. "Does anything in the corpus declare
+/// the thing legacy pointed at" is a question about the whole scan, so it is a
+/// second stage over the collected differences rather than another arm inside
+/// [`differential`] — which stays pure and per-file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Disputed {
+    /// Both producers declare it and current still did not connect the
+    /// reference. The ONLY class that is a loss of reach.
+    RealLoss,
+    /// legacy declares it, current does not. The two grammars MINT it
+    /// differently — this indexer's problem, and it must keep blocking.
+    IdentityDisagreement,
+    /// Neither declares this spelling, but legacy declares a LONGER one for the
+    /// same member: its grammar qualifies a trait-impl method with the trait
+    /// while a call site cannot know which trait. legacy's own two sides
+    /// disagree.
+    LegacySelfDisagreement,
+    /// Nothing anywhere declares it. legacy resolved to a node that exists only
+    /// because a reference asked for it.
+    Ghost,
+}
+
+/// Classify one disputed target. ONE owner, because the gate and the `why`
+/// report both ask it and two implementations would drift into two answers to
+/// the question the cutover decision rests on.
+pub fn classify(
+    key: &str,
+    legacy_defs: &BTreeSet<String>,
+    current_defs: &BTreeSet<String>,
+) -> Disputed {
+    match (legacy_defs.contains(key), current_defs.contains(key)) {
+        (_, true) => Disputed::RealLoss,
+        (true, false) => Disputed::IdentityDisagreement,
+        (false, false) => {
+            // Is the SAME member declared on the SAME type under a LONGER
+            // identity? If a longer key exists, the "ghost" is legacy
+            // disagreeing with itself rather than a missing declaration.
+            let sep = '\u{00B7}';
+            let qualified = key.rsplit_once(sep).is_some_and(|(head, member)| {
+                let head = format!("{head}{sep}");
+                let member = format!("{sep}{member}");
+                legacy_defs.iter().any(|k| k.starts_with(&head) && k.ends_with(&member))
+            });
+            if qualified { Disputed::LegacySelfDisagreement } else { Disputed::Ghost }
+        }
+    }
+}
+
+/// Reclassify the regressions that are legacy being WRONG rather than this
+/// indexer losing reach (S1).
+///
+/// The gate said "legacy resolved this and current does not", which is true and
+/// insufficient — it never said whether legacy was RIGHT. Measured over this
+/// repo, most of the time it was not: legacy's reference side derives a
+/// target's module from the CALL SITE, so `CheckOutcome::ready` became
+/// `…·checker·CheckOutcome·ready` and a type used inside `mod tests` gained the
+/// test module. Those targets name nothing that exists.
+///
+/// R4 already settles what such an edge is worth — a wrong edge is worse than a
+/// missing one — so declining to mint it is the rewrite working. Two classes
+/// flip, and the two that do NOT are the point:
+///
+/// - [`Disputed::IdentityDisagreement`] stays a regression. legacy declares it
+///   and this indexer mints it differently; folding that into `Explained` would
+///   hide a grammar difference behind a rule about legacy's mistakes.
+/// - [`Disputed::RealLoss`] stays a regression, obviously.
+///
+/// Every flip carries the reason that fired, because `blocks_cutover` treats an
+/// `Explained` with no written reason as unclassified.
+pub fn explain_dangling(
+    report: &mut DiffReport,
+    legacy_defs: &BTreeSet<String>,
+    current_defs: &BTreeSet<String>,
+) {
+    for difference in &mut report.differences {
+        if difference.verdict != Verdict::Regression {
+            continue;
+        }
+        let (verdict, reason) = match classify(&difference.key, legacy_defs, current_defs) {
+            Disputed::Ghost => (
+                Verdict::Explained,
+                "NOTHING declares this: legacy resolved to a node that exists only because a \
+                 reference asked for it, and R4 ranks that below no edge at all",
+            ),
+            Disputed::LegacySelfDisagreement => (
+                Verdict::Explained,
+                "legacy DECLARES a longer identity for this member and its reference side mints \
+                 a shorter one — its own two passes disagreeing, not reach lost here",
+            ),
+            Disputed::IdentityDisagreement | Disputed::RealLoss => continue,
+        };
+        difference.verdict = verdict;
+        difference.reason = reason.to_string();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn declared(keys: &[&str]) -> BTreeSet<String> {
+        keys.iter().map(|k| (*k).to_string()).collect()
+    }
+
+    fn regression(key: &str) -> Difference {
+        Difference {
+            verdict: Verdict::Regression,
+            key: key.to_string(),
+            reason: "legacy resolved this target and current does not".to_string(),
+        }
+    }
+
+    /// The rule the gate was missing, and the reason it blocked on a number
+    /// that was mostly not about this indexer.
+    ///
+    /// A target NO producer declares is one legacy resolved to a node that
+    /// exists only because a reference asked for it. R4 already settles what
+    /// that is worth: a wrong edge is worse than a missing one, so declining to
+    /// mint it is the rewrite working, not reach lost.
+    ///
+    /// MUTATION that must break this: explain every regression. The
+    /// identity-disagreement case below then goes quiet, and a real minting
+    /// difference between the two grammars stops blocking.
+    #[test]
+    fn a_target_no_producer_declares_is_explained_and_a_minting_difference_is_not() {
+        let legacy = declared(&[
+            "rust·p·m·Widget·draw",
+            // The trait-qualified form legacy's DEFINITION side mints while its
+            // reference side mints the unqualified one.
+            "rust·p·m·Widget·Draw·render",
+            "rust·p·m·OnlyLegacy·spelled",
+        ]);
+        let current = declared(&["rust·p·m·Widget·draw"]);
+
+        let mut report = DiffReport {
+            differences: vec![
+                regression("rust·p·m·Widget·draw"),
+                regression("rust·p·m·OnlyLegacy·spelled"),
+                regression("rust·p·m·Widget·render"),
+                regression("rust·p·m·Ghost·nothing_declares_this"),
+            ],
+            legacy_resolved: 4,
+            current_resolved: 1,
+        };
+        explain_dangling(&mut report, &legacy, &current);
+
+        let verdict = |key: &str| {
+            report.differences.iter().find(|d| d.key == key).expect("the difference is there")
+        };
+
+        assert_eq!(
+            verdict("rust·p·m·Ghost·nothing_declares_this").verdict,
+            Verdict::Explained,
+            "nothing declares it, so legacy resolved to a node a reference invented"
+        );
+        assert_eq!(
+            verdict("rust·p·m·Widget·render").verdict,
+            Verdict::Explained,
+            "legacy DECLARES the trait-qualified form, so its own two sides disagree"
+        );
+        assert_eq!(
+            verdict("rust·p·m·OnlyLegacy·spelled").verdict,
+            Verdict::Regression,
+            "legacy declares it and this indexer does not: a MINTING difference, which is \
+             this indexer's bug and must keep blocking"
+        );
+        assert_eq!(
+            verdict("rust·p·m·Widget·draw").verdict,
+            Verdict::Regression,
+            "both declare it and the reference was not connected: a real loss of reach"
+        );
+
+        for difference in &report.differences {
+            if difference.verdict == Verdict::Explained {
+                assert!(
+                    !difference.reason.trim().is_empty(),
+                    "{} was explained with no reason, which `blocks_cutover` treats as \
+                     unclassified anyway",
+                    difference.key
+                );
+            }
+        }
+    }
+
+    /// The rule is applied to REGRESSIONS only. An improvement that happens to
+    /// name something nothing declares is a different fact and this must not
+    /// touch it.
+    #[test]
+    fn explaining_a_dangling_target_leaves_every_other_verdict_alone() {
+        let mut report = DiffReport {
+            differences: vec![
+                Difference {
+                    verdict: Verdict::Improvement,
+                    key: "rust·p·m·Ghost·nothing_declares_this".to_string(),
+                    reason: "current resolves a target legacy did not".to_string(),
+                },
+                Difference {
+                    verdict: Verdict::Explained,
+                    key: "lib·serde·Serialize".to_string(),
+                    reason: "an external target".to_string(),
+                },
+            ],
+            legacy_resolved: 0,
+            current_resolved: 1,
+        };
+        let before = report.clone();
+        explain_dangling(&mut report, &declared(&[]), &declared(&[]));
+        assert_eq!(report, before, "only a regression is reclassified");
+    }
 
     /// The normalisation, on the case that makes it necessary.
     ///
@@ -346,6 +554,13 @@ mod corpus {
         let mut current_failed_to_read = 0usize;
         let mut current_declined: std::collections::BTreeMap<String, usize> = Default::default();
         let mut current_unresolved_names: Vec<(String, String)> = Vec::new();
+        // Every DECLARATION each producer makes, normalised the same way a
+        // difference's key is. Collected here because "does anything in the
+        // corpus declare the thing legacy pointed at" cannot be answered from
+        // one file, and it is the question that separates a regression from
+        // legacy having been wrong.
+        let mut legacy_defs: BTreeSet<String> = BTreeSet::new();
+        let mut current_defs: BTreeSet<String> = BTreeSet::new();
 
         for (abs, text) in &sources {
             // legacy: the shipped producer, from the absolute path (it walks up to
@@ -389,12 +604,22 @@ mod corpus {
                 },
             ));
 
+            legacy_defs.extend(legacy.defs.iter().map(|d| identity_key(&d.fqn)));
+            current_defs.extend(current.symbols.iter().map(|s| identity_key(s.fqn.as_str())));
+
             let report = differential(&legacy, &current);
             totals.legacy_resolved += report.legacy_resolved;
             totals.current_resolved += report.current_resolved;
             totals.differences.extend(report.differences);
             files_compared += 1;
         }
+
+        // The second stage: what the per-file gate could not know. See
+        // `explain_dangling` for which classes flip and which deliberately do
+        // not.
+        let before = totals.count(Verdict::Regression);
+        explain_dangling(&mut totals, &legacy_defs, &current_defs);
+        let explained_away = before - totals.count(Verdict::Regression);
 
         let regressions = totals.count(Verdict::Regression);
         let improvements = totals.count(Verdict::Improvement);
@@ -407,7 +632,8 @@ mod corpus {
         println!("resolved targets  legacy    {}", totals.legacy_resolved);
         println!("resolved targets  current    {}", totals.current_resolved);
         println!("IMPROVEMENT             {improvements}");
-        println!("REGRESSION              {regressions}");
+        println!("REGRESSION              {regressions}  (was {before} before the dangling rule)");
+        println!("  of which legacy was WRONG about {explained_away}");
         println!("EXPLAINED               {explained}");
         println!("UNCLASSIFIED            {unclassified}");
         println!("blocks cutover          {}", totals.blocks_cutover());
@@ -526,8 +752,9 @@ mod why {
     use crate::indexer::resolve::{World, resolve};
     use crate::languages::LanguageAdapter;
 
-    /// One disputed target, with everything needed to judge it by hand.
-    struct Disputed {
+    /// One disputed target, laid out with everything needed to judge it by hand.
+    /// Its CLASSIFICATION is [`super::Disputed`]; this is the evidence beside it.
+    struct Case {
         key: String,
         file: String,
         reason: String,
@@ -657,7 +884,7 @@ mod why {
                         hits.into_iter().take(3).collect()
                     }
                 };
-                let item = Disputed {
+                let item = Case {
                     key: d.key.clone(),
                     file: rel.clone(),
                     reason,
@@ -667,34 +894,19 @@ mod why {
                     source_line,
                     saw,
                 };
-                match (legacy_defs.contains(&d.key), current_defs.contains(&d.key)) {
-                    (_, true) => real_loss.push(item),
-                    (true, false) => identity_disagreement.push(item),
-                    (false, false) => {
-                        // Is the SAME member declared on the SAME type under a
-                        // LONGER identity? legacy's grammar qualifies a trait-impl
-                        // method with its trait (`…·Type·Trait·member`) while a
-                        // call site cannot know which trait, so it mints
-                        // `…·Type·member`. If a longer key exists, legacy's own two
-                        // sides disagree, and the "ghost" is that disagreement
-                        // rather than a missing declaration.
-                        let sep = '\u{00B7}';
-                        let qualified = d.key.rsplit_once(sep).is_some_and(|(head, member)| {
-                            let head = format!("{head}{sep}");
-                            let member = format!("{sep}{member}");
-                            legacy_defs.iter().any(|k| k.starts_with(&head) && k.ends_with(&member))
-                        });
-                        if qualified {
-                            trait_qualified.push(item);
-                        } else {
-                            ghost.push(item);
-                        }
-                    }
+                // The SAME predicate the gate reclassifies with. Two copies
+                // would be two answers to the question the cutover rests on,
+                // and the one printed here is the one a person reads.
+                match classify(&d.key, &legacy_defs, &current_defs) {
+                    Disputed::RealLoss => real_loss.push(item),
+                    Disputed::IdentityDisagreement => identity_disagreement.push(item),
+                    Disputed::LegacySelfDisagreement => trait_qualified.push(item),
+                    Disputed::Ghost => ghost.push(item),
                 }
             }
         }
 
-        let show = |label: &str, items: &[Disputed], n: usize| {
+        let show = |label: &str, items: &[Case], n: usize| {
             println!("\n\n══ {label}: {} ══", items.len());
             for d in items.iter().take(n) {
                 println!("\n  target legacy claimed : {}", d.key);
@@ -734,7 +946,7 @@ mod why {
 
         // What current SAID, per class. This is the number that says what one fix
         // would buy: a class dominated by a single reason has a single cause.
-        fn by_reason(items: &[Disputed]) -> std::collections::BTreeMap<&str, usize> {
+        fn by_reason(items: &[Case]) -> std::collections::BTreeMap<&str, usize> {
             let mut m: std::collections::BTreeMap<&str, usize> = Default::default();
             for d in items {
                 *m.entry(d.reason.as_str()).or_default() += 1;
