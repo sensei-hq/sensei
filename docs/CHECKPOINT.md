@@ -37,32 +37,40 @@ acceptance tests are `indexer::acceptance::*`.
 Last run, 1,331 files:
 
     references             rust   typescript
-    RESOLVED             59,182       23,156
-    ReceiverTypeUnknown  17,499       12,114
-    Denylisted           17,716        3,481
-    ExternalBoundary     11,272       12,483   <- NOT ours; no edge exists
-    AmbiguousCandidates   8,520            7
-    NoImportInScope       7,959        4,537
+    RESOLVED             59,733       23,156
+    ReceiverTypeUnknown  17,523       12,114
+    Denylisted           17,733        3,481
+    ExternalBoundary     11,295       12,483
+    AmbiguousCandidates   8,523            7
+    NoImportInScope       7,476        4,537
     DynamicDispatch           0        1,328
     UnhandledForm             1          165
     Unplaced / NoDeclaredType / MacroExpansion: 0 everywhere
 
-Three rules landed against measured causes, and RESOLVED went 70,801 -> 82,338:
+RESOLVED went 70,801 -> 82,889 over four rules, each built against a measured
+cause: ExternalBoundary, fully-qualified external paths, Svelte runes, `Self`.
 
-- **ExternalBoundary** — a member name NOTHING first-party declares cannot be a
-  first-party edge. 23,755 references left the miss bucket on the corpus's own
-  declarations, never a hand-written list.
-- **Fully-qualified external paths** — `serde_json::json!(..)` is a complete use
-  and R5 says an external is named by use, so requiring an import was requiring
-  something Rust does not. Rust NoImportInScope 18,386 -> 7,959.
-- **Svelte 5 runes** — `$state`/`$derived`/`$props` are in scope with nothing
-  written. A prelude entry now carries its own PACKAGE, so a rune names
-  `svelte` and not `ecmascript`.
+## THE CHEAP RULES ARE DONE — do not build another rung without a new measurement
 
-STILL OPEN, measured at 9,503 before the above absorbed part of it: a `use
-super::*` glob. `Ladder::enumerable` only reads a glob whose target the FILE
-covers; at a barrier the corpus knows every symbol every module declares. Needs
-re-measuring before it is built.
+The residue was decomposed and it is NOT actionable. `NoImportInScope`'s largest
+part is "a name we DO declare somewhere", and its head is:
+
+    783 pool | 535 push | 422 get | 317 pg | 168 from | 130 path | 128 join
+    108 id | 101 is_empty | 90 len
+
+`pool`, `pg`, `path`, `id` are LOCAL VARIABLES; `push`, `get`, `join`,
+`is_empty`, `len` are std collection methods. They land in that bucket only
+because some first-party type happens to declare a member of the same name —
+the name-match ceiling, confirmed rather than assumed. There is no large set of
+lost first-party edges here.
+
+A further 3,441 are a FIELD reach, which the ladder refuses to place through a
+path rung BY DESIGN (see `Ladder::climb`, with the measured `content_hash`
+case). Not a gap either.
+
+Remaining real gain needs the cross-file RETURN TYPE (#174), not another rung.
+The glob barrier fell from 9,503 to 2,134 once the external-path rung landed,
+so it is no longer the largest anything.
 
 ## Acceptance status
 
