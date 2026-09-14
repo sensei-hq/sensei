@@ -77,6 +77,21 @@ pub struct Grammar {
     /// name. Also verbatim in the specifier, so also the ladder's to read off.
     /// `None` where the language has no such spelling.
     pub wildcard: Option<&'static str>,
+    /// Whether a fully-qualified path can name an EXTERNAL package with no
+    /// import at all.
+    ///
+    /// Rust yes: `serde_json::json!(..)` and `tracing::warn!(..)` are complete
+    /// uses, and R5 says an external is named by use and never opened — so
+    /// requiring an import to place one is requiring something the language
+    /// does not. MEASURED: 268 `serde_json::json`, 57 `tracing::warn`, 54
+    /// `tracing::error`, 39 `uuid::Uuid::parse_str` sat in `NoImportInScope`
+    /// for exactly this reason.
+    ///
+    /// TypeScript NO, and the difference is not stylistic: a bare `foo.bar` is
+    /// an ordinary property access on a local object, so reading its head as a
+    /// package would mint a library node for every untyped local in the corpus.
+    /// A JavaScript module names an external ONLY through an import.
+    pub paths_name_packages: bool,
     /// Whether a rooted path is relative to the file's DIRECTORY rather than to
     /// the module the file is.
     ///
@@ -100,12 +115,19 @@ pub struct Grammar {
     /// splits differ in which separator falls where, so the loser names no
     /// declaration at all rather than naming somebody else's (A4 catches it).
     pub names_a_type: fn(&str) -> bool,
-    /// The package that supplies the names in scope with no import.
-    pub prelude_package: &'static str,
-    /// Those names, each with the path inside `prelude_package` that it is
-    /// re-exported from. The path and not the bare name, so a file that imports
-    /// one the long way lands on the node the prelude lands on.
-    pub prelude: &'static [(&'static str, &'static str)],
+    /// The names in scope with NO import, each as
+    /// `(name, package, path within that package)`.
+    ///
+    /// The package is per-entry rather than one per language, and that is not
+    /// generality for its own sake: Svelte's runes — `$state`, `$derived`,
+    /// `$props` — are in scope with nothing written, exactly like a prelude
+    /// name, but they belong to `svelte` and not to `ecmascript`. One package
+    /// for the whole table would have filed 1,038 references under a package
+    /// that does not define them.
+    ///
+    /// The PATH and not the bare name, so a file that imports one the long way
+    /// lands on the node the prelude lands on.
+    pub prelude: &'static [(&'static str, &'static str, &'static str)],
     /// Members every value of the language has. Filtering, not failure — see
     /// [`Reason::Denylisted`].
     pub plumbing: &'static [&'static str],
@@ -318,6 +340,9 @@ impl<'a> Ladder<'a> {
         if let Placed::Proven(fqn) = self.rooted_in_this_package(&wanted, at) {
             return Resolution::Resolved(fqn);
         }
+        if let Placed::Proven(fqn) = self.a_fully_qualified_external(&wanted) {
+            return Resolution::Resolved(fqn);
+        }
         // Rung 4 is the only one a glob can overrule: an explicit item and an
         // explicit import both outrank a glob, but a glob outranks the prelude.
         // So a glob in scope over a name the prelude also has leaves two
@@ -475,6 +500,36 @@ impl<'a> Ladder<'a> {
         }
     }
 
+    /// Rung 3b. A path whose HEAD names a package this scan does not own is a
+    /// complete reference to an external, with or without an import (R5).
+    ///
+    /// Guarded three ways, because the failure mode is minting a library node
+    /// out of an ordinary local:
+    ///
+    /// - the language must SAY a path can do this ([`Grammar::paths_name_packages`]);
+    /// - the path must have more than one segment, so a bare name never fires;
+    /// - the head must not be a root word, and must not name a first-party
+    ///   package — a sibling crate is ours however it is spelled.
+    fn a_fully_qualified_external(&self, wanted: &Wanted) -> Placed {
+        if !self.grammar.paths_name_packages {
+            return Placed::Unbound;
+        }
+        let Some((head, rest)) = wanted.segments.split_first() else {
+            return Placed::Unbound;
+        };
+        if rest.is_empty() || self.is_a_root(head) || self.owned_by_this_scan(head).is_some() {
+            return Placed::Unbound;
+        }
+        // A package name is a lowercase identifier. A leading TYPE is a path
+        // inside this package that some other rung owns, and reading it as a
+        // package would file `Widget::new` under a crate called `Widget`.
+        let names_a_type = self.grammar.names_a_type;
+        if names_a_type(head) {
+            return Placed::Unbound;
+        }
+        self.library(head, rest)
+    }
+
     /// Rung 4. A language puts some names in scope with nothing written to bring
     /// them there, so the absence of an import says nothing about them. They are
     /// members of a package we never open, like any other external (R5).
@@ -482,12 +537,14 @@ impl<'a> Ladder<'a> {
         let Some((head, tail)) = wanted.segments.split_first() else {
             return Placed::Unbound;
         };
-        let Some((_, path)) = self.grammar.prelude.iter().find(|(name, _)| name == head) else {
+        let Some((_, package, path)) =
+            self.grammar.prelude.iter().find(|(name, _, _)| name == head)
+        else {
             return Placed::Unbound;
         };
         let mut segments = self.split(path);
         segments.extend(tail.iter().cloned());
-        self.library(self.grammar.prelude_package, &segments)
+        self.library(package, &segments)
     }
 
     /// Whether a glob in scope could have replaced a prelude name without the
