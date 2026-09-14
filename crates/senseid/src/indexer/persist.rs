@@ -1106,9 +1106,7 @@ pub(crate) fn file_identity_of(
     module: &str,
     path: &str,
 ) -> Result<String, String> {
-    let fqn = match language {
-        Language::Rust => super::lang::rust::file_fqn(package, module, path),
-    };
+    let fqn = super::lang::adapter_for(language).file_fqn(package, module, path);
     fqn.map(|fqn| fqn.as_str().to_string())
         .map_err(|e| format!("{path} ({package}::{module}) has no file identity: {e:?}"))
 }
@@ -1510,7 +1508,8 @@ mod tests {
     use crate::indexer::facts::{
         DeclaredType, FileFacts, Language, Param, Reason, RelationKind, Symbol,
     };
-    use crate::indexer::lang::rust::{self, Source};
+    use crate::indexer::lang::Source;
+    use crate::indexer::lang::rust;
     use crate::indexer::persist;
     use crate::indexer::resolve::{World, resolve};
 

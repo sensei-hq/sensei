@@ -49,21 +49,44 @@ use super::fqn::{self, Form, Reach};
 /// own idea of what a miss means.
 pub struct Grammar {
     pub language: Language,
-    /// What joins the segments of a qualified name.
-    pub separator: &'static str,
-    /// The path root that names the package being scanned.
-    pub package_root: &'static str,
-    /// The path root that names the module the path is written in.
-    pub module_self: &'static str,
-    /// The path root that names the module one level out.
-    pub module_parent: &'static str,
+    /// What joins the segments of a QUALIFIED NAME at a use site — Rust's
+    /// `a::b::c`, TypeScript's `ns.thing`.
+    pub path_separator: &'static str,
+    /// What joins the segments of a MODULE PATH, which is also how an import
+    /// specifier spells its way to a module — Rust's `a::b`, TypeScript's
+    /// `./a/b`.
+    ///
+    /// Separate from [`Grammar::path_separator`] because for every language but
+    /// Rust they differ, and Rust spelling them alike is a coincidence rather
+    /// than a rule. Collapsing them split `./lib/store` into one segment and
+    /// then joined `src.lib` as a module path — two wrong identities from one
+    /// shared field.
+    pub module_separator: &'static str,
+    /// The words that ROOT a path, and what each one roots it at. A language
+    /// with no such word — JavaScript has no `crate` — simply does not list
+    /// one, which is why this is a table and not three named fields: an absent
+    /// root has no spelling, and giving it a placeholder spelling would make
+    /// some real segment accidentally root a path.
+    pub roots: &'static [(&'static str, Root)],
     /// What an import specifier puts between the path and the name it binds.
     /// The walk keeps a specifier verbatim, so the ladder has to know where the
-    /// path stops.
-    pub names_the_binding: &'static str,
+    /// path stops. `None` where the specifier never carries the binding —
+    /// TypeScript states it in the import clause, not in the string.
+    pub names_the_binding: Option<&'static str>,
     /// What a specifier ends with when it binds a whole module instead of one
     /// name. Also verbatim in the specifier, so also the ladder's to read off.
-    pub wildcard: &'static str,
+    /// `None` where the language has no such spelling.
+    pub wildcard: Option<&'static str>,
+    /// Whether a rooted path is relative to the file's DIRECTORY rather than to
+    /// the module the file is.
+    ///
+    /// The two languages genuinely differ and getting it wrong is off by one
+    /// module in every relative import. Rust's `self::x` inside module `a::b`
+    /// names `a::b::x` — the module itself. JavaScript's `./x` inside
+    /// `src/a/b.ts` names `src/a/x` — a SIBLING, because the specifier is a
+    /// filesystem path and `b.ts` is a file in `src/a`, not a directory
+    /// containing `x`.
+    pub relative_to_directory: bool,
     /// Whether a segment names a TYPE rather than a module.
     ///
     /// This is the one thing the ladder cannot read off the source: `a::b::c`
@@ -86,6 +109,21 @@ pub struct Grammar {
     /// Members every value of the language has. Filtering, not failure — see
     /// [`Reason::Denylisted`].
     pub plumbing: &'static [&'static str],
+}
+
+/// What a root word roots a path AT.
+///
+/// Three cases, because there are three: the package itself, the module the
+/// path is written in, and one module out. A language states as many of them as
+/// it has spellings for (see [`Grammar::roots`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Root {
+    /// The package being scanned — Rust's `crate`.
+    Package,
+    /// The module the path is written in — Rust's `self`, TypeScript's `.`.
+    Here,
+    /// One module out — Rust's `super`, TypeScript's `..`.
+    Up,
 }
 
 /// What the ladder is told about the scan it is part of.
@@ -392,7 +430,7 @@ impl<'a> Ladder<'a> {
             return Enumerable::No;
         };
         let here = self.module_at(glob.at);
-        let file = self.split(self.module);
+        let file = self.split_module(self.module);
         if target.len() >= file.len() && here.starts_with(&target) {
             Enumerable::TheModule(target)
         } else {
@@ -461,8 +499,19 @@ impl<'a> Ladder<'a> {
         Wanted { segments: self.split(raw), reach: evidence.reach }
     }
 
+    /// A use-site path, in segments.
     fn split(&self, raw: &str) -> Vec<String> {
-        raw.split(self.grammar.separator)
+        self.segments(raw, self.grammar.path_separator)
+    }
+
+    /// A module path or an import specifier, in segments. A DIFFERENT separator
+    /// from [`Ladder::split`] everywhere but Rust — see [`Grammar`].
+    fn split_module(&self, raw: &str) -> Vec<String> {
+        self.segments(raw, self.grammar.module_separator)
+    }
+
+    fn segments(&self, raw: &str, separator: &str) -> Vec<String> {
+        raw.split(separator)
             .map(str::trim)
             // A turbofish decorates a path without naming a segment of it.
             .filter(|s| !s.is_empty() && !s.starts_with('<'))
@@ -470,29 +519,40 @@ impl<'a> Ladder<'a> {
             .collect()
     }
 
+    /// Which root a segment names, if it names one at all.
+    fn root_of(&self, segment: &str) -> Option<Root> {
+        self.grammar.roots.iter().find(|(word, _)| *word == segment).map(|(_, root)| *root)
+    }
+
     fn is_a_root(&self, segment: &str) -> bool {
-        segment == self.grammar.package_root
-            || segment == self.grammar.module_self
-            || segment == self.grammar.module_parent
+        self.root_of(segment).is_some()
     }
 
     /// Read a path's leading root words against the module the path is written
     /// in, leaving package-relative segments.
     fn relative_to(&self, segments: &[String], at: Span) -> Rooted {
         let mut base = self.module_at(at);
+        // A directory-relative language counts from the folder the file sits
+        // in, so the file's own segment comes off before any `..` is read. Done
+        // once, on seeing the first root: `../..` pops twice from the
+        // directory, not three times.
+        if self.grammar.relative_to_directory && segments.first().is_some_and(|s| self.is_a_root(s))
+        {
+            base.pop();
+        }
         let mut rest = segments;
         while let Some(head) = rest.first() {
-            if head == self.grammar.package_root {
-                base.clear();
-            } else if head == self.grammar.module_self {
+            match self.root_of(head) {
+                Some(Root::Package) => base.clear(),
                 // Names the module the path is written in, which `base` already
                 // is.
-            } else if head == self.grammar.module_parent {
-                if base.pop().is_none() {
-                    return Rooted::Nowhere;
+                Some(Root::Here) => {}
+                Some(Root::Up) => {
+                    if base.pop().is_none() {
+                        return Rooted::Nowhere;
+                    }
                 }
-            } else {
-                break;
+                None => break,
             }
             rest = &rest[1..];
         }
@@ -506,7 +566,7 @@ impl<'a> Ladder<'a> {
     /// same way.
     fn module_at(&self, at: Span) -> Vec<String> {
         let mut segments: Vec<String> =
-            self.split(self.module).into_iter().filter(|s| !s.is_empty()).collect();
+            self.split_module(self.module).into_iter().filter(|s| !s.is_empty()).collect();
         for (span, name) in &self.blocks {
             if encloses(*span, at) {
                 segments.push((*name).to_string());
@@ -519,17 +579,22 @@ impl<'a> Ladder<'a> {
     fn specifier(&self, import: &Import) -> Rooted {
         // The specifier is kept verbatim, alias and all, so the alias comes off
         // before the path can be read.
-        let path = match import.path.split_once(self.grammar.names_the_binding) {
+        let path = match self.grammar.names_the_binding.and_then(|sep| import.path.split_once(sep))
+        {
             Some((path, _alias)) => path,
             None => import.path.as_str(),
         };
-        let mut segments = self.split(path);
+        let mut segments = self.split_module(path);
         // A grouped `self` (`use a::{self}`) binds the module the group is on,
         // not a member called `self`; a wildcard binds that module's contents
         // and is not a segment of its path either.
-        while segments
-            .last()
-            .is_some_and(|s| s == self.grammar.module_self || s == self.grammar.wildcard)
+        //
+        // A LEADING root is not popped here — `relative_to` below reads it, and
+        // popping `.` off `./a` would leave a bare `a` that reads as a package.
+        while segments.len() > 1
+            && segments.last().is_some_and(|s| {
+                self.root_of(s) == Some(Root::Here) || self.grammar.wildcard == Some(s.as_str())
+            })
         {
             segments.pop();
         }
@@ -569,7 +634,10 @@ impl<'a> Ladder<'a> {
     /// scan.
     fn identity(&self, package: &str, segments: &[String], reach: Reach) -> Placed {
         let lang = self.grammar.language;
-        let separator = self.grammar.separator;
+        // The MODULE separator: `front` here is a module path, and joining it
+        // with the use-site one would mint `src.lib` where the declaration side
+        // minted `src/lib`.
+        let separator = self.grammar.module_separator;
         let Some((last, front)) = segments.split_last() else {
             return Placed::Unbound;
         };
@@ -607,7 +675,7 @@ impl<'a> Ladder<'a> {
     /// path is kept, because "which of their members do we use" is a question
     /// the graph has to answer.
     fn library(&self, package: &str, segments: &[String]) -> Placed {
-        let member = segments.join(self.grammar.separator);
+        let member = segments.join(self.grammar.path_separator);
         match fqn::refer(&Form::Lib { package, member: &member }) {
             Ok(fqn) => Placed::Proven(fqn),
             Err(_) => Placed::Unbound,
@@ -646,7 +714,8 @@ mod tests {
 
     use crate::indexer::facts::{FileFacts, RefKind, Reference, Resolution};
     use crate::indexer::fqn;
-    use crate::indexer::lang::rust::{self, Source};
+    use crate::indexer::lang::Source;
+    use crate::indexer::lang::rust;
     use crate::indexer::resolve::{World, resolve};
     use crate::indexer::{module_of, package_of};
 
