@@ -1,4 +1,4 @@
-//! Indexer v2 — one module per language, each owning exactly one thing: how to
+//! One module per language, each owning exactly one thing: how to
 //! read that language's grammar (R7).
 //!
 //! Everything a language module is NOT allowed to own lives above it: the fqn

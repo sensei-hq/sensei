@@ -1,4 +1,4 @@
-//! Indexer v2 — the resolution ladder and the reason codes (step 5 of the plan).
+//! The resolution ladder and the reason codes (stage 5).
 //!
 //! This is the one place a use site is turned into a target (R7). A language
 //! module reads a grammar and says what it SAW; it never says what a name means,

@@ -1,4 +1,4 @@
-//! Indexer v2 — the emit path from [`FileFacts`] to the database (step 7).
+//! The emit path from [`FileFacts`] to the database (stage 6).
 //!
 //! One rule shapes everything here: **a fact that the walk captured must not be
 //! able to stop reaching storage without the build breaking** (R3, R9). The
@@ -59,7 +59,7 @@
 //! EXCLUDED.props` REPLACES a key rather than appending, so the second write
 //! erased the first's occurrences with nothing counting the loss. So the list is
 //! an OBJECT KEYED BY FILE, merged by
-//! [`crate::db::pg_store::PgStore::merge_v2_edge_occurrences`]. The same `||`
+//! [`crate::db::pg_store::PgStore::merge_edge_occurrences`]. The same `||`
 //! then does both jobs: it replaces this file's list, so a re-scan drops spans
 //! that have moved, and it leaves every other file's alone. What that still
 //! cannot cover is counted — see [`EdgeCollision`].
@@ -285,7 +285,7 @@ pub enum OriginRow {
     External(String),
 }
 
-/// Everything one folder's v2 rows read back as.
+/// Everything one folder's rows read back as.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stored {
     pub symbols: Vec<SymbolRow>,
@@ -854,7 +854,7 @@ fn occurrence_from_prop(value: &serde_json::Value) -> Option<Occurrence> {
 /// than appending, and that is exactly the behaviour wanted PER FILE (a re-scan
 /// must drop spans that have moved) and exactly the wrong behaviour ACROSS
 /// files (the second write would erase the first). Keying by file gets both:
-/// see [`crate::db::pg_store::PgStore::merge_v2_edge_occurrences`].
+/// see [`crate::db::pg_store::PgStore::merge_edge_occurrences`].
 fn occurrences_prop(row: &EdgeRow) -> serde_json::Value {
     serde_json::Value::Array(row.occurrences.iter().map(occurrence_prop).collect())
 }
@@ -865,7 +865,7 @@ fn edge_props(row: &EdgeRow) -> serde_json::Value {
     // `implements` row means — the `edges` table comment names it, and
     // `prune_mislabelled_containment_extends` DELETES any `extends` row that
     // lacks it. Stamping it is therefore not decoration: without it every
-    // inheritance edge v2 writes would be collected as legacy debris.
+    // inheritance edge this indexer writes would be collected as legacy debris.
     //
     // Read off the first structural occurrence. A second one would have to
     // disagree with it to matter, and it cannot: the grouping key already
@@ -975,7 +975,7 @@ pub async fn write(
             Some(owner) => Some(node_for(store, folder_id, &mut known, owner, language).await?),
             None => None,
         };
-        let id = store.upsert_v2_symbol(folder_id, &node_columns_of(&row), parent.as_ref()).await?;
+        let id = store.upsert_symbol(folder_id, &node_columns_of(&row), parent.as_ref()).await?;
         *declarations.entry(row.fqn.clone()).or_default() += 1;
         known.insert(row.fqn, id);
     }
@@ -1009,7 +1009,7 @@ pub async fn write(
         }
         // The occurrences go out SEPARATELY and keyed by this file, so a re-scan
         // of it replaces its own list while another file's survives.
-        store.merge_v2_edge_occurrences(&edge_id, file_path, &occurrences_prop(&row)).await?;
+        store.merge_edge_occurrences(&edge_id, file_path, &occurrences_prop(&row)).await?;
         edges += 1;
     }
     Ok(Written {
@@ -1070,7 +1070,7 @@ async fn node_for(
     // `modified_at` on a row it is about to write back unaltered. A file's own
     // module node comes through here on every file-scope use site, so without
     // this every file churns at least one row per pass.
-    let id = match store.v2_node_unchanged_by_reference(folder_id, fqn, Some(language)).await? {
+    let id = match store.node_unchanged_by_reference(folder_id, fqn, Some(language)).await? {
         Some(id) => id,
         None => {
             let (kind, name) = stub_kind_and_name(fqn)?;
@@ -1176,7 +1176,7 @@ pub(crate) fn stub_kind_and_name(fqn: &str) -> Result<(&'static str, String), St
 }
 
 /// The write policy for one edge's target — the SHARED one
-/// (`crate::graph_facts`), so v2 does not arrive with a second idea of what a
+/// (`crate::graph_facts`), so this indexer does not arrive with a second idea of what a
 /// miss means.
 ///
 /// A proven first-party target that has not been indexed yet becomes a STUB and
@@ -1204,21 +1204,21 @@ fn target_ref_of(target: &TargetKey) -> Result<TargetRef, String> {
 
 // ── reading back ─────────────────────────────────────────────────────────────
 
-/// Read one folder's v2 rows back into the shapes they were written from.
+/// Read one folder's rows back into the shapes they were written from.
 ///
 /// Every miss is an error and never a substituted value: a decoded row that
 /// filled in a blank would make the round-trip test pass on data the database
 /// does not hold, which is the one thing it exists to catch (R4).
 pub async fn read_back(store: &PgStore, folder_id: &uuid::Uuid) -> Result<Stored, String> {
     let symbols = store
-        .v2_definition_nodes(folder_id)
+        .definition_nodes(folder_id)
         .await?
         .iter()
         .map(symbol_row_from_columns)
         .collect::<Result<Vec<_>, String>>()?;
     let mut stored =
         Stored { symbols, references: Vec::new(), relations: Vec::new(), imports: Vec::new() };
-    for edge in store.v2_edges(folder_id).await? {
+    for edge in store.occurrence_edges(folder_id).await? {
         read_edge_into(&edge, &mut stored)?;
     }
     Ok(stored)
@@ -1237,10 +1237,9 @@ fn read_edge_into(edge: &EdgeColumns, stored: &mut Stored) -> Result<(), String>
     // An OBJECT keyed by file, not a flat list — see `occurrences_prop`. A flat
     // list is the shape this reader's writer no longer produces, so it is an
     // error rather than something to read half of.
-    let by_file = props
-        .get("occurrences")
-        .and_then(|v| v.as_object())
-        .ok_or_else(|| format!("{source_fqn}: an edge with no occurrences is not a v2 edge"))?;
+    let by_file = props.get("occurrences").and_then(|v| v.as_object()).ok_or_else(|| {
+        format!("{source_fqn}: an edge with no occurrences is not one this indexer wrote")
+    })?;
     let occurrences: Vec<&serde_json::Value> = by_file
         .values()
         .map(|of_one_file| {
@@ -1359,7 +1358,7 @@ fn symbol_row_from_columns(columns: &NodeColumns) -> Result<SymbolRow, String> {
     let kind = symbol_kind_from_label(kind_label)
         .ok_or_else(|| format!("{fqn}: props.symbol_kind names no kind: {kind_label:?}"))?;
     let holds = node_kind_holds(node_kind).ok_or_else(|| {
-        format!("{fqn}: the node_kind column says {node_kind:?}, which no v2 symbol is filed under")
+        format!("{fqn}: the node_kind column says {node_kind:?}, which no symbol is filed under")
     })?;
     if !holds.contains(&kind) {
         return Err(format!(
@@ -1370,8 +1369,9 @@ fn symbol_row_from_columns(columns: &NodeColumns) -> Result<SymbolRow, String> {
 
     let file_path = file_path.clone().ok_or_else(|| missing("the file path"))?;
     let language_label = language.as_deref().ok_or_else(|| missing("the language"))?;
-    let language = Language::from_label(language_label)
-        .ok_or_else(|| format!("{fqn}: language names no language v2 reads: {language_label:?}"))?;
+    let language = Language::from_label(language_label).ok_or_else(|| {
+        format!("{fqn}: language names no language this indexer reads: {language_label:?}")
+    })?;
 
     let start_line = line_start.ok_or_else(|| missing("the first line"))?;
     let end_line = line_end.ok_or_else(|| missing("the last line"))?;
@@ -1577,7 +1577,7 @@ pub fn widest(a: u32) -> u32 {
     }
 
     async fn a_folder(store: &PgStore, test: &str) -> uuid::Uuid {
-        create_test_folder(store, &format!("v2_persist_{test}_{}", uuid::Uuid::new_v4())).await
+        create_test_folder(store, &format!("persist_{test}_{}", uuid::Uuid::new_v4())).await
     }
 
     /// Write the facts the way the pipeline does — barrier first.
@@ -1805,7 +1805,7 @@ pub fn widest(a: u32) -> u32 {
         // Not an absence: the row exists, and it names the target it could not
         // place rather than pointing at a node that would be a guess.
         let named: Vec<String> = store
-            .v2_edges(&folder)
+            .occurrence_edges(&folder)
             .await
             .expect("the edges read back")
             .into_iter()
@@ -1908,33 +1908,33 @@ pub fn widest(a: u32) -> u32 {
         );
     }
 
-    /// The safety property, at the read boundary. v2 has no caller, but the
+    /// The safety property, at the read boundary. This indexer has no caller, but the
     /// cutover puts BOTH indexers' rows in one folder for one language at a
-    /// time (spec §7), so v2's reader has to be able to tell them apart. A
-    /// reader that swallowed a v1 edge would report facts v2 never produced,
+    /// time (spec §7), so its reader has to be able to tell them apart. A
+    /// reader that swallowed a legacy edge would report facts nothing here produced,
     /// and a differential harness (step 8) built on it would be measuring
     /// itself.
     #[tokio::test]
-    async fn a_v1_edge_in_the_same_folder_is_neither_read_as_a_v2_fact_nor_an_error() {
+    async fn a_legacy_edge_in_the_same_folder_is_neither_read_as_a_fact_nor_an_error() {
         let facts = walked();
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "coexist").await;
         persisted(&store, &folder, &facts).await.expect("the facts persist");
-        let v2_only = persist::read_back(&store, &folder).await.expect("the rows read back");
+        let ours_only = persist::read_back(&store, &folder).await.expect("the rows read back");
 
-        // A v1 edge: the shipped indexer's shape — no props, a bare target name.
+        // A legacy edge: the shipped indexer's shape — no props, a bare target name.
         let source = store
             .node_id_by_fqn(&folder, "rust·senseid·gadget·widest·item")
             .await
             .expect("the lookup runs")
             .expect("the fixture declares it");
         store
-            .insert_edge(&folder, &source, None, Some("something_v1_saw"), None, "calls")
+            .insert_edge(&folder, &source, None, Some("something_legacy_saw"), None, "calls")
             .await
-            .expect("the v1 edge inserts");
+            .expect("the legacy edge inserts");
 
         let after = persist::read_back(&store, &folder).await.expect("the rows still read back");
-        assert_eq!(after, v2_only, "a v1 edge must change nothing v2 reads");
+        assert_eq!(after, ours_only, "a legacy edge must change nothing this indexer reads");
     }
 
     /// R9 as a property of the SOURCE, because it is not a property of any
@@ -1964,7 +1964,7 @@ pub fn widest(a: u32) -> u32 {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let sources = [
             ("indexer/persist.rs", root.join("src/indexer/persist.rs")),
-            ("db/pg_store/indexer_v2.rs", root.join("src/db/pg_store/indexer_v2.rs")),
+            ("db/pg_store/indexer.rs", root.join("src/db/pg_store/indexer.rs")),
         ];
         // Every type that crosses the fact/row boundary in either direction.
         let required = [
@@ -2381,7 +2381,7 @@ pub fn widest(a: u32) -> u32 {
         persisted(&store, &folder, &facts).await.expect("the facts persist");
 
         let edges: Vec<_> = store
-            .v2_edges(&folder)
+            .occurrence_edges(&folder)
             .await
             .expect("the edges read back")
             .into_iter()
@@ -2565,7 +2565,7 @@ pub fn widest(a: u32) -> u32 {
             kind_of(&store, &folder, "before").await,
             "unknown",
             "an `item` stub must not claim a kind the identity does not state; `parameter` is \
-             the placeholder v2 never mints for a declaration (D2), so it cannot be read as one"
+             the placeholder this indexer never mints for a declaration (D2), so it cannot be read as one"
         );
 
         persisted(&store, &folder, &walk_of("bell", "src/bell.rs", callee))
@@ -2673,7 +2673,7 @@ pub fn widest(a: u32) -> u32 {
         persisted(&store, &folder, &facts).await.expect("the facts persist");
 
         let containment: std::collections::BTreeMap<String, Option<String>> = store
-            .v2_containment(&folder)
+            .containment(&folder)
             .await
             .expect("the containment reads back")
             .into_iter()
@@ -2732,7 +2732,7 @@ pub fn widest(a: u32) -> u32 {
         let folder = a_folder(&store, "externals").await;
         persisted(&store, &folder, &facts).await.expect("the facts persist");
 
-        let lib = store.v2_lib_nodes(&folder).await.expect("the external rows read back");
+        let lib = store.lib_nodes(&folder).await.expect("the external rows read back");
         let container = lib
             .iter()
             .find(|row| row.fqn == "lib·std" && row.parent_fqn.is_none())

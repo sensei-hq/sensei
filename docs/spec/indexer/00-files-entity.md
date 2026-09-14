@@ -1,18 +1,18 @@
 # Stage 0 — the files entity, and ALL the DDL
 
-Whole-system spec: `docs/design/indexer-v2.md` §7h (the DDL ruling), R13 (the
+Whole-system spec: `docs/design/indexer.md` §7h (the DDL ruling), R13 (the
 files entity), R10.7/R10.9 (the detail column), R10.7d (ORPHANED), D10, D11.
 Where this document and that one disagree, that one wins and this is a bug.
 
 ## 1. Purpose
 
-Open the schema ONCE, before any v2 code exists, so that no later stage has to
+Open the schema ONCE, before any indexer code exists, so that no later stage has to
 work around a column it knows is coming. Seven changes, one `dbd` pass.
 
 Serves both goals indirectly and one directly: after this stage the 8,147
 ORPHANED nodes — which today assert "declared in x.rs" about files the scanner
 does not track, and read as COMPLETE to every consumer — are not merely swept
-but UNREPRESENTABLE. That is a G2 correctness fix that needs no v2 code at all.
+but UNREPRESENTABLE. That is a G2 correctness fix that needs no the indexer code at all.
 
 This stage writes NO Rust. If you find yourself editing `crates/`, you are in
 the wrong stage.
@@ -118,7 +118,7 @@ land together; splitting them migrates the same table twice.
   What is left of D12 after the wipe: drop the two labels (a `create type` +
   `ALTER TABLE ... TYPE` + rename swap, since Postgres has no `DROP VALUE`)
   and repoint `graph_nodes.locality` at the fqn test. The 111 code references
-  are largely v1's writer, which stage 10 retires regardless.
+  are largely the legacy indexer's writer, which stage 10 retires regardless.
 
 - **S6** (§7h.5). Check `sensei.edge_kind` before widening it. **Current 11
   values:**
@@ -399,7 +399,7 @@ workflow.
 **134 references across 10 Rust files** name `scan_state` or `nodes.file_path`,
 plus `design.dbml` and the `folder_completeness` view. They are mechanical but
 they are not optional — the tree must compile at the end of this stage even
-though no v2 code has been written. Measured, bounded, and the reason S1–S3
+though no the indexer code has been written. Measured, bounded, and the reason S1–S3
 land together.
 
 **Do not add `ON DELETE CASCADE` to `nodes.file_id`.** It is tempting and it is

@@ -113,7 +113,7 @@ fn origin_remote(repo_path: &str) -> Option<String> {
 /// gates the read: if the file was seen before at this exact timestamp its
 /// bytes cannot have changed, and last scan's hash is still its hash.
 ///
-/// This is the two-tier gate v1 already used (`scan_logic::plan_reindex`),
+/// This is the two-tier gate the legacy scan already used (`scan_logic::plan_reindex`),
 /// kept OUT of [`structure::plan_structure`] so that function stays pure and
 /// hash-only. It is a caching decision, not a classification one.
 fn file_facts(path: &std::path::Path, previous: Option<&FileFacts>) -> Option<FileFacts> {
@@ -301,9 +301,9 @@ const LOCAL_PROTOCOLS: &[&str] = &["link:", "workspace:", "file:", "path:", "por
 /// folder -> folder for local siblings (02 S8, 02b S11).
 ///
 /// THE MISSING WRITER. `referenced_libraries` is how "which projects use this
-/// library" and every version-drift question are answered, and nothing in v2
+/// library" and every version-drift question are answered, and nothing here
 /// wrote it — `extract_deps` does, but only as a separate task handler that
-/// the v2 scan never invokes. Without it there are no folder -> library edges
+/// this scan never invokes. Without it there are no folder -> library edges
 /// at all, and `library_update_scheduler` (the only consumer of the registry
 /// URLs) has nothing to tick over.
 ///
@@ -764,7 +764,7 @@ mod corpus {
     /// release they describe rather than to whatever `develop` holds today.
     ///
     /// `cargo test -p senseid --bin senseid three_routes -- --ignored --nocapture`
-    /// Every v2 stage is visible in the stream the UI already subscribes to
+    /// Every stage is visible in the stream the UI already subscribes to
     /// (08 S1/S4).
     ///
     /// Before this, `scan_and_write_structure` emitted NOTHING — stages 1, 2, 2b
@@ -777,7 +777,7 @@ mod corpus {
     /// exactly what leaves a UI spinning forever, and only the pairing catches
     /// it.
     #[tokio::test]
-    async fn every_v2_stage_reaches_the_progress_stream() {
+    async fn every_stage_reaches_the_progress_stream() {
         let Ok(pg) = PgStore::connect_test().await else {
             return;
         };

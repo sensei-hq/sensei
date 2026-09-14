@@ -1,10 +1,10 @@
-# Indexer v2 — execution sequence and spec index
+# The indexer — execution sequence and spec index
 
 The master plan. Each stage has its OWN spec, implementable and verifiable on
 its own. This file is the order and the dependency between them; it holds no
 design detail of its own.
 
-Source of the split: `docs/design/indexer-v2.md` (R1..R15, A1..A8, D1..D9) is the
+Source of the split: `docs/design/indexer.md` (R1..R15, A1..A8, D1..D9) is the
 whole-system spec. The per-stage specs below carve it into buildable pieces and
 must not contradict it — where they do, the whole-system spec wins and the
 per-stage one is a bug.
@@ -15,7 +15,7 @@ Each row is startable only when everything above it is done and verified. This
 ordering is not preference: each stage consumes a structure the previous one
 creates.
 
-**`docs/plans/indexer-v2-rust.md` is SUPERSEDED by this file plus the ten
+**`docs/plans/indexer-rust-superseded.md` is SUPERSEDED by this file plus the ten
 specs.** It deferred all DDL to its "step 9", which contradicted stage 0 below;
 that conflict is resolved in favour of stage 0 (whole-system spec §7h, D10).
 Keep it only as the historical record of how the Rust steps were first drafted.
@@ -33,7 +33,7 @@ Keep it only as the historical record of how the Rust steps were first drafted.
 | 7 | `spec/indexer/07-reconcile.md` | claim diff, dirty vs delete, cascade ordering | 6 |
 | 8 | `spec/indexer/08-progress.md` | extend `TaskEvent` SSE for the new stages | 3 (usable from there) |
 | 9 | `spec/indexer/09-incremental.md` | changed files -> repos, the inverse traversal | 7 |
-| 10 | `spec/indexer/10-cutover.md` | differential harness, **WIPE + rebuild the code graph (D13)**, switch rust only, retire v1 | 9 |
+| 10 | `spec/indexer/10-cutover.md` | differential harness, **WIPE + rebuild the code graph (D13)**, switch rust only, retire the legacy indexer | 9 |
 
 Steps 1-3 can be verified without any parsing at all. Step 4 needs no database.
 Only 6 onward touch persistence. That is deliberate — it front-loads everything
@@ -47,7 +47,7 @@ derived without re-parsing — so the code graph is TRUNCATED and rebuilt at
 stage 10, not healed in place.
 
 Every stage before 10 therefore changes SCHEMA only, because schema defines
-the shape v2 writes into and must be right before cutover. A backfill on
+the shape the indexer writes into and must be right before cutover. A backfill on
 `nodes`/`edges` is waste: cutover deletes it. D12's 21,928-row backfill was
 withdrawn on exactly this ground, and it could not have produced a correct
 value anyway.
@@ -95,7 +95,7 @@ Live: **572 commands across 58 folders and 4 ecosystems.** `source_file` already
 records the declaring manifest, so the per-manifest scoping this plan called for
 is present — the working directory is its dirname.
 
-### So what v2 actually changes here
+### So what the indexer actually changes here
 
 Not the extraction. Only WHERE IT RUNS. Today it happens in a `libraries` task
 handler, separate from the scan. Under R14 it belongs in `scan_repo`, before the
@@ -247,10 +247,10 @@ folders' command sets and loses which directory each `build` runs in.
 
 | | |
 |---|---|
-| whole-system spec | written and REVIEWED — `docs/design/indexer-v2.md` |
+| whole-system spec | written and REVIEWED — `docs/design/indexer.md` |
 | consistency review | run, 38 findings, folded in at `f9393c52` |
 | per-stage specs | **WRITTEN** — `docs/spec/indexer/00..10` |
-| superseded | `docs/plans/indexer-v2-rust.md` (DDL ordering; historical only) |
+| superseded | `docs/plans/indexer-rust-superseded.md` (DDL ordering; historical only) |
 | code | `bc343622`, nothing since |
 
 The review found ten CRITICAL items, all of them stale text that would have

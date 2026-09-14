@@ -1,6 +1,6 @@
 # Stage 7 — reconcile: dirty is not deleted, deleted is not demoted
 
-Whole-system spec: `docs/design/indexer-v2.md` §7b in full — **R10.1, R10.3,
+Whole-system spec: `docs/design/indexer.md` §7b in full — **R10.1, R10.3,
 R10.4, R10.5, R10.6, R10.7, R10.8, R10.9** — plus A8, A9, D8, D9. Depends on
 stage 6.
 
@@ -80,7 +80,7 @@ correction, not a cosmetic change.
   edges away, in silence, from files nobody re-indexed.
 - **S9** (R10.4). Remove only F's key from `props.occurrences`; delete the edge
   row iff the result is `{}`. Never the source-scoped
-  `DELETE FROM edges WHERE source_id = ANY(…)`, which is the v1 shape and takes
+  `DELETE FROM edges WHERE source_id = ANY(…)`, which is the legacy indexer shape and takes
   every other file's occurrences with it.
 - **S10** (R10.4, D9). A node is deleted only when `props.claims` is EMPTY.
   When a claim remains but the released one owned the definition columns, clear

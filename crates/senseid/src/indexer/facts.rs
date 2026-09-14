@@ -1,4 +1,4 @@
-//! Indexer v2 — the fact vocabulary one walk produces (spec §3).
+//! The fact vocabulary one walk produces (spec §3).
 //!
 //! Types, and the labels those types spell themselves with. Every rule that
 //! INTERPRETS them lives elsewhere: the fqn grammar in `fqn.rs`, the resolution
@@ -18,7 +18,7 @@
 //
 // This module has no caller on purpose: the shipped indexer under
 // `crate::languages` keeps producing the graph until the rust cutover in step 9
-// of `docs/plans/indexer-v2-rust.md`. The allow is what lets the two coexist
+// at stage 10 (`docs/spec/indexer/10-cutover.md`). The allow lets the two coexist
 // without either one carrying warnings.
 #![allow(dead_code)]
 
@@ -789,7 +789,7 @@ mod tests {
     /// and a caller cannot tell it from one the walk read (R4). The needle is
     /// assembled for the same reason as the one above.
     #[test]
-    fn nothing_in_v2_defaults_a_value_it_did_not_read() {
+    fn nothing_defaults_a_value_it_did_not_read() {
         // Both spellings: the derive/impl that hands out a whole value, and the
         // call that turns a failed read into a zero nobody can tell from a real
         // one. The needles are assembled for the same reason as the ones above.

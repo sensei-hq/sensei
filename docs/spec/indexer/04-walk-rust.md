@@ -1,6 +1,6 @@
 # Stage 4 — the Rust walk: one parse, all the facts
 
-Whole-system spec: `docs/design/indexer-v2.md` §2 and §2.1 (identity and
+Whole-system spec: `docs/design/indexer.md` §2 and §2.1 (identity and
 reach), §3 (the fact types), R1, R2, R3, R8, R9, D2, D5, D7. Depends on
 stage 3.
 
@@ -28,7 +28,7 @@ suite runs on string literals.
 
 `FileFacts` must have **no production constructor** other than a language
 module's `read` (R10.3) — that is what makes it impossible for a failed parse
-to reach reconcile as an empty fact set. Enforce with a guard test over the v2
+to reach reconcile as an empty fact set. Enforce with a guard test over the indexer
 sources.
 
 ## 3. Requirements
@@ -93,7 +93,7 @@ sources.
 
 **Nothing may turn an `Err` into an empty fact set.** `.unwrap_or_default()` on
 a `Result<FileFacts, _>` is the exact shape the DRY/no-fabrication rule forbids,
-and a guard test must assert it appears nowhere in the v2 sources.
+and a guard test must assert it appears nowhere in the indexer sources.
 
 ## 5. Verification
 
@@ -150,4 +150,4 @@ expensive version.
 - Field and enum-variant symbols are non-zero over the real corpus.
 - The independent reference counter agrees over this repo's real Rust.
 - R8's seven patterns are each shown derivable from the emitted facts (S10).
-- No `Option<Fqn>` and no early-return arm exists in the v2 sources.
+- No `Option<Fqn>` and no early-return arm exists in the indexer sources.

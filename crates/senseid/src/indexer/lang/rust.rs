@@ -1,4 +1,4 @@
-//! Indexer v2 — reading the Rust grammar (spec §7 D4, step 3 and 4 of the plan).
+//! Reading the Rust grammar (spec §7 D4, stages 3 and 4).
 //!
 //! This module owns one thing: how a Rust source file is READ (R7). It mints no
 //! identity of its own — every fqn comes back through `fqn::define`/`fqn::refer`
@@ -301,10 +301,10 @@ pub fn file_fqn(package: &str, module: &str, path: &str) -> Result<Fqn, FqnError
 /// | `crates/x/src/a/mod.rs` | `a` |
 ///
 /// THE ONE OWNER of this rule, and it had three. A private
-/// `rust_module_path` in v1's `languages::rust_lang`, a `#[cfg(test)]`
+/// `rust_module_path` in the legacy `languages::rust_lang`, a `#[cfg(test)]`
 /// `indexer::module_of` that guessed the crate root by looking for `/src/`
-/// instead of being told it, and nothing at all in v2's production path. The
-/// test helper now delegates here; v1's copy retires with v1 at stage 10.
+/// instead of being told it, and nothing at all in this indexer's production
+/// path. The test helper now delegates here; the legacy copy retires at stage 10.
 ///
 /// It matters beyond tidiness: this string is a SEGMENT OF EVERY FQN the file
 /// declares, so two implementations that disagree by one segment mint two
@@ -2717,7 +2717,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
 
     // ── step 4: every reference ──────────────────────────────────────────────
 
-    /// A2, and the load-bearing check of the whole rewrite. v1's defect was a
+    /// A2, and the load-bearing check of the whole rewrite. The legacy defect was a
     /// catch-all arm that returned early, so a use site it did not understand
     /// left no trace at all and the loss was invisible. This is what makes the
     /// loss visible: an independent count of use-site nodes over this repo's own

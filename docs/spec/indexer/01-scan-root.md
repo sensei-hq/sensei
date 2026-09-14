@@ -1,6 +1,6 @@
 # Stage 1 — scan root: which repositories exist
 
-Whole-system spec: `docs/design/indexer-v2.md` §7g (R15), R14 (structure before
+Whole-system spec: `docs/design/indexer.md` §7g (R15), R14 (structure before
 work). Depends on stage 0.
 
 ## 1. Purpose
