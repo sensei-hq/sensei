@@ -1352,6 +1352,62 @@ pub fn free(w: &Widget) -> u32 { w.width }
 
     // ── step 4: every reference ──────────────────────────────────────────────
 
+    /// A declaration inside a function body is named under that function.
+    ///
+    /// The AST always carried the parent — the walk is inside `Walk::function`
+    /// descending into its own children, and `Scope::from` was already being
+    /// set from it, which is why a REFERENCE in a body attributed correctly.
+    /// The declaration did not, because `declare` reads `container` and nothing
+    /// told the container it had gone inside a body.
+    ///
+    /// MEASURED: three `static RE` in three `fn`s of one file minted ONE
+    /// identity; A7 reported 708 such collisions.
+    ///
+    /// MUTATION: drop `inner.fn_scope.push(..)` from `Walk::function` — the two
+    /// `RE`s collapse onto one fqn again.
+    #[test]
+    fn a_declaration_inside_a_function_body_is_named_under_that_function() {
+        let facts = facts(
+            "m",
+            "pub fn a() -> u32 { static RE: u32 = 1; RE }\n\
+             pub fn b() -> u32 { static RE: u32 = 2; RE }\n\
+             pub static RE: u32 = 3;\n",
+        );
+        let minted: Vec<&str> =
+            facts.symbols.iter().filter(|s| s.name == "RE").map(|s| s.fqn.as_str()).collect();
+        assert_eq!(minted.len(), 3, "three declarations: {minted:?}");
+        let distinct: std::collections::BTreeSet<&&str> = minted.iter().collect();
+        assert_eq!(distinct.len(), 3, "three declarations, three identities: {minted:?}");
+        assert!(
+            minted.contains(&"rust·p·m::fn::a·RE·item"),
+            "the local is named under its function: {minted:?}"
+        );
+        assert!(
+            minted.contains(&"rust·p·m·RE·item"),
+            "and the module-level one is untouched: {minted:?}"
+        );
+
+        // AND WHAT THIS DOES NOT DO. `RE` in the body is a BARE IDENTIFIER,
+        // and `Walk::use_site` deliberately emits no reference for one — the
+        // walk cannot tell a local variable read from a const read without
+        // scope analysis, and emitting every one would bury the graph. So these
+        // three declarations are now three distinct nodes with NO inbound edge,
+        // where before they were one node with the wrong answer.
+        //
+        // That is the trade, stated rather than glossed: R4 ranks a missing
+        // edge above a wrong one, and "where is `RE` defined" answering with
+        // whichever file-position won is the wrong one. Closing the other half
+        // needs identifier reads, which is a separate decision.
+        assert!(
+            !facts.references.iter().any(|r| matches!(
+                &r.target,
+                Resolution::Unresolved { evidence, .. } if evidence.name == "RE"
+            )),
+            "a bare identifier read is not a use site today; if that changes, this test is \
+             where the other half of the merge gets asserted"
+        );
+    }
+
     // ── anchoring a member to its type's module ──────────────────────────
 
     /// The fix, and the defect it replaces, in one test.

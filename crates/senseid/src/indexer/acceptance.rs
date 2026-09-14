@@ -344,7 +344,8 @@ fn an_import_named_target_resolves() {
 /// stated as "zero" that fails on its first run gets waived, and a waived gate
 /// is not a gate. The number may fall; it may not rise.
 ///
-/// # 708 today, and they are TWO causes, not one
+/// # 525 today. The function-body cause is CLOSED for Rust and PARTIAL for
+/// TypeScript
 ///
 /// A declaration inside a FUNCTION BODY is minted as if it sat at module scope.
 ///
@@ -373,9 +374,29 @@ fn an_import_named_target_resolves() {
 /// `const _` twice in one file (`tasks/handlers/embed.rs`) is a third thing
 /// again: an anonymous name is not a name.
 ///
+/// # TypeScript's 522 — what the function-body fix does NOT yet reach
+///
+/// A declaration is now named under its enclosing function for a `function`
+/// declaration and for a function or arrow bound to a `const`. Two shapes are
+/// still un-scoped, and they are the common ones in this corpus:
+///
+/// - an ANONYMOUS arrow in argument position — `items.map(x => { const y = 1 })`
+///   — walked by the `ArrowFunctionExpression` arm of `Walk::expression`, which
+///   has no name to push;
+/// - a METHOD body, walked from `Walk::class_element`, where the container is
+///   `Type` so a local is minted as a MEMBER of the class rather than a local
+///   of the method.
+///
+/// Both need a name for the enclosing scope that a use site could also compose.
+/// An anonymous arrow has none, so this is the same grammar question the Rust
+/// side answered differently: what identity does an unreachable declaration
+/// get? Not settled for the anonymous case.
+///
 /// # What this number was before, and why it moved
 ///
-/// 1,114 was reported, and 375 of those were ONE declaration emitted TWICE by
+/// 708 -> 525 is the function-body fix: Rust 13 -> 3, TypeScript 695 -> 522.
+///
+/// 1,114 was reported before that, and 375 of those were ONE declaration emitted TWICE by
 /// the JavaScript walk walking a function initialiser on two paths — a
 /// declaration colliding with itself, not two declarations sharing a scope. A
 /// further 31 were files the shipped scan never reads, which the corpus was
@@ -426,9 +447,9 @@ fn no_two_declarations_mint_one_identity() {
 
     // THE RATCHET. Lower it when a collision is repaired; never raise it to
     // make a run pass.
-    const KNOWN: usize = 708;
-    const KNOWN_RUST: usize = 13;
-    const KNOWN_TYPESCRIPT: usize = 695;
+    const KNOWN: usize = 525;
+    const KNOWN_RUST: usize = 3;
+    const KNOWN_TYPESCRIPT: usize = 522;
     assert!(
         collisions.len() <= KNOWN,
         "identity collisions rose to {} (ratchet {KNOWN}) — two declarations under one \
