@@ -55,7 +55,7 @@ pub enum TaskEvent {
         files_expected: Option<u32>,
     },
 
-    /// A v2 pipeline STAGE began (08 S1) — `scan_root`, `scan_repo`,
+    /// An indexer pipeline STAGE began (08 S1) — `scan_root`, `scan_repo`,
     /// `library_discovery`, `structure_write`.
     ///
     /// Its own variant rather than a reuse of [`Self::Started`], which carries a

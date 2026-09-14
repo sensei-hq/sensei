@@ -1,6 +1,6 @@
 # Stage 2 — scan repo: submodules, subtrees, manifests, files
 
-Whole-system spec: `docs/design/indexer-v2.md` §7g (R15), R14, R10.7c, R10.7h.
+Whole-system spec: `docs/design/indexer.md` §7g (R15), R14, R10.7c, R10.7h.
 Depends on stage 1.
 
 ## 1. Purpose
@@ -154,7 +154,7 @@ ruby, dotnet, composer, swiftpm). It provides `manifest_filenames`, `accepts`,
 `is_workspace_root`, `stack_labels`, `infer_role`. It is CALLED today and
 persists **572 commands across 58 folders and 4 ecosystems**.
 
-v2 changes only WHERE IT RUNS — from a separate `libraries` task handler into
+The indexer changes only WHERE IT RUNS — from a separate `libraries` task handler into
 this stage, before the structure barrier — not what it extracts.
 
 **Do NOT glob a second time for manifests.** This stage already walks every

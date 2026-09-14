@@ -1,6 +1,6 @@
 # Stage 5 — the resolution ladder
 
-Whole-system spec: `docs/design/indexer-v2.md` §2 (identity), §2.1 (reach),
+Whole-system spec: `docs/design/indexer.md` §2 (identity), §2.1 (reach),
 R2, R6, R7, A1, A3, A6, D7. Depends on stage 4.
 
 ## 1. Purpose

@@ -1,4 +1,4 @@
-//! Indexer v2 — the one place an FQN string is built (spec §2, R7).
+//! The one place an FQN string is built (spec §2, R7).
 //!
 //! An FQN is a LOOKUP KEY, minted independently by a reference and by a
 //! definition. If the two sides mint different strings for one symbol they

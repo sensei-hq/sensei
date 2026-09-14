@@ -1,6 +1,6 @@
 # Stage 6 — persistence: lossless at the boundary
 
-Whole-system spec: `docs/design/indexer-v2.md` R3, R4, R9, R13, D1, D9.
+Whole-system spec: `docs/design/indexer.md` R3, R4, R9, R13, D1, D9.
 Depends on stage 5.
 
 ## 1. Purpose
@@ -103,7 +103,7 @@ tick. Two owners of deletion is how a race gets built.
 
 ## 7. Definition of done
 
-- No positional-argument insert exists in the v2 persistence path.
+- No positional-argument insert exists in the indexer persistence path.
 - The round trip passes over a fixture AND asserts against columns, not props.
 - The 11 self-verifying column mappings are fixed as a class.
 - Claims and occurrences both merge per file, proven by two-file fixtures.

@@ -1,6 +1,6 @@
 # Stage 3 — structure write: the barrier
 
-Whole-system spec: `docs/design/indexer-v2.md` R14, R13 (the walk creates file
+Whole-system spec: `docs/design/indexer.md` R14, R13 (the walk creates file
 rows), R10.7b (folder rollup). Depends on stage 2.
 
 ## 1. Purpose

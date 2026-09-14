@@ -1,6 +1,6 @@
 # Stage 8 — runtime progress: extend what exists, invent nothing
 
-Whole-system spec: `docs/design/indexer-v2.md` R14 (the barrier gives the
+Whole-system spec: `docs/design/indexer.md` R14 (the barrier gives the
 denominator), R10.7b (folder rollup). Usable from stage 3 onward.
 
 > **This stage is the RUNTIME progress the app consumes during a scan.**

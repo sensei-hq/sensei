@@ -4,11 +4,11 @@ pub mod doc_indexer;
 pub mod lib_indexer;
 pub mod llms_indexer;
 
-// ── indexer v2 (docs/design/indexer-v2.md, docs/plans/indexer-v2-rust.md) ─────
-// Deliberately without a caller. The shipped code-graph indexer under
-// `crate::languages` keeps producing the graph until the rust cutover in step 9
-// of the plan; wiring these in before then would put two producers with
-// different rules on the same tables.
+// ── the indexer (docs/design/indexer.md, docs/plans/indexer-sequence.md) ─────
+// Deliberately without a caller. The LEGACY code-graph indexer under
+// `crate::languages` keeps producing the graph until the rust cutover at stage
+// 10; wiring these in before then would put two producers with different rules
+// on the same tables.
 /// The cutover gate (stage 10 S1/S2).
 ///
 /// `#[cfg(test)]` because it IS a test-runner tool: it is invoked with
@@ -30,29 +30,30 @@ pub mod scan_repo;
 pub mod scan_root;
 pub mod structure;
 
-/// Every v2 source file, as `(path relative to `src/indexer/`, body)`.
+/// Every guarded source file, as `(path relative to `src/indexer/`, body)`.
 ///
-/// Several v2 rules are properties of the CODE rather than of any value it
-/// computes — "no fqn is built by string formatting outside `fqn.rs`", "no
-/// `Option` stands in for a resolution". Those are only checkable by reading the
-/// source, and more than one test file checks one, so the reader lives here
-/// instead of being copied into each.
+/// Several of this indexer's rules are properties of the CODE rather than of
+/// any value it computes — "no fqn is built by string formatting outside
+/// `fqn.rs`", "no `Option` stands in for a resolution". Those are only checkable
+/// by reading the source, and more than one test file checks one, so the reader
+/// lives here instead of being copied into each.
 ///
-/// Scoped to the v2 files listed below rather than to everything under
-/// `src/indexer/`, because the v1 modules that share this directory are not v2's
-/// to constrain: `doc_indexer.rs` and its neighbours parse markdown, where the
-/// fqn separator is a plausible bullet character, and an edit there must not be
-/// able to turn a v2 guard red.
+/// Scoped to the files listed below rather than to everything under
+/// `src/indexer/`, because the LEGACY modules that share this directory are not
+/// this indexer's to constrain: `doc_indexer.rs` and its neighbours parse
+/// markdown, where the fqn separator is a plausible bullet character, and an
+/// edit there must not be able to turn a guard red.
 #[cfg(test)]
 fn guard_sources() -> Vec<(String, String)> {
-    /// Files, and directories whose whole contents are v2's. Adding a v2 module
-    /// outside these is a deliberate act that has to be recorded here.
-    const V2: &[&str] = &["facts.rs", "fqn.rs", "persist.rs", "reconcile.rs", "resolve.rs", "lang"];
+    /// Files, and directories whose whole contents this indexer owns. Adding a
+    /// module outside these is a deliberate act that has to be recorded here.
+    const OWNED: &[&str] =
+        &["facts.rs", "fqn.rs", "persist.rs", "reconcile.rs", "resolve.rs", "lang"];
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/indexer");
     let mut out = Vec::new();
-    for entry in V2.iter().flat_map(|name| walkdir::WalkDir::new(root.join(name))) {
-        let entry = entry.expect("the v2 source tree must be readable");
+    for entry in OWNED.iter().flat_map(|name| walkdir::WalkDir::new(root.join(name))) {
+        let entry = entry.expect("the guarded source tree must be readable");
         if entry.path().extension().is_none_or(|ext| ext != "rs") {
             continue;
         }
@@ -171,7 +172,7 @@ pub(crate) fn module_of(path: &str) -> String {
     }
 }
 
-/// The part of a v2 source file that is NOT its test module.
+/// The part of a guarded source file that is NOT its test module.
 ///
 /// A test may legitimately write an expected fqn as a string literal — that is
 /// what an assertion IS — while production code may never build one. Splitting

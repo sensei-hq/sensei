@@ -1,6 +1,6 @@
 # Stage 2b — library discovery: packages to libraries, skills, agents, docs
 
-Whole-system spec: `docs/design/indexer-v2.md` R10.7f, R10.7g, R10.7h, R11.1,
+Whole-system spec: `docs/design/indexer.md` R10.7f, R10.7g, R10.7h, R11.1,
 R11.2, R12. Depends on stage 2. Does NOT depend on any parsing.
 
 ## 1. Purpose
@@ -12,9 +12,9 @@ components, 10 skills and 6 agents are indexed and unreachable from any node.
 
 This is the single largest G1 payoff in the whole plan and it is placed at 2b
 because it is INDEPENDENT of parsing: `library_packages` is keyed by package
-NAME, so it can be populated as soon as stage 2 has read the manifests. Putting
-it after persistence would imply a dependency that does not exist and would
-queue the biggest payoff behind the slowest stage.
+NAME, so it can be populated as soon as stage 2 has read the manifests.
+Putting it after persistence would imply a dependency that does not exist and
+would queue the biggest payoff behind the slowest stage.
 
 ## 2. Inputs and outputs
 
@@ -29,32 +29,32 @@ queue the biggest payoff behind the slowest stage.
 ## 3. Requirements
 
 - **S1** (R10.7h). When a dependency ships `sensei.library.json` at its root,
-  read it. One file yields the library, its skills, its agents and the location
-  of its docs corpus — four of the five tables in the chain.
+read it. One file yields the library, its skills, its agents and the location
+of its docs corpus — four of the five tables in the chain.
 - **S2** (R10.7h). The manifest does NOT carry the package list. Nothing in
-  `rokkit/sensei.library.json` states that `@rokkit/ui` belongs to `rokkit`.
-  Populate `library_packages` from the repo's WORKSPACE MEMBERS (`package.json`
-  `workspaces`, `Cargo.toml` `members`), which stage 2 already extracted via
-  `detect_workspace_members`. That is equally declared, just stated elsewhere.
+`rokkit/sensei.library.json` states that `@rokkit/ui` belongs to `rokkit`.
+Populate `library_packages` from the repo's WORKSPACE MEMBERS (`package.json`
+`workspaces`, `Cargo.toml` `members`), which stage 2 already extracted via
+`detect_workspace_members`. That is equally declared, just stated elsewhere.
 - **S3** (R10.7f, R11.1). **NEVER infer a grouping.** `@rokkit/*` -> `rokkit`
-  is a tempting prefix rule and it is a guess: `@types/node` belongs to no
-  "types" library and gateway's crates share no prefix at all. An invented
-  grouping is a fabricated fact about a dependency and it would be believed.
+is a tempting prefix rule and it is a guess: `@types/node` belongs to no
+"types" library and gateway's crates share no prefix at all. An invented
+grouping is a fabricated fact about a dependency and it would be believed.
 - **S4** (R11.1). Record PROVENANCE on every grouping — `declared_by_dependency`
-  (the manifest), `declared_by_user`, or absent. `library_kind` already carries
-  `detected | imported` and is the natural home. A manifest is the dependency
-  speaking about itself; a user is a local judgement. They differ in authority
-  and must stay distinguishable forever.
+(the manifest), `declared_by_user`, or absent. `library_kind` already carries
+`detected | imported` and is the natural home. A manifest is the dependency
+speaking about itself; a user is a local judgement. They differ in authority
+and must stay distinguishable forever.
 - **S5** (R11.1). An ungrouped package stays ungrouped. That is COMPLETE, not
-  wrong — the graph is not missing something, it is simply not yet grouped.
+wrong — the graph is not missing something, it is simply not yet grouped.
 - **S6** (R11.2, IN SCOPE HALF ONLY). When a user supplies a grouping, emit the
-  `sensei.library.json` they could keep. Do NOT contact the dependency's
-  repository: measured, all 1,121 `libraries` rows are `kind = 'detected'` and
-  exactly **2 carry any URL at all**, so there is nothing to file against for
-  1,119 of them. The upstream half is deferred with its input named.
+`sensei.library.json` they could keep. Do NOT contact the dependency's
+repository: measured, all 1,121 `libraries` rows are `kind = 'detected'` and
+exactly **2 carry any URL at all**, so there is nothing to file against for
+1,119 of them. The upstream half is deferred with its input named.
 - **S7.** Populate `homepage_url` from `parse_dependencies` where the manifest
-  supplies it. This is the prerequisite S6's deferred half needs, it is a field
-  not a subsystem, and it is why the 2-of-1,121 number should move.
+supplies it. This is the prerequisite S6's deferred half needs, it is a field
+not a subsystem, and it is why the 2-of-1,121 number should move.
 
 ## 3b. THREE INGESTION ROUTES, and what already exists for each
 
@@ -98,20 +98,20 @@ register as one.
 ### S7b — the LOCAL trigger, and a staleness check
 
 - **S7b.1.** When `ingest_manifest` records a `local_path`, ENQUEUE an
-  `index_library` for that path. That is the local route's trigger and it
-  closes kavach. The path is already in hand; nothing needs discovering.
+`index_library` for that path. That is the local route's trigger and it
+closes kavach. The path is already in hand; nothing needs discovering.
 - **S7b.2.** `read_local_source_files` ERRORS when the root has no `.txt`
-  files. That error is the STALENESS SIGNAL — record it against the version
-  (`files.skip_detail`'s analogue for libraries) rather than letting the task
-  fail silently. dbd would have surfaced on the first re-run.
+files. That error is the STALENESS SIGNAL — record it against the version
+(`files.skip_detail`'s analogue for libraries) rather than letting the task
+fail silently. dbd would have surfaced on the first re-run.
 - **S7b.3.** **Do not delete stale pages on a failed fetch.** dbd's 36 pages
-  are the last known-true content; deleting them on a transient read error
-  trades a stale answer for no answer. Mark the version stale, keep the
-  content, and label it on read — the same rule R10.7 applies to a dirty file.
+are the last known-true content; deleting them on a transient read error
+trades a stale answer for no answer. Mark the version stale, keep the
+content, and label it on read — the same rule R10.7 applies to a dirty file.
 - **S7b.4.** The local convention is `docs/llms/*.txt`, NOT markdown. A
-  library with a rich `docs/` tree and no `docs/llms/` yields nothing, which
-  is correct behaviour and a confusing result — say so in the stale/empty
-  reason rather than reporting an empty success.
+library with a rich `docs/` tree and no `docs/llms/` yields nothing, which
+is correct behaviour and a confusing result — say so in the stale/empty
+reason rather than reporting an empty success.
 
 ### S8 — extract the repository URL from responses ALREADY BEING FETCHED
 
@@ -120,7 +120,7 @@ The github and website routes both need a URL, and neither has one: measured,
 `libraries/registry.rs::registry_latest_url` already fetches, per ecosystem:
 
     npm    https://registry.npmjs.org/<name>/latest   -> repository.url, homepage
-    cargo  https://crates.io/api/v1/crates/<name>     -> crate.repository, crate.homepage
+    cargo  https://crates.io/api/the legacy indexer/crates/<name>     -> crate.repository, crate.homepage
     pypi   https://pypi.org/pypi/<name>/json          -> info.project_urls
 
 **The URLs are in responses the code already downloads and throws away.**
@@ -144,10 +144,10 @@ When more than one route can supply docs for one library, prefer in that
 order, and RECORD which one won on the row. The reasoning:
 
 - **website** — the library's own published docs. Curated, current, and what
-  its authors intend a reader to see.
+its authors intend a reader to see.
 - **github** — raw but complete, and the only route with VERSION HISTORY.
 - **local** — whatever happens to be vendored in `node_modules/` or the
-  registry cache. A real fallback, and often stripped of docs entirely.
+registry cache. A real fallback, and often stripped of docs entirely.
 
 **THE PRECEDENCE INVERTS WHEN THE VERSION DOES NOT MATCH, and this is the
 subtlety worth stating.** A website documents ONE version, normally the
@@ -167,11 +167,11 @@ a wrong one (R4).
 ### S10 — versioned docs: THE SCHEMA CANNOT REPRESENT THIS TODAY
 
 `libraries` is `unique(ecosystem, name)` — **one row per library, therefore
-one version.** `library_pages` has no version column at all
-(`id, library_id, title, url, local_path, description, content, source_type,
-component, embedding, fetched_at, modified_at`). So "docs for v1.2 vs v3.0"
-is currently unrepresentable, and so is a skill or agent that differs between
-versions.
+one version.** `library_pages` has no version column at all (`id, library_id,
+title, url, local_path, description, content, source_type, component,
+embedding, fetched_at, modified_at`). So "docs for the legacy indexer.2 vs
+v3.0" is currently unrepresentable, and so is a skill or agent that differs
+between versions.
 
 **DECIDED (2026-09-10): option B — a `library_versions` level, with all
 library CONTENT linked to a version.** The DDL moves into stage 0 so the table
@@ -187,55 +187,55 @@ is opened once. Shape:
 Three consequences to carry into the migration:
 
 - **`version` moves OFF `libraries`.** Populated on 1,083 of 1,121 rows today,
-  so the migration is one `library_versions` row per existing
-  `(library, version)`, then drop the column. `libraries` keeps
-  `unique(ecosystem, name)` and becomes purely the identity.
+so the migration is one `library_versions` row per existing
+`(library, version)`, then drop the column. `libraries` keeps
+`unique(ecosystem, name)` and becomes purely the identity.
 - **`resolved_version` sits beside `version`** (S11): `version` is the KEY,
-  including the literal `latest`; `resolved_version` is the concrete version
-  `latest` meant at `fetched_at`. Without it, "is our latest still latest?"
-  is unanswerable.
+including the literal `latest`; `resolved_version` is the concrete version
+`latest` meant at `fetched_at`. Without it, "is our latest still latest?"
+is unanswerable.
 - **`referenced_libraries.version_used` stays TEXT, not an FK.** A folder can
-  pin a version we have never fetched docs for, and a foreign key would either
-  block that or force a phantom row — the get-or-create failure R13 forbids
-  one table over. Join opportunistically; a miss is an honest "no docs for
-  this version".
+pin a version we have never fetched docs for, and a foreign key would either
+block that or force a phantom row — the get-or-create failure R13 forbids
+one table over. Join opportunistically; a miss is an honest "no docs for
+this version".
 
 **DOCS ARE PACKAGE-LEVEL; SKILLS AND AGENTS ARE LIBRARY-LEVEL.** A library
 publishes several packages, and a page usually documents ONE of them —
 `rokkit`'s `List` page is about `@rokkit/ui`, not about rokkit as a whole. Its
-skills and agents genuinely are about the library. So `library_content` carries
-`package_name`:
+skills and agents genuinely are about the library. So `library_content`
+carries `package_name`:
 
 - NULL = library-level. An overview, a guide, an architecture page. A real
-  state, not a gap, and what every skill and agent has.
+state, not a gap, and what every skill and agent has.
 - set = documents that published package, spelled as a dependency file spells
-  it (`@rokkit/ui`), so resolving it against `library_packages.package_name` is
-  an equality join.
+it (`@rokkit/ui`), so resolving it against `library_packages.package_name` is
+an equality join.
 
 It is TEXT and deliberately not an FK: a page can name a package not yet
 grouped, and an FK would either reject the page or force a phantom
 `library_packages` row — the get-or-create failure R13 forbids one table over.
 
 **The unique key is `(library_version_id, kind, package_name, name)` NULLS NOT
-DISTINCT.** Both halves are load-bearing. Without `package_name`, `@rokkit/ui`'s
-`List` page and `@rokkit/chart`'s `List` page collide and one silently evicts
-the other. Without NULLS NOT DISTINCT, Postgres treats the library-level rows —
-precisely the ones with no package — as mutually distinct, so re-ingesting a
-manifest inserts another "Getting started" every run instead of updating one.
-MEASURED: four identical library-level rows accumulated under the plain key
-before this was caught.
+DISTINCT.** Both halves are load-bearing. Without `package_name`,
+`@rokkit/ui`'s `List` page and `@rokkit/chart`'s `List` page collide and one
+silently evicts the other. Without NULLS NOT DISTINCT, Postgres treats the
+library-level rows — precisely the ones with no package — as mutually
+distinct, so re-ingesting a manifest inserts another "Getting started" every
+run instead of updating one. MEASURED: four identical library-level rows
+accumulated under the plain key before this was caught.
 
 Note for the schema tool: an inline `unique nulls not distinct (...)` table
 constraint is silently reduced to a plain unique. It must be a standalone
 `create unique index ... nulls not distinct`.
 
-**`library_packages` stays at the LIBRARY level, not the version.** Grouping is
-about identity, and the node -> package -> library chain (R10.7g) resolves from
-an fqn that carries NO version, so a version-keyed grouping could not be walked
-from a node at all. Package membership CAN drift across releases — `@rokkit/x`
-present in v1, gone in v2 — and that is a DEFERRED refinement (R11: the
-evidence is captured, the gap is named), not a reason to key the grouping on
-something the caller does not have.
+**`library_packages` stays at the LIBRARY level, not the version.** Grouping
+is about identity, and the node -> package -> library chain (R10.7g) resolves
+from an fqn that carries NO version, so a version-keyed grouping could not be
+walked from a node at all. Package membership CAN drift across releases —
+`@rokkit/x` present in the legacy indexer, gone in the indexer — and that is a
+DEFERRED refinement (R11: the evidence is captured, the gap is named), not a
+reason to key the grouping on something the caller does not have.
 
 The rejected option, recorded so it is not re-proposed:
 
@@ -390,14 +390,14 @@ the file. An earlier draft of this section conflated the two and concluded
 Two exclusions that already work the same way and must be kept:
 
 - **`local_source` deps are not libraries.** npm `link:`/`workspace:`/`file:`
-  and Cargo `path=` resolve to a local sibling; `DepVersion`'s own comment
-  records that the writer routes `Some(_)` to `project_dependencies` and
-  SKIPS the external-library upsert. That is correct — a workspace sibling is
-  first-party code, and stage 4 indexes it properly.
+and Cargo `path=` resolve to a local sibling; `DepVersion`'s own comment
+records that the writer routes `Some(_)` to `project_dependencies` and
+SKIPS the external-library upsert. That is correct — a workspace sibling is
+first-party code, and stage 4 indexes it properly.
 - **`dev` is a flag, not an exclusion.** Dev dependencies are still DIRECT and
-  you write real code against them (test frameworks, build tools). Keep them,
-  keep the flag, and let a consumer filter. Dropping them would make "how do
-  I test this" unanswerable for the very packages that answer it.
+you write real code against them (test frameworks, build tools). Keep them,
+keep the flag, and let a consumer filter. Dropping them would make "how do
+I test this" unanswerable for the very packages that answer it.
 
 ### What is already built and must NOT be rebuilt
 
@@ -449,17 +449,17 @@ stated as a query, and it is unanswerable today.
 **The model is already right; the data is missing.** An earlier draft of the
 design recorded that the library level "does not exist". It does —
 `sensei.library_packages (package_name, library_id, source)` is exactly the
-grouping, joinable to the fqn's package segment with no new column, and it even
-carries `source` for the provenance R11.1 requires. It has zero rows. A missing
-subsystem and an empty table need very different work.
+grouping, joinable to the fqn's package segment with no new column, and it
+even carries `source` for the provenance R11.1 requires. It has zero rows. A
+missing subsystem and an empty table need very different work.
 
-**`sensei.libraries` currently holds PACKAGES, not libraries.** `@rokkit/actions`,
-`@rokkit/app` and `@rokkit/core` are separate rows, all `kind = 'detected'`,
-because with `library_packages` empty there is nothing to group them under.
-Populating the grouping does not mean deleting those rows — it means a
-`rokkit` row appears above them. Decide and write down what happens to the
-package-level rows before writing the migration; leaving both levels in one
-table with no discriminator is how the next reader gets it wrong.
+**`sensei.libraries` currently holds PACKAGES, not libraries.**
+`@rokkit/actions`, `@rokkit/app` and `@rokkit/core` are separate rows, all
+`kind = 'detected'`, because with `library_packages` empty there is nothing to
+group them under. Populating the grouping does not mean deleting those rows —
+it means a `rokkit` row appears above them. Decide and write down what happens
+to the package-level rows before writing the migration; leaving both levels in
+one table with no discriminator is how the next reader gets it wrong.
 
 **RESOLVED — `library_skills` / `library_agents` / `library_pages` are now one
 `library_content` table** discriminated by `kind`, keyed to
@@ -470,16 +470,16 @@ table with no discriminator is how the next reader gets it wrong.
 
 - `library_packages` is non-zero and every row carries provenance.
 - The `node -> package -> library -> pages/skills/agents` query returns real
-  content for at least one real reference.
+content for at least one real reference.
 - Ungrouped packages are counted, not errored, and the count is in the
-  the run.
+the run.
 - No prefix inference exists anywhere in the stage — verified by a test, not by
-  reading.
+reading.
 - [x] The `library_content` shape question is answered in writing — COLLAPSE,
-  together with S10's versioning shape (option B, `library_versions`). Both
-  are implemented; see S10.
+together with S10's versioning shape (option B, `library_versions`). Both
+are implemented; see S10.
 - `repository`/`homepage` extracted from registry responses already being
-  fetched (S8); the 2-of-1,121 URL count moves, and it is measured.
+fetched (S8); the 2-of-1,121 URL count moves, and it is measured.
 - Source precedence recorded per library, with the version-mismatch label
-  present on any doc served for a version the project does not pin (S9).
+present on any doc served for a version the project does not pin (S9).
 - No URL is ever derived from a package name, verified by test.

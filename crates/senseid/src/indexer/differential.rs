@@ -1,5 +1,9 @@
-//! Stage 10 S1/S2 — the cutover gate: what does v2 see that v1 did not, and
-//! what did v1 see that v2 lost?
+//! Stage 10 S1/S2 — the cutover gate: what does this indexer see that the
+//! legacy one did not, and what did the legacy one see that this one lost?
+//!
+//! `legacy` throughout is `crate::languages`, the shipped producer; `current`
+//! is this indexer. Naming them by role rather than by a version number is
+//! deliberate — only one of them survives cutover.
 //!
 //! Spec: `docs/spec/indexer/10-cutover.md`. This is a TOOL whose output a
 //! person reads before deciding to cut over, not a test that passes or fails on
@@ -7,19 +11,20 @@
 //!
 //! # The comparison is on RESOLVED targets, not on reference counts (S2)
 //!
-//! v1 DROPS a reference it cannot resolve; v2 emits an `Unresolved` for every
-//! one. So v2 will show far more references, and that increase is the fix
+//! `legacy` DROPS a reference it cannot resolve; `current` emits an `Unresolved`
+//! for every one. So `current` shows far more references, and that increase is the fix
 //! rather than a regression. Counting raw references would report the defect
 //! being repaired as damage — which is why S2 names the comparison explicitly
 //! and why this module never exposes a raw count as a verdict.
 //!
 //! # The grammars differ, and a naive set-diff reports everything as lost
 //!
-//! v2 added a trailing REACH segment that v1's fqns do not carry — measured
-//! before the wipe, 194,355 of 194,376 stored fqns had none. So v1's
-//! `rust·senseid·api·handle` and v2's `rust·senseid·api·handle·item` name the
-//! same symbol in two spellings, and a straight set difference would call every
-//! v1 symbol a regression and every v2 symbol an improvement at the same time:
+//! `current` added a trailing REACH segment that `legacy`'s fqns do not carry —
+//! measured before the wipe, 194,355 of 194,376 stored fqns had none. So
+//! `legacy`'s `rust·senseid·api·handle` and `current`'s
+//! `rust·senseid·api·handle·item` name the same symbol in two spellings, and a
+//! straight set difference would call every `legacy` symbol a regression and
+//! every `current` symbol an improvement at the same time:
 //! a report that is 100% wrong while looking complete.
 //!
 //! [`identity_key`] is the one normalisation, and it is the ONLY one. Anything
@@ -39,9 +44,9 @@ use crate::languages::fqn::FqnFileOutput;
 /// gate that conflates them is not a gate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Verdict {
-    /// v2 resolves a target v1 did not. The point of the rewrite.
+    /// current resolves a target legacy did not. The point of the rewrite.
     Improvement,
-    /// v1 resolved a target v2 does not. BLOCKS cutover (S1).
+    /// legacy resolved a target current does not. BLOCKS cutover (S1).
     Regression,
     /// A difference with a named, written reason.
     Explained,
@@ -64,10 +69,10 @@ pub struct Difference {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DiffReport {
     pub differences: Vec<Difference>,
-    /// Resolved targets v1 produced, normalised. Reported as a COUNT of the
+    /// Resolved targets legacy produced, normalised. Reported as a COUNT of the
     /// compared set rather than of raw references, per S2.
-    pub v1_resolved: usize,
-    pub v2_resolved: usize,
+    pub legacy_resolved: usize,
+    pub current_resolved: usize,
 }
 
 impl DiffReport {
@@ -75,12 +80,12 @@ impl DiffReport {
         self.differences.iter().filter(|d| d.verdict == verdict).count()
     }
 
-    /// Is v2's resolved set a SUPERSET of v1's (S2)?
+    /// Is current's resolved set a SUPERSET of legacy's (S2)?
     ///
-    /// Stated as a set property and not as `v2_resolved >= v1_resolved`: two
+    /// Stated as a set property and not as `current_resolved >= legacy_resolved`: two
     /// sets of equal size can each hold something the other does not, and a
     /// count comparison would call that a pass.
-    pub fn v2_resolves_everything_v1_did(&self) -> bool {
+    pub fn current_resolves_everything_legacy_did(&self) -> bool {
         self.count(Verdict::Regression) == 0
     }
 
@@ -98,22 +103,22 @@ impl DiffReport {
 
 /// An fqn reduced to what the two grammars AGREE on.
 ///
-/// v2's trailing reach segment is dropped, because v1 has none and keeping it
+/// current's trailing reach segment is dropped, because legacy has none and keeping it
 /// would make every symbol differ. Nothing else is normalised: the language,
 /// the package and the whole module/name path must match exactly, since those
 /// are what identify the symbol in both grammars.
 ///
 /// **The reach is recognised by its LABEL, not by position.** `fqn::parse`
-/// cannot be used here: it implements the v2 grammar, in which the last segment
-/// IS the reach, so handing it a v1 fqn strips the symbol's NAME instead and
+/// cannot be used here: it implements the current grammar, in which the last segment
+/// IS the reach, so handing it a legacy fqn strips the symbol's NAME instead and
 /// two unrelated symbols in one module collapse onto one key. That is a silent
 /// wrong answer of the worst kind — the harness would under-report both
 /// regressions and improvements, and the totals would still look sensible.
 ///
 /// Recognising the label is safe in the other direction too: `item`, `field`,
-/// `macro` and `mod` are reserved trailing segments in v2's grammar, and a v1
+/// `macro` and `mod` are reserved trailing segments in current's grammar, and a legacy
 /// fqn whose last segment happens to be one of those words would have to be a
-/// symbol literally named `item` — for which the v2 spelling is
+/// symbol literally named `item` — for which the current spelling is
 /// `…·item·item`, so the normalised keys still agree.
 ///
 /// A string that parses as neither grammar is returned VERBATIM rather than
@@ -129,18 +134,19 @@ pub fn identity_key(fqn: &str) -> String {
     }
 }
 
-/// Every resolved target v1 produced for one file, normalised.
-fn v1_resolved_targets(v1: &FqnFileOutput) -> BTreeSet<String> {
-    v1.refs.iter().filter_map(|r| r.target_fqn.as_deref()).map(identity_key).collect()
+/// Every resolved target legacy produced for one file, normalised.
+fn legacy_resolved_targets(legacy: &FqnFileOutput) -> BTreeSet<String> {
+    legacy.refs.iter().filter_map(|r| r.target_fqn.as_deref()).map(identity_key).collect()
 }
 
-/// Every resolved target v2 produced for one file, normalised.
+/// Every resolved target current produced for one file, normalised.
 ///
 /// `Unresolved` is deliberately not counted. It is not a missing target — it is
-/// v2 saying so, which is the behaviour v1 lacked, and folding it in here would
+/// current saying so, which is the behaviour legacy lacked, and folding it in here would
 /// compare the two on a dimension only one of them has.
-fn v2_resolved_targets(v2: &FileFacts) -> BTreeSet<String> {
-    v2.references
+fn current_resolved_targets(current: &FileFacts) -> BTreeSet<String> {
+    current
+        .references
         .iter()
         .filter_map(|r| match &r.target {
             Resolution::Resolved(fqn) => Some(identity_key(fqn.as_str())),
@@ -153,43 +159,43 @@ fn v2_resolved_targets(v2: &FileFacts) -> BTreeSet<String> {
 ///
 /// Every difference is classified. The classification rules are:
 ///
-/// - resolved by v2 and not v1 -> IMPROVEMENT. This is the rewrite working.
-/// - resolved by v1 and not v2 -> REGRESSION, unless a rule below explains it.
-/// - an external (`lib·`) target v1 resolved -> EXPLAINED. v1 minted a `lib·`
-///   node for any import it could not place first-party; v2 reaches externals
+/// - resolved by current and not legacy -> IMPROVEMENT. This is the rewrite working.
+/// - resolved by legacy and not current -> REGRESSION, unless a rule below explains it.
+/// - an external (`lib·`) target legacy resolved -> EXPLAINED. legacy minted a `lib·`
+///   node for any import it could not place first-party; current reaches externals
 ///   through the same prefix but only from a use site that names a package, so
 ///   the two sets legitimately differ in shape rather than in reach.
 ///
 /// Anything else that differs is UNCLASSIFIED and blocks, which is what stops
 /// this from becoming a rubber stamp.
-pub fn differential(v1: &FqnFileOutput, v2: &FileFacts) -> DiffReport {
-    let a = v1_resolved_targets(v1);
-    let b = v2_resolved_targets(v2);
+pub fn differential(legacy: &FqnFileOutput, current: &FileFacts) -> DiffReport {
+    let a = legacy_resolved_targets(legacy);
+    let b = current_resolved_targets(current);
 
     let mut differences = Vec::new();
     for key in b.difference(&a) {
         differences.push(Difference {
             verdict: Verdict::Improvement,
             key: key.clone(),
-            reason: "v2 resolves a target v1 did not".into(),
+            reason: "current resolves a target legacy did not".into(),
         });
     }
     for key in a.difference(&b) {
         let (verdict, reason) = if key.starts_with(crate::languages::fqn::LIB_PREFIX) {
             (
                 Verdict::Explained,
-                "an external target: v1 minted one for any unplaceable import, v2 mints one \
+                "an external target: legacy minted one for any unplaceable import, current mints one \
                  only where the use site names a package (D12)"
                     .to_string(),
             )
         } else {
-            (Verdict::Regression, "v1 resolved this target and v2 does not".to_string())
+            (Verdict::Regression, "legacy resolved this target and current does not".to_string())
         };
         differences.push(Difference { verdict, key: key.clone(), reason });
     }
 
     differences.sort();
-    DiffReport { differences, v1_resolved: a.len(), v2_resolved: b.len() }
+    DiffReport { differences, legacy_resolved: a.len(), current_resolved: b.len() }
 }
 
 #[cfg(test)]
@@ -206,10 +212,10 @@ mod tests {
         assert_eq!(
             identity_key("rust·senseid·api::handlers·handle·item"),
             identity_key("rust·senseid·api::handlers·handle"),
-            "v1 and v2 spell one symbol two ways; the reach is the only difference"
+            "legacy and current spell one symbol two ways; the reach is the only difference"
         );
         // The language segment SURVIVES. Using `fqn::parse` here dropped it —
-        // and worse, on a v1 fqn it stripped the NAME, collapsing every symbol
+        // and worse, on a legacy fqn it stripped the NAME, collapsing every symbol
         // in a module onto one key while the totals still looked sensible.
         assert_eq!(identity_key("rust·senseid·api·handle·item"), "rust·senseid·api·handle");
         // Two symbols in one module stay two keys. This is the assertion the
@@ -273,12 +279,12 @@ mod tests {
             differences: vec![Difference {
                 verdict: Verdict::Improvement,
                 key: "x".into(),
-                reason: "v2 resolves it".into(),
+                reason: "current resolves it".into(),
             }],
             ..Default::default()
         };
         assert!(!report.blocks_cutover());
-        assert!(report.v2_resolves_everything_v1_did());
+        assert!(report.current_resolves_everything_legacy_did());
     }
 
     /// S2, stated as a SET property.
@@ -287,17 +293,17 @@ mod tests {
     /// count comparison would pass this. The superset question is about
     /// membership and is answered by the regression count.
     #[test]
-    fn equal_counts_do_not_make_v2_a_superset() {
+    fn equal_counts_do_not_make_current_a_superset() {
         let report = DiffReport {
             differences: vec![
                 Difference { verdict: Verdict::Improvement, key: "a".into(), reason: "new".into() },
                 Difference { verdict: Verdict::Regression, key: "b".into(), reason: "lost".into() },
             ],
-            v1_resolved: 10,
-            v2_resolved: 10,
+            legacy_resolved: 10,
+            current_resolved: 10,
         };
         assert!(
-            !report.v2_resolves_everything_v1_did(),
+            !report.current_resolves_everything_legacy_did(),
             "same size, different members — the counts agreeing proves nothing"
         );
         assert!(report.blocks_cutover());
@@ -315,7 +321,7 @@ mod tests {
 ///
 /// ```text
 /// cargo test -p senseid --bin senseid -- --ignored --nocapture \
-///   indexer::differential::corpus::v1_and_v2_over_this_repos_rust
+///   indexer::differential::corpus::legacy_and_current_over_this_repos_rust
 /// ```
 #[cfg(test)]
 mod corpus {
@@ -326,7 +332,7 @@ mod corpus {
 
     #[tokio::test]
     #[ignore]
-    async fn v1_and_v2_over_this_repos_rust() {
+    async fn legacy_and_current_over_this_repos_rust() {
         let sources = crate::indexer::corpus_rust_sources();
         let first_party: std::collections::BTreeSet<String> =
             sources.iter().map(|(path, _)| crate::indexer::package_of(path)).collect();
@@ -335,54 +341,56 @@ mod corpus {
 
         let mut totals = DiffReport::default();
         let mut files_compared = 0usize;
-        let mut v1_produced_nothing = 0usize;
-        let mut v2_failed_to_read = 0usize;
-        let mut v2_declined: std::collections::BTreeMap<String, usize> = Default::default();
-        let mut v2_unresolved_names: Vec<(String, String)> = Vec::new();
+        let mut legacy_produced_nothing = 0usize;
+        let mut current_failed_to_read = 0usize;
+        let mut current_declined: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut current_unresolved_names: Vec<(String, String)> = Vec::new();
 
         for (abs, text) in &sources {
-            // v1: the shipped producer, from the absolute path (it walks up to
+            // legacy: the shipped producer, from the absolute path (it walks up to
             // the manifest itself).
-            let Some(v1) = crate::languages::rust_lang::RustAdapter.fqn_output(abs, "", text)
+            let Some(legacy) = crate::languages::rust_lang::RustAdapter.fqn_output(abs, "", text)
             else {
-                // v1 declining a file is itself a fact — COUNTED, not skipped,
-                // because "v1 produced nothing here" is precisely the case where
-                // v2 looking better means nothing.
-                v1_produced_nothing += 1;
+                // legacy declining a file is itself a fact — COUNTED, not skipped,
+                // because "legacy produced nothing here" is precisely the case where
+                // current looking better means nothing.
+                legacy_produced_nothing += 1;
                 continue;
             };
 
-            // v2: the same file, at the grain a real walk produces.
+            // current: the same file, at the grain a real walk produces.
             let package = crate::indexer::package_of(abs);
             let rel = crate::indexer::workspace_relative(abs);
             let module = crate::indexer::module_of(&rel);
             let Ok(facts) =
                 rust::read(&Source { package: &package, module: &module, path: &rel, text })
             else {
-                v2_failed_to_read += 1;
+                current_failed_to_read += 1;
                 continue;
             };
-            let v2 = resolve(facts, &rust::GRAMMAR, &world);
+            let current = resolve(facts, &rust::GRAMMAR, &world);
 
-            // Every NAME v2 saw at a use site but declined to place. If a v1
-            // "resolution" turns up here, v2 did not lose the reference — it
+            // Every NAME current saw at a use site but declined to place. If a legacy
+            // "resolution" turns up here, current did not lose the reference — it
             // saw it and refused to guess, which R4 says is the right answer
             // and is the opposite of a regression.
-            for r in &v2.references {
+            for r in &current.references {
                 if let crate::indexer::facts::Resolution::Unresolved { reason, .. } = &r.target {
-                    *v2_declined.entry(format!("{reason:?}")).or_insert(0usize) += 1;
+                    *current_declined.entry(format!("{reason:?}")).or_insert(0usize) += 1;
                 }
             }
-            v2_unresolved_names.extend(v2.references.iter().filter_map(|r| match &r.target {
-                crate::indexer::facts::Resolution::Unresolved { reason, evidence } => {
-                    Some((evidence.name.clone(), format!("{reason:?}")))
-                }
-                _ => None,
-            }));
+            current_unresolved_names.extend(current.references.iter().filter_map(
+                |r| match &r.target {
+                    crate::indexer::facts::Resolution::Unresolved { reason, evidence } => {
+                        Some((evidence.name.clone(), format!("{reason:?}")))
+                    }
+                    _ => None,
+                },
+            ));
 
-            let report = differential(&v1, &v2);
-            totals.v1_resolved += report.v1_resolved;
-            totals.v2_resolved += report.v2_resolved;
+            let report = differential(&legacy, &current);
+            totals.legacy_resolved += report.legacy_resolved;
+            totals.current_resolved += report.current_resolved;
             totals.differences.extend(report.differences);
             files_compared += 1;
         }
@@ -392,28 +400,28 @@ mod corpus {
         let explained = totals.count(Verdict::Explained);
         let unclassified = totals.count(Verdict::Unclassified);
 
-        println!("\n── v1 vs v2 over {files_compared} rust files ──");
-        println!("v1 produced no output   {v1_produced_nothing}");
-        println!("v2 could not read       {v2_failed_to_read}");
-        println!("resolved targets  v1    {}", totals.v1_resolved);
-        println!("resolved targets  v2    {}", totals.v2_resolved);
+        println!("\n── legacy vs current over {files_compared} rust files ──");
+        println!("legacy produced no output   {legacy_produced_nothing}");
+        println!("current could not read       {current_failed_to_read}");
+        println!("resolved targets  legacy    {}", totals.legacy_resolved);
+        println!("resolved targets  current    {}", totals.current_resolved);
         println!("IMPROVEMENT             {improvements}");
         println!("REGRESSION              {regressions}");
         println!("EXPLAINED               {explained}");
         println!("UNCLASSIFIED            {unclassified}");
         println!("blocks cutover          {}", totals.blocks_cutover());
-        println!("\nv2 UNRESOLVED by reason (references v1 would simply have dropped):");
-        for (reason, n) in &v2_declined {
+        println!("\nUNRESOLVED by reason (references legacy would simply have dropped):");
+        for (reason, n) in &current_declined {
             println!("  {n:>6}  {reason}");
         }
-        println!("  (total unresolved: {})", v2_unresolved_names.len());
+        println!("  (total unresolved: {})", current_unresolved_names.len());
 
-        // THE DECIDING MEASUREMENT for the 777. For each regression, did v2 SEE
-        // that name at a use site and decline to place it? If so v2 did not lose
+        // THE DECIDING MEASUREMENT for the 777. For each regression, did current SEE
+        // that name at a use site and decline to place it? If so current did not lose
         // the reference — it refused to guess, which R4 says is correct and is
         // the opposite of a regression.
         let declined_by_name: std::collections::BTreeMap<&str, &str> =
-            v2_unresolved_names.iter().map(|(n, r)| (n.as_str(), r.as_str())).collect();
+            current_unresolved_names.iter().map(|(n, r)| (n.as_str(), r.as_str())).collect();
         let mut seen_and_declined: std::collections::BTreeMap<&str, usize> = Default::default();
         let mut never_seen = 0usize;
         for d in totals.differences.iter().filter(|d| d.verdict == Verdict::Regression) {
@@ -423,11 +431,11 @@ mod corpus {
                 None => never_seen += 1,
             }
         }
-        println!("\nof {regressions} regressions, v2 SAW the name and declined:");
+        println!("\nof {regressions} regressions, current SAW the name and declined:");
         for (reason, n) in &seen_and_declined {
             println!("  {n:>6}  {reason}");
         }
-        println!("  {never_seen:>6}  name never appears at any v2 use site");
+        println!("  {never_seen:>6}  name never appears at any current use site");
 
         // A sample of each blocking class, so the number has something
         // inspectable behind it. "N regressions" and "these N regressions" are
@@ -489,23 +497,23 @@ mod corpus {
 
 /// WHY the gate blocks — the investigation behind the 777, with source.
 ///
-/// The gate says "v1 resolved this and v2 does not". That is a true statement
-/// and an insufficient one, because it does not say whether v1 was RIGHT. This
+/// The gate says "legacy resolved this and current does not". That is a true statement
+/// and an insufficient one, because it does not say whether legacy was RIGHT. This
 /// answers that, by asking of every disputed target the one question that
 /// settles it:
 ///
-/// **Does the thing v1 pointed at exist?**
+/// **Does the thing legacy pointed at exist?**
 ///
 /// Three outcomes, and they mean opposite things:
 ///
-/// - the target exists in NEITHER producer's definitions -> v1 resolved to a
-///   GHOST. Nothing in the corpus declares it. v1's edge pointed at a node
+/// - the target exists in NEITHER producer's definitions -> legacy resolved to a
+///   GHOST. Nothing in the corpus declares it. legacy's edge pointed at a node
 ///   minted only because a reference asked for it, and R4 ranks that below no
 ///   edge at all. Not a regression.
-/// - it exists in v1's definitions but not v2's -> the two DISAGREE ON IDENTITY,
+/// - it exists in legacy's definitions but not current's -> the two DISAGREE ON IDENTITY,
 ///   not on reach. A minting difference, which the normalisation should have
 ///   covered and did not.
-/// - it exists in BOTH -> v2 HAS the definition and still did not connect the
+/// - it exists in BOTH -> current HAS the definition and still did not connect the
 ///   reference to it. The only class that is a real loss of reach.
 ///
 /// `#[ignore]` for the same reason as the gate: it parses the corpus twice.
@@ -521,10 +529,10 @@ mod why {
         key: String,
         file: String,
         reason: String,
-        /// What v1 and v2 each DECLARE under this member name, so the two
+        /// What legacy and current each DECLARE under this member name, so the two
         /// spellings can be read side by side instead of inferred.
-        v1_declares: Vec<String>,
-        v2_declares: Vec<String>,
+        legacy_declares: Vec<String>,
+        current_declares: Vec<String>,
         /// The use site's line, and the source text of it.
         line: u32,
         source_line: String,
@@ -543,20 +551,20 @@ mod why {
 
         // Pass 1: every DEFINITION both producers mint, normalised. This is what
         // "does the target exist?" is asked against.
-        let mut v1_defs: std::collections::BTreeSet<String> = Default::default();
-        let mut v2_defs: std::collections::BTreeSet<String> = Default::default();
+        let mut legacy_defs: std::collections::BTreeSet<String> = Default::default();
+        let mut current_defs: std::collections::BTreeSet<String> = Default::default();
         let mut parsed: Vec<(String, String, crate::indexer::facts::FileFacts)> = Vec::new();
-        let mut v1_by_file: std::collections::BTreeMap<
+        let mut legacy_by_file: std::collections::BTreeMap<
             String,
             crate::languages::fqn::FqnFileOutput,
         > = Default::default();
 
         for (abs, text) in &sources {
-            let Some(v1) = crate::languages::rust_lang::RustAdapter.fqn_output(abs, "", text)
+            let Some(legacy) = crate::languages::rust_lang::RustAdapter.fqn_output(abs, "", text)
             else {
                 continue;
             };
-            v1_defs.extend(v1.defs.iter().map(|d| identity_key(&d.fqn)));
+            legacy_defs.extend(legacy.defs.iter().map(|d| identity_key(&d.fqn)));
 
             let package = crate::indexer::package_of(abs);
             let rel = crate::indexer::workspace_relative(abs);
@@ -567,8 +575,8 @@ mod why {
                 continue;
             };
             let facts = resolve(facts, &rust::GRAMMAR, &world);
-            v2_defs.extend(facts.symbols.iter().map(|s| identity_key(s.fqn.as_str())));
-            v1_by_file.insert(rel.clone(), v1);
+            current_defs.extend(facts.symbols.iter().map(|s| identity_key(s.fqn.as_str())));
+            legacy_by_file.insert(rel.clone(), legacy);
             parsed.push((rel, text.clone(), facts));
         }
 
@@ -578,14 +586,14 @@ mod why {
         let mut identity_disagreement = Vec::new();
         let mut real_loss = Vec::new();
 
-        for (rel, text, v2) in &parsed {
-            let Some(v1) = v1_by_file.get(rel) else { continue };
-            let report = differential(v1, v2);
+        for (rel, text, current) in &parsed {
+            let Some(legacy) = legacy_by_file.get(rel) else { continue };
+            let report = differential(legacy, current);
 
             for d in report.differences.iter().filter(|d| d.verdict == Verdict::Regression) {
-                // The use site v2 declined, matched by the bare name.
+                // The use site current declined, matched by the bare name.
                 let leaf = d.key.rsplit('\u{00B7}').next().unwrap_or("").to_string();
-                let declined = v2.references.iter().find_map(|r| match &r.target {
+                let declined = current.references.iter().find_map(|r| match &r.target {
                     crate::indexer::facts::Resolution::Unresolved { reason, evidence }
                         if evidence.name == leaf =>
                     {
@@ -594,7 +602,7 @@ mod why {
                     _ => None,
                 });
                 let (reason, saw, line) = declined.unwrap_or_else(|| {
-                    ("(v2 emitted no reference for this name)".into(), leaf.clone(), 0)
+                    ("(current emitted no reference for this name)".into(), leaf.clone(), 0)
                 });
                 // Line 0 means NO use site was matched, so there is no source
                 // to show. Printing line 1 there — which an earlier version of
@@ -602,7 +610,7 @@ mod why {
                 // has nothing to do with, and a reader would reasonably believe
                 // the two were related.
                 let source_line = if line == 0 {
-                    "(no use site matched this name in v2's references)".to_string()
+                    "(no use site matched this name in current's references)".to_string()
                 } else {
                     text.lines()
                         .nth(line as usize - 1)
@@ -651,28 +659,28 @@ mod why {
                     key: d.key.clone(),
                     file: rel.clone(),
                     reason,
-                    v1_declares: declares(&v1_defs),
-                    v2_declares: declares(&v2_defs),
+                    legacy_declares: declares(&legacy_defs),
+                    current_declares: declares(&current_defs),
                     line,
                     source_line,
                     saw,
                 };
-                match (v1_defs.contains(&d.key), v2_defs.contains(&d.key)) {
+                match (legacy_defs.contains(&d.key), current_defs.contains(&d.key)) {
                     (_, true) => real_loss.push(item),
                     (true, false) => identity_disagreement.push(item),
                     (false, false) => {
                         // Is the SAME member declared on the SAME type under a
-                        // LONGER identity? v1's grammar qualifies a trait-impl
+                        // LONGER identity? legacy's grammar qualifies a trait-impl
                         // method with its trait (`…·Type·Trait·member`) while a
                         // call site cannot know which trait, so it mints
-                        // `…·Type·member`. If a longer key exists, v1's own two
+                        // `…·Type·member`. If a longer key exists, legacy's own two
                         // sides disagree, and the "ghost" is that disagreement
                         // rather than a missing declaration.
                         let sep = '\u{00B7}';
                         let qualified = d.key.rsplit_once(sep).is_some_and(|(head, member)| {
                             let head = format!("{head}{sep}");
                             let member = format!("{sep}{member}");
-                            v1_defs.iter().any(|k| k.starts_with(&head) && k.ends_with(&member))
+                            legacy_defs.iter().any(|k| k.starts_with(&head) && k.ends_with(&member))
                         });
                         if qualified {
                             trait_qualified.push(item);
@@ -687,38 +695,42 @@ mod why {
         let show = |label: &str, items: &[Disputed], n: usize| {
             println!("\n\n══ {label}: {} ══", items.len());
             for d in items.iter().take(n) {
-                println!("\n  target v1 claimed : {}", d.key);
+                println!("\n  target legacy claimed : {}", d.key);
                 println!("  use site          : {}:{}", d.file, d.line);
                 println!("  source            : {}", d.source_line);
-                println!("  v2 saw the name   : {}", d.saw);
-                println!("  v2 declined because: {}", d.reason);
-                println!("  v1 DECLARES       : {:?}", d.v1_declares);
-                println!("  v2 DECLARES       : {:?}", d.v2_declares);
+                println!("  current saw the name   : {}", d.saw);
+                println!("  current declined because: {}", d.reason);
+                println!("  legacy DECLARES       : {:?}", d.legacy_declares);
+                println!("  current DECLARES       : {:?}", d.current_declares);
             }
         };
 
         println!("\n\n════════ WHY THE GATE BLOCKS ════════");
-        println!("v1 definitions {} | v2 definitions {}", v1_defs.len(), v2_defs.len());
+        println!(
+            "legacy definitions {} | current definitions {}",
+            legacy_defs.len(),
+            current_defs.len()
+        );
         show(
-            "V1 DISAGREES WITH ITSELF — its definition side spells this member with a trait \
+            "LEGACY DISAGREES WITH ITSELF — its definition side spells this member with a trait \
              qualifier and its reference side without one, so the edge points at an identity \
-             v1's own parser never declares",
+             legacy's own parser never declares",
             &trait_qualified,
             5,
         );
         show("GHOST — nothing declares this under ANY identity", &ghost, 5);
         show(
-            "IDENTITY DISAGREEMENT — v1 declares it, v2 mints the declaration differently",
+            "IDENTITY DISAGREEMENT — legacy declares it, current mints the declaration differently",
             &identity_disagreement,
             6,
         );
         show(
-            "REAL LOSS — v2 HAS the definition and still did not connect the reference",
+            "REAL LOSS — current HAS the definition and still did not connect the reference",
             &real_loss,
             8,
         );
 
-        // What v2 SAID, per class. This is the number that says what one fix
+        // What current SAID, per class. This is the number that says what one fix
         // would buy: a class dominated by a single reason has a single cause.
         fn by_reason(items: &[Disputed]) -> std::collections::BTreeMap<&str, usize> {
             let mut m: std::collections::BTreeMap<&str, usize> = Default::default();
@@ -728,19 +740,19 @@ mod why {
             m
         }
         for (label, items) in [
-            ("v1 self-disagreement", &trait_qualified),
+            ("legacy self-disagreement", &trait_qualified),
             ("ghost", &ghost),
             ("identity disagreement", &identity_disagreement),
             ("REAL LOSS", &real_loss),
         ] {
-            println!("\n{label} — v2's reason:");
+            println!("\n{label} — current's reason:");
             for (reason, n) in by_reason(items) {
                 println!("  {n:>5}  {reason}");
             }
         }
 
         println!("\n\n──── verdict ────");
-        println!("v1 self-disagreement   {}", trait_qualified.len());
+        println!("legacy self-disagreement   {}", trait_qualified.len());
         println!("ghost, no declaration  {}", ghost.len());
         println!("identity disagreement  {}", identity_disagreement.len());
         println!("REAL LOSS OF REACH     {}", real_loss.len());
@@ -749,7 +761,7 @@ mod why {
 
 /// WHAT WOULD FIX IT — how far a binding map gets, measured (not estimated).
 ///
-/// v2's walk resolves a receiver's type in exactly one case: `self`/`Self`
+/// current's walk resolves a receiver's type in exactly one case: `self`/`Self`
 /// inside a type's own body. It never visits a `let` declaration, so
 /// `let cfg = SenseiConfig::from_env(); cfg.method()` is a
 /// `ReceiverTypeUnknown` even though the type is stated one line above.
