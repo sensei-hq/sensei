@@ -36,19 +36,29 @@ acceptance tests are `indexer::acceptance::*`.
 
 Last run, 1,331 files:
 
-    references     rust   typescript
-    RESOLVED      48,677     22,389
-    NoImportInScope  18,291    5,317
-    ReceiverTypeUnknown 28,627 24,597
-    AmbiguousCandidates  8,508        0
-    Denylisted       17,678      3,475
-    DynamicDispatch       0      1,328
-    UnhandledForm         1        165
+    references             rust   typescript
+    RESOLVED             48,705       22,096
+    ReceiverTypeUnknown  17,479       12,114   <- what is left to type
+    ExternalBoundary     11,261       12,483   <- NOT ours, no edge exists
+    NoImportInScope      18,386        5,604
+    Denylisted           17,710        3,481
+    AmbiguousCandidates   8,520            0
+    DynamicDispatch           0        1,328
+    UnhandledForm             1          165
     Unplaced / NoDeclaredType / MacroExpansion: 0 everywhere
 
-    declarations  13,368     13,074
-    relations      5,319      4,021
-    imports 1st-party 2,036   2,299 | external 1,455 / 3,270
+`ExternalBoundary` is decided from the corpus's own declarations, never a list:
+a member name NOTHING first-party declares cannot become a first-party edge, so
+`.trim()`, `.collect()`, `.toBe()` are the boundary R5 names and never opens.
+23,744 references moved out of `ReceiverTypeUnknown` on that rule, which is what
+made the remainder readable.
+
+Per function, the shape a reader needs is already there — 99% of Rust functions
+carry a fetchable `path:n-m` and 84% carry an outgoing call edge:
+
+    functions/methods  rust 7,847 | ts 2,029
+    line RANGE              7,785 |    1,886
+    >=1 outgoing call       6,550 |    1,537
 
 ## Acceptance status
 

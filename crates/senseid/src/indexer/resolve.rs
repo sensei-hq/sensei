@@ -133,6 +133,19 @@ pub struct World<'a> {
     /// boundary however it is spelled, so it resolves local; anything else the
     /// import calls external is a library (R5).
     pub first_party: &'a BTreeSet<String>,
+    /// Every MEMBER NAME any first-party type in this scan declares.
+    ///
+    /// What tells a miss from a boundary. A member the scan declares nowhere
+    /// cannot become a first-party edge however much is later learned about the
+    /// receiver — `.trim()`, `.collect()`, `.toBe()` are methods on types R5
+    /// says we name and never open — so counting them as failures made 23,739
+    /// of 53,224 untyped receivers read as a gap somebody should close.
+    ///
+    /// A BARRIER artifact like the type table: built from a completed pass, so
+    /// the answer does not depend on which file came first (R6). Empty means
+    /// "not supplied", and then nothing is reclassified — the previous
+    /// behaviour, and never a guess.
+    pub first_party_members: &'a BTreeSet<String>,
     /// Every identity minted before this file. It is here, and it is
     /// deliberately never read.
     ///
@@ -330,6 +343,15 @@ impl<'a> Ladder<'a> {
         match reason {
             Reason::UnhandledForm => reason,
             _ if self.grammar.plumbing.contains(&evidence.name.as_str()) => Reason::Denylisted,
+            // A receiver we could not type, whose MEMBER nothing first-party
+            // declares. No inference reaches it, because there is nothing of
+            // ours on the other end — see `World::first_party_members`.
+            Reason::ReceiverTypeUnknown
+                if !self.world.first_party_members.is_empty()
+                    && !self.world.first_party_members.contains(&evidence.name) =>
+            {
+                Reason::ExternalBoundary
+            }
             _ => reason,
         }
     }
@@ -742,7 +764,15 @@ mod tests {
         .expect("the fixture parses");
         let first_party: BTreeSet<String> = first_party.iter().map(|p| (*p).to_string()).collect();
         let scanned = BTreeSet::new();
-        resolve(facts, &rust::GRAMMAR, &World { first_party: &first_party, scanned: &scanned })
+        resolve(
+            facts,
+            &rust::GRAMMAR,
+            &World {
+                first_party: &first_party,
+                first_party_members: &BTreeSet::new(),
+                scanned: &scanned,
+            },
+        )
     }
 
     /// Every reference's outcome, as text: the identity it was placed at, or the
@@ -1145,7 +1175,11 @@ mod tests {
 
         let (first_party, walked) = corpus();
         let scanned = BTreeSet::new();
-        let world = World { first_party: &first_party, scanned: &scanned };
+        let world = World {
+            first_party: &first_party,
+            first_party_members: &BTreeSet::new(),
+            scanned: &scanned,
+        };
 
         let mut histogram: BTreeMap<String, usize> = BTreeMap::new();
         let mut common: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
@@ -1289,7 +1323,11 @@ mod tests {
                 Some((parsed.package.to_string(), (*parsed.tail.last()?).to_string()))
             })
             .collect();
-        let world = World { first_party: &first_party, scanned: &BTreeSet::new() };
+        let world = World {
+            first_party: &first_party,
+            first_party_members: &BTreeSet::new(),
+            scanned: &BTreeSet::new(),
+        };
 
         let mut total = 0usize;
         let mut dangling: BTreeMap<String, usize> = BTreeMap::new();
@@ -1395,7 +1433,11 @@ mod tests {
 
         let module_only = fqn::Reach::Mod.as_str();
         let scanned = BTreeSet::new();
-        let world = World { first_party: &first_party, scanned: &scanned };
+        let world = World {
+            first_party: &first_party,
+            first_party_members: &BTreeSet::new(),
+            scanned: &scanned,
+        };
         let mut resolved = 0usize;
         let mut broken: BTreeMap<String, usize> = BTreeMap::new();
         let mut only_a_module_declares_it: BTreeMap<String, usize> = BTreeMap::new();
@@ -1491,12 +1533,20 @@ mod tests {
             let alone = resolve(
                 facts.clone(),
                 &rust::GRAMMAR,
-                &World { first_party: &first_party, scanned: &nothing },
+                &World {
+                    first_party: &first_party,
+                    first_party_members: &BTreeSet::new(),
+                    scanned: &nothing,
+                },
             );
             let after = resolve(
                 facts,
                 &rust::GRAMMAR,
-                &World { first_party: &first_party, scanned: &everything },
+                &World {
+                    first_party: &first_party,
+                    first_party_members: &BTreeSet::new(),
+                    scanned: &everything,
+                },
             );
             assert!(
                 alone == after,
@@ -1551,7 +1601,11 @@ mod tests {
                 let placed = resolve(
                     facts,
                     &rust::GRAMMAR,
-                    &World { first_party: &first_party, scanned: &scanned },
+                    &World {
+                        first_party: &first_party,
+                        first_party_members: &BTreeSet::new(),
+                        scanned: &scanned,
+                    },
                 );
                 scanned.extend(placed.symbols.iter().map(|s| s.fqn.clone()));
                 out.insert(path, placed);
@@ -1630,7 +1684,11 @@ mod tests {
         }
 
         let scanned = BTreeSet::new();
-        let world = World { first_party: &first_party, scanned: &scanned };
+        let world = World {
+            first_party: &first_party,
+            first_party_members: &BTreeSet::new(),
+            scanned: &scanned,
+        };
         let mut resolved = 0usize;
         let mut elsewhere: BTreeMap<String, usize> = BTreeMap::new();
         let mut through_a_trait: BTreeMap<String, usize> = BTreeMap::new();

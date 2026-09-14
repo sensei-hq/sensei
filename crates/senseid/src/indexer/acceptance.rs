@@ -96,8 +96,22 @@ fn read_the_corpus() -> Vec<Read> {
     // nothing resolved and would report every pattern as underivable. That is
     // what the first run of this file did.
     let first_party: BTreeSet<String> = sources.iter().map(|(p, _, _)| p.clone()).collect();
+    // The BOUNDARY table, from the same completed pass the type table came
+    // from: every member name any first-party type declares. A member the scan
+    // declares NOWHERE cannot become a first-party edge, so the ladder labels
+    // it the boundary rather than counting it as a miss.
+    let first_party_members: BTreeSet<String> = first
+        .iter()
+        .flat_map(|r| r.facts.symbols.iter())
+        .filter(|s| matches!(s.kind, SymbolKind::Method | SymbolKind::Field | SymbolKind::Property))
+        .map(|s| s.name.clone())
+        .collect();
     let scanned = BTreeSet::new();
-    let world = World { first_party: &first_party, scanned: &scanned };
+    let world = World {
+        first_party: &first_party,
+        first_party_members: &first_party_members,
+        scanned: &scanned,
+    };
     read_all(&homes)
         .into_iter()
         .map(|read| {
@@ -136,6 +150,7 @@ fn report() {
         "AmbiguousCandidates",
         "DynamicDispatch",
         "Denylisted",
+        "ExternalBoundary",
         "NoDeclaredType",
         "MacroExpansion",
         "UnhandledForm",
@@ -329,6 +344,9 @@ fn an_import_named_target_resolves() {
     }
 }
 
+/// `(language, shape)` and the count plus a few examples, ranked for display.
+type Ranked<'a> = (&'a (&'a str, &'a str), &'a (usize, Vec<String>));
+
 /// What `ReceiverTypeUnknown` ACTUALLY is, bucketed by the shape of the
 /// receiver the walk could not type.
 ///
@@ -380,7 +398,7 @@ fn what_the_untyped_receivers_are() {
     }
 
     println!("\n## ReceiverTypeUnknown, by receiver shape\n");
-    let mut ranked: Vec<(&(&str, &str), &(usize, Vec<String>))> = shapes.iter().collect();
+    let mut ranked: Vec<Ranked<'_>> = shapes.iter().collect();
     ranked.sort_by_key(|(_, (n, _))| std::cmp::Reverse(*n));
     for ((language, shape), (n, examples)) in ranked {
         println!("{n:>7}  [{language}] {shape}");

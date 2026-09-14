@@ -672,6 +672,7 @@ fn reason_label(reason: Reason) -> &'static str {
         Reason::DynamicDispatch => "dynamic_dispatch",
         Reason::MacroExpansion => "macro_expansion",
         Reason::Denylisted => "denylisted",
+        Reason::ExternalBoundary => "external_boundary",
         Reason::Unplaced => "unplaced",
     }
 }
@@ -686,6 +687,7 @@ fn reason_from_label(label: &str) -> Option<Reason> {
         "dynamic_dispatch" => Reason::DynamicDispatch,
         "macro_expansion" => Reason::MacroExpansion,
         "denylisted" => Reason::Denylisted,
+        "external_boundary" => Reason::ExternalBoundary,
         "unplaced" => Reason::Unplaced,
         _ => return None,
     })
@@ -1573,7 +1575,15 @@ pub fn widest(a: u32) -> u32 {
                 .expect("the fixture parses");
         let first_party: BTreeSet<String> = ["senseid".to_string()].into_iter().collect();
         let scanned = BTreeSet::new();
-        resolve(facts, &rust::GRAMMAR, &World { first_party: &first_party, scanned: &scanned })
+        resolve(
+            facts,
+            &rust::GRAMMAR,
+            &World {
+                first_party: &first_party,
+                first_party_members: &BTreeSet::new(),
+                scanned: &scanned,
+            },
+        )
     }
 
     async fn a_folder(store: &PgStore, test: &str) -> uuid::Uuid {
@@ -2309,7 +2319,11 @@ pub fn widest(a: u32) -> u32 {
         let first_party: BTreeSet<String> =
             sources.iter().map(|(path, _)| crate::indexer::package_of(path)).collect();
         let scanned = BTreeSet::new();
-        let world = World { first_party: &first_party, scanned: &scanned };
+        let world = World {
+            first_party: &first_party,
+            first_party_members: &BTreeSet::new(),
+            scanned: &scanned,
+        };
 
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "corpus").await;
