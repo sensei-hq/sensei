@@ -1020,6 +1020,30 @@ impl<'a> Walk<'a> {
         self.emit(scope, RefKind::TypeUse, node, miss);
     }
 
+    /// `Self` spelled as the type it means.
+    ///
+    /// `Self::new()` and `-> Self` name the type the enclosing `impl` or trait
+    /// body is about, which [`Container`] already holds — so minting a type
+    /// literally called `Self` files a reference under a name no declaration
+    /// carries. MEASURED: 33 references named `Self` and could reach nothing.
+    ///
+    /// Only the LEADING segment is rewritten, and only when it is exactly
+    /// `Self`: a type genuinely named `SelfTest` is not this, and a `Self` at
+    /// the file level is inside no type and stays as it was rather than being
+    /// attached to a guess.
+    fn concrete(&self, scope: &Scope, raw: &str) -> String {
+        let ty = match &scope.container {
+            Container::Type { name, .. } => name.as_str(),
+            Container::TraitImpl { ty, .. } => ty.as_str(),
+            Container::File | Container::Unnameable { .. } => return raw.to_string(),
+        };
+        match raw.strip_prefix("Self") {
+            Some("") => ty.to_string(),
+            Some(rest) if rest.starts_with("::") => format!("{ty}{rest}"),
+            _ => raw.to_string(),
+        }
+    }
+
     /// A type named in a signature, a field, a bound or a construction. The one
     /// owner of type-text normalisation is `fqn::type_segment`, so the use side
     /// and the definition side reduce `Widget<T>` and `Widget` the same way.
@@ -1031,6 +1055,7 @@ impl<'a> Walk<'a> {
         let Ok(name) = type_segment(&path) else {
             return unhandled(node, raw, Reach::Item);
         };
+        let name = self.concrete(scope, &name);
         let mut saw = considered(fqn::refer(&Form::Item {
             lang: Language::Rust,
             package: self.package,
@@ -1055,6 +1080,9 @@ impl<'a> Walk<'a> {
         let package = self.package;
         let module = scope.module.as_str();
         // Turbofish arguments decorate a path without naming a segment of it.
+        // `Self` is the enclosing type, which the container already knows —
+        // see `Walk::concrete`.
+        let raw = &self.concrete(scope, raw);
         let segments: Vec<&str> = raw
             .split("::")
             .map(str::trim)
