@@ -1475,6 +1475,46 @@ pub fn free(w: &Widget) -> u32 { w.width }
         );
     }
 
+    /// `Self` names the enclosing type, not a type called `Self`.
+    ///
+    /// MEASURED: 33 references named `Self` and could reach nothing, because
+    /// the walk minted an identity for a type no declaration carries.
+    ///
+    /// MUTATION: drop the `Self` arm from `Walk::concrete` — `Self::new()` goes
+    /// back to naming `Self` and matches nothing.
+    #[test]
+    fn self_names_the_enclosing_type_and_not_a_type_called_self() {
+        let facts = facts(
+            "m",
+            "pub struct Widget { w: u32 }\n\
+             impl Widget {\n\
+             \x20   pub fn new() -> Self { Self { w: 0 } }\n\
+             \x20   pub fn make() -> Self { Self::new() }\n\
+             }\n",
+        );
+        let named: Vec<String> = facts
+            .references
+            .iter()
+            .filter_map(|r| match &r.target {
+                Resolution::Resolved(fqn) => Some(fqn.to_string()),
+                Resolution::Unresolved { evidence, .. } => {
+                    evidence.saw.iter().find_map(|o| match o {
+                        Observation::Candidate(fqn) => Some(fqn.to_string()),
+                        _ => None,
+                    })
+                }
+            })
+            .collect();
+        assert!(
+            !named.iter().any(|f| f.contains("\u{00B7}Self\u{00B7}")),
+            "nothing may be filed under a type called `Self`: {named:?}"
+        );
+        assert!(
+            named.iter().any(|f| f.ends_with("Widget\u{00B7}new\u{00B7}item")),
+            "`Self::new()` reaches Widget::new: {named:?}"
+        );
+    }
+
     // ── anchoring a member to its type's module ──────────────────────────
 
     /// The fix, and the defect it replaces, in one test.

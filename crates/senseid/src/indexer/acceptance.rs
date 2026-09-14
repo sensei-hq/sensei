@@ -23,6 +23,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::facts::{FileFacts, RefKind, RelationKind, Resolution, SymbolKind};
+use super::fqn::Reach;
 use super::lang::{self, Source, TypeHomes};
 use super::resolve::{World, resolve};
 
@@ -422,6 +423,73 @@ fn what_the_unimported_names_are() {
         println!("  {n:>6}  {name}");
     }
     assert!(!buckets.is_empty(), "no unimported names, so this proved nothing");
+}
+
+/// The residue: names we DO declare somewhere and still could not place.
+///
+/// The largest bucket left after the cheap rules, and unlike them it has no
+/// single mechanism — so it is decomposed by the SHAPE of the path, which is
+/// what decides which rung should have fired.
+#[test]
+#[ignore]
+fn what_the_placeable_names_are() {
+    let corpus = read_the_corpus();
+    let mut declared: BTreeSet<&str> = BTreeSet::new();
+    for read in &corpus {
+        for symbol in &read.facts.symbols {
+            declared.insert(symbol.name.as_str());
+        }
+    }
+
+    let mut shapes: BTreeMap<(&str, &str), usize> = BTreeMap::new();
+    let mut head: BTreeMap<&str, usize> = BTreeMap::new();
+    for read in &corpus {
+        let language = read.facts.language.as_str();
+        let separator = lang::adapter_for(read.facts.language).grammar().path_separator;
+        for reference in &read.facts.references {
+            let Resolution::Unresolved { reason, evidence } = &reference.target else { continue };
+            if format!("{reason:?}") != "NoImportInScope" {
+                continue;
+            }
+            let name = evidence.name.as_str();
+            let first = name.split(separator).next().unwrap_or(name);
+            if !declared.contains(name) && !declared.contains(first) {
+                continue;
+            }
+            let segments = name.split(separator).count();
+            let shape = if segments > 1 {
+                "a multi-segment PATH — the rung that should place it is rooted or import"
+            } else if evidence.reach == Reach::Field {
+                "a FIELD reach — no path rung may serve one, by design"
+            } else if name.chars().next().is_some_and(char::is_uppercase) {
+                "a bare TYPE name — declared elsewhere, no import placed it"
+            } else {
+                "a bare VALUE name — a function or const declared elsewhere"
+            };
+            *shapes.entry((language, shape)).or_default() += 1;
+            *head.entry(name).or_default() += 1;
+        }
+    }
+
+    println!("\n## The placeable residue, by path shape\n");
+    println!("| {:<58} | {:>8} | {:>10} |", "", "rust", "typescript");
+    println!("|{}|{}|{}|", "-".repeat(60), "-".repeat(10), "-".repeat(12));
+    let rows: BTreeSet<&str> = shapes.keys().map(|(_, s)| *s).collect();
+    for shape in &rows {
+        println!(
+            "| {:<58} | {:>8} | {:>10} |",
+            shape,
+            shapes.get(&("rust", *shape)).copied().unwrap_or(0),
+            shapes.get(&("typescript", *shape)).copied().unwrap_or(0)
+        );
+    }
+    let mut ranked: Vec<(&&str, &usize)> = head.iter().collect();
+    ranked.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+    println!("\nhead:");
+    for (name, n) in ranked.iter().take(12) {
+        println!("  {n:>6}  {name}");
+    }
+    assert!(!shapes.is_empty(), "no placeable residue, so this proved nothing");
 }
 
 /// `(language, shape)` and the count plus a few examples, ranked for display.
