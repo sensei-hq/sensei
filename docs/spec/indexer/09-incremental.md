@@ -1,6 +1,6 @@
 # Stage 9 — incremental: changed files back to repos
 
-Whole-system spec: `docs/design/indexer-v2.md` R14 (incremental mode), R15
+Whole-system spec: `docs/design/indexer.md` R14 (incremental mode), R15
 (§7g, the root set), R6, R10.5. Depends on stage 7.
 
 ## 1. Purpose

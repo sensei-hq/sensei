@@ -36,7 +36,7 @@ create table if not exists files (
   --   parsed_at set,  skip_reason set  -> unparseable | skipped, per the reason
   -- A four-value enum column was the other option and was rejected: it would
   -- restate what skip_reason already says, giving two writes of one fact that
-  -- can disagree. See indexer-v2.md R13.
+  -- can disagree. See indexer.md R13.
 , parsed_at                timestamptz
 , indexed_at               timestamptz not null default now()
 , modified_at              timestamptz not null default now()

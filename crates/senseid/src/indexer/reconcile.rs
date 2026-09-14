@@ -1,4 +1,4 @@
-//! Indexer v2 — re-indexing a file replaces exactly what that file claims
+//! Re-indexing a file replaces exactly what that file claims
 //! (spec R10, A8, D8, D9; plan step 7b).
 //!
 //! [`super::persist::write`] only ADDS. A call deleted from a source file keeps
@@ -55,7 +55,7 @@ pub struct Located {
 /// mistake unrepresentable: a file whose READ failed can never arrive here as
 /// an empty fact set. `read` returns `Result<FileFacts, ReadError>`, `FileFacts`
 /// has no production constructor outside a language module's `read` — guarded
-/// by a test over the v2 sources — and there is no variant here that a caller
+/// by a test over the guarded sources — and there is no variant here that a caller
 /// could put an `Err` into. On `Err` the caller does not call reconcile at all,
 /// the file keeps the graph it had, and the failure is reported.
 ///
@@ -194,7 +194,7 @@ pub async fn reconcile(
 ) -> Result<Reconciled, String> {
     let here = stated.located();
     let now = stated.claims();
-    let before = store.v2_claims_of_file(folder_id, &here.path).await?;
+    let before = store.claims_of_file(folder_id, &here.path).await?;
 
     // R10.3's brake. Only an INFERRED emptiness is braked: a file that is
     // `Gone` was observed to be absent, and re-reading it would only re-observe
@@ -228,7 +228,7 @@ pub async fn reconcile(
     let mut demoted = 0usize;
     let mut contested: Vec<Contested> = Vec::new();
     for fqn in before.difference(&now) {
-        let Some(release) = store.release_v2_claim(folder_id, fqn, &here.path).await? else {
+        let Some(release) = store.release_claim(folder_id, fqn, &here.path).await? else {
             // The claim was read out of this folder a moment ago. A node that is
             // not there now is an inconsistency, not something to count as a
             // release that happened.
@@ -242,7 +242,7 @@ pub async fn reconcile(
             // Back to the shape a not-yet-indexed reference has — the kind the
             // IDENTITY states, never one guessed from what used to be there.
             let (kind, _) = persist::stub_kind_and_name(fqn)?;
-            store.demote_v2_symbol(&release.node_id, kind).await?;
+            store.demote_symbol(&release.node_id, kind).await?;
             demoted += 1;
         } else {
             contested
@@ -298,11 +298,11 @@ async fn drop_stale_occurrences(
 
     let mut dropped = 0usize;
     let mut deleted = 0usize;
-    for edge in store.v2_edges_contributed_by(folder_id, &here.path, &sources).await? {
+    for edge in store.edges_contributed_by(folder_id, &here.path, &sources).await? {
         if keep.contains(&edge) {
             continue;
         }
-        match store.drop_v2_edge_occurrences(&edge, &here.path).await? {
+        match store.drop_edge_occurrences(&edge, &here.path).await? {
             Dropped::Kept => dropped += 1,
             Dropped::RowDeleted => {
                 dropped += 1;
@@ -377,7 +377,7 @@ mod tests {
     }
 
     async fn a_folder(store: &PgStore, test: &str) -> uuid::Uuid {
-        create_test_folder(store, &format!("v2_reconcile_{test}_{}", uuid::Uuid::new_v4())).await
+        create_test_folder(store, &format!("reconcile_{test}_{}", uuid::Uuid::new_v4())).await
     }
 
     /// Reconcile the way the pipeline does — barrier first.
@@ -1034,7 +1034,7 @@ mod tests {
     /// Node rows are compared WHOLE, `modified_at` included. Edge rows are
     /// compared without it: `insert_edge_with_props` stamps `modified_at =
     /// now()` on every conflicting insert, it is a pre-existing `pg_store`
-    /// function the shipped indexer calls, and v2 may not change its behaviour.
+    /// function the legacy indexer calls, and this one may not change its behaviour.
     /// The row's CONTENT — endpoints, kind, props, occurrences — is compared in
     /// full.
     #[tokio::test]
@@ -1131,19 +1131,15 @@ mod tests {
             .expect("the index");
 
         assert_eq!(
-            store.v2_claims_of_file(&folder, "src/gadget.rs").await.expect("the claims read"),
+            store.claims_of_file(&folder, "src/gadget.rs").await.expect("the claims read"),
             facts.symbols.iter().map(|s| s.fqn.as_str().to_string()).collect::<BTreeSet<String>>(),
             "the set of nodes claiming this file must equal the set of symbols it declares"
         );
 
         // And an ownership relation is still a parent_id after reconcile, so the
         // diff has not undone what the write set up.
-        let containment: BTreeMap<String, Option<String>> = store
-            .v2_containment(&folder)
-            .await
-            .expect("the containment reads")
-            .into_iter()
-            .collect();
+        let containment: BTreeMap<String, Option<String>> =
+            store.containment(&folder).await.expect("the containment reads").into_iter().collect();
         for relation in facts.relations.iter().filter(|r| r.kind == RelationKind::Owns) {
             if let crate::indexer::facts::Resolution::Resolved(parent) = &relation.parent {
                 assert_eq!(
@@ -1163,7 +1159,7 @@ mod tests {
         async fn run(order: [&str; 2]) -> Vec<serde_json::Value> {
             let store = PgStore::connect_test().await.expect("the test database must be reachable");
             let folder =
-                create_test_folder(&store, &format!("v2_move_{}", uuid::Uuid::new_v4())).await;
+                create_test_folder(&store, &format!("move_{}", uuid::Uuid::new_v4())).await;
             // `moved` starts in `first.rs`.
             reconciled(
                 &store,
@@ -1242,7 +1238,7 @@ mod tests {
 
         for (package, module, path) in &indexed {
             let claims: Vec<String> = store
-                .v2_claims_of_file(&folder, path)
+                .claims_of_file(&folder, path)
                 .await
                 .expect("the claims read")
                 .into_iter()
@@ -1253,13 +1249,13 @@ mod tests {
                     .expect("the file identity"),
             );
             let found: BTreeSet<uuid::Uuid> = store
-                .v2_edges_contributed_by(&folder, path, &sources)
+                .edges_contributed_by(&folder, path, &sources)
                 .await
                 .expect("the lookup runs")
                 .into_iter()
                 .collect();
             let truth: BTreeSet<uuid::Uuid> = store
-                .v2_edges_naming_file(&folder, path)
+                .occurrence_edges_naming_file(&folder, path)
                 .await
                 .expect("the unnarrowed read runs")
                 .into_iter()
