@@ -90,7 +90,8 @@ pub enum ReadError {
 /// Where each type NAME is declared, for the packages being scanned.
 ///
 /// **The one fact a walk cannot read out of the file it was handed, and needs.**
-/// A member's identity is `…·<module>·<Type>·<member>`, and `<module>` is the
+/// A member's identity carries the module, then the type, then the member,
+/// and that MODULE is the
 /// module the TYPE lives in — `PgStore::upsert_symbol` is reached through
 /// `db::pg_store::PgStore` however many files carry an `impl PgStore`. Rust puts
 /// those impl blocks anywhere; this repo has 24 of them for `PgStore` alone.
@@ -180,7 +181,8 @@ fn names_a_type(kind: SymbolKind) -> bool {
     )
 }
 
-/// The module segment of an ITEM identity — `lang·pkg·[module]·name·reach`.
+/// The module segment of an ITEM identity, whose parts in order are the
+/// language, the package, an optional module, the name, and the reach.
 ///
 /// Only the item form is decomposed, and only with the name in hand. The MEMBER
 /// forms differ by one segment while an empty module is dropped, so a
