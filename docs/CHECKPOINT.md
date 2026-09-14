@@ -37,28 +37,32 @@ acceptance tests are `indexer::acceptance::*`.
 Last run, 1,331 files:
 
     references             rust   typescript
-    RESOLVED             48,705       22,096
-    ReceiverTypeUnknown  17,479       12,114   <- what is left to type
-    ExternalBoundary     11,261       12,483   <- NOT ours, no edge exists
-    NoImportInScope      18,386        5,604
-    Denylisted           17,710        3,481
-    AmbiguousCandidates   8,520            0
+    RESOLVED             59,182       23,156
+    ReceiverTypeUnknown  17,499       12,114
+    Denylisted           17,716        3,481
+    ExternalBoundary     11,272       12,483   <- NOT ours; no edge exists
+    AmbiguousCandidates   8,520            7
+    NoImportInScope       7,959        4,537
     DynamicDispatch           0        1,328
     UnhandledForm             1          165
     Unplaced / NoDeclaredType / MacroExpansion: 0 everywhere
 
-`ExternalBoundary` is decided from the corpus's own declarations, never a list:
-a member name NOTHING first-party declares cannot become a first-party edge, so
-`.trim()`, `.collect()`, `.toBe()` are the boundary R5 names and never opens.
-23,744 references moved out of `ReceiverTypeUnknown` on that rule, which is what
-made the remainder readable.
+Three rules landed against measured causes, and RESOLVED went 70,801 -> 82,338:
 
-Per function, the shape a reader needs is already there — 99% of Rust functions
-carry a fetchable `path:n-m` and 84% carry an outgoing call edge:
+- **ExternalBoundary** — a member name NOTHING first-party declares cannot be a
+  first-party edge. 23,755 references left the miss bucket on the corpus's own
+  declarations, never a hand-written list.
+- **Fully-qualified external paths** — `serde_json::json!(..)` is a complete use
+  and R5 says an external is named by use, so requiring an import was requiring
+  something Rust does not. Rust NoImportInScope 18,386 -> 7,959.
+- **Svelte 5 runes** — `$state`/`$derived`/`$props` are in scope with nothing
+  written. A prelude entry now carries its own PACKAGE, so a rune names
+  `svelte` and not `ecmascript`.
 
-    functions/methods  rust 7,847 | ts 2,029
-    line RANGE              7,785 |    1,886
-    >=1 outgoing call       6,550 |    1,537
+STILL OPEN, measured at 9,503 before the above absorbed part of it: a `use
+super::*` glob. `Ladder::enumerable` only reads a glob whose target the FILE
+covers; at a barrier the corpus knows every symbol every module declares. Needs
+re-measuring before it is built.
 
 ## Acceptance status
 
