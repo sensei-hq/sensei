@@ -275,6 +275,21 @@ pub enum Reason {
     /// failure — its own reason so a reader can exclude it without also
     /// excluding genuine misses.
     Denylisted,
+    /// The target names a member NO first-party type declares anywhere in the
+    /// scan, so it cannot be an edge we could ever draw: it is a method on a
+    /// library type — `.trim()`, `.collect()`, `.toBe()` — at the boundary R5
+    /// says we name and never open.
+    ///
+    /// Its own reason because the alternative was counting it as a failure.
+    /// MEASURED: 23,739 of the 53,224 receivers reported as
+    /// [`Reason::ReceiverTypeUnknown`] were this, and the number read as a gap
+    /// somebody should close. It is not one — no amount of type inference makes
+    /// `.toBe()` a first-party edge — and a bucket that mixes "we dropped
+    /// something" with "this is where our world ends" cannot be acted on.
+    ///
+    /// Decided from the corpus's own declarations, never from a list: a name is
+    /// at the boundary exactly when nothing we index declares it.
+    ExternalBoundary,
     /// The walk read the use site and minted the candidate identity it names,
     /// but placing that candidate needs the shared resolution ladder, which the
     /// walk is not (R7). The walk never reaches outside the file it was handed,
@@ -522,6 +537,7 @@ mod tests {
             Reason::DynamicDispatch,
             Reason::MacroExpansion,
             Reason::Denylisted,
+            Reason::ExternalBoundary,
             Reason::Unplaced,
         ]
     }
@@ -645,10 +661,11 @@ mod tests {
                 | Reason::DynamicDispatch
                 | Reason::MacroExpansion
                 | Reason::Denylisted
+                | Reason::ExternalBoundary
                 | Reason::Unplaced => {}
             }
         }
-        assert_eq!(all_reasons().len(), 9);
+        assert_eq!(all_reasons().len(), 10);
 
         for o in all_observations() {
             match o {

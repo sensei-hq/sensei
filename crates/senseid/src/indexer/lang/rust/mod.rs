@@ -377,11 +377,15 @@ mod tests {
         // and nothing looked it up" — which is exactly the distinction these
         // tests are about.
         let first_party = std::collections::BTreeSet::from(["p".to_string()]);
-        let scanned = std::collections::BTreeSet::new();
+        let scanned = BTreeSet::new();
         let facts = crate::indexer::resolve::resolve(
             facts,
             &GRAMMAR,
-            &crate::indexer::resolve::World { first_party: &first_party, scanned: &scanned },
+            &crate::indexer::resolve::World {
+                first_party: &first_party,
+                first_party_members: &BTreeSet::new(),
+                scanned: &scanned,
+            },
         );
         facts
             .references
@@ -1172,6 +1176,8 @@ pub fn free(w: &Widget) -> u32 { w.width }
         "macro_definition",
         "field_declaration",
     ];
+
+    use std::collections::BTreeSet;
 
     use crate::indexer::corpus_rust_sources as repo_rust_sources;
 
