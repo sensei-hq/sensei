@@ -122,6 +122,57 @@ fn corpus_rust_sources() -> Vec<(String, String)> {
     out
 }
 
+/// Every JavaScript, TypeScript and Svelte source file of this repo's own front
+/// ends, as `(path relative to the workspace root, body)`.
+///
+/// The sibling of [`corpus_rust_sources`], and it exists for the same reason: a
+/// fixture proves the walk handles what the fixture's author thought of, and
+/// the corpus proves it handles what is there. `app/`, `dojo/` and `website/`
+/// are three real SvelteKit applications, which is a harder corpus than
+/// anything a test would write.
+///
+/// `node_modules` and build output are excluded, and so is everything
+/// generated: `.svelte-kit` holds code nobody wrote, so a defect found in it is
+/// a defect in a generator rather than in this reader.
+#[cfg(test)]
+fn corpus_web_sources() -> Vec<(String, String)> {
+    const SKIP: &[&str] =
+        &["node_modules", "target", "build", "dist", ".svelte-kit", ".vercel", "coverage"];
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("the crate sits two levels below the workspace root");
+    let mut out = Vec::new();
+    for top in ["app", "dojo", "website"] {
+        for entry in walkdir::WalkDir::new(root.join(top)).into_iter().filter_entry(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            !SKIP.contains(&name.as_str()) && !name.starts_with('.')
+        }) {
+            let Ok(entry) = entry else { continue };
+            let path = entry.path();
+            let claimed = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                matches!(e, "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "svelte")
+            });
+            if !claimed {
+                continue;
+            }
+            // A file that will not read as UTF-8 is not source this walk can be
+            // handed, and skipping it here is not a fallback: the caller of the
+            // real pipeline never gets one either.
+            let Ok(body) = std::fs::read_to_string(path) else { continue };
+            let relative = path
+                .strip_prefix(root)
+                .expect("walkdir yields paths under the root it was given")
+                .display()
+                .to_string();
+            out.push((relative, body));
+        }
+    }
+    assert!(out.len() > 200, "the corpus is three SvelteKit apps; {} files is not it", out.len());
+    out.sort_by(|(a, _), (b, _)| a.cmp(b));
+    out
+}
+
 /// The package a crate's manifest declares, which source spells with an
 /// underscore where the manifest hyphenates it.
 #[cfg(test)]
