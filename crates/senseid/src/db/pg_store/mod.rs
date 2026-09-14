@@ -487,15 +487,15 @@ mod extensions;
 pub(crate) mod folders;
 mod governance;
 mod graph;
-mod indexer_v2;
+mod indexer;
 /// Named outside this module because the MCP handler picks the direction and
 /// `graph` consumes it — the caller/callee envelope and `call_coverage` must
 /// agree on which side of the relation is being counted, so the choice is one
 /// shared enum rather than a string each side re-interprets.
 pub(crate) use graph::CallDirection;
 #[cfg(test)]
-pub(crate) use indexer_v2::LibColumns;
-pub(crate) use indexer_v2::{Dropped, EdgeColumns, NodeColumns};
+pub(crate) use indexer::LibColumns;
+pub(crate) use indexer::{Dropped, EdgeColumns, NodeColumns};
 mod library;
 mod logs;
 mod mcp;

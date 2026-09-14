@@ -1,7 +1,8 @@
-//! Indexer v2's row-level access to `sensei.nodes` and `sensei.edges`
-//! (`docs/plans/indexer-v2-rust.md`, step 7).
+//! The indexer's row-level access to `sensei.nodes` and `sensei.edges`
+//! (`docs/spec/indexer/06-persist.md`).
 //!
-//! Everything here is v2's and has no caller on the shipped path. The policy —
+//! Everything here belongs to this indexer and has no caller on the shipped
+//! path. The policy —
 //! which fact becomes which row — lives in `crate::indexer::persist`; this file
 //! is only the SQL that layer cannot write for itself.
 //!
@@ -15,8 +16,8 @@ use super::{FqnDef, PgStore};
 /// One `sensei.nodes` row, as the columns hold it.
 ///
 /// Raw on purpose: `crate::indexer::persist` owns the decoding, because turning
-/// a `kind` label back into a [`crate::indexer::facts::SymbolKind`] is v2
-/// grammar and this file is not where v2 grammar lives (R7).
+/// a `kind` label back into a [`crate::indexer::facts::SymbolKind`] is the
+/// indexer's grammar, and this file is not where that lives (R7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeColumns {
     pub fqn: String,
@@ -94,8 +95,8 @@ pub enum Dropped {
     NoSuchEdge,
 }
 
-/// The `sensei.nodes` projection [`PgStore::v2_definition_nodes`] selects, in
-/// column order, and the `sensei.edges` one [`PgStore::v2_edges`] selects.
+/// The `sensei.nodes` projection [`PgStore::definition_nodes`] selects, in
+/// column order, and the `sensei.edges` one [`PgStore::occurrence_edges`] selects.
 ///
 /// Named rather than written inline: sqlx hands back a positional tuple, and a
 /// ten-element tuple spelled out at the binding site is exactly the shape this
@@ -116,12 +117,12 @@ type NodeProjection = (
 
 type EdgeProjection = (Option<String>, String, Option<String>, Option<String>, serde_json::Value);
 
-/// The [`PgStore::v2_lib_nodes`] projection: fqn, kind, name, `props.package`,
+/// The [`PgStore::lib_nodes`] projection: fqn, kind, name, `props.package`,
 /// and the container's fqn. Named for the reason [`NodeProjection`] is.
 type LibProjection = (Option<String>, String, String, Option<String>, Option<String>);
 
 impl PgStore {
-    /// Write one v2 declaration.
+    /// Write one declaration.
     ///
     /// Takes the row as ONE value and never as an argument list (R9): a
     /// positional insert is a hand-copied enumeration of the producer's fields,
@@ -147,7 +148,7 @@ impl PgStore {
     /// the collapse happens BELOW the fqn where nothing counts it. `None` means
     /// the declaration is a member of nothing (a free item), which is a fact and
     /// not a gap.
-    pub async fn upsert_v2_symbol(
+    pub async fn upsert_symbol(
         &self,
         folder_id: &uuid::Uuid,
         columns: &NodeColumns,
@@ -167,12 +168,11 @@ impl PgStore {
         } = columns;
 
         // A definition without a home file is not a definition — it is the stub
-        // shape, which `v2_definition_nodes` deliberately does not read back.
+        // shape, which `definition_nodes` deliberately does not read back.
         // Writing one here would put a row in the graph that reads as a
         // declaration and names no source.
-        let file_path = file_path
-            .as_deref()
-            .ok_or_else(|| format!("upsert_v2_symbol: {fqn} has no file path"))?;
+        let file_path =
+            file_path.as_deref().ok_or_else(|| format!("upsert_symbol: {fqn} has no file path"))?;
 
         // A re-scan of a file nobody edited must not churn the graph. Without
         // this, every pass rewrites every node and stamps `modified_at = now()`
@@ -183,11 +183,11 @@ impl PgStore {
         // A read before the write and not a narrower UPDATE, because the row is
         // written by TWO statements and the first of them is
         // `upsert_node_by_fqn`, which the shipped indexer also calls and whose
-        // behaviour v2 may not change. Skipping is the only lever this side of
+        // behaviour this indexer may not change. Skipping is the only lever this side of
         // that boundary. It costs one SELECT on a first write and saves two
         // writes on every unchanged re-write, which is the direction a daemon
         // that re-scans runs in.
-        if let Some(id) = self.v2_symbol_unchanged(folder_id, columns, parent_id).await? {
+        if let Some(id) = self.symbol_unchanged(folder_id, columns, parent_id).await? {
             return Ok(id);
         }
 
@@ -213,7 +213,7 @@ impl PgStore {
         // must survive a writer that knows less about them.
         //
         // `claims` is the exception and takes `jsonb_set`, the
-        // [`Self::merge_v2_edge_occurrences`] idiom, for the same reason: `||`
+        // [`Self::merge_edge_occurrences`] idiom, for the same reason: `||`
         // at the top level would REPLACE the whole `claims` object with this
         // file's key and release every other file's claim on the same identity
         // (D9, R10.4). Two files can declare one fqn — measured, 2 in this
@@ -236,12 +236,12 @@ impl PgStore {
         .bind(file_path)
         .execute(&self.pool)
         .await
-        .map_err(|e| format!("upsert_v2_symbol detail ({fqn}): {e}"))?;
+        .map_err(|e| format!("upsert_symbol detail ({fqn}): {e}"))?;
 
         Ok(id)
     }
 
-    /// The id of the row [`Self::upsert_v2_symbol`] would write, WHEN writing it
+    /// The id of the row [`Self::upsert_symbol`] would write, WHEN writing it
     /// would change nothing.
     ///
     /// Every column and prop that write sets is compared, and the comparison is
@@ -255,11 +255,11 @@ impl PgStore {
     ///   Containment is the trap here: `params` is an ARRAY, and `[a, b] @> [b]`
     ///   is true, so a declaration that LOST a parameter would look unchanged and
     ///   the loss would never be written. Per-key `IS DISTINCT FROM` is exact,
-    ///   and it stays out of v2's grammar (R7) — it compares whatever keys the
+    ///   and it stays out of the indexer's grammar (R7) — it compares whatever keys the
     ///   caller brought.
     /// - `props.claims` must already name this file, because claiming is part of
     ///   what the write does (D9).
-    async fn v2_symbol_unchanged(
+    async fn symbol_unchanged(
         &self,
         folder_id: &uuid::Uuid,
         columns: &NodeColumns,
@@ -328,14 +328,14 @@ impl PgStore {
         .bind(props)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| format!("v2_symbol_unchanged ({fqn}): {e}"))?;
+        .map_err(|e| format!("symbol_unchanged ({fqn}): {e}"))?;
         Ok(row.map(|(id,)| id))
     }
 
     /// The id of the node `fqn` names, WHEN a reference to it would change
     /// nothing.
     ///
-    /// The companion of [`Self::v2_symbol_unchanged`] for the other write a file
+    /// The companion of [`Self::symbol_unchanged`] for the other write a file
     /// makes: `upsert_node_by_fqn` with no definition, which is how a use site
     /// reaches a target no file has declared yet. On a row that already exists
     /// that statement changes exactly two things — it backfills `language`
@@ -347,7 +347,7 @@ impl PgStore {
     /// Without it a re-scan of an unchanged file still churns one row per file:
     /// the file's OWN module node, which the file references at every file-scope
     /// use site and which some other file declares.
-    pub async fn v2_node_unchanged_by_reference(
+    pub async fn node_unchanged_by_reference(
         &self,
         folder_id: &uuid::Uuid,
         fqn: &str,
@@ -362,7 +362,7 @@ impl PgStore {
         .bind(language)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| format!("v2_node_unchanged_by_reference ({fqn}): {e}"))?;
+        .map_err(|e| format!("node_unchanged_by_reference ({fqn}): {e}"))?;
         Ok(row.map(|(id,)| id))
     }
 
@@ -373,7 +373,7 @@ impl PgStore {
     /// that says which file's edges hang off a node — measured, 356 of this
     /// repository's 372 files have their own module node declared by a DIFFERENT
     /// file — so keying removal on it deletes rows nobody re-indexed (R10.1).
-    pub async fn v2_claims_of_file(
+    pub async fn claims_of_file(
         &self,
         folder_id: &uuid::Uuid,
         file_path: &str,
@@ -387,7 +387,7 @@ impl PgStore {
         .bind(file_path)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| format!("v2_claims_of_file ({file_path}): {e}"))?;
+        .map_err(|e| format!("claims_of_file ({file_path}): {e}"))?;
         Ok(rows.into_iter().map(|(fqn,)| fqn).collect())
     }
 
@@ -400,7 +400,7 @@ impl PgStore {
     /// `Ok(None)` when the folder holds no node under that fqn. That is a
     /// genuine absence — the caller asked to release a claim on something that
     /// is not there — and never a released-nothing reported as a release.
-    pub async fn release_v2_claim(
+    pub async fn release_claim(
         &self,
         folder_id: &uuid::Uuid,
         fqn: &str,
@@ -421,7 +421,7 @@ impl PgStore {
         .bind(file_path)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| format!("release_v2_claim ({fqn} / {file_path}): {e}"))?;
+        .map_err(|e| format!("release_claim ({fqn} / {file_path}): {e}"))?;
 
         row.map(|(node_id, remaining)| {
             // `RETURNING` reads the row as the UPDATE left it, so this is what
@@ -429,7 +429,7 @@ impl PgStore {
             // in; anything else means another writer put something there and
             // reconcile must not guess what it meant.
             let held_by = remaining.as_object().ok_or_else(|| {
-                format!("release_v2_claim ({fqn}): props.claims is not an object: {remaining}")
+                format!("release_claim ({fqn}): props.claims is not an object: {remaining}")
             })?;
             Ok(Released { node_id, still_claimed_by: held_by.keys().cloned().collect() })
         })
@@ -453,7 +453,7 @@ impl PgStore {
     /// trigger it cannot be trusted: a damaged parse is undetectable (R10.3).
     /// Collecting a stub nothing points at belongs to
     /// [`Self::prune_orphan_stubs_scoped`], which already owns that predicate.
-    pub async fn demote_v2_symbol(&self, node_id: &uuid::Uuid, kind: &str) -> Result<(), String> {
+    pub async fn demote_symbol(&self, node_id: &uuid::Uuid, kind: &str) -> Result<(), String> {
         sqlx_core::query::query(
             "UPDATE sensei.nodes
                 SET resolved = false,
@@ -473,11 +473,11 @@ impl PgStore {
         .bind(kind)
         .execute(&self.pool)
         .await
-        .map_err(|e| format!("demote_v2_symbol: {e}"))?;
+        .map_err(|e| format!("demote_symbol: {e}"))?;
         Ok(())
     }
 
-    /// Every DEFINITION node of a folder — the rows a v2 symbol write produced.
+    /// Every DEFINITION node of a folder — the rows a symbol write produced.
     ///
     /// `file_id IS NOT NULL` is what separates them from the two node shapes
     /// that legitimately have no file: the reference stubs a call to a
@@ -488,7 +488,7 @@ impl PgStore {
     /// (R13). It is the same string the caller wrote — `files` is keyed
     /// `(folder_id, file_path)` and the writer resolved the id from exactly that
     /// value — so the round trip this feeds still compares like with like.
-    pub async fn v2_definition_nodes(
+    pub async fn definition_nodes(
         &self,
         folder_id: &uuid::Uuid,
     ) -> Result<Vec<NodeColumns>, String> {
@@ -503,7 +503,7 @@ impl PgStore {
         .bind(folder_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| format!("v2_definition_nodes: {e}"))?;
+        .map_err(|e| format!("definition_nodes: {e}"))?;
 
         rows.into_iter()
             .map(
@@ -519,10 +519,10 @@ impl PgStore {
                     docstring,
                     props,
                 )| {
-                    // A definition with no fqn is a LEGACY row, not a v2 one, and
-                    // reading it as v2 would report a symbol nothing here wrote.
+                    // A definition with no fqn is a LEGACY row, not one of ours,
+                    // and reading it as ours would report a symbol nothing here wrote.
                     let fqn = fqn.ok_or_else(|| {
-                        format!("v2_definition_nodes: {name} in {file_path:?} carries no fqn")
+                        format!("definition_nodes: {name} in {file_path:?} carries no fqn")
                     })?;
                     Ok(NodeColumns {
                         fqn,
@@ -549,7 +549,7 @@ impl PgStore {
     /// symbol. Until this existed nothing read any of them, so inverting the one
     /// line that derives the package left the whole suite green while every
     /// dependency in the graph was filed under the wrong name.
-    pub async fn v2_lib_nodes(&self, folder_id: &uuid::Uuid) -> Result<Vec<LibColumns>, String> {
+    pub async fn lib_nodes(&self, folder_id: &uuid::Uuid) -> Result<Vec<LibColumns>, String> {
         let rows: Vec<LibProjection> = sqlx_core::query_as::query_as(&format!(
             "SELECT n.fqn, n.kind::text, n.name, n.props ->> 'package', p.fqn
                        FROM sensei.nodes n
@@ -562,23 +562,23 @@ impl PgStore {
         .bind(folder_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| format!("v2_lib_nodes: {e}"))?;
+        .map_err(|e| format!("lib_nodes: {e}"))?;
 
         rows.into_iter()
             .map(|(fqn, kind, name, package, parent_fqn)| {
                 // A lib node is minted by fqn and by nothing else, so one without
                 // an fqn is a row this cannot have written.
                 let fqn = fqn.ok_or_else(|| {
-                    format!("v2_lib_nodes: a {kind} node named {name} carries no fqn")
+                    format!("lib_nodes: a {kind} node named {name} carries no fqn")
                 })?;
                 Ok(LibColumns { fqn, kind, name, package, parent_fqn })
             })
             .collect()
     }
 
-    /// What each v2 node is a MEMBER of, as `(node fqn, owner fqn)`.
+    /// What each node is a MEMBER of, as `(node fqn, owner fqn)`.
     ///
-    /// The read side of [`Self::upsert_v2_symbol`]'s `parent_id`. Without it
+    /// The read side of [`Self::upsert_symbol`]'s `parent_id`. Without it
     /// that column is write-only: nothing in the round trip reads it, so
     /// `parent_id: None` sat there passing the whole suite while it silently
     /// merged rows the identity index could no longer tell apart.
@@ -590,7 +590,7 @@ impl PgStore {
     /// Every fqn-keyed node of the folder, not only definitions: a member whose
     /// owner has not been indexed yet is parented on the owner's STUB, and
     /// excluding stubs would report that as "no owner".
-    pub async fn v2_containment(
+    pub async fn containment(
         &self,
         folder_id: &uuid::Uuid,
     ) -> Result<Vec<(String, Option<String>)>, String> {
@@ -604,7 +604,7 @@ impl PgStore {
         .bind(folder_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| format!("v2_containment: {e}"))?;
+        .map_err(|e| format!("containment: {e}"))?;
 
         rows.into_iter()
             .map(|(fqn, parent)| {
@@ -612,7 +612,7 @@ impl PgStore {
                 // filter and the projection disagree — an error, never a row
                 // invented to fill the hole.
                 let fqn = fqn.ok_or_else(|| {
-                    "v2_containment: a row matched `fqn IS NOT NULL` and carries no fqn".to_string()
+                    "containment: a row matched `fqn IS NOT NULL` and carries no fqn".to_string()
                 })?;
                 Ok((fqn, parent))
             })
@@ -625,7 +625,7 @@ impl PgStore {
     /// contributed to the same edge.
     ///
     /// A second statement rather than props on the insert, for the reason
-    /// [`Self::upsert_v2_symbol`] needs one: `insert_edge_with_props` merges
+    /// [`Self::upsert_symbol`] needs one: `insert_edge_with_props` merges
     /// with `props = edges.props || EXCLUDED.props`, and jsonb `||` REPLACES a
     /// key rather than appending to it. An edge is keyed `(folder, source,
     /// target, kind)` and two files can produce the same edge — `crates/mcp`'s
@@ -642,7 +642,7 @@ impl PgStore {
     /// `props.relation` is written by the insert above and read by
     /// `prune_mislabelled_containment_extends`, and a writer that knows less
     /// about a key must not erase it.
-    pub async fn merge_v2_edge_occurrences(
+    pub async fn merge_edge_occurrences(
         &self,
         edge_id: &uuid::Uuid,
         file_path: &str,
@@ -663,14 +663,14 @@ impl PgStore {
         .bind(occurrences)
         .execute(&self.pool)
         .await
-        .map_err(|e| format!("merge_v2_edge_occurrences ({file_path}): {e}"))?;
+        .map_err(|e| format!("merge_edge_occurrences ({file_path}): {e}"))?;
         Ok(())
     }
 
     /// Take ONE file's occurrences off an edge, and delete the row only when
     /// nothing is left on it (R10.4).
     ///
-    /// Never `DELETE FROM sensei.edges WHERE source_id = ANY(…)`. That is the v1
+    /// Never `DELETE FROM sensei.edges WHERE source_id = ANY(…)`. That is the legacy
     /// shape and it takes every other file's occurrences with it: an edge row is
     /// keyed `(folder, source, target, kind)` and two files can produce one —
     /// measured, 4 of this repository's 82,913.
@@ -680,7 +680,7 @@ impl PgStore {
     /// "is it empty now" from the row as it was BEFORE the UPDATE — the same
     /// value read twice under two different meanings, which is the shape this
     /// whole step exists to remove.
-    pub async fn drop_v2_edge_occurrences(
+    pub async fn drop_edge_occurrences(
         &self,
         edge_id: &uuid::Uuid,
         file_path: &str,
@@ -699,7 +699,7 @@ impl PgStore {
         .bind(file_path)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| format!("drop_v2_edge_occurrences ({file_path}): {e}"))?;
+        .map_err(|e| format!("drop_edge_occurrences ({file_path}): {e}"))?;
 
         let Some((emptied,)) = row else {
             return Ok(Dropped::NoSuchEdge);
@@ -711,7 +711,7 @@ impl PgStore {
             .bind(edge_id)
             .execute(&self.pool)
             .await
-            .map_err(|e| format!("drop_v2_edge_occurrences delete ({file_path}): {e}"))?;
+            .map_err(|e| format!("drop_edge_occurrences delete ({file_path}): {e}"))?;
         Ok(Dropped::RowDeleted)
     }
 
@@ -734,9 +734,9 @@ impl PgStore {
     ///
     /// The occurrence key is then required OUTRIGHT, so what comes back is
     /// exactly what this file contributed and never a row it merely sits near.
-    /// [`Self::v2_edges_naming_file`] is the unnarrowed form the corpus test
+    /// [`Self::occurrence_edges_naming_file`] is the unnarrowed form the corpus test
     /// proves this against.
-    pub async fn v2_edges_contributed_by(
+    pub async fn edges_contributed_by(
         &self,
         folder_id: &uuid::Uuid,
         file_path: &str,
@@ -756,18 +756,18 @@ impl PgStore {
         .bind(sources)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| format!("v2_edges_contributed_by ({file_path}): {e}"))?;
+        .map_err(|e| format!("edges_contributed_by ({file_path}): {e}"))?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
     /// Every edge row whose occurrences NAME `file_path`, with no narrowing.
     ///
     /// The unit of edge attribution as R10.1 states it, and therefore the
-    /// definition [`Self::v2_edges_contributed_by`] is measured against. Kept
+    /// definition [`Self::edges_contributed_by`] is measured against. Kept
     /// apart from it rather than used in its place because it can use no index
     /// at all until step 9 adds one, and a reconcile that scans every edge of a
     /// folder per file is a different cost curve.
-    pub async fn v2_edges_naming_file(
+    pub async fn occurrence_edges_naming_file(
         &self,
         folder_id: &uuid::Uuid,
         file_path: &str,
@@ -781,16 +781,19 @@ impl PgStore {
         .bind(file_path)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| format!("v2_edges_naming_file ({file_path}): {e}"))?;
+        .map_err(|e| format!("occurrence_edges_naming_file ({file_path}): {e}"))?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
-    /// Every v2 edge of a folder.
+    /// Every edge of a folder that THIS indexer wrote.
     ///
-    /// Selected by `props -> 'occurrences'`, which only a v2 write puts there.
+    /// Selected by `props -> 'occurrences'`, which only a write from here puts there.
     /// A folder can hold both indexers' output during the cutover, and reading
-    /// a v1 edge as a v2 one would report facts v2 never produced.
-    pub async fn v2_edges(&self, folder_id: &uuid::Uuid) -> Result<Vec<EdgeColumns>, String> {
+    /// a legacy edge as one of ours would report facts this indexer never produced.
+    pub async fn occurrence_edges(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Vec<EdgeColumns>, String> {
         let rows: Vec<EdgeProjection> = sqlx_core::query_as::query_as(
             "SELECT s.fqn, e.kind::text, t.fqn, e.target_name, e.props
                    FROM sensei.edges e
@@ -802,15 +805,15 @@ impl PgStore {
         .bind(folder_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| format!("v2_edges: {e}"))?;
+        .map_err(|e| format!("occurrence_edges: {e}"))?;
 
         rows.into_iter()
             .map(|(source_fqn, kind, target_fqn, target_name, props)| {
-                // Only a v2 write puts `occurrences` in props, and every node a
-                // v2 write touches is fqn-keyed. A source without one means the
+                // Only a write from here puts `occurrences` in props, and every
+                // node it touches is fqn-keyed. A source without one means the
                 // filter above matched something this cannot read.
                 let source_fqn = source_fqn.ok_or_else(|| {
-                    format!("v2_edges: a {kind} edge has a source node with no fqn")
+                    format!("occurrence_edges: a {kind} edge has a source node with no fqn")
                 })?;
                 Ok(EdgeColumns { source_fqn, kind, target_fqn, target_name, props })
             })

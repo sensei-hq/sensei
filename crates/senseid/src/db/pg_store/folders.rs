@@ -1147,7 +1147,7 @@ impl PgStore {
         self.write_scan_state(folder_id, file_path, mtime, content_hash, Some(reason)).await
     }
 
-    // ── indexer v2 stages 1-3 (docs/spec/indexer/01..03) ─────────────────
+    // ── indexer stages 1-3 (docs/spec/indexer/01..03) ────────────────────
 
     /// Upsert a `sensei.repositories` row keyed on the NORMALIZED REMOTE
     /// (stage 1, S4/S5).
