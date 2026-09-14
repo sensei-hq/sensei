@@ -944,6 +944,49 @@ mod why {
             8,
         );
 
+        // The IDENTITY DISAGREEMENT class, every one of them, bucketed by the
+        // SHAPE of the disagreement.
+        //
+        // Six samples cannot tell one cause from three, and this class is the
+        // one where the two producers both DECLARE the symbol — so each bucket
+        // is a decision about which of them is right, not a gap to close.
+        {
+            let sep = '\u{00B7}';
+            let mut shapes: std::collections::BTreeMap<&str, Vec<(String, String)>> =
+                Default::default();
+            for d in &identity_disagreement {
+                let ours = d
+                    .current_declares
+                    .iter()
+                    .find(|k| !k.starts_with('('))
+                    .cloned()
+                    .unwrap_or_else(|| "(none)".to_string());
+                let shape = if ours == "(none)" {
+                    "current declares NOTHING under any spelling of this name"
+                } else if ours.rsplit_once(sep).map(|(_, m)| m)
+                    == d.key.rsplit_once(sep).map(|(_, m)| m)
+                    && ours.matches(sep).count() == d.key.matches(sep).count()
+                {
+                    // Same member, same arity, different module segment.
+                    "same member, DIFFERENT module segment"
+                } else {
+                    "different segmentation"
+                };
+                shapes.entry(shape).or_default().push((d.key.clone(), ours));
+            }
+            println!(
+                "\n\n══ IDENTITY DISAGREEMENT, all {} by shape ══",
+                identity_disagreement.len()
+            );
+            for (shape, items) in &shapes {
+                println!("\n  {} — {}", items.len(), shape);
+                for (legacy_key, ours) in items {
+                    println!("      legacy  {legacy_key}");
+                    println!("      current {ours}");
+                }
+            }
+        }
+
         // What current SAID, per class. This is the number that says what one fix
         // would buy: a class dominated by a single reason has a single cause.
         fn by_reason(items: &[Case]) -> std::collections::BTreeMap<&str, usize> {
