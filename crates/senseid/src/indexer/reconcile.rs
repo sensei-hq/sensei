@@ -354,7 +354,8 @@ mod tests {
     use crate::db::pg_store::PgStore;
     use crate::db::pg_store::tests::create_test_folder;
     use crate::indexer::facts::RelationKind;
-    use crate::indexer::lang::rust::{self, Source};
+    use crate::indexer::lang::Source;
+    use crate::indexer::lang::rust;
     use crate::indexer::persist::TargetRow;
     use crate::indexer::resolve::{World, resolve};
 

@@ -71,23 +71,41 @@ impl fmt::Display for Fqn {
     }
 }
 
-/// A language the walk can read. One variant, because one language is built at
-/// a time and the trigger to add the next is the current one passing spec §6.
+/// A language the walk can read.
 ///
 /// An enum rather than a string so the leading fqn segment cannot be spelled
 /// two ways: `"rust"` on the definition side and `"Rust"` on the reference side
 /// would be two graphs that never meet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// **`.js`, `.ts` and a `.svelte` script block are ONE language here, and that
+/// is a merge decision rather than a taxonomy.** They share a module graph: a
+/// `.ts` file importing from a `.js` file is ordinary, and if the two sides
+/// carried different leading segments the import would mint an identity the
+/// declaration never mints and the two would never meet (spec §2). Three
+/// adapters read them — they claim different extensions and only one of them
+/// has annotations to read — but all three file their symbols under this one
+/// label, which is also the label the legacy producer used, so a differential
+/// over JS compares like with like.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Language {
     Rust,
+    /// JavaScript, TypeScript, and the script block of a Svelte component.
+    TypeScript,
 }
 
 impl Language {
+    /// Every language this build can read. Exhaustively matched below, so a new
+    /// variant does not compile until it is listed here too.
+    pub fn all() -> &'static [Language] {
+        &[Language::Rust, Language::TypeScript]
+    }
+
     /// The label this language occupies the leading fqn segment with. Paired
     /// with [`Language::from_label`] here so the two directions cannot drift.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Rust => "rust",
+            Self::TypeScript => "typescript",
         }
     }
 
@@ -97,6 +115,7 @@ impl Language {
     pub fn from_label(label: &str) -> Option<Self> {
         match label {
             "rust" => Some(Self::Rust),
+            "typescript" => Some(Self::TypeScript),
             _ => None,
         }
     }
@@ -446,7 +465,7 @@ mod tests {
     }
 
     fn all_languages() -> Vec<Language> {
-        vec![Language::Rust]
+        Language::all().to_vec()
     }
 
     fn all_symbol_kinds() -> Vec<SymbolKind> {
@@ -558,10 +577,10 @@ mod tests {
     fn every_declaration_fact_variant_is_constructible() {
         for l in all_languages() {
             match l {
-                Language::Rust => {}
+                Language::Rust | Language::TypeScript => {}
             }
         }
-        assert_eq!(all_languages().len(), 1);
+        assert_eq!(all_languages().len(), 2);
 
         for k in all_symbol_kinds() {
             match k {
@@ -669,6 +688,29 @@ mod tests {
             }
         }
         assert_eq!(all_import_origins().len(), 2);
+    }
+
+    /// Every label round-trips, and no two languages share one.
+    ///
+    /// The label is the LEADING SEGMENT of every identity the language mints
+    /// (spec §2), so a label that does not survive a round trip files a symbol
+    /// under a language nothing reads back, and two languages sharing a label
+    /// merge two graphs that have no business meeting.
+    #[test]
+    fn every_language_label_round_trips_and_is_unique() {
+        let mut seen: Vec<&str> = Vec::new();
+        for language in Language::all() {
+            let label = language.as_str();
+            assert_eq!(
+                Language::from_label(label),
+                Some(*language),
+                "{label} does not read back as the language that wrote it"
+            );
+            assert!(!seen.contains(&label), "two languages both spell themselves {label}");
+            seen.push(label);
+        }
+        assert_eq!(seen.len(), all_languages().len(), "`all` and the round trip disagree");
+        assert_eq!(Language::from_label("COBOL"), None, "an unknown label names no language");
     }
 
     /// R2 in one assertion. `Resolution` is total: the walk has exactly two
@@ -786,23 +828,45 @@ mod tests {
     }
 
     /// A derived or hand-written default hands out a value nothing observed,
-    /// and a caller cannot tell it from one the walk read (R4). The needle is
-    /// assembled for the same reason as the one above.
+    /// and a caller cannot tell it from one the walk read (R4).
+    ///
+    /// Matched on the two SPELLINGS that do it rather than on the word, and the
+    /// difference is not pedantry: a plain substring search for `Default` also
+    /// matches `ExportDefaultDeclaration`, which is what a JavaScript reader has
+    /// to call `export default`. A guard that a second language cannot satisfy
+    /// without renaming that language's keywords is a guard that will be
+    /// deleted, so it is narrowed to the thing it protects:
+    ///
+    /// - a DERIVED or hand-written `Default`, which hands out a whole value;
+    /// - `unwrap_or_default`, which turns a failed read into a zero nobody can
+    ///   tell from a real one.
+    ///
+    /// Calling `::default()` on a third-party type is neither — an arena
+    /// allocator is not data the walk claims to have read — and is left alone.
     #[test]
     fn nothing_defaults_a_value_it_did_not_read() {
-        // Both spellings: the derive/impl that hands out a whole value, and the
-        // call that turns a failed read into a zero nobody can tell from a real
-        // one. The needles are assembled for the same reason as the ones above.
-        let banned = [format!("Def{}", "ault"), format!("unwrap_or_def{}", "ault")];
+        // Assembled, because this file is one of the ones being read and a
+        // literal would match itself.
+        let swallowed = format!("unwrap_or_def{}", "ault");
+        let derived = format!("Def{}", "ault");
         let mut read = 0;
         for (path, body) in crate::indexer::guard_sources() {
             read += 1;
             let body = crate::indexer::outside_tests(&body);
-            for needle in &banned {
+            assert!(
+                !body.contains(swallowed.as_str()),
+                "{path} uses `{swallowed}`: a failed read turned into a zero is one a caller \
+                 cannot tell from a real one (R4)"
+            );
+            for line in body.lines() {
+                let trimmed = line.trim_start();
+                let hands_out_a_whole_value = (trimmed.starts_with("#[derive(")
+                    || trimmed.starts_with("impl "))
+                    && line.contains(derived.as_str());
                 assert!(
-                    !body.contains(needle.as_str()),
-                    "{path} mentions `{needle}`: a value nothing observed is fabricated data \
-                     that a caller cannot tell from one the walk read (R4)"
+                    !hands_out_a_whole_value,
+                    "{path} derives or implements `{derived}`: a value nothing observed is \
+                     fabricated data that a caller cannot tell from one the walk read (R4)\n  {line}"
                 );
             }
         }

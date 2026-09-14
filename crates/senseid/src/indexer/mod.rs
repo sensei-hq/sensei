@@ -67,9 +67,20 @@ fn guard_sources() -> Vec<(String, String)> {
             .unwrap_or_else(|e| panic!("cannot read {relative}: {e}"));
         out.push((relative, body));
     }
-    for required in
-        ["facts.rs", "fqn.rs", "persist.rs", "reconcile.rs", "resolve.rs", "lang/rust.rs"]
-    {
+    for required in [
+        "facts.rs",
+        "fqn.rs",
+        "persist.rs",
+        "reconcile.rs",
+        "resolve.rs",
+        "lang/mod.rs",
+        "lang/common.rs",
+        "lang/rust/mod.rs",
+        "lang/rust/walk.rs",
+        "lang/rust/types.rs",
+        "lang/javascript.rs",
+        "lang/svelte.rs",
+    ] {
         assert!(
             out.iter().any(|(p, _)| p == required),
             "the guard did not find {required}, so it is not reading what it claims to guard"
@@ -178,7 +189,20 @@ pub(crate) fn module_of(path: &str) -> String {
 /// what an assertion IS — while production code may never build one. Splitting
 /// here is what lets the guards below be strict about the second without
 /// forbidding the first.
+///
+/// The split is on the ATTRIBUTE — the marker at the start of a line — and not
+/// on the phrase anywhere in the file. MEASURED: `lang/rust.rs` carried
+/// `#[cfg(test)]` inside a doc comment on line 304, so every guard cut the file
+/// there and two thirds of the walk was never read. A vacuous guard is green,
+/// which is why this is a rule and not a convenience.
 #[cfg(test)]
 pub(crate) fn outside_tests(body: &str) -> &str {
-    body.split("#[cfg(test)]").next().unwrap_or(body)
+    let mut offset = 0;
+    for line in body.split_inclusive('\n') {
+        if line.trim_start().starts_with("#[cfg(test)]") {
+            return &body[..offset];
+        }
+        offset += line.len();
+    }
+    body
 }

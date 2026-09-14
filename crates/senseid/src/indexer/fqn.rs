@@ -40,9 +40,14 @@ use super::facts::{Fqn, Language};
 
 /// FQN segment separator — U+00B7 MIDDLE DOT.
 ///
-/// Private, so the compiler — not a convention — stops another module from
-/// assembling an fqn out of parts.
-const SEP: char = '·';
+/// READABLE by other modules and joinable by none: a language module needs it
+/// to refuse a type name that carries it, which is a check, while assembling an
+/// fqn out of parts stays impossible because [`Fqn::from_encoded`] is the only
+/// door and it is `pub(super)`.
+pub const SEPARATOR: char = '·';
+
+/// The same character, for this module's own use.
+const SEP: char = SEPARATOR;
 
 /// The leading segment of an external symbol, standing where a language would
 /// be. An external has no language of ours because we never open it (R5).
@@ -290,77 +295,6 @@ fn join(segments: &[&str]) -> String {
         out.push_str(segment);
     }
     out
-}
-
-/// Reduce the source text of a type to the one segment that names it.
-///
-/// The single owner of that rule (R7). The two sides read a type out of
-/// different places and get different text for one type: the definition side
-/// sees an impl header (`impl<T> Widget<T>`), the reference side sees a use
-/// (`Widget::<u32>::new`, `&Widget`, `crate::widget::Widget`). If each
-/// normalised its own way they would mint different strings and never merge, so
-/// neither does — both call this.
-///
-/// It strips what decorates a type and keeps the head of its path. It is NOT
-/// resolution: `Self` and a bare `Widget` come back verbatim, because deciding
-/// WHICH `Widget` is meant needs the import table and belongs to the ladder.
-pub fn type_segment(raw: &str) -> Result<String, FqnError> {
-    let path = type_path(raw)?;
-    Ok(path.rsplit("::").next().unwrap_or(&path).trim().to_string())
-}
-
-/// The same reduction as [`type_segment`], stopping one step earlier: it keeps
-/// the PATH that leads to the type instead of only the name at its end.
-///
-/// Both are needed and both are here, because the name alone cannot say WHICH
-/// `Widget` is meant while the path can: `crate::widget::Widget` states its own
-/// root, and a reference that kept only `Widget` has thrown that away. Discarding
-/// something already parsed is the failure this rewrite is measuring, so the walk
-/// records the path as evidence and the resolution ladder reads it back.
-pub fn type_path(raw: &str) -> Result<String, FqnError> {
-    let not_a_type = || FqnError::NotATypeName { value: raw.to_string() };
-
-    let mut rest = raw.trim();
-    // Decorations, in any order and any number: `&mut &'a dyn Trait` is legal.
-    loop {
-        let before = rest;
-        for prefix in ["&", "*const ", "*mut ", "*", "dyn ", "impl ", "mut "] {
-            rest = rest.strip_prefix(prefix).unwrap_or(rest).trim_start();
-        }
-        if rest.starts_with('\'') {
-            // A lifetime argument decorates the type without naming it.
-            rest = rest[1..]
-                .trim_start_matches(|c: char| c.is_alphanumeric() || c == '_')
-                .trim_start();
-        }
-        if rest == before {
-            break;
-        }
-    }
-
-    // Generic arguments belong to the use, not to the identity: `Widget<T>` and
-    // `Widget` are one type.
-    let head = rest.split('<').next().unwrap_or(rest).trim();
-    // `Widget::<u32>` leaves a turbofish's `::` dangling once the arguments go.
-    let path = head.trim_end_matches(':').trim();
-    let name = path.rsplit("::").next().unwrap_or(path).trim();
-
-    if name.is_empty() {
-        return Err(not_a_type());
-    }
-    // A tuple, a slice, a unit or a fn pointer names no single type. Rust
-    // identifiers start with a letter or an underscore, so anything else here
-    // is not a name to mint a segment from.
-    if !name.starts_with(|c: char| c.is_alphabetic() || c == '_') {
-        return Err(not_a_type());
-    }
-    if path.contains(SEP) {
-        return Err(FqnError::SeparatorInSegment {
-            segment: Segment::Type,
-            value: path.to_string(),
-        });
-    }
-    Ok(path.to_string())
 }
 
 /// Whether an fqn names something of ours or something we only ever name (R5).
@@ -906,69 +840,6 @@ mod tests {
         })
         .expect("well-formed");
         assert_ne!(module, function, "a module and a same-named fn are two symbols, not one");
-    }
-
-    /// The reference side reads a type out of source text that carries generics,
-    /// references and a module path; the definition side reads it out of an impl
-    /// header that carries different ones. `Widget<T>` and `Widget` are the same
-    /// type and must produce the same segment, or the two sides never merge.
-    #[test]
-    fn one_owner_normalises_a_type_into_its_fqn_segment() {
-        for (raw, expected) in [
-            ("Widget", "Widget"),
-            ("Widget<T>", "Widget"),
-            ("Widget::<u32>", "Widget"),
-            ("&Widget", "Widget"),
-            ("&mut Widget<T>", "Widget"),
-            ("&'a Widget", "Widget"),
-            ("*const Widget", "Widget"),
-            ("dyn Draw", "Draw"),
-            ("impl Draw", "Draw"),
-            ("crate::widget::Widget", "Widget"),
-            ("std::collections::HashMap<String, u32>", "HashMap"),
-            ("Box<Widget>", "Box"),
-            ("Self", "Self"),
-        ] {
-            assert_eq!(type_segment(raw).as_deref(), Ok(expected), "normalising `{raw}`");
-        }
-    }
-
-    /// The path a type is reached through is a fact the source states and the
-    /// name at its end is not: `Widget` alone cannot say which `Widget`, while
-    /// `crate::widget::Widget` roots itself. Both reductions strip the same
-    /// decorations, so a caller that wants one and a caller that wants the other
-    /// cannot disagree about what a type's text says.
-    #[test]
-    fn the_path_to_a_type_survives_the_same_reduction_that_produces_its_name() {
-        for (raw, path, segment) in [
-            ("Widget", "Widget", "Widget"),
-            ("&mut crate::widget::Widget<T>", "crate::widget::Widget", "Widget"),
-            ("std::collections::HashMap<String, u32>", "std::collections::HashMap", "HashMap"),
-            ("super::Widget", "super::Widget", "Widget"),
-            ("dyn crate::draw::Draw", "crate::draw::Draw", "Draw"),
-            ("Widget::<u32>", "Widget", "Widget"),
-        ] {
-            assert_eq!(type_path(raw).as_deref(), Ok(path), "the path of `{raw}`");
-            assert_eq!(type_segment(raw).as_deref(), Ok(segment), "the name of `{raw}`");
-        }
-        for raw in ["(u32, u32)", "[u8]", "()", "&[u8]", ""] {
-            assert!(
-                matches!(type_path(raw), Err(FqnError::NotATypeName { .. })),
-                "`{raw}` names no type, so it has no path either"
-            );
-        }
-    }
-
-    /// A tuple, a slice and a unit are types with no name, so there is no
-    /// segment to mint. Inventing one would be fabrication (R4).
-    #[test]
-    fn a_type_with_no_name_is_an_error_not_an_invented_segment() {
-        for raw in ["(u32, u32)", "[u8]", "()", "&[u8]", ""] {
-            assert!(
-                matches!(type_segment(raw), Err(FqnError::NotATypeName { .. })),
-                "`{raw}` names no type, so it has no fqn segment"
-            );
-        }
     }
 
     /// Two call sites building an fqn by hand is how the definition and
