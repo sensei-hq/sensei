@@ -25,7 +25,7 @@
 #![allow(dead_code)]
 
 use super::javascript;
-use super::{LanguageAdapter, ReadError, Source};
+use super::{LanguageAdapter, ReadError, Source, TypeHomes};
 use crate::indexer::facts::{FileFacts, Fqn, Language};
 use crate::indexer::fqn::FqnError;
 use crate::indexer::resolve::Grammar;
@@ -52,7 +52,9 @@ impl LanguageAdapter for SvelteAdapter {
         &javascript::GRAMMAR
     }
 
-    fn read(&self, source: &Source<'_>) -> Result<FileFacts, ReadError> {
+    fn read(&self, source: &Source<'_>, _types: &TypeHomes) -> Result<FileFacts, ReadError> {
+        // See `javascript::TypeScriptAdapter::read` — a class owns its members
+        // lexically, so there is no separate home to be told about.
         read(source)
     }
 

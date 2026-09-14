@@ -543,6 +543,9 @@ mod corpus {
     #[ignore]
     async fn legacy_and_current_over_this_repos_rust() {
         let sources = crate::indexer::corpus_rust_sources();
+        // THE BARRIER. Every type's home, from a first pass, before a single
+        // member is anchored — see `type_homes_of_the_corpus`.
+        let homes = super::type_homes_of_the_corpus(&sources);
         let first_party: std::collections::BTreeSet<String> =
             sources.iter().map(|(path, _)| crate::indexer::package_of(path)).collect();
         let scanned = std::collections::BTreeSet::new();
@@ -578,9 +581,10 @@ mod corpus {
             let package = crate::indexer::package_of(abs);
             let rel = crate::indexer::workspace_relative(abs);
             let module = crate::indexer::module_of(&rel);
-            let Ok(facts) =
-                rust::read(&Source { package: &package, module: &module, path: &rel, text })
-            else {
+            let Ok(facts) = rust::read(
+                &Source { package: &package, module: &module, path: &rel, text },
+                &homes,
+            ) else {
                 current_failed_to_read += 1;
                 continue;
             };
@@ -722,6 +726,37 @@ mod corpus {
     }
 }
 
+/// Where every type in the corpus is declared, from a FIRST pass over it.
+///
+/// The barrier `TypeHomes` needs: every file walked before any is anchored, so
+/// the answer does not depend on which file came first (R6). A production
+/// caller gets the same table from stage 3's structure barrier; a corpus
+/// harness builds it here.
+#[cfg(test)]
+fn type_homes_of_the_corpus(sources: &[(String, String)]) -> crate::indexer::lang::TypeHomes {
+    use crate::indexer::lang::Source;
+    use crate::indexer::lang::{TypeHomes, rust};
+
+    let mut declared: Vec<(String, crate::indexer::facts::Symbol)> = Vec::new();
+    for (abs, text) in sources {
+        let package = crate::indexer::package_of(abs);
+        let rel = crate::indexer::workspace_relative(abs);
+        let module = crate::indexer::module_of(&rel);
+        // Walked with NO table: this pass only wants the type DECLARATIONS,
+        // whose module is the file's own and never needs anchoring.
+        let Ok(facts) = rust::read(
+            &Source { package: &package, module: &module, path: &rel, text },
+            &TypeHomes::unknown(),
+        ) else {
+            continue;
+        };
+        for symbol in facts.symbols {
+            declared.push((package.clone(), symbol));
+        }
+    }
+    TypeHomes::of(declared.iter().map(|(p, s)| (p.as_str(), s)))
+}
+
 /// How much would anchoring a member to its TYPE's module move? (Sizing.)
 ///
 /// A member's identity is `…·<module>·<Type>·<member>`, and this indexer fills
@@ -796,13 +831,16 @@ mod anchoring {
     #[ignore]
     async fn how_far_a_member_is_from_its_types_module() {
         let sources = crate::indexer::corpus_rust_sources();
+        // THE BARRIER. Every type's home, from a first pass, before a single
+        // member is anchored — see `type_homes_of_the_corpus`.
+        let homes = super::type_homes_of_the_corpus(&sources);
         let mut all: Vec<crate::indexer::facts::FileFacts> = Vec::new();
         for (abs, text) in &sources {
             let package = crate::indexer::package_of(abs);
             let rel = crate::indexer::workspace_relative(abs);
             let module = crate::indexer::module_of(&rel);
             if let Ok(facts) =
-                rust::read(&Source { package: &package, module: &module, path: &rel, text })
+                rust::read(&Source { package: &package, module: &module, path: &rel, text }, &homes)
             {
                 all.push(facts);
             }
@@ -968,6 +1006,9 @@ mod why {
     #[ignore]
     async fn what_the_disputed_targets_actually_are() {
         let sources = crate::indexer::corpus_rust_sources();
+        // THE BARRIER. Every type's home, from a first pass, before a single
+        // member is anchored — see `type_homes_of_the_corpus`.
+        let homes = super::type_homes_of_the_corpus(&sources);
         let first_party: std::collections::BTreeSet<String> =
             sources.iter().map(|(path, _)| crate::indexer::package_of(path)).collect();
         let scanned = std::collections::BTreeSet::new();
@@ -993,9 +1034,10 @@ mod why {
             let package = crate::indexer::package_of(abs);
             let rel = crate::indexer::workspace_relative(abs);
             let module = crate::indexer::module_of(&rel);
-            let Ok(facts) =
-                rust::read(&Source { package: &package, module: &module, path: &rel, text })
-            else {
+            let Ok(facts) = rust::read(
+                &Source { package: &package, module: &module, path: &rel, text },
+                &homes,
+            ) else {
                 continue;
             };
             let facts = resolve(facts, &rust::GRAMMAR, &world);
@@ -1224,8 +1266,8 @@ mod why {
 #[cfg(test)]
 mod reach {
     use crate::indexer::facts::{Observation, Resolution};
-    use crate::indexer::lang::Source;
     use crate::indexer::lang::rust;
+    use crate::indexer::lang::{Source, TypeHomes};
     use crate::indexer::resolve::{World, resolve};
 
     /// How a receiver's type could be learned, cheapest first.
@@ -1392,6 +1434,9 @@ mod reach {
     #[ignore]
     async fn how_each_unknown_receiver_could_be_typed() {
         let sources = crate::indexer::corpus_rust_sources();
+        // THE BARRIER. Every type's home, from a first pass, before a single
+        // member is anchored — see `type_homes_of_the_corpus`.
+        let homes = super::type_homes_of_the_corpus(&sources);
         let first_party: std::collections::BTreeSet<String> =
             sources.iter().map(|(path, _)| crate::indexer::package_of(path)).collect();
         let scanned = std::collections::BTreeSet::new();
@@ -1406,9 +1451,10 @@ mod reach {
             let package = crate::indexer::package_of(abs);
             let rel = crate::indexer::workspace_relative(abs);
             let module = crate::indexer::module_of(&rel);
-            if let Ok(f) =
-                rust::read(&Source { package: &package, module: &module, path: &rel, text })
-            {
+            if let Ok(f) = rust::read(
+                &Source { package: &package, module: &module, path: &rel, text },
+                &TypeHomes::unknown(),
+            ) {
                 first_party_types.extend(
                     f.symbols
                         .iter()
@@ -1438,9 +1484,10 @@ mod reach {
             let package = crate::indexer::package_of(abs);
             let rel = crate::indexer::workspace_relative(abs);
             let module = crate::indexer::module_of(&rel);
-            let Ok(facts) =
-                rust::read(&Source { package: &package, module: &module, path: &rel, text })
-            else {
+            let Ok(facts) = rust::read(
+                &Source { package: &package, module: &module, path: &rel, text },
+                &homes,
+            ) else {
                 continue;
             };
             let facts = resolve(facts, &rust::GRAMMAR, &world);
