@@ -24,46 +24,53 @@ legacy indexer at cutover, not before. Pre-release DB: `dbd reconcile`.
 | 4b — the JS/TS/Svelte reader, corpus-verified | `630275d5` |
 | 10 S3–S7 — switch rust, re-index, retire legacy | BLOCKED on the gate |
 
-## Judged against the GOAL, not against the legacy producer
+## ONE canonical report — read this, do not retype it
 
-The differential harness is DELETED. "Does this agree with the producer being
-replaced" is a transition question, and letting it set the agenda meant chasing
-a number that says nothing about whether the graph is any good. §6's first line
-was always right: thresholds, not comparisons.
+    cargo test -p senseid --bin senseid -- --ignored --nocapture \
+      indexer::acceptance::report
 
-`indexer::acceptance` runs §6 and R8 over the real corpus, every language:
+Prints a fixed table: every `Reason` as a row (present or zero), every language
+as a column. It exists because a number retyped into prose acquires a new label
+each time and a reader cannot tell a movement from a rephrasing. The other
+acceptance tests are `indexer::acceptance::*`.
 
-    cargo test -p senseid --bin senseid -- --ignored --nocapture indexer::acceptance
+Last run, 1,331 files:
 
-    A3  every miss named, 100% accounted for, both languages   PASS
-        rust       resolved 48,604 | unresolved 72,962
-        typescript resolved 23,347 | unresolved 37,044
-    R5  internal vs external           PASS
-        local 4,479 | external 4,725 across 153 packages | globs 408
-    R8  the seven patterns' facts all emitted, and DERIVED     PASS
-        42 Facades, 62 Adapters, from nodes and edges alone
-    A7  one declaration, one identity  1,114 COLLIDING (ratchet)
+    references     rust   typescript
+    RESOLVED      48,677     22,389
+    NoImportInScope  18,291    5,317
+    ReceiverTypeUnknown 28,627 24,597
+    AmbiguousCandidates  8,508        0
+    Denylisted       17,678      3,475
+    DynamicDispatch       0      1,328
+    UnhandledForm         1        165
+    Unplaced / NoDeclaredType / MacroExpansion: 0 everywhere
 
-## A7's 1,114 have one head, and it is a real defect
+    declarations  13,368     13,074
+    relations      5,319      4,021
+    imports 1st-party 2,036   2,299 | external 1,455 / 3,270
 
-A declaration inside a FUNCTION BODY is minted as if it sat at module scope.
-Three `static RE` in three `fn`s of `adapters/manifest/gradle.rs` mint ONE
-identity, so "where is `RE` defined" answers with whichever was written last.
-Same shape in `provision_status`, `COPY_CAP`, `status_of`, `ARMS`, and
-TypeScript's `deadline` — not a Rust quirk.
+## Acceptance status
 
-The repair is the walk giving a function body its own container. Whether a
-local is named under its function or not emitted at all is a grammar decision
-and is NOT yet made.
-
-## Next command
-
-    cargo test -p senseid --bin senseid -- --ignored --nocapture indexer::acceptance
+| | |
+|---|---|
+| A1 import-named targets resolve | PASS, ratcheted (rust 18,291 / ts 5,317 misses) |
+| A3 every miss named, 100% | PASS both languages |
+| A7 one declaration, one identity | 708 (rust 13, ts 695), ratcheted per language |
+| R5 internal vs external | PASS, 153 external packages |
+| R8 seven patterns derivable | PASS — 42 Facades, 62 Adapters from nodes+edges |
+| A2 zero references dropped | RUST ONLY — no independent oxc counter yet |
+| A4 / A5 / A6 / A9 | not built as corpus checks |
 
 ## Known-broken — do not build on
 
-- **A local declaration is named at module scope** — A7's 1,114, above. The
-  walk needs a container for a function body.
+- **A local declaration is named at module scope** — A7's 708. A `static` or
+  `const` inside a `fn` body mints at module scope, so three unrelated `RE`s in
+  one file are one node. The walk needs a container for a function body; a
+  `#[cfg(feature)]` pair is a SECOND, different cause and may be one to tolerate.
+- **A2 has no TypeScript half.** The Rust reference count is checked against an
+  independent counter written from the other side; the oxc side is unchecked, so
+  a dropped JS reference would be invisible.
 - `delete_folder` issues a path-prefix `DELETE` (`process.rs`), which 09 S7
   forbids. Fix is N file reconciles; blocked on stage 10 wiring reconcile.
 - The watcher has no manifest/lockfile branch (09 S9), and LOCKFILE PATHS ARE
