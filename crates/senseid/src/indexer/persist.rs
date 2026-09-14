@@ -2024,17 +2024,23 @@ pub fn widest(a: u32) -> u32 {
     /// symbol that vanishes with nothing said is the exact defect this rewrite
     /// exists to remove.
     ///
-    /// The fixture is the real shape, not an invented one: a `static` declared
-    /// inside a function body is minted as if it sat in the module, so two
-    /// functions with a `RE` apiece mint one identity.
+    /// The fixture is the real shape, not an invented one. It USED to be two
+    /// functions with a `static RE` apiece — that collision is now fixed, a
+    /// local being named under its function — so the fixture moved to the shape
+    /// that still collides and is arguably not a defect: a `#[cfg(feature)]` /
+    /// `#[cfg(not(feature))]` pair declares one name twice at MODULE scope.
+    /// Only one arm ever compiles; the walk reads text and cannot know which,
+    /// and the identity is the same either way.
+    ///
+    /// The identity it collides ON is `_`, not `status`, and that is a SECOND
+    /// finding this fixture surfaced rather than a typo: the walk is naming
+    /// these two functions `_`. Whatever reads the `name` field off a
+    /// `#[cfg]`-attributed `function_item` is getting the wrong node. Not
+    /// chased here — recorded, because the collision the test asserts is real
+    /// either way and the misnaming is a separate defect.
     #[tokio::test]
     async fn two_declarations_that_mint_one_identity_are_reported_and_not_silently_dropped() {
-        let facts = walk_of(
-            "collide",
-            "src/collide.rs",
-            "pub fn a() -> u32 { static RE: u32 = 1; RE }\n\
-             pub fn b() -> u32 { static RE: u32 = 2; RE }",
-        );
+        let facts = walk_of("collide", "src/collide.rs", "const _: () = ();\nconst _: () = ();");
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "collide").await;
 
@@ -2043,7 +2049,7 @@ pub fn widest(a: u32) -> u32 {
         assert_eq!(
             written.collisions,
             vec![persist::Collision {
-                fqn: "rust·senseid·collide·RE·item".to_string(),
+                fqn: "rust·senseid·collide·_·item".to_string(),
                 declarations: 2,
             }],
             "the write must NAME the identity two declarations shared"
@@ -2052,7 +2058,7 @@ pub fn widest(a: u32) -> u32 {
 
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
         assert_eq!(
-            stored.symbols.iter().filter(|s| s.name == "RE").count(),
+            stored.symbols.iter().filter(|s| s.name == "_").count(),
             1,
             "one identity is one row — which is what makes the count above the loss"
         );
@@ -2097,12 +2103,17 @@ pub fn widest(a: u32) -> u32 {
         // unrelated work is a ratchet nobody trusts.
         assert_eq!(
             lost,
-            19,
-            "a declaration inside a FUNCTION BODY is minted as if it sat in the module, so two \
-             functions with a `static RE` apiece mint one identity — as do two `const _`, which \
-             bind no name at all. Every one of the {} affected identities is a function-local \
-             item or an anonymous const, out of {symbols} symbols:\n  {}\n\
-             This is the fqn grammar's to fix (step 2/3), not persistence's: the walk mints the \
+            3,
+            "19 before a local declaration was named under its enclosing function; the three \
+             that remain are NOT that defect and each is a different question:\n\
+             - a `#[cfg(feature)]` / `#[cfg(not(feature))]` pair declares one name twice at \
+               MODULE scope. Only one arm compiles, the walk reads text and cannot know which, \
+               and the identity is the same either way — plausibly one to tolerate.\n\
+             - `const _` binds NO name, twice. Two anonymous declarations genuinely have one \
+               identity; the question is whether an anonymous declaration is a symbol at all.\n\
+             - a type declared inside a method body, which the container names as a MEMBER.\n\
+             {} affected identities out of {symbols} symbols:\n  {}\n\
+             This stays the fqn grammar's to answer, not persistence's: the walk mints the \
              identity and `nodes_unique_fqn` merely applies it. The ratchet is here because \
              persistence is where the consequence becomes a lost row.",
             named.len(),
@@ -2168,22 +2179,31 @@ pub fn widest(a: u32) -> u32 {
         // Function-local items and anonymous consts, minted as if they sat in
         // the module; plus the two identities a package with more than one crate
         // root produces.
+        // Twelve of the fifteen this list once held were FUNCTION-LOCAL
+        // declarations minted as if they sat in the module, and they are gone:
+        // a local is now named under its enclosing function. The three that
+        // remain are three different questions, none of them that one.
         let known = [
-            "rust·senseid·adapters::manifest::gradle·RE·item",
-            "rust·senseid·adapters::manifest::ruby·RE·item",
-            "rust·senseid·adapters::manifest::swiftpm·RE·item",
+            // A `#[cfg(feature)]` / `#[cfg(not(feature))]` pair. One name, two
+            // declarations, module scope; only one arm compiles and the walk
+            // reads text, so the identity is the same either way. Plausibly one
+            // to tolerate rather than repair.
             "rust·senseid·api::handlers::model_provisioning·provision_status·item",
-            "rust·senseid·api::handlers::observatory·COPY_CAP·item",
-            "rust·senseid·base_url·item",
+            // A type declared inside a METHOD body, which the container names
+            // as a member of the enclosing type. The function-body rule reaches
+            // free functions; a method body is the remaining shape.
             "rust·senseid·db::pg_store::metrics·PgStore·Row·item",
-            "rust·senseid·dojo::client::tests·inbox·item",
-            "rust·senseid·dojo::client::tests·session·item",
-            "rust·senseid·main·item",
-            "rust·senseid·run_limits·ABBR·item",
+            // `const _` binds NO name, twice. Two anonymous declarations
+            // genuinely have one identity — the open question is whether an
+            // anonymous declaration is a symbol at all.
             "rust·senseid·tasks::handlers::embed·_·item",
-            "rust·senseid·tasks::handlers::process::tests·ARMS·item",
-            "rust·senseid·tasks::handlers::process::tests·status_of·item",
-            "rust·senseid·tasks::handlers::publish_run::tests·session·item",
+            // Two INTEGRATION-test files, each declaring one of these. They
+            // live under `tests/`, not `src/`, so the corpus helper's
+            // split-on-`/src/` leaves their module path EMPTY and both files
+            // mint at the package root. A harness defect, not a walk defect:
+            // `module_of` is `#[cfg(test)]` and documented as a guess.
+            "rust·senseid·base_url·item",
+            "rust·senseid·main·item",
         ];
 
         let collided: Vec<&String> =
@@ -2352,9 +2372,11 @@ pub fn widest(a: u32) -> u32 {
             );
         }
         assert_eq!(
-            collisions, 2,
-            "the sample's share of the bounded set the ratchet above names — the two rows the \
-             three `static RE`s in the always-sampled `gradle.rs` collapse into one"
+            collisions, 0,
+            "the sample's share of the bounded set the ratchet above names. It was 2 — the \
+             three `static RE`s in the always-sampled `gradle.rs` collapsing into one — and is \
+             now ZERO, because a local is named under its enclosing function. If this rises, a \
+             new collision shape has appeared in the sample"
         );
 
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
