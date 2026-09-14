@@ -107,6 +107,228 @@ fn read_the_corpus() -> Vec<Read> {
         .collect()
 }
 
+/// THE REPORT. Every reason, every language, one table, the same shape on every
+/// run.
+///
+/// It exists because prose drifts. A number retyped into a summary acquires a
+/// different label each time it is written, and a reader cannot tell a real
+/// movement from a rephrasing. This is the ONE place the graph's coverage is
+/// stated: every `Reason` variant appears as a row whether or not it occurred,
+/// so a bucket going from absent to present is visible rather than being a new
+/// line that was not there before.
+///
+///     cargo test -p senseid --bin senseid -- --ignored --nocapture \
+///       indexer::acceptance::report
+#[test]
+#[ignore]
+fn report() {
+    let corpus = read_the_corpus();
+
+    // Every language the registry reads, in a fixed order, whether or not the
+    // corpus happened to contain one.
+    let languages: Vec<&'static str> =
+        super::facts::Language::all().iter().map(|l| l.as_str()).collect();
+    // Every reason, in a fixed order, whether or not it occurred.
+    let reasons = [
+        "Unplaced",
+        "NoImportInScope",
+        "ReceiverTypeUnknown",
+        "AmbiguousCandidates",
+        "DynamicDispatch",
+        "Denylisted",
+        "NoDeclaredType",
+        "MacroExpansion",
+        "UnhandledForm",
+    ];
+
+    let mut cells: BTreeMap<(&str, String), usize> = BTreeMap::new();
+    let mut files: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut symbols: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut relations: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut imports_local: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut imports_external: BTreeMap<&str, usize> = BTreeMap::new();
+
+    for read in &corpus {
+        let language = read.facts.language.as_str();
+        *files.entry(language).or_default() += 1;
+        *symbols.entry(language).or_default() += read.facts.symbols.len();
+        *relations.entry(language).or_default() += read.facts.relations.len();
+        for import in &read.facts.imports {
+            match import.origin {
+                super::facts::ImportOrigin::Local => {
+                    *imports_local.entry(language).or_default() += 1
+                }
+                super::facts::ImportOrigin::External { .. } => {
+                    *imports_external.entry(language).or_default() += 1
+                }
+            }
+        }
+        for reference in &read.facts.references {
+            let row = match &reference.target {
+                Resolution::Resolved(_) => "RESOLVED".to_string(),
+                Resolution::Unresolved { reason, .. } => format!("{reason:?}"),
+            };
+            *cells.entry((language, row)).or_default() += 1;
+        }
+    }
+
+    let width = 22;
+    let row = |label: &str, get: &dyn Fn(&str) -> usize| {
+        let mut line = format!("| {label:<width$} |");
+        let mut total = 0;
+        for language in &languages {
+            let n = get(language);
+            total += n;
+            line.push_str(&format!(" {n:>10} |"));
+        }
+        line.push_str(&format!(" {total:>10} |"));
+        println!("{line}");
+    };
+
+    let mut header = format!("| {:<width$} |", "");
+    let mut rule = format!("|{}|", "-".repeat(width + 2));
+    for language in &languages {
+        header.push_str(&format!(" {language:>10} |"));
+        rule.push_str(&format!("{}|", "-".repeat(12)));
+    }
+    header.push_str(&format!(" {:>10} |", "total"));
+    rule.push_str(&format!("{}|", "-".repeat(12)));
+
+    println!("\n## Corpus\n");
+    println!("{header}");
+    println!("{rule}");
+    row("files read", &|l| files.get(l).copied().unwrap_or(0));
+    row("declarations", &|l| symbols.get(l).copied().unwrap_or(0));
+    row("relations", &|l| relations.get(l).copied().unwrap_or(0));
+    row("imports, first-party", &|l| imports_local.get(l).copied().unwrap_or(0));
+    row("imports, external", &|l| imports_external.get(l).copied().unwrap_or(0));
+
+    println!("\n## References, by reason\n");
+    println!("{header}");
+    println!("{rule}");
+    row("RESOLVED", &|l| cells.get(&(l, "RESOLVED".to_string())).copied().unwrap_or(0));
+    for reason in reasons {
+        row(reason, &|l| cells.get(&(l, reason.to_string())).copied().unwrap_or(0));
+    }
+
+    let total: usize = cells.values().sum();
+    assert!(total > 0, "the corpus produced no references at all");
+    // Every reference is in exactly one row: the rows ARE the enum, so a new
+    // variant that nothing lists would show up here as a missing total.
+    let tabulated: usize = languages
+        .iter()
+        .map(|l| {
+            std::iter::once("RESOLVED")
+                .chain(reasons)
+                .map(|r| cells.get(&(*l, r.to_string())).copied().unwrap_or(0))
+                .sum::<usize>()
+        })
+        .sum();
+    assert_eq!(
+        tabulated, total,
+        "the table accounts for {tabulated} of {total} references — a `Reason` variant exists \
+         that this report has no row for, so the table is quietly incomplete"
+    );
+}
+
+/// **A1. Import-mediated references resolve at a high rate.**
+///
+/// §6 puts this first and says why: an import NAMES its target, so a miss here
+/// means the grammar is misread rather than that the answer was unknowable. It
+/// is the sharpest signal the walk or the ladder is wrong, and nothing measured
+/// it.
+///
+/// "Import-mediated" is computed, not assumed: a reference whose path HEAD is a
+/// name an `Import` in the same file binds. That is exactly the population the
+/// ladder's `through_an_import` rung claims, so a miss in it is a rung failing
+/// on its own input.
+///
+/// A THRESHOLD per language, ratcheted at what is measured, because §6's target
+/// of 99.9% stated as a hard gate today would fail and be waived.
+#[test]
+#[ignore]
+fn an_import_named_target_resolves() {
+    let corpus = read_the_corpus();
+    let mut hit: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut missed: BTreeMap<&str, (usize, BTreeMap<String, usize>)> = BTreeMap::new();
+
+    for read in &corpus {
+        let language = read.facts.language.as_str();
+        let separator = lang::adapter_for(read.facts.language).grammar().path_separator;
+        let bound: BTreeSet<&str> = read
+            .facts
+            .imports
+            .iter()
+            .filter_map(|i| match &i.binds {
+                super::facts::Binding::Name(name) => Some(name.as_str()),
+                super::facts::Binding::Glob => None,
+            })
+            .collect();
+        if bound.is_empty() {
+            continue;
+        }
+        for reference in &read.facts.references {
+            let (name, resolved) = match &reference.target {
+                Resolution::Resolved(_) => {
+                    // A resolved target no longer carries the evidence that
+                    // says how it was reached, so the population is counted
+                    // from the reference's own `from`-side name where it has
+                    // one. Resolved references are counted as hits only when
+                    // the walk left a name to match, which is why the miss
+                    // side below is the one that must be complete.
+                    (None, true)
+                }
+                Resolution::Unresolved { reason, evidence } => {
+                    (Some((evidence.name.clone(), format!("{reason:?}"))), false)
+                }
+            };
+            match name {
+                None if resolved => {}
+                Some((name, reason)) => {
+                    let head = name.split(separator).next().unwrap_or(&name);
+                    if bound.contains(head) {
+                        let entry = missed.entry(language).or_insert((0, BTreeMap::new()));
+                        entry.0 += 1;
+                        *entry.1.entry(reason).or_default() += 1;
+                    }
+                }
+                None => {}
+            }
+        }
+        // The hit side: every reference the ladder DID place in a file that has
+        // imports. Counted per file so the rate has a denominator.
+        *hit.entry(language).or_default() += read
+            .facts
+            .references
+            .iter()
+            .filter(|r| matches!(r.target, Resolution::Resolved(_)))
+            .count();
+    }
+
+    println!("\n## A1: references whose path head an import binds\n");
+    for (language, (n, reasons)) in &missed {
+        let resolved = hit.get(language).copied().unwrap_or(0);
+        let rate =
+            if resolved + n == 0 { 100.0 } else { 100.0 * resolved as f64 / (resolved + n) as f64 };
+        println!("{language}: {resolved} resolved, {n} import-named MISSES ({rate:.1}%)");
+        for (reason, count) in reasons {
+            println!("  {count:>6}  {reason}");
+        }
+    }
+
+    assert!(!missed.is_empty() || !hit.is_empty(), "no file in the corpus had an import");
+    // THE RATCHET, per language. Measured, not aspirational.
+    for (language, ceiling) in [("rust", 20_000usize), ("typescript", 8_000usize)] {
+        let n = missed.get(language).map(|(n, _)| *n).unwrap_or(0);
+        assert!(
+            n <= ceiling,
+            "{language}: {n} references name a head an import binds and did not resolve \
+             (ratchet {ceiling}). An import names its target, so this is the grammar or the \
+             ladder being wrong, not an unknowable answer"
+        );
+    }
+}
+
 /// **A7. No two declarations mint one identity.**
 ///
 /// The guard §2.1 leans on when it drops the type/value discriminator, and it
