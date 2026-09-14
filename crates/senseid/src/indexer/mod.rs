@@ -9,15 +9,16 @@ pub mod llms_indexer;
 // `crate::languages` keeps producing the graph until the rust cutover at stage
 // 10; wiring these in before then would put two producers with different rules
 // on the same tables.
-/// The cutover gate (stage 10 S1/S2).
+/// The acceptance harness — §6's A1–A9 and R8, measured over the real corpus.
 ///
-/// `#[cfg(test)]` because it IS a test-runner tool: it is invoked with
-/// `cargo test -- --ignored` and its output is read by a person deciding
-/// whether to cut over. Compiling it into the shipped binary would make it
-/// eight more "never used" findings claiming to be production code, which is
-/// the pattern this design has hit ten times already.
+/// `#[cfg(test)]` because it IS a test-runner tool. What it is NOT is a
+/// comparison: the question "does this agree with the producer being replaced"
+/// is a transition question, and answering it was setting the agenda for work
+/// whose actual goal is an accurate call and reference graph. Thresholds, not
+/// comparisons (§6's first line) — a graph is judged against what a reader
+/// needs from it, and the legacy producer is not that reader.
 #[cfg(test)]
-pub mod differential;
+pub mod acceptance;
 pub mod facts;
 pub mod fqn;
 pub mod incremental;
