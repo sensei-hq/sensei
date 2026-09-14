@@ -326,7 +326,8 @@ mod tests {
 #[cfg(test)]
 mod corpus {
     use super::*;
-    use crate::indexer::lang::rust::{self, Source};
+    use crate::indexer::lang::Source;
+    use crate::indexer::lang::rust;
     use crate::indexer::resolve::{World, resolve};
     use crate::languages::LanguageAdapter;
 
@@ -520,7 +521,8 @@ mod corpus {
 #[cfg(test)]
 mod why {
     use super::*;
-    use crate::indexer::lang::rust::{self, Source};
+    use crate::indexer::lang::Source;
+    use crate::indexer::lang::rust;
     use crate::indexer::resolve::{World, resolve};
     use crate::languages::LanguageAdapter;
 
@@ -772,7 +774,8 @@ mod why {
 #[cfg(test)]
 mod reach {
     use crate::indexer::facts::{Observation, Resolution};
-    use crate::indexer::lang::rust::{self, Source};
+    use crate::indexer::lang::Source;
+    use crate::indexer::lang::rust;
     use crate::indexer::resolve::{World, resolve};
 
     /// How a receiver's type could be learned, cheapest first.
