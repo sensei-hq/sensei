@@ -90,9 +90,10 @@ so it is no longer the largest anything.
   `const` inside a `fn` body mints at module scope, so three unrelated `RE`s in
   one file are one node. The walk needs a container for a function body; a
   `#[cfg(feature)]` pair is a SECOND, different cause and may be one to tolerate.
-- **The TypeScript walk DROPS 383 references** (A2). Found the day the oxc
-  independent counter was built. 99 of 946 files disagree; the head is
-  `app/src/lib/health-state.spec.svelte.ts` at 24. Ratcheted, not fixed.
+- **The TypeScript walk DROPS 152 references** (A2), down from 383 once SPREAD
+  was walked. 54 of 946 files still disagree. Run the A2 test with `--nocapture`
+  — it prints the SOURCE LINE of every site it emitted nothing for, which is how
+  the spread cause was found.
 - `delete_folder` issues a path-prefix `DELETE` (`process.rs`), which 09 S7
   forbids. Fix is N file reconciles; blocked on stage 10 wiring reconcile.
 - The watcher has no manifest/lockfile branch (09 S9), and LOCKFILE PATHS ARE

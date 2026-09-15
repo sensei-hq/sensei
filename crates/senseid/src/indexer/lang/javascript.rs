@@ -1701,18 +1701,14 @@ impl Walk<'_> {
                     self.expression(&c.callee, scope, flow);
                 }
                 for argument in &c.arguments {
-                    if let Some(e) = argument.as_expression() {
-                        self.expression(e, scope, flow);
-                    }
+                    self.argument(argument, scope, flow);
                 }
             }
             Expression::NewExpression(n) => {
                 let miss = self.name_type(n.callee.span(), scope);
                 self.emit(scope, RefKind::Constructs, n.span, miss);
                 for argument in &n.arguments {
-                    if let Some(e) = argument.as_expression() {
-                        self.expression(e, scope, flow);
-                    }
+                    self.argument(argument, scope, flow);
                 }
             }
             Expression::StaticMemberExpression(m) => {
@@ -1774,15 +1770,32 @@ impl Walk<'_> {
             }
             Expression::ArrayExpression(a) => {
                 for element in &a.elements {
-                    if let Some(e) = element.as_expression() {
-                        self.expression(e, scope, flow);
+                    match element {
+                        ArrayExpressionElement::SpreadElement(s) => {
+                            self.expression(&s.argument, scope, flow)
+                        }
+                        other => {
+                            if let Some(e) = other.as_expression() {
+                                self.expression(e, scope, flow);
+                            }
+                        }
                     }
                 }
             }
             Expression::ObjectExpression(o) => {
                 for property in &o.properties {
-                    if let ObjectPropertyKind::ObjectProperty(p) = property {
-                        self.expression(&p.value, scope, flow);
+                    match property {
+                        ObjectPropertyKind::ObjectProperty(p) => {
+                            self.expression(&p.value, scope, flow)
+                        }
+                        // `{ ...authHeaders(token) }` — a SPREAD is the same
+                        // expression it would be without the dots, and skipping
+                        // it drops the call inside. MEASURED: spread in all
+                        // three positions was most of A2's 383 dropped
+                        // references.
+                        ObjectPropertyKind::SpreadProperty(s) => {
+                            self.expression(&s.argument, scope, flow)
+                        }
                     }
                 }
             }
@@ -1822,6 +1835,19 @@ impl Walk<'_> {
             // rung that could tell them apart needs scope analysis the ladder
             // does not have either.
             _ => {}
+        }
+    }
+
+    /// One argument, spread or not. `f(...xs.map(g))` carries a call that a
+    /// plain `as_expression()` returns `None` for.
+    fn argument(&mut self, argument: &Argument<'_>, scope: &Scope, flow: &mut Flow) {
+        match argument {
+            Argument::SpreadElement(s) => self.expression(&s.argument, scope, flow),
+            other => {
+                if let Some(e) = other.as_expression() {
+                    self.expression(e, scope, flow);
+                }
+            }
         }
     }
 
@@ -2763,6 +2789,10 @@ mod tests {
         calls: usize,
         constructs: usize,
         members: usize,
+        /// Where each site was. A count says a reference was dropped; the span
+        /// says which SYNTAX drops it, which is the difference between knowing
+        /// there is a defect and being able to fix one.
+        seen: Vec<(u32, u32)>,
         /// Spans of members the walk reads as part of something else, so they
         /// are not counted a second time.
         absorbed: BTreeSet<(u32, u32)>,
@@ -2771,6 +2801,7 @@ mod tests {
     impl<'a> oxc_ast_visit::Visit<'a> for UseSites {
         fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
             self.calls += 1;
+            self.seen.push((call.span.start, call.span.end));
             // The callee is READ BY the call, whatever shape it is.
             if let Some(member) = as_member(&call.callee) {
                 self.absorbed.insert((member.span().start, member.span().end));
@@ -2780,12 +2811,14 @@ mod tests {
 
         fn visit_new_expression(&mut self, new: &NewExpression<'a>) {
             self.constructs += 1;
+            self.seen.push((new.span.start, new.span.end));
             oxc_ast_visit::walk::walk_new_expression(self, new);
         }
 
         fn visit_static_member_expression(&mut self, member: &StaticMemberExpression<'a>) {
             if !self.absorbed.contains(&(member.span.start, member.span.end)) {
                 self.members += 1;
+                self.seen.push((member.span.start, member.span.end));
             }
             oxc_ast_visit::walk::walk_static_member_expression(self, member);
         }
@@ -2793,19 +2826,26 @@ mod tests {
         fn visit_computed_member_expression(&mut self, member: &ComputedMemberExpression<'a>) {
             if !self.absorbed.contains(&(member.span.start, member.span.end)) {
                 self.members += 1;
+                self.seen.push((member.span.start, member.span.end));
             }
             oxc_ast_visit::walk::walk_computed_member_expression(self, member);
         }
     }
 
     /// The independent count over one source, in the dialect its path states.
-    fn count_use_sites(text: &str, path: &str) -> usize {
+    fn count_use_sites(text: &str, path: &str) -> Vec<(u32, u32)> {
         let allocator = Allocator::default();
         let source_type = SourceType::from_path(path).expect("a claimed extension");
         let parsed = Parser::new(&allocator, text, source_type).parse();
-        let mut sites = UseSites { calls: 0, constructs: 0, members: 0, absorbed: BTreeSet::new() };
+        let mut sites = UseSites {
+            calls: 0,
+            constructs: 0,
+            members: 0,
+            seen: Vec::new(),
+            absorbed: BTreeSet::new(),
+        };
         oxc_ast_visit::Visit::visit_program(&mut sites, &parsed.program);
-        sites.calls + sites.constructs + sites.members
+        sites.seen
     }
 
     /// A2 over the REAL corpus, not a fixture.
@@ -2821,6 +2861,7 @@ mod tests {
         let mut walked = 0usize;
         let mut counted = 0usize;
         let mut disagreed: Vec<(String, usize, usize)> = Vec::new();
+        let mut missed_shapes: BTreeMap<String, usize> = BTreeMap::new();
 
         for (path, text) in crate::indexer::corpus_web_sources() {
             // `.svelte` is markup wrapped around script and has no single oxc
@@ -2844,30 +2885,63 @@ mod tests {
                     )
                 })
                 .count();
-            let theirs = count_use_sites(&text, &path);
+            let sites = count_use_sites(&text, &path);
+            let theirs = sites.len();
             walked += ours;
             counted += theirs;
             if ours != theirs {
+                // The LINES the counter saw a site on that the walk emitted
+                // nothing for. A count says a reference was dropped; the source
+                // line says which syntax drops it.
+                // A MULTISET, not a set. A first version compared sets of
+                // line numbers, so three sites on one line matched one walk
+                // reference and the other two read as drops — it reported 115
+                // phantom misses on `const { data, error } = await db` and
+                // would have sent somebody chasing a defect that is not there.
+                let mut ours_at: BTreeMap<u32, usize> = BTreeMap::new();
+                for reference in &facts.references {
+                    *ours_at.entry(reference.at.start_line).or_default() += 1;
+                }
+                let lines = LineIndex::of(&text);
+                for (start, end) in sites {
+                    let at = lines.locate(start, end).start_line;
+                    let left = ours_at.entry(at).or_default();
+                    if *left > 0 {
+                        *left -= 1;
+                    } else {
+                        let source = text.lines().nth(at as usize - 1).unwrap_or("").trim();
+                        *missed_shapes
+                            .entry(source.chars().take(72).collect::<String>())
+                            .or_default() += 1;
+                    }
+                }
                 disagreed.push((path.clone(), ours, theirs));
             }
         }
 
         println!("\n## A2 (typescript): the walk against an independent count\n");
         println!("walk {walked} | independent {counted} | files disagreeing {}", disagreed.len());
-        for (path, ours, theirs) in disagreed.iter().take(10) {
+        for (path, ours, theirs) in disagreed.iter().take(5) {
             println!("  {path}: walk {ours}, independent {theirs}");
+        }
+        let mut ranked: Vec<(&String, &usize)> = missed_shapes.iter().collect();
+        ranked.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+        println!("\nthe SOURCE the walk emitted nothing for:");
+        for (source, n) in ranked.iter().take(18) {
+            println!("  {n:>4}  {source}");
         }
         assert!(walked > 1_000, "only {walked} references, so this proved nothing");
 
-        // A2 says ZERO dropped, and this is not zero: the walk is 383 short
-        // across 99 of 946 files. Stated as a RATCHET rather than as the target,
+        // A2 says ZERO dropped, and this is not zero: the walk is 152 short
+        // across 54 of 946 files — down from 383 across 99 once SPREAD was
+        // walked in all three positions it can appear. Stated as a RATCHET rather than as the target,
         // for §6's reason — a gate that fails on its first run gets waived, and
         // a waived gate is not a gate. It may fall; it may not rise.
         //
         // The delta is per-file above, not just summed, because one file off by
         // twenty and twenty files off by one are different defects. The head is
         // `health-state.spec.svelte.ts` at 24, which is where to look first.
-        const KNOWN_DROPPED: usize = 383;
+        const KNOWN_DROPPED: usize = 152;
         let dropped = counted.saturating_sub(walked);
         assert!(
             dropped <= KNOWN_DROPPED,
