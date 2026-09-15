@@ -217,7 +217,11 @@ impl<'a> Walk<'a> {
             }
             "enum_declaration" => self.type_declaration(scope, node, SymbolKind::Enum),
             "record_declaration" => self.type_declaration(scope, node, SymbolKind::Struct),
-            "method_declaration" | "constructor_declaration" => self.method(scope, node),
+            // An annotation element declares a name and a type, which is a
+            // method in the grammar's eyes and in ours.
+            "method_declaration"
+            | "constructor_declaration"
+            | "annotation_type_element_declaration" => self.method(scope, node),
             "field_declaration" => self.field_declaration(scope, node),
             "enum_constant" => self.enum_constant(scope, node),
             "local_variable_declaration" => {
@@ -247,6 +251,12 @@ impl<'a> Walk<'a> {
     }
 
     fn enum_constant(&mut self, scope: &Scope, node: Node<'_>) {
+        // `VIDEOCALL(1, ApplicationConstants.CallType.VideoCall.name())` — a
+        // constant's ARGUMENTS hold calls and field accesses like any other
+        // expression, and declaring the constant without walking into them
+        // dropped every one. MEASURED: the head of A2's disagreement list was
+        // enums, at 16 emitted against 34 counted.
+        self.children(scope, node);
         let Some(name) = self.field_text(node, "name") else { return };
         let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
         self.symbols.push(Symbol {
@@ -291,7 +301,7 @@ impl<'a> Walk<'a> {
                 });
             }
         }
-        self.annotations(node, &fqn);
+        self.annotations(scope, node, &fqn);
 
         let inner = Scope {
             from: fqn,
@@ -392,10 +402,25 @@ impl<'a> Walk<'a> {
             declared_type: returns,
             params,
         });
-        self.annotations(node, &fqn);
+        self.annotations(scope, node, &fqn);
         self.type_use(scope, node, "type");
-        if let Some(body) = node.child_by_field_name("body") {
-            self.children(&inner, body);
+        match node.child_by_field_name("body") {
+            Some(body) => self.children(&inner, body),
+            // An ANNOTATION ELEMENT has no body — it has a `default` clause, and
+            // `OnNullInput onNullInput() default OnNullInput.CALLED` puts a
+            // field access there. Walking only the body dropped every one.
+            None => {
+                let mut cursor = node.walk();
+                let rest: Vec<Node<'_>> = node
+                    .named_children(&mut cursor)
+                    .filter(|c| !matches!(c.kind(), "modifiers" | "formal_parameters"))
+                    .filter(|c| Some(c.id()) != node.child_by_field_name("type").map(|t| t.id()))
+                    .filter(|c| Some(c.id()) != node.child_by_field_name("name").map(|n| n.id()))
+                    .collect();
+                for child in rest {
+                    self.node(&inner, child);
+                }
+            }
         }
     }
 
@@ -420,10 +445,20 @@ impl<'a> Walk<'a> {
                 },
                 params: Vec::new(),
             });
-            self.annotations(node, &fqn);
+            self.annotations(scope, node, &fqn);
         }
         self.type_use(scope, node, "type");
-        self.children(scope, node);
+        // The DECLARATORS only. `children(node)` would descend into `modifiers`
+        // too, and `annotations` above has already walked those arguments — so
+        // `@Temporal(TemporalType.TIMESTAMP)` was emitted twice. A2 caught it as
+        // the walk emitting MORE than an independent count, which is inventing
+        // references rather than dropping them.
+        let mut cursor = node.walk();
+        let declarators: Vec<Node<'_>> =
+            node.children(&mut cursor).filter(|d| d.kind() == "variable_declarator").collect();
+        for declarator in declarators {
+            self.children(scope, declarator);
+        }
     }
 
     fn visibility(&self, node: Node<'_>) -> Visibility {
@@ -453,7 +488,7 @@ impl<'a> Walk<'a> {
     /// Annotations are how a Java codebase says which framework it is built on,
     /// so dropping them would lose the single most useful structural fact about
     /// a Spring or JPA class.
-    fn annotations(&mut self, node: Node<'_>, child: &Fqn) {
+    fn annotations(&mut self, scope: &Scope, node: Node<'_>, child: &Fqn) {
         let mut cursor = node.walk();
         let blocks: Vec<Node<'_>> =
             node.children(&mut cursor).filter(|c| c.kind() == "modifiers").collect();
@@ -472,6 +507,21 @@ impl<'a> Walk<'a> {
                     parent: self.refer_to_type(raw, name),
                     at: span(annotation),
                 });
+                // An annotation's ARGUMENTS are expressions like any other:
+                // `@GetMapping("/rest/" + Controller.API_VERSION)` holds a
+                // field access, and recording only the Decorates relation
+                // dropped it. Same shape as the enum-constant case above.
+                //
+                // Everything but the NAME, rather than the `arguments` field:
+                // `@Target({ElementType.METHOD})` puts an array initialiser
+                // there instead of an argument list, and asking for the field
+                // by name missed it.
+                let mut args = annotation.walk();
+                let rest: Vec<Node<'_>> =
+                    annotation.named_children(&mut args).filter(|c| c.id() != name.id()).collect();
+                for child in rest {
+                    self.node(scope, child);
+                }
             }
         }
     }
