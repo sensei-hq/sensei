@@ -91,13 +91,14 @@ pub enum Language {
     Rust,
     /// JavaScript, TypeScript, and the script block of a Svelte component.
     TypeScript,
+    Java,
 }
 
 impl Language {
     /// Every language this build can read. Exhaustively matched below, so a new
     /// variant does not compile until it is listed here too.
     pub fn all() -> &'static [Language] {
-        &[Language::Rust, Language::TypeScript]
+        &[Language::Rust, Language::TypeScript, Language::Java]
     }
 
     /// The label this language occupies the leading fqn segment with. Paired
@@ -106,6 +107,7 @@ impl Language {
         match self {
             Self::Rust => "rust",
             Self::TypeScript => "typescript",
+            Self::Java => "java",
         }
     }
 
@@ -116,6 +118,7 @@ impl Language {
         match label {
             "rust" => Some(Self::Rust),
             "typescript" => Some(Self::TypeScript),
+            "java" => Some(Self::Java),
             _ => None,
         }
     }
@@ -271,10 +274,15 @@ pub enum Reason {
     /// The target would only exist after macro expansion, and expansions are
     /// not parsed.
     MacroExpansion,
-    /// Deliberately filtered plumbing (`clone`, `unwrap`). Filtering, not
-    /// failure — its own reason so a reader can exclude it without also
-    /// excluding genuine misses.
-    Denylisted,
+    /// Plumbing the grammar deliberately filters — `clone`, `unwrap`,
+    /// `toString`. Filtering, not failure: its own reason so a reader can
+    /// exclude it without also excluding genuine misses.
+    ///
+    /// Named for what it IS rather than for the mechanism that catches it. It
+    /// was `Denylisted`, which described the list in `Grammar::plumbing` and
+    /// left a reader to work out that the list holds plumbing; the field and the
+    /// reason now share a name.
+    Plumbing,
     /// The target names a member NO first-party type declares anywhere in the
     /// scan, so it cannot be an edge we could ever draw: it is a method on a
     /// library type — `.trim()`, `.collect()`, `.toBe()` — at the boundary R5
@@ -323,7 +331,7 @@ impl Reason {
             Self::AmbiguousCandidates => "ambiguous_candidates",
             Self::DynamicDispatch => "dynamic_dispatch",
             Self::MacroExpansion => "macro_expansion",
-            Self::Denylisted => "denylisted",
+            Self::Plumbing => "plumbing",
             Self::ExternalBoundary => "external_boundary",
             Self::Unplaced => "unplaced",
         }
@@ -340,11 +348,34 @@ impl Reason {
             "ambiguous_candidates" => Self::AmbiguousCandidates,
             "dynamic_dispatch" => Self::DynamicDispatch,
             "macro_expansion" => Self::MacroExpansion,
-            "denylisted" => Self::Denylisted,
+            "plumbing" => Self::Plumbing,
             "external_boundary" => Self::ExternalBoundary,
             "unplaced" => Self::Unplaced,
             _ => return None,
         })
+    }
+
+    /// Does this miss cast doubt on a first-party edge, or has the ladder
+    /// positively placed the site OUTSIDE?
+    ///
+    /// Two of the ten are verdicts rather than failures. [`Reason::Plumbing`]
+    /// is documented as "filtering, not failure" — `.ok()` on a `Result` is
+    /// plumbing. [`Reason::ExternalBoundary`] is decided by "nothing we index
+    /// declares this name", which is the ladder saying the world ends here —
+    /// `.as_deref()` is not an edge anyone lost. Neither is a gap somebody
+    /// should close, and counting them as uncertainty makes the graph look
+    /// least sure exactly where it is most.
+    ///
+    /// On the enum rather than beside one consumer, because there are now two
+    /// — `impact` excludes them from a blast radius, and the acceptance report
+    /// splits the histogram by them — and a partition of this enum written
+    /// twice would drift the first time a variant is added.
+    ///
+    /// MEASURED over this repo: the two account for 45,320 of 97,681 misses,
+    /// headed by std methods (`map`, `into`, `as_str`, `collect`) that merely
+    /// share a name with something first-party.
+    pub fn casts_doubt(self) -> bool {
+        !matches!(self, Self::Plumbing | Self::ExternalBoundary)
     }
 
     /// Every variant, so a test or a report can iterate the whole taxonomy
@@ -357,7 +388,7 @@ impl Reason {
         Reason::AmbiguousCandidates,
         Reason::DynamicDispatch,
         Reason::MacroExpansion,
-        Reason::Denylisted,
+        Reason::Plumbing,
         Reason::ExternalBoundary,
         Reason::Unplaced,
     ];
@@ -668,7 +699,7 @@ mod tests {
             Reason::AmbiguousCandidates,
             Reason::DynamicDispatch,
             Reason::MacroExpansion,
-            Reason::Denylisted,
+            Reason::Plumbing,
             Reason::ExternalBoundary,
             Reason::Unplaced,
         ]
@@ -725,10 +756,10 @@ mod tests {
     fn every_declaration_fact_variant_is_constructible() {
         for l in all_languages() {
             match l {
-                Language::Rust | Language::TypeScript => {}
+                Language::Rust | Language::TypeScript | Language::Java => {}
             }
         }
-        assert_eq!(all_languages().len(), 2);
+        assert_eq!(all_languages().len(), 3);
 
         for k in all_symbol_kinds() {
             match k {
@@ -792,7 +823,7 @@ mod tests {
                 | Reason::AmbiguousCandidates
                 | Reason::DynamicDispatch
                 | Reason::MacroExpansion
-                | Reason::Denylisted
+                | Reason::Plumbing
                 | Reason::ExternalBoundary
                 | Reason::Unplaced => {}
             }

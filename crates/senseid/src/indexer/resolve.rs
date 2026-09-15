@@ -129,7 +129,7 @@ pub struct Grammar {
     /// lands on the node the prelude lands on.
     pub prelude: &'static [(&'static str, &'static str, &'static str)],
     /// Members every value of the language has. Filtering, not failure — see
-    /// [`Reason::Denylisted`].
+    /// [`Reason::Plumbing`].
     pub plumbing: &'static [&'static str],
 }
 
@@ -366,12 +366,12 @@ impl<'a> Ladder<'a> {
     /// for it rather than a share of every other one.
     ///
     /// [`Reason::UnhandledForm`] is left alone: it names a gap in the WALK, not
-    /// a name the ladder declined to chase, and moving one into the denylist
+    /// a name the ladder declined to chase, and moving one into the plumbing list
     /// would hide exactly what the histogram exists to show.
     fn filtered(&self, reason: Reason, evidence: &Evidence) -> Reason {
         match reason {
             Reason::UnhandledForm => reason,
-            _ if self.grammar.plumbing.contains(&evidence.name.as_str()) => Reason::Denylisted,
+            _ if self.grammar.plumbing.contains(&evidence.name.as_str()) => Reason::Plumbing,
             // A receiver we could not type, whose MEMBER nothing first-party
             // declares. No inference reaches it, because there is nothing of
             // ours on the other end — see `World::first_party_members`.
@@ -1068,7 +1068,7 @@ mod tests {
         assert_placed(&facts, "lib·std·assert_eq");
     }
 
-    /// The denylist is FILTERING, not failure. `x.clone()` is a miss the ladder
+    /// The plumbing list is FILTERING, not failure. `x.clone()` is a miss the ladder
     /// will never place and there are thousands of them; left in the general
     /// bucket they bury the misses somebody could act on. Its own reason is what
     /// lets a reader drop it without dropping those.
@@ -1081,7 +1081,7 @@ mod tests {
         let facts = ladder("m", "fn f(x: &Thing) { let y = helper(); x.clone(); y.width(); }");
         let got = targets(&facts);
         assert!(
-            got.iter().any(|t| t == "Denylisted(clone)"),
+            got.iter().any(|t| t == "Plumbing(clone)"),
             "`clone` is plumbing, not a gap in the graph; got {got:?}"
         );
         assert!(
@@ -1117,7 +1117,7 @@ mod tests {
                 "use crate::shim::*;\nfn f() { Vec::new(); }",
             ),
             (
-                Reason::Denylisted,
+                Reason::Plumbing,
                 "plumbing, filtered so it does not bury genuine misses",
                 "fn f(x: &Thing) { x.clone(); }",
             ),
