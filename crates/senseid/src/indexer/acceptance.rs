@@ -1328,66 +1328,97 @@ fn every_type_owned_declaration_says_which_type_owns_it() {
     }
 }
 
-/// **Every function and class in the SOURCE tree should be reached by
-/// something.** A declaration that nothing reaches cannot run.
+/// **Two barriers, and every miss has to be explainable.**
 ///
-/// The hypothesis is sharp because of what sits on each side of it:
+/// A class is one node; an independent function is one node. Each should appear
+/// as the CALLEE end of some edge, and which end the caller sits on says a
+/// different thing:
 ///
-/// - the POPULATION is non-test callables. A test is called by the harness, not
-///   by us, so it can never have a caller here and including it only dilutes.
-/// - the REACHERS are everything, tests included. A test calls the thing it
-///   tests, so a well-covered function has a caller even when nothing in
-///   production calls it directly.
+/// 1. **Reached by a test.** With high coverage, a source node nothing tests is
+///    either untested or an edge the graph lost. This is the easier barrier and
+///    the one to clear first, because a test calls its subject directly and by
+///    name — the simplest edge there is.
+/// 2. **Reached by other source.** A node only tests reach is exercised but not
+///    USED, which is either a genuine entry point (a task the scheduler calls, a
+///    handler a router registers, a public library surface) or a gap.
 ///
-/// So this repository — an application, thoroughly tested, with no dead code —
-/// should have almost no orphans. Every one is either dead code or an edge the
-/// graph lost, and the list is the only way to tell.
-///
-/// The test/non-test split is by `#[cfg(test)]` POSITION, not by module name:
-/// the test modules here are called `forge_token_observe_tests`,
-/// `probe_classification`, `adjacency_policy_tests`. Matching on the name
-/// `tests` found 3,533 of them and left 1,562 looking like defects.
+/// Neither is asserted at zero. The point is the decomposition: a graph is good
+/// when every miss has a name, and the names here are few and checkable.
 #[test]
 #[ignore]
-fn every_function_and_class_in_the_source_tree_is_reached_by_something() {
+fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
     let corpus = read_the_corpus();
 
-    // Every identity anything points AT — a placed reference target, or the
-    // parent of a placed relation. Tests count as reachers, deliberately.
-    let mut reached: BTreeSet<&str> = BTreeSet::new();
-    for read in &corpus {
-        for reference in &read.facts.references {
-            if let Resolution::Resolved { fqn, .. } = &reference.target {
-                reached.insert(fqn.as_str());
-            }
-        }
-        for relation in &read.facts.relations {
-            if let Resolution::Resolved { fqn, .. } = &relation.parent {
-                reached.insert(fqn.as_str());
-            }
-        }
-    }
-
-    // The line each file's test module starts at. Past it, a declaration is a
-    // test; before it, it is source.
+    // Where each file's test region begins. Past it, a declaration is a test.
+    // By POSITION rather than by module name: the modules here are called
+    // `forge_token_observe_tests`, `probe_classification`,
+    // `adjacency_policy_tests`, and matching the name `tests` misclassified
+    // 1,562 of them as source.
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|p| p.parent())
         .expect("the crate sits two levels below the workspace root");
-    let tests_begin = |path: &str| -> u32 {
-        let full = root.join(path);
-        let Ok(text) = std::fs::read_to_string(&full) else { return u32::MAX };
-        let mut line = 0u32;
-        for raw in text.lines() {
-            line += 1;
-            if raw.trim_start().starts_with("#[cfg(test)]") {
-                return line;
+    let mut boundary: BTreeMap<&str, u32> = BTreeMap::new();
+    for read in &corpus {
+        let at = std::fs::read_to_string(root.join(&read.path))
+            .ok()
+            .and_then(|text| {
+                text.lines()
+                    .position(|l| l.trim_start().starts_with("#[cfg(test)]"))
+                    .map(|i| i as u32 + 1)
+            })
+            .unwrap_or(u32::MAX);
+        boundary.insert(read.path.as_str(), at);
+    }
+    let a_test_file =
+        |path: &str| path.contains(".test.") || path.contains(".spec.") || path.contains("/tests/");
+
+    // Every declared identity, and which side of the line it sits on.
+    let mut side: BTreeMap<&str, bool> = BTreeMap::new(); // true = test
+    for read in &corpus {
+        let at = boundary[read.path.as_str()];
+        for symbol in &read.facts.symbols {
+            side.insert(
+                symbol.fqn.as_str(),
+                a_test_file(&read.path) || symbol.span.start_line >= at,
+            );
+        }
+    }
+
+    // For each identity: is it reached from a test, and from source?
+    let mut by_test: BTreeSet<&str> = BTreeSet::new();
+    let mut by_source: BTreeSet<&str> = BTreeSet::new();
+    for read in &corpus {
+        let at = boundary[read.path.as_str()];
+        let file_is_a_test = a_test_file(&read.path);
+        for reference in &read.facts.references {
+            let Resolution::Resolved { fqn, .. } = &reference.target else { continue };
+            // The CALLER's side. A use site at file scope belongs to the file,
+            // which `side` may not hold — treat that as source, which is the
+            // conservative reading: it can only make barrier 2 look better
+            // satisfied, never barrier 1.
+            let from_a_test = side
+                .get(reference.from.as_str())
+                .copied()
+                .unwrap_or(file_is_a_test || reference.at.start_line >= at);
+            // A node calling ITSELF proves nothing about being reached.
+            if reference.from.as_str() == fqn.as_str() {
+                continue;
+            }
+            if from_a_test {
+                by_test.insert(fqn.as_str());
+            } else {
+                by_source.insert(fqn.as_str());
             }
         }
-        u32::MAX
-    };
+        for relation in &read.facts.relations {
+            if let Resolution::Resolved { fqn, .. } = &relation.parent {
+                by_source.insert(fqn.as_str());
+            }
+        }
+    }
 
-    let callable = |kind: SymbolKind| {
+    let a_node = |kind: SymbolKind| {
         matches!(
             kind,
             SymbolKind::Function
@@ -1400,63 +1431,81 @@ fn every_function_and_class_in_the_source_tree_is_reached_by_something() {
         )
     };
 
-    let mut declared: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut orphans: BTreeMap<&str, Vec<(&str, &str, u32)>> = BTreeMap::new();
+    #[derive(Default)]
+    struct Tally {
+        nodes: usize,
+        no_test: usize,
+        no_source: usize,
+        neither: usize,
+    }
+    let mut per: BTreeMap<&str, Tally> = BTreeMap::new();
+    let mut untested: Vec<String> = Vec::new();
+    let mut unused: Vec<String> = Vec::new();
     for read in &corpus {
         let language = read.facts.language.as_str();
-        let boundary = tests_begin(&read.path);
-        let is_a_test_file = read.path.contains(".test.")
-            || read.path.contains(".spec.")
-            || read.path.contains("/tests/");
-        for symbol in read.facts.symbols.iter().filter(|s| callable(s.kind)) {
-            if is_a_test_file || symbol.span.start_line >= boundary {
-                continue;
+        for symbol in read.facts.symbols.iter().filter(|s| a_node(s.kind)) {
+            if side[symbol.fqn.as_str()] {
+                continue; // a test node: the harness calls it, not us
             }
-            *declared.entry(language).or_default() += 1;
-            if !reached.contains(symbol.fqn.as_str()) {
-                orphans.entry(language).or_default().push((
-                    symbol.name.as_str(),
-                    read.path.as_str(),
-                    symbol.span.start_line,
-                ));
+            let t = per.entry(language).or_default();
+            t.nodes += 1;
+            let tested = by_test.contains(symbol.fqn.as_str());
+            let used = by_source.contains(symbol.fqn.as_str());
+            if !tested {
+                t.no_test += 1;
+                untested.push(format!("{} {}:{}", symbol.name, read.path, symbol.span.start_line));
+            }
+            if !used {
+                t.no_source += 1;
+                unused.push(format!("{} {}:{}", symbol.name, read.path, symbol.span.start_line));
+            }
+            if !tested && !used {
+                t.neither += 1;
             }
         }
     }
 
-    println!("\n## Source declarations nothing reaches\n");
+    println!(
+        "\n  identities reached from a test: {} | from source: {}",
+        by_test.len(),
+        by_source.len()
+    );
+    let test_files = corpus.iter().filter(|r| a_test_file(&r.path)).count();
+    let test_nodes = side.values().filter(|t| **t).count();
+    println!("  test files in corpus: {test_files} | test-side declarations: {test_nodes}");
+    println!("\n## Two barriers, per language\n");
+    println!(
+        "  {:<12} {:>7} {:>12} {:>14} {:>10}",
+        "", "nodes", "no test edge", "no source edge", "neither"
+    );
     for language in super::facts::Language::all() {
         let l = language.as_str();
-        let all = declared.get(l).copied().unwrap_or(0);
-        if all == 0 {
+        let Some(t) = per.get(l) else { continue };
+        if t.nodes == 0 {
             continue;
         }
-        let none = orphans.get(l).map_or(0, Vec::len);
+        let pct = |n: usize| 100.0 * n as f64 / t.nodes as f64;
         println!(
-            "  {l:<12} {none:>6} of {all:>6} source callables unreached ({:.1}%)",
-            100.0 * none as f64 / all as f64
+            "  {l:<12} {:>7} {:>7} {:>4.0}% {:>9} {:>4.0}% {:>5} {:>4.0}%",
+            t.nodes,
+            t.no_test,
+            pct(t.no_test),
+            t.no_source,
+            pct(t.no_source),
+            t.neither,
+            pct(t.neither)
         );
     }
 
-    let mut by_area: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut listed: Vec<String> = Vec::new();
-    for found in orphans.values() {
-        for (name, path, line) in found {
-            let area = path.split('/').take(3).collect::<Vec<_>>().join("/");
-            *by_area.entry(Box::leak(area.into_boxed_str())).or_default() += 1;
-            listed.push(format!("    {name}  {path}:{line}"));
+    let head = |what: &str, mut list: Vec<String>| {
+        list.sort();
+        println!("\n  {what}, first 25 of {}:", list.len());
+        for line in list.iter().take(25) {
+            println!("    {line}");
         }
-    }
-    let mut ranked: Vec<_> = by_area.iter().collect();
-    ranked.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
-    println!("\n  by area:");
-    for (area, n) in ranked.iter().take(12) {
-        println!("    {n:>5}  {area}");
-    }
-    listed.sort();
-    println!("\n  first 40 of {}:", listed.len());
-    for line in listed.iter().take(40) {
-        println!("{line}");
-    }
+    };
+    head("BARRIER 1 — no test reaches it", untested);
+    head("BARRIER 2 — no source reaches it", unused);
 
-    assert!(declared.values().sum::<usize>() > 0, "the corpus declares no source callables");
+    assert!(per.values().map(|t| t.nodes).sum::<usize>() > 0, "no source nodes at all");
 }
