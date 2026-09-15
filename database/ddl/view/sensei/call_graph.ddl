@@ -35,6 +35,16 @@ select e.id              as edge_id
      -- at the end, so inserting this beside the other target_* columns would
      -- make the replace fail against an existing database.
      , coalesce(tgt.name, e.target_name) as target_symbol
+     -- WHY an unresolved edge is unresolved, from the walk that could not
+     -- place it. Written by the indexer into `props.reason`; the vocabulary is
+     -- sensei.reason_codes under domain `code_graph`, and Reason::as_label on
+     -- the Rust side is the one producer of these strings.
+     --
+     -- A named column rather than every consumer spelling `props->>'reason'`
+     -- for itself. Appended last for the reason target_symbol was: `create or
+     -- replace view` may only add columns at the end.
+     , e.props->>'reason' as unresolved_reason
+     , src.language       as source_language
   from edges         e
   join folders       f
     on f.id          = e.folder_id
