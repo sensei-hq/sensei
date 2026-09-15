@@ -17,7 +17,7 @@ use super::types::{element_type, simple_type_name};
 use super::types::{type_path, type_segment};
 use crate::indexer::facts::{
     Binding, DeclaredType, Fqn, Import, ImportOrigin, Language, Observation, Param, Reason,
-    RefKind, Reference, Relation, RelationKind, Resolution, Symbol, SymbolKind, Visibility,
+    RefKind, Reference, Relation, RelationKind, Resolution, Rung, Symbol, SymbolKind, Visibility,
 };
 use crate::indexer::fqn::{self, Form, FqnError, Reach};
 
@@ -449,7 +449,10 @@ impl<'a> Walk<'a> {
                         // Proven, not guessed: this identity was minted by the
                         // same rule that named the member, from a declaration
                         // this walk read, so the two sides cannot disagree.
-                        parent: Resolution::Resolved(owner.clone()),
+                        parent: Resolution::Resolved {
+                            fqn: owner.clone(),
+                            via: Rung::DeclaredHere,
+                        },
                         at: symbol.span,
                     });
                 }

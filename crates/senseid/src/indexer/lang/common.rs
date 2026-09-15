@@ -151,7 +151,7 @@ mod tests {
                     assert!(!evidence.name.is_empty(), "{node_kind} produced a nameless miss");
                     assert!(!evidence.node_kind.is_empty(), "{node_kind} produced no node kind");
                 }
-                Resolution::Resolved(fqn) => panic!("a miss resolved to {fqn}"),
+                Resolution::Resolved { fqn, .. } => panic!("a miss resolved to {fqn}"),
             }
         }
     }

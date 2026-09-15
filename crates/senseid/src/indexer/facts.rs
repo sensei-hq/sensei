@@ -404,10 +404,84 @@ pub struct Evidence {
     pub saw: Vec<Observation>,
 }
 
+/// Which rung of the ladder placed an edge.
+///
+/// The rungs are not interchangeable, and a consumer handed a bare "resolved"
+/// treats the weakest claim the ladder makes exactly like the strongest.
+/// [`Rung::DeclaredHere`] is a file pointing at its own declaration — there is
+/// nothing to be wrong about. [`Rung::ThroughAGlob`] is a name bound by
+/// `use x::*`, where the ladder knows the glob covers the module but the source
+/// never wrote the name down. Same `Resolved`, very different evidence.
+///
+/// It is also the one field that maps an edge back to the code that made it. A
+/// rung IS a method on `Ladder`, so a wrong edge tagged `through_a_glob` names
+/// `Ladder::through_a_glob` as the thing to go and read — which is what makes a
+/// defect report actionable instead of a search.
+///
+/// Declaration order is CLIMB order, and [`Rung::ALL`] relies on it: reading the
+/// list is reading the ladder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Rung {
+    /// The file declares the target itself.
+    DeclaredHere,
+    /// An import in scope binds the head of the path.
+    ThroughAnImport,
+    /// A glob in scope covers the module the target sits in. The name itself
+    /// was never written down, which is what makes this the weakest first-party
+    /// rung.
+    ThroughAGlob,
+    /// A path rooted at this package, needing no import.
+    RootedInThisPackage,
+    /// A fully-qualified path that leaves the scanned source (R5). Named, never
+    /// opened.
+    FullyQualifiedExternal,
+    /// A name the language puts in scope everywhere. Outranked by a glob, which
+    /// could have shadowed it.
+    InThePrelude,
+}
+
+impl Rung {
+    /// The stable label this rung is written and read under. One labeling, for
+    /// the reason [`Reason::as_label`] gives.
+    pub fn as_label(self) -> &'static str {
+        match self {
+            Self::DeclaredHere => "declared_here",
+            Self::ThroughAnImport => "through_an_import",
+            Self::ThroughAGlob => "through_a_glob",
+            Self::RootedInThisPackage => "rooted_in_this_package",
+            Self::FullyQualifiedExternal => "fully_qualified_external",
+            Self::InThePrelude => "in_the_prelude",
+        }
+    }
+
+    /// The inverse of [`Rung::as_label`]. `None` for a label no rung claims.
+    pub fn from_label(label: &str) -> Option<Self> {
+        Some(match label {
+            "declared_here" => Self::DeclaredHere,
+            "through_an_import" => Self::ThroughAnImport,
+            "through_a_glob" => Self::ThroughAGlob,
+            "rooted_in_this_package" => Self::RootedInThisPackage,
+            "fully_qualified_external" => Self::FullyQualifiedExternal,
+            "in_the_prelude" => Self::InThePrelude,
+            _ => return None,
+        })
+    }
+
+    /// Every rung, in the order `Ladder::climb` tries them.
+    pub const ALL: &'static [Rung] = &[
+        Rung::DeclaredHere,
+        Rung::ThroughAnImport,
+        Rung::ThroughAGlob,
+        Rung::RootedInThisPackage,
+        Rung::FullyQualifiedExternal,
+        Rung::InThePrelude,
+    ];
+}
+
 /// Where a reference points. Total by construction (spec §3.2, R2).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Resolution {
-    Resolved(Fqn),
+    Resolved { fqn: Fqn, via: Rung },
     Unresolved { reason: Reason, evidence: Evidence },
 }
 
@@ -620,7 +694,7 @@ mod tests {
 
     fn all_resolutions() -> Vec<Resolution> {
         vec![
-            Resolution::Resolved(an_fqn("resolved")),
+            Resolution::Resolved { fqn: an_fqn("resolved"), via: Rung::DeclaredHere },
             Resolution::Unresolved { reason: Reason::ReceiverTypeUnknown, evidence: an_evidence() },
         ]
     }
@@ -799,7 +873,7 @@ mod tests {
 
         for r in resolutions {
             match r {
-                Resolution::Resolved(fqn) => {
+                Resolution::Resolved { fqn, .. } => {
                     assert!(!fqn.as_str().is_empty(), "a resolved target names a symbol");
                 }
                 Resolution::Unresolved { reason, evidence } => {
@@ -852,7 +926,7 @@ mod tests {
         let relation = Relation {
             kind: RelationKind::TraitImpl,
             child: an_fqn("Widget"),
-            parent: Resolution::Resolved(an_fqn("Display")),
+            parent: Resolution::Resolved { fqn: an_fqn("Display"), via: Rung::DeclaredHere },
             at: a_span(),
         };
         let import = Import {
@@ -946,6 +1020,65 @@ mod tests {
             }
         }
         assert!(read > 0, "the guard read no files, so it would have passed vacuously");
+    }
+
+    /// Every rung has prose too, and every piece of rung prose has a rung.
+    ///
+    /// Its own domain rather than sharing `code_graph`, because `precedence` is
+    /// scoped per domain and means different things: for a reason it is "fix
+    /// this first", for a rung it is CLIMB ORDER — which rung outranks which.
+    /// One domain would make that number answer two questions.
+    ///
+    /// Every rung is `normal`: a placed edge is not a fault and not a refusal,
+    /// it is the ladder working. The table's CHECK then forces remedy and actor
+    /// to be null, which is correct — there is nothing to do about a success.
+    #[test]
+    fn every_rung_is_explained_by_a_seeded_reason_code() {
+        const DOMAIN: &str = "code_graph_rung";
+        let seed = include_str!("../../../../database/import/staging/reason_codes.jsonl");
+        let rows: Vec<serde_json::Value> = seed
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("every seed line is JSON"))
+            .filter(|row: &serde_json::Value| row["domain"] == DOMAIN)
+            .collect();
+
+        for rung in Rung::ALL {
+            let code = rung.as_label();
+            let row = rows
+                .iter()
+                .find(|r| r["code"] == code)
+                .unwrap_or_else(|| panic!("{DOMAIN}.{code} has no row in reason_codes.jsonl"));
+            for field in ["summary", "detail"] {
+                assert!(
+                    row[field].as_str().is_some_and(|s| !s.trim().is_empty()),
+                    "{code}.{field} is empty prose"
+                );
+            }
+            assert_eq!(row["kind"], "normal", "{code}: a placed edge is not a fault");
+            assert!(
+                row["remedy"].as_str().unwrap_or("").is_empty()
+                    && row["actor"].as_str().unwrap_or("").is_empty(),
+                "{code} is `normal`, so reason_codes_normal_is_silent rejects a remedy or actor"
+            );
+        }
+        for row in &rows {
+            let code = row["code"].as_str().unwrap_or_default();
+            assert!(Rung::from_label(code).is_some(), "{DOMAIN}.{code} names no rung");
+        }
+        assert_eq!(rows.len(), Rung::ALL.len(), "one row per rung, no more");
+
+        // Precedence IS climb order, so the seeded order must be the enum's.
+        let mut seeded: Vec<(i64, &str)> = rows
+            .iter()
+            .map(|r| (r["precedence"].as_i64().unwrap_or(0), r["code"].as_str().unwrap_or("")))
+            .collect();
+        seeded.sort_unstable();
+        assert_eq!(
+            seeded.iter().map(|(_, c)| *c).collect::<Vec<_>>(),
+            Rung::ALL.iter().map(|r| r.as_label()).collect::<Vec<_>>(),
+            "seeded precedence disagrees with the order Ladder::climb tries the rungs"
+        );
     }
 
     /// Every reason a miss can carry has PROSE, and every piece of prose has a
