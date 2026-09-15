@@ -16,6 +16,60 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 ---
 
 
+
+## Indexer — Java's 26,995 edges at members nothing declares (measured 2026-09-15)
+
+`SENSEI_CORPUS=~/Work/Dayamed … indexer::lang::java::corpus` prints this every
+run. 26,995 first-party edges across 1,007 identities name a member that is in
+no source file. Head:
+
+    456  ApplicationConstants.SUCCESS
+    379  Patient.getUserDetails          <- Lombok @Getter
+    335  ApplicationConstants.PATIENT
+    283  UserDetailsRepository.findById  <- inherited from JpaRepository
+
+Two causes, both real: Lombok writes accessors at compile time (1,868 files in
+that corpus carry `@Getter`/`@Setter`/`@Data`), and Spring Data inherits methods
+from library interfaces. Both are targets that exist only after something else
+runs — what `Reason::MacroExpansion` names — and the walk mints a first-party
+identity instead, which is a wrong edge (R4).
+
+### The path in: the walk PLACES instead of stating
+
+`java/walk.rs::refer_to_member` returns `Resolution::Resolved { via: DeclaredHere }`
+whenever the TYPE is first-party, bypassing the ladder — so nothing ever asks
+whether the MEMBER exists. That is the R7 violation, and fixing it is right.
+
+### Two attempts, both measured, both shelved (`git stash@{0}`)
+
+1. **Walk states the path, ladder places it.** Correct by R7, but Java's
+   `declared_here` rung goes to ZERO — the ladder matches `evidence.name`
+   against the file's declarations, and for a member path the bare name is not
+   enough. Net: dangling 26,995 -> 21,018, RESOLVED 64.3% -> 60.3%. Roughly
+   15,000 resolutions lost to remove 6,000 wrong edges, and the split between
+   correct and incorrect inside those 15,000 was not measured.
+
+2. **Ladder refuses a member `World::first_party_members` does not hold.**
+   REGRESSES RUST by 2,112 edges. That table is built from
+   Method/Field/Property, so an associated function like `PgStore::connect` is a
+   `Function` and is absent. It exists for the ExternalBoundary
+   reclassification, not as a member inventory, and using it as one is a
+   narrowing.
+
+### What the fix actually needs
+
+A member inventory the ladder can consult — `(package, type, member)`, built at
+the same barrier `TypeHomes` is. Then the walk states the path (fix 1) and a
+ladder rung places a member on a first-party type only when that type declares
+it. Without the inventory, fix 1 alone trades wrong edges for missing ones at a
+ratio nobody has measured.
+
+Lombok specifically may deserve its own answer: a class carrying `@Getter` has
+`getX()` for every field `x`, which is derivable from facts the walk already
+emits (the Decorates relation and the field list). That would turn ~380 of the
+head into real edges rather than refusing them.
+
+
 ## Indexer — `unwrap_or` fallbacks that hide a cause (adversarial review, 2026-09-15)
 
 **Finding: 6,109 misses carry a first-party home the walk fabricated for a type
