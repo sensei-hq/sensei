@@ -43,10 +43,10 @@ fn package_root_of(path: &str) -> &str {
 }
 
 /// One file's facts, with the package that owns it.
-struct Read {
-    package: String,
-    path: String,
-    facts: FileFacts,
+pub(super) struct Read {
+    pub(super) package: String,
+    pub(super) path: String,
+    pub(super) facts: FileFacts,
 }
 
 /// Read the whole corpus — every language — through the adapter each extension
@@ -55,7 +55,7 @@ struct Read {
 /// The barrier is here: every file is walked once with no type table so the
 /// type DECLARATIONS can be collected, then walked again with the table, which
 /// is what makes a member's identity independent of which file came first (R6).
-fn read_the_corpus() -> Vec<Read> {
+pub(super) fn read_the_corpus() -> Vec<Read> {
     let mut sources: Vec<(String, String, String)> = Vec::new();
     for (abs, text) in super::corpus_rust_sources() {
         let package = super::package_of(&abs);
