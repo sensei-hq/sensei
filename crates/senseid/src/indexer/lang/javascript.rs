@@ -2866,6 +2866,109 @@ mod tests {
         );
     }
 
+    /// The reader, over a codebase NOBODY HERE WROTE.
+    ///
+    /// `app/`, `dojo/` and `website/` were written alongside this indexer, so
+    /// agreement with them is weaker evidence than it looks: a grammar shape
+    /// none of our authors happens to use is a shape the reader has never been
+    /// asked about. Every defect A2 found — spread, computed writes, parameter
+    /// defaults — was a shape that WAS in our code; what is not there cannot be
+    /// found there.
+    ///
+    /// Point it at someone else's:
+    ///
+    /// ```text
+    /// SENSEI_CORPUS=~/Work/Dayamed cargo test -p senseid --bin senseid -- \
+    ///   --ignored --nocapture indexer::lang::javascript::tests::a_foreign_corpus
+    /// ```
+    ///
+    /// SKIPPED, not failed, when the variable is unset: this is a probe a
+    /// person runs against a codebase they have, and a test that demanded one
+    /// would fail on every machine that does not.
+    #[test]
+    #[ignore]
+    fn a_foreign_corpus_reads_and_its_misses_are_all_named() {
+        let Ok(root) = std::env::var("SENSEI_CORPUS") else {
+            println!("SENSEI_CORPUS unset — nothing to read. See this test's docs.");
+            return;
+        };
+        let root = std::path::Path::new(&root);
+        let tops: Vec<String> = std::fs::read_dir(root)
+            .expect("SENSEI_CORPUS names a readable directory")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|name| !name.starts_with('.'))
+            .collect();
+        let tops: Vec<&str> = tops.iter().map(String::as_str).collect();
+        let sources = crate::indexer::web_sources_under(root, &tops, 1);
+
+        let mut files = 0usize;
+        let mut unreadable = 0usize;
+        let mut references = 0usize;
+        let mut symbols = 0usize;
+        let mut walked = 0usize;
+        let mut counted = 0usize;
+        let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
+
+        for (path, text) in &sources {
+            let ext = format!(".{}", path.rsplit('.').next().unwrap_or(""));
+            let Some(adapter) = crate::indexer::lang::adapter_for_ext(&ext) else { continue };
+            files += 1;
+            let module = adapter.module_path(path, ".");
+            let source = Source { package: "foreign", module: &module, path, text };
+            let Ok(facts) = adapter.read(&source, &crate::indexer::lang::TypeHomes::unknown())
+            else {
+                unreadable += 1;
+                continue;
+            };
+            symbols += facts.symbols.len();
+            references += facts.references.len();
+            for reference in &facts.references {
+                if let Resolution::Unresolved { reason, evidence } = &reference.target {
+                    *reasons.entry(format!("{reason:?}")).or_default() += 1;
+                    assert!(
+                        !evidence.name.is_empty(),
+                        "{path}: a miss with nothing in it is one nobody can act on"
+                    );
+                }
+            }
+            // A2 over foreign code, which is the point: our own corpus cannot
+            // contain a shape our own authors never wrote.
+            if !path.ends_with(".svelte") {
+                walked += facts
+                    .references
+                    .iter()
+                    .filter(|r| {
+                        matches!(
+                            r.kind,
+                            RefKind::Calls | RefKind::Constructs | RefKind::Reads | RefKind::Writes
+                        )
+                    })
+                    .count();
+                counted += count_use_sites(text, path).len();
+            }
+        }
+
+        println!("\n## A foreign corpus: {}\n", root.display());
+        println!("files {files} | unreadable {unreadable}");
+        println!("symbols {symbols} | references {references}");
+        println!(
+            "A2: walk {walked} | independent {counted} | dropped {}",
+            counted.saturating_sub(walked)
+        );
+        for (reason, n) in &reasons {
+            println!("  {n:>7}  {reason}");
+        }
+
+        assert!(files > 0, "no file under {} was claimed by an adapter", root.display());
+        assert!(
+            unreadable * 20 < files.max(1),
+            "{unreadable} of {files} did not parse — over 5%, which is the reader being wrong \
+             about the language rather than about a file"
+        );
+    }
+
     // ── A2: zero references dropped ──────────────────────────────────────
 
     /// **A2.** The count of `Reference` values equals the count of use sites in

@@ -84,6 +84,29 @@ so it is no longer the largest anything.
 | A2 zero references dropped | RUST ONLY — no independent oxc counter yet |
 | A4 / A5 / A6 / A9 | not built as corpus checks |
 
+## A FOREIGN corpus says the reader does not generalise
+
+    SENSEI_CORPUS=~/Work/Dayamed cargo test -p senseid --bin senseid -- \
+      --ignored --nocapture indexer::lang::javascript::tests::a_foreign_corpus
+
+    1,646 files, 0 unreadable | 52,691 symbols | 190,741 references
+    A2 dropped 3,768 of 191,383 (2.0%)   <- OUR corpus: 14 of 50,106 (0.03%)
+    UnhandledForm 685                    <- OUR corpus: 165
+
+Seventy times the drop rate on code nobody here wrote. Our front ends were
+written alongside this indexer, so agreement with them is weak evidence: a
+grammar shape none of our authors uses is one the reader has never been asked
+about. Every A2 defect found so far — spread, computed writes, parameter
+defaults — was a shape that WAS in our code.
+
+`Unplaced` 69,297 in that run is NOT a finding: the probe reads without running
+the ladder, so nothing is placed by design.
+
+**Consequence for the remaining languages.** Do not build an adapter against
+fixtures and our own repo. `~/Work/Dayamed` has 8,010 Java files, 186 SQL, and
+`~/Work` has a dozen more repos; `web_sources_under` now takes a root so any of
+them can be pointed at.
+
 ## Known-broken — do not build on
 
 - **A local declaration is named at module scope** — A7's 708. A `static` or
