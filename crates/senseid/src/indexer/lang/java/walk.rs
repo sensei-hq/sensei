@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 
 use tree_sitter::Node;
 
-use super::super::{ReadError, Source, TypeHomes};
+use super::super::{Home, ReadError, Source, TypeHomes};
 use crate::indexer::facts::{
     Binding, DeclaredType, Evidence, FileFacts, Fqn, Import, ImportOrigin, Language, Param, Reason,
     RefKind, Reference, Relation, RelationKind, Resolution, Rung, Span, Symbol, SymbolKind,
@@ -576,7 +576,9 @@ impl<'a> Walk<'a> {
         let Ok(ty) = super::type_segment(ty) else {
             return self.missed(member, at, Reason::UnhandledForm, Reach::Item);
         };
-        if self.types.home_of(self.package, &ty).is_some()
+        // Only when the scan DECLARES the type. Anything else goes to the
+        // ladder as a path, which knows the imports and can name the library.
+        if matches!(self.types.lookup(self.package, &ty), Home::Ours { .. })
             && let Ok(fqn) = fqn::refer(&Form::Member {
                 lang: Language::Java,
                 package: self.package,

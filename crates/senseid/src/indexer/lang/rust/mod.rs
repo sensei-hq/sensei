@@ -363,6 +363,7 @@ const MODULE: Reach = Reach::Mod;
 mod tests {
     use super::types::simple_type_name;
     use super::*;
+    use crate::indexer::lang::Home;
 
     /// Every reference's target, as `name -> resolution`.
     fn targets(text: &str) -> Vec<(String, String)> {
@@ -1586,7 +1587,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
                 params: Vec::new(),
             },
         )));
-        assert_eq!(homes.home_of("senseid", "PgStore"), Some("db::pg_store"));
+        assert_eq!(homes.lookup("senseid", "PgStore"), Home::Ours { module: "db::pg_store" });
 
         let told = read_with(&homes);
         assert!(
@@ -1646,14 +1647,18 @@ pub fn free(w: &Widget) -> u32 { w.width }
         let one = declare("a");
         let two = declare("b");
         let homes = TypeHomes::of(vec![("senseid", &one), ("senseid", &two)]);
-        assert_eq!(homes.home_of("senseid", "Config"), None, "two homes is not one home");
+        assert_eq!(
+            homes.lookup("senseid", "Config"),
+            Home::Ambiguous,
+            "two homes is not one home, and not no home either"
+        );
         assert!(homes.is_empty(), "an ambiguous name is absent, not resolved to the first");
 
         // The same name in a DIFFERENT package is a different type and keeps
         // its home.
         let elsewhere = TypeHomes::of(vec![("senseid", &one), ("cli", &two)]);
-        assert_eq!(elsewhere.home_of("senseid", "Config"), Some("a"));
-        assert_eq!(elsewhere.home_of("cli", "Config"), Some("b"));
+        assert_eq!(elsewhere.lookup("senseid", "Config"), Home::Ours { module: "a" });
+        assert_eq!(elsewhere.lookup("cli", "Config"), Home::Ours { module: "b" });
     }
 
     /// A2, and the load-bearing check of the whole rewrite. The legacy defect was a

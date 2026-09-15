@@ -43,7 +43,7 @@ pub mod javascript;
 pub mod rust;
 pub mod svelte;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::indexer::facts::{FileFacts, Fqn, Language, Symbol, SymbolKind};
 use crate::indexer::fqn::FqnError;
@@ -88,6 +88,28 @@ pub enum ReadError {
     NoFileIdentity(FqnError),
 }
 
+/// Where a type lives, as far as this scan can tell.
+///
+/// What tells "we declare it, here" from "two of ours share the name" from
+/// "nothing of ours declares it" — three answers an `Option<&str>` collapsed
+/// into one `None` that three callers then papered over with the use site's own
+/// module.
+///
+/// [`Home::NotOurs`] deliberately says nothing about WHICH outside — library or
+/// language built-in. That needs the grammar's prelude and the file's imports,
+/// neither of which this table has, and both of which the ladder does (R7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Home<'a> {
+    /// This scan declares it, in `module`.
+    Ours { module: &'a str },
+    /// Two or more first-party declarations answer to this name, so there is no
+    /// one home. NOT a miss — a different answer, and one the caller must not
+    /// resolve by picking.
+    Ambiguous,
+    /// Nothing this scan declares answers to the name.
+    NotOurs,
+}
+
 /// Where each type NAME is declared, for the packages being scanned.
 ///
 /// **The one fact a walk cannot read out of the file it was handed, and needs.**
@@ -113,6 +135,10 @@ pub enum ReadError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeHomes {
     homes: BTreeMap<(String, String), String>,
+    /// Names TWO first-party declarations answer to. Kept rather than dropped:
+    /// "I know two places" is a different answer from "I know none", and a
+    /// caller that cannot tell them apart resolves the first by picking.
+    ambiguous: BTreeSet<(String, String)>,
 }
 
 impl TypeHomes {
@@ -120,7 +146,7 @@ impl TypeHomes {
     /// does. What a caller that has not run the barrier gets, and what the
     /// walk did before this existed.
     pub fn unknown() -> Self {
-        Self { homes: BTreeMap::new() }
+        Self { homes: BTreeMap::new(), ambiguous: BTreeSet::new() }
     }
 
     /// Build from every declaration the scan has seen, as
@@ -150,13 +176,39 @@ impl TypeHomes {
                 }
             }
         }
-        Self { homes: seen.into_iter().filter_map(|(k, v)| Some((k, v?))).collect() }
+        let ambiguous = seen.iter().filter(|(_, v)| v.is_none()).map(|(k, _)| k.clone()).collect();
+        Self { homes: seen.into_iter().filter_map(|(k, v)| Some((k, v?))).collect(), ambiguous }
     }
 
-    /// The module a type is declared in, or `None` when the scan does not know
-    /// or knows two.
-    pub fn home_of(&self, package: &str, ty: &str) -> Option<&str> {
-        self.homes.get(&(package.to_string(), ty.to_string())).map(String::as_str)
+    /// Where a type is declared — a TOTAL answer.
+    ///
+    /// This returned `Option<&str>` and three callers wrote
+    /// `.unwrap_or(the_use_site_module)` on the `None`. That fallback filed
+    /// `Vec`, `String`, `Path`, `HashMap` and `Option` under a first-party
+    /// module, minting a first-party member identity for `PathBuf::join` under
+    /// the using file's own module — for a type this scan does not declare.
+    /// MEASURED: 6,109 misses carried one,
+    /// 5,671 of them reported as `NoImportInScope` — 47% of that whole bucket,
+    /// every one of them the indexer knowing exactly what the type was and
+    /// filing it as ours anyway.
+    ///
+    /// The `Option` also meant TWO things at once. `home_of`'s own doc said
+    /// "does not know **or knows two**", so one `unwrap_or` swallowed genuine
+    /// ambiguity as well, silently picking a module where the honest answer is
+    /// [`Reason::AmbiguousCandidates`](crate::indexer::facts::Reason).
+    ///
+    /// Total by construction, the same rule
+    /// [`Resolution`](crate::indexer::facts::Resolution) follows: there is no
+    /// variant meaning "nothing", so a caller has to say what it does about
+    /// each case rather than substituting a third.
+    pub fn lookup(&self, package: &str, ty: &str) -> Home<'_> {
+        match self.homes.get(&(package.to_string(), ty.to_string())) {
+            Some(module) => Home::Ours { module: module.as_str() },
+            None if self.ambiguous.contains(&(package.to_string(), ty.to_string())) => {
+                Home::Ambiguous
+            }
+            None => Home::NotOurs,
+        }
     }
 
     /// How many names have ONE known home. For a report; a table that silently
