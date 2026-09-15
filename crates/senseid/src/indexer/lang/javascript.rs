@@ -1748,6 +1748,27 @@ impl Walk<'_> {
             Expression::FunctionExpression(f) => self.function_body(f, scope, flow),
             Expression::ClassExpression(c) => self.class(c, scope, flow),
             Expression::AwaitExpression(a) => self.expression(&a.argument, scope, flow),
+            // `buckets[idx].c++` READS and WRITES its argument, and had no arm
+            // at all — so the member and everything inside the index went
+            // unseen.
+            Expression::UpdateExpression(u) => match &u.argument {
+                SimpleAssignmentTarget::StaticMemberExpression(m) => {
+                    let miss = self.name_member(
+                        &m.object,
+                        &m.property.name,
+                        "StaticMemberExpression",
+                        scope,
+                        flow,
+                    );
+                    self.emit(scope, RefKind::Writes, m.span, miss);
+                    self.expression(&m.object, scope, flow);
+                }
+                SimpleAssignmentTarget::ComputedMemberExpression(m) => {
+                    self.expression(&m.object, scope, flow);
+                    self.expression(&m.expression, scope, flow);
+                }
+                _ => {}
+            },
             Expression::ParenthesizedExpression(p) => self.expression(&p.expression, scope, flow),
             Expression::UnaryExpression(u) => self.expression(&u.argument, scope, flow),
             Expression::BinaryExpression(b) => {
@@ -1826,6 +1847,19 @@ impl Walk<'_> {
                     self.emit(scope, RefKind::Reads, m.span, miss);
                     self.expression(&m.object, scope, flow);
                 }
+                // `parts[0]?.[0]` — optional chaining over a COMPUTED member.
+                ChainElement::ComputedMemberExpression(m) => {
+                    let miss = Miss::because(
+                        Reason::DynamicDispatch,
+                        "ComputedMemberExpression",
+                        self.text_of(m.expression.span()).trim(),
+                        Reach::Field,
+                        vec![Observation::Receiver(self.text_of(m.object.span()).to_string())],
+                    );
+                    self.emit(scope, RefKind::Reads, m.span, miss);
+                    self.expression(&m.object, scope, flow);
+                    self.expression(&m.expression, scope, flow);
+                }
                 _ => {}
             },
             // A literal, a bare identifier, `this`, a regexp. None of these
@@ -1877,6 +1911,23 @@ impl Walk<'_> {
                 );
                 self.emit(scope, RefKind::Writes, m.span, miss);
                 self.expression(&m.object, scope, flow);
+            }
+            AssignmentTarget::ComputedMemberExpression(m) => {
+                // `byProject[r.projectId] = g`. Which member is written is not
+                // knowable without running it — the same reason a computed READ
+                // is `DynamicDispatch` — but the WRITE happened and the index
+                // expression is a use site of its own. The catch-all below
+                // emitted neither.
+                let miss = Miss::because(
+                    Reason::DynamicDispatch,
+                    "ComputedMemberExpression",
+                    self.text_of(m.expression.span()).trim(),
+                    Reach::Field,
+                    vec![Observation::Receiver(self.text_of(m.object.span()).to_string())],
+                );
+                self.emit(scope, RefKind::Writes, m.span, miss);
+                self.expression(&m.object, scope, flow);
+                self.expression(&m.expression, scope, flow);
             }
             other => {
                 // A destructuring target binds several names; each is cleared.
@@ -2932,16 +2983,19 @@ mod tests {
         }
         assert!(walked > 1_000, "only {walked} references, so this proved nothing");
 
-        // A2 says ZERO dropped, and this is not zero: the walk is 152 short
-        // across 54 of 946 files — down from 383 across 99 once SPREAD was
-        // walked in all three positions it can appear. Stated as a RATCHET rather than as the target,
+        // A2 says ZERO dropped, and this is not zero: the walk is 73 short
+        // across 34 of 946 files. It was 383 across 99: SPREAD in all three
+        // positions took it to 152, then a COMPUTED member as an assignment
+        // target, an update expression, and an optional-chained computed
+        // member took it to 73. Each was found by reading the printout below,
+        // never by guessing at the grammar. Stated as a RATCHET rather than as the target,
         // for §6's reason — a gate that fails on its first run gets waived, and
         // a waived gate is not a gate. It may fall; it may not rise.
         //
         // The delta is per-file above, not just summed, because one file off by
         // twenty and twenty files off by one are different defects. The head is
         // `health-state.spec.svelte.ts` at 24, which is where to look first.
-        const KNOWN_DROPPED: usize = 152;
+        const KNOWN_DROPPED: usize = 73;
         let dropped = counted.saturating_sub(walked);
         assert!(
             dropped <= KNOWN_DROPPED,
