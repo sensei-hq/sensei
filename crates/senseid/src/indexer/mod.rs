@@ -21,6 +21,7 @@ pub mod llms_indexer;
 pub mod acceptance;
 pub mod facts;
 pub mod fqn;
+pub mod impact;
 pub mod incremental;
 pub mod lang;
 pub mod persist;
@@ -49,7 +50,7 @@ fn guard_sources() -> Vec<(String, String)> {
     /// Files, and directories whose whole contents this indexer owns. Adding a
     /// module outside these is a deliberate act that has to be recorded here.
     const OWNED: &[&str] =
-        &["facts.rs", "fqn.rs", "persist.rs", "reconcile.rs", "resolve.rs", "lang"];
+        &["facts.rs", "fqn.rs", "impact.rs", "persist.rs", "reconcile.rs", "resolve.rs", "lang"];
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/indexer");
     let mut out = Vec::new();
@@ -71,6 +72,7 @@ fn guard_sources() -> Vec<(String, String)> {
     for required in [
         "facts.rs",
         "fqn.rs",
+        "impact.rs",
         "persist.rs",
         "reconcile.rs",
         "resolve.rs",
@@ -245,6 +247,36 @@ pub(crate) fn module_of(path: &str) -> String {
         Some((crate_root, _)) => lang::rust::module_path(path, crate_root),
         None => String::new(),
     }
+}
+
+/// One Rust source, walked and then placed against the shared ladder — the two
+/// steps the processor will run at cutover, so what a test is handed here is
+/// what its subject will be handed then.
+///
+/// Here rather than in each test module because three of them need it, and the
+/// two that had it had it character-for-character twice. A per-module copy is
+/// how the walk step and the resolve step drift apart between subjects, and the
+/// drift reads as a difference in the SUBJECT rather than in the fixture.
+#[cfg(test)]
+pub(crate) fn walked_rust(module: &str, path: &str, text: &str) -> facts::FileFacts {
+    use std::collections::BTreeSet;
+
+    use lang::{Source, TypeHomes, rust};
+    use resolve::{World, resolve};
+
+    let facts =
+        rust::read(&Source { package: "senseid", module, path, text }, &TypeHomes::unknown())
+            .expect("the fixture parses");
+    let first_party: BTreeSet<String> = ["senseid".to_string()].into_iter().collect();
+    resolve(
+        facts,
+        &rust::GRAMMAR,
+        &World {
+            first_party: &first_party,
+            first_party_members: &BTreeSet::new(),
+            scanned: &BTreeSet::new(),
+        },
+    )
 }
 
 /// The part of a guarded source file that is NOT its test module.
