@@ -689,8 +689,16 @@ mod corpus {
         let mut total = 0usize;
         let mut local_imports = 0usize;
         let mut library_imports = 0usize;
+        let mut nodes = 0usize;
+        let mut placed_relations = 0usize;
         for facts in read_all(&homes) {
             let placed = resolve(facts, &GRAMMAR, &world);
+            nodes += placed.symbols.len();
+            placed_relations += placed
+                .relations
+                .iter()
+                .filter(|r| matches!(r.parent, Resolution::Resolved { .. }))
+                .count();
             // What the WALK said, which for Java is always external — it is
             // the ladder that flips the ones this scan owns, per reference, and
             // it does not rewrite the Import fact. Counting these as "the
@@ -731,6 +739,16 @@ mod corpus {
         println!(
             "import statements {library_imports} | placed edges that stayed first-party {local_imports}\n"
         );
+        // The same ratio `acceptance::report` prints for the other two. An EDGE
+        // is a fact with both ends known; an unresolved reference is a row with
+        // a reason and no target, so counting it would make a graph look richer
+        // the worse it resolved.
+        println!(
+            "resolved edges {} | nodes {nodes} | edges per node {:.2}\n",
+            resolved + placed_relations,
+            (resolved + placed_relations) as f64 / nodes.max(1) as f64
+        );
+
         println!("by rung:");
         for (rung, n) in &rungs {
             println!("  {n:>8}  {rung}");
