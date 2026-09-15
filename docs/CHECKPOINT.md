@@ -1,62 +1,40 @@
 # Checkpoint — the indexer
 
-**JS/TS/Svelte reader built. `impact.rs` answers n-depth blast radius with the
-reason it stops; `sensei.graph_boundary` serves the same answer from SQL with
-prose. Suite 3,484 / 0, clippy -D warnings + fmt clean. Stage 10 cutover gated.**
+**Every edge now carries its provenance: a placed one says WHICH RUNG placed it,
+an unplaced one says WHY. Both have prose in `sensei.reason_codes` and a
+group-by view. MCP serves them. Suite 3,493 / 0, clippy + fmt clean. Stage 10
+cutover still gated.**
 
 Read `docs/plans/indexer-sequence.md`, then `docs/design/indexer.md`.
 
-## Three canonical reports — do not retype their numbers
+## Canonical reports — do not retype their numbers
 
     cargo test -p senseid --bin senseid -- --ignored --nocapture \
-      indexer::acceptance::report      # resolve rate + reason, per language
+      indexer::acceptance::report      # resolve rate by reason AND by rung
       indexer::impact::tests::report   # blast radius at depth 3
     SENSEI_CORPUS=~/Work/Dayamed … indexer::lang::javascript::tests::a_foreign_corpus
 
-    select source_language, reason_code, reason_summary, count(*)
-      from sensei.graph_boundary where folder_id = $1 group by 1,2,3;
+    select source_language, reason_code,  count(*) from sensei.graph_boundary   …
+    select source_language, resolved_via, count(*) from sensei.graph_resolution …
 
-## Load-bearing decisions, with the measurement
+## Load-bearing decisions, each with its measurement
 
+- Six rungs = six `Ladder` methods, so a wrong edge names the function to read.
+  Only 2,150 of 83,562 placed edges (2.6%) rest on `through_a_glob`, the
+  weakest. Rung totals must equal RESOLVED — asserted.
 - `Denylisted` + `ExternalBoundary` are verdicts, NOT doubt — excluded from a
-  radius. Including them added 10,398 sites headed by `map`/`into`/`as_str`/
-  `collect`, all std methods colliding by name.
-- `graph_boundary` LEFT-joins `reason_codes`; INNER drops unseeded codes (test
-  names this mutation). `Reason::as_label` is the one producer of the codes.
+  radius. Including them added 10,398 sites headed by std methods (`map`,
+  `into`, `as_str`, `collect`) colliding by name.
+- Both views LEFT-join `reason_codes`; INNER drops unseeded codes (tests name
+  this mutation). `Reason::as_label` / `Rung::as_label` are the sole producers.
 - Foreign corpus: A2 drops 2.0% on code nobody here wrote vs 0.03% on ours.
   Build remaining adapters corpus-first, never fixtures-first.
-
-## Placed edges say WHICH RUNG placed them
-
-`Resolution::Resolved { fqn, via: Rung }`. Six rungs = six `Ladder` methods, so
-a wrong edge names the function to read. Prose in `reason_codes` domain
-`code_graph_rung` (precedence = climb order); `sensei.graph_resolution` is the
-group-by view, sibling of `graph_boundary`.
-
-    rung                      rust   typescript
-    declared_here           11,156        5,161
-    through_an_import       13,005       16,117
-    through_a_glob           2,150            0   <- weakest rung: 2.6% of all
-    rooted_in_this_package   1,293            0
-    fully_qualified_external 10,483           0
-    in_the_prelude          22,167        2,030
-
-Rung totals must equal RESOLVED — `acceptance::report` asserts it, so no edge
-is placed without saying how.
-
-## MCP answers with reasons
-
-`get_callers`/`get_callees` carry `coverage.why` — the miss reasons with prose,
-most actionable first. New `get_impact(name, depth)` returns the n-hop radius
-plus `boundary`. Four surfaces: `crates/mcp` list + EXPECTED_TOOLS, `mcp.rs`
-arm, `mcp_manifests.rs`. A guard now reads the match arms out of `mcp.rs`
-itself, so a misspelled arm fails instead of two hand-lists agreeing.
 
 ## Next
 
 1. Java adapter, corpus-first (~/Work/Dayamed: 8,010 java, 186 sql).
-2. Stage 10 cutover — until then the LEGACY indexer writes no `props.reason`,
-   so `coverage.why` reports `reason: null` on live data. Honest, not broken.
+2. Stage 10 cutover. Until then the LEGACY indexer writes neither `props.reason`
+   nor `props.rung`, so both surface null on live data. Honest, not broken.
 
 ## Known-broken — do not build on
 
