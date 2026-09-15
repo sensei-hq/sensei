@@ -354,29 +354,9 @@ mod tests {
     use crate::db::pg_store::PgStore;
     use crate::db::pg_store::tests::create_test_folder;
     use crate::indexer::facts::RelationKind;
-    use crate::indexer::lang::rust;
-    use crate::indexer::lang::{Source, TypeHomes};
     use crate::indexer::persist::TargetRow;
-    use crate::indexer::resolve::{World, resolve};
 
-    /// One file, walked and then placed against the shared ladder — the two
-    /// steps the processor will run at cutover, so what reconcile is handed here
-    /// is what it will be handed then.
-    fn walk_of(module: &str, path: &str, text: &str) -> FileFacts {
-        let facts =
-            rust::read(&Source { package: "senseid", module, path, text }, &TypeHomes::unknown())
-                .expect("it parses");
-        let first_party: BTreeSet<String> = ["senseid".to_string()].into_iter().collect();
-        resolve(
-            facts,
-            &rust::GRAMMAR,
-            &World {
-                first_party: &first_party,
-                first_party_members: &BTreeSet::new(),
-                scanned: &BTreeSet::new(),
-            },
-        )
-    }
+    use crate::indexer::walked_rust as walk_of;
 
     fn stated(module: &str, path: &str, text: &str) -> Stated {
         Stated::Parsed(walk_of(module, path, text))

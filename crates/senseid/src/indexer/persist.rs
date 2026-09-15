@@ -662,37 +662,6 @@ fn ref_kind_from_label(label: &str) -> Option<RefKind> {
     })
 }
 
-fn reason_label(reason: Reason) -> &'static str {
-    match reason {
-        Reason::UnhandledForm => "unhandled_form",
-        Reason::NoDeclaredType => "no_declared_type",
-        Reason::ReceiverTypeUnknown => "receiver_type_unknown",
-        Reason::NoImportInScope => "no_import_in_scope",
-        Reason::AmbiguousCandidates => "ambiguous_candidates",
-        Reason::DynamicDispatch => "dynamic_dispatch",
-        Reason::MacroExpansion => "macro_expansion",
-        Reason::Denylisted => "denylisted",
-        Reason::ExternalBoundary => "external_boundary",
-        Reason::Unplaced => "unplaced",
-    }
-}
-
-fn reason_from_label(label: &str) -> Option<Reason> {
-    Some(match label {
-        "unhandled_form" => Reason::UnhandledForm,
-        "no_declared_type" => Reason::NoDeclaredType,
-        "receiver_type_unknown" => Reason::ReceiverTypeUnknown,
-        "no_import_in_scope" => Reason::NoImportInScope,
-        "ambiguous_candidates" => Reason::AmbiguousCandidates,
-        "dynamic_dispatch" => Reason::DynamicDispatch,
-        "macro_expansion" => Reason::MacroExpansion,
-        "denylisted" => Reason::Denylisted,
-        "external_boundary" => Reason::ExternalBoundary,
-        "unplaced" => Reason::Unplaced,
-        _ => return None,
-    })
-}
-
 fn span_prop(at: Span) -> serde_json::Value {
     serde_json::json!([at.start_line, at.start_col, at.end_line, at.end_col])
 }
@@ -788,7 +757,7 @@ fn occurrence_prop(occurrence: &Occurrence) -> serde_json::Value {
 
 fn with_outcome(mut prop: serde_json::Value, outcome: &Outcome) -> serde_json::Value {
     if let Outcome::Missed { reason, evidence } = outcome {
-        prop["reason"] = serde_json::Value::String(reason_label(*reason).to_string());
+        prop["reason"] = serde_json::Value::String(reason.as_label().to_string());
         prop["evidence"] = evidence_prop(evidence);
     }
     prop
@@ -821,7 +790,7 @@ fn outcome_from_prop(value: &serde_json::Value) -> Option<Outcome> {
         return Some(Outcome::Proven);
     };
     Some(Outcome::Missed {
-        reason: reason_from_label(reason.as_str()?)?,
+        reason: Reason::from_label(reason.as_str()?)?,
         evidence: evidence_from_prop(value.get("evidence")?)?,
     })
 }
@@ -1569,22 +1538,7 @@ pub fn widest(a: u32) -> u32 {
         walk_of("gadget", FILE_PATH, FIXTURE)
     }
 
-    fn walk_of(module: &str, path: &str, text: &str) -> FileFacts {
-        let facts =
-            rust::read(&Source { package: "senseid", module, path, text }, &TypeHomes::unknown())
-                .expect("the fixture parses");
-        let first_party: BTreeSet<String> = ["senseid".to_string()].into_iter().collect();
-        let scanned = BTreeSet::new();
-        resolve(
-            facts,
-            &rust::GRAMMAR,
-            &World {
-                first_party: &first_party,
-                first_party_members: &BTreeSet::new(),
-                scanned: &scanned,
-            },
-        )
-    }
+    use crate::indexer::walked_rust as walk_of;
 
     async fn a_folder(store: &PgStore, test: &str) -> uuid::Uuid {
         create_test_folder(store, &format!("persist_{test}_{}", uuid::Uuid::new_v4())).await

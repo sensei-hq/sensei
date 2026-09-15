@@ -305,6 +305,64 @@ pub enum Reason {
     Unplaced,
 }
 
+impl Reason {
+    /// The stable label this reason is written and read under.
+    ///
+    /// ONE labeling, because there is more than one consumer: `persist` writes
+    /// it into `edges.props` and reads it back, and `impact` shows it to a
+    /// person. Two matches over the same enum agree on the day they are written
+    /// and drift on the day a variant is added to one of them — and the drift
+    /// surfaces as a reason that round-trips to `None`, which reads as "this
+    /// miss has no reason" rather than as the bug it is.
+    pub fn as_label(self) -> &'static str {
+        match self {
+            Self::UnhandledForm => "unhandled_form",
+            Self::NoDeclaredType => "no_declared_type",
+            Self::ReceiverTypeUnknown => "receiver_type_unknown",
+            Self::NoImportInScope => "no_import_in_scope",
+            Self::AmbiguousCandidates => "ambiguous_candidates",
+            Self::DynamicDispatch => "dynamic_dispatch",
+            Self::MacroExpansion => "macro_expansion",
+            Self::Denylisted => "denylisted",
+            Self::ExternalBoundary => "external_boundary",
+            Self::Unplaced => "unplaced",
+        }
+    }
+
+    /// The inverse of [`Reason::as_label`]. `None` for a label no variant
+    /// claims, which is a corrupt or future row and never a silent default.
+    pub fn from_label(label: &str) -> Option<Self> {
+        Some(match label {
+            "unhandled_form" => Self::UnhandledForm,
+            "no_declared_type" => Self::NoDeclaredType,
+            "receiver_type_unknown" => Self::ReceiverTypeUnknown,
+            "no_import_in_scope" => Self::NoImportInScope,
+            "ambiguous_candidates" => Self::AmbiguousCandidates,
+            "dynamic_dispatch" => Self::DynamicDispatch,
+            "macro_expansion" => Self::MacroExpansion,
+            "denylisted" => Self::Denylisted,
+            "external_boundary" => Self::ExternalBoundary,
+            "unplaced" => Self::Unplaced,
+            _ => return None,
+        })
+    }
+
+    /// Every variant, so a test or a report can iterate the whole taxonomy
+    /// rather than restate it and fall behind.
+    pub const ALL: &'static [Reason] = &[
+        Reason::UnhandledForm,
+        Reason::NoDeclaredType,
+        Reason::ReceiverTypeUnknown,
+        Reason::NoImportInScope,
+        Reason::AmbiguousCandidates,
+        Reason::DynamicDispatch,
+        Reason::MacroExpansion,
+        Reason::Denylisted,
+        Reason::ExternalBoundary,
+        Reason::Unplaced,
+    ];
+}
+
 /// Something the walk saw at the use site and could not turn into a target.
 ///
 /// This is material for a later pass, never an answer. A [`Observation::Candidate`]
