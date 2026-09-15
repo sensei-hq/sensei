@@ -165,6 +165,7 @@ fn report() {
     let mut files: BTreeMap<&str, usize> = BTreeMap::new();
     let mut symbols: BTreeMap<&str, usize> = BTreeMap::new();
     let mut relations: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut placed_relations: BTreeMap<&str, usize> = BTreeMap::new();
     let mut imports_local: BTreeMap<&str, usize> = BTreeMap::new();
     let mut imports_external: BTreeMap<&str, usize> = BTreeMap::new();
 
@@ -173,6 +174,12 @@ fn report() {
         *files.entry(language).or_default() += 1;
         *symbols.entry(language).or_default() += read.facts.symbols.len();
         *relations.entry(language).or_default() += read.facts.relations.len();
+        *placed_relations.entry(language).or_default() += read
+            .facts
+            .relations
+            .iter()
+            .filter(|r| matches!(r.parent, Resolution::Resolved { .. }))
+            .count();
         for import in &read.facts.imports {
             match import.origin {
                 super::facts::ImportOrigin::Local => {
@@ -225,6 +232,35 @@ fn report() {
     row("relations", &|l| relations.get(l).copied().unwrap_or(0));
     row("imports, first-party", &|l| imports_local.get(l).copied().unwrap_or(0));
     row("imports, external", &|l| imports_external.get(l).copied().unwrap_or(0));
+
+    // ── how much graph each declaration carries ──────────────────────────────
+    //
+    // An EDGE is a fact with both ends known: a reference the ladder placed, or
+    // a relation whose parent it placed. An unresolved reference is a row with
+    // a reason and no target — real, reportable, and not an edge, so counting
+    // it here would make a graph look richer the WORSE it resolved.
+    //
+    // A NODE is a declaration. The ratio says how much structure one
+    // declaration carries, which is the number a reader feels: a graph at 1.0
+    // is a list, and one at 5.0 is something to traverse.
+    println!("\n## Edges per node\n");
+    println!("{header}");
+    println!("{rule}");
+    let edges = |l: &str| -> usize {
+        cells.get(&(l, "RESOLVED".to_string())).copied().unwrap_or(0)
+            + placed_relations.get(l).copied().unwrap_or(0)
+    };
+    row("resolved edges", &edges);
+    row("nodes", &|l| symbols.get(l).copied().unwrap_or(0));
+    print!("| {:<width$} |", "edges per node");
+    for language in &languages {
+        let n = symbols.get(language).copied().unwrap_or(0);
+        let ratio = if n == 0 { 0.0 } else { edges(language) as f64 / n as f64 };
+        print!(" {ratio:>10.2} |");
+    }
+    let all_edges: usize = languages.iter().map(|l| edges(l)).sum();
+    let all_nodes: usize = symbols.values().sum();
+    println!(" {:>10.2} |", if all_nodes == 0 { 0.0 } else { all_edges as f64 / all_nodes as f64 });
 
     println!("\n## References, by reason\n");
     println!("{header}");
@@ -1290,4 +1326,137 @@ fn every_type_owned_declaration_says_which_type_owns_it() {
              graph cannot say which type owns any of them"
         );
     }
+}
+
+/// **Every function and class in the SOURCE tree should be reached by
+/// something.** A declaration that nothing reaches cannot run.
+///
+/// The hypothesis is sharp because of what sits on each side of it:
+///
+/// - the POPULATION is non-test callables. A test is called by the harness, not
+///   by us, so it can never have a caller here and including it only dilutes.
+/// - the REACHERS are everything, tests included. A test calls the thing it
+///   tests, so a well-covered function has a caller even when nothing in
+///   production calls it directly.
+///
+/// So this repository — an application, thoroughly tested, with no dead code —
+/// should have almost no orphans. Every one is either dead code or an edge the
+/// graph lost, and the list is the only way to tell.
+///
+/// The test/non-test split is by `#[cfg(test)]` POSITION, not by module name:
+/// the test modules here are called `forge_token_observe_tests`,
+/// `probe_classification`, `adjacency_policy_tests`. Matching on the name
+/// `tests` found 3,533 of them and left 1,562 looking like defects.
+#[test]
+#[ignore]
+fn every_function_and_class_in_the_source_tree_is_reached_by_something() {
+    let corpus = read_the_corpus();
+
+    // Every identity anything points AT — a placed reference target, or the
+    // parent of a placed relation. Tests count as reachers, deliberately.
+    let mut reached: BTreeSet<&str> = BTreeSet::new();
+    for read in &corpus {
+        for reference in &read.facts.references {
+            if let Resolution::Resolved { fqn, .. } = &reference.target {
+                reached.insert(fqn.as_str());
+            }
+        }
+        for relation in &read.facts.relations {
+            if let Resolution::Resolved { fqn, .. } = &relation.parent {
+                reached.insert(fqn.as_str());
+            }
+        }
+    }
+
+    // The line each file's test module starts at. Past it, a declaration is a
+    // test; before it, it is source.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("the crate sits two levels below the workspace root");
+    let tests_begin = |path: &str| -> u32 {
+        let full = root.join(path);
+        let Ok(text) = std::fs::read_to_string(&full) else { return u32::MAX };
+        let mut line = 0u32;
+        for raw in text.lines() {
+            line += 1;
+            if raw.trim_start().starts_with("#[cfg(test)]") {
+                return line;
+            }
+        }
+        u32::MAX
+    };
+
+    let callable = |kind: SymbolKind| {
+        matches!(
+            kind,
+            SymbolKind::Function
+                | SymbolKind::Method
+                | SymbolKind::Class
+                | SymbolKind::Struct
+                | SymbolKind::Enum
+                | SymbolKind::Trait
+                | SymbolKind::Interface
+        )
+    };
+
+    let mut declared: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut orphans: BTreeMap<&str, Vec<(&str, &str, u32)>> = BTreeMap::new();
+    for read in &corpus {
+        let language = read.facts.language.as_str();
+        let boundary = tests_begin(&read.path);
+        let is_a_test_file = read.path.contains(".test.")
+            || read.path.contains(".spec.")
+            || read.path.contains("/tests/");
+        for symbol in read.facts.symbols.iter().filter(|s| callable(s.kind)) {
+            if is_a_test_file || symbol.span.start_line >= boundary {
+                continue;
+            }
+            *declared.entry(language).or_default() += 1;
+            if !reached.contains(symbol.fqn.as_str()) {
+                orphans.entry(language).or_default().push((
+                    symbol.name.as_str(),
+                    read.path.as_str(),
+                    symbol.span.start_line,
+                ));
+            }
+        }
+    }
+
+    println!("\n## Source declarations nothing reaches\n");
+    for language in super::facts::Language::all() {
+        let l = language.as_str();
+        let all = declared.get(l).copied().unwrap_or(0);
+        if all == 0 {
+            continue;
+        }
+        let none = orphans.get(l).map_or(0, Vec::len);
+        println!(
+            "  {l:<12} {none:>6} of {all:>6} source callables unreached ({:.1}%)",
+            100.0 * none as f64 / all as f64
+        );
+    }
+
+    let mut by_area: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut listed: Vec<String> = Vec::new();
+    for found in orphans.values() {
+        for (name, path, line) in found {
+            let area = path.split('/').take(3).collect::<Vec<_>>().join("/");
+            *by_area.entry(Box::leak(area.into_boxed_str())).or_default() += 1;
+            listed.push(format!("    {name}  {path}:{line}"));
+        }
+    }
+    let mut ranked: Vec<_> = by_area.iter().collect();
+    ranked.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+    println!("\n  by area:");
+    for (area, n) in ranked.iter().take(12) {
+        println!("    {n:>5}  {area}");
+    }
+    listed.sort();
+    println!("\n  first 40 of {}:", listed.len());
+    for line in listed.iter().take(40) {
+        println!("{line}");
+    }
+
+    assert!(declared.values().sum::<usize>() > 0, "the corpus declares no source callables");
 }
