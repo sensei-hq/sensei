@@ -90,8 +90,9 @@ so it is no longer the largest anything.
   `const` inside a `fn` body mints at module scope, so three unrelated `RE`s in
   one file are one node. The walk needs a container for a function body; a
   `#[cfg(feature)]` pair is a SECOND, different cause and may be one to tolerate.
-- **The TypeScript walk DROPS 152 references** (A2), down from 383 once SPREAD
-  was walked. 54 of 946 files still disagree. Run the A2 test with `--nocapture`
+- **The TypeScript walk DROPS 73 references** (A2), down from 383 over two
+  passes: spread, then computed-member writes / `++` / optional-chained
+  computed members. 34 of 946 files still disagree. Run the A2 test with `--nocapture`
   — it prints the SOURCE LINE of every site it emitted nothing for, which is how
   the spread cause was found.
 - `delete_folder` issues a path-prefix `DELETE` (`process.rs`), which 09 S7
