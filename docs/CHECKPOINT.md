@@ -26,10 +26,19 @@ Read `docs/plans/indexer-sequence.md`, then `docs/design/indexer.md`.
 - Foreign corpus: A2 drops 2.0% on code nobody here wrote vs 0.03% on ours.
   Build remaining adapters corpus-first, never fixtures-first.
 
+## MCP answers with reasons
+
+`get_callers`/`get_callees` carry `coverage.why` — the miss reasons with prose,
+most actionable first. New `get_impact(name, depth)` returns the n-hop radius
+plus `boundary`. Four surfaces: `crates/mcp` list + EXPECTED_TOOLS, `mcp.rs`
+arm, `mcp_manifests.rs`. A guard now reads the match arms out of `mcp.rs`
+itself, so a misspelled arm fails instead of two hand-lists agreeing.
+
 ## Next
 
-1. MCP reads `graph_boundary` at cutover, so `get_callers` answers with reasons.
-2. Java adapter, corpus-first (~/Work/Dayamed: 8,010 java, 186 sql).
+1. Java adapter, corpus-first (~/Work/Dayamed: 8,010 java, 186 sql).
+2. Stage 10 cutover — until then the LEGACY indexer writes no `props.reason`,
+   so `coverage.why` reports `reason: null` on live data. Honest, not broken.
 
 ## Known-broken — do not build on
 

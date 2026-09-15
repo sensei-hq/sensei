@@ -305,8 +305,18 @@ impl<'a> Graph<'a> {
         // frontier symbol with no callers of its own ends the graph as surely
         // as the limit does, and reporting that as truncated would attach doubt
         // to an answer that is in fact complete.
+        //
+        // ...and the caller beyond it must be one the radius does not already
+        // hold. A cycle back into the radius adds nobody, so `contains_key`
+        // alone made a COMPLETE answer report itself truncated. Found by the
+        // SQL twin of this traversal, whose fixture had a cycle where this
+        // one's did not — the same rule written twice, wrong in both.
         let truncated = cut_short
-            && reached.iter().any(|r| r.depth == depth && self.callers_of.contains_key(&r.symbol));
+            && reached.iter().filter(|r| r.depth == depth).any(|r| {
+                self.callers_of
+                    .get(&r.symbol)
+                    .is_some_and(|edges| edges.iter().any(|e| !radius.contains(&e.from)))
+            });
 
         let (boundary, boundary_total, boundary_reasons) = self.boundary_of(&radius);
         Impact {
@@ -462,6 +472,36 @@ pub fn top() { upper(); }
 
         assert_eq!(impact.reached.len(), 3);
         assert!(!impact.truncated, "depth 4 over a 3-deep chain is exact, not cut short");
+    }
+
+    /// A cycle back INTO the radius is not evidence of anything beyond it.
+    ///
+    /// `top` sits at the depth limit and does have a caller — `bottom`, the
+    /// root. Reporting that as truncated tells a reader a complete answer might
+    /// be partial, and the only way to act on it is to re-run deeper and get
+    /// the same thing. Found by the SQL twin of this traversal; the rule was
+    /// written twice and was wrong in both.
+    #[test]
+    fn a_caller_already_in_the_radius_does_not_make_the_answer_look_truncated() {
+        let files = vec![walked_rust(
+            "ring",
+            "src/ring.rs",
+            r#"
+pub fn bottom() { top(); }
+pub fn middle() { bottom(); }
+pub fn upper() { middle(); }
+pub fn top() { upper(); }
+"#,
+        )];
+        let graph = Graph::of(&files);
+        let exact = graph.impact_of(&fqn_of(&files, "bottom"), 3);
+
+        assert_eq!(names_at(&exact, 3), ["top"], "`top` is at the limit");
+        assert!(
+            !exact.truncated,
+            "and its only caller is `bottom`, the root — already in the radius, so nothing \
+             lies beyond and the answer is exact"
+        );
     }
 
     #[test]
