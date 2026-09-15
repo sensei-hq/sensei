@@ -141,8 +141,20 @@ fn corpus_web_sources() -> Vec<(String, String)> {
         .parent()
         .and_then(|p| p.parent())
         .expect("the crate sits two levels below the workspace root");
+    web_sources_under(root, &["app", "dojo", "website"], 200)
+}
+
+/// The same reader, pointed anywhere.
+///
+/// Split out so a check can run over a codebase NOBODY HERE WROTE. Our own
+/// front ends were written alongside this indexer, so agreement with them is
+/// weaker evidence than it looks — a grammar shape none of our authors happen
+/// to use is a shape the reader has never been asked about. `SENSEI_CORPUS`
+/// points this at somebody else's code.
+#[cfg(test)]
+fn web_sources_under(root: &std::path::Path, tops: &[&str], least: usize) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    for top in ["app", "dojo", "website"] {
+    for top in tops {
         // The SAME walker the scan and the fs-watcher use. A hand-written skip
         // list here was not merely duplication: it let 52 gitignored files —
         // an i18n compiler's generated messages — into the corpus, so every
@@ -169,7 +181,7 @@ fn corpus_web_sources() -> Vec<(String, String)> {
             out.push((relative, body));
         }
     }
-    assert!(out.len() > 200, "the corpus is three SvelteKit apps; {} files is not it", out.len());
+    assert!(out.len() >= least, "expected at least {least} files, found {}", out.len());
     out.sort_by(|(a, _), (b, _)| a.cmp(b));
     out
 }
