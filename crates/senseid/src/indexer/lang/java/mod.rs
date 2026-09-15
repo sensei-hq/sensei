@@ -587,4 +587,191 @@ mod corpus {
             assert!(worst.len() <= 5, "{} files disagree, up from the 5 measured", worst.len());
         }
     }
+
+    /// The ladder over Java, and the first real Java resolve rate.
+    ///
+    /// The BARRIER is the whole point: every file is read once with no type
+    /// table so the declarations can be collected, then read again with it, so
+    /// a member's identity does not depend on which file came first (R6).
+    ///
+    /// `first_party` is every package the scan DECLARES. That is what flips an
+    /// import from library to local — a Java source file states nothing about
+    /// which side of the boundary a name is on, so `owned_by_this_scan` answers
+    /// it from the manifest of declarations rather than from a prefix guess.
+    #[test]
+    #[ignore]
+    fn the_ladder_places_what_this_corpus_declares() {
+        use std::collections::BTreeSet;
+
+        use crate::indexer::facts::{FileFacts, SymbolKind};
+        use crate::indexer::resolve::{World, resolve};
+
+        let sources = sources();
+        if sources.is_empty() {
+            println!("SENSEI_CORPUS unset or holds no .java — nothing to measure.");
+            return;
+        }
+        let hand_written: Vec<&(String, String, bool)> =
+            sources.iter().filter(|(_, _, generated)| !generated).collect();
+
+        let read_all = |types: &TypeHomes| -> Vec<FileFacts> {
+            hand_written
+                .iter()
+                .filter_map(|(path, text, _)| {
+                    // The package is READ from the source, so what is handed in
+                    // is only the default-package fallback.
+                    let source = Source { package: "unnamed", module: "", path, text };
+                    walk::read(&source, types).ok()
+                })
+                .collect()
+        };
+
+        let first = read_all(&TypeHomes::unknown());
+        let homes = TypeHomes::of(
+            first.iter().flat_map(|f| f.symbols.iter().map(|s| (f.package.as_str(), s))),
+        );
+        // Every package this scan declares. In Java that IS the namespace, so
+        // the set is exact rather than a prefix.
+        let first_party: BTreeSet<String> = first.iter().map(|f| f.package.clone()).collect();
+        let first_party_members: BTreeSet<String> = first
+            .iter()
+            .flat_map(|f| f.symbols.iter())
+            .filter(|s| matches!(s.kind, SymbolKind::Method | SymbolKind::Field))
+            .map(|s| s.name.clone())
+            .collect();
+        let scanned = BTreeSet::new();
+        let world = World {
+            first_party: &first_party,
+            first_party_members: &first_party_members,
+            scanned: &scanned,
+        };
+
+        let mut reasons: BTreeMap<&'static str, usize> = BTreeMap::new();
+        let mut rungs: BTreeMap<&'static str, usize> = BTreeMap::new();
+        let mut resolved = 0usize;
+        let mut total = 0usize;
+        let mut local_imports = 0usize;
+        let mut library_imports = 0usize;
+        for facts in read_all(&homes) {
+            let placed = resolve(facts, &GRAMMAR, &world);
+            // What the WALK said, which for Java is always external — it is
+            // the ladder that flips the ones this scan owns, per reference, and
+            // it does not rewrite the Import fact. Counting these as "the
+            // classification" would report 0 first-party imports for a corpus
+            // whose own packages account for most of them.
+            library_imports += placed.imports.len();
+            local_imports += placed
+                .references
+                .iter()
+                .filter(|r| match &r.target {
+                    Resolution::Resolved { fqn, .. } => !fqn.as_str().starts_with("lib"),
+                    Resolution::Unresolved { .. } => false,
+                })
+                .count();
+            for r in &placed.references {
+                total += 1;
+                match &r.target {
+                    Resolution::Resolved { via, .. } => {
+                        resolved += 1;
+                        *rungs.entry(via.as_label()).or_default() += 1;
+                    }
+                    Resolution::Unresolved { reason, .. } => {
+                        *reasons.entry(reason.as_label()).or_default() += 1;
+                    }
+                }
+            }
+        }
+
+        println!(
+            "\n## Java, resolved — {} files, {} packages\n",
+            hand_written.len(),
+            first_party.len()
+        );
+        println!(
+            "references {total} | RESOLVED {resolved} ({:.1}%)",
+            100.0 * resolved as f64 / total.max(1) as f64
+        );
+        println!(
+            "import statements {library_imports} | placed edges that stayed first-party {local_imports}\n"
+        );
+        println!("by rung:");
+        for (rung, n) in &rungs {
+            println!("  {n:>8}  {rung}");
+        }
+        println!("\nby reason:");
+        let mut head: BTreeMap<String, usize> = BTreeMap::new();
+        for facts in read_all(&homes) {
+            for r in &resolve(facts, &GRAMMAR, &world).references {
+                if let Resolution::Unresolved { reason, evidence } = &r.target
+                    && reason.as_label() == "no_import_in_scope"
+                {
+                    *head.entry(evidence.name.clone()).or_default() += 1;
+                }
+            }
+        }
+        let mut ranked_head: Vec<_> = head.iter().collect();
+        ranked_head.sort_by_key(|(n, c)| (std::cmp::Reverse(**c), *n));
+        println!("  no_import_in_scope head: {:?}\n", &ranked_head[..ranked_head.len().min(14)]);
+        let mut ranked: Vec<_> = reasons.iter().collect();
+        ranked.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+        for (reason, n) in ranked {
+            println!("  {n:>8}  {reason}");
+        }
+
+        // THE CHECK THAT CAUGHT THE RUST VERSION OF THIS. Handing the ladder a
+        // qualified path is only safe if an unbound one falls through to a miss
+        // rather than being placed first-party by another rung. A first-party
+        // identity no declaration mints is that failure, visible.
+        let minted: BTreeSet<String> = read_all(&homes)
+            .iter()
+            .flat_map(|f| f.symbols.iter())
+            .map(|s| s.fqn.as_str().to_string())
+            .collect();
+        let mut dangling: BTreeMap<String, usize> = BTreeMap::new();
+        for facts in read_all(&homes) {
+            for r in &resolve(facts, &GRAMMAR, &world).references {
+                if let Resolution::Resolved { fqn, .. } = &r.target
+                    && !fqn.as_str().starts_with("lib")
+                    && !minted.contains(fqn.as_str())
+                {
+                    *dangling.entry(fqn.as_str().to_string()).or_default() += 1;
+                }
+            }
+        }
+        let dangling_total: usize = dangling.values().sum();
+        let mut worst_dangling: Vec<_> = dangling.iter().collect();
+        worst_dangling.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+        println!(
+            "\nfirst-party edges naming no declaration: {dangling_total} across {} identities",
+            dangling.len()
+        );
+        for (fqn, n) in worst_dangling.iter().take(6) {
+            println!("  {n:>6}  {fqn}");
+        }
+
+        // KNOWN BROKEN, and the number is here so it cannot be forgotten. The
+        // declaration side mints `<package>··<Type>` — an EMPTY module segment
+        // between them — and the ladder mints `<package>·<Type>`. Two spellings
+        // of one symbol, which is the merge-contract failure §2 exists to
+        // prevent, and it is why `Patient` heads this list while `Patient.java`
+        // sits in the corpus declaring exactly that name in exactly that
+        // package. Until it is fixed, a first-party Java edge resolves to an
+        // identity no declaration mints.
+        println!(
+            "\nKNOWN BROKEN: {dangling_total} first-party edges name an identity no declaration \
+             mints — the empty module segment is spelled differently by `fqn::define` and by \
+             `Ladder::identity`."
+        );
+
+        assert_eq!(
+            resolved + reasons.values().sum::<usize>(),
+            total,
+            "every reference is resolved or carries a reason (A3)"
+        );
+        assert!(
+            reasons.get("unplaced").is_none_or(|n| *n == 0),
+            "{} references reached no verdict — the ladder returned without answering",
+            reasons.get("unplaced").copied().unwrap_or(0)
+        );
+    }
 }
