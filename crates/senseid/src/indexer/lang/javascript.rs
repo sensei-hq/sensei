@@ -948,8 +948,14 @@ impl Walk<'_> {
     }
 
     /// The source text a span covers, verbatim.
+    ///
+    /// Sliced rather than fetched-with-a-fallback. Both `text` and `offset` are
+    /// rebound per script block, so a span is in range by construction and the
+    /// old fallback was unreachable — but an empty string standing in for a
+    /// failed read is one a caller cannot tell from a name the source carried,
+    /// and it would have gone on to NAME a symbol. A bad span is now loud.
     fn text_of(&self, span: OxcSpan) -> &str {
-        self.text.get(span.start as usize..span.end as usize).unwrap_or("")
+        &self.text[span.start as usize..span.end as usize]
     }
 
     /// The module path a declaration found here is named in. One place, so a

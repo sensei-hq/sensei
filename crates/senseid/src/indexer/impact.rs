@@ -585,14 +585,19 @@ pub fn viaparam(e: Mystery) { e.start(); }
         sites.sort_unstable();
         assert_eq!(
             sites,
-            [("no_import_in_scope", "start"), ("receiver_type_unknown", "start")],
-            "and the two it could not place are reported WITH the reason, not dropped"
+            [("receiver_type_unknown", "start")],
+            "the one it could not place is reported WITH the reason, not dropped"
         );
+        // `viaparam`'s receiver is typed `Mystery`, which nothing declares — so
+        // it is the BOUNDARY, not doubt, and does not count against the answer.
+        // It read as `no_import_in_scope` until the walk stopped filing a type
+        // it does not declare under the using file's own module.
+        assert_eq!(impact.boundary_total, 1);
         assert!(
             impact.boundary.iter().all(|b| b.at.start_line > 0 && !b.file.is_empty()),
             "every boundary site is somewhere a person can go and look"
         );
-        assert_eq!(impact.confidence(), Some(1.0 / 3.0), "one placed of three candidates");
+        assert_eq!(impact.confidence(), Some(0.5), "one placed, one doubted, one outside");
     }
 
     /// A miss cannot widen a radius it is already inside.
@@ -657,7 +662,9 @@ pub fn three(c: Mystery) { c.open(); }
 
         let counts = impact.by_reason();
         assert_eq!(counts.get("receiver_type_unknown"), Some(&2));
-        assert_eq!(counts.get("no_import_in_scope"), Some(&1));
+        // `three(c: Mystery)` names a type nothing declares, so it is outside
+        // rather than doubt and is not in the tally at all.
+        assert_eq!(counts.get("no_import_in_scope"), None);
         assert_eq!(counts.values().sum::<usize>(), impact.boundary.len());
     }
 
