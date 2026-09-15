@@ -1370,8 +1370,22 @@ fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
             .unwrap_or(u32::MAX);
         boundary.insert(read.path.as_str(), at);
     }
-    let a_test_file =
-        |path: &str| path.contains(".test.") || path.contains(".spec.") || path.contains("/tests/");
+    // A WHOLE FILE of tests. `crates/senseid/src/db/pg_store/tests.rs` carries no
+    // `#[cfg(test)]` of its own — the attribute sits on the `mod tests;` in the
+    // parent — so the boundary scan finds nothing and calls all 15,000 lines of
+    // it SOURCE. That one file put 1,758 tests into the "nothing reaches it"
+    // bucket, and is most of why rust read as 81% untested.
+    //
+    // Matched on the STEM: the path is `…/tests.rs`, a file, which the `/tests/`
+    // directory pattern does not catch.
+    let a_test_file = |path: &str| {
+        let stem = path.rsplit('/').next().unwrap_or(path);
+        path.contains(".test.")
+            || path.contains(".spec.")
+            || path.contains("/tests/")
+            || stem == "tests.rs"
+            || stem.ends_with("_tests.rs")
+    };
 
     // Every declared identity, and which side of the line it sits on.
     let mut side: BTreeMap<&str, bool> = BTreeMap::new(); // true = test
@@ -1418,6 +1432,36 @@ fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
         }
     }
 
+    // TRANSITIVE reach from the tests. A test calls an entry point, which calls
+    // the internals; every one of those is exercised without ever being NAMED
+    // by a test. One hop measures naming, the closure measures exercise, and
+    // conflating them is what makes a healthy graph look like 19% coverage.
+    let mut calls_from: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for read in &corpus {
+        for reference in &read.facts.references {
+            if let Resolution::Resolved { fqn, .. } = &reference.target
+                && reference.from.as_str() != fqn.as_str()
+            {
+                calls_from.entry(reference.from.as_str()).or_default().push(fqn.as_str());
+            }
+        }
+    }
+    let mut exercised: BTreeSet<&str> = by_test.clone();
+    let mut frontier: Vec<&str> = exercised.iter().copied().collect();
+    let mut hops = 0u32;
+    while !frontier.is_empty() && hops < 40 {
+        let mut next = Vec::new();
+        for node in frontier {
+            for called in calls_from.get(node).into_iter().flatten() {
+                if exercised.insert(called) {
+                    next.push(*called);
+                }
+            }
+        }
+        frontier = next;
+        hops += 1;
+    }
+
     let a_node = |kind: SymbolKind| {
         matches!(
             kind,
@@ -1434,6 +1478,7 @@ fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
     #[derive(Default)]
     struct Tally {
         nodes: usize,
+        exercised: usize,
         no_test: usize,
         no_source: usize,
         neither: usize,
@@ -1441,6 +1486,7 @@ fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
     let mut per: BTreeMap<&str, Tally> = BTreeMap::new();
     let mut untested: Vec<String> = Vec::new();
     let mut unused: Vec<String> = Vec::new();
+    let mut neither: Vec<String> = Vec::new();
     for read in &corpus {
         let language = read.facts.language.as_str();
         for symbol in read.facts.symbols.iter().filter(|s| a_node(s.kind)) {
@@ -1451,6 +1497,9 @@ fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
             t.nodes += 1;
             let tested = by_test.contains(symbol.fqn.as_str());
             let used = by_source.contains(symbol.fqn.as_str());
+            if exercised.contains(symbol.fqn.as_str()) {
+                t.exercised += 1;
+            }
             if !tested {
                 t.no_test += 1;
                 untested.push(format!("{} {}:{}", symbol.name, read.path, symbol.span.start_line));
@@ -1461,6 +1510,8 @@ fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
             }
             if !tested && !used {
                 t.neither += 1;
+                neither
+                    .push(format!("{:<44} {}:{}", symbol.name, read.path, symbol.span.start_line));
             }
         }
     }
@@ -1473,10 +1524,11 @@ fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
     let test_files = corpus.iter().filter(|r| a_test_file(&r.path)).count();
     let test_nodes = side.values().filter(|t| **t).count();
     println!("  test files in corpus: {test_files} | test-side declarations: {test_nodes}");
+    println!("  transitively exercised from tests: {} (closure over {hops} hops)", exercised.len());
     println!("\n## Two barriers, per language\n");
     println!(
-        "  {:<12} {:>7} {:>12} {:>14} {:>10}",
-        "", "nodes", "no test edge", "no source edge", "neither"
+        "  {:<12} {:>7} {:>12} {:>16} {:>14} {:>10}",
+        "", "nodes", "no test edge", "exercised (all hops)", "no source edge", "neither"
     );
     for language in super::facts::Language::all() {
         let l = language.as_str();
@@ -1486,10 +1538,12 @@ fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
         }
         let pct = |n: usize| 100.0 * n as f64 / t.nodes as f64;
         println!(
-            "  {l:<12} {:>7} {:>7} {:>4.0}% {:>9} {:>4.0}% {:>5} {:>4.0}%",
+            "  {l:<12} {:>7} {:>7} {:>4.0}% {:>11} {:>4.0}% {:>9} {:>4.0}% {:>5} {:>4.0}%",
             t.nodes,
             t.no_test,
             pct(t.no_test),
+            t.exercised,
+            pct(t.exercised),
             t.no_source,
             pct(t.no_source),
             t.neither,
@@ -1506,6 +1560,16 @@ fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
     };
     head("BARRIER 1 — no test reaches it", untested);
     head("BARRIER 2 — no source reaches it", unused);
+    // Rust first, because the `#`-prefixed JavaScript privates sort to the top
+    // and are already a KNOWN defect — the walk reads no `PrivateFieldExpression`
+    // at the call site. Showing them again buries everything else.
+    let mut rust_only: Vec<String> =
+        neither.iter().filter(|l| l.contains("crates/")).cloned().collect();
+    rust_only.sort();
+    println!("\n  NEITHER, rust only — first 25 of {}:", rust_only.len());
+    for line in rust_only.iter().take(25) {
+        println!("    {line}");
+    }
 
     assert!(per.values().map(|t| t.nodes).sum::<usize>() > 0, "no source nodes at all");
 }
