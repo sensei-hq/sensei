@@ -15,6 +15,84 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+
+## Indexer — `unwrap_or` fallbacks that hide a cause (adversarial review, 2026-09-15)
+
+**Finding: 6,109 misses carry a first-party home the walk fabricated for a type
+the scan does not declare.** 5,671 of them are `no_import_in_scope` — 47% of that
+whole bucket. Head: `Vec` 1138, `Record` 644, `String` 280, `Node` 267,
+`Value` 221, `Path` 195, `HashMap` 188, `Option` 185. All std, DOM or
+third-party. Measured over the 1,332-file corpus.
+
+### The three call sites
+
+| site | shape | verdict |
+|---|---|---|
+| `lang/rust/walk.rs:784` | `home_of(..).unwrap_or_else(\|\| scope.module)` on an `impl` block | **Defensible.** A declaration site; members declared in that block are ours even when the type is external. |
+| `lang/rust/walk.rs:967` | same, on `receiver.member` | **Defect.** |
+| `lang/rust/walk.rs:1101` | same, on a `Type::member` path (`Vec::new()`) | **Defect, and the larger of the two** — `Vec` heads the list. |
+
+### Two causes under one fallback
+
+`TypeHomes::home_of` returns `None` for two unrelated reasons — its own doc says
+"does not know **or knows two**". So the fallback fires on AMBIGUITY as well as
+on externality, silently picking the use site's module where the honest answer is
+`AmbiguousCandidates`. That is the 125 `ambiguous_candidates` in the population.
+
+### The fix is architectural, and the mechanism already exists
+
+`Observation::UnplacedType(path)` lets a walk hand the ladder the raw path
+instead of a minted identity, and `Ladder::wanted` already reads it. So:
+
+- on a `home_of` miss, emit `UnplacedType("Path::join")` rather than
+  `Candidate(rust·pkg·module·Path·join·item)`;
+- `Ladder::through_an_import` then finds `Path` bound by `use std::path::Path`
+  and mints `lib·std·path::Path::join`.
+
+These stop being misses at all and become RESOLVED external edges. This is R7
+working as designed: the walk states what it SAW, the ladder places it. The
+current code has the walk placing, which is why it can place wrongly.
+
+`TypeHomes::home_of` should return a total answer rather than an `Option` — the
+same rule `Resolution` already follows:
+
+```rust
+pub enum Home<'a> {
+    Ours { module: &'a str },  // declared in this scan
+    Ambiguous,                 // two first-party declarations share the name
+    NotOurs,                   // nothing first-party declares it
+}
+```
+
+`NotOurs` vs `LanguageInternal` vs `Library` is NOT TypeHomes' to answer — it
+needs the grammar's prelude and the file's imports, which live in the ladder.
+That split is also what makes the three-way external classification cheap once
+this lands.
+
+### A hole in the R4 guard
+
+`nothing_defaults_a_value_it_did_not_read` matches `unwrap_or_default` only, so
+`unwrap_or("")` passes — semantically identical for a `&str`.
+`lang/javascript.rs:952` (`text_of`) has exactly that shape: an unreadable span
+becomes an empty string that then names a symbol. Safe today because oxc spans
+are in range by construction; the shape is still the forbidden one.
+
+### Assessed and NOT defects
+
+- `split(..).next().unwrap_or(x)` — ~16 sites in `types.rs`, `javascript.rs`,
+  `walk.rs`. `next()` on a split is infallible, the fallback is unreachable, no
+  information is lost. Noise, not risk.
+- `push_owner`'s `symbol.as_ref().ok()` — documented and correct: a declaration
+  with no identity owns nothing, because there is nothing for the edge to point
+  at.
+- `type_segment(..).ok()` in the JS receiver chain — a type the segmenter
+  rejects becomes "no type", so the site reports `ReceiverTypeUnknown` where the
+  truth is `UnhandledForm`. Wrong reason, same class as the above, much smaller.
+
+**Sequence.** Do this BEFORE the Java A2 counter: it moves corpus numbers, and
+they should move once rather than twice with Java half-counted.
+
+
 ## Self-upgrade: health checks the five prereqs, and nothing checks the plugin
 
 **Found 2026-08-28**, publishing four new commands and an agent.
