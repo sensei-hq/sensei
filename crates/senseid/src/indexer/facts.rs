@@ -947,4 +947,76 @@ mod tests {
         }
         assert!(read > 0, "the guard read no files, so it would have passed vacuously");
     }
+
+    /// Every reason a miss can carry has PROSE, and every piece of prose has a
+    /// reason.
+    ///
+    /// `Reason::as_label` gives a consumer a token; `sensei.reason_codes` is
+    /// what turns that token into something a person or a model can act on.
+    /// They are in two files, so the only thing keeping them in step is this
+    /// test. Without it the failure is silent and one-directional: a variant
+    /// added here surfaces to every reader as a bare `unhandled_form` with no
+    /// explanation, which reads as a system that has nothing to say rather than
+    /// as prose somebody forgot to write.
+    ///
+    /// Asserted against the SEED FILE rather than a list restated here, for the
+    /// reason `the_refresh_window_is_wider_than_the_check_interval` gives: a
+    /// copy keeps agreeing with itself.
+    #[test]
+    fn every_reason_is_explained_by_a_seeded_reason_code() {
+        const DOMAIN: &str = "code_graph";
+        let seed = include_str!("../../../../database/import/staging/reason_codes.jsonl");
+
+        let rows: Vec<serde_json::Value> = seed
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("every seed line is JSON"))
+            .filter(|row: &serde_json::Value| row["domain"] == DOMAIN)
+            .collect();
+
+        for reason in Reason::ALL {
+            let code = reason.as_label();
+            let row = rows
+                .iter()
+                .find(|r| r["code"] == code)
+                .unwrap_or_else(|| panic!("{DOMAIN}.{code} has no row in reason_codes.jsonl"));
+            for field in ["summary", "detail"] {
+                let text = row[field].as_str().unwrap_or("");
+                assert!(!text.trim().is_empty(), "{code}.{field} is empty prose");
+            }
+            let kind = row["kind"].as_str().unwrap_or("");
+            assert!(
+                matches!(kind, "normal" | "refusal" | "fault"),
+                "{code} has kind {kind:?}, which sensei.reason_kind does not have"
+            );
+            // The CHECK on the table, asserted here so a bad row fails in the
+            // suite rather than at deploy.
+            if kind == "normal" {
+                assert!(
+                    row["remedy"].as_str().unwrap_or("").is_empty()
+                        && row["actor"].as_str().unwrap_or("").is_empty(),
+                    "{code} is `normal` but names a remedy or an actor — \
+                     reason_codes_normal_is_silent rejects that"
+                );
+            }
+        }
+
+        // And nothing the other way: prose for a reason that no longer exists
+        // is prose no reader will ever see, which is how a vocabulary rots.
+        for row in &rows {
+            let code = row["code"].as_str().unwrap_or_default();
+            assert!(
+                Reason::from_label(code).is_some(),
+                "{DOMAIN}.{code} is seeded but no Reason variant produces it"
+            );
+        }
+
+        let mut precedences: Vec<i64> =
+            rows.iter().filter_map(|r| r["precedence"].as_i64()).collect();
+        precedences.sort_unstable();
+        let before = precedences.len();
+        precedences.dedup();
+        assert_eq!(before, precedences.len(), "reason_codes is UNIQUE (domain, precedence)");
+        assert_eq!(rows.len(), Reason::ALL.len(), "one row per reason, no more");
+    }
 }

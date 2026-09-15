@@ -1019,8 +1019,14 @@ async fn docs_are_served_for_the_version_a_folder_pins_and_labelled_when_they_ca
     let folder =
         s.upsert_folder(&rid, "git", "s9-app", &abs, &abs, None, None, None).await.unwrap();
 
-    let lib =
-        s.upsert_library("_test:s9lib", "npm", Some("1.2.0"), None, None, None).await.unwrap();
+    // Unique per run, like the watch root and the folder above. It was the one
+    // FIXED identifier in the test, and `delete_library` at the bottom only
+    // runs on the happy path — so a single run that died partway left
+    // `library_content` rows that made every later run fail on
+    // `library_content_identity_uq`, permanently, with an error naming the
+    // constraint rather than the abandoned cleanup.
+    let lib_name = format!("_test:s9lib:{}", uuid::Uuid::new_v4());
+    let lib = s.upsert_library(&lib_name, "npm", Some("1.2.0"), None, None, None).await.unwrap();
     // Two held versions: the one this folder pins, and a newer one.
     for (v, page) in [("1.2.0", "list @ 1.2"), ("3.0.0", "list @ 3.0")] {
         let vid = s.ensure_library_version(&lib, Some(v)).await.unwrap();
@@ -1037,14 +1043,14 @@ async fn docs_are_served_for_the_version_a_folder_pins_and_labelled_when_they_ca
     s.upsert_referenced_library(&folder, &lib, Some("1.2.0"), None).await.unwrap();
 
     // The folder pins 1.2 → it gets 1.2's docs, and NO caveat.
-    let d = s.get_library_docs("_test:s9lib", Some("list"), Some(&abs)).await.unwrap();
+    let d = s.get_library_docs(&lib_name, Some("list"), Some(&abs)).await.unwrap();
     assert_eq!(d.served_version.as_deref(), Some("1.2.0"));
     assert_eq!(d.version_note, None, "an exact answer needs no caveat");
     assert_eq!(d.pages[0]["content"], "list @ 1.2");
 
     // Re-pin to a version nothing serves → closest, LABELLED.
     s.upsert_referenced_library(&folder, &lib, Some("2.0.0"), None).await.unwrap();
-    let d2 = s.get_library_docs("_test:s9lib", Some("list"), Some(&abs)).await.unwrap();
+    let d2 = s.get_library_docs(&lib_name, Some("list"), Some(&abs)).await.unwrap();
     assert!(d2.version_note.is_some(), "a wrong-version answer must say so");
     assert!(
         d2.version_note.as_deref().unwrap().contains("you are on 2.0.0"),
@@ -1053,7 +1059,7 @@ async fn docs_are_served_for_the_version_a_folder_pins_and_labelled_when_they_ca
     );
 
     // No folder stated → latest, and no caveat INVENTED. There is no pin to miss.
-    let d3 = s.get_library_docs("_test:s9lib", Some("list"), None).await.unwrap();
+    let d3 = s.get_library_docs(&lib_name, Some("list"), None).await.unwrap();
     assert_eq!(d3.version_note, None, "absent context is not a mismatch");
     assert!(d3.pinned_version.is_none());
 
@@ -13592,6 +13598,105 @@ async fn get_callers_by_name_finds_a_caller_through_an_unresolved_edge() {
     // name-matched one rather than treating the list as uniformly certain.
     let unresolved_row = callers.iter().find(|c| c["name"] == "middleware").unwrap();
     assert_eq!(unresolved_row["resolved"], serde_json::json!(false));
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// `graph_boundary` turns a miss into something a reader can act on.
+///
+/// The reason has been on every unresolved reference since the ladder was built
+/// and written into `edges.props->>'reason'` since persistence landed; nothing
+/// ever read it back. This view joins it to the `code_graph` vocabulary in
+/// `sensei.reason_codes`, so a consumer gets "the type of the thing being
+/// called on is not known here" instead of a bare token — or instead of
+/// nothing, which is what "3 callers" over a graph that missed nine amounts to.
+///
+/// The LEFT join is the load-bearing part. A code with no prose must surface
+/// RAW, never drop the row: losing a boundary site from a boundary report is
+/// the exact failure the report exists to prevent, and it would make an
+/// incomplete answer look complete.
+///
+/// Mutation that must break this test: make the reason_codes join INNER.
+#[tokio::test]
+async fn graph_boundary_explains_a_miss_and_keeps_one_it_cannot_explain() {
+    let s = pg_store().await;
+    let folder = format!("boundary_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    let caller = s
+        .seed_node(&fid, "function", "probe_caller", "src/probe.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+
+    // Three seeded reasons across both kinds, plus one the vocabulary does not
+    // have — a future variant, or a row somebody forgot to seed.
+    for (names, reason) in [
+        ("start", "receiver_type_unknown"),
+        ("pool", "no_import_in_scope"),
+        ("trim", "external_boundary"),
+        ("mystery", "not_a_seeded_code"),
+    ] {
+        s.insert_edge_with_props(
+            &fid,
+            &caller,
+            None,
+            Some(names),
+            None,
+            "calls",
+            &serde_json::json!({ "reason": reason }),
+        )
+        .await
+        .unwrap();
+    }
+
+    /// One boundary row, named so the assertions below read as claims about a
+    /// miss rather than as tuple indices.
+    struct Site {
+        names: String,
+        code: Option<String>,
+        kind: Option<String>,
+        summary: Option<String>,
+    }
+
+    let rows: Vec<Site> = sqlx_core::query_as::query_as(
+        "SELECT names, reason_code, reason_kind::text, reason_summary
+           FROM sensei.graph_boundary
+          WHERE folder_id = $1
+          ORDER BY names",
+    )
+    .bind(fid)
+    .fetch_all(&s.pool)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(names, code, kind, summary)| Site { names, code, kind, summary })
+    .collect();
+
+    assert_eq!(rows.len(), 4, "every unplaced site is a row, explained or not");
+
+    let by_name: std::collections::HashMap<&str, &Site> =
+        rows.iter().map(|r| (r.names.as_str(), r)).collect();
+
+    let typed = by_name["start"];
+    assert_eq!(typed.code.as_deref(), Some("receiver_type_unknown"));
+    assert_eq!(typed.kind.as_deref(), Some("fault"), "a receiver we failed to type is a fault");
+    assert!(
+        typed.summary.as_deref().is_some_and(|s| s.contains("type of the thing being called on")),
+        "the prose must come through, not just the code: {:?}",
+        typed.summary
+    );
+
+    assert_eq!(
+        by_name["trim"].kind.as_deref(),
+        Some("refusal"),
+        "the world ending is a decision, not a failure — a reader must be able to \
+         exclude it without also excluding real misses"
+    );
+
+    let unknown = by_name["mystery"];
+    assert_eq!(unknown.code.as_deref(), Some("not_a_seeded_code"), "the raw code survives");
+    assert_eq!(unknown.kind, None, "with no prose, because none is seeded");
+    assert_eq!(unknown.summary, None);
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }

@@ -20,9 +20,22 @@ ambiguous_candidates 382. `Denylisted` and `ExternalBoundary` are EXCLUDED —
 both are verdicts, not doubt; counting them added 10,398 sites headed by `map`,
 `into`, `as_str`, `collect`, all std methods colliding by name.
 
+## Reasons have prose, and the graph has a boundary view
+
+`sensei.reason_codes` domain `code_graph` — 10 rows, one per `Reason`, with
+summary/detail/remedy/actor. `Reason::as_label` is the only producer of the
+codes; `every_reason_is_explained_by_a_seeded_reason_code` pins both directions.
+
+    select source_language, reason_code, reason_summary, count(*)
+      from sensei.graph_boundary where folder_id = $1 group by 1,2,3;
+
+`graph_boundary` = the unresolved slice of `call_graph` LEFT-joined to the
+vocabulary. LEFT is load-bearing: an unseeded code surfaces raw, never drops the
+row. Applied to `sensei` and `sensei_test`; `dbd diff` in sync.
+
 ## Next
 
-1. Wire `impact` to MCP at cutover (`get_callers` returns the reason too).
+1. MCP reads `graph_boundary` at cutover so `get_callers` answers with the reason.
 2. Java adapter, corpus-first — see the foreign-corpus finding below.
 
 ## A FOREIGN corpus says the JS/TS reader does not generalise
