@@ -640,7 +640,32 @@ impl<'a> Walk<'a> {
         {
             return Resolution::Resolved { fqn, via: Rung::DeclaredHere };
         }
-        self.unplaced(member, at, Reach::Item)
+        // NOT OURS — so hand the ladder the WHOLE PATH, not just the member.
+        //
+        // `Mockito.when(...)` is a qualified static call, and dropping the
+        // receiver leaves the ladder a bare `when` that no import binds. With
+        // the path, `through_an_import` finds `Mockito` bound by
+        // `import org.mockito.Mockito` and names the member in that library.
+        // MEASURED: `when` 7,169, `any` 5,397, `anyLong` 3,087, `anyString`
+        // 2,662 — the whole head of the miss histogram is this shape.
+        //
+        // Safe here in a way it was not in Rust, where the same handoff sent a
+        // path with no import to `rooted_in_this_package` and it came back
+        // placed FIRST-PARTY, taking dangling identities from 312 to 683. Java
+        // has no path roots at all (`Grammar::roots` is empty), so an unbound
+        // path falls through to the same miss it reaches today rather than to a
+        // wrong edge. The dangling count is the check, and it is asserted below.
+        Resolution::Unresolved {
+            reason: Reason::Unplaced,
+            evidence: Evidence {
+                name: member.to_string(),
+                node_kind: at.kind().to_string(),
+                reach: Reach::Item,
+                saw: vec![crate::indexer::facts::Observation::UnplacedType(format!(
+                    "{ty}.{member}"
+                ))],
+            },
+        }
     }
 
     fn unplaced(&self, name: &str, at: Node<'_>, reach: Reach) -> Resolution {

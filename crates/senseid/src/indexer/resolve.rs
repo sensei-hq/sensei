@@ -683,8 +683,19 @@ impl<'a> Ladder<'a> {
         }
 
         match &import.origin {
-            // The head IS the package; what follows is the path inside it.
-            ImportOrigin::External { .. } => Rooted::At(segments.into_iter().skip(1).collect()),
+            // The HEAD is the package and what follows is the path inside it —
+            // but the head is as many segments as the package has, not one.
+            //
+            // `skip(1)` was Rust's shape, where a crate name is a single
+            // segment. A Java package is `org.mockito.Mockito`, so skipping one
+            // left `mockito.Mockito.when` as the path INSIDE a package already
+            // called `org.mockito.Mockito`, and the identity carried its own
+            // package twice. The same bug reaches JavaScript's scoped packages:
+            // `@sveltejs/kit` is two segments by the module separator.
+            ImportOrigin::External { package } => {
+                let head = self.split_module(package).len().max(1);
+                Rooted::At(segments.into_iter().skip(head).collect())
+            }
             ImportOrigin::Local => self.relative_to(&segments, import.at),
         }
     }
