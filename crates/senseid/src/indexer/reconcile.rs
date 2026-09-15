@@ -518,7 +518,7 @@ mod tests {
         let calls: Vec<&crate::indexer::persist::ReferenceRow> = stored
             .references
             .iter()
-            .filter(|r| r.target == TargetRow::Resolved(toll.to_string()))
+            .filter(|r| matches!(&r.target, TargetRow::Resolved { fqn, .. } if fqn == toll))
             .collect();
         assert!(
             calls.is_empty(),
@@ -1127,7 +1127,9 @@ mod tests {
         let containment: BTreeMap<String, Option<String>> =
             store.containment(&folder).await.expect("the containment reads").into_iter().collect();
         for relation in facts.relations.iter().filter(|r| r.kind == RelationKind::Owns) {
-            if let crate::indexer::facts::Resolution::Resolved(parent) = &relation.parent {
+            if let crate::indexer::facts::Resolution::Resolved { fqn: parent, .. } =
+                &relation.parent
+            {
                 assert_eq!(
                     containment.get(relation.child.as_str()).map(Option::as_deref),
                     Some(Some(parent.as_str())),

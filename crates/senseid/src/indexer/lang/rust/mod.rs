@@ -393,13 +393,15 @@ mod tests {
             .iter()
             .map(|r| {
                 let shown = match &r.target {
-                    crate::indexer::facts::Resolution::Resolved(f) => f.as_str().to_string(),
+                    crate::indexer::facts::Resolution::Resolved { fqn: f, .. } => {
+                        f.as_str().to_string()
+                    }
                     crate::indexer::facts::Resolution::Unresolved { reason, evidence } => {
                         format!("UNRESOLVED({reason:?}) {}", evidence.name)
                     }
                 };
                 let name = match &r.target {
-                    crate::indexer::facts::Resolution::Resolved(f) => {
+                    crate::indexer::facts::Resolution::Resolved { fqn: f, .. } => {
                         f.as_str().rsplit('\u{00B7}').nth(1).unwrap_or("").to_string()
                     }
                     crate::indexer::facts::Resolution::Unresolved { evidence, .. } => {
@@ -1451,7 +1453,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
             .references
             .iter()
             .filter_map(|r| match &r.target {
-                Resolution::Resolved(fqn) => Some(fqn.to_string()),
+                Resolution::Resolved { fqn, .. } => Some(fqn.to_string()),
                 _ => None,
             })
             .collect();
@@ -1496,7 +1498,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
             .references
             .iter()
             .filter_map(|r| match &r.target {
-                Resolution::Resolved(fqn) => Some(fqn.to_string()),
+                Resolution::Resolved { fqn, .. } => Some(fqn.to_string()),
                 Resolution::Unresolved { evidence, .. } => {
                     evidence.saw.iter().find_map(|o| match o {
                         Observation::Candidate(fqn) => Some(fqn.to_string()),
@@ -1804,7 +1806,7 @@ fn helper() -> u32 { 0 }
             .iter()
             .filter_map(|r| match &r.target {
                 Resolution::Unresolved { evidence, .. } => Some(evidence),
-                Resolution::Resolved(_) => None,
+                Resolution::Resolved { .. } => None,
             })
             .flat_map(|e| e.saw.iter())
             .filter_map(|o| match o {
@@ -1923,7 +1925,7 @@ fn helper() -> u32 { 0 }
             for reference in &facts.references {
                 total += 1;
                 match &reference.target {
-                    Resolution::Resolved(fqn) => panic!(
+                    Resolution::Resolved { fqn, .. } => panic!(
                         "{path}: the walk resolved {fqn} — resolution is step 5's, not a \
                          language module's (R7)"
                     ),
@@ -1957,7 +1959,7 @@ fn helper() -> u32 { 0 }
             .iter()
             .map(|r| {
                 let parent = match &r.parent {
-                    Resolution::Resolved(fqn) => fqn.as_str().to_string(),
+                    Resolution::Resolved { fqn, .. } => fqn.as_str().to_string(),
                     Resolution::Unresolved { reason, evidence } => {
                         format!("{reason:?}({})", evidence.name)
                     }
@@ -2095,7 +2097,7 @@ fn helper() -> u32 { 0 }
                 fqn::parse(relation.child.as_str())
                     .unwrap_or_else(|e| panic!("{path}: relation child is not an fqn: {e:?}"));
                 match &relation.parent {
-                    Resolution::Resolved(fqn) => {
+                    Resolution::Resolved { fqn, .. } => {
                         fqn::parse(fqn.as_str()).unwrap_or_else(|e| {
                             panic!("{path}: relation parent is not an fqn: {e:?}")
                         });

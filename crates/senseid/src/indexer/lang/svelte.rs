@@ -156,7 +156,7 @@ mod tests {
             .references
             .iter()
             .map(|r| match &r.target {
-                Resolution::Resolved(fqn) => ("?".to_string(), fqn.to_string()),
+                Resolution::Resolved { fqn, .. } => ("?".to_string(), fqn.to_string()),
                 Resolution::Unresolved { reason, evidence } => (
                     evidence.name.clone(),
                     evidence

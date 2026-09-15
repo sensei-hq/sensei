@@ -47,7 +47,7 @@ use super::common::{Miss, considered};
 use super::{LanguageAdapter, ReadError, Source, TypeHomes};
 use crate::indexer::facts::{
     Binding, DeclaredType, FileFacts, Fqn, Import, ImportOrigin, Language, Observation, Param,
-    Reason, RefKind, Reference, Relation, RelationKind, Resolution, Span, Symbol, SymbolKind,
+    Reason, RefKind, Reference, Relation, RelationKind, Resolution, Rung, Span, Symbol, SymbolKind,
     Visibility,
 };
 use crate::indexer::fqn::{self, Form, FqnError, Reach, SEPARATOR};
@@ -1000,7 +1000,9 @@ impl Walk<'_> {
                     self.found.relations.push(Relation {
                         kind: RelationKind::Owns,
                         child: symbol.fqn.clone(),
-                        parent: Resolution::Resolved(owner),
+                        // The owner is a declaration in THIS file — the walk
+                        // read both sides — so the rung is the first one.
+                        parent: Resolution::Resolved { fqn: owner, via: Rung::DeclaredHere },
                         at: symbol.span,
                     });
                 }
@@ -2514,7 +2516,7 @@ mod tests {
             .references
             .iter()
             .map(|r| match &r.target {
-                Resolution::Resolved(fqn) => ("?".to_string(), fqn.to_string()),
+                Resolution::Resolved { fqn, .. } => ("?".to_string(), fqn.to_string()),
                 Resolution::Unresolved { reason, evidence } => {
                     let candidate = evidence.saw.iter().find_map(|o| match o {
                         Observation::Candidate(fqn) => Some(fqn.to_string()),

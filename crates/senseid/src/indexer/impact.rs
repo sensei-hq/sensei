@@ -220,12 +220,14 @@ impl<'a> Graph<'a> {
             for reference in &file.references {
                 let Reference { from, kind, at, target } = reference;
                 match target {
-                    Resolution::Resolved(to) => callers_of.entry(to).or_default().push(Edge {
-                        from: from.clone(),
-                        kind: *kind,
-                        at: *at,
-                        file: file.path.clone(),
-                    }),
+                    Resolution::Resolved { fqn: to, .. } => {
+                        callers_of.entry(to).or_default().push(Edge {
+                            from: from.clone(),
+                            kind: *kind,
+                            at: *at,
+                            file: file.path.clone(),
+                        })
+                    }
                     Resolution::Unresolved { reason, evidence } => {
                         misses_by_name.entry(evidence.name.as_str()).or_default().push(Miss {
                             from: from.clone(),
@@ -796,7 +798,7 @@ pub fn three(c: Mystery) { c.open(); }
         let mut stated: BTreeSet<(&Fqn, &Fqn)> = BTreeSet::new();
         for file in &files {
             for reference in &file.references {
-                if let Resolution::Resolved(to) = &reference.target {
+                if let Resolution::Resolved { fqn: to, .. } = &reference.target {
                     stated.insert((&reference.from, to));
                 }
             }
