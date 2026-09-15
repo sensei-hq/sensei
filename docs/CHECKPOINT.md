@@ -26,6 +26,24 @@ Read `docs/plans/indexer-sequence.md`, then `docs/design/indexer.md`.
 - Foreign corpus: A2 drops 2.0% on code nobody here wrote vs 0.03% on ours.
   Build remaining adapters corpus-first, never fixtures-first.
 
+## Placed edges say WHICH RUNG placed them
+
+`Resolution::Resolved { fqn, via: Rung }`. Six rungs = six `Ladder` methods, so
+a wrong edge names the function to read. Prose in `reason_codes` domain
+`code_graph_rung` (precedence = climb order); `sensei.graph_resolution` is the
+group-by view, sibling of `graph_boundary`.
+
+    rung                      rust   typescript
+    declared_here           11,156        5,161
+    through_an_import       13,005       16,117
+    through_a_glob           2,150            0   <- weakest rung: 2.6% of all
+    rooted_in_this_package   1,293            0
+    fully_qualified_external 10,483           0
+    in_the_prelude          22,167        2,030
+
+Rung totals must equal RESOLVED — `acceptance::report` asserts it, so no edge
+is placed without saying how.
+
 ## MCP answers with reasons
 
 `get_callers`/`get_callees` carry `coverage.why` — the miss reasons with prose,

@@ -158,6 +158,10 @@ fn report() {
     ];
 
     let mut cells: BTreeMap<(&str, String), usize> = BTreeMap::new();
+    // The other half of the same question. A bare RESOLVED count says how much
+    // of the graph is placed and nothing about how well — `declared_here` and
+    // `through_a_glob` are both RESOLVED and are not the same claim.
+    let mut rungs: BTreeMap<(&str, &'static str), usize> = BTreeMap::new();
     let mut files: BTreeMap<&str, usize> = BTreeMap::new();
     let mut symbols: BTreeMap<&str, usize> = BTreeMap::new();
     let mut relations: BTreeMap<&str, usize> = BTreeMap::new();
@@ -181,7 +185,10 @@ fn report() {
         }
         for reference in &read.facts.references {
             let row = match &reference.target {
-                Resolution::Resolved(_) => "RESOLVED".to_string(),
+                Resolution::Resolved { via, .. } => {
+                    *rungs.entry((language, via.as_label())).or_default() += 1;
+                    "RESOLVED".to_string()
+                }
                 Resolution::Unresolved { reason, .. } => format!("{reason:?}"),
             };
             *cells.entry((language, row)).or_default() += 1;
@@ -227,8 +234,29 @@ fn report() {
         row(reason, &|l| cells.get(&(l, reason.to_string())).copied().unwrap_or(0));
     }
 
+    println!("\n## Resolved references, by the rung that placed them\n");
+    println!("{header}");
+    println!("{rule}");
+    for rung in super::facts::Rung::ALL {
+        row(rung.as_label(), &|l| rungs.get(&(l, rung.as_label())).copied().unwrap_or(0));
+    }
+
     let total: usize = cells.values().sum();
     assert!(total > 0, "the corpus produced no references at all");
+    // The rungs must account for every RESOLVED reference. They are the only
+    // way `climb` can return one, so a shortfall means a resolution was minted
+    // somewhere that does not say which rung minted it.
+    let placed: usize = languages
+        .iter()
+        .map(|l| cells.get(&(*l, "RESOLVED".to_string())).copied().unwrap_or(0))
+        .sum();
+    let by_rung: usize = rungs.values().sum();
+    assert_eq!(
+        by_rung, placed,
+        "the rungs account for {by_rung} of {placed} placed references — an edge exists that \
+         does not say which rung placed it, and a rung is the only thing mapping a wrong edge \
+         back to the code that made it"
+    );
     // Every reference is in exactly one row: the rows ARE the enum, so a new
     // variant that nothing lists would show up here as a missing total.
     let tabulated: usize = languages
@@ -285,7 +313,7 @@ fn an_import_named_target_resolves() {
         }
         for reference in &read.facts.references {
             let (name, resolved) = match &reference.target {
-                Resolution::Resolved(_) => {
+                Resolution::Resolved { .. } => {
                     // A resolved target no longer carries the evidence that
                     // says how it was reached, so the population is counted
                     // from the reference's own `from`-side name where it has
@@ -317,7 +345,7 @@ fn an_import_named_target_resolves() {
             .facts
             .references
             .iter()
-            .filter(|r| matches!(r.target, Resolution::Resolved(_)))
+            .filter(|r| matches!(r.target, Resolution::Resolved { .. }))
             .count();
     }
 
@@ -858,7 +886,7 @@ fn every_miss_is_accounted_for_in_every_language() {
             by_language.entry(read.facts.language.as_str()).or_insert((0, 0, BTreeMap::new()));
         for reference in &read.facts.references {
             match &reference.target {
-                Resolution::Resolved(_) => entry.0 += 1,
+                Resolution::Resolved { .. } => entry.0 += 1,
                 Resolution::Unresolved { reason, evidence } => {
                     entry.1 += 1;
                     *entry.2.entry(format!("{reason:?}")).or_default() += 1;
@@ -986,7 +1014,7 @@ fn the_facts_the_seven_patterns_need_are_all_emitted_and_two_are_derived() {
     for read in &corpus {
         for relation in &read.facts.relations {
             if relation.kind == RelationKind::Owns
-                && let Resolution::Resolved(owner) = &relation.parent
+                && let Resolution::Resolved { fqn: owner, .. } = &relation.parent
             {
                 owner_of.insert(relation.child.as_str().to_string(), owner.as_str().to_string());
             }
@@ -998,7 +1026,7 @@ fn the_facts_the_seven_patterns_need_are_all_emitted_and_two_are_derived() {
             if reference.kind != RefKind::Calls {
                 continue;
             }
-            let Resolution::Resolved(target) = &reference.target else { continue };
+            let Resolution::Resolved { fqn: target, .. } = &reference.target else { continue };
             let (Some(caller), Some(callee)) =
                 (owner_of.get(reference.from.as_str()), owner_of.get(target.as_str()))
             else {
@@ -1024,7 +1052,7 @@ fn the_facts_the_seven_patterns_need_are_all_emitted_and_two_are_derived() {
             if matches!(
                 relation.kind,
                 RelationKind::Implements | RelationKind::TraitImpl | RelationKind::Extends
-            ) && let Resolution::Resolved(parent) = &relation.parent
+            ) && let Resolution::Resolved { fqn: parent, .. } = &relation.parent
             {
                 implements
                     .entry(relation.child.as_str().to_string())

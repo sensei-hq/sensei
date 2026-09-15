@@ -13602,6 +13602,98 @@ async fn get_callers_by_name_finds_a_caller_through_an_unresolved_edge() {
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
 
+/// `graph_resolution` says how a placed edge was placed.
+///
+/// The sibling of `graph_boundary`. That one is where the graph stops; this is
+/// where it holds and on what evidence. A consumer handed a bare `resolved`
+/// treats `declared_here` — a file pointing at its own declaration — exactly
+/// like `through_a_glob`, a name the source never wrote down.
+///
+/// Mutation that must break this test: make the reason_codes join INNER, or
+/// drop the `target_id is not null` filter so unplaced edges leak in.
+#[tokio::test]
+async fn graph_resolution_says_which_rung_placed_each_edge() {
+    let s = pg_store().await;
+    let folder = format!("rung_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    let target = s
+        .seed_node(&fid, "function", "placed", "src/t.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    for (i, rung) in ["declared_here", "through_a_glob", "not_a_seeded_rung"].iter().enumerate() {
+        let caller = s
+            .seed_node(
+                &fid,
+                "function",
+                &format!("via_{i}"),
+                &format!("src/v{i}.rs"),
+                None,
+                None,
+                Some(1),
+                Some(9),
+            )
+            .await
+            .unwrap();
+        s.insert_edge_with_props(
+            &fid,
+            &caller,
+            Some(&target),
+            None,
+            None,
+            "calls",
+            &serde_json::json!({ "rung": rung }),
+        )
+        .await
+        .unwrap();
+    }
+    // An UNPLACED edge, which this view must not show at all — that one is
+    // graph_boundary's, and a row in both would be counted twice by anyone
+    // adding the two together.
+    let stray = s
+        .seed_node(&fid, "function", "stray", "src/s.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    s.insert_edge_with_props(
+        &fid,
+        &stray,
+        None,
+        Some("placed"),
+        None,
+        "calls",
+        &serde_json::json!({ "reason": "receiver_type_unknown" }),
+    )
+    .await
+    .unwrap();
+
+    let rows: Vec<(Option<String>, Option<String>)> = sqlx_core::query_as::query_as(
+        "SELECT resolved_via, rung_summary FROM sensei.graph_resolution
+          WHERE folder_id = $1 ORDER BY source_name",
+    )
+    .bind(fid)
+    .fetch_all(&s.pool)
+    .await
+    .unwrap();
+
+    assert_eq!(rows.len(), 3, "three placed edges, and the unplaced one is not one of them");
+    assert_eq!(rows[0].0.as_deref(), Some("declared_here"));
+    assert!(
+        rows[0].1.as_deref().is_some_and(|s| s.contains("declares the target itself")),
+        "the prose comes with it: {:?}",
+        rows[0].1
+    );
+    assert_eq!(rows[1].0.as_deref(), Some("through_a_glob"));
+    assert!(
+        rows[1].1.as_deref().is_some_and(|s| s.contains("glob")),
+        "and it is the rung's own prose, not the first row's"
+    );
+    let unknown = &rows[2];
+    assert_eq!(unknown.0.as_deref(), Some("not_a_seeded_rung"), "the raw rung survives");
+    assert_eq!(unknown.1, None, "with no prose, because none is seeded");
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
 /// `coverage` says HOW MUCH of a caller list is missing; this says WHY.
 ///
 /// Two integers tell a reader the list is incomplete and nothing else, so the
