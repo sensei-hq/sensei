@@ -188,7 +188,7 @@ const PRELUDE: &[(&str, &str, &str)] = &[
 /// A miss on one of these is not a gap anybody can close — no first-party
 /// declaration is on the other end of it — and there are thousands, so leaving
 /// them in the general bucket buries the misses that ARE worth closing. This is
-/// the list the `Denylisted` reason exists for: filtering, not failure, and only
+/// the list the `Plumbing` reason exists for: filtering, not failure, and only
 /// ever applied to a reference the ladder has already failed to place, so a
 /// provable edge is never dropped by it.
 const PLUMBING: &[&str] = &[
