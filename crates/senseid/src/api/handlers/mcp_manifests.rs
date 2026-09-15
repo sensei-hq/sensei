@@ -141,6 +141,45 @@ pub fn manifests() -> Vec<McpToolManifest> {
         },
         McpToolManifest {
             mcp: "sensei",
+            id: "sensei.get_impact",
+            name: "get_impact",
+            kind: McpToolKind::Query,
+            summary: "Everything that reaches a symbol within N hops — the blast radius of changing it — plus where the graph stops and why.",
+            inputs: vec![
+                McpToolInput {
+                    key: "name",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Symbol",
+                    placeholder: Some("insert_edge_with_props"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "depth",
+                    kind: McpInputKind::Text,
+                    required: false,
+                    label: "Hops",
+                    placeholder: Some("2"),
+                    default: Some("2"),
+                    options: None,
+                },
+                McpToolInput {
+                    key: "repoId",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Project",
+                    placeholder: Some("sensei"),
+                    default: None,
+                    options: None,
+                },
+            ],
+            example: McpToolExample {
+                response: "insert_edge_with_props — found, defined at pg_store/graph.rs:1522\n7 reached within 2 hops (depth 1: 4, depth 2: 3)\nboundary: 11 sites name it and could not be placed\n  9 receiver_type_unknown — the type of the thing being called on is not known here\n  2 no_import_in_scope — the name is used here but nothing in scope brings it in",
+            },
+        },
+        McpToolManifest {
+            mcp: "sensei",
             id: "sensei.get_callers",
             name: "get_callers",
             kind: McpToolKind::Query,
@@ -668,6 +707,27 @@ mod tests {
         assert_eq!(v["inputs"][0]["placeholder"], "PgStore");
     }
 
+    /// Every advertised tool has a match arm that actually answers it.
+    ///
+    /// Read off `mcp.rs` ITSELF, not off a list maintained beside it. The list
+    /// below still exists — it catches a tool dispatched but never advertised —
+    /// but on its own it compared two hand-written lists and would have stayed
+    /// green through a misspelled arm, which is the failure that matters: the
+    /// tool appears in the catalogue and returns "unknown tool" when called.
+    #[test]
+    fn every_listed_tool_has_a_match_arm_in_the_dispatcher() {
+        const DISPATCHER: &str = include_str!("mcp.rs");
+        for m in manifests() {
+            assert!(
+                DISPATCHER.contains(&format!("\"{}\" =>", m.name)),
+                "{} is advertised but mcp.rs has no `\"{}\" =>` arm — it would answer \
+                 \"unknown tool\" to every caller",
+                m.name,
+                m.name
+            );
+        }
+    }
+
     #[test]
     fn every_listed_tool_has_a_call_dispatch() {
         // Sanity: the list_tools + call_tool sets stay in lockstep. If a new
@@ -678,6 +738,7 @@ mod tests {
             "get_symbol",
             "get_callers",
             "get_callees",
+            "get_impact",
             "get_file_tags",
             "get_communities",
             "get_doc_drift",
