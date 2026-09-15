@@ -385,7 +385,7 @@ mod corpus {
     use tree_sitter::Node;
 
     use super::*;
-    use crate::indexer::facts::{RefKind, Resolution};
+    use crate::indexer::facts::{RefKind, RelationKind, Resolution, SymbolKind};
     use crate::indexer::lang::{Source, TypeHomes};
 
     /// Every `.java` file under `SENSEI_CORPUS`, and whether it looks generated.
@@ -501,6 +501,8 @@ mod corpus {
         let mut reasons: BTreeMap<&'static str, usize> = BTreeMap::new();
         let mut symbols = 0usize;
         let mut relations = 0usize;
+        let mut owned_members = 0usize;
+        let mut owns = 0usize;
 
         for (path, text, generated) in &sources {
             if *generated {
@@ -518,6 +520,17 @@ mod corpus {
             };
             symbols += facts.symbols.len();
             relations += facts.relations.len();
+            owned_members += facts
+                .symbols
+                .iter()
+                .filter(|s| {
+                    matches!(
+                        s.kind,
+                        SymbolKind::Method | SymbolKind::Field | SymbolKind::EnumVariant
+                    )
+                })
+                .count();
+            owns += facts.relations.iter().filter(|r| r.kind == RelationKind::Owns).count();
             for r in &facts.references {
                 if let Resolution::Unresolved { reason, .. } = &r.target {
                     *reasons.entry(reason.as_label()).or_default() += 1;
@@ -569,6 +582,22 @@ mod corpus {
         }
 
         assert!(files > 0, "no hand-written .java under SENSEI_CORPUS");
+
+        // Every member must say WHICH TYPE owns it. The cross-language guard in
+        // `acceptance` cannot check Java — this repository holds no Java — so
+        // the assertion has to live where the Java is.
+        //
+        // `RelationKind::Owns` is the vocabulary a member rung needs, and no
+        // `SymbolKind` filter substitutes for it: which kinds are type-owned
+        // differs per language, which is what made `World::first_party_members`
+        // unusable as an inventory and cost Rust 2,112 edges when it was tried.
+        println!("\ntype-owned declarations {owned_members} | Owns relations {owns}");
+        assert!(
+            owns > 0,
+            "Java declares {owned_members} type-owned members and emits NO Owns relation, so \
+             the graph cannot say which type owns any of them"
+        );
+
         assert!(unreadable.is_empty(), "a file the grammar could not read is a fact to act on");
 
         // RATCHETED, not zero. §6's first line: a gate that fails on its first

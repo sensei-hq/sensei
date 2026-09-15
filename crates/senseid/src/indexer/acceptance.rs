@@ -1188,3 +1188,60 @@ fn every_import_is_classified_as_ours_or_a_librarys() {
          node out of nothing"
     );
 }
+
+/// **Every member says which type owns it.** One language emitted none and
+/// every test passed.
+///
+/// `RelationKind::Owns` is the vocabulary for "this type declares this member"
+/// — the fact a member rung needs, and the one thing no `SymbolKind` filter can
+/// stand in for. Rust and JavaScript emit it; Java shipped with ZERO and
+/// nothing noticed, because no check compares the languages on it.
+///
+/// Counted per language for exactly that reason: a total would have read as
+/// healthy while one column sat at nought.
+#[test]
+#[ignore]
+fn every_type_owned_declaration_says_which_type_owns_it() {
+    let corpus = read_the_corpus();
+    let mut members: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut owns: BTreeMap<&str, usize> = BTreeMap::new();
+
+    for read in &corpus {
+        let language = read.facts.language.as_str();
+        // A member is a declaration whose identity carries a TYPE segment —
+        // read off the fqn rather than guessed from `SymbolKind`, because which
+        // kinds are type-owned differs per language and that guess is what made
+        // `first_party_members` unusable as an inventory.
+        *members.entry(language).or_default() += read
+            .facts
+            .symbols
+            .iter()
+            .filter(|s| super::fqn::parse(s.fqn.as_str()).is_ok_and(|p| p.tail.len() > 1))
+            .count();
+        *owns.entry(language).or_default() +=
+            read.facts.relations.iter().filter(|r| r.kind == RelationKind::Owns).count();
+    }
+
+    println!("\n## Owns, per language\n");
+    for language in super::facts::Language::all() {
+        let l = language.as_str();
+        println!(
+            "  {l:<12} members {:>7} | owns {:>7}",
+            members.get(l).copied().unwrap_or(0),
+            owns.get(l).copied().unwrap_or(0)
+        );
+    }
+
+    for language in super::facts::Language::all() {
+        let l = language.as_str();
+        let declared = members.get(l).copied().unwrap_or(0);
+        if declared == 0 {
+            continue;
+        }
+        assert!(
+            owns.get(l).copied().unwrap_or(0) > 0,
+            "{l} declares {declared} type-owned members and emits NO Owns relation, so the \
+             graph cannot say which type owns any of them"
+        );
+    }
+}
