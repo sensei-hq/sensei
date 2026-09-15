@@ -71,6 +71,13 @@ async fn symbol_relation_envelope(
             tracing::warn!(error = %e, name, "mcp symbol_relation_envelope: call_coverage failed");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+    // Two integers say the list is incomplete; they cannot say what to do, so
+    // the only next step they leave is "grep everything". The reason narrows
+    // it — and it has been recorded on every unplaced edge all along.
+    let why = state.pg.call_coverage_reasons(folder_ids, name, direction).await.map_err(|e| {
+        tracing::warn!(error = %e, name, "mcp symbol_relation_envelope: call_coverage_reasons failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
 
     // Library calls are reported in full, just not interleaved with the answer.
     // Nothing is dropped: `library_calls.count` is exact and the symbols are
@@ -94,6 +101,11 @@ async fn symbol_relation_envelope(
             // Spelled out so a reader does not have to infer the rule from two
             // integers: `complete` means every recorded edge was placed.
             "complete":   unresolved == 0,
+            // WHY the missing ones are missing, most actionable first, each
+            // with the prose from sensei.reason_codes. A `reason` of null is a
+            // site recorded with no reason at all — reported as null rather
+            // than guessed at.
+            "why":        why,
         },
     }))
 }
@@ -155,6 +167,40 @@ pub(crate) async fn mcp_call_tool(
             let ids = resolve_scope_ids(&state, repo_id).await?;
             let callees = state.pg.get_callees_by_name(repo_id, name).await.map_err(|e| { tracing::warn!(error = %e, repo_id, name, "mcp get_callees: get_callees_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
             symbol_relation_envelope(&state, &ids, name, "callees", callees).await?
+        }
+        // The blast radius, n hops out. `get_callers` answers one hop; a
+        // refactor needs the transitive set, and needs to know where it stops
+        // — `truncated` for the query's limit, `coverage.why` for the graph's.
+        "get_impact" => {
+            let name = params["name"].as_str().unwrap_or(query);
+            let depth = params["depth"].as_i64().unwrap_or(2) as i32;
+            let ids = resolve_scope_ids(&state, repo_id).await?;
+            let radius = state.pg.impact_of_symbol(&ids, name, depth).await.map_err(|e| {
+                tracing::warn!(error = %e, repo_id, name, "mcp get_impact: impact_of_symbol failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+            let definitions = state.pg.symbol_definitions(&ids, name).await.map_err(|e| {
+                tracing::warn!(error = %e, name, "mcp get_impact: symbol_definitions failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+            let why = state
+                .pg
+                .call_coverage_reasons(&ids, name, CallDirection::Incoming)
+                .await
+                .map_err(|e| {
+                    tracing::warn!(error = %e, name, "mcp get_impact: call_coverage_reasons failed");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            serde_json::json!({
+                "symbol": { "name": name, "found": !definitions.is_empty(), "defined_at": definitions },
+                "reached":   radius["reached"],
+                "depth":     radius["depth"],
+                "truncated": radius["truncated"],
+                // The second half of the answer. A radius printed without it
+                // reads as exact, and a reader refactors on a number that is
+                // short by however many sites the ladder could not place.
+                "boundary":  why,
+            })
         }
         "get_file_tags" => {
             let tag = params["tag"].as_str().unwrap_or(query);

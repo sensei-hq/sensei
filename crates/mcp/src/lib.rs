@@ -583,6 +583,12 @@ pub fn handle_list_tools() -> Value {
             ], &[
                 ("project", "string", "Project name. Defaults to current project."),
             ]),
+            tool("get_impact", "Blast radius: everything that reaches a symbol within N hops, plus where the graph stops and WHY. Use before changing or renaming anything — `get_callers` answers one hop, this answers the transitive set. The `boundary` field lists use sites that name the symbol and could not be resolved, each with a reason, so you know how much the radius may be understating rather than trusting it as exact.", &[
+                ("name", "string", "Symbol to find the blast radius of"),
+            ], &[
+                ("depth", "number", "How many hops of callers to walk (default 2, max 10)"),
+                ("project", "string", "Project name. Defaults to current project."),
+            ]),
             tool("get_project_summary", "Get overview of a project — function count, types, libraries used, tech stack.", &[], &[
                 ("project", "string", "Project name. Defaults to current project."),
             ]),
@@ -1320,6 +1326,7 @@ mod tests {
         "context_pack",
         "get_callers",
         "get_callees",
+        "get_impact",
         "get_project_summary",
         "get_lib_docs",
         "search_lib_docs",
