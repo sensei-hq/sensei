@@ -2124,6 +2124,154 @@ impl PgStore {
     /// Counted with its own query rather than tallied from the returned list,
     /// because those lists are `LIMIT 100` — deriving coverage from a truncated
     /// list would under-report exactly when completeness matters most.
+    /// WHY the unresolved half of [`Self::call_coverage`] is unresolved, with
+    /// the prose that makes it actionable.
+    ///
+    /// Coverage says a caller list is incomplete; it cannot say what to do
+    /// about it, so the only next step it leaves a reader is "grep everything".
+    /// A reason narrows that: receivers the walk could not type is a different
+    /// job from names with no import in scope, and `external_boundary` is not a
+    /// job at all — it is the graph correctly declining to follow a call into a
+    /// library.
+    ///
+    /// Ordered by `reason_precedence`, which is the registry's own answer to
+    /// "which of these should a reader deal with first". A code with no seeded
+    /// prose sorts LAST and keeps its row: the reason is reported as `null`
+    /// rather than invented, because a producer that records no reason is a
+    /// different state from one that records `unplaced`, and collapsing them
+    /// would put a specific claim where there is no information.
+    pub async fn call_coverage_reasons(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        name: &str,
+        direction: CallDirection,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        // The filter column comes from a closed enum, never from caller input,
+        // so this stays static SQL with the name passed as a bind parameter.
+        let sql = match direction {
+            CallDirection::Incoming => {
+                "SELECT reason_code, reason_kind::text, reason_summary, reason_remedy,
+                        min(reason_precedence), count(*)
+                   FROM sensei.graph_boundary
+                  WHERE folder_id = ANY($1) AND names = $2 AND edge_kind = 'calls'
+                  GROUP BY 1, 2, 3, 4
+                  ORDER BY 5 NULLS LAST, 6 DESC"
+            }
+            CallDirection::Outgoing => {
+                "SELECT reason_code, reason_kind::text, reason_summary, reason_remedy,
+                        min(reason_precedence), count(*)
+                   FROM sensei.graph_boundary
+                  WHERE folder_id = ANY($1) AND source_name = $2 AND edge_kind = 'calls'
+                  GROUP BY 1, 2, 3, 4
+                  ORDER BY 5 NULLS LAST, 6 DESC"
+            }
+        };
+        type ReasonRow =
+            (Option<String>, Option<String>, Option<String>, Option<String>, Option<i16>, i64);
+        let rows: Vec<ReasonRow> = sqlx_core::query_as::query_as(sql)
+            .bind(folder_ids)
+            .bind(name)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(code, kind, summary, remedy, _, count)| {
+                serde_json::json!({
+                    "reason":      code,
+                    "kind":        kind,
+                    "explanation": summary,
+                    "remedy":      remedy,
+                    "count":       count,
+                })
+            })
+            .collect())
+    }
+
+    /// Every symbol that reaches `name` within `depth` hops — the blast radius
+    /// of changing it.
+    ///
+    /// Breadth-first over `calls` edges in reverse. `union` in the recursive
+    /// term deduplicates, which is both what reports a symbol once at its
+    /// SHORTEST distance and what makes a cycle terminate instead of running to
+    /// the recursion limit.
+    ///
+    /// `truncated` distinguishes "the graph ended" from "the query ended", and
+    /// the distinction is not cosmetic: a reader told a complete answer might be
+    /// partial will re-run a deeper query it did not need, and one told nothing
+    /// will trust a partial answer. It is true only when a symbol AT the limit
+    /// has a caller of its own — the limit being reached is not by itself
+    /// evidence that anything lies beyond it.
+    ///
+    /// This is the PLACED half of the answer. The other half is
+    /// [`Self::call_coverage_reasons`]: sites that name something in the radius
+    /// and could not be placed. A radius without it reads as exact.
+    pub async fn impact_of_symbol(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        name: &str,
+        depth: i32,
+    ) -> Result<serde_json::Value, String> {
+        // Clamped rather than trusted. `depth` reaches this from an MCP
+        // argument, and the recursive term is bounded by nothing else.
+        let depth = depth.clamp(1, 10);
+        /// One symbol in the radius: name, kind, where, how far out, and
+        /// whether anything beyond it reaches in.
+        type RadiusRow = (String, String, Option<String>, Option<i32>, i32, bool);
+        let rows: Vec<RadiusRow> = sqlx_core::query_as::query_as(
+            "WITH RECURSIVE seed AS (
+                     SELECT n.id FROM sensei.nodes n
+                      WHERE n.folder_id = ANY($1) AND n.name = $2
+                 ), radius AS (
+                     SELECT e.source_id AS node_id, 1 AS depth
+                       FROM sensei.edges e JOIN seed s ON e.target_id = s.id
+                      WHERE e.folder_id = ANY($1) AND e.kind = 'calls'
+                        AND e.source_id <> s.id
+                     UNION
+                     SELECT e.source_id, r.depth + 1
+                       FROM sensei.edges e JOIN radius r ON e.target_id = r.node_id
+                      WHERE e.folder_id = ANY($1) AND e.kind = 'calls' AND r.depth < $3
+                        AND e.source_id NOT IN (SELECT id FROM seed)
+                 ), nearest AS (
+                     SELECT node_id, min(depth) AS depth FROM radius GROUP BY node_id
+                 )
+                 SELECT n.name, n.kind::text, f.file_path, n.line_start, x.depth
+                      -- A caller ALREADY IN the radius cannot extend it. Without
+                      -- the two NOT INs a cycle back to the seed makes every
+                      -- limit-depth symbol look like it has more beyond it, and
+                      -- a complete answer reports itself truncated.
+                      , EXISTS (SELECT 1 FROM sensei.edges e2
+                                 WHERE e2.folder_id = ANY($1) AND e2.kind = 'calls'
+                                   AND e2.target_id = x.node_id
+                                   AND e2.source_id NOT IN (SELECT node_id FROM nearest)
+                                   AND e2.source_id NOT IN (SELECT id FROM seed)
+                               ) AS has_unseen_callers
+                   FROM nearest x
+                   JOIN sensei.nodes n ON n.id = x.node_id
+                   LEFT JOIN sensei.files f ON f.id = n.file_id
+                  ORDER BY x.depth, f.file_path, n.line_start
+                  LIMIT 500",
+        )
+        .bind(folder_ids)
+        .bind(name)
+        .bind(depth)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let truncated = rows.iter().any(|(_, _, _, _, d, has_unseen)| *d == depth && *has_unseen);
+        let reached: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|(name, kind, file, line, depth, _)| {
+                serde_json::json!({
+                    "name": name, "kind": kind, "file_path": file,
+                    "line_start": line, "depth": depth,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "reached": reached, "truncated": truncated, "depth": depth }))
+    }
+
     pub async fn call_coverage(
         &self,
         folder_ids: &[uuid::Uuid],

@@ -13602,6 +13602,148 @@ async fn get_callers_by_name_finds_a_caller_through_an_unresolved_edge() {
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
 
+/// `coverage` says HOW MUCH of a caller list is missing; this says WHY.
+///
+/// Two integers tell a reader the list is incomplete and nothing else, so the
+/// only available next step is "grep everything". A reason narrows it: eleven
+/// receivers the walk could not type is a different job from eleven names with
+/// no import in scope, and `external_boundary` is not a job at all.
+///
+/// Mutation that must break this test: drop the `ORDER BY reason_precedence`,
+/// or count the whole folder instead of the sites naming this symbol.
+#[tokio::test]
+async fn call_coverage_reasons_says_why_the_missing_callers_are_missing() {
+    let s = pg_store().await;
+    let folder = format!("why_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+    // ONE SOURCE PER SITE. `edges_unique_unresolved` is
+    // (folder_id, source_id, target_name, target_file, kind), so several
+    // unplaced sites naming one symbol from one body collapse to ONE row with
+    // merged props — the schema's edge identity (D1). A fixture that ignored it
+    // measured a single surviving reason and read as a query bug.
+    for (i, (names, reason)) in [
+        ("render", "receiver_type_unknown"),
+        ("render", "receiver_type_unknown"),
+        ("render", "external_boundary"),
+        ("render", "no_import_in_scope"),
+        ("unrelated", "receiver_type_unknown"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let caller = s
+            .seed_node(
+                &fid,
+                "function",
+                &format!("caller_{i}"),
+                &format!("src/c{i}.rs"),
+                None,
+                None,
+                Some(1),
+                Some(9),
+            )
+            .await
+            .unwrap();
+        s.insert_edge_with_props(
+            &fid,
+            &caller,
+            None,
+            Some(names),
+            None,
+            "calls",
+            &serde_json::json!({ "reason": reason }),
+        )
+        .await
+        .unwrap();
+    }
+
+    let why = s
+        .call_coverage_reasons(&[fid], "render", crate::db::pg_store::CallDirection::Incoming)
+        .await
+        .unwrap();
+
+    let codes: Vec<&str> = why.iter().filter_map(|r| r["reason"].as_str()).collect();
+    assert_eq!(
+        codes,
+        ["receiver_type_unknown", "no_import_in_scope", "external_boundary"],
+        "ordered by precedence — the most actionable first, the boundary last"
+    );
+    assert_eq!(why[0]["count"], serde_json::json!(2));
+    assert_eq!(why[0]["kind"], serde_json::json!("fault"));
+    assert!(
+        why[0]["explanation"].as_str().is_some_and(|s| s.contains("called on")),
+        "the prose comes with it: {:?}",
+        why[0]["explanation"]
+    );
+    assert_eq!(
+        why.iter().map(|r| r["count"].as_i64().unwrap_or(0)).sum::<i64>(),
+        4,
+        "the site naming `unrelated` is not this symbol's doubt"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// The n-depth blast radius, over the stored graph.
+///
+/// Breadth-first and deduplicated, so a symbol reachable two ways is reported
+/// once at its SHORTEST distance and a cycle terminates. `truncated` separates
+/// "the graph ended" from "the query did" — a reader told an exact answer might
+/// be partial re-runs a query it did not need to.
+///
+/// Mutation that must break this test: drop the `depth < $3` guard (hangs or
+/// over-reports), or report a symbol at its longest distance.
+#[tokio::test]
+async fn impact_of_symbol_walks_callers_to_depth_and_says_when_it_stopped_early() {
+    let s = pg_store().await;
+    let folder = format!("impact_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    // bottom <- middle <- upper <- top, plus a cycle top <- bottom.
+    let mut id = std::collections::HashMap::new();
+    for (n, f) in
+        [("bottom", "src/b.rs"), ("middle", "src/m.rs"), ("upper", "src/u.rs"), ("top", "src/t.rs")]
+    {
+        id.insert(
+            n,
+            s.seed_node(&fid, "function", n, f, None, None, Some(1), Some(9)).await.unwrap(),
+        );
+    }
+    for (from, to) in
+        [("middle", "bottom"), ("upper", "middle"), ("top", "upper"), ("bottom", "top")]
+    {
+        s.insert_edge(&fid, &id[from], Some(&id[to]), None, None, "calls").await.unwrap();
+    }
+
+    let deep = s.impact_of_symbol(&[fid], "bottom", 3).await.unwrap();
+    let at = |d: i64| -> Vec<String> {
+        let mut v: Vec<String> = deep["reached"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["depth"] == serde_json::json!(d))
+            .map(|r| r["name"].as_str().unwrap_or_default().to_string())
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(at(1), ["middle"]);
+    assert_eq!(at(2), ["upper"]);
+    assert_eq!(at(3), ["top"]);
+    assert_eq!(deep["reached"].as_array().unwrap().len(), 3, "the cycle adds nobody");
+    assert_eq!(deep["truncated"], serde_json::json!(false), "the graph ran out first");
+
+    let shallow = s.impact_of_symbol(&[fid], "bottom", 1).await.unwrap();
+    assert_eq!(shallow["reached"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        shallow["truncated"],
+        serde_json::json!(true),
+        "`middle` has a caller that depth 1 did not reach, and the answer says so"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
 /// `graph_boundary` turns a miss into something a reader can act on.
 ///
 /// The reason has been on every unresolved reference since the ladder was built
