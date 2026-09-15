@@ -6,12 +6,12 @@
 //! language look like to the ladder"; this file answers "what did the parser
 //! just hand me". The identity rules are read here and decided there.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tree_sitter::Node;
 
 use super::super::common::{Miss, considered};
-use super::super::{Source, TypeHomes};
+use super::super::{Home, Source, TypeHomes};
 use super::MODULE;
 use super::types::{element_type, simple_type_name};
 use super::types::{type_path, type_segment};
@@ -66,6 +66,7 @@ pub(super) fn walk<'a>(
         package: source.package,
         types,
         declared_fields: BTreeMap::new(),
+        declared_here: BTreeSet::new(),
         symbols: Vec::new(),
         references: Vec::new(),
         relations: Vec::new(),
@@ -227,6 +228,14 @@ struct Walk<'a> {
     /// of a struct declared elsewhere in the file — possibly after it. A scope
     /// only flows downward and could not reach them.
     declared_fields: BTreeMap<String, BTreeMap<String, String>>,
+    /// Every type name THIS FILE declares.
+    ///
+    /// The nearest home there is, and the one `TypeHomes` cannot supply: it is
+    /// built from a completed pass over the whole scan, so a single-file read
+    /// is handed an empty one. Consulting the file first is also simply
+    /// correct — a type declared here lives here, whatever a later barrier
+    /// says.
+    declared_here: BTreeSet<String>,
     symbols: Vec<Symbol>,
     references: Vec<Reference>,
     relations: Vec<Relation>,
@@ -234,6 +243,19 @@ struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
+    /// Where a type lives: THIS FILE first, then the scan, then outside.
+    ///
+    /// The file comes first because it is the nearest home and the one
+    /// `TypeHomes` cannot supply — that table is a barrier artifact built from a
+    /// completed pass, so a single-file read gets an empty one and every local
+    /// type would read as external.
+    fn home_of<'s>(&'s self, scope: &'s Scope, ty: &str) -> Home<'s> {
+        if self.declared_here.contains(ty) {
+            return Home::Ours { module: scope.module.as_str() };
+        }
+        self.types.lookup(self.package, ty)
+    }
+
     fn text(&self, node: Node<'_>) -> &'a str {
         &self.src[node.byte_range()]
     }
@@ -597,6 +619,11 @@ impl<'a> Walk<'a> {
     /// Walk the whole tree once for struct field types. See
     /// [`Walk::declared_fields`].
     fn collect_declared_fields(&mut self, node: Node<'_>) {
+        if matches!(node.kind(), "struct_item" | "union_item" | "enum_item" | "trait_item")
+            && let Some(name) = self.field_text(node, "name")
+        {
+            self.declared_here.insert(name.to_string());
+        }
         if matches!(node.kind(), "struct_item" | "union_item")
             && let Some(name) = self.field_text(node, "name")
         {
@@ -777,11 +804,14 @@ impl<'a> Walk<'a> {
         // where the type lives — or has been told two places — the block's own
         // module stands, which is the previous behaviour and is right whenever
         // the type is declared here.
-        let home = self
-            .types
-            .home_of(self.package, &ty)
-            .map(str::to_string)
-            .unwrap_or_else(|| scope.module.clone());
+        let home = match self.home_of(scope, &ty) {
+            Home::Ours { module } => module.to_string(),
+            // This block DECLARES these members, so they are ours wherever the
+            // type came from — `impl MyTrait for PathBuf` puts our methods in
+            // our module. Unlike the use sites below, nothing is being placed
+            // here; the block's own module is the answer, not a stand-in.
+            Home::Ambiguous | Home::NotOurs => scope.module.clone(),
+        };
 
         let mut inner = scope.clone();
         // A PRE-PASS over this block's methods, before any body is walked: a
@@ -964,16 +994,53 @@ impl<'a> Walk<'a> {
         // USE SITE's module here is what made a call resolve only when the
         // caller happened to share a module with the impl block — the two sides
         // agreeing is the merge contract (§2), not an optimisation.
-        let module = self.types.home_of(self.package, ty).unwrap_or(scope.module.as_str());
-        let considered = considered(fqn::refer(&Form::Member {
-            lang: Language::Rust,
-            package: self.package,
-            module,
-            ty,
-            member,
-            reach,
-        }));
-        unplaced(node, member, reach, considered)
+        match self.home_of(scope, ty) {
+            Home::Ours { module } => {
+                let considered = considered(fqn::refer(&Form::Member {
+                    lang: Language::Rust,
+                    package: self.package,
+                    module,
+                    ty,
+                    member,
+                    reach,
+                }));
+                unplaced(node, member, reach, considered)
+            }
+            // Two first-party types answer to this name, so there is no one
+            // home and picking would be a coin toss recorded as a fact.
+            Home::Ambiguous => Miss {
+                reason: Reason::AmbiguousCandidates,
+                name: member.to_string(),
+                node_kind: node.kind().to_string(),
+                reach,
+                saw: vec![Observation::Receiver(receiver.to_string())],
+            },
+            // NOTHING OF OURS DECLARES THIS TYPE. The receiver IS known — we
+            // read it off a declaration — and it is outside, so this is the
+            // boundary and not a lookup that failed.
+            //
+            // Before this, the use site's own module stood in and the walk
+            // minted a first-party member identity for `Path::join` under the
+            // using file's own module: an identity for a type we do not
+            // declare. MEASURED at 6,109 sites, 5,671 of them surfacing as
+            // `NoImportInScope` — sending a reader after an import that was
+            // never the issue.
+            //
+            // Handing the ladder the PATH instead (`Path::join`, via
+            // `Observation::UnplacedType`) would be better still: it knows the
+            // imports and could name the library member directly, a resolved
+            // external edge. MEASURED and NOT DONE: a path with no import to
+            // bind it gets placed first-party by a later rung instead, which
+            // took dangling identities from 312 to 683. The ladder needs to be
+            // told the type is external, which a bare path cannot say.
+            Home::NotOurs => Miss {
+                reason: Reason::ExternalBoundary,
+                name: member.to_string(),
+                node_kind: node.kind().to_string(),
+                reach,
+                saw: vec![Observation::Receiver(receiver.to_string())],
+            },
+        }
     }
 
     fn member_access(&mut self, node: Node<'_>, scope: &Scope) {
@@ -1094,15 +1161,23 @@ impl<'a> Walk<'a> {
         match segments.as_slice() {
             [name] => considered(fqn::refer(&Form::Item { lang, package, module, name, reach })),
             [ty, member] if !matches!(*ty, "crate" | "self" | "super") => match type_segment(ty) {
-                Ok(ty) => considered(fqn::refer(&Form::Member {
-                    lang,
-                    package,
-                    // The type's home, the same as the declaration side.
-                    module: self.types.home_of(package, &ty).unwrap_or(module),
-                    ty: &ty,
-                    member,
-                    reach,
-                })),
+                // Only when the scan DECLARES the type. `Vec::new()` used to
+                // mint a first-party member identity for `Vec::new` off the
+                // using file's own module — `Vec` headed the measured list at
+                // 1,138 sites. An
+                // empty candidate list leaves the bare path for the ladder,
+                // which resolves it through the import that brought `Vec` in.
+                Ok(ty) => match self.home_of(scope, &ty) {
+                    Home::Ours { module } => considered(fqn::refer(&Form::Member {
+                        lang,
+                        package,
+                        module,
+                        ty: &ty,
+                        member,
+                        reach,
+                    })),
+                    Home::Ambiguous | Home::NotOurs => Vec::new(),
+                },
                 Err(_) => Vec::new(),
             },
             // A longer path is not a thing this walk can read on its own, and a

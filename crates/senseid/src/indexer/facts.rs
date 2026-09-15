@@ -1027,7 +1027,13 @@ mod tests {
     fn nothing_defaults_a_value_it_did_not_read() {
         // Assembled, because this file is one of the ones being read and a
         // literal would match itself.
+        // BOTH spellings. `unwrap_or_default()` and `unwrap_or("")` are the
+        // same act on a `&str`, and the guard matched only the first — so
+        // `javascript.rs`'s `text_of` turned an unreadable span into an empty
+        // string that went on to NAME a symbol, under a guard written to
+        // forbid exactly that.
         let swallowed = format!("unwrap_or_def{}", "ault");
+        let empty_string = format!("unwrap_or({}{})", '"', '"');
         let derived = format!("Def{}", "ault");
         let mut read = 0;
         for (path, body) in crate::indexer::guard_sources() {
@@ -1037,6 +1043,11 @@ mod tests {
                 !body.contains(swallowed.as_str()),
                 "{path} uses `{swallowed}`: a failed read turned into a zero is one a caller \
                  cannot tell from a real one (R4)"
+            );
+            assert!(
+                !body.contains(empty_string.as_str()),
+                "{path} uses `{empty_string}`: an empty string a failed read produced is one a \
+                 caller cannot tell from a name the source actually carried (R4)"
             );
             for line in body.lines() {
                 let trimmed = line.trim_start();
