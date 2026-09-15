@@ -881,4 +881,185 @@ mod tests {
         }
         assert!(read > 0, "the guard read no files, so it would have passed vacuously");
     }
+
+    // ── the merge contract, as a property ────────────────────────────────────
+
+    /// Every shape a walk can mint, in every language, as `(label, form)`.
+    ///
+    /// Built here rather than per-test so a new `Form` variant or a new
+    /// `Language` shows up in all three properties below at once. The empty
+    /// module is included DELIBERATELY: Java has one for every declaration, and
+    /// it is the segment most likely to be rendered two ways.
+    fn every_shape() -> Vec<(String, Form<'static>)> {
+        let mut out = Vec::new();
+        for lang in Language::all() {
+            // `Ty` is in this list ON PURPOSE. With distinct names per
+            // position — module `m`, type `Ty` — no two shapes can collide and
+            // the collision property passes vacuously. A module named like a
+            // type is the case that probes it, and Rust has plenty: `impl` in a
+            // module called `Patient` is ordinary.
+            for module in ["", "m", "m::deep", "Ty"] {
+                let tag = |what: &str| format!("{:?}/{what}/module={module:?}", lang);
+                out.push((
+                    tag("Item"),
+                    Form::Item {
+                        lang: *lang,
+                        package: "p",
+                        module: Box::leak(module.to_string().into_boxed_str()),
+                        name: "thing",
+                        reach: Reach::Item,
+                    },
+                ));
+                out.push((
+                    tag("Member"),
+                    Form::Member {
+                        lang: *lang,
+                        package: "p",
+                        module: Box::leak(module.to_string().into_boxed_str()),
+                        ty: "Ty",
+                        member: "thing",
+                        reach: Reach::Item,
+                    },
+                ));
+                out.push((
+                    tag("TraitMember"),
+                    Form::TraitMember {
+                        lang: *lang,
+                        package: "p",
+                        module: Box::leak(module.to_string().into_boxed_str()),
+                        ty: "Ty",
+                        tr: "Tr",
+                        member: "thing",
+                        reach: Reach::Item,
+                    },
+                ));
+            }
+        }
+        out.push(("Lib".to_string(), Form::Lib { package: "serde", member: "Value" }));
+        out
+    }
+
+    /// **THE MERGE CONTRACT.** The declaration side and the reference side,
+    /// handed the same symbol, must produce the same string (spec §2).
+    ///
+    /// Everything downstream rests on this and nothing tested it directly. A7's
+    /// collision count and the corpus dangling-edge counts are both DOWNSTREAM
+    /// measurements: they say something broke without saying what, which is why
+    /// diagnosing a Java mismatch needed a throwaway probe rather than a test to
+    /// consult.
+    #[test]
+    fn define_and_refer_agree_on_every_shape_in_every_language() {
+        for (label, form) in every_shape() {
+            let defined = define(&form);
+            let referred = refer(&form);
+            match (&defined, &referred) {
+                (Ok(d), Ok(r)) => assert_eq!(
+                    d.as_str(),
+                    r.as_str(),
+                    "{label}: the two sides mint different strings for one symbol"
+                ),
+                (Err(d), Err(r)) => assert_eq!(
+                    format!("{d:?}"),
+                    format!("{r:?}"),
+                    "{label}: the two sides refuse it for different reasons"
+                ),
+                _ => panic!("{label}: one side minted and the other refused"),
+            }
+        }
+    }
+
+    /// What is minted can be read back: the language, the package and the reach
+    /// survive the round trip.
+    ///
+    /// NOT the whole form. `parse` returns `tail` as an undifferentiated list,
+    /// so `module=m, name=n` and `ty=m, member=n` read back identically — see
+    /// the next test, which measures that rather than wishing it away.
+    #[test]
+    fn what_is_minted_parses_back_to_the_language_package_and_reach() {
+        for (label, form) in every_shape() {
+            let Ok(fqn) = define(&form) else { continue };
+            let parsed = parse(fqn.as_str())
+                .unwrap_or_else(|e| panic!("{label}: {fqn} does not parse: {e:?}"));
+            let want_package = match form {
+                Form::Lib { package, .. } => package,
+                Form::Item { package, .. }
+                | Form::Member { package, .. }
+                | Form::TraitMember { package, .. } => package,
+            };
+            assert_eq!(parsed.package, want_package, "{label}: the package did not survive");
+            assert!(!parsed.tail.is_empty(), "{label}: {fqn} carries no name");
+            match (&form, parsed.origin) {
+                (Form::Lib { .. }, Origin::Lib) => {}
+                (_, Origin::Local { lang, reach }) => {
+                    let want = match form {
+                        Form::Item { lang, .. }
+                        | Form::Member { lang, .. }
+                        | Form::TraitMember { lang, .. } => lang,
+                        Form::Lib { .. } => unreachable!("Lib matched above"),
+                    };
+                    assert_eq!(lang, want, "{label}: the language did not survive");
+                    assert_eq!(reach, Reach::Item, "{label}: the reach did not survive");
+                }
+                (f, o) => panic!("{label}: {f:?} came back as {o:?}"),
+            }
+        }
+    }
+
+    /// Two DIFFERENT symbols must not mint one string.
+    ///
+    /// This is A7 at the grammar level rather than over a corpus: A7 finds
+    /// collisions that happened, this finds shapes that CAN collide. Where the
+    /// grammar admits one, the pair is listed — a documented collision class is
+    /// a thing a reader can weigh, and an undocumented one is a wrong edge
+    /// nobody can see.
+    #[test]
+    fn no_two_shapes_mint_one_string() {
+        let mut by_string: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for (label, form) in every_shape() {
+            if let Ok(fqn) = define(&form) {
+                by_string.entry(fqn.as_str().to_string()).or_default().push(label);
+            }
+        }
+        let collisions: Vec<(&String, &Vec<String>)> =
+            by_string.iter().filter(|(_, who)| who.len() > 1).collect();
+
+        // ONE KNOWN CLASS, in every language: an ITEM in a module named like a
+        // type is spelled the same as a MEMBER of that type at the package
+        // root, because the module segment and the type segment sit in the same
+        // position and nothing marks which is which.
+        //
+        //     Item   { module: "Ty", name: "thing" }
+        //     Member { module: "",   ty: "Ty", member: "thing" }
+        //
+        // Latent rather than live, for different reasons per language. Rust and
+        // TypeScript need a module named in CamelCase, which is legal and
+        // uncommon. JAVA HAS THE SHAPE EVERYWHERE — its module is empty for
+        // every declaration — but Java has no free items outside a class, so
+        // the `Item` side of the pair is never minted and the two never meet.
+        //
+        // Recorded rather than fixed: closing it means a marker segment in
+        // every fqn this repository has ever written. The ratchet is what makes
+        // a SECOND class fail loudly instead of joining an unexamined list.
+        let known: usize = Language::all().len();
+        assert_eq!(
+            collisions.len(),
+            known,
+            "the grammar admits {} colliding strings, not the {known} known \
+             (one per language, item-in-a-type-named-module vs member):\n{}",
+            collisions.len(),
+            collisions
+                .iter()
+                .map(|(s, who)| format!("  {s}\n    {}", who.join("\n    ")))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        for (minted, who) in &collisions {
+            assert!(
+                who.iter().any(|w| w.contains("Item")) && who.iter().any(|w| w.contains("Member")),
+                "{minted} is a collision between {who:?}, which is NOT the known \
+                 item-versus-member class"
+            );
+        }
+    }
 }
