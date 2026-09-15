@@ -267,6 +267,52 @@ fn report() {
 
     let total: usize = cells.values().sum();
     assert!(total > 0, "the corpus produced no references at all");
+
+    // ── the classification itself, ratcheted ─────────────────────────────────
+    //
+    // This report PRINTED for a long time and asserted almost nothing about the
+    // histogram, so a shared-ladder change could reclassify half the corpus and
+    // the only signal would be a person reading two runs side by side.
+    //
+    // SHARES, not counts. The Rust corpus is this repository, so it grows every
+    // time the indexer does — 124,185 references became 124,684 in one session
+    // of adding tests — and a count floor would fail on growth or pass on
+    // regression depending on which moved faster.
+    for language in &languages {
+        let placed = cells.get(&(*language, "RESOLVED".to_string())).copied().unwrap_or(0);
+        let seen: usize = std::iter::once("RESOLVED")
+            .chain(reasons)
+            .map(|r| cells.get(&(*language, r.to_string())).copied().unwrap_or(0))
+            .sum();
+        if seen == 0 {
+            continue;
+        }
+        let share = 100.0 * placed as f64 / seen as f64;
+        // MEASURED: rust 48.7%, typescript 40.4%. A point of slack, because the
+        // corpus moves under us; anything larger is a change in behaviour and
+        // has to be looked at rather than absorbed.
+        let floor = match *language {
+            "rust" => 47.7,
+            "typescript" => 39.4,
+            _ => 0.0,
+        };
+        assert!(
+            share >= floor,
+            "{language} resolves {share:.1}% of its references, below the {floor}% measured — \
+             a shared-ladder change has reclassified something"
+        );
+    }
+
+    // A3's core, and it was asserted only for Java. Every reference reaches a
+    // verdict: `Unplaced` means the ladder returned without answering, which is
+    // the one reason no reader can act on.
+    for language in &languages {
+        assert_eq!(
+            cells.get(&(*language, "Unplaced".to_string())).copied().unwrap_or(0),
+            0,
+            "{language} left references with no verdict at all"
+        );
+    }
     // The three groups are a PARTITION. If they stop summing to the whole, a
     // variant has been added that `casts_doubt` has not been taught about, and
     // the group table is quietly reporting a smaller corpus than the one above.
