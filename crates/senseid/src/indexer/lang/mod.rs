@@ -38,6 +38,7 @@
 #![allow(dead_code)]
 
 pub mod common;
+pub mod java;
 pub mod javascript;
 pub mod rust;
 pub mod svelte;
@@ -289,6 +290,7 @@ pub trait LanguageAdapter: Send + Sync {
 pub fn all_adapters() -> &'static [&'static dyn LanguageAdapter] {
     &[
         &rust::RustAdapter,
+        &java::JavaAdapter,
         &javascript::TypeScriptAdapter,
         &javascript::JavaScriptAdapter,
         &svelte::SvelteAdapter,
@@ -477,6 +479,13 @@ mod tests {
             "javascript" => {
                 "export class Widget { wide() { return 1; } }\n\
                  export function free() { const w = new Widget(); return w.wide(); }\n"
+            }
+            "java" => {
+                "package p;\n\
+                 public class Widget {\n\
+                   private int width;\n\
+                   public int wide() { return this.width; }\n\
+                 }\n"
             }
             "svelte" => {
                 "<script>\n\

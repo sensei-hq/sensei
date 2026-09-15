@@ -150,7 +150,7 @@ fn report() {
         "ReceiverTypeUnknown",
         "AmbiguousCandidates",
         "DynamicDispatch",
-        "Denylisted",
+        "Plumbing",
         "ExternalBoundary",
         "NoDeclaredType",
         "MacroExpansion",
@@ -234,6 +234,30 @@ fn report() {
         row(reason, &|l| cells.get(&(l, reason.to_string())).copied().unwrap_or(0));
     }
 
+    // The partition the prose kept reaching for. Stated in the table so nobody
+    // has to invent a word for it — and the words invented so far collided with
+    // `Unplaced`, which is a real variant meaning something else entirely.
+    let doubt = |l: &str| -> usize {
+        super::facts::Reason::ALL
+            .iter()
+            .filter(|r| r.casts_doubt())
+            .map(|r| cells.get(&(l, format!("{r:?}"))).copied().unwrap_or(0))
+            .sum()
+    };
+    let verdicts = |l: &str| -> usize {
+        super::facts::Reason::ALL
+            .iter()
+            .filter(|r| !r.casts_doubt())
+            .map(|r| cells.get(&(l, format!("{r:?}"))).copied().unwrap_or(0))
+            .sum()
+    };
+    println!("\n## The same references, in the three groups that mean different things\n");
+    println!("{header}");
+    println!("{rule}");
+    row("placed", &|l| cells.get(&(l, "RESOLVED".to_string())).copied().unwrap_or(0));
+    row("outside, by verdict", &verdicts);
+    row("doubt — a real gap", &doubt);
+
     println!("\n## Resolved references, by the rung that placed them\n");
     println!("{header}");
     println!("{rule}");
@@ -243,6 +267,20 @@ fn report() {
 
     let total: usize = cells.values().sum();
     assert!(total > 0, "the corpus produced no references at all");
+    // The three groups are a PARTITION. If they stop summing to the whole, a
+    // variant has been added that `casts_doubt` has not been taught about, and
+    // the group table is quietly reporting a smaller corpus than the one above.
+    let grouped: usize = languages
+        .iter()
+        .map(|l| {
+            cells.get(&(*l, "RESOLVED".to_string())).copied().unwrap_or(0) + doubt(l) + verdicts(l)
+        })
+        .sum();
+    assert_eq!(
+        grouped, total,
+        "placed + verdict + doubt is {grouped} of {total} — the three groups must partition \
+         every reference, or the split is hiding some"
+    );
     // The rungs must account for every RESOLVED reference. They are the only
     // way `climb` can return one, so a shortfall means a resolution was minted
     // somewhere that does not say which rung minted it.

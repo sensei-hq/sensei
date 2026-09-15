@@ -80,22 +80,6 @@ pub struct Boundary {
 /// [`Impact::boundary_total`].
 pub const MAX_BOUNDARY_SITES: usize = 50;
 
-/// Does an unplaced site cast doubt on a first-party symbol, or has the ladder
-/// already placed it outside?
-///
-/// Two reasons are verdicts rather than failures. [`Reason::Denylisted`] is
-/// documented as "filtering, not failure" — `.clone()` on an untyped receiver
-/// is plumbing. [`Reason::ExternalBoundary`] is decided by "nothing we index
-/// declares this name", which is the ladder saying the world ends here. Both
-/// share a bare NAME with first-party declarations often enough to matter:
-/// measured over this repo they contributed 10,398 boundary sites, headed by
-/// `map` (1,995), `into` (1,352), `as_str` (1,107) and `collect` (1,094) —
-/// every one a standard-library method. Counting a verdict as uncertainty
-/// makes the graph look least sure where it is most.
-fn casts_doubt(reason: Reason) -> bool {
-    !matches!(reason, Reason::Denylisted | Reason::ExternalBoundary)
-}
-
 /// The answer to "what does changing this touch".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Impact {
@@ -349,7 +333,7 @@ impl<'a> Graph<'a> {
             let Some(name) = self.names.get(member) else { continue };
             let Some(misses) = self.misses_by_name.get(*name) else { continue };
             for miss in misses {
-                if !casts_doubt(miss.reason) || radius.contains(&miss.from) {
+                if !miss.reason.casts_doubt() || radius.contains(&miss.from) {
                     continue;
                 }
                 // One site can name two radius members only if two members
@@ -832,7 +816,7 @@ pub fn three(c: Mystery) { c.open(); }
     /// A reason that POSITIVELY places a site outside is not doubt about a
     /// symbol inside.
     ///
-    /// `Denylisted` is documented as "filtering, not failure": `.clone()` on an
+    /// `Plumbing` is documented as "filtering, not failure": `.clone()` on an
     /// untyped receiver is plumbing, and it is not a candidate caller of a
     /// first-party `clone` however many we declare. `ExternalBoundary` is
     /// decided by "nothing we index declares this name as a member" — the
@@ -864,7 +848,7 @@ pub fn genuine() { let y = make(); y.real(); }
         let filtered = graph.impact_of(&fqn_of(&files, "clone"), 3);
         assert!(
             filtered.boundary.is_empty(),
-            "denylisted plumbing is not a candidate caller: {:?}",
+            "filtered plumbing is not a candidate caller: {:?}",
             filtered.boundary.iter().map(|b| b.reason.as_label()).collect::<Vec<_>>()
         );
 
