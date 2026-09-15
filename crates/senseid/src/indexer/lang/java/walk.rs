@@ -144,6 +144,25 @@ impl<'a> Walk<'a> {
         node.child_by_field_name(name).map(|c| self.text(c))
     }
 
+    /// Record that the enclosing type owns this declaration.
+    ///
+    /// `RelationKind::Owns` is the vocabulary for "this type declares this
+    /// member", and it is the fact a member rung needs — no `SymbolKind` filter
+    /// substitutes for it, because which kinds are type-owned differs per
+    /// language. Java emitted NONE of these and every test passed, because no
+    /// check compared the languages on it. 54,192 declarations, zero edges.
+    fn owned_by_the_enclosing_type(&mut self, scope: &Scope, child: &Fqn, at: Span) {
+        let Container::Type { .. } = &scope.container else { return };
+        self.relations.push(Relation {
+            kind: RelationKind::Owns,
+            child: child.clone(),
+            // Proven, not guessed: `scope.from` is the identity this walk minted
+            // for the enclosing type, from a declaration it read in this file.
+            parent: Resolution::Resolved { fqn: scope.from.clone(), via: Rung::DeclaredHere },
+            at,
+        });
+    }
+
     /// Mint the identity of a declaration in the current container.
     fn declare(&self, scope: &Scope, member: &str, reach: Reach) -> Result<Fqn, FqnError> {
         let lang = Language::Java;
@@ -259,6 +278,7 @@ impl<'a> Walk<'a> {
         self.children(scope, node);
         let Some(name) = self.field_text(node, "name") else { return };
         let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
+        self.owned_by_the_enclosing_type(scope, &fqn, span(node));
         self.symbols.push(Symbol {
             fqn,
             kind: SymbolKind::EnumVariant,
@@ -302,6 +322,7 @@ impl<'a> Walk<'a> {
             }
         }
         self.annotations(scope, node, &fqn);
+        self.owned_by_the_enclosing_type(scope, &fqn, span(node));
 
         let inner = Scope {
             from: fqn,
@@ -402,6 +423,7 @@ impl<'a> Walk<'a> {
             declared_type: returns,
             params,
         });
+        self.owned_by_the_enclosing_type(scope, &fqn, span(node));
         self.annotations(scope, node, &fqn);
         self.type_use(scope, node, "type");
         match node.child_by_field_name("body") {
@@ -445,6 +467,7 @@ impl<'a> Walk<'a> {
                 },
                 params: Vec::new(),
             });
+            self.owned_by_the_enclosing_type(scope, &fqn, span(declarator));
             self.annotations(scope, node, &fqn);
         }
         self.type_use(scope, node, "type");
