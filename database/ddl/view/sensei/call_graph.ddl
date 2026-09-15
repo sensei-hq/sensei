@@ -45,6 +45,16 @@ select e.id              as edge_id
      -- replace view` may only add columns at the end.
      , e.props->>'reason' as unresolved_reason
      , src.language       as source_language
+     -- WHICH RUNG of the resolution ladder placed a resolved edge. The
+     -- sibling of unresolved_reason above: that one says why the ladder
+     -- stopped, this one says how it got there. `declared_here` is a file
+     -- pointing at its own declaration; `through_a_glob` is a name the source
+     -- never wrote down. Same `target_id`, very different evidence.
+     --
+     -- Vocabulary: sensei.reason_codes under domain `code_graph_rung`, whose
+     -- precedence is CLIMB ORDER. Written by the indexer into `props.rung`;
+     -- Rung::as_label on the Rust side is the one producer of these strings.
+     , e.props->>'rung'   as resolved_via
   from edges         e
   join folders       f
     on f.id          = e.folder_id

@@ -36,7 +36,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::facts::{
     Binding, Evidence, FileFacts, Fqn, Import, ImportOrigin, Language, Observation, Reason,
-    Reference, Relation, Resolution, Span, SymbolKind,
+    Reference, Relation, Resolution, Rung, Span, SymbolKind,
 };
 use super::fqn::{self, Form, Reach};
 
@@ -287,7 +287,9 @@ impl<'a> Ladder<'a> {
 
     fn place(&self, target: &Resolution, at: Span) -> Resolution {
         match target {
-            Resolution::Resolved(fqn) => Resolution::Resolved(fqn.clone()),
+            Resolution::Resolved { fqn, via } => {
+                Resolution::Resolved { fqn: fqn.clone(), via: *via }
+            }
             // Every reason but `Unplaced` states a cause that still holds after
             // the ladder has run, so the ladder does not overrule it.
             Resolution::Unresolved { reason: Reason::Unplaced, evidence } => {
@@ -304,7 +306,7 @@ impl<'a> Ladder<'a> {
     /// the source; a rung that cannot prove one does not guess (R4).
     fn climb(&self, evidence: &Evidence, at: Span) -> Resolution {
         if let Placed::Proven(fqn) = self.declared_here(evidence) {
-            return Resolution::Resolved(fqn);
+            return Resolution::Resolved { fqn, via: Rung::DeclaredHere };
         }
         let wanted = self.wanted(evidence);
         // A FIELD is reachable through no path, so no path rung may serve one.
@@ -332,23 +334,25 @@ impl<'a> Ladder<'a> {
             };
         }
         if let Placed::Proven(fqn) = self.through_an_import(&wanted, at) {
-            return Resolution::Resolved(fqn);
+            return Resolution::Resolved { fqn, via: Rung::ThroughAnImport };
         }
         if let Placed::Proven(fqn) = self.through_a_glob(&wanted, at) {
-            return Resolution::Resolved(fqn);
+            return Resolution::Resolved { fqn, via: Rung::ThroughAGlob };
         }
         if let Placed::Proven(fqn) = self.rooted_in_this_package(&wanted, at) {
-            return Resolution::Resolved(fqn);
+            return Resolution::Resolved { fqn, via: Rung::RootedInThisPackage };
         }
         if let Placed::Proven(fqn) = self.a_fully_qualified_external(&wanted) {
-            return Resolution::Resolved(fqn);
+            return Resolution::Resolved { fqn, via: Rung::FullyQualifiedExternal };
         }
         // Rung 4 is the only one a glob can overrule: an explicit item and an
         // explicit import both outrank a glob, but a glob outranks the prelude.
         // So a glob in scope over a name the prelude also has leaves two
         // possible origins and nothing to tell them apart.
         match (self.in_the_prelude(&wanted), self.a_glob_binds_at(at)) {
-            (Placed::Proven(fqn), false) => return Resolution::Resolved(fqn),
+            (Placed::Proven(fqn), false) => {
+                return Resolution::Resolved { fqn, via: Rung::InThePrelude };
+            }
             (Placed::Proven(_), true) => return self.shadowed_by_a_glob(evidence, at),
             (Placed::Unbound, _) => {}
         }
@@ -791,7 +795,7 @@ fn same_package(one: &str, other: &str) -> bool {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use crate::indexer::facts::{FileFacts, RefKind, Reference, Resolution};
+    use crate::indexer::facts::{FileFacts, RefKind, Reference, Resolution, Rung};
     use crate::indexer::fqn;
     use crate::indexer::lang::rust;
     use crate::indexer::lang::{Source, TypeHomes};
@@ -800,7 +804,7 @@ mod tests {
 
     fn placed(reference: &Reference) -> &str {
         match &reference.target {
-            Resolution::Resolved(fqn) => fqn.as_str(),
+            Resolution::Resolved { fqn, .. } => fqn.as_str(),
             Resolution::Unresolved { reason, evidence } => {
                 panic!("expected a resolution, got {reason:?} for {}", evidence.name)
             }
@@ -840,7 +844,7 @@ mod tests {
             .references
             .iter()
             .map(|r| match &r.target {
-                Resolution::Resolved(fqn) => fqn.as_str().to_string(),
+                Resolution::Resolved { fqn, .. } => fqn.as_str().to_string(),
                 Resolution::Unresolved { reason, evidence } => {
                     format!("{reason:?}({})", evidence.name)
                 }
@@ -851,6 +855,61 @@ mod tests {
     fn assert_placed(facts: &FileFacts, expected: &str) {
         let got = targets(facts);
         assert!(got.iter().any(|t| t == expected), "no reference reached {expected}; got {got:?}");
+    }
+
+    /// Every placed edge records WHICH RUNG placed it.
+    ///
+    /// The rungs are not interchangeable. `declared_here` is the file pointing
+    /// at its own declaration; `in_the_prelude` is a language-wide default that
+    /// any file could have shadowed. Both arrive as `Resolved`, and a consumer
+    /// handed only that treats the weakest claim the ladder makes exactly like
+    /// the strongest.
+    ///
+    /// It is also the one field that maps an edge back to the code that made
+    /// it: a rung IS a function in this file, so a wrong edge tagged
+    /// `through_a_glob` names `through_a_glob` as the thing to go and read.
+    #[test]
+    fn every_placed_reference_records_the_rung_that_placed_it() {
+        let facts = ladder(
+            "m",
+            "use crate::db::PgStore;\nfn helper() {}\nfn f() { helper(); PgStore::connect(); Some(1); }",
+        );
+        let via = |fqn: &str| -> Rung {
+            facts
+                .references
+                .iter()
+                .find_map(|r| match &r.target {
+                    Resolution::Resolved { fqn: f, via } if f.as_str() == fqn => Some(*via),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("nothing placed {fqn}"))
+        };
+        assert_eq!(via("rust·p·m·helper·item"), Rung::DeclaredHere);
+        assert_eq!(via("rust·p·db·PgStore·connect·item"), Rung::ThroughAnImport);
+        assert_eq!(via("lib·std·option::Option::Some"), Rung::InThePrelude);
+    }
+
+    /// The labels round-trip and cover the ladder, exactly as the reasons do.
+    /// `Rung::ALL` is in climb order, so a reader of the list reads the ladder.
+    #[test]
+    fn the_rung_labels_round_trip_and_cover_every_rung() {
+        for rung in Rung::ALL {
+            assert_eq!(Rung::from_label(rung.as_label()), Some(*rung), "{rung:?} lost its label");
+        }
+        assert_eq!(Rung::from_label("not_a_rung"), None);
+        assert_eq!(
+            Rung::ALL.iter().map(|r| r.as_label()).collect::<Vec<_>>(),
+            [
+                "declared_here",
+                "through_an_import",
+                "through_a_glob",
+                "rooted_in_this_package",
+                "fully_qualified_external",
+                "in_the_prelude",
+            ],
+            "ALL is the ladder in climb order — a reordering here is a claim that the \
+             ladder tries them differently"
+        );
     }
 
     /// The first rung. A name the walk minted a candidate for, whose candidate is
@@ -1126,7 +1185,9 @@ mod tests {
             .iter()
             .filter(|r| r.kind != crate::indexer::facts::RelationKind::Owns)
             .map(|r| match &r.parent {
-                Resolution::Resolved(fqn) => format!("{:?} -> {}", r.kind, fqn.as_str()),
+                Resolution::Resolved { fqn, .. } => {
+                    format!("{:?} -> {}", r.kind, fqn.as_str())
+                }
                 Resolution::Unresolved { reason, evidence } => {
                     format!("{:?} -> {reason:?}({})", r.kind, evidence.name)
                 }
@@ -1258,7 +1319,7 @@ mod tests {
             for reference in &facts.references {
                 total += 1;
                 match &reference.target {
-                    Resolution::Resolved(_) => resolved += 1,
+                    Resolution::Resolved { .. } => resolved += 1,
                     Resolution::Unresolved { reason, evidence } => {
                         unresolved += 1;
                         assert_ne!(
@@ -1285,7 +1346,7 @@ mod tests {
             for relation in &facts.relations {
                 structural += 1;
                 match &relation.parent {
-                    Resolution::Resolved(_) => structural_resolved += 1,
+                    Resolution::Resolved { .. } => structural_resolved += 1,
                     Resolution::Unresolved { reason, evidence } => {
                         assert_ne!(
                             *reason,
@@ -1395,7 +1456,7 @@ mod tests {
                     continue;
                 }
                 total += 1;
-                let Resolution::Resolved(parent) = &relation.parent else {
+                let Resolution::Resolved { fqn: parent, .. } = &relation.parent else {
                     panic!(
                         "{path}: an ownership edge is minted from a declaration this walk \
                             read, so it is never a miss"
@@ -1506,7 +1567,7 @@ mod tests {
                 .map(|r| &r.target)
                 .chain(placed.relations.iter().map(|r| &r.parent));
             for target in targets {
-                let Resolution::Resolved(fqn) = target else {
+                let Resolution::Resolved { fqn, .. } = target else {
                     continue;
                 };
                 let Ok(parsed) = fqn::parse(fqn.as_str()) else {
@@ -1751,7 +1812,7 @@ mod tests {
         let mut through_a_trait: BTreeMap<String, usize> = BTreeMap::new();
         for (_, facts) in walked {
             for reference in resolve(facts, &rust::GRAMMAR, &world).references {
-                let Resolution::Resolved(fqn) = &reference.target else {
+                let Resolution::Resolved { fqn, .. } = &reference.target else {
                     continue;
                 };
                 let Ok(parsed) = fqn::parse(fqn.as_str()) else {

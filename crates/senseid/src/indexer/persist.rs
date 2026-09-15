@@ -83,7 +83,7 @@ use crate::graph_facts::{EdgeFact, OnMiss, TargetRef};
 
 use super::facts::{
     Binding, DeclaredType, Evidence, FileFacts, Import, ImportOrigin, Language, Observation, Param,
-    Reason, RefKind, Reference, Relation, RelationKind, Resolution, Span, Symbol, SymbolKind,
+    Reason, RefKind, Reference, Relation, RelationKind, Resolution, Rung, Span, Symbol, SymbolKind,
     Visibility,
 };
 use super::fqn::{self, Origin, Reach};
@@ -146,7 +146,7 @@ impl SymbolRow {
 /// no shape here meaning "nothing", so a miss cannot be written as an absence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TargetRow {
-    Resolved(String),
+    Resolved { fqn: String, via: Rung },
     Unresolved { reason: Reason, evidence: EvidenceRow },
 }
 
@@ -193,7 +193,9 @@ impl ReferenceRow {
 
 fn target_row_of(target: &Resolution) -> TargetRow {
     match target {
-        Resolution::Resolved(fqn) => TargetRow::Resolved(fqn.as_str().to_string()),
+        Resolution::Resolved { fqn, via } => {
+            TargetRow::Resolved { fqn: fqn.as_str().to_string(), via: *via }
+        }
         Resolution::Unresolved { reason, evidence } => {
             let Evidence { name, node_kind, reach, saw } = evidence;
             TargetRow::Unresolved {
@@ -499,9 +501,14 @@ enum Occurrence {
 /// is the edge's `target_id` — a column — so reading it back out of props would
 /// be the round trip comparing a copy of the props with itself instead of with
 /// the edge.
+///
+/// It DOES carry the rung, because that is the one thing about a proven edge
+/// the columns cannot say. Without it a consumer cannot tell a declaration the
+/// file points at itself from a name a glob happened to cover, and a wrong edge
+/// names no function to go and read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Outcome {
-    Proven,
+    Proven { via: Rung },
     Missed { reason: Reason, evidence: EvidenceRow },
 }
 
@@ -557,7 +564,7 @@ fn edge_rows_of(facts: &FileFacts, file: &str) -> Vec<EdgeRow> {
 
 fn target_key_and_outcome(target: &Resolution) -> (TargetKey, Outcome) {
     match target_row_of(target) {
-        TargetRow::Resolved(fqn) => (TargetKey::Proven(fqn), Outcome::Proven),
+        TargetRow::Resolved { fqn, via } => (TargetKey::Proven(fqn), Outcome::Proven { via }),
         TargetRow::Unresolved { reason, evidence } => {
             (TargetKey::Named(evidence.name.clone()), Outcome::Missed { reason, evidence })
         }
@@ -756,9 +763,14 @@ fn occurrence_prop(occurrence: &Occurrence) -> serde_json::Value {
 }
 
 fn with_outcome(mut prop: serde_json::Value, outcome: &Outcome) -> serde_json::Value {
-    if let Outcome::Missed { reason, evidence } = outcome {
-        prop["reason"] = serde_json::Value::String(reason.as_label().to_string());
-        prop["evidence"] = evidence_prop(evidence);
+    match outcome {
+        Outcome::Proven { via } => {
+            prop["rung"] = serde_json::Value::String(via.as_label().to_string());
+        }
+        Outcome::Missed { reason, evidence } => {
+            prop["reason"] = serde_json::Value::String(reason.as_label().to_string());
+            prop["evidence"] = evidence_prop(evidence);
+        }
     }
     prop
 }
@@ -787,7 +799,11 @@ fn origin_from_prop(value: &serde_json::Value) -> Option<OriginRow> {
 /// a malformed row and errors rather than being read as a proof.
 fn outcome_from_prop(value: &serde_json::Value) -> Option<Outcome> {
     let Some(reason) = value.get("reason") else {
-        return Some(Outcome::Proven);
+        // A prop with no `rung` either predates this column or was written by
+        // another producer. `None` rather than a default rung: a fabricated
+        // provenance is indistinguishable from a read one, which is the whole
+        // reason the rung exists (R4).
+        return Some(Outcome::Proven { via: Rung::from_label(value.get("rung")?.as_str()?)? });
     };
     Some(Outcome::Missed {
         reason: Reason::from_label(reason.as_str()?)?,
@@ -1010,7 +1026,9 @@ fn owners(facts: &FileFacts) -> HashMap<&str, &str> {
         .iter()
         .filter(|relation| relation.kind == RelationKind::Owns)
         .filter_map(|relation| match &relation.parent {
-            Resolution::Resolved(parent) => Some((relation.child.as_str(), parent.as_str())),
+            Resolution::Resolved { fqn: parent, .. } => {
+                Some((relation.child.as_str(), parent.as_str()))
+            }
             Resolution::Unresolved { .. } => None,
         })
         .collect()
@@ -1253,7 +1271,9 @@ fn read_edge_into(edge: &EdgeColumns, stored: &mut Stored) -> Result<(), String>
             Occurrence::Use { kind, at, outcome } => {
                 filed_as(&[&kind], edge_kind_holds_uses(column).contains(&kind))?;
                 let target = match outcome {
-                    Outcome::Proven => TargetRow::Resolved(proven("use site")?),
+                    Outcome::Proven { via } => {
+                        TargetRow::Resolved { fqn: proven("use site")?, via }
+                    }
                     Outcome::Missed { reason, evidence } => missed("use site", reason, evidence)?,
                 };
                 stored.references.push(ReferenceRow { from: source_fqn.clone(), kind, at, target });
@@ -1261,7 +1281,9 @@ fn read_edge_into(edge: &EdgeColumns, stored: &mut Stored) -> Result<(), String>
             Occurrence::Structure { kind, at, outcome } => {
                 filed_as(&[&kind], edge_kind_holds_structure(column).contains(&kind))?;
                 let parent = match outcome {
-                    Outcome::Proven => TargetRow::Resolved(proven("relation")?),
+                    Outcome::Proven { via } => {
+                        TargetRow::Resolved { fqn: proven("relation")?, via }
+                    }
                     Outcome::Missed { reason, evidence } => missed("relation", reason, evidence)?,
                 };
                 stored.relations.push(RelationRow { kind, child: source_fqn.clone(), parent, at });
@@ -1477,7 +1499,7 @@ mod tests {
     use crate::db::pg_store::PgStore;
     use crate::db::pg_store::tests::create_test_folder;
     use crate::indexer::facts::{
-        DeclaredType, FileFacts, Language, Param, Reason, RelationKind, Symbol,
+        DeclaredType, FileFacts, Language, Param, Reason, RelationKind, Rung, Symbol,
     };
     use crate::indexer::lang::rust;
     use crate::indexer::lang::{Source, TypeHomes};
@@ -1729,6 +1751,43 @@ pub fn widest(a: u32) -> u32 {
         same_rows(stored.references.clone(), expected, "every use site the walk saw");
     }
 
+    /// The symmetric verification: a RESOLVED reference is a row carrying the
+    /// rung that placed it.
+    ///
+    /// `target_id` says which target, so the rung is the only thing about a
+    /// proven edge that the columns cannot say. Without it, a consumer reading
+    /// the graph back cannot tell a declaration the file points at itself from
+    /// a name a glob happened to cover, and cannot tell which function in
+    /// `resolve.rs` to go and read when the edge is wrong.
+    #[tokio::test]
+    async fn a_resolved_reference_is_a_row_carrying_the_rung_that_placed_it() {
+        let facts = walked();
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "rungs").await;
+
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
+        let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
+
+        let rungs: Vec<Rung> = stored
+            .references
+            .iter()
+            .filter_map(|r| match &r.target {
+                persist::TargetRow::Resolved { via, .. } => Some(*via),
+                persist::TargetRow::Unresolved { .. } => None,
+            })
+            .collect();
+        assert!(!rungs.is_empty(), "the fixture must place something");
+        assert!(
+            rungs.contains(&Rung::DeclaredHere),
+            "the fixture calls a function it declares, which is the first rung: {rungs:?}"
+        );
+        // And it round-trips as itself, not as a default that every row would
+        // also carry.
+        let expected: Vec<persist::ReferenceRow> =
+            facts.references.iter().map(persist::ReferenceRow::of).collect();
+        same_rows(stored.references.clone(), expected, "every use site, rung included");
+    }
+
     /// The named verification: an unresolved reference is a ROW carrying its
     /// reason, never an absence. `nowhere_at_all` is declared nowhere and
     /// imported by nothing, so the ladder refuses it — and that refusal, with
@@ -1813,9 +1872,9 @@ pub fn widest(a: u32) -> u32 {
         assert_eq!(
             kinds,
             vec![
-                "Extends Resolved(\"lib·std·marker::Sized\")".to_string(),
+                "Extends Resolved { fqn: \"lib·std·marker::Sized\", via: InThePrelude }".to_string(),
                 "Extends Unresolved { reason: NoImportInScope, evidence: EvidenceRow { name: \"Nowhere\", node_kind: \"type_identifier\", reach: Item, saw: [Candidate(\"rust·senseid·gadget·Nowhere·item\"), UnplacedType(\"Nowhere\")] } }".to_string(),
-                "TraitImpl Resolved(\"rust·senseid·gadget·Shape·item\")".to_string(),
+                "TraitImpl Resolved { fqn: \"rust·senseid·gadget·Shape·item\", via: DeclaredHere }".to_string(),
             ],
             "the inherent impl contributes no inheritance edge; the trait impl and the \
              supertrait bound each contribute one, and the unplaceable one keeps its reason"
@@ -2384,8 +2443,7 @@ pub fn widest(a: u32) -> u32 {
                 .references
                 .iter()
                 .filter(|r| {
-                    r.target
-                        == persist::TargetRow::Resolved("rust·senseid·twice·once·item".to_string())
+                        matches!(&r.target, persist::TargetRow::Resolved { fqn, .. } if fqn == "rust·senseid·twice·once·item")
                 })
                 .map(|r| (r.at.start_line, r.at.start_col))
                 .collect(),
@@ -2497,8 +2555,7 @@ pub fn widest(a: u32) -> u32 {
                 .references
                 .iter()
                 .filter(|r| {
-                    r.target
-                        == persist::TargetRow::Resolved("rust·senseid·rescan·once·item".to_string())
+                        matches!(&r.target, persist::TargetRow::Resolved { fqn, .. } if fqn == "rust·senseid·rescan·once·item")
                 })
                 .map(|r| r.at.start_line)
                 .collect(),
@@ -2673,7 +2730,9 @@ pub fn widest(a: u32) -> u32 {
             .iter()
             .filter(|r| r.kind == RelationKind::Owns)
             .filter_map(|r| match &r.parent {
-                Resolution::Resolved(parent) => Some((r.child.as_str(), parent.as_str())),
+                Resolution::Resolved { fqn: parent, .. } => {
+                    Some((r.child.as_str(), parent.as_str()))
+                }
                 Resolution::Unresolved { .. } => None,
             })
             .collect();
