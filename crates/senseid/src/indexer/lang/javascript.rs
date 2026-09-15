@@ -1303,6 +1303,7 @@ impl Walk<'_> {
     fn function_body(&mut self, f: &Function<'_>, scope: &Scope, outer: &mut Flow) {
         let mut inner = self.captured(outer);
         self.bind_params(&f.params, &mut inner);
+        self.param_defaults(&f.params, scope, &mut inner);
         if let Some(body) = &f.body {
             for statement in &body.statements {
                 self.statement(statement, scope, &mut inner);
@@ -1332,6 +1333,44 @@ impl Walk<'_> {
                 continue;
             };
             flow.bind(&id.name, self.annotated_type(param.type_annotation.as_deref()));
+        }
+    }
+
+    /// A parameter's DEFAULT is an expression that runs, and it was walked
+    /// nowhere — so `function f(now: Date = new Date())` lost the construction
+    /// and `f({ reload = vi.fn() })` lost the call.
+    ///
+    /// Both spellings: the default on a plain parameter, and the one inside a
+    /// destructuring pattern, which the grammar carries as an
+    /// `AssignmentPattern` rather than on the parameter.
+    fn param_defaults(&mut self, params: &FormalParameters<'_>, scope: &Scope, flow: &mut Flow) {
+        for param in &params.items {
+            if let Some(initializer) = &param.initializer {
+                self.expression(initializer, scope, flow);
+            }
+            self.pattern_defaults(&param.pattern, scope, flow);
+        }
+    }
+
+    /// The defaults a binding pattern carries, however deeply nested:
+    /// `{ a: { b = f() } }`.
+    fn pattern_defaults(&mut self, pattern: &BindingPattern<'_>, scope: &Scope, flow: &mut Flow) {
+        match pattern {
+            BindingPattern::AssignmentPattern(a) => {
+                self.expression(&a.right, scope, flow);
+                self.pattern_defaults(&a.left, scope, flow);
+            }
+            BindingPattern::ObjectPattern(o) => {
+                for property in &o.properties {
+                    self.pattern_defaults(&property.value, scope, flow);
+                }
+            }
+            BindingPattern::ArrayPattern(a) => {
+                for element in a.elements.iter().flatten() {
+                    self.pattern_defaults(element, scope, flow);
+                }
+            }
+            BindingPattern::BindingIdentifier(_) => {}
         }
     }
 
@@ -1666,6 +1705,7 @@ impl Walk<'_> {
                     Expression::ArrowFunctionExpression(a) => {
                         let mut nested = self.captured(flow);
                         self.bind_params(&a.params, &mut nested);
+                        self.param_defaults(&a.params, &inner, &mut nested);
                         let mut body_scope = inner.clone();
                         body_scope.fn_scope.push(id.name.to_string());
                         for statement in &a.body.statements {
@@ -1741,6 +1781,7 @@ impl Walk<'_> {
             Expression::ArrowFunctionExpression(a) => {
                 let mut nested = self.captured(flow);
                 self.bind_params(&a.params, &mut nested);
+                self.param_defaults(&a.params, scope, &mut nested);
                 for statement in &a.body.statements {
                     self.statement(statement, scope, &mut nested);
                 }
@@ -1807,6 +1848,14 @@ impl Walk<'_> {
                 for property in &o.properties {
                     match property {
                         ObjectPropertyKind::ObjectProperty(p) => {
+                            // A COMPUTED key is an expression that runs:
+                            // `{ [includeKey('company', 1)]: false }` carries a
+                            // call in the key, not in the value.
+                            if p.computed
+                                && let Some(key) = p.key.as_expression()
+                            {
+                                self.expression(key, scope, flow);
+                            }
                             self.expression(&p.value, scope, flow)
                         }
                         // `{ ...authHeaders(token) }` — a SPREAD is the same
@@ -2983,19 +3032,26 @@ mod tests {
         }
         assert!(walked > 1_000, "only {walked} references, so this proved nothing");
 
-        // A2 says ZERO dropped, and this is not zero: the walk is 73 short
-        // across 34 of 946 files. It was 383 across 99: SPREAD in all three
-        // positions took it to 152, then a COMPUTED member as an assignment
-        // target, an update expression, and an optional-chained computed
-        // member took it to 73. Each was found by reading the printout below,
-        // never by guessing at the grammar. Stated as a RATCHET rather than as the target,
+        // A2 says ZERO dropped, and this is not zero: the walk is 14 short
+        // across 11 of 946 files. It was 383 across 99, in three passes:
+        //
+        //   383 -> 152  SPREAD, in all three positions it can appear
+        //   152 ->  73  a COMPUTED member as an assignment target, `x++`,
+        //               an optional-chained computed member
+        //    73 ->  14  a PARAMETER DEFAULT (`now: Date = new Date()`) and a
+        //               COMPUTED KEY (`{ [f(x)]: false }`)
+        //
+        // Every one was found by reading the printout below. None was found by
+        // reasoning about the grammar, and the one time a shape was guessed at
+        // from the top of this list it was a phantom the diagnostic had
+        // invented — see the multiset note above. Stated as a RATCHET rather than as the target,
         // for §6's reason — a gate that fails on its first run gets waived, and
         // a waived gate is not a gate. It may fall; it may not rise.
         //
         // The delta is per-file above, not just summed, because one file off by
         // twenty and twenty files off by one are different defects. The head is
         // `health-state.spec.svelte.ts` at 24, which is where to look first.
-        const KNOWN_DROPPED: usize = 73;
+        const KNOWN_DROPPED: usize = 14;
         let dropped = counted.saturating_sub(walked);
         assert!(
             dropped <= KNOWN_DROPPED,
