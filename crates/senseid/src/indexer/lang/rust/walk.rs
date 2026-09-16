@@ -58,6 +58,7 @@ pub(super) fn walk<'a>(
         // The file scope binds nothing: a `let` lives in a block, and the file
         // level has none.
         bindings: BTreeMap::new(),
+        bound_to_a_call: BTreeMap::new(),
         returns: BTreeMap::new(),
         fields: BTreeMap::new(),
     };
@@ -145,6 +146,24 @@ struct Scope {
     /// cannot outlive the block that introduced it or be seen before its own
     /// `let`.
     bindings: BTreeMap<String, String>,
+    /// Local name -> the CALLEE whose result bound it, for the locals the source
+    /// never typed.
+    ///
+    /// The sibling of [`Scope::bindings`] and a weaker fact on purpose. That one
+    /// holds a TYPE, which the source wrote down. This one holds a NAME, because
+    /// `let s = pg_store()` states no type anywhere in this file — what `pg_store`
+    /// returns is written on a declaration that may be in another file, so only
+    /// a completed pass can answer it and the walk must not try (R6).
+    ///
+    /// So the walk records the question and the ladder answers it. The chained
+    /// form `pg_store().script()` already resolved through
+    /// `Ladder::through_what_the_receiver_returns`; this is the same edge split
+    /// over two lines, and the only thing that was missing is the link from the
+    /// receiver's NAME back to the call.
+    ///
+    /// Recorded only where [`Scope::bindings`] has nothing, so a type the source
+    /// STATED is never overruled by one a lookup would infer.
+    bound_to_a_call: BTreeMap<String, String>,
 }
 
 impl Scope {
@@ -322,10 +341,15 @@ impl<'a> Walk<'a> {
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
             self.node(child, &scope);
-            if child.kind() == "let_declaration"
-                && let Some((name, ty)) = self.binding_of(child)
-            {
+            if child.kind() != "let_declaration" {
+                continue;
+            }
+            // A type the source STATED always wins. The callee is recorded only
+            // where there is none, so a lookup can never overrule a declaration.
+            if let Some((name, ty)) = self.binding_of(child) {
                 scope.bindings.insert(name, ty);
+            } else if let Some((name, callee)) = self.bound_to_a_call(child) {
+                scope.bound_to_a_call.insert(name, callee);
             }
         }
     }
@@ -437,6 +461,71 @@ impl<'a> Walk<'a> {
         };
         let head = path.split("::").next()?;
         simple_type_name(head).map(|t| (name, t))
+    }
+
+    /// The `(name, callee)` a `let` binds when it states no type but its value
+    /// IS a call — `let s = pg_store().await`.
+    ///
+    /// The weaker sibling of [`Walk::binding_of`], and reached only when that
+    /// one found nothing. It answers a different question: not "what type is
+    /// this" — the file does not say — but "what call produced it", which the
+    /// file does say and which a completed pass can turn into a type.
+    ///
+    /// Precedence lives at the one call site and not here as well. A `let` that
+    /// states a type has already had its chance at [`Walk::binding_of`], and a
+    /// second copy of that rule in this function would be a second place for it
+    /// to be changed.
+    ///
+    /// PLUMBING IS PEELED, from the grammar's own list rather than by matching
+    /// text here, so the one place that decides what plumbing is stays the one
+    /// place. `.await` and `?` are peeled too: they are syntax rather than
+    /// calls, so no list can name them and the node kind is what says so.
+    ///
+    /// The innermost callee must be a PLAIN PATH — an identifier or a scoped
+    /// one. A method call (`events.begin()`) is refused: its own receiver is
+    /// untyped, so the ladder could not place the callee either, and an uncapped
+    /// chase is how a wrong type travels a long way quietly (R4).
+    fn bound_to_a_call(&self, node: Node<'_>) -> Option<(String, String)> {
+        let pattern = node.child_by_field_name("pattern")?;
+        if pattern.kind() != "identifier" {
+            return None;
+        }
+        let callee = self.callee_under_the_plumbing(node.child_by_field_name("value")?)?;
+        Some((self.text(pattern).to_string(), callee))
+    }
+
+    /// The call a value expression ultimately is, with `.await`, `?` and
+    /// plumbing hops peeled off the outside.
+    ///
+    /// Bounded by the nesting of the expression itself, so it terminates: each
+    /// step strips one layer and recurses on a strictly smaller node.
+    fn callee_under_the_plumbing(&self, value: Node<'_>) -> Option<String> {
+        match value.kind() {
+            // `pg_store().await` and `thing()?` — syntax, not calls, and they
+            // hand back what the inner expression produced.
+            "await_expression" | "try_expression" => {
+                self.callee_under_the_plumbing(value.named_child(0)?)
+            }
+            "call_expression" => {
+                let function = value.child_by_field_name("function")?;
+                match function.kind() {
+                    // The callee the ladder can place.
+                    "identifier" | "scoped_identifier" => Some(self.text(function).to_string()),
+                    // `inner(..).clone()` — a plumbing hop wrapping the real
+                    // call. Anything else is a method call on a receiver this
+                    // walk has not typed, and is refused.
+                    "field_expression" => {
+                        let hop = self.field_text(function, "field")?;
+                        if !super::GRAMMAR.plumbing.contains(&hop) {
+                            return None;
+                        }
+                        self.callee_under_the_plumbing(function.child_by_field_name("value")?)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     /// The one dispatch. Every arm either records a declaration and walks its
@@ -1018,12 +1107,19 @@ impl<'a> Walk<'a> {
             }),
         };
         let Some(ty) = self_type else {
+            // Nothing here types the receiver. If it is a local bound to a
+            // CALL, say which — the ladder has a completed pass and can read
+            // what that call returns, which this file cannot (R6).
+            let mut saw = vec![Observation::Receiver(receiver.to_string())];
+            if let Some(callee) = scope.bound_to_a_call.get(receiver) {
+                saw.push(Observation::BoundToTheResultOf(callee.clone()));
+            }
             return Miss {
                 reason: Reason::ReceiverTypeUnknown,
                 name: member.to_string(),
                 node_kind: node.kind().to_string(),
                 reach,
-                saw: vec![Observation::Receiver(receiver.to_string())],
+                saw,
             };
         };
         // The type's home, exactly as the declaration side used it. Minting the

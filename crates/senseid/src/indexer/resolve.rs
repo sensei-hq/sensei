@@ -739,19 +739,54 @@ impl<'a> Ladder<'a> {
             return self.member_of(receiver, evidence);
         }
 
+        // A BINDING the source never typed, whose `let` the walk read as the
+        // result of a call. `let c = Config::from_env(); c.script()` is the
+        // chained form above split over two lines and is the same edge; the
+        // walk cannot close it because what the callee returns is written on a
+        // declaration that may be in another file (R6).
+        //
+        // Tried BEFORE the receiver text is read as a call, because the two
+        // cannot both apply: a receiver the walk bound to a call is a bare
+        // name, and a bare name has no `()` to strip.
+        if let Some(callee) = evidence.saw.iter().find_map(|o| match o {
+            Observation::BoundToTheResultOf(callee) => Some(callee.as_str()),
+            _ => None,
+        }) {
+            return self.what_that_call_returns(callee, evidence, at);
+        }
+
         // Only a CALL has a return type. A bare binding is the walk's job and
         // it already did it.
         let callee = receiver.strip_suffix("()")?;
+        self.what_that_call_returns(callee, evidence, at)
+    }
+
+    /// The member on whatever `callee` hands back.
+    ///
+    /// One place, because two reach it: a receiver that IS a call, and a
+    /// receiver that is a local bound to one. Both need the same three steps and
+    /// a second copy is how they would come to disagree about which of them is a
+    /// lookup and which is a guess.
+    ///
+    /// Nothing here is inferred. The callee climbs the SAME ladder a callee
+    /// does, so nothing new decides where it lives; the return type is the one
+    /// the source WROTE, so a declaration stating none leaves the receiver an
+    /// honest miss; and the member must be one that type DECLARES.
+    fn what_that_call_returns(
+        &self,
+        callee: &str,
+        evidence: &Evidence,
+        at: Span,
+    ) -> Option<(Fqn, Rung)> {
         if callee.is_empty() || callee.contains(['(', ' ']) {
             return None;
         }
-
-        // The inner call, placed by the ordinary rungs.
+        // The call, placed by the ordinary rungs.
         let inner = Evidence {
             name: callee.to_string(),
             node_kind: evidence.node_kind.clone(),
             reach: Reach::Item,
-            saw: Vec::new(),
+            saw: self.considered_here(callee),
         };
         let Resolution::Resolved { fqn, .. } = self.climb(&inner, at) else {
             return None;
@@ -759,10 +794,42 @@ impl<'a> Ladder<'a> {
         let returned = self.world.returns.get(&fqn)?;
 
         // The type the call hands back, as a segment.
+        let names_a_type = self.grammar.names_a_type;
         let ty = self.split(returned).into_iter().rev().find(|segment| names_a_type(segment))?;
 
         // And the member on it.
         self.member_of(&ty, evidence)
+    }
+
+    /// The identity a BARE name would carry if THIS FILE declared it, as a
+    /// candidate for the one rung that checks exactly that.
+    ///
+    /// The walk mints this for every bare name it reads, so every reference
+    /// arrives carrying one. A callee read out of a `let` is the exception: it
+    /// was never a reference of its own, so nothing minted it, and
+    /// [`Ladder::declared_here`] — which reads candidates and nothing else —
+    /// could not see a free function declared three lines up.
+    ///
+    /// The same form and the same module the walk would use, so the two cannot
+    /// spell it differently. It stays a CANDIDATE: it places nothing until it is
+    /// found among the identities this file declares (R4).
+    ///
+    /// A PATH is left alone. Its head is bound by an import or a root word, and
+    /// those are rungs of their own that already answer it.
+    fn considered_here(&self, name: &str) -> Vec<Observation> {
+        if name.contains(self.grammar.module_separator) {
+            return Vec::new();
+        }
+        match fqn::refer(&Form::Item {
+            lang: self.grammar.language,
+            package: self.package,
+            module: self.module,
+            name,
+            reach: Reach::Item,
+        }) {
+            Ok(fqn) => vec![Observation::Candidate(fqn)],
+            Err(_) => Vec::new(),
+        }
     }
 
     /// `<ty>::<member>`, and only if that type DECLARES it.
@@ -1738,36 +1805,71 @@ mod tests {
         );
     }
 
-    /// The same receiver, reaching a member its TRAIT IMPL supplies.
+    /// **A binding whose type the source never states, typed by the CALL that
+    /// bound it.** Red-first, and the largest single shape left in the lost
+    /// column after the trait-impl rung landed.
     ///
-    /// The two ways a receiver gets typed — the walk reading a binding, and the
-    /// ladder reading a unit struct or a call's return type — must reach the
-    /// same declaration, or a method is callable from one shape and invisible
-    /// from the other. `Ladder::member_of` is the one place that mints for the
-    /// second, so it has to ask the same two tables in the same order.
+    /// `Config::from_env().script()` already resolved, because the receiver IS
+    /// the call and the ladder can read its return type. `let c =
+    /// Config::from_env(); c.script()` is the same edge written over two lines,
+    /// and it did not: `binding_of` reads a type the source WROTE, the source
+    /// wrote none, and by the time the ladder sees the receiver all it has is
+    /// the word `c`.
     ///
-    /// Taken from the real miss: `crates/bootstrap/src/health/platforms/macos.rs`
-    /// writes `MacOSProvider.resolvers()` against a `resolvers` that only
-    /// `impl PlatformProvider for MacOSProvider` supplies.
+    /// So the walk says what bound it. Nothing here is inferred: the callee is
+    /// placed by the ordinary ladder, the return type is the one the source
+    /// wrote on the declaration, and the member still has to be one that type
+    /// declares. It is the SAME lookup the chained form already does, reached
+    /// through one more fact.
+    ///
+    /// MEASURED: `async fn pg_store() -> PgStore` is bound as
+    /// `let s = pg_store().await` 306 times in one file of this repository, and
+    /// every `s.<method>()` after it was a lost `PgStore` method.
     #[test]
-    fn a_unit_struct_receiver_reaches_a_member_its_trait_impl_supplies() {
+    fn a_binding_the_source_never_typed_is_typed_by_the_call_that_bound_it() {
         let scanned = scan(&[
-            ("t", "src/t.rs", "pub trait Remedy { fn fix(&self) -> u32; }\n"),
             (
-                "r",
-                "src/r.rs",
-                "use crate::t::Remedy;\n\
-                 pub struct Fixer;\n\
-                 impl Remedy for Fixer { fn fix(&self) -> u32 { 0 } }\n",
+                "db",
+                "src/db.rs",
+                "pub struct PgStore { pub url: String }\n\
+                 impl PgStore { pub fn ping(&self) -> u32 { 0 } }\n",
             ),
-            ("u", "src/u.rs", "use crate::r::Fixer;\npub fn go() -> u32 { Fixer.fix() }\n"),
+            (
+                "h",
+                "src/h.rs",
+                "use crate::db::PgStore;\n\
+                 pub fn store() -> PgStore { PgStore { url: String::new() } }\n\
+                 pub fn go() -> u32 { let s = store(); s.ping() }\n",
+            ),
         ]);
-        let got = targets(file_of(&scanned, "src/u.rs"));
-        assert!(
-            got.iter().any(|t| t == "rust·p·r·Fixer·Remedy·fix·item"),
-            "the receiver is typed and the member is declared, so the only thing between them \
-             is the trait segment the use site cannot know; got {got:?}"
-        );
+        assert_placed(file_of(&scanned, "src/h.rs"), "rust·p·db·PgStore·ping·item");
+    }
+
+    /// The same, with the plumbing between the call and the binding.
+    ///
+    /// `let s = pg_store().await` and `let a = adapter().unwrap()` are how this
+    /// repository actually writes it, and `.await` and `.unwrap()` say nothing
+    /// about the type — which is exactly what the grammar's plumbing list is
+    /// for. Peeled here rather than matched as text, so the list stays the one
+    /// place that decides what plumbing is.
+    #[test]
+    fn the_plumbing_between_a_call_and_its_binding_does_not_hide_the_call() {
+        let scanned = scan(&[
+            (
+                "db",
+                "src/db.rs",
+                "pub struct PgStore { pub url: String }\n\
+                 impl PgStore { pub fn ping(&self) -> u32 { 0 } }\n",
+            ),
+            (
+                "h",
+                "src/h.rs",
+                "use crate::db::PgStore;\n\
+                 pub async fn store() -> PgStore { PgStore { url: String::new() } }\n\
+                 pub async fn go() -> u32 { let s = store().await.clone(); s.ping() }\n",
+            ),
+        ]);
+        assert_placed(file_of(&scanned, "src/h.rs"), "rust·p·db·PgStore·ping·item");
     }
 
     /// **The table is Rust-shaped and must stay a no-op everywhere else.**
