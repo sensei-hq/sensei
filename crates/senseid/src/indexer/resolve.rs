@@ -44,7 +44,7 @@ use super::facts::{
     Binding, DeclaredType, Evidence, FileFacts, Fqn, Import, ImportOrigin, Language, Observation,
     Reason, Reference, Relation, RelationKind, Resolution, Rung, Span, SymbolKind,
 };
-use super::fqn::{self, Form, Reach};
+use super::fqn::{self, Form, Origin, Reach};
 
 /// One language's vocabulary, as DATA rather than as behaviour.
 ///
@@ -210,6 +210,14 @@ pub struct World<'a> {
     /// which file came first (R6). Empty means "not supplied", and then nothing
     /// resolves through it — the previous behaviour, and never a guess.
     pub declared_members: &'a BTreeSet<Fqn>,
+    /// The same question one step weaker, for the members whose two spellings
+    /// cannot agree: which declaration answers to the collapsed spelling a use
+    /// site is able to mint. See [`SuppliedMembers`].
+    ///
+    /// Consulted only after [`World::declared_members`] has been asked for an
+    /// exact match, so an inherent declaration outranks one a trait supplies —
+    /// which is the order the language resolves them in.
+    pub supplied_members: &'a SuppliedMembers,
     /// What each declaration RETURNS, so a call on the result of a call can be
     /// typed. Empty means "not supplied" and nothing is chased — never a guess.
     pub returns: &'a BTreeMap<Fqn, String>,
@@ -283,6 +291,162 @@ pub fn members_declared_by<'a>(files: impl IntoIterator<Item = &'a FileFacts>) -
         .collect()
 }
 
+/// Which declaration answers to a member spelling a use site can mint, WHERE
+/// THE TWO DIFFER.
+///
+/// One language puts a segment in a member's identity that no use site can
+/// know. A method declared inside `impl Display for Widget` is declared with the
+/// trait as a segment of its identity, between the type and the member, and that
+/// qualifier is not decoration: it is what keeps `Display::fmt` and `Debug::fmt`
+/// on one type from becoming one symbol. A use site writing `w.fmt()` has no way
+/// to know which trait supplies the name — that is what dispatch decides — so
+/// the only spelling it can ever mint is the collapsed one, with the trait
+/// segment absent.
+///
+/// So the merge contract needs a LOOKUP on the reference side rather than a
+/// second mint. The value handed back is a string a DECLARATION produced; this
+/// table never assembles an identity for a declaration it did not read (R4).
+///
+/// Holds only the members whose two spellings differ, because the ones whose
+/// spellings agree are already answered — exactly — by
+/// [`World::declared_members`], and an inherent declaration outranks a trait's
+/// in the language as it does on the ladder.
+///
+/// A BARRIER artifact like the type table: built from a completed pass, so the
+/// answer does not depend on which file came first (R6).
+///
+/// MEASURED over this repository before the rung existed: 395 trait-supplied
+/// methods and not one of them linked, against 663 of 1,211 for the inherent
+/// ones. 326 of the 797 lost rust methods were this and nothing else.
+pub struct SuppliedMembers {
+    answers: BTreeMap<Fqn, Fqn>,
+    /// Spellings TWO declarations answer to. Kept rather than dropped: "I know
+    /// two" is a different answer from "I know none", and a caller that cannot
+    /// tell them apart resolves the first by picking.
+    ambiguous: BTreeSet<Fqn>,
+}
+
+/// What [`SuppliedMembers::lookup`] found. Total, like
+/// [`Home`](super::lang::Home): there is no variant meaning "nothing", so a
+/// caller has to say what it does about each case rather than substituting a
+/// third.
+pub enum Supplier<'a> {
+    /// Exactly one declaration answers to the spelling.
+    One(&'a Fqn),
+    /// Two or more do, and nothing at the use site says which. A wrong edge to
+    /// a real node is the one thing R4 ranks below a missing one.
+    Several,
+    /// None does.
+    Nobody,
+}
+
+impl SuppliedMembers {
+    /// No table at all — what a caller that has not run the barrier gets, and
+    /// what the ladder had before this existed. Nothing resolves through it,
+    /// which is the previous behaviour and never a guess.
+    pub fn unknown() -> Self {
+        Self { answers: BTreeMap::new(), ambiguous: BTreeSet::new() }
+    }
+
+    /// Build from a COMPLETED pass, from the `Owns` relations: the parent names
+    /// the TYPE and the child is the member's own identity.
+    ///
+    /// The owner is needed and cannot be done without. A member's identity reads
+    /// module then type then member, or module then type then TRAIT then member,
+    /// the module is one joined segment, and the module is dropped when empty —
+    /// so three segments is either a member in a module or a trait member at the
+    /// package root, and the string alone cannot say which. Reading the owner's
+    /// type NAME settles it. Doing without it was the first version of this and
+    /// it called 213 plain members trait ones.
+    ///
+    /// The owner's MODULE is not used, deliberately. An `impl` block sits
+    /// wherever it likes, so the owner's module is the block's and the member's
+    /// is the type's home; taking the module off the child is what makes the key
+    /// the same string [`Ladder::member_of`] mints.
+    pub fn of<'a>(files: impl IntoIterator<Item = &'a FileFacts>) -> Self {
+        let mut answers: BTreeMap<Fqn, Fqn> = BTreeMap::new();
+        let mut ambiguous: BTreeSet<Fqn> = BTreeSet::new();
+        for facts in files {
+            for relation in facts.relations.iter().filter(|r| r.kind == RelationKind::Owns) {
+                let Resolution::Resolved { fqn: owner, .. } = &relation.parent else { continue };
+                let Ok(owner) = fqn::parse(owner.as_str()) else { continue };
+                let Some(ty) = owner.tail.last() else { continue };
+                let Ok(child) = fqn::parse(relation.child.as_str()) else { continue };
+                let Origin::Local { lang, reach } = child.origin else { continue };
+                let Some((member, head)) = child.tail.split_last() else { continue };
+                // Where the TYPE sits, looked for to the LEFT of the member so a
+                // member spelled like the type it hangs off cannot be taken for
+                // it.
+                let Some(at) = head.iter().rposition(|segment| segment == ty) else { continue };
+                // EXACTLY one segment between the type and the member, and that
+                // is the trait. Nothing else is the form this table is about,
+                // and a table that guessed at an unfamiliar shape would key it
+                // on a string no use site mints.
+                if head.len() != at + 2 {
+                    continue;
+                }
+                // The module is one segment or it is absent; the grammar mints
+                // no third shape.
+                let module = match &head[..at] {
+                    [] => "",
+                    [module] => module,
+                    _ => continue,
+                };
+                let Ok(collapsed) = fqn::refer(&Form::Member {
+                    lang,
+                    package: child.package,
+                    module,
+                    ty,
+                    member,
+                    reach,
+                }) else {
+                    continue;
+                };
+                // Ambiguity is final. Without this a third declaration of the
+                // same spelling would re-fill the slot the second emptied, and
+                // the table would then depend on the order the files arrived in
+                // (R6).
+                if ambiguous.contains(&collapsed) {
+                    continue;
+                }
+                match answers.get(&collapsed).map(|first| *first == relation.child) {
+                    Some(true) => {}
+                    Some(false) => {
+                        answers.remove(&collapsed);
+                        ambiguous.insert(collapsed);
+                    }
+                    None => {
+                        answers.insert(collapsed, relation.child.clone());
+                    }
+                }
+            }
+        }
+        Self { answers, ambiguous }
+    }
+
+    /// Which declaration answers to a minted spelling — a TOTAL answer, for the
+    /// reason [`TypeHomes::lookup`](super::lang::TypeHomes::lookup) gives.
+    pub fn lookup(&self, minted: &Fqn) -> Supplier<'_> {
+        if self.ambiguous.contains(minted) {
+            return Supplier::Several;
+        }
+        match self.answers.get(minted) {
+            Some(declared) => Supplier::One(declared),
+            None => Supplier::Nobody,
+        }
+    }
+
+    /// How many spellings have ONE answer. For a report; a table that silently
+    /// came out empty would make the rung a no-op nobody noticed.
+    pub fn len(&self) -> usize {
+        self.answers.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.answers.is_empty()
+    }
+}
+
 /// Place every reference and every relation of one file against the ladder
 /// (spec §3.2, §3.3).
 ///
@@ -316,6 +480,18 @@ pub fn resolve(facts: FileFacts, grammar: &Grammar, world: &World<'_>) -> FileFa
 enum Placed {
     Proven(Fqn),
     Unbound,
+}
+
+impl Placed {
+    /// A candidate is proven or it is nothing. Written once because three rungs
+    /// need it, and a `bool` threaded through each of them is how one comes to
+    /// return the candidate on a false.
+    fn proven_if(fqn: &Fqn, proof: bool) -> Self {
+        match proof {
+            true => Self::Proven(fqn.clone()),
+            false => Self::Unbound,
+        }
+    }
 }
 
 /// Where a path's root put it, once the root word has been read away.
@@ -408,10 +584,8 @@ impl<'a> Ladder<'a> {
             // plumbing is still plumbing.
             Resolution::Unresolved { reason: Reason::ReceiverTypeUnknown, evidence } => {
                 match self.through_what_the_receiver_returns(evidence, at) {
-                    Placed::Proven(fqn) => {
-                        Resolution::Resolved { fqn, via: Rung::DeclaredByItsType }
-                    }
-                    Placed::Unbound => Resolution::Unresolved {
+                    Some((fqn, via)) => Resolution::Resolved { fqn, via },
+                    None => Resolution::Unresolved {
                         reason: self.filtered(Reason::ReceiverTypeUnknown, evidence),
                         evidence: evidence.clone(),
                     },
@@ -471,6 +645,20 @@ impl<'a> Ladder<'a> {
         if let Placed::Proven(fqn) = self.declared_by_its_type(evidence) {
             return Resolution::Resolved { fqn, via: Rung::DeclaredByItsType };
         }
+        // Directly below it, because it is the same fact one degree less
+        // certain: the type declares the member, but through a trait, so the
+        // candidate and the declaration cannot be the same string and the
+        // spelling has to be looked up. An INHERENT declaration therefore wins,
+        // as it does in the language.
+        //
+        // Above the field guard, and on the correct side of it. The guard
+        // forbids a PATH rung from serving a field; this is an owning-type
+        // lookup keyed on a whole identity, reach included, so it is the same
+        // kind of proof as the two rungs above it and not the kind the guard is
+        // aimed at.
+        if let Placed::Proven(fqn) = self.supplied_by_a_trait_impl(evidence) {
+            return Resolution::Resolved { fqn, via: Rung::SuppliedByATraitImpl };
+        }
         if a_field {
             return Resolution::Unresolved {
                 reason: self.filtered(Reason::NoImportInScope, evidence),
@@ -525,33 +713,37 @@ impl<'a> Ladder<'a> {
     /// One hop only. `a().b().c()` needs `b`'s return type, which is this same
     /// lookup applied again — allowed, but bounded, because an uncapped chase
     /// is how a wrong type travels a long way quietly.
-    fn through_what_the_receiver_returns(&self, evidence: &Evidence, at: Span) -> Placed {
+    ///
+    /// It hands back the RUNG as well as the identity, because it can reach two
+    /// of them: an exact match on what the type declares, or the weaker lookup
+    /// of a spelling a trait impl answers to. One label for both would make the
+    /// histogram read the weaker claim as the stronger one.
+    fn through_what_the_receiver_returns(
+        &self,
+        evidence: &Evidence,
+        at: Span,
+    ) -> Option<(Fqn, Rung)> {
         if self.world.returns.is_empty() {
-            return Placed::Unbound;
+            return None;
         }
-        let Some(receiver) = evidence.saw.iter().find_map(|o| match o {
+        let receiver = evidence.saw.iter().find_map(|o| match o {
             Observation::Receiver(text) => Some(text.as_str()),
             _ => None,
-        }) else {
-            return Placed::Unbound;
-        };
+        })?;
         // A UNIT STRUCT used as a value: the name IS the value, so it is a
         // receiver of its own type. `Resolver.remedy()` where `Resolver` has no
         // fields — this codebase writes every health resolver that way. Not a
         // call, so there is no return type to look up; the type is the name.
         let names_a_type = self.grammar.names_a_type;
         if !receiver.ends_with("()") && names_a_type(receiver) && !receiver.contains(['.', ' ']) {
-            if let Some(placed) = self.member_of(receiver, evidence) {
-                return placed;
-            }
-            return Placed::Unbound;
+            return self.member_of(receiver, evidence);
         }
 
         // Only a CALL has a return type. A bare binding is the walk's job and
         // it already did it.
-        let Some(callee) = receiver.strip_suffix("()") else { return Placed::Unbound };
+        let callee = receiver.strip_suffix("()")?;
         if callee.is_empty() || callee.contains(['(', ' ']) {
-            return Placed::Unbound;
+            return None;
         }
 
         // The inner call, placed by the ordinary rungs.
@@ -562,18 +754,15 @@ impl<'a> Ladder<'a> {
             saw: Vec::new(),
         };
         let Resolution::Resolved { fqn, .. } = self.climb(&inner, at) else {
-            return Placed::Unbound;
+            return None;
         };
-        let Some(returned) = self.world.returns.get(&fqn) else { return Placed::Unbound };
+        let returned = self.world.returns.get(&fqn)?;
 
         // The type the call hands back, as a segment.
-        let Some(ty) = self.split(returned).into_iter().rev().find(|segment| names_a_type(segment))
-        else {
-            return Placed::Unbound;
-        };
+        let ty = self.split(returned).into_iter().rev().find(|segment| names_a_type(segment))?;
 
         // And the member on it.
-        self.member_of(&ty, evidence).unwrap_or(Placed::Unbound)
+        self.member_of(&ty, evidence)
     }
 
     /// `<ty>::<member>`, and only if that type DECLARES it.
@@ -582,7 +771,15 @@ impl<'a> Ladder<'a> {
     /// naming itself, and a call's return type — cannot mint differently. The
     /// `declared_members` check is what stops a name match becoming an edge
     /// (R4); it is the same set the sibling rung uses.
-    fn member_of(&self, ty: &str, evidence: &Evidence) -> Option<Placed> {
+    ///
+    /// Two questions in the order the language asks them. An EXACT match on the
+    /// minted spelling first, which is an inherent declaration; then the
+    /// [`SuppliedMembers`] lookup, which is one a trait impl answers to under a
+    /// spelling this side cannot mint. Same order and same two tables as
+    /// [`Ladder::declared_by_its_type`] and
+    /// [`Ladder::supplied_by_a_trait_impl`], so a receiver typed by the walk and
+    /// one typed here cannot reach different declarations.
+    fn member_of(&self, ty: &str, evidence: &Evidence) -> Option<(Fqn, Rung)> {
         let module = self.types_home_of(ty)?;
         let minted = fqn::refer(&Form::Member {
             lang: self.grammar.language,
@@ -593,7 +790,13 @@ impl<'a> Ladder<'a> {
             reach: evidence.reach,
         })
         .ok()?;
-        self.world.declared_members.contains(&minted).then_some(Placed::Proven(minted))
+        if self.world.declared_members.contains(&minted) {
+            return Some((minted, Rung::DeclaredByItsType));
+        }
+        match self.world.supplied_members.lookup(&minted) {
+            Supplier::One(declared) => Some((declared.clone(), Rung::SuppliedByATraitImpl)),
+            Supplier::Several | Supplier::Nobody => None,
+        }
     }
 
     /// The module a type lives in, from the identities the scan declared.
@@ -647,7 +850,9 @@ impl<'a> Ladder<'a> {
     /// very same file declares it, the two sides have already met and there is
     /// nothing left to prove.
     fn declared_here(&self, evidence: &Evidence) -> Placed {
-        self.first_candidate(evidence, |fqn| self.declared.contains(fqn.as_str()))
+        self.first_candidate(evidence, |fqn| {
+            Placed::proven_if(fqn, self.declared.contains(fqn.as_str()))
+        })
     }
 
     /// Rung 1b. The same proof, one file further out: a candidate that some
@@ -678,19 +883,49 @@ impl<'a> Ladder<'a> {
     /// whichever file is resolved first. That is the whole difference between it
     /// and [`World::scanned`], which is carried and deliberately never read.
     fn declared_by_its_type(&self, evidence: &Evidence) -> Placed {
-        self.first_candidate(evidence, |fqn| self.world.declared_members.contains(fqn))
+        self.first_candidate(evidence, |fqn| {
+            Placed::proven_if(fqn, self.world.declared_members.contains(fqn))
+        })
     }
 
-    /// The first identity the walk CONSIDERED that some predicate proves. Shared
-    /// by the two rungs above, which differ only in where they look the
+    /// Rung 1c. The same proof again, one degree less certain: no declaration
+    /// carries the candidate's spelling, but exactly one answers to it.
+    ///
+    /// A member supplied by `impl Display for Widget` is declared with `Display`
+    /// as a segment between `Widget` and `fmt`. A use site writing `w.fmt()`
+    /// knows the type and the member and cannot know the trait — dispatch decides
+    /// that — so the candidate it mints has no trait segment, and the two sides
+    /// never meet however well the receiver is typed. MEASURED: 395 such methods
+    /// in this repository, of which zero were linked.
+    ///
+    /// It is the ONE rung that returns an identity other than the candidate, and
+    /// that is exactly what makes it a lookup and not a second mint: the string
+    /// handed back was produced by a declaration, read out of
+    /// [`SuppliedMembers`], never assembled here (R4). Two declarations
+    /// answering to one spelling is [`Supplier::Several`] and places nothing.
+    ///
+    /// Below [`Ladder::declared_by_its_type`] because an inherent declaration
+    /// outranks a trait's, which is the order the language resolves them in.
+    fn supplied_by_a_trait_impl(&self, evidence: &Evidence) -> Placed {
+        self.first_candidate(evidence, |fqn| match self.world.supplied_members.lookup(fqn) {
+            Supplier::One(declared) => Placed::Proven(declared.clone()),
+            Supplier::Several | Supplier::Nobody => Placed::Unbound,
+        })
+    }
+
+    /// The first identity the walk CONSIDERED that some predicate places. Shared
+    /// by the three rungs above, which differ only in where they look the
     /// candidate up — and a second copy of this loop is how they would come to
     /// disagree about what a candidate is.
-    fn first_candidate(&self, evidence: &Evidence, proves: impl Fn(&Fqn) -> bool) -> Placed {
+    ///
+    /// The predicate returns a [`Placed`] rather than a bool because one of the
+    /// three answers with a DIFFERENT identity from the candidate it was handed.
+    fn first_candidate(&self, evidence: &Evidence, places: impl Fn(&Fqn) -> Placed) -> Placed {
         for observation in &evidence.saw {
             if let Observation::Candidate(fqn) = observation
-                && proves(fqn)
+                && let Placed::Proven(placed) = places(fqn)
             {
-                return Placed::Proven(fqn.clone());
+                return Placed::Proven(placed);
             }
         }
         Placed::Unbound
@@ -1117,7 +1352,9 @@ mod tests {
     use crate::indexer::facts::{FileFacts, RefKind, Reference, RelationKind, Resolution, Rung};
     use crate::indexer::fqn;
     use crate::indexer::lang::{LanguageAdapter, Source, TypeHomes, javascript, rust};
-    use crate::indexer::resolve::{World, members_declared_by, resolve, returns_declared_by};
+    use crate::indexer::resolve::{
+        SuppliedMembers, World, members_declared_by, resolve, returns_declared_by,
+    };
     use crate::indexer::{module_of, package_of};
 
     fn placed(reference: &Reference) -> &str {
@@ -1150,6 +1387,7 @@ mod tests {
                 first_party: &first_party,
                 first_party_members: &BTreeSet::new(),
                 declared_members: &BTreeSet::new(),
+                supplied_members: &SuppliedMembers::unknown(),
                 returns: &std::collections::BTreeMap::new(),
                 scanned: &scanned,
             },
@@ -1201,11 +1439,13 @@ mod tests {
 
         let first_party: BTreeSet<String> = ["p".to_string()].into_iter().collect();
         let declared_members = members_declared_by(anchored.iter().map(|(_, f)| f));
+        let supplied_members = SuppliedMembers::of(anchored.iter().map(|(_, f)| f));
         let returns = returns_declared_by(anchored.iter().map(|(_, f)| f));
         let world = World {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &declared_members,
+            supplied_members: &supplied_members,
             returns: &returns,
             scanned: &BTreeSet::new(),
         };
@@ -1267,6 +1507,129 @@ mod tests {
             "the proof is the declaration, so the rung must say so rather than claiming an \
              import named it"
         );
+    }
+
+    /// **A method a trait impl supplies**, red-first, and the largest single
+    /// hole the per-kind table had: 326 of 797 lost rust methods.
+    ///
+    /// The two sides mint different strings and neither is wrong. A declaration
+    /// inside `impl Provider for MacOSProvider` carries the TRAIT as a segment,
+    /// because `Display::fmt` and `Debug::fmt` on one type are two symbols and
+    /// the qualifier is what keeps them apart. A use site writing
+    /// `p.resolvers()` has no way to know which trait supplies the name — that
+    /// is what dispatch decides — so it can only ever spell the collapsed form.
+    ///
+    /// So the merge contract needs a LOOKUP, not a second mint: the use site
+    /// spells the collapsed identity, and the scan says which declaration
+    /// answers to it. What comes back is a string a declaration produced, never
+    /// one this side assembled.
+    ///
+    /// MEASURED before the rung existed: 395 trait-supplied methods in this
+    /// repository and not one of them linked — 0%, against 663 of 1,211 for the
+    /// inherent ones.
+    #[test]
+    fn a_method_a_trait_impl_supplies_is_reached_through_its_collapsed_spelling() {
+        let scanned = scan(&[
+            ("provider", "src/provider.rs", "pub trait Provider { fn resolvers(&self) -> u32; }\n"),
+            (
+                "macos",
+                "src/macos.rs",
+                "use crate::provider::Provider;\n\
+                 pub struct MacOSProvider { pub n: u32 }\n\
+                 impl Provider for MacOSProvider { fn resolvers(&self) -> u32 { 0 } }\n",
+            ),
+            (
+                "start",
+                "src/start.rs",
+                "use crate::macos::MacOSProvider;\n\
+                 pub fn go(p: &MacOSProvider) -> u32 { p.resolvers() }\n",
+            ),
+        ]);
+
+        let caller = file_of(&scanned, "src/start.rs");
+        assert_placed(caller, "rust·p·macos·MacOSProvider·Provider·resolvers·item");
+        let call =
+            caller.references.iter().find(|r| r.kind == RefKind::Calls).expect("one call site");
+        let Resolution::Resolved { via, .. } = &call.target else {
+            panic!("the call is not placed: {:?}", call.target)
+        };
+        assert_eq!(
+            *via,
+            Rung::SuppliedByATraitImpl,
+            "the proof is weaker than an exact identity match — one declaration was found to \
+             answer to a spelling nothing declares — so the histogram must not read it as the \
+             stronger claim"
+        );
+    }
+
+    /// The same lookup, refusing. TWO traits supplying one member name on one
+    /// type collapse onto one spelling, and nothing at the use site says which
+    /// was meant — that is what dispatch decides at runtime.
+    ///
+    /// Unbound, not the first of the two. A wrong edge to a real node is the one
+    /// thing R4 ranks below a missing one, and "I know two places" has to stay
+    /// distinguishable from "I know one".
+    #[test]
+    fn two_trait_impls_supplying_one_member_name_on_one_type_place_neither() {
+        let scanned = scan(&[
+            (
+                "shape",
+                "src/shape.rs",
+                "pub trait Wide { fn draw(&self) -> u32; }\n\
+                 pub trait Tall { fn draw(&self) -> u32; }\n\
+                 pub struct Box2 { pub n: u32 }\n\
+                 impl Wide for Box2 { fn draw(&self) -> u32 { 0 } }\n\
+                 impl Tall for Box2 { fn draw(&self) -> u32 { 1 } }\n",
+            ),
+            (
+                "start",
+                "src/start.rs",
+                "use crate::shape::Box2;\n\
+                 pub fn go(b: &Box2) -> u32 { b.draw() }\n",
+            ),
+        ]);
+
+        let caller = file_of(&scanned, "src/start.rs");
+        let call =
+            caller.references.iter().find(|r| r.kind == RefKind::Calls).expect("one call site");
+        assert!(
+            matches!(call.target, Resolution::Unresolved { .. }),
+            "two traits supply `draw`, so the lookup has two answers and must give neither; \
+             got {:?}",
+            call.target
+        );
+    }
+
+    /// An INHERENT declaration of the same name outranks the trait's, because
+    /// that is what the language does: inherent method resolution runs before
+    /// any trait's.
+    ///
+    /// MEASURED, and the only pair of its kind in this repository:
+    /// `ModelProvisioning` declares an inherent `status_all` and also an
+    /// `impl ReadinessProbe for ModelProvisioning` whose `status_all` delegates
+    /// to it. The exact identity match has to be tried before the collapsed
+    /// lookup or the edge that resolves correctly today becomes ambiguous.
+    #[test]
+    fn an_inherent_member_outranks_the_one_a_trait_impl_supplies() {
+        let scanned = scan(&[
+            (
+                "probe",
+                "src/probe.rs",
+                "pub trait Ready { fn status(&self) -> u32; }\n\
+                 pub struct Svc { pub n: u32 }\n\
+                 impl Svc { pub fn status(&self) -> u32 { 0 } }\n\
+                 impl Ready for Svc { fn status(&self) -> u32 { Svc::status(self) } }\n",
+            ),
+            (
+                "start",
+                "src/start.rs",
+                "use crate::probe::Svc;\n\
+                 pub fn go(s: &Svc) -> u32 { s.status() }\n",
+            ),
+        ]);
+
+        let caller = file_of(&scanned, "src/start.rs");
+        assert_placed(caller, "rust·p·probe·Svc·status·item");
     }
 
     /// The other half of the same rung, and the reason it is restricted to
@@ -1372,6 +1735,81 @@ mod tests {
         assert!(
             got.iter().any(|t| t == "rust·p·r·Resolver·remedy·item"),
             "a unit struct names its own type as the receiver; got {got:?}"
+        );
+    }
+
+    /// The same receiver, reaching a member its TRAIT IMPL supplies.
+    ///
+    /// The two ways a receiver gets typed — the walk reading a binding, and the
+    /// ladder reading a unit struct or a call's return type — must reach the
+    /// same declaration, or a method is callable from one shape and invisible
+    /// from the other. `Ladder::member_of` is the one place that mints for the
+    /// second, so it has to ask the same two tables in the same order.
+    ///
+    /// Taken from the real miss: `crates/bootstrap/src/health/platforms/macos.rs`
+    /// writes `MacOSProvider.resolvers()` against a `resolvers` that only
+    /// `impl PlatformProvider for MacOSProvider` supplies.
+    #[test]
+    fn a_unit_struct_receiver_reaches_a_member_its_trait_impl_supplies() {
+        let scanned = scan(&[
+            ("t", "src/t.rs", "pub trait Remedy { fn fix(&self) -> u32; }\n"),
+            (
+                "r",
+                "src/r.rs",
+                "use crate::t::Remedy;\n\
+                 pub struct Fixer;\n\
+                 impl Remedy for Fixer { fn fix(&self) -> u32 { 0 } }\n",
+            ),
+            ("u", "src/u.rs", "use crate::r::Fixer;\npub fn go() -> u32 { Fixer.fix() }\n"),
+        ]);
+        let got = targets(file_of(&scanned, "src/u.rs"));
+        assert!(
+            got.iter().any(|t| t == "rust·p·r·Fixer·Remedy·fix·item"),
+            "the receiver is typed and the member is declared, so the only thing between them \
+             is the trait segment the use site cannot know; got {got:?}"
+        );
+    }
+
+    /// **The table is Rust-shaped and must stay a no-op everywhere else.**
+    ///
+    /// `Form::TraitMember` is minted at exactly ONE site in the whole
+    /// repository, in the Rust walk. TypeScript has no trait qualifier — a class
+    /// implementing an interface declares plain class members — so every member
+    /// identity it mints already IS the spelling a use site can reach, and the
+    /// table must come out empty rather than keyed on something.
+    ///
+    /// Asserted rather than assumed, because the lookup this feeds is shared by
+    /// every language: an entry here would put a TypeScript or Java member
+    /// behind a second, weaker spelling for no gain.
+    #[test]
+    fn a_language_with_no_trait_qualifier_supplies_nothing_through_the_table() {
+        let files: &[(&str, &str, &str)] = &[(
+            "lib/w",
+            "src/lib/w.ts",
+            "export interface Remedy { fix(): number }\n\
+             export class Fixer implements Remedy { fix(): number { return 0 } }\n",
+        )];
+        let scanned = scan_of(&javascript::TypeScriptAdapter, files);
+        let supplied = SuppliedMembers::of(scanned.iter().map(|(_, f)| f));
+        assert!(
+            supplied.is_empty(),
+            "typescript declares its members under the spelling a use site mints, so nothing \
+             needs a second one"
+        );
+
+        // And the rust side of the same claim, so the assertion above cannot
+        // pass because the builder is broken for everyone.
+        let rust = scan(&[(
+            "m",
+            "src/m.rs",
+            "pub trait Remedy { fn fix(&self) -> u32; }\n\
+             pub struct Fixer;\n\
+             impl Remedy for Fixer { fn fix(&self) -> u32 { 0 } }\n",
+        )]);
+        assert_eq!(
+            SuppliedMembers::of(rust.iter().map(|(_, f)| f)).len(),
+            1,
+            "rust puts the trait in the identity, so exactly one member needs a second spelling"
         );
     }
 
@@ -1764,6 +2202,7 @@ mod tests {
                 "declared_here",
                 "through_an_import",
                 "declared_by_its_type",
+                "supplied_by_a_trait_impl",
                 "through_a_glob",
                 "rooted_in_this_package",
                 "fully_qualified_external",
@@ -2159,6 +2598,7 @@ mod tests {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &BTreeSet::new(),
+            supplied_members: &SuppliedMembers::unknown(),
             returns: &std::collections::BTreeMap::new(),
             scanned: &scanned,
         };
@@ -2309,6 +2749,7 @@ mod tests {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &BTreeSet::new(),
+            supplied_members: &SuppliedMembers::unknown(),
             returns: &std::collections::BTreeMap::new(),
             scanned: &BTreeSet::new(),
         };
@@ -2421,6 +2862,7 @@ mod tests {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &BTreeSet::new(),
+            supplied_members: &SuppliedMembers::unknown(),
             returns: &std::collections::BTreeMap::new(),
             scanned: &scanned,
         };
@@ -2523,6 +2965,7 @@ mod tests {
                     first_party: &first_party,
                     first_party_members: &BTreeSet::new(),
                     declared_members: &BTreeSet::new(),
+                    supplied_members: &SuppliedMembers::unknown(),
                     returns: &std::collections::BTreeMap::new(),
                     scanned: &nothing,
                 },
@@ -2534,6 +2977,7 @@ mod tests {
                     first_party: &first_party,
                     first_party_members: &BTreeSet::new(),
                     declared_members: &BTreeSet::new(),
+                    supplied_members: &SuppliedMembers::unknown(),
                     returns: &std::collections::BTreeMap::new(),
                     scanned: &everything,
                 },
@@ -2595,6 +3039,7 @@ mod tests {
                         first_party: &first_party,
                         first_party_members: &BTreeSet::new(),
                         declared_members: &BTreeSet::new(),
+                        supplied_members: &SuppliedMembers::unknown(),
                         returns: &std::collections::BTreeMap::new(),
                         scanned: &scanned,
                     },
@@ -2680,6 +3125,7 @@ mod tests {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &BTreeSet::new(),
+            supplied_members: &SuppliedMembers::unknown(),
             returns: &std::collections::BTreeMap::new(),
             scanned: &scanned,
         };
