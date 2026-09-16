@@ -107,6 +107,18 @@ impl Miss {
     }
 }
 
+/// [`crate::indexer::resolve::Grammar::module_segment`] for a language whose
+/// import specifier is ALREADY a module path: no reduction at all.
+///
+/// Rust's `use a::b` and Java's `import a.b.C` name modules, not files, so
+/// there is no extension in them to drop — and a segment that happens to
+/// contain a dot is a real segment. Shared rather than spelled once per
+/// grammar, so "this language has no file names in its paths" is one statement
+/// and the two languages cannot drift from it.
+pub fn already_a_module_segment(segment: &str) -> &str {
+    segment
+}
+
 /// An identity the walk CONSIDERED, as evidence — never as a resolution. One
 /// that could not even be minted leaves no observation behind rather than a
 /// placeholder one.

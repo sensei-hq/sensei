@@ -86,6 +86,8 @@ pub const GRAMMAR: crate::indexer::resolve::Grammar = crate::indexer::resolve::G
     path_separator: "::",
     module_separator: "::",
     roots: &[(CRATE_ROOT, Root::Package), ("self", Root::Here), ("super", Root::Up)],
+    // A `use` path names modules, never files, so there is no extension in it.
+    module_segment: crate::indexer::lang::common::already_a_module_segment,
     // Rust's `self::x` names a member of the module `x` is written in, not
     // a sibling file.
     relative_to_directory: false,

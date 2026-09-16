@@ -98,6 +98,24 @@ pub struct Grammar {
     /// package would mint a library node for every untyped local in the corpus.
     /// A JavaScript module names an external ONLY through an import.
     pub paths_name_packages: bool,
+    /// How the LAST segment of a LOCAL import specifier reduces to a segment of
+    /// a module path.
+    ///
+    /// A JavaScript specifier is a filesystem path, so its last segment is a
+    /// FILE NAME: `./buckets.js` names the module the declaration side minted
+    /// from `src/lib/buckets.ts`, and the extension belongs to neither. Rust's
+    /// `use a::b` is already a module path and has no file name in it, so it
+    /// answers with what it was given.
+    ///
+    /// A FUNCTION rather than a flag, so the rule lives in the language module
+    /// that also applies it to the declaration side — `javascript::module_path`
+    /// calls this same one. Two spellings of it is exactly how the two sides of
+    /// an import come to mint different strings and never merge (spec §2).
+    ///
+    /// Applied to LOCAL specifiers only. An external's path is never reduced to
+    /// a module of ours, so there is no declaration for it to agree with, and
+    /// chopping `lodash/get.js` would rename a library node for no gain.
+    pub module_segment: fn(&str) -> &str,
     /// Whether a rooted path is relative to the file's DIRECTORY rather than to
     /// the module the file is.
     ///
@@ -311,9 +329,9 @@ impl<'a> Ladder<'a> {
         let mut bound: BTreeMap<&str, Vec<&Import>> = BTreeMap::new();
         let mut globs: Vec<&Import> = Vec::new();
         for import in &facts.imports {
-            match &import.binds {
-                Binding::Name(name) => bound.entry(name.as_str()).or_default().push(import),
-                Binding::Glob => globs.push(import),
+            match import.binds.name() {
+                Some(name) => bound.entry(name).or_default().push(import),
+                None => globs.push(import),
             }
         }
 
@@ -536,6 +554,16 @@ impl<'a> Ladder<'a> {
         let Rooted::At(mut segments) = self.specifier(import) else {
             return Placed::Unbound;
         };
+        // The head is a segment of the target only when the specifier did not
+        // already spell it. `use a::b::C` ends with `C`, so appending the head
+        // would name `a::b::C::C`; `import { C } from './b'` ends with the
+        // MODULE, so dropping the head names the module in place of `C`.
+        //
+        // The import says which, because both shapes appear in one JavaScript
+        // file — see [`Binding::MemberOf`].
+        if let Binding::MemberOf { member, .. } = &import.binds {
+            segments.push(member.clone());
+        }
         segments.extend(tail.iter().cloned());
 
         match &import.origin {
@@ -798,7 +826,19 @@ impl<'a> Ladder<'a> {
                 let head = self.split_module(package).len().max(1);
                 Rooted::At(segments.into_iter().skip(head).collect())
             }
-            ImportOrigin::Local => self.relative_to(&segments, import.at),
+            ImportOrigin::Local => {
+                // The last segment of a local specifier is a FILE NAME, and the
+                // declaration side reduced the same file to a module segment
+                // before minting anything. See [`Grammar::module_segment`].
+                //
+                // A leading root is never the last segment here: `./` alone is
+                // not a specifier, so the `while` above cannot have left one.
+                if let Some(last) = segments.last_mut() {
+                    let reduce = self.grammar.module_segment;
+                    *last = reduce(last).to_string();
+                }
+                self.relative_to(&segments, import.at)
+            }
         }
     }
 
@@ -910,8 +950,7 @@ mod tests {
 
     use crate::indexer::facts::{FileFacts, RefKind, Reference, Resolution, Rung};
     use crate::indexer::fqn;
-    use crate::indexer::lang::rust;
-    use crate::indexer::lang::{Source, TypeHomes};
+    use crate::indexer::lang::{LanguageAdapter, Source, TypeHomes, javascript, rust};
     use crate::indexer::resolve::{World, members_declared_by, resolve};
     use crate::indexer::{module_of, package_of};
 
@@ -963,11 +1002,26 @@ mod tests {
     ///
     /// `files` are `(module, path, text)`.
     fn scan(files: &[(&str, &str, &str)]) -> Vec<(String, FileFacts)> {
+        scan_of(&rust::RustAdapter, files)
+    }
+
+    /// The same scan, in another language.
+    ///
+    /// Through [`LanguageAdapter`] rather than through a second copy of the loop
+    /// above, because the two passes and the barrier between them are the SHARED
+    /// pipeline and not Rust's: a fixture that walked TypeScript its own way
+    /// could pass while the real scan failed, which is the one thing a harness
+    /// must not be able to do.
+    fn scan_of(
+        adapter: &dyn LanguageAdapter,
+        files: &[(&str, &str, &str)],
+    ) -> Vec<(String, FileFacts)> {
         let read_all = |types: &TypeHomes| -> Vec<(String, FileFacts)> {
             files
                 .iter()
                 .map(|(module, path, text)| {
-                    let facts = rust::read(&Source { package: "p", module, path, text }, types)
+                    let facts = adapter
+                        .read(&Source { package: "p", module, path, text }, types)
                         .unwrap_or_else(|e| panic!("{path}: {e:?}"));
                     ((*path).to_string(), facts)
                 })
@@ -988,7 +1042,7 @@ mod tests {
         };
         anchored
             .into_iter()
-            .map(|(path, facts)| (path, resolve(facts, &rust::GRAMMAR, &world)))
+            .map(|(path, facts)| (path, resolve(facts, adapter.grammar(), &world)))
             .collect()
     }
 
@@ -1133,6 +1187,142 @@ mod tests {
         ]);
         let caller = file_of(&scanned, "src/watcher.rs");
         assert_placed(caller, "rust·p·db·PgStore·url·field");
+    }
+
+    /// Rung 2, red-first, for a language whose specifier does NOT name the
+    /// binding.
+    ///
+    /// `use a::b::kindFor` ends with the name it binds, so Rust's import rung
+    /// reads the specifier and appends whatever followed the head. JavaScript
+    /// states the binding in the import CLAUSE — `import { kindFor } from
+    /// './buckets'` — and the specifier names only the MODULE, so dropping the
+    /// head there mints the module's identity in place of the member's and every
+    /// named import lands on a node that is not the one imported.
+    ///
+    /// MEASURED at the whole of it: 3,865 first-party TypeScript import edges,
+    /// not one of which named a declaration this scan holds.
+    #[test]
+    fn a_named_import_binds_a_member_the_specifier_does_not_name() {
+        let scanned = scan_of(
+            &javascript::TypeScriptAdapter,
+            &[
+                (
+                    "lib/buckets",
+                    "src/lib/buckets.ts",
+                    "export function kindFor(a: string): string { return a; }\n",
+                ),
+                (
+                    "lib/board",
+                    "src/lib/board.ts",
+                    "import { kindFor } from './buckets';\n\
+                     export function go(): string { return kindFor('x'); }\n",
+                ),
+            ],
+        );
+        assert_placed(
+            file_of(&scanned, "src/lib/board.ts"),
+            "typescript·p·lib/buckets·kindFor·item",
+        );
+    }
+
+    /// The other half of the same question, and the reason the answer cannot be
+    /// a per-LANGUAGE flag.
+    ///
+    /// `import * as buckets from './buckets'` binds the MODULE, so the specifier
+    /// names the bound thing exactly as a Rust `use` does, and appending the
+    /// head would mint `lib/buckets·buckets·kindFor` — a node nothing declares.
+    /// The two clauses sit in one language and one file, so what tells them
+    /// apart has to be read off the import itself.
+    ///
+    /// Green before the fix and green after it: this is the edge the obvious
+    /// per-language knob would have taken away.
+    #[test]
+    fn a_namespace_import_binds_the_module_and_keeps_naming_it() {
+        let scanned = scan_of(
+            &javascript::TypeScriptAdapter,
+            &[
+                (
+                    "lib/buckets",
+                    "src/lib/buckets.ts",
+                    "export function kindFor(a: string): string { return a; }\n",
+                ),
+                (
+                    "lib/board",
+                    "src/lib/board.ts",
+                    "import * as buckets from './buckets';\n\
+                     export function go(): string { return buckets.kindFor('x'); }\n",
+                ),
+            ],
+        );
+        assert_placed(
+            file_of(&scanned, "src/lib/board.ts"),
+            "typescript·p·lib/buckets·kindFor·item",
+        );
+    }
+
+    /// The second half of the same defect, and it hides behind the first.
+    ///
+    /// A JavaScript specifier is a FILE path, so `./buckets.js` ends with a file
+    /// name — while the declaration side reduced `src/lib/buckets.ts` to the
+    /// module `lib/buckets`. The extension is therefore a segment on one side
+    /// and absent on the other, and the two never merge however well the member
+    /// is named. `./buckets.js` next to `buckets.ts` is not a typo: it is what
+    /// TypeScript's `nodenext` resolution requires the source to write.
+    ///
+    /// MEASURED across the 3,865: naming the member alone lands 1,619 of them;
+    /// stemming the file as well lands 3,248.
+    #[test]
+    fn a_local_specifiers_file_extension_is_not_a_segment_of_the_module() {
+        let scanned = scan_of(
+            &javascript::TypeScriptAdapter,
+            &[
+                (
+                    "lib/buckets",
+                    "src/lib/buckets.ts",
+                    "export function kindFor(a: string): string { return a; }\n",
+                ),
+                (
+                    "lib/board",
+                    "src/lib/board.ts",
+                    "import { kindFor } from './buckets.js';\n\
+                     export function go(): string { return kindFor('x'); }\n",
+                ),
+            ],
+        );
+        assert_placed(
+            file_of(&scanned, "src/lib/board.ts"),
+            "typescript·p·lib/buckets·kindFor·item",
+        );
+    }
+
+    /// An ALIASED named import asks two different questions, and one string
+    /// cannot answer both: `kf` is what this file looks the name up by, and
+    /// `kindFor` is what the other module declares.
+    ///
+    /// MUTATION: push `local` instead of `member` in `through_an_import` — the
+    /// target becomes `lib/buckets·kf·item`, which nothing declares.
+    #[test]
+    fn an_aliased_named_import_reaches_the_name_the_other_module_declares() {
+        let scanned = scan_of(
+            &javascript::TypeScriptAdapter,
+            &[
+                (
+                    "lib/buckets",
+                    "src/lib/buckets.ts",
+                    "export function kindFor(a: string): string { return a; }\n",
+                ),
+                (
+                    "lib/board",
+                    "src/lib/board.ts",
+                    "import { kindFor as kf } from './buckets.js';\n\
+                     export function go(): string { return kf('x'); }\n",
+                ),
+            ],
+        );
+        assert_placed(
+            file_of(&scanned, "src/lib/board.ts"),
+            "typescript·p·lib/buckets·kindFor·item",
+        );
     }
 
     /// Every reference's outcome, as text: the identity it was placed at, or the
