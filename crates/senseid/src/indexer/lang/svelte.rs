@@ -52,10 +52,8 @@ impl LanguageAdapter for SvelteAdapter {
         &javascript::GRAMMAR
     }
 
-    fn read(&self, source: &Source<'_>, _types: &TypeHomes) -> Result<FileFacts, ReadError> {
-        // See `javascript::TypeScriptAdapter::read` — a class owns its members
-        // lexically, so there is no separate home to be told about.
-        read(source)
+    fn read(&self, source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadError> {
+        read(source, types)
     }
 
     fn file_fqn(&self, package: &str, module: &str, path: &str) -> Result<Fqn, FqnError> {
@@ -76,14 +74,14 @@ impl LanguageAdapter for SvelteAdapter {
 }
 
 /// Parse one component once (R1) and return everything that parse saw.
-pub fn read(source: &Source<'_>) -> Result<FileFacts, ReadError> {
+pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadError> {
     let from = javascript::file_fqn(source.package, source.module, source.path)
         .map_err(ReadError::NoFileIdentity)?;
 
     let blocks = script_blocks(source.text);
     // ONE walk over the blocks and the markup — see `read_component` for why
     // two would leave the markup typing nothing.
-    let found = javascript::read_component(source, &blocks, from)?;
+    let found = javascript::read_component(source, types, &blocks, from)?;
 
     Ok(FileFacts {
         language: Language::TypeScript,
@@ -147,8 +145,11 @@ mod tests {
     use crate::indexer::facts::{Observation, RefKind, Resolution};
 
     fn facts(text: &str) -> FileFacts {
-        read(&Source { package: "pkg", module: "lib/Comp", path: "src/lib/Comp.svelte", text })
-            .expect("the component reads")
+        read(
+            &Source { package: "pkg", module: "lib/Comp", path: "src/lib/Comp.svelte", text },
+            &TypeHomes::unknown(),
+        )
+        .expect("the component reads")
     }
 
     fn named(facts: &FileFacts, name: &str) -> Vec<String> {
