@@ -1805,6 +1805,38 @@ mod tests {
         );
     }
 
+    /// The same receiver, reaching a member its TRAIT IMPL supplies.
+    ///
+    /// The two ways a receiver gets typed — the walk reading a binding, and the
+    /// ladder reading a unit struct or a call's return type — must reach the
+    /// same declaration, or a method is callable from one shape and invisible
+    /// from the other. `Ladder::member_of` is the one place that mints for the
+    /// second, so it has to ask the same two tables in the same order.
+    ///
+    /// Taken from the real miss: `crates/bootstrap/src/health/platforms/macos.rs`
+    /// writes `MacOSProvider.resolvers()` against a `resolvers` that only
+    /// `impl PlatformProvider for MacOSProvider` supplies.
+    #[test]
+    fn a_unit_struct_receiver_reaches_a_member_its_trait_impl_supplies() {
+        let scanned = scan(&[
+            ("t", "src/t.rs", "pub trait Remedy { fn fix(&self) -> u32; }\n"),
+            (
+                "r",
+                "src/r.rs",
+                "use crate::t::Remedy;\n\
+                 pub struct Fixer;\n\
+                 impl Remedy for Fixer { fn fix(&self) -> u32 { 0 } }\n",
+            ),
+            ("u", "src/u.rs", "use crate::r::Fixer;\npub fn go() -> u32 { Fixer.fix() }\n"),
+        ]);
+        let got = targets(file_of(&scanned, "src/u.rs"));
+        assert!(
+            got.iter().any(|t| t == "rust·p·r·Fixer·Remedy·fix·item"),
+            "the receiver is typed and the member is declared, so the only thing between them \
+             is the trait segment the use site cannot know; got {got:?}"
+        );
+    }
+
     /// **A binding whose type the source never states, typed by the CALL that
     /// bound it.** Red-first, and the largest single shape left in the lost
     /// column after the trait-impl rung landed.
