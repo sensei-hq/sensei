@@ -144,6 +144,24 @@ pub(super) struct Kind {
     /// NODE'S OWN REACH carried its bare name. A defect, at lower confidence:
     /// two declarations can share a name.
     pub(super) lost_by_name: usize,
+    /// Unlinked, SOME unresolved use site of the corpus carried its bare name,
+    /// and a narrowing ruled that site out — so it is not in [`Kind::lost`].
+    ///
+    /// **This column is what makes `lost` comparable across runs.**
+    /// [`Kind::lost_by_name`] is defined by whichever narrowings
+    /// [`NamedBy::verdict`] applies, and three were added during one sweep —
+    /// reach, then language, then [`Via`]. Each shrank the column for a reason
+    /// that has nothing to do with the resolver, and the drops were read as
+    /// resolver progress because the table gave no way to tell them apart:
+    /// about 79% of that sweep's TypeScript `lost` reduction and 56% of its Rust
+    /// one was the definition moving underneath the number.
+    ///
+    /// So the table now prints both sides. A run whose `lost` fell while this
+    /// rose by the same amount changed the DEFINITION; one whose `lost` fell
+    /// while this held still changed the RESOLVER. Neither is legible from
+    /// `lost` alone, and a number nobody can attribute is a number nobody should
+    /// quote.
+    pub(super) narrowed_out: usize,
 }
 
 impl Kind {
@@ -168,10 +186,11 @@ impl Kind {
         self.never_named += other.never_named;
         self.lost_exact += other.lost_exact;
         self.lost_by_name += other.lost_by_name;
+        self.narrowed_out += other.narrowed_out;
     }
 
     /// This row as the table prints it, in [`HEADINGS`] order.
-    fn cells(&self) -> [String; 7] {
+    fn cells(&self) -> [String; 8] {
         [
             self.nodes,
             self.from_source,
@@ -180,6 +199,7 @@ impl Kind {
             self.lost(),
             self.lost_exact,
             self.lost_by_name,
+            self.narrowed_out,
         ]
         .map(|n| n.to_string())
     }
@@ -187,19 +207,19 @@ impl Kind {
 
 /// The by-kind table's columns, in order. Beside [`Kind::cells`] so a heading
 /// and the number under it cannot be reordered apart.
-const HEADINGS: [&str; 7] =
-    ["nodes", "calls", "test calls", "not called", "lost", "exact", "by name"];
+const HEADINGS: [&str; 8] =
+    ["nodes", "calls", "test calls", "not called", "lost", "exact", "by name", "narrowed"];
 
 /// One line of the by-kind table — the heading, a kind, or the total.
 ///
 /// One function because the widths belong in one place. Three copies of a
 /// format string is three things to keep in step, and a heading that has
 /// drifted off its column is read as a different measurement.
-fn a_row(label: &str, cells: [String; 7]) {
-    let [nodes, calls, test_calls, not_called, lost, exact, by_name] = cells;
+fn a_row(label: &str, cells: [String; 8]) {
+    let [nodes, calls, test_calls, not_called, lost, exact, by_name, narrowed] = cells;
     println!(
         "  {label:<16} {nodes:>7} {calls:>8} {test_calls:>12} {not_called:>12} {lost:>7} \
-         {exact:>7} {by_name:>8}"
+         {exact:>7} {by_name:>8} {narrowed:>9}"
     );
 }
 
@@ -271,6 +291,14 @@ pub(super) struct NamedBy<'a> {
     /// two labels are already written and read under everywhere else, so the
     /// two sides of the lookup cannot spell either differently.
     by_reach: BTreeMap<(Language, &'static str, Via), BTreeSet<&'a str>>,
+    /// The same names with NO key at all — the pool as it stood before any of
+    /// the three narrowings above existed.
+    ///
+    /// Kept so the table can print what the narrowings REMOVE rather than only
+    /// what they leave. See [`Kind::narrowed_out`]: without it a narrowing and
+    /// a resolver fix move the `lost` column identically and no reader of two
+    /// runs can tell which happened.
+    any_name: BTreeSet<&'a str>,
 }
 
 /// HOW a use site went looking for its target, as far as its evidence shows.
@@ -292,6 +320,15 @@ enum Via {
 }
 
 impl<'a> NamedBy<'a> {
+    /// No evidence at all — the base a caller fills one table of, and what
+    /// [`NamedBy::of`] starts from. The idiom [`TypeHomes::unknown`] and
+    /// [`SuppliedMembers::unknown`] already use, here for the same reason: a
+    /// literal repeated at four sites is four places to forget a table when a
+    /// fourth is added.
+    fn nothing() -> Self {
+        Self { exact: BTreeSet::new(), by_reach: BTreeMap::new(), any_name: BTreeSet::new() }
+    }
+
     /// Read every unresolved use site of the corpus into the two sets.
     ///
     /// Relations are read alongside references, and that symmetry is the point:
@@ -300,7 +337,7 @@ impl<'a> NamedBy<'a> {
     /// out, a type that only an `impl` header names reads as "nothing ever
     /// named it" — the one bucket that is explicitly not a defect.
     fn of(units: &'a [Unit<'a>]) -> Self {
-        let mut named = Self { exact: BTreeSet::new(), by_reach: BTreeMap::new() };
+        let mut named = Self::nothing();
         for unit in units {
             let references = unit.facts.references.iter().map(|r| &r.target);
             let relations = unit.facts.relations.iter().map(|r| &r.parent);
@@ -334,7 +371,18 @@ impl<'a> NamedBy<'a> {
                 .entry((language, evidence.reach.as_str(), via))
                 .or_default()
                 .insert(evidence.name.as_str());
+            self.any_name.insert(evidence.name.as_str());
         }
+    }
+
+    /// Did ANY unresolved use site of the corpus carry this bare name, whatever
+    /// its language, reach or shape? The pool [`NamedBy::verdict`] narrows.
+    ///
+    /// Not a second verdict and never read as one — see [`Kind::narrowed_out`].
+    /// It answers the question a reader of two runs needs and cannot otherwise
+    /// ask: how much of the `lost` column moved because the narrowings moved.
+    fn named_before_narrowing(&self, name: &str) -> bool {
+        self.any_name.contains(name)
     }
 
     /// The grade of evidence, if any, naming one declaration.
@@ -455,7 +503,19 @@ pub(super) fn by_kind(units: &[Unit<'_>]) -> BTreeMap<&'static str, BTreeMap<Sym
             match named.verdict(symbol.kind, symbol.fqn.as_str(), symbol.name.as_str()) {
                 Lost::Exact => row.lost_exact += 1,
                 Lost::ByName => row.lost_by_name += 1,
-                Lost::Nothing => row.never_named += 1,
+                Lost::Nothing => {
+                    row.never_named += 1;
+                    // A narrowing is what put it here, and the table says so.
+                    // The kind check is NOT one of the three — it is a fact
+                    // about the grammar, not a filter over evidence — so a kind
+                    // nothing can name is left out rather than counted as
+                    // something a narrowing removed.
+                    if symbol.kind.can_be_named()
+                        && named.named_before_narrowing(symbol.name.as_str())
+                    {
+                        row.narrowed_out += 1;
+                    }
+                }
             }
         }
     }
@@ -933,6 +993,7 @@ mod tests {
                 (Language::Rust, Reach::Mod.as_str(), Via::NameAlone),
                 BTreeSet::from(["inner"]),
             )]),
+            ..NamedBy::nothing()
         };
 
         assert_eq!(
@@ -1024,6 +1085,52 @@ mod tests {
             ts.get(&SymbolKind::Function).map(|f| f.nodes),
             Some(1),
             "the typescript file was read; a fixture that produced nothing would pass vacuously"
+        );
+    }
+
+    /// **What the narrowings TOOK OUT of the lost column, in the table.**
+    ///
+    /// The three narrowings above are each correct and each shrinks `lost` for
+    /// a reason that is not the resolver getting better. Added one at a time
+    /// during a single sweep, they moved the column under the numbers being
+    /// quoted beside it: about 79% of that sweep's TypeScript `lost` reduction
+    /// and 56% of its Rust one was the definition changing, and nothing in the
+    /// table said so. A reader comparing two runs could not have known.
+    ///
+    /// The same fixture as the language narrowing, read the other way round:
+    /// `ram_gb` is not lost, AND the reason it is not is a narrowing rather than
+    /// an absence of evidence. Both halves in one assertion, because either
+    /// alone is the ambiguity this column exists to remove.
+    ///
+    /// MUTATION: drop the `any_name` insert from [`NamedBy::saw`]. The column
+    /// reads 0 and the run is indistinguishable from one where nothing ever
+    /// spelled `ram_gb`.
+    #[test]
+    fn the_table_says_how_many_nodes_a_narrowing_took_out_of_the_lost_column() {
+        let rows = report_over(&[
+            ("crates/x/src/lib.rs", "pub struct Hw {\n\x20   pub ram_gb: usize,\n}\n"),
+            ("app/src/lib/hw.ts", "export function peek(v): number { return v.ram_gb; }\n"),
+        ]);
+        let rust = rows.get("rust").expect("the rust fixture produced rows");
+        let field = rust.get(&SymbolKind::Field).expect("the struct declares a field");
+        assert_eq!(
+            (field.lost(), field.narrowed_out),
+            (0, 1),
+            "the field is not lost, and it is not lost BECAUSE a narrowing ruled the only site \
+             that spells it out — a run cannot be compared with one that narrowed differently \
+             unless the table says which"
+        );
+
+        // A declaration nothing anywhere names is NOT in this column, so it
+        // cannot be passing by counting every unlinked node.
+        let function = rows
+            .get("typescript")
+            .and_then(|ts| ts.get(&SymbolKind::Function))
+            .expect("the typescript fixture declares a function");
+        assert_eq!(
+            (function.lost(), function.narrowed_out),
+            (0, 0),
+            "nobody calls `peek` and nobody spells it either; there is no narrowing to report"
         );
     }
 
@@ -1168,6 +1275,7 @@ mod tests {
                 (Language::Rust, Reach::Item.as_str(), Via::AReceiver),
                 BTreeSet::from(["draw"]),
             )]),
+            ..NamedBy::nothing()
         };
 
         assert_eq!(
@@ -1218,7 +1326,7 @@ mod tests {
             saw: vec![],
         };
 
-        let mut named = NamedBy { exact: BTreeSet::new(), by_reach: BTreeMap::new() };
+        let mut named = NamedBy::nothing();
         named.saw(Language::Rust, &considered);
         named.saw(Language::Rust, &named_only);
 
