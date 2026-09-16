@@ -520,6 +520,22 @@ pub enum Rung {
     /// (package, name) and so answers in the use site's OWN package, which an
     /// import naming a sibling crate's same-named type would contradict.
     DeclaredByItsType,
+    /// A TYPE in this scan declares the target THROUGH A TRAIT IMPL, and exactly
+    /// one such declaration answers to the spelling the use site could mint.
+    ///
+    /// Its own rung and not folded into [`Rung::DeclaredByItsType`], because the
+    /// proof is weaker and the histogram has to be able to say so. That one
+    /// matches a whole identity: the walk minted a string and a declaration
+    /// minted the same string. This one cannot — a member supplied by
+    /// `impl Display for W` carries the TRAIT as a segment, and a use site
+    /// writing `w.fmt()` has no way to know which trait supplies the name. So
+    /// the collapsed spelling is looked UP, and the answer is unique or there is
+    /// no answer.
+    ///
+    /// Directly below [`Rung::DeclaredByItsType`], which is the same fact
+    /// exactly known: an inherent declaration outranks a trait's, as it does in
+    /// the language.
+    SuppliedByATraitImpl,
     /// A glob in scope covers the module the target sits in. The name itself
     /// was never written down, which is what makes this the weakest first-party
     /// rung.
@@ -542,6 +558,7 @@ impl Rung {
             Self::DeclaredHere => "declared_here",
             Self::ThroughAnImport => "through_an_import",
             Self::DeclaredByItsType => "declared_by_its_type",
+            Self::SuppliedByATraitImpl => "supplied_by_a_trait_impl",
             Self::ThroughAGlob => "through_a_glob",
             Self::RootedInThisPackage => "rooted_in_this_package",
             Self::FullyQualifiedExternal => "fully_qualified_external",
@@ -555,6 +572,7 @@ impl Rung {
             "declared_here" => Self::DeclaredHere,
             "through_an_import" => Self::ThroughAnImport,
             "declared_by_its_type" => Self::DeclaredByItsType,
+            "supplied_by_a_trait_impl" => Self::SuppliedByATraitImpl,
             "through_a_glob" => Self::ThroughAGlob,
             "rooted_in_this_package" => Self::RootedInThisPackage,
             "fully_qualified_external" => Self::FullyQualifiedExternal,
@@ -568,6 +586,7 @@ impl Rung {
         Rung::DeclaredHere,
         Rung::ThroughAnImport,
         Rung::DeclaredByItsType,
+        Rung::SuppliedByATraitImpl,
         Rung::ThroughAGlob,
         Rung::RootedInThisPackage,
         Rung::FullyQualifiedExternal,
