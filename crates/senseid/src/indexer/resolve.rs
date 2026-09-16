@@ -948,7 +948,7 @@ fn same_package(one: &str, other: &str) -> bool {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use crate::indexer::facts::{FileFacts, RefKind, Reference, Resolution, Rung};
+    use crate::indexer::facts::{FileFacts, RefKind, Reference, RelationKind, Resolution, Rung};
     use crate::indexer::fqn;
     use crate::indexer::lang::{LanguageAdapter, Source, TypeHomes, javascript, rust};
     use crate::indexer::resolve::{World, members_declared_by, resolve};
@@ -1115,6 +1115,61 @@ mod tests {
     /// onto locals declared in its SPEC file. A wrong edge in place of a missing
     /// one is exactly what R4 forbids, so the rung takes its set from
     /// `RelationKind::Owns`: what a TYPE declares, which a bare name never is.
+    /// The `Owns` restriction on `members_declared_by`, tested DIRECTLY.
+    ///
+    /// The sibling test above uses a free function — the child of no relation at
+    /// all — so it refutes only the "every declared symbol" widening. A widening
+    /// INSIDE the relation set is the one a future edit would plausibly make,
+    /// and it was unguarded: swapping the filter to admit `Extends`,
+    /// `Implements` and `TraitImpl` children passed all 319 unit tests and all
+    /// 13 corpus checks while silently gaining 11 edges.
+    ///
+    /// Those children are TYPE identities, not members. A set holding them lets
+    /// a bare type name in another file of the same module reduction resolve
+    /// onto them — the same shape as the 68 wrong edges onto `.spec` files that
+    /// the restriction exists to prevent.
+    #[test]
+    fn only_what_a_type_owns_is_a_member() {
+        let facts = crate::indexer::walked_rust(
+            "m",
+            "src/m.rs",
+            "pub trait Draw { fn draw(&self); }\n\
+             pub struct Widget;\n\
+             impl Draw for Widget { fn draw(&self) {} }\n",
+        );
+
+        // ANTI-VACUITY. Without a non-`Owns` relation in the fixture there is
+        // nothing for the filter to exclude and the test proves nothing —
+        // which is how the sibling above came to look like a guard.
+        assert!(
+            facts.relations.iter().any(|r| r.kind != RelationKind::Owns),
+            "the fixture must contain a relation the filter has to reject"
+        );
+
+        let declared = members_declared_by(std::iter::once(&facts));
+        let is = |name: &str| {
+            facts
+                .symbols
+                .iter()
+                .find(|s| s.name == name)
+                .unwrap_or_else(|| panic!("the fixture declares no {name}"))
+                .fqn
+                .clone()
+        };
+
+        assert!(
+            declared.contains(&is("draw")),
+            "a method its type owns IS a member; the set holds {declared:?}"
+        );
+        for a_type in ["Widget", "Draw"] {
+            assert!(
+                !declared.contains(&is(a_type)),
+                "{a_type} is a TYPE, and it reached the member set — a bare name matching it \
+                 in another file would resolve onto it"
+            );
+        }
+    }
+
     #[test]
     fn a_bare_name_matching_another_files_declaration_is_not_proof_of_anything() {
         let scanned = scan(&[
