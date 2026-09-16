@@ -264,6 +264,9 @@ impl ImportRow {
             path: path.clone(),
             binds: match binds {
                 Binding::Name(name) => BindingRow::Name(name.clone()),
+                Binding::MemberOf { local, member } => {
+                    BindingRow::MemberOf { local: local.clone(), member: member.clone() }
+                }
                 Binding::Glob => BindingRow::Glob,
             },
             origin: match origin {
@@ -278,6 +281,7 @@ impl ImportRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BindingRow {
     Name(String),
+    MemberOf { local: String, member: String },
     Glob,
 }
 
@@ -749,6 +753,9 @@ fn occurrence_prop(occurrence: &Occurrence) -> serde_json::Value {
             "fact": "brought",
             "binds": match binds {
                 BindingRow::Name(name) => serde_json::json!({ "binds": "name", "name": name }),
+                BindingRow::MemberOf { local, member } => {
+                    serde_json::json!({ "binds": "member_of", "name": local, "member": member })
+                }
                 BindingRow::Glob => serde_json::json!({ "binds": "glob" }),
             },
             "origin": match origin {
@@ -778,6 +785,10 @@ fn with_outcome(mut prop: serde_json::Value, outcome: &Outcome) -> serde_json::V
 fn binds_from_prop(value: &serde_json::Value) -> Option<BindingRow> {
     Some(match value.get("binds")?.as_str()? {
         "name" => BindingRow::Name(value.get("name")?.as_str()?.to_string()),
+        "member_of" => BindingRow::MemberOf {
+            local: value.get("name")?.as_str()?.to_string(),
+            member: value.get("member")?.as_str()?.to_string(),
+        },
         "glob" => BindingRow::Glob,
         _ => return None,
     })
