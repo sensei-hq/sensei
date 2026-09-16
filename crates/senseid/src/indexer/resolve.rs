@@ -41,8 +41,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::facts::{
-    Binding, Evidence, FileFacts, Fqn, Import, ImportOrigin, Language, Observation, Reason,
-    Reference, Relation, RelationKind, Resolution, Rung, Span, SymbolKind,
+    Binding, DeclaredType, Evidence, FileFacts, Fqn, Import, ImportOrigin, Language, Observation,
+    Reason, Reference, Relation, RelationKind, Resolution, Rung, Span, SymbolKind,
 };
 use super::fqn::{self, Form, Reach};
 
@@ -210,6 +210,9 @@ pub struct World<'a> {
     /// which file came first (R6). Empty means "not supplied", and then nothing
     /// resolves through it — the previous behaviour, and never a guess.
     pub declared_members: &'a BTreeSet<Fqn>,
+    /// What each declaration RETURNS, so a call on the result of a call can be
+    /// typed. Empty means "not supplied" and nothing is chased — never a guess.
+    pub returns: &'a BTreeMap<Fqn, String>,
     /// Every identity minted before this file. It is here, and it is
     /// deliberately never read.
     ///
@@ -219,6 +222,45 @@ pub struct World<'a> {
     /// `resolving_a_file_does_not_depend_on_what_has_been_scanned_before_it` can
     /// hand the ladder the whole corpus and show the output does not move.
     pub scanned: &'a BTreeSet<Fqn>,
+}
+
+/// What each function and method RETURNS, for [`World::returns`].
+///
+/// A lookup, never an inference: the value is the type the source WROTE. A
+/// declaration that states no return type is absent, and a receiver typed from
+/// it stays an honest miss.
+///
+/// `Self` is resolved HERE, from the member's own identity. A method's fqn
+/// carries the type it belongs to, so `Config::from_env -> Self` is stored as
+/// `Config` without anything having to guess: the answer is a segment of the
+/// key. The walk does not do it — `declared_type` is the text the source wrote,
+/// which is the right thing for a fact to be.
+///
+/// Handed a COMPLETED pass, like the other barrier artifacts: the key is a
+/// member identity carrying its type's module, which is only right once the
+/// type table has been applied.
+pub fn returns_declared_by<'a>(
+    files: impl IntoIterator<Item = &'a FileFacts>,
+) -> BTreeMap<Fqn, String> {
+    files
+        .into_iter()
+        .flat_map(|facts| facts.symbols.iter())
+        .filter_map(|symbol| match &symbol.declared_type {
+            DeclaredType::Stated(stated) => {
+                let stated = stated.trim_start_matches('&').trim();
+                if stated != "Self" {
+                    return Some((symbol.fqn.clone(), stated.to_string()));
+                }
+                // `Self` IS the enclosing type, and the member's identity says
+                // which: the segment before the member name.
+                let parsed = fqn::parse(symbol.fqn.as_str()).ok()?;
+                let at = parsed.tail.iter().position(|s| *s == symbol.name)?;
+                let owner = parsed.tail.get(at.checked_sub(1)?)?;
+                Some((symbol.fqn.clone(), (*owner).to_string()))
+            }
+            DeclaredType::Unstated => None,
+        })
+        .collect()
 }
 
 /// Every member identity the scan declares, for [`World::declared_members`].
@@ -357,6 +399,24 @@ impl<'a> Ladder<'a> {
             Resolution::Unresolved { reason: Reason::Unplaced, evidence } => {
                 self.climb(evidence, at)
             }
+            // ...with ONE exception, and it is an exception for a reason the
+            // walk can state precisely: `ReceiverTypeUnknown` means the walk
+            // could not type the receiver FROM THE FILE IT HAD. That cause does
+            // NOT still hold once a completed pass is in hand — the receiver may
+            // be a call whose return type another file states. Nothing else is
+            // retried: a name with no import in scope is still nameless, and
+            // plumbing is still plumbing.
+            Resolution::Unresolved { reason: Reason::ReceiverTypeUnknown, evidence } => {
+                match self.through_what_the_receiver_returns(evidence, at) {
+                    Placed::Proven(fqn) => {
+                        Resolution::Resolved { fqn, via: Rung::DeclaredByItsType }
+                    }
+                    Placed::Unbound => Resolution::Unresolved {
+                        reason: self.filtered(Reason::ReceiverTypeUnknown, evidence),
+                        evidence: evidence.clone(),
+                    },
+                }
+            }
             Resolution::Unresolved { reason, evidence } => Resolution::Unresolved {
                 reason: self.filtered(*reason, evidence),
                 evidence: evidence.clone(),
@@ -441,6 +501,98 @@ impl<'a> Ladder<'a> {
             reason: self.filtered(Reason::NoImportInScope, evidence),
             evidence: evidence.clone(),
         }
+    }
+
+    /// A receiver that is itself a CALL, typed by what that call returns.
+    ///
+    /// `Config::from_env().script()` and `let c = Config::from_env(); c.script()`
+    /// are the same edge, and only the second resolved: the `let` gives the
+    /// binding a type the walk can read, while the chained form leaves the walk
+    /// with an expression it cannot type and no cross-file knowledge to type it
+    /// with. MEASURED on one real pair of files: four of the 37 misses, every
+    /// one this shape.
+    ///
+    /// Three things keep this a LOOKUP rather than an inference:
+    ///
+    /// - the inner call climbs the SAME ladder a callee does, so nothing new
+    ///   decides where `from_env` lives;
+    /// - the return type is the one the source WROTE — a declaration stating
+    ///   none is absent from the table and the receiver stays a miss;
+    /// - the member must be one the type DECLARES, checked against the same
+    ///   `declared_members` the sibling rung uses, so a name match alone never
+    ///   mints an edge (R4).
+    ///
+    /// One hop only. `a().b().c()` needs `b`'s return type, which is this same
+    /// lookup applied again — allowed, but bounded, because an uncapped chase
+    /// is how a wrong type travels a long way quietly.
+    fn through_what_the_receiver_returns(&self, evidence: &Evidence, at: Span) -> Placed {
+        if self.world.returns.is_empty() {
+            return Placed::Unbound;
+        }
+        let Some(receiver) = evidence.saw.iter().find_map(|o| match o {
+            Observation::Receiver(text) => Some(text.as_str()),
+            _ => None,
+        }) else {
+            return Placed::Unbound;
+        };
+        // Only a CALL has a return type. A bare binding is the walk's job and
+        // it already did it.
+        let Some(callee) = receiver.strip_suffix("()") else { return Placed::Unbound };
+        if callee.is_empty() || callee.contains(['(', ' ']) {
+            return Placed::Unbound;
+        }
+
+        // The inner call, placed by the ordinary rungs.
+        let inner = Evidence {
+            name: callee.to_string(),
+            node_kind: evidence.node_kind.clone(),
+            reach: Reach::Item,
+            saw: Vec::new(),
+        };
+        let Resolution::Resolved { fqn, .. } = self.climb(&inner, at) else {
+            return Placed::Unbound;
+        };
+        let Some(returned) = self.world.returns.get(&fqn) else { return Placed::Unbound };
+
+        // The type the call hands back, as a segment.
+        let names_a_type = self.grammar.names_a_type;
+        let Some(ty) = self.split(returned).into_iter().rev().find(|segment| names_a_type(segment))
+        else {
+            return Placed::Unbound;
+        };
+
+        // And the member on it — only if that type DECLARES it.
+        let module = match self.types_home_of(&ty) {
+            Some(module) => module,
+            None => return Placed::Unbound,
+        };
+        let Ok(minted) = fqn::refer(&Form::Member {
+            lang: self.grammar.language,
+            package: self.package,
+            module: &module,
+            ty: &ty,
+            member: &evidence.name,
+            reach: evidence.reach,
+        }) else {
+            return Placed::Unbound;
+        };
+        if self.world.declared_members.contains(&minted) {
+            return Placed::Proven(minted);
+        }
+        Placed::Unbound
+    }
+
+    /// The module a type lives in, from the identities the scan declared.
+    ///
+    /// Read off `declared_members` rather than from a second table: a member's
+    /// identity already carries its type's module, and deriving it here from
+    /// the same set the rung checks against is what stops the two disagreeing.
+    fn types_home_of(&self, ty: &str) -> Option<String> {
+        self.world.declared_members.iter().find_map(|member| {
+            let parsed = fqn::parse(member.as_str()).ok()?;
+            let at = parsed.tail.iter().position(|segment| *segment == ty)?;
+            Some(parsed.tail[..at].join(self.grammar.module_separator))
+        })
     }
 
     /// Plumbing is filtered wherever it lands, so the histogram has one bucket
@@ -951,7 +1103,7 @@ mod tests {
     use crate::indexer::facts::{FileFacts, RefKind, Reference, RelationKind, Resolution, Rung};
     use crate::indexer::fqn;
     use crate::indexer::lang::{LanguageAdapter, Source, TypeHomes, javascript, rust};
-    use crate::indexer::resolve::{World, members_declared_by, resolve};
+    use crate::indexer::resolve::{World, members_declared_by, resolve, returns_declared_by};
     use crate::indexer::{module_of, package_of};
 
     fn placed(reference: &Reference) -> &str {
@@ -984,6 +1136,7 @@ mod tests {
                 first_party: &first_party,
                 first_party_members: &BTreeSet::new(),
                 declared_members: &BTreeSet::new(),
+                returns: &std::collections::BTreeMap::new(),
                 scanned: &scanned,
             },
         )
@@ -1034,10 +1187,12 @@ mod tests {
 
         let first_party: BTreeSet<String> = ["p".to_string()].into_iter().collect();
         let declared_members = members_declared_by(anchored.iter().map(|(_, f)| f));
+        let returns = returns_declared_by(anchored.iter().map(|(_, f)| f));
         let world = World {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &declared_members,
+            returns: &returns,
             scanned: &BTreeSet::new(),
         };
         anchored
@@ -1128,6 +1283,53 @@ mod tests {
     /// a bare type name in another file of the same module reduction resolve
     /// onto them — the same shape as the 68 wrong edges onto `.spec` files that
     /// the restriction exists to prevent.
+    /// **A call on the RESULT of a call.** `SenseiConfig::from_env().script()`
+    /// is the same edge as `let c = SenseiConfig::from_env(); c.script()`, and
+    /// only the second resolved.
+    ///
+    /// MEASURED on the real pair: `crates/bootstrap/src/config.rs` and
+    /// `health/resolvers/daemon_start.rs` place 158 of 195 references, and
+    /// FOUR of the 37 misses name something those files declare — all four this
+    /// shape. `cfg.brew_service_name()` at line 156 resolves because the `let`
+    /// gives the binding a type the walk can read; the identical call chained on
+    /// one line does not. Same call, same types, different syntax.
+    ///
+    /// Everything the chain needs is already on the nodes: `from_env` carries
+    /// `declared_type: Stated("Self")`, and `Self` in an `impl SenseiConfig` is
+    /// `SenseiConfig`. What was missing is a lookup from a resolved callee to
+    /// its return type.
+    #[test]
+    fn a_call_on_the_result_of_a_call_is_typed_by_what_that_call_returns() {
+        let scanned = scan(&[
+            (
+                "config",
+                "src/config.rs",
+                "pub struct Config { pub n: u32 }\n\
+                 impl Config {\n\
+                   pub fn from_env() -> Self { Config { n: 0 } }\n\
+                   pub fn script(&self) -> u32 { self.n }\n\
+                 }\n",
+            ),
+            (
+                "user",
+                "src/user.rs",
+                "use crate::config::Config;\n\
+                 pub fn chained() -> u32 { Config::from_env().script() }\n\
+                 pub fn bound() -> u32 { let c = Config::from_env(); c.script() }\n",
+            ),
+        ]);
+
+        let got = targets(file_of(&scanned, "src/user.rs"));
+        let want = "rust·p·config·Config·script·item";
+        // The BOUND form already worked; it is here so a regression in it shows
+        // up beside the fix rather than after it.
+        assert_eq!(
+            got.iter().filter(|t| *t == want).count(),
+            2,
+            "both the chained and the bound call must reach {want}; got {got:?}"
+        );
+    }
+
     #[test]
     fn only_what_a_type_owns_is_a_member() {
         let facts = crate::indexer::walked_rust(
@@ -1876,6 +2078,7 @@ mod tests {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &BTreeSet::new(),
+            returns: &std::collections::BTreeMap::new(),
             scanned: &scanned,
         };
 
@@ -2025,6 +2228,7 @@ mod tests {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &BTreeSet::new(),
+            returns: &std::collections::BTreeMap::new(),
             scanned: &BTreeSet::new(),
         };
 
@@ -2136,6 +2340,7 @@ mod tests {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &BTreeSet::new(),
+            returns: &std::collections::BTreeMap::new(),
             scanned: &scanned,
         };
         let mut resolved = 0usize;
@@ -2237,6 +2442,7 @@ mod tests {
                     first_party: &first_party,
                     first_party_members: &BTreeSet::new(),
                     declared_members: &BTreeSet::new(),
+                    returns: &std::collections::BTreeMap::new(),
                     scanned: &nothing,
                 },
             );
@@ -2247,6 +2453,7 @@ mod tests {
                     first_party: &first_party,
                     first_party_members: &BTreeSet::new(),
                     declared_members: &BTreeSet::new(),
+                    returns: &std::collections::BTreeMap::new(),
                     scanned: &everything,
                 },
             );
@@ -2307,6 +2514,7 @@ mod tests {
                         first_party: &first_party,
                         first_party_members: &BTreeSet::new(),
                         declared_members: &BTreeSet::new(),
+                        returns: &std::collections::BTreeMap::new(),
                         scanned: &scanned,
                     },
                 );
@@ -2391,6 +2599,7 @@ mod tests {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &BTreeSet::new(),
+            returns: &std::collections::BTreeMap::new(),
             scanned: &scanned,
         };
         let mut resolved = 0usize;

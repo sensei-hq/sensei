@@ -435,11 +435,13 @@ mod tests {
             .map(|s| s.name.clone())
             .collect();
         let declared_members = members_declared_by(anchored.iter());
+        let returns = crate::indexer::resolve::returns_declared_by(anchored.iter());
         let scanned = BTreeSet::new();
         let world = World {
             first_party: &first_party,
             first_party_members: &first_party_members,
             declared_members: &declared_members,
+            returns: &returns,
             scanned: &scanned,
         };
         anchored
