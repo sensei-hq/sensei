@@ -28,7 +28,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::facts::{FileFacts, Language, Resolution, SymbolKind};
+use super::facts::{Evidence, FileFacts, Language, Observation, Resolution, SymbolKind};
+use super::fqn::{self, Origin, Reach};
 
 /// One file of a corpus: what the walk read, and the text it was read from.
 ///
@@ -123,13 +124,6 @@ fn area_of(path: &str) -> String {
     segments[..=(root + 1).min(segments.len() - 1)].join("/")
 }
 
-/// Run both barriers over a corpus, print the decomposition, and hand back the
-/// per-language tally so a caller can assert on it.
-///
-/// Printing and measuring are one pass deliberately. The decomposition IS the
-/// result — a count alone cannot be argued with, and every wrong diagnosis this
-/// measurement has produced was a count somebody explained before they split
-/// it.
 /// One row of the by-kind report.
 #[derive(Default)]
 pub(super) struct Kind {
@@ -143,46 +137,244 @@ pub(super) struct Kind {
     /// graph has nothing to lose — an entry point, a registered handler, a
     /// public surface, or genuinely dead.
     pub(super) never_named: usize,
-    /// Unlinked, and a use site DOES name it but did not connect. The ladder
-    /// failed. This is the only column that is a defect.
-    pub(super) named_but_lost: usize,
+    /// Unlinked, and an unresolved use site carried this node's EXACT identity.
+    /// No collision is possible; the edge was meant and it is missing.
+    pub(super) lost_exact: usize,
+    /// Unlinked, no identity names it, and an unresolved use site AT THIS
+    /// NODE'S OWN REACH carried its bare name. A defect, at lower confidence:
+    /// two declarations can share a name.
+    pub(super) lost_by_name: usize,
+}
+
+impl Kind {
+    /// Unlinked and something named it, at either grade of evidence. The
+    /// defect column.
+    pub(super) fn lost(&self) -> usize {
+        self.lost_exact + self.lost_by_name
+    }
+
+    /// Unlinked for any reason — the defect and the nodes nothing ever named.
+    pub(super) fn not_called(&self) -> usize {
+        self.never_named + self.lost()
+    }
+
+    /// Fold another row in, for the TOTAL line. Every field, so a column added
+    /// to the table cannot be left out of its own total.
+    fn absorb(&mut self, other: &Kind) {
+        self.nodes += other.nodes;
+        self.linked += other.linked;
+        self.from_source += other.from_source;
+        self.from_test += other.from_test;
+        self.never_named += other.never_named;
+        self.lost_exact += other.lost_exact;
+        self.lost_by_name += other.lost_by_name;
+    }
+
+    /// This row as the table prints it, in [`HEADINGS`] order.
+    fn cells(&self) -> [String; 7] {
+        [
+            self.nodes,
+            self.from_source,
+            self.from_test,
+            self.not_called(),
+            self.lost(),
+            self.lost_exact,
+            self.lost_by_name,
+        ]
+        .map(|n| n.to_string())
+    }
+}
+
+/// The by-kind table's columns, in order. Beside [`Kind::cells`] so a heading
+/// and the number under it cannot be reordered apart.
+const HEADINGS: [&str; 7] =
+    ["nodes", "calls", "test calls", "not called", "lost", "exact", "by name"];
+
+/// One line of the by-kind table — the heading, a kind, or the total.
+///
+/// One function because the widths belong in one place. Three copies of a
+/// format string is three things to keep in step, and a heading that has
+/// drifted off its column is read as a different measurement.
+fn a_row(label: &str, cells: [String; 7]) {
+    let [nodes, calls, test_calls, not_called, lost, exact, by_name] = cells;
+    println!(
+        "  {label:<16} {nodes:>7} {calls:>8} {test_calls:>12} {not_called:>12} {lost:>7} \
+         {exact:>7} {by_name:>8}"
+    );
+}
+
+/// A kind's label in the table, marked if no reference can name one.
+///
+/// The marker is derived from [`SymbolKind::can_be_named`] at the moment of
+/// printing rather than stored on the row, so there is exactly one answer to
+/// "can this be named" and the table cannot disagree with the count beside it.
+fn label_of(kind: SymbolKind) -> String {
+    match kind.can_be_named() {
+        true => format!("{kind:?}"),
+        false => format!("{kind:?} *"),
+    }
+}
+
+/// How strongly an unresolved use site points at a node no edge reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Lost {
+    /// A use site carried this node's exact identity.
+    Exact,
+    /// No identity, but a use site at this node's reach carried its bare name.
+    ByName,
+    /// Nothing named it. There was no edge here to lose.
+    Nothing,
+}
+
+/// What the UNRESOLVED references of a corpus can prove about a node no edge
+/// reached.
+///
+/// Two grades of evidence, kept apart because they are not the same claim:
+///
+/// - an IDENTITY. A walk that cannot place a use site often records what it
+///   CONSIDERED as [`Observation::Candidate`], which is a full identity. If
+///   that identity is a node's own, the use site meant that node and no other,
+///   and the missing edge is certain.
+/// - a NAME. Otherwise all the walk has is the bare name at the use site,
+///   because that is what unresolved means. A name is shared: an `is_empty`
+///   the standard library declares and one this repository declares are the
+///   same eight characters, so a name match can only ever be an upper bound.
+///
+/// The name match is narrowed by REACH, which is not a guess and costs nothing.
+/// [`Evidence::reach`] is a function of the use SYNTAX — `x.name` is
+/// [`Reach::Field`], `a::b::name` and `name()` are [`Reach::Item`] — and a
+/// declaration's identity ends in the reach its own form minted. A use site at
+/// one reach cannot produce the identity of a declaration at another, so a name
+/// matched across a reach boundary is a collision by construction, never a lost
+/// edge.
+///
+/// MEASURED over this repository: narrowing by reach drops 1,304 name matches,
+/// and the drop is one-sided in a way that says what it is — 1,278 of them are
+/// declarations at item reach whose name appears only at FIELD reach, i.e. a
+/// member read of somebody's property that happens to spell the declaration's
+/// name. It takes TypeScript's `Const` row from 1,390 names matched down to
+/// 357. One worked example, the `base` the drop is named after: `app`'s
+/// `senseiApi` declares a local `const base`, the only `.base` in the whole
+/// corpus is `SIZE_PX.base` in a `dojo` component, and before the narrowing
+/// that member read was the evidence blaming the resolver for `base`.
+pub(super) struct NamedBy<'a> {
+    exact: BTreeSet<&'a str>,
+    /// Keyed by [`Reach::as_str`], the label the reach is already written and
+    /// read under everywhere else, so the two sides of the lookup cannot spell
+    /// it differently.
+    by_reach: BTreeMap<&'static str, BTreeSet<&'a str>>,
+}
+
+impl<'a> NamedBy<'a> {
+    /// Read every unresolved use site of the corpus into the two sets.
+    ///
+    /// Relations are read alongside references, and that symmetry is the point:
+    /// a RESOLVED relation parent already counts as an edge that reached the
+    /// node, so an unresolved one has to count as an attempt that failed. Left
+    /// out, a type that only an `impl` header names reads as "nothing ever
+    /// named it" — the one bucket that is explicitly not a defect.
+    fn of(units: &'a [Unit<'a>]) -> Self {
+        let mut named = Self { exact: BTreeSet::new(), by_reach: BTreeMap::new() };
+        for unit in units {
+            let references = unit.facts.references.iter().map(|r| &r.target);
+            let relations = unit.facts.relations.iter().map(|r| &r.parent);
+            for target in references.chain(relations) {
+                if let Resolution::Unresolved { evidence, .. } = target {
+                    named.saw(evidence);
+                }
+            }
+        }
+        named
+    }
+
+    /// One use site's evidence. An identity is recorded INSTEAD of the name,
+    /// never as well: a walk that got as far as minting a candidate has said
+    /// which node it meant, and letting its bare name stand too would put that
+    /// use site behind every other declaration that shares the name.
+    fn saw(&mut self, evidence: &'a Evidence) {
+        let mut minted = false;
+        for observation in &evidence.saw {
+            if let Observation::Candidate(fqn) = observation {
+                self.exact.insert(fqn.as_str());
+                minted = true;
+            }
+        }
+        if !minted {
+            self.by_reach
+                .entry(evidence.reach.as_str())
+                .or_default()
+                .insert(evidence.name.as_str());
+        }
+    }
+
+    /// The grade of evidence, if any, naming one declaration.
+    ///
+    /// A kind no reference can name is answered before any evidence is
+    /// consulted, and [`SymbolKind::can_be_named`] is the one place that
+    /// decides which kinds those are. There is no callee relation for a
+    /// container, so the question "did an edge to it go missing" has no
+    /// answer but zero.
+    ///
+    /// Today the reach narrowing below would reach the same zero on its own —
+    /// a module's identity ends at [`Reach::Mod`] and no use site mints that
+    /// reach, so its name can never be found in `by_reach`. That is a
+    /// coincidence of two rules agreeing, and the whole point of asking the
+    /// kind first is that the zero stops depending on the coincidence.
+    fn verdict(&self, kind: SymbolKind, fqn: &str, name: &str) -> Lost {
+        if !kind.can_be_named() {
+            return Lost::Nothing;
+        }
+        if self.exact.contains(fqn) {
+            return Lost::Exact;
+        }
+        // A declaration's identity was minted by `fqn::define`, so reading it
+        // back cannot fail — and if it ever does, that is a defect in the
+        // identity and not a node to quietly report as unnamed.
+        let parsed = fqn::parse(fqn).expect("a declaration carries an identity this can read");
+        let Origin::Local { reach, .. } = parsed.origin else {
+            // An external carries no reach (see `Form::Lib`) and declares
+            // nothing here, so no use site in this corpus reaches it.
+            return Lost::Nothing;
+        };
+        match self.by_reach.get(reach.as_str()).is_some_and(|names| names.contains(name)) {
+            true => Lost::ByName,
+            false => Lost::Nothing,
+        }
+    }
 }
 
 /// Every declared node by KIND, and for each: linked, or unlinked and why.
 ///
-/// The split that matters is the last two columns. "Nothing reaches it" alone
+/// The split that matters is the last columns. "Nothing reaches it" alone
 /// cannot tell a task the scheduler calls by string from an edge the resolver
 /// dropped, and those need opposite responses — one is the code, one is us.
 ///
-/// The signal separating them is whether any UNRESOLVED reference names the
-/// node. If something tried to name it and the ladder came back empty, that is
-/// a miss. If nothing names it at all, the graph never had an edge to lose.
+/// The signal separating them is whether any UNRESOLVED use site names the
+/// node, at the two grades of evidence [`NamedBy`] describes. If something
+/// tried to name it and the ladder came back empty, that is a miss. If nothing
+/// names it at all, the graph never had an edge to lose.
 ///
-/// The name match is deliberately generous — a bare name, not an identity —
-/// because an unresolved reference HAS no identity, that is what unresolved
-/// means. So `named_but_lost` is an UPPER bound: a std `is_empty` colliding
-/// with a first-party `is_empty` counts. It is the right way round, because a
-/// number that overstates a defect gets investigated and one that understates
-/// it gets trusted.
-pub(super) fn by_kind(units: &[Unit<'_>]) -> BTreeMap<&'static str, BTreeMap<String, Kind>> {
+/// Keyed by [`SymbolKind`] and not by its label, because the row IS about a
+/// kind: stringify it here and the printer can no longer ask the kind anything,
+/// which is how a kind that cannot be named ends up re-decided by whoever is
+/// formatting the table.
+///
+/// A kind nothing can name keeps its row, and its `lost` reads zero by
+/// construction — see [`NamedBy::verdict`]. Dropping the row instead would take
+/// the count of those declarations out of the table, and the count is a true
+/// statement worth reading: it is the only thing the table can say about them.
+pub(super) fn by_kind(units: &[Unit<'_>]) -> BTreeMap<&'static str, BTreeMap<SymbolKind, Kind>> {
+    let named = NamedBy::of(units);
     let mut from_source: BTreeSet<&str> = BTreeSet::new();
     let mut from_test: BTreeSet<&str> = BTreeSet::new();
-    let mut named: BTreeSet<&str> = BTreeSet::new();
     for unit in units {
         let boundary = test_boundary(unit.path, unit.text, unit.facts.language);
         for r in &unit.facts.references {
-            let caller_is_a_test = r.at.start_line >= boundary;
-            match &r.target {
-                Resolution::Resolved { fqn, .. } => {
-                    if caller_is_a_test {
-                        from_test.insert(fqn.as_str());
-                    } else {
-                        from_source.insert(fqn.as_str());
-                    }
-                }
-                Resolution::Unresolved { evidence, .. } => {
-                    named.insert(evidence.name.as_str());
-                }
+            let Resolution::Resolved { fqn, .. } = &r.target else { continue };
+            if r.at.start_line >= boundary {
+                from_test.insert(fqn.as_str());
+            } else {
+                from_source.insert(fqn.as_str());
             }
         }
         for rel in &unit.facts.relations {
@@ -192,7 +384,7 @@ pub(super) fn by_kind(units: &[Unit<'_>]) -> BTreeMap<&'static str, BTreeMap<Str
         }
     }
 
-    let mut out: BTreeMap<&'static str, BTreeMap<String, Kind>> = BTreeMap::new();
+    let mut rows: BTreeMap<&'static str, BTreeMap<SymbolKind, Kind>> = BTreeMap::new();
     for unit in units {
         let language = unit.facts.language.as_str();
         let boundary = test_boundary(unit.path, unit.text, unit.facts.language);
@@ -200,8 +392,7 @@ pub(super) fn by_kind(units: &[Unit<'_>]) -> BTreeMap<&'static str, BTreeMap<Str
             if symbol.span.start_line >= boundary {
                 continue; // a test: the harness calls it, never us
             }
-            let row =
-                out.entry(language).or_default().entry(format!("{:?}", symbol.kind)).or_default();
+            let row = rows.entry(language).or_default().entry(symbol.kind).or_default();
             row.nodes += 1;
             let by_source = from_source.contains(symbol.fqn.as_str());
             let by_test = from_test.contains(symbol.fqn.as_str());
@@ -213,16 +404,25 @@ pub(super) fn by_kind(units: &[Unit<'_>]) -> BTreeMap<&'static str, BTreeMap<Str
             }
             if by_source || by_test {
                 row.linked += 1;
-            } else if named.contains(symbol.name.as_str()) {
-                row.named_but_lost += 1;
-            } else {
-                row.never_named += 1;
+                continue;
+            }
+            match named.verdict(symbol.kind, symbol.fqn.as_str(), symbol.name.as_str()) {
+                Lost::Exact => row.lost_exact += 1,
+                Lost::ByName => row.lost_by_name += 1,
+                Lost::Nothing => row.never_named += 1,
             }
         }
     }
-    out
+    rows
 }
 
+/// Run both barriers over a corpus, print the decomposition, and hand back the
+/// per-language tally so a caller can assert on it.
+///
+/// Printing and measuring are one pass deliberately. The decomposition IS the
+/// result — a count alone cannot be argued with, and every wrong diagnosis this
+/// measurement has produced was a count somebody explained before they split
+/// it.
 pub(super) fn two_barriers(units: &[Unit<'_>]) -> BTreeMap<&'static str, Tally> {
     // Where each file's test region begins. Past it, a declaration is a test.
     // By POSITION rather than by module name: the modules in this repository
@@ -359,29 +559,33 @@ pub(super) fn two_barriers(units: &[Unit<'_>]) -> BTreeMap<&'static str, Tally> 
     //
     // `not called` is the only column that needs explaining, and every entry in
     // it is listed below with a reason. `lost` inside it is a resolver defect —
-    // something names it and the ladder came back empty. The target is zero.
-    for (language, kinds) in by_kind(units) {
+    // something names it and the ladder came back empty. The target is zero,
+    // and it is split by how strong the evidence is: `exact` is a use site that
+    // carried this very identity, `by name` is a use site that spelled the name
+    // at the right reach and could be a namesake. See [`NamedBy`].
+    //
+    // A kind marked `*` is one no reference can name. Its row is a count, and
+    // its `lost` is zero because the question has no other answer for a
+    // container — not because a resolver cleared it.
+    for (language, kinds) in &by_kind(units) {
         println!("\n## {language}\n");
-        println!(
-            "  {:<14} {:>7} {:>8} {:>12} {:>12} {:>7}",
-            "kind", "nodes", "calls", "test calls", "not called", "lost"
-        );
+        a_row("kind", HEADINGS.map(str::to_string));
         let mut rows: Vec<_> = kinds.iter().collect();
         rows.sort_by_key(|(_, k)| std::cmp::Reverse(k.nodes));
-        let (mut n, mut s, mut t, mut u, mut m) = (0, 0, 0, 0, 0);
+        let mut total = Kind::default();
+        let mut containers = false;
         for (kind, k) in rows {
-            let not_called = k.never_named + k.named_but_lost;
-            println!(
-                "  {kind:<14} {:>7} {:>8} {:>12} {:>12} {:>7}",
-                k.nodes, k.from_source, k.from_test, not_called, k.named_but_lost
-            );
-            n += k.nodes;
-            s += k.from_source;
-            t += k.from_test;
-            u += not_called;
-            m += k.named_but_lost;
+            containers |= !kind.can_be_named();
+            a_row(&label_of(*kind), k.cells());
+            total.absorb(k);
         }
-        println!("  {:<14} {n:>7} {s:>8} {t:>12} {u:>12} {m:>7}", "TOTAL");
+        a_row("TOTAL", total.cells());
+        if containers {
+            println!(
+                "  * a CONTAINER: a reference cannot name one, so it has no callee edge to \
+                 lose and `lost` reads 0 by construction. The `calls` columns are the check."
+            );
+        }
     }
 
     println!("\n## Two barriers, per language\n");
@@ -526,6 +730,7 @@ fn decompose(units: &[Unit<'_>], orphans: &[(&str, SymbolKind, &str, &str)]) {
 mod tests {
     use super::*;
     use crate::indexer::facts::Language;
+    use crate::indexer::fqn;
     use crate::indexer::lang::{self, Source, TypeHomes};
     use crate::indexer::resolve::{World, members_declared_by, resolve};
 
@@ -573,6 +778,282 @@ mod tests {
                 resolve(facts, grammar, &world)
             })
             .collect()
+    }
+
+    /// Walk and place a handful of files, then read the by-kind report off
+    /// them. The two report tests below differ only in their fixture.
+    fn report_over(files: &[(&str, &str)]) -> BTreeMap<&'static str, BTreeMap<SymbolKind, Kind>> {
+        let corpus = placed(files);
+        let units: Vec<Unit<'_>> = corpus
+            .iter()
+            .zip(files.iter())
+            .map(|(facts, (path, text))| Unit { path, text, facts })
+            .collect();
+        // The map borrows the units, so the rows have to be lifted out of the
+        // borrow before the corpus goes out of scope at the end of this call.
+        by_kind(&units)
+    }
+
+    /// A MODULE is a CONTAINER: nothing calls it, it is IMPORTED, and the
+    /// things inside it are what get called. It keeps its row, because how
+    /// many were declared is a true statement and the only one available; what
+    /// it cannot have is a lost edge.
+    ///
+    /// The fixture is the exact shape that made the old report wrong: a module
+    /// named `inner`, and — in the same corpus — a member read that also
+    /// spells `inner` and cannot be placed. A bare-name match reads those two
+    /// as the same name and reports the module as an edge somebody lost. No
+    /// edge was ever possible: a module is entered by an import, which is not
+    /// a reference at all.
+    #[test]
+    fn a_module_keeps_its_row_and_has_no_edge_to_lose() {
+        let rows = report_over(&[(
+            "crates/x/src/lib.rs",
+            "pub mod inner {\n\
+             \x20   pub fn f() {}\n\
+             }\n\
+             pub fn g(v: Outside) -> usize { v.inner }\n",
+        )]);
+
+        let rust = rows.get("rust").expect("the rust fixture produced rows");
+        let module = rust.get(&SymbolKind::Module).expect("the module is counted, in the table");
+        assert_eq!(
+            (module.nodes, module.from_source, module.from_test),
+            (1, 0, 0),
+            "the count is the statement the table can make about a container"
+        );
+        assert_eq!(
+            (module.lost(), module.never_named),
+            (0, 1),
+            "and `lost` is 0: an unplaceable `v.inner` is a member read, not a module entry"
+        );
+    }
+
+    /// A zero has to say WHY it is zero, or the next reader spends a morning
+    /// looking for the edges a container never had.
+    ///
+    /// The marker is the whole of that explanation in the printed table, so it
+    /// is pinned rather than left to survive on nobody noticing it.
+    #[test]
+    fn a_kind_no_reference_can_name_is_marked_in_the_table() {
+        assert_eq!(label_of(SymbolKind::Module), "Module *", "a container is marked as one");
+        assert_eq!(
+            label_of(SymbolKind::Function),
+            "Function",
+            "and a kind that can lose an edge carries no mark, so the mark means something"
+        );
+    }
+
+    /// The zero above is a property of the KIND, and this is where that is
+    /// pinned — the report alone cannot pin it.
+    ///
+    /// No walk mints a use site at [`Reach::Mod`], so the reach narrowing
+    /// already answers zero for a module and a corpus fixture would pass with
+    /// the kind never consulted. Two rules agreeing is not one rule holding.
+    /// Here the evidence is built by hand, at the strongest grade there is —
+    /// the module's own identity — and a container still has nothing to lose,
+    /// while the same evidence about a namable kind is read normally.
+    #[test]
+    fn a_container_is_answered_before_any_evidence_is_read() {
+        let a_module = fqn::define(&fqn::Form::Item {
+            lang: Language::Rust,
+            package: "x",
+            module: "outer",
+            name: "inner",
+            reach: Reach::Mod,
+        })
+        .expect("a module identity");
+        let a_function = fqn::define(&fqn::Form::Item {
+            lang: Language::Rust,
+            package: "x",
+            module: "outer",
+            name: "inner",
+            reach: Reach::Item,
+        })
+        .expect("a function identity");
+
+        let named = NamedBy {
+            exact: BTreeSet::from([a_module.as_str(), a_function.as_str()]),
+            by_reach: BTreeMap::from([(Reach::Mod.as_str(), BTreeSet::from(["inner"]))]),
+        };
+
+        assert_eq!(
+            named.verdict(SymbolKind::Module, a_module.as_str(), "inner"),
+            Lost::Nothing,
+            "a container has no callee relation, so no evidence can make it a lost edge"
+        );
+        assert_eq!(
+            named.verdict(SymbolKind::Function, a_function.as_str(), "inner"),
+            Lost::Exact,
+            "and the same evidence about a kind a reference CAN name is still read"
+        );
+    }
+
+    /// A name is shared; a REACH is not. `x.TOTAL` and `TOTAL` are two
+    /// different questions, and only one of them can ever reach a const.
+    ///
+    /// Both halves in one fixture, because the failure mode is a rule that
+    /// answers one of them and not the other: the unplaceable member read
+    /// `v.TOTAL` is evidence about the FIELD named `TOTAL` and is no evidence
+    /// at all about the CONST named `TOTAL`.
+    #[test]
+    fn a_name_that_collides_across_a_reach_is_not_a_lost_edge() {
+        let rows = report_over(&[(
+            "crates/x/src/lib.rs",
+            "pub const TOTAL: usize = 1;\n\
+             pub struct S {\n\
+             \x20   pub TOTAL: usize,\n\
+             }\n\
+             pub fn peek(v: Outside) -> usize { v.TOTAL }\n",
+        )]);
+        let rust = rows.get("rust").expect("the rust fixture produced rows");
+
+        let field = rust.get(&SymbolKind::Field).expect("the struct declares a field");
+        assert_eq!(
+            (field.lost_exact, field.lost_by_name),
+            (0, 1),
+            "a member read at field reach names the field, by name and not by identity"
+        );
+
+        let konst = rust.get(&SymbolKind::Const).expect("the file declares a const");
+        assert_eq!(
+            (konst.lost_exact, konst.lost_by_name, konst.never_named),
+            (0, 0, 1),
+            "and the same four characters at field reach are no evidence about a const"
+        );
+    }
+
+    /// A header that names a supertype is a use site, and for one language it
+    /// is the ONLY record of that use site.
+    ///
+    /// A resolved relation parent already counts as an edge that reached the
+    /// type — the linked column is built from relations as well as references —
+    /// so an unresolved one has to count as an attempt that failed. The fixture
+    /// is Java rather than Rust, and that is the whole point of it: `impl Draw
+    /// for W` emits a `TypeUse` REFERENCE beside its `TraitImpl` relation, so a
+    /// Rust fixture passes whether relation parents are read or not and proves
+    /// nothing. MEASURED: dropping relation parents leaves this repository's
+    /// own Rust and TypeScript table byte-identical. Java's `implements Draw`
+    /// emits the relation alone, so here the read is the only thing standing
+    /// between `Draw` and the bucket that says nobody named it.
+    #[test]
+    fn a_header_naming_a_supertype_is_a_use_site_even_with_no_reference_beside_it() {
+        // A MARKER interface, with no members of its own. One that declares a
+        // member owns it, and an `Owns` relation's parent resolves by
+        // construction — so the type would be linked whatever this evidence
+        // scan does, and the fixture would measure nothing.
+        let rows = report_over(&[
+            ("server/src/main/java/com/x/Draw.java", "package com.x;\npublic interface Draw {}\n"),
+            (
+                "server/src/main/java/com/y/W.java",
+                "package com.y;\npublic class W implements Draw {}\n",
+            ),
+        ]);
+        let java = rows.get("java").expect("the java fixture produced rows");
+        let interface = java.get(&SymbolKind::Interface).expect("the fixture declares one");
+        assert_eq!(
+            (interface.linked, interface.lost_exact, interface.lost_by_name, interface.never_named),
+            (0, 0, 1, 0),
+            "the implements header named `Draw` and the ladder came back empty, which is a \
+             lost edge and not a type nobody names"
+        );
+    }
+
+    /// The two grades of evidence, and which one wins.
+    ///
+    /// An [`Observation::Candidate`] is a full identity the walk considered, so
+    /// a node it matches was MEANT — there is no collision to argue about. A
+    /// bare name is shared by construction. When both are available the
+    /// identity answers, because counting a node in both columns would make
+    /// `lost` a sum of two overlapping sets.
+    #[test]
+    fn an_identity_outranks_a_name_as_evidence_that_an_edge_was_lost() {
+        let widget = fqn::define(&fqn::Form::Member {
+            lang: Language::Rust,
+            package: "x",
+            module: "widget",
+            ty: "Widget",
+            member: "draw",
+            reach: Reach::Item,
+        })
+        .expect("a member identity");
+        let gadget = fqn::define(&fqn::Form::Member {
+            lang: Language::Rust,
+            package: "x",
+            module: "gadget",
+            ty: "Gadget",
+            member: "draw",
+            reach: Reach::Item,
+        })
+        .expect("a member identity");
+
+        let named = NamedBy {
+            exact: BTreeSet::from([widget.as_str()]),
+            by_reach: BTreeMap::from([(Reach::Item.as_str(), BTreeSet::from(["draw"]))]),
+        };
+
+        assert_eq!(
+            named.verdict(SymbolKind::Method, widget.as_str(), "draw"),
+            Lost::Exact,
+            "the use site carried this very identity, so nothing is being guessed"
+        );
+        assert_eq!(
+            named.verdict(SymbolKind::Method, gadget.as_str(), "draw"),
+            Lost::ByName,
+            "the same name on another type is a name match and is reported as one"
+        );
+        assert_eq!(
+            named.verdict(SymbolKind::Method, gadget.as_str(), "resize"),
+            Lost::Nothing,
+            "and a name no use site spells at this reach is not evidence of anything"
+        );
+    }
+
+    /// A use site that MINTED an identity does not also lend its bare name.
+    ///
+    /// The node it protects is not the one the candidate names — `verdict`
+    /// reads `exact` first, so that node is reported as exact either way. It is
+    /// every NAMESAKE. Let the name stand as well and one unplaceable
+    /// `widget.draw()` becomes evidence against every other `draw` declared in
+    /// the corpus, which is how an upper bound stops being worth reading.
+    #[test]
+    fn a_use_site_that_minted_an_identity_does_not_also_lend_its_bare_name() {
+        let widget = fqn::define(&fqn::Form::Member {
+            lang: Language::Rust,
+            package: "x",
+            module: "widget",
+            ty: "Widget",
+            member: "draw",
+            reach: Reach::Item,
+        })
+        .expect("a member identity");
+        let considered = Evidence {
+            name: "draw".to_string(),
+            node_kind: "call_expression".to_string(),
+            reach: Reach::Item,
+            saw: vec![Observation::Candidate(widget.clone())],
+        };
+        let named_only = Evidence {
+            name: "resize".to_string(),
+            node_kind: "call_expression".to_string(),
+            reach: Reach::Item,
+            saw: vec![],
+        };
+
+        let mut named = NamedBy { exact: BTreeSet::new(), by_reach: BTreeMap::new() };
+        named.saw(&considered);
+        named.saw(&named_only);
+
+        assert_eq!(
+            named.exact,
+            BTreeSet::from([widget.as_str()]),
+            "the walk said which node it meant, and that is what is recorded"
+        );
+        assert_eq!(
+            named.by_reach.get(Reach::Item.as_str()),
+            Some(&BTreeSet::from(["resize"])),
+            "only the use site with no identity of its own falls back to its bare name"
+        );
     }
 
     /// END TO END, through the real Java adapter and the real ladder: a JUnit
