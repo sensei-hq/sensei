@@ -780,6 +780,61 @@ pub fn module_segment(segment: &str) -> &str {
 /// exactly one type in it and TypeScript's own narrowing says so.
 pub fn type_segment(raw: &str) -> Result<String, FqnError> {
     let not_a_type = || FqnError::NotATypeName { value: raw.to_string() };
+    let Some(name) = names_one_type(raw) else {
+        return Err(not_a_type());
+    };
+    if name.contains(SEPARATOR) {
+        return Err(FqnError::SeparatorInSegment {
+            segment: fqn::Segment::Type,
+            value: name.to_string(),
+        });
+    }
+    Ok(name.to_string())
+}
+
+/// The one identifier a type reduces to, or nothing.
+///
+/// [`type_segment`] is this plus the [`FqnError`] a caller building an identity
+/// needs to report. Split so [`element_segment`], which has no identity to
+/// build and for which an unreadable element is simply an absent one, can reach
+/// the same rule without a second copy of it deciding differently.
+fn names_one_type(raw: &str) -> Option<&str> {
+    let sole = sole_arm(raw)?;
+
+    // `T[]` is an Array of T, whose members are Array's and not T's. Refused
+    // for the same reason the Rust reader refuses `Arc<T>`. What ONE ELEMENT of
+    // it is, is a different question, and `element_segment` answers that one.
+    if sole.ends_with("[]") {
+        return None;
+    }
+
+    // Generic arguments belong to the use, not to the identity: `Widget<T>` and
+    // `Widget` are one type. A qualified name is typed by its LAST segment; the
+    // namespace in front says where it is declared, not what it is.
+    let head = sole.split('<').next().unwrap_or(sole).trim();
+    let name = head.rsplit('.').next().unwrap_or(head).trim();
+
+    if name.is_empty() {
+        return None;
+    }
+    // A tuple, an object literal type, a string literal, a primitive keyword —
+    // an identifier starts with a letter, `_` or `$`, so anything else names no
+    // declaration this grammar can mint a segment for.
+    if !name.starts_with(|c: char| c.is_alphabetic() || c == '_' || c == '$') {
+        return None;
+    }
+    Some(name)
+}
+
+/// The ONE arm a type annotation reduces to, before anything reads its shape:
+/// `readonly T`, `(T)`, and a union or intersection whose other arms are only
+/// the absent-value types all name the same single type.
+///
+/// Split out of [`type_segment`] because [`element_segment`] needs the same
+/// reduction before it can see the brackets — `Row[] | null` states an array of
+/// `Row` exactly as `Row[]` does — and two copies of this rule would be two
+/// places for the two readers to disagree.
+fn sole_arm(raw: &str) -> Option<&str> {
     let mut rest = raw.trim();
 
     // `readonly T`, and a parenthesised type.
@@ -802,41 +857,68 @@ pub fn type_segment(raw: &str) -> Result<String, FqnError> {
         .map(str::trim)
         .filter(|a| !a.is_empty() && *a != "null" && *a != "undefined")
         .collect();
-    let sole = match arms.as_slice() {
-        [one] => *one,
+    match arms.as_slice() {
+        [one] => Some(one),
         // Every arm the same type is one type written twice.
-        [first, others @ ..] if others.iter().all(|o| o == first) => *first,
-        _ => return Err(not_a_type()),
+        [first, others @ ..] if others.iter().all(|o| o == first) => Some(first),
+        _ => None,
+    }
+}
+
+/// What ONE ELEMENT of an array annotation is, reduced the same way a type
+/// annotation is.
+///
+/// `type_segment` refuses `Row[]` because the RECEIVER is an Array and `.length`
+/// is Array's member, not `Row`'s — and that stands. But the annotation still
+/// states what comes out of the array, and every `Array` iteration method hands
+/// its callback exactly that. The two readings are kept apart so neither can be
+/// used where the other belongs (R4): the element type never types the array.
+///
+/// Absent where the annotation states no array, or states an array of something
+/// with no single name — `Row[][]`, `(A | B)[]`, `string[]`. Absent is the
+/// honest answer there; the walk then leaves the callback's parameter untyped.
+fn element_segment(raw: &str) -> Option<String> {
+    let sole = sole_arm(raw)?;
+    let inner = match sole.strip_suffix("[]") {
+        Some(inner) => inner,
+        // `Array<T>` and `ReadonlyArray<T>` are the same annotation written
+        // long. No other generic is an array, so no other head is peeled.
+        None => {
+            let (head, arguments) = sole.split_once('<')?;
+            match head.trim() {
+                "Array" | "ReadonlyArray" => arguments.strip_suffix('>')?,
+                _ => return None,
+            }
+        }
     };
+    // The separator check `type_segment` makes is skipped deliberately: a name
+    // carrying one cannot be a segment of an identity, and `name_member` will
+    // refuse to mint one from it anyway. Reported here it would be an error
+    // with no identity to attach it to.
+    Some(names_one_type(inner)?.to_string())
+}
 
-    // `T[]` is an Array of T, whose members are Array's and not T's. Refused
-    // for the same reason the Rust reader refuses `Arc<T>`.
-    if sole.ends_with("[]") {
-        return Err(not_a_type());
+/// Which parameters of an `Array` iteration method's callback hold an ELEMENT
+/// of the array, by method name. Absent for a name `Array` does not declare.
+///
+/// The positions are read off `Array`'s own signatures and are facts about
+/// them, not a guess: `map`, `filter`, `find` and their kin pass
+/// `(element, index, array)`; `sort` passes two elements to compare; `reduce`
+/// passes `(accumulator, element, index, array)`, so the element is second and
+/// the accumulator is left untyped because nothing here states what it is.
+///
+/// A method not listed hands its callback something this walk cannot name, and
+/// a receiver that is not an array never reaches here at all — it has no
+/// element type recorded, which is the narrowing that keeps a `Bag` with its
+/// own `map` from having its callback typed as a `Bag`.
+fn elements_handed_to_the_callback_of(method: &str) -> Option<&'static [usize]> {
+    match method {
+        "map" | "filter" | "forEach" | "find" | "findIndex" | "findLast" | "findLastIndex"
+        | "flatMap" | "some" | "every" => Some(&[0]),
+        "sort" | "toSorted" => Some(&[0, 1]),
+        "reduce" | "reduceRight" => Some(&[1]),
+        _ => None,
     }
-
-    // Generic arguments belong to the use, not to the identity: `Widget<T>` and
-    // `Widget` are one type. A qualified name is typed by its LAST segment; the
-    // namespace in front says where it is declared, not what it is.
-    let head = sole.split('<').next().unwrap_or(sole).trim();
-    let name = head.rsplit('.').next().unwrap_or(head).trim();
-
-    if name.is_empty() {
-        return Err(not_a_type());
-    }
-    // A tuple, an object literal type, a string literal, a primitive keyword —
-    // an identifier starts with a letter, `_` or `$`, so anything else names no
-    // declaration this grammar can mint a segment for.
-    if !name.starts_with(|c: char| c.is_alphabetic() || c == '_' || c == '$') {
-        return Err(not_a_type());
-    }
-    if name.contains(SEPARATOR) {
-        return Err(FqnError::SeparatorInSegment {
-            segment: fqn::Segment::Type,
-            value: name.to_string(),
-        });
-    }
-    Ok(name.to_string())
 }
 
 // ── the flow-sensitive binding map (04b S1, S2) ──────────────────────────────
@@ -857,11 +939,19 @@ struct Flow {
     /// another file, so only a completed scan can say (R6). The walk records
     /// the name it read and the ladder does the lookup.
     from_calls: BTreeMap<String, String>,
+    /// What ONE ELEMENT of a binding that holds an array is.
+    ///
+    /// A third table rather than a second reading of [`Flow::types`], and for
+    /// the reason `element_segment` records: the array and its elements are two
+    /// different types, and a receiver typed as its own element would put
+    /// `length` on the element. Kept apart, neither can be read where the other
+    /// belongs.
+    elements: BTreeMap<String, String>,
 }
 
 impl Flow {
     fn empty() -> Self {
-        Self { types: BTreeMap::new(), from_calls: BTreeMap::new() }
+        Self { types: BTreeMap::new(), from_calls: BTreeMap::new(), elements: BTreeMap::new() }
     }
 
     fn get(&self, name: &str) -> Option<&str> {
@@ -872,17 +962,22 @@ impl Flow {
         self.from_calls.get(name).map(String::as_str)
     }
 
+    fn element_of(&self, name: &str) -> Option<&str> {
+        self.elements.get(name).map(String::as_str)
+    }
+
     /// **S1.** Record what the most recent assignment said. An assignment the
     /// walk cannot type CLEARS the binding rather than leaving the previous type
     /// in place — "I no longer know" is the truth, and keeping a stale type is
     /// the fabrication (R4).
     ///
-    /// Clearing takes the CALL with it. A rebound name no longer holds what the
-    /// earlier call handed back, and a callee left standing here would type the
-    /// new value as the old one — the same staleness one line up, one table
-    /// over.
+    /// Clearing takes the CALL and the ELEMENT with it. A rebound name no
+    /// longer holds what the earlier call handed back, nor what the earlier
+    /// array's elements were, and either left standing here would type the new
+    /// value as the old one — the same staleness one line up, one table over.
     fn bind(&mut self, name: &str, ty: Option<String>) {
         self.from_calls.remove(name);
+        self.elements.remove(name);
         match ty {
             Some(ty) => {
                 self.types.insert(name.to_string(), ty);
@@ -893,12 +988,36 @@ impl Flow {
         }
     }
 
+    /// The binding holds an ARRAY, and this is what one of its elements is.
+    ///
+    /// Recorded after [`Flow::bind`] and never instead of it, because the two
+    /// answer different questions about the same name: `bind` says what the
+    /// receiver is, this says what comes out of it. `bind` clears this table,
+    /// so the order is the whole of the sequencing rule.
+    fn holds_elements_of(&mut self, name: &str, element: Option<String>) {
+        match element {
+            Some(element) => {
+                self.elements.insert(name.to_string(), element);
+            }
+            None => {
+                self.elements.remove(name);
+            }
+        }
+    }
+
     /// **S1's other half.** The source states no type, but it does say the value
     /// is whatever `callee` handed back.
     ///
     /// Recorded only where [`Flow::bind`] found no stated type, so a type the
     /// source WROTE is never overruled by one a lookup would find — the same
     /// order the Rust walk uses for the same reason.
+    ///
+    /// The ELEMENT table is left alone, and that is not an omission. [`Flow::bind`]
+    /// is the one place an assignment is recorded and it clears all three
+    /// tables, so anything still standing here was stated about THIS value:
+    /// `const rows: Row[] = fetchRows()` states both that the elements are
+    /// `Row`s and that the array came out of `fetchRows`, and clearing here
+    /// would throw the first fact away to record the second.
     fn bound_to_the_result_of(&mut self, name: &str, callee: &str) {
         self.types.remove(name);
         self.from_calls.insert(name.to_string(), callee.to_string());
@@ -908,19 +1027,71 @@ impl Flow {
     /// agrees. Which arm ran is not knowable, so the join is the INTERSECTION
     /// and an empty intersection is an honest unknown — not "the last arm wins".
     ///
-    /// The callee table joins by the same rule and in the same breath: two arms
-    /// calling two different functions leave a value this walk cannot name, and
-    /// keeping either one would be picking an arm.
+    /// All three tables join by that one rule and in the same breath: two arms
+    /// calling two different functions, or holding two different arrays, leave
+    /// a value this walk cannot name, and keeping either one would be picking
+    /// an arm.
     fn join(arms: &[Flow]) -> Flow {
         let Some((first, rest)) = arms.split_first() else {
             return Flow::empty();
         };
         let mut out = first.clone();
-        out.types.retain(|name, ty| rest.iter().all(|arm| arm.get(name) == Some(ty.as_str())));
-        out.from_calls
-            .retain(|name, of| rest.iter().all(|arm| arm.callee_of(name) == Some(of.as_str())));
+        agreed(&mut out.types, rest, Flow::get);
+        agreed(&mut out.from_calls, rest, Flow::callee_of);
+        agreed(&mut out.elements, rest, Flow::element_of);
         out
     }
+}
+
+/// What a CALL states about its callback's parameters that the callback's own
+/// signature does not.
+///
+/// One case today — an `Array` iteration method hands its callback an element
+/// — and the shape is general because the fact is: the caller knows something
+/// about a parameter the callee never wrote down.
+#[derive(Clone, Copy)]
+struct Handed<'a> {
+    /// Which parameter positions hold it. See
+    /// [`elements_handed_to_the_callback_of`].
+    at: &'a [usize],
+    element: &'a str,
+}
+
+impl Handed<'_> {
+    /// Type the named positions, and ONLY where the author annotated nothing.
+    /// An annotation is what the source says about the value; what the caller
+    /// hands over is an inference about it, and the written one outranks it.
+    ///
+    /// A destructuring parameter is skipped for the reason `bind_params`
+    /// records: it binds several names of several types, and giving each the
+    /// whole element type is false.
+    fn seed(&self, params: &FormalParameters<'_>, flow: &mut Flow) {
+        for position in self.at {
+            let Some(param) = params.items.get(*position) else {
+                continue;
+            };
+            if param.type_annotation.is_some() {
+                continue;
+            }
+            let BindingPattern::BindingIdentifier(id) = &param.pattern else {
+                continue;
+            };
+            flow.bind(&id.name, Some(self.element.to_string()));
+        }
+    }
+}
+
+/// One name-keyed table of a [`Flow`], intersected against the other arms: a
+/// name survives only where every arm reads back the same value for it.
+///
+/// One function for all three tables rather than one `retain` apiece, so a
+/// table added later cannot quietly join by a different rule than the rest.
+fn agreed(
+    mine: &mut BTreeMap<String, String>,
+    rest: &[Flow],
+    read: for<'a> fn(&'a Flow, &str) -> Option<&'a str>,
+) {
+    mine.retain(|name, value| rest.iter().all(|arm| read(arm, name) == Some(value.as_str())));
 }
 
 // ── the walk ─────────────────────────────────────────────────────────────────
@@ -1411,6 +1582,58 @@ impl Walk<'_> {
         }
     }
 
+    /// An arrow function's body, in a flow state of its OWN — the same rule
+    /// [`Walk::function_body`] records, for the same reason.
+    ///
+    /// `handed` is what the CALL SITE states about parameters the arrow's own
+    /// signature leaves unannotated, which for a callback is nearly all of
+    /// them: `rows.map((r) => …)` writes no type for `r` anywhere, and the only
+    /// statement of what it is sits on `rows`.
+    fn arrow_body(
+        &mut self,
+        a: &ArrowFunctionExpression<'_>,
+        scope: &Scope,
+        outer: &Flow,
+        handed: Option<Handed<'_>>,
+    ) {
+        let mut nested = self.captured(outer);
+        self.bind_params(&a.params, &mut nested);
+        if let Some(handed) = handed {
+            handed.seed(&a.params, &mut nested);
+        }
+        self.param_defaults(&a.params, scope, &mut nested);
+        for statement in &a.body.statements {
+            self.statement(statement, scope, &mut nested);
+        }
+    }
+
+    /// What the callee of a call hands its callback, where that callee is an
+    /// `Array` iteration method on a binding whose ELEMENT type is known.
+    ///
+    /// Both halves have to hold, and each is the narrowing that makes the other
+    /// safe: the method must be one `Array` declares, and the receiver must be
+    /// a binding an annotation said was an array. A `Bag` with its own `map`
+    /// fails the second, so its callback is typed as nothing rather than as a
+    /// `Bag` (R4).
+    ///
+    /// Only a bare-name receiver. `rows.filter(…).map(…)` hands its second
+    /// callback the same element, but nothing here has read what the first call
+    /// returns, and inventing it is the guess this refuses to make.
+    fn elements_handed_by(
+        &self,
+        callee: &Expression<'_>,
+        flow: &Flow,
+    ) -> Option<(&'static [usize], String)> {
+        let Expression::StaticMemberExpression(member) = callee else {
+            return None;
+        };
+        let at = elements_handed_to_the_callback_of(&member.property.name)?;
+        let Expression::Identifier(receiver) = &member.object else {
+            return None;
+        };
+        Some((at, flow.element_of(&receiver.name)?.to_string()))
+    }
+
     /// What a nested function may keep from the scope around it: the bindings
     /// whose names this file never assigns to. See [`Walk::reassigned`].
     fn captured(&self, outer: &Flow) -> Flow {
@@ -1420,9 +1643,14 @@ impl Walk<'_> {
                 inner.bind(name, Some(ty.clone()));
             }
         }
-        // Which call bound a name travels into the closure on the same terms
-        // its type does: a name nothing reassigns still holds what that call
-        // handed back when the body runs.
+        // Which call bound a name, and what one element of it is, travel into
+        // the closure on the same terms its type does: a name nothing reassigns
+        // still holds what that call handed back when the body runs.
+        for (name, element) in &outer.elements {
+            if !self.reassigned.contains(name) {
+                inner.holds_elements_of(name, Some(element.clone()));
+            }
+        }
         for (name, callee) in &outer.from_calls {
             if !self.reassigned.contains(name) {
                 inner.bound_to_the_result_of(name, callee);
@@ -1440,7 +1668,12 @@ impl Walk<'_> {
             let BindingPattern::BindingIdentifier(id) = &param.pattern else {
                 continue;
             };
-            flow.bind(&id.name, self.annotated_type(param.type_annotation.as_deref()));
+            let annotation = param.type_annotation.as_deref();
+            // BOTH readings the annotation supports, in the order
+            // `Flow::holds_elements_of` states: what the binding is, and —
+            // where the annotation is an array — what one element of it is.
+            flow.bind(&id.name, self.annotated_type(annotation));
+            flow.holds_elements_of(&id.name, self.annotated_element(annotation));
         }
     }
 
@@ -1507,6 +1740,12 @@ impl Walk<'_> {
     /// which is why route 1 leads S3.
     fn annotated_type(&self, annotation: Option<&TSTypeAnnotation<'_>>) -> Option<String> {
         type_segment(self.text_of(annotation?.type_annotation.span())).ok()
+    }
+
+    /// What one ELEMENT of an annotation STATES, where the annotation is an
+    /// array. Absent everywhere else — see [`element_segment`].
+    fn annotated_element(&self, annotation: Option<&TSTypeAnnotation<'_>>) -> Option<String> {
+        element_segment(self.text_of(annotation?.type_annotation.span()))
     }
 
     fn class(&mut self, c: &Class<'_>, scope: &Scope, flow: &mut Flow) {
@@ -1812,6 +2051,13 @@ impl Walk<'_> {
                 .or_else(|| declarator.init.as_ref().and_then(|e| self.stated_type(e)));
             let stated = ty.is_some();
             flow.bind(&id.name, ty);
+            // An ARRAY annotation states no type the binding could be, so `ty`
+            // above is absent for one — but it does state what comes out of the
+            // array, which is a separate reading and a separate table.
+            flow.holds_elements_of(
+                &id.name,
+                self.annotated_element(declarator.type_annotation.as_deref()),
+            );
             // Neither route STATED a type. The initialiser may still say which
             // call produced the value, and what that call returns is written on
             // a declaration this file may not hold — so the walk records the
@@ -1865,8 +2111,18 @@ impl Walk<'_> {
                 } else if !matches!(c.callee, Expression::Identifier(_)) {
                     self.expression(&c.callee, scope, flow);
                 }
+                // An `Array` iteration method hands its callback an ELEMENT,
+                // and the callback is where nearly every member read of this
+                // corpus's row types happens. Read before the arguments are
+                // walked, because it is what one of them is walked WITH.
+                let handed = self.elements_handed_by(&c.callee, flow);
                 for argument in &c.arguments {
-                    self.argument(argument, scope, flow);
+                    match (&handed, argument.as_expression()) {
+                        (Some((at, element)), Some(Expression::ArrowFunctionExpression(a))) => {
+                            self.arrow_body(a, scope, flow, Some(Handed { at, element }));
+                        }
+                        _ => self.argument(argument, scope, flow),
+                    }
                 }
             }
             Expression::NewExpression(n) => {
@@ -1918,14 +2174,7 @@ impl Walk<'_> {
                 self.expression(&m.expression, scope, flow);
             }
             Expression::AssignmentExpression(a) => self.assignment(a, scope, flow),
-            Expression::ArrowFunctionExpression(a) => {
-                let mut nested = self.captured(flow);
-                self.bind_params(&a.params, &mut nested);
-                self.param_defaults(&a.params, scope, &mut nested);
-                for statement in &a.body.statements {
-                    self.statement(statement, scope, &mut nested);
-                }
-            }
+            Expression::ArrowFunctionExpression(a) => self.arrow_body(a, scope, flow, None),
             Expression::FunctionExpression(f) => self.function_body(f, scope, flow),
             Expression::ClassExpression(c) => self.class(c, scope, flow),
             Expression::AwaitExpression(a) => self.expression(&a.argument, scope, flow),
@@ -3261,6 +3510,88 @@ mod tests {
             .find(|(name, _)| name == "m")
             .expect("the member call is a reference");
         assert!(call.1.ends_with("T·m·item"), "the signature types the parameter: {call:?}");
+    }
+
+    /// Route 4 — the ELEMENT of an array. `T[]` names no type the receiver
+    /// could be, so `type_segment` refuses it; but it does state what one
+    /// element IS, and every array iteration method hands its callback exactly
+    /// that.
+    ///
+    /// The position differs per method and is a fact about `Array`'s signatures
+    /// rather than a guess: `map`/`filter`/`find` and their kin pass
+    /// `(element, index, array)`, `sort` passes two elements, and `reduce`
+    /// passes `(accumulator, element, …)` — so the element is at position 1
+    /// there and the accumulator is left untyped.
+    ///
+    /// MUTATION: make `ELEMENT_AT` answer `None` for every method — every row
+    /// below reports `ReceiverTypeUnknown` again.
+    #[test]
+    fn an_array_iteration_callback_is_handed_an_element_of_the_array() {
+        let each = [
+            ("map", "rows.map((r) => r.m())"),
+            ("filter", "rows.filter((r) => r.m())"),
+            ("find", "rows.find((r) => r.m())"),
+            ("findIndex", "rows.findIndex((r) => r.m())"),
+            ("findLast", "rows.findLast((r) => r.m())"),
+            ("forEach", "rows.forEach((r) => { r.m(); })"),
+            ("flatMap", "rows.flatMap((r) => r.m())"),
+            ("some", "rows.some((r) => r.m())"),
+            ("every", "rows.every((r) => r.m())"),
+            ("sort", "rows.sort((a, r) => r.m())"),
+            ("reduce", "rows.reduce((acc, r) => r.m(), 0)"),
+            ("reduceRight", "rows.reduceRight((acc, r) => r.m(), 0)"),
+        ];
+        for (method, body) in each {
+            let facts = facts(&format!(
+                "class T {{ m() {{}} }}\nexport function go(rows: T[]) {{ return {body}; }}\n"
+            ));
+            let call = member_targets(&facts)
+                .into_iter()
+                .find(|(name, target)| name == "m" || target.ends_with("T·m·item"))
+                .unwrap_or_else(|| panic!("`{method}` emitted no reference to `m`"));
+            assert!(call.1.ends_with("T·m·item"), "`{method}` hands its callback a `T`: {call:?}");
+        }
+    }
+
+    /// And the same annotation must NOT type the array itself. `rows.length` is
+    /// `Array`'s member, so letting the element type stand in for the receiver
+    /// would mint `T·length`, which is a wrong edge and worse than none (R4).
+    ///
+    /// MUTATION: have `bind_params` bind the element type as the binding's own
+    /// type — `length` then resolves onto `T`.
+    #[test]
+    fn an_array_binding_is_not_itself_an_element() {
+        let facts = facts(
+            "class T { length() {} }\nexport function go(rows: T[]) { return rows.length; }\n",
+        );
+        let read = member_targets(&facts)
+            .into_iter()
+            .find(|(name, _)| name == "length")
+            .expect("the member read is a reference");
+        assert!(
+            !read.1.contains("T·length"),
+            "the array is an Array, not one of its elements: {read:?}"
+        );
+    }
+
+    /// A callback on a receiver whose ELEMENT type is unknown stays unknown.
+    /// The narrowing is what keeps this off `Array`-shaped members of types
+    /// that are not arrays: a `Bag` with its own `map` gets nothing.
+    ///
+    /// MUTATION: fall back to the receiver's own type when no element type was
+    /// recorded — `r.m()` then resolves onto `Bag`.
+    #[test]
+    fn a_map_on_something_that_is_not_an_array_types_nothing() {
+        let facts = facts(
+            "class Bag { map(f) {} m() {} }\n\
+             export function go(bag: Bag) { return bag.map((r) => r.m()); }\n",
+        );
+        let inner =
+            member_targets(&facts).into_iter().filter(|(name, _)| name == "m").collect::<Vec<_>>();
+        assert!(
+            inner.iter().all(|(_, target)| !target.contains("Bag·m")),
+            "a receiver with no element type hands its callback nothing: {inner:?}"
+        );
     }
 
     /// `this` inside a class body is that class, which is the one receiver the
