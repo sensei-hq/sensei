@@ -457,6 +457,18 @@ pub enum Rung {
     DeclaredHere,
     /// An import in scope binds the head of the path.
     ThroughAnImport,
+    /// A TYPE in this scan declares the target as its member, in another file.
+    ///
+    /// The same proof [`Rung::DeclaredHere`] offers, one file further out: the
+    /// walk minted a member identity from the type's barrier-known home, and
+    /// that exact identity is one some type was read declaring. Rust puts an
+    /// `impl` block anywhere, so a method and the type it hangs off are very
+    /// often in different files.
+    ///
+    /// Below [`Rung::ThroughAnImport`] deliberately. The type table is keyed by
+    /// (package, name) and so answers in the use site's OWN package, which an
+    /// import naming a sibling crate's same-named type would contradict.
+    DeclaredByItsType,
     /// A glob in scope covers the module the target sits in. The name itself
     /// was never written down, which is what makes this the weakest first-party
     /// rung.
@@ -478,6 +490,7 @@ impl Rung {
         match self {
             Self::DeclaredHere => "declared_here",
             Self::ThroughAnImport => "through_an_import",
+            Self::DeclaredByItsType => "declared_by_its_type",
             Self::ThroughAGlob => "through_a_glob",
             Self::RootedInThisPackage => "rooted_in_this_package",
             Self::FullyQualifiedExternal => "fully_qualified_external",
@@ -490,6 +503,7 @@ impl Rung {
         Some(match label {
             "declared_here" => Self::DeclaredHere,
             "through_an_import" => Self::ThroughAnImport,
+            "declared_by_its_type" => Self::DeclaredByItsType,
             "through_a_glob" => Self::ThroughAGlob,
             "rooted_in_this_package" => Self::RootedInThisPackage,
             "fully_qualified_external" => Self::FullyQualifiedExternal,
@@ -502,6 +516,7 @@ impl Rung {
     pub const ALL: &'static [Rung] = &[
         Rung::DeclaredHere,
         Rung::ThroughAnImport,
+        Rung::DeclaredByItsType,
         Rung::ThroughAGlob,
         Rung::RootedInThisPackage,
         Rung::FullyQualifiedExternal,
