@@ -409,17 +409,25 @@ pub fn is_test_path(rel_path: &str, language: Option<&str>) -> bool {
     let stem = std::path::Path::new(file).file_stem().and_then(|s| s.to_str()).unwrap_or(file);
     let stem_lower = stem.to_ascii_lowercase();
 
-    // Cross-language: foo.test.* / foo.spec.* (JS/TS/Svelte/Vue), *_test.*
-    // (Go/Py/Rust), test_*.py-style prefix, pytest's conftest.
+    // Cross-language: foo.test.* / foo.spec.* (JS/TS/Svelte/Vue), *_test.* and
+    // *_tests.* (Go/Py/Rust), test_*.py-style prefix, pytest's conftest.
     //
     // The bare `test`/`tests` stem is EXACT equality, not a prefix or suffix
     // rule: it names Rust's idiomatic sibling test module (`pg_store/tests.rs`),
     // where no path segment is a `tests/` DIRECTORY so the stem is the only
     // signal. Widening it to a substring would swallow `latest.rs`,
     // `contest.rs` and `testable.rs`, which the false-match test pins.
+    //
+    // The AFFIX rules carry both numbers for the same reason the bare stem
+    // does. `pg_store/playbook_tests.rs` is the same idiom as `foo_test.rs`
+    // and only `_test` was listed, so five real files of this repository —
+    // four under `pg_store/`, one under `languages/` — indexed as production.
+    // The underscore is what keeps this safe: `contests.rs` and `protests.rs`
+    // do not carry one, and the false-match test pins them.
     if file_lower.contains(".test.")
         || file_lower.contains(".spec.")
         || stem_lower.ends_with("_test")
+        || stem_lower.ends_with("_tests")
         || stem_lower.starts_with("test_")
         || stem_lower == "test"
         || stem_lower == "tests"
@@ -930,6 +938,14 @@ mod tests {
         // so "exclude tests" filtered nothing and returned them as production.
         assert!(is_test_path("crates/senseid/src/db/pg_store/tests.rs", Some("rust")));
         assert!(is_test_path("src/parser/test.rs", Some("rust")));
+        // The PLURAL affix, which is the same Rust idiom as `foo_test.rs` and
+        // was the one spelling this rule did not have. Four real files carry it
+        // — `pg_store/playbook_tests.rs`, `knowledge_tests.rs`, `run_tests.rs`,
+        // `pack_resolution_tests.rs` — plus `languages/corpus_tests.rs`, and
+        // every declaration in them read as PRODUCTION to `nodes.is_test` and
+        // to the indexer's coverage barrier alike.
+        assert!(is_test_path("crates/senseid/src/db/pg_store/playbook_tests.rs", Some("rust")));
+        assert!(is_test_path("crates/senseid/src/languages/corpus_tests.rs", Some("rust")));
         // Language-agnostic: the stem carries the convention on its own.
         assert!(is_test_path("app/src/lib/tests.ts", Some("typescript")));
         // Java/Kotlin class-name suffixes (gated by language).
@@ -955,6 +971,11 @@ mod tests {
             "src/contest.rs",
             "src/protest.ts",
             "src/testable.rs",
+            // The plural affix needs its UNDERSCORE. These end in the letters
+            // of `_tests` without one, and are what stops that rule becoming a
+            // substring match.
+            "src/contests.rs",
+            "src/protests.ts",
         ] {
             assert!(!is_test_path(p, language_for_path(p)), "should NOT be a test path: {p}");
         }
