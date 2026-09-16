@@ -535,6 +535,18 @@ impl<'a> Ladder<'a> {
         }) else {
             return Placed::Unbound;
         };
+        // A UNIT STRUCT used as a value: the name IS the value, so it is a
+        // receiver of its own type. `Resolver.remedy()` where `Resolver` has no
+        // fields — this codebase writes every health resolver that way. Not a
+        // call, so there is no return type to look up; the type is the name.
+        let names_a_type = self.grammar.names_a_type;
+        if !receiver.ends_with("()") && names_a_type(receiver) && !receiver.contains(['.', ' ']) {
+            if let Some(placed) = self.member_of(receiver, evidence) {
+                return placed;
+            }
+            return Placed::Unbound;
+        }
+
         // Only a CALL has a return type. A bare binding is the walk's job and
         // it already did it.
         let Some(callee) = receiver.strip_suffix("()") else { return Placed::Unbound };
@@ -555,31 +567,33 @@ impl<'a> Ladder<'a> {
         let Some(returned) = self.world.returns.get(&fqn) else { return Placed::Unbound };
 
         // The type the call hands back, as a segment.
-        let names_a_type = self.grammar.names_a_type;
         let Some(ty) = self.split(returned).into_iter().rev().find(|segment| names_a_type(segment))
         else {
             return Placed::Unbound;
         };
 
-        // And the member on it — only if that type DECLARES it.
-        let module = match self.types_home_of(&ty) {
-            Some(module) => module,
-            None => return Placed::Unbound,
-        };
-        let Ok(minted) = fqn::refer(&Form::Member {
+        // And the member on it.
+        self.member_of(&ty, evidence).unwrap_or(Placed::Unbound)
+    }
+
+    /// `<ty>::<member>`, and only if that type DECLARES it.
+    ///
+    /// One place, so the two ways of learning a receiver's type — a unit struct
+    /// naming itself, and a call's return type — cannot mint differently. The
+    /// `declared_members` check is what stops a name match becoming an edge
+    /// (R4); it is the same set the sibling rung uses.
+    fn member_of(&self, ty: &str, evidence: &Evidence) -> Option<Placed> {
+        let module = self.types_home_of(ty)?;
+        let minted = fqn::refer(&Form::Member {
             lang: self.grammar.language,
             package: self.package,
             module: &module,
-            ty: &ty,
+            ty,
             member: &evidence.name,
             reach: evidence.reach,
-        }) else {
-            return Placed::Unbound;
-        };
-        if self.world.declared_members.contains(&minted) {
-            return Placed::Proven(minted);
-        }
-        Placed::Unbound
+        })
+        .ok()?;
+        self.world.declared_members.contains(&minted).then_some(Placed::Proven(minted))
     }
 
     /// The module a type lives in, from the identities the scan declared.
@@ -1327,6 +1341,37 @@ mod tests {
             got.iter().filter(|t| *t == want).count(),
             2,
             "both the chained and the bound call must reach {want}; got {got:?}"
+        );
+    }
+
+    /// A UNIT STRUCT used as a value is a receiver of its own type.
+    ///
+    /// `DaemonStartResolver.fallback_remedy()` — the struct has no fields, so
+    /// the name IS the value, and this codebase uses it for every resolver.
+    /// Not a call, so the returns lookup does not apply; not a binding, so the
+    /// walk had nothing to read. It was the last of the four real misses in
+    /// `config.rs` + `daemon_start.rs`.
+    #[test]
+    fn a_unit_struct_used_as_a_value_is_a_receiver_of_its_own_type() {
+        let scanned = scan(&[
+            (
+                "r",
+                "src/r.rs",
+                "pub struct Resolver;\n\
+                 impl Resolver {\n\
+                   pub fn remedy(&self) -> u32 { 0 }\n\
+                 }\n",
+            ),
+            (
+                "u",
+                "src/u.rs",
+                "use crate::r::Resolver;\npub fn go() -> u32 { Resolver.remedy() }\n",
+            ),
+        ]);
+        let got = targets(file_of(&scanned, "src/u.rs"));
+        assert!(
+            got.iter().any(|t| t == "rust·p·r·Resolver·remedy·item"),
+            "a unit struct names its own type as the receiver; got {got:?}"
         );
     }
 
