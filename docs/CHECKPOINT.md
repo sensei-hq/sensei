@@ -1,63 +1,40 @@
 # Checkpoint — the indexer
 
-**Slice: Java. The two coverage barriers are now ONE implementation
-(`indexer/barrier.rs`) run over both corpora, taught Java's JUnit convention via
-`languages::is_test_path`. Java's first barrier numbers: 23,593 nodes, 63% no
-test edge, 40% exercised, 48% reached by nothing. Java's 26,995 dangling edges
-are decomposed into 10 named buckets — the "chiefly Lombok and Spring Data"
-reading was two thirds wrong. Suite 3,514 / 0, clippy + fmt clean. Stage 10
-cutover still gated.**
+**Slice: final measurement. No code changed; the three reports were re-run and
+every remaining "reached by nothing" entry classified against source. Suite
+3,519 / 0 failed, clippy 0, fmt clean, both `SENSEI_CORPUS` java groups green.
+Stage 10 cutover still gated.** Read `docs/plans/indexer-sequence.md`, then
+`docs/design/indexer.md`. Canonical reports — do not retype their numbers:
 
-Read `docs/plans/indexer-sequence.md`, then `docs/design/indexer.md`.
-
-## Canonical reports — do not retype their numbers
-
-    cargo test -p senseid --bin senseid -- --ignored --nocapture \
-      indexer::acceptance::report
-      indexer::acceptance::every_first_party_edge_names_a_declaration_this_scan_holds
-      indexer::acceptance::every_source_node_is_reached_by_a_test_and_then_by_other_source
+    cargo test -p senseid --bin senseid -- --ignored --nocapture indexer::acceptance::
+      report | every_first_party_edge_names_a_declaration_this_scan_holds
+      every_source_node_is_reached_by_a_test_and_then_by_other_source
     SENSEI_CORPUS=~/Work/Dayamed … indexer::lang::java::corpus
 
-## Done in this slice
+| | nodes | no test | exercised | nothing | resolve |
+|---|---|---|---|---|---|
+| rust | 4,376 | 3,408 78% | 2,607 60% | 1,131 26% | 50.6% |
+| typescript | 2,186 | 1,543 71% | 821 38% | 508 23% | 41.6% |
+| java | 23,593 | 14,854 63% | 9,478 40% | 11,391 48% | 64.3% |
 
-- **`indexer/barrier.rs`** — the two barriers, extracted so both corpora run one
-  copy. `acceptance` supplies this repo's Rust and TypeScript; `lang::java::corpus`
-  supplies `SENSEI_CORPUS`.
-- **One test-vs-source classifier**, delegating to `languages::is_test_path` —
-  already the source of truth for `nodes.is_test` and already Java-aware. Taught
-  it the `_tests.rs` stem it was missing (5 real files). The inline
-  `#[cfg(test)]` region stays, because no path can show it.
-- **Java interface inheritance** — `interface_declaration` states its parents in
-  an `extends_interfaces` child with NO field name, so every Java interface read
-  as having no parents. Same change stopped a clause's type ARGUMENTS being
-  recorded as supertypes (`extends JpaRepository<User, Long>` was emitting
-  `UserRepository extends Long`).
-- **Rust `for` patterns** — `for_expression` skipped the pattern between the
-  collection and the body, so `for Placed { .. } in &corpus` named no type.
-  Found by A2 going 0 -> 1 files disagreeing.
+Only "named by no use site" can mean no caller: rust 252 of 1,131, ts 196 of 508,
+java 3,105 of 11,391 — the rest are resolver misses already decomposed. Inside
+it, "no test AND no caller" holds for **33 rust** (4 `main`, 17 task table, 12
+serde), **11 ts**, **~300 java**. The remainder is the instrument, not dead code.
 
-## Next
+## Next — largest first, all measured
 
-1. **Java's field reach** — 9,932 of the 26,995 are a declaration at
-   `Reach::Field` against a use site at `Reach::Item`. NOT a one-liner: 2,856
-   field reads land today and every one lands on an `item` (enum constants), so
-   the naive change trades dangling for dangling. Detail in `docs/backlog.md`.
-2. **Cause B, rust**: 761 of rust's orphans are `ReceiverTypeUnknown`. Java has
-   the same shape at 41,969, plus a same-package rung it has no equivalent of.
-3. A8's two finds (652 rust `Owns` parents, 561 typescript barrel targets).
+1. **Re-export tables.** ts `$lib` hides 93 orphans / 1,456 refs; rust `pub use`
+   hides 11; ts barrels 561 A8 edges. One artifact, three corpora.
+2. **A call inside a macro emits nothing** — 90 of rust's 252.
+3. **A function passed as a VALUE emits nothing** — 59 ts (Svelte props).
+4. Java field reach 9,932; cause B (rust 761, java 41,969 receiver-untyped).
 
 ## Known-broken — do not build on
 
-- Java: 26,995 dangling, decomposed. 10,403 Lombok + 2,529 Spring Data are
-  compile-time synthesis and deliberately NOT attempted; 9,932 field-reach and
-  2,356 interface-constant are indexer defects with their own slice.
-- Java barrier 2 is 62% for two measured reasons: a same-package reference needs
-  no import and no rung places one (33,597 misses), and a local's type does not
-  survive to the next statement (41,969 misses).
-- 252 rust nodes are named by no use site: registered task handlers and callees
-  used only inside a macro. An upper bound on dead code, not a count of it.
-- A7: 525 colliding identities. A2 TypeScript drops 14 ours; Java 9.
-- `indexer::lib_indexer::tests::real_dbd_single_file_has_deploy_component` needs
-  a sibling `dbd-rs` checkout at a hard-coded absolute path. `#[ignore]`d.
-- `delete_folder` issues a path-prefix DELETE (`process.rs`); 09 S7 forbids it.
-- `library_content.package_name` has no writer.
+- `acceptance.rs` is `#[cfg(test)]` at its PARENT, so `barrier::test_boundary`
+  reads its 13 `#[test]` fns as source. Fourth classifier bug of this probe.
+- `constructor` is a node (33 ts); no use site can ever name one.
+- Java 26,995 dangling stands; Lombok 10,403 + Spring Data 2,529 not attempted.
+- A7: 525 colliding identities. A2 ts drops 14; java 9.
+- `real_dbd_single_file_has_deploy_component` needs a sibling `dbd-rs`. `#[ignore]`d.
