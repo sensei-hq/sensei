@@ -458,6 +458,14 @@ pub enum Observation {
     ImportInScope(String),
     /// A type the walk read but could not place in the graph.
     UnplacedType(String),
+    /// The receiver is a LOCAL BINDING the source never typed, and this is the
+    /// callee whose result it was bound to, verbatim (`pg_store`).
+    ///
+    /// Not a type, and deliberately not dressed as one: what the walk read is a
+    /// name, and only a completed pass knows what that name returns. It rides
+    /// beside [`Observation::Receiver`] rather than replacing it, because the
+    /// receiver text is what the source WROTE and the histogram counts it.
+    BoundToTheResultOf(String),
     /// An identity the walk considered and could not prove.
     Candidate(Fqn),
 }
@@ -835,6 +843,7 @@ mod tests {
             Observation::Receiver("ctx.pg()".to_string()),
             Observation::ImportInScope("crate::db::PgStore".to_string()),
             Observation::UnplacedType("PgStore".to_string()),
+            Observation::BoundToTheResultOf("pg_store".to_string()),
             Observation::Candidate(an_fqn("candidate")),
         ]
     }
@@ -1007,10 +1016,11 @@ mod tests {
                 Observation::Receiver(_)
                 | Observation::ImportInScope(_)
                 | Observation::UnplacedType(_)
+                | Observation::BoundToTheResultOf(_)
                 | Observation::Candidate(_) => {}
             }
         }
-        assert_eq!(all_observations().len(), 4);
+        assert_eq!(all_observations().len(), 5);
     }
 
     #[test]
