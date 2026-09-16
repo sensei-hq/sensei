@@ -307,11 +307,32 @@ impl<'a> Walk<'a> {
 
         // `extends` and `implements` are the same question the ladder answers
         // for a callee, so they climb the same rungs (R7).
+        //
+        // THREE clauses, and the third is reached differently on purpose. A
+        // `class_declaration` states its parents in the NAMED fields
+        // `superclass` and `interfaces`; an `interface_declaration` states its
+        // in an `extends_interfaces` child that the grammar gives no field name
+        // at all, so `child_by_field_name` finds nothing and every interface
+        // read as having no parents. That is not a corner: every Spring Data
+        // repository is `interface XRepository extends JpaRepository<..>`, and
+        // without the relation there is no way to tell a method inherited from
+        // one from a method nothing declares — 2,756 dangling edges in the
+        // Dayamed corpus were labelled "unexplained" for exactly this reason.
+        let mut cursor = node.walk();
+        let mut clauses: Vec<(Node<'_>, RelationKind)> = node
+            .children(&mut cursor)
+            .filter(|c| c.kind() == "extends_interfaces")
+            .map(|c| (c, RelationKind::Extends))
+            .collect();
         for (field, relation) in
             [("superclass", RelationKind::Extends), ("interfaces", RelationKind::Implements)]
         {
-            let Some(clause) = node.child_by_field_name(field) else { continue };
-            for named in self.type_names_under(clause) {
+            if let Some(clause) = node.child_by_field_name(field) {
+                clauses.push((clause, relation));
+            }
+        }
+        for (clause, relation) in clauses {
+            for named in self.supertypes_named(clause) {
                 let raw = self.text(named);
                 self.relations.push(Relation {
                     kind: relation,
@@ -338,9 +359,32 @@ impl<'a> Walk<'a> {
 
     /// Every `type_identifier` at or under a node, in source order.
     fn type_names_under<'t>(&self, node: Node<'t>) -> Vec<Node<'t>> {
+        self.type_names(node, false)
+    }
+
+    /// The types a SUPERTYPE clause names — its entries, and not the arguments
+    /// they are parameterised by.
+    ///
+    /// `extends JpaRepository<User, Long>` names ONE supertype. Reading every
+    /// type identifier under the clause also records `User` and `Long`, which
+    /// says `UserRepository extends Long`: a WRONG edge, which R4 ranks below
+    /// no edge and which pattern detection reads as real. `implements
+    /// Comparable<Foo>` is the same shape and makes a type its own supertype.
+    ///
+    /// The argument is not lost as a fact anybody had — a supertype clause
+    /// emits RELATIONS and never a reference, so the arguments were only ever
+    /// present as the wrong relation.
+    fn supertypes_named<'t>(&self, clause: Node<'t>) -> Vec<Node<'t>> {
+        self.type_names(clause, true)
+    }
+
+    fn type_names<'t>(&self, node: Node<'t>, skip_arguments: bool) -> Vec<Node<'t>> {
         let mut out = Vec::new();
         let mut stack = vec![node];
         while let Some(n) = stack.pop() {
+            if skip_arguments && n.kind() == "type_arguments" {
+                continue;
+            }
             if matches!(n.kind(), "type_identifier" | "scoped_type_identifier") {
                 out.push(n);
                 continue;

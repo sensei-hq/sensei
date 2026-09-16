@@ -320,6 +320,51 @@ mod tests {
         );
     }
 
+    /// **An interface's supertypes are inheritance too, and the grammar does
+    /// not put them in a field.**
+    ///
+    /// `class_declaration` carries `superclass` and `interfaces` as named
+    /// fields, so `child_by_field_name` finds them. `interface_declaration`
+    /// carries neither: its supertypes sit in an `extends_interfaces` CHILD
+    /// with no field name at all, so a reader that only asks for fields sees an
+    /// interface as having no parents.
+    ///
+    /// It is not a corner. Every Spring Data repository in a Java codebase is
+    /// `interface XRepository extends JpaRepository<..>`, and with the
+    /// inheritance missing there is no way to tell an inherited `findById` from
+    /// a method nothing declares — which is exactly how 2,756 dangling edges in
+    /// the Dayamed corpus came to be labelled "unexplained".
+    #[test]
+    fn an_interface_states_its_supertypes_where_no_field_name_reaches() {
+        use crate::indexer::facts::{RelationKind, Resolution};
+
+        let text = "package p;\n\
+                    public interface UserRepository extends JpaRepository<User, Long>, Audited {\n\
+                    \x20 User findByName(String name);\n\
+                    }\n";
+        let facts = walk::read(
+            &Source { package: "unnamed", module: "", path: "src/main/java/p/R.java", text },
+            &TypeHomes::unknown(),
+        )
+        .expect("the fixture parses");
+
+        let parents: Vec<String> = facts
+            .relations
+            .iter()
+            .filter(|r| matches!(r.kind, RelationKind::Extends | RelationKind::Implements))
+            .map(|r| match &r.parent {
+                Resolution::Resolved { fqn, .. } => fqn.as_str().to_string(),
+                Resolution::Unresolved { evidence, .. } => evidence.name.clone(),
+            })
+            .collect();
+        assert_eq!(
+            parents,
+            vec!["JpaRepository".to_string(), "Audited".to_string()],
+            "an interface extends a LIST, in source order, and the type argument is not one \
+             of them"
+        );
+    }
+
     /// The convention the whole module leans on, stated once as a test.
     #[test]
     fn a_leading_capital_is_what_names_a_type() {
@@ -484,6 +529,100 @@ mod corpus {
         counts.values().sum()
     }
 
+    /// One hand-written file of the corpus, walked, anchored and PLACED.
+    pub(super) struct Placed {
+        pub(super) path: String,
+        pub(super) text: String,
+        pub(super) facts: crate::indexer::facts::FileFacts,
+    }
+
+    /// The whole hand-written corpus, read twice and placed ONCE.
+    ///
+    /// The BARRIER is the whole point: every file is read with no type table so
+    /// the declarations can be collected, then read again with it, so a
+    /// member's identity does not depend on which file came first (R6).
+    ///
+    /// `first_party` is every package the scan DECLARES. That is what flips an
+    /// import from library to local — a Java source file states nothing about
+    /// which side of the boundary a name is on, so the answer comes from the
+    /// manifest of declarations rather than from a prefix guess.
+    ///
+    /// Shared, and resolving ONCE, because two measurements now read this
+    /// corpus and the ladder test used to run the whole placement four times
+    /// over to print four sections of one report. `resolve` is pure, so four
+    /// runs could only ever produce the same facts at four times the cost.
+    fn placed_corpus() -> Vec<Placed> {
+        use std::collections::BTreeSet;
+
+        use crate::indexer::facts::{FileFacts, SymbolKind};
+        use crate::indexer::resolve::{World, resolve};
+
+        let sources = sources();
+        let hand_written: Vec<&(String, String, bool)> =
+            sources.iter().filter(|(_, _, generated)| !generated).collect();
+        if hand_written.is_empty() {
+            return Vec::new();
+        }
+
+        let read_all = |types: &TypeHomes| -> Vec<FileFacts> {
+            hand_written
+                .iter()
+                .filter_map(|(path, text, _)| {
+                    // The package is READ from the source, so what is handed in
+                    // is only the default-package fallback.
+                    let source = Source { package: "unnamed", module: "", path, text };
+                    walk::read(&source, types).ok()
+                })
+                .collect()
+        };
+
+        let first = read_all(&TypeHomes::unknown());
+        let homes = TypeHomes::of(
+            first.iter().flat_map(|f| f.symbols.iter().map(|s| (f.package.as_str(), s))),
+        );
+        // The second pass, COMPLETE, before anything is placed — every barrier
+        // artifact below comes off it. `declared_members` in particular cannot
+        // come off `first`: a member's identity carries its TYPE's module, so
+        // the pre-barrier pass spells those members differently.
+        let anchored = read_all(&homes);
+        // Every package this scan declares. In Java that IS the namespace, so
+        // the set is exact rather than a prefix.
+        let first_party: BTreeSet<String> = anchored.iter().map(|f| f.package.clone()).collect();
+        let first_party_members: BTreeSet<String> = anchored
+            .iter()
+            .flat_map(|f| f.symbols.iter())
+            .filter(|s| matches!(s.kind, SymbolKind::Method | SymbolKind::Field))
+            .map(|s| s.name.clone())
+            .collect();
+        let declared_members = crate::indexer::resolve::members_declared_by(anchored.iter());
+        let scanned = BTreeSet::new();
+        let world = World {
+            first_party: &first_party,
+            first_party_members: &first_party_members,
+            declared_members: &declared_members,
+            scanned: &scanned,
+        };
+
+        // Joined back onto the source it came from BY PATH, not by index:
+        // `read_all` skips a file the grammar rejects, so the two lists need
+        // not line up and a positional zip would slide every text one file
+        // along from the facts it belongs to.
+        let text_of: BTreeMap<&str, &str> =
+            hand_written.iter().map(|(path, text, _)| (path.as_str(), text.as_str())).collect();
+        anchored
+            .into_iter()
+            .map(|facts| {
+                let text = text_of
+                    .get(facts.path.as_str())
+                    .unwrap_or_else(|| {
+                        panic!("{} came out of the walk, not the corpus", facts.path)
+                    })
+                    .to_string();
+                Placed { path: facts.path.clone(), text, facts: resolve(facts, &GRAMMAR, &world) }
+            })
+            .collect()
+    }
+
     /// **A2 for Java.** Every use site the grammar has, counted from the other
     /// side, against what the walk emitted.
     #[test]
@@ -630,68 +769,18 @@ mod corpus {
 
     /// The ladder over Java, and the first real Java resolve rate.
     ///
-    /// The BARRIER is the whole point: every file is read once with no type
-    /// table so the declarations can be collected, then read again with it, so
-    /// a member's identity does not depend on which file came first (R6).
-    ///
-    /// `first_party` is every package the scan DECLARES. That is what flips an
-    /// import from library to local — a Java source file states nothing about
-    /// which side of the boundary a name is on, so `owned_by_this_scan` answers
-    /// it from the manifest of declarations rather than from a prefix guess.
+    /// The corpus itself — the two-pass barrier and the placement — is
+    /// [`placed_corpus`]; what is here is the report and its gates.
     #[test]
     #[ignore]
     fn the_ladder_places_what_this_corpus_declares() {
         use std::collections::BTreeSet;
 
-        use crate::indexer::facts::{FileFacts, SymbolKind};
-        use crate::indexer::resolve::{World, resolve};
-
-        let sources = sources();
-        if sources.is_empty() {
+        let corpus = placed_corpus();
+        if corpus.is_empty() {
             println!("SENSEI_CORPUS unset or holds no .java — nothing to measure.");
             return;
         }
-        let hand_written: Vec<&(String, String, bool)> =
-            sources.iter().filter(|(_, _, generated)| !generated).collect();
-
-        let read_all = |types: &TypeHomes| -> Vec<FileFacts> {
-            hand_written
-                .iter()
-                .filter_map(|(path, text, _)| {
-                    // The package is READ from the source, so what is handed in
-                    // is only the default-package fallback.
-                    let source = Source { package: "unnamed", module: "", path, text };
-                    walk::read(&source, types).ok()
-                })
-                .collect()
-        };
-
-        let first = read_all(&TypeHomes::unknown());
-        let homes = TypeHomes::of(
-            first.iter().flat_map(|f| f.symbols.iter().map(|s| (f.package.as_str(), s))),
-        );
-        // The second pass, COMPLETE, before anything is placed — every barrier
-        // artifact below comes off it. `declared_members` in particular cannot
-        // come off `first`: a member's identity carries its TYPE's module, so
-        // the pre-barrier pass spells those members differently.
-        let anchored = read_all(&homes);
-        // Every package this scan declares. In Java that IS the namespace, so
-        // the set is exact rather than a prefix.
-        let first_party: BTreeSet<String> = anchored.iter().map(|f| f.package.clone()).collect();
-        let first_party_members: BTreeSet<String> = anchored
-            .iter()
-            .flat_map(|f| f.symbols.iter())
-            .filter(|s| matches!(s.kind, SymbolKind::Method | SymbolKind::Field))
-            .map(|s| s.name.clone())
-            .collect();
-        let declared_members = crate::indexer::resolve::members_declared_by(anchored.iter());
-        let scanned = BTreeSet::new();
-        let world = World {
-            first_party: &first_party,
-            first_party_members: &first_party_members,
-            declared_members: &declared_members,
-            scanned: &scanned,
-        };
 
         let mut reasons: BTreeMap<&'static str, usize> = BTreeMap::new();
         let mut rungs: BTreeMap<&'static str, usize> = BTreeMap::new();
@@ -701,8 +790,10 @@ mod corpus {
         let mut library_imports = 0usize;
         let mut nodes = 0usize;
         let mut placed_relations = 0usize;
-        for facts in anchored {
-            let placed = resolve(facts, &GRAMMAR, &world);
+        let mut packages: BTreeSet<&str> = BTreeSet::new();
+        let mut head: BTreeMap<&str, usize> = BTreeMap::new();
+        for Placed { facts: placed, .. } in &corpus {
+            packages.insert(placed.package.as_str());
             nodes += placed.symbols.len();
             placed_relations += placed
                 .relations
@@ -730,18 +821,17 @@ mod corpus {
                         resolved += 1;
                         *rungs.entry(via.as_label()).or_default() += 1;
                     }
-                    Resolution::Unresolved { reason, .. } => {
+                    Resolution::Unresolved { reason, evidence } => {
                         *reasons.entry(reason.as_label()).or_default() += 1;
+                        if reason.as_label() == "no_import_in_scope" {
+                            *head.entry(evidence.name.as_str()).or_default() += 1;
+                        }
                     }
                 }
             }
         }
 
-        println!(
-            "\n## Java, resolved — {} files, {} packages\n",
-            hand_written.len(),
-            first_party.len()
-        );
+        println!("\n## Java, resolved — {} files, {} packages\n", corpus.len(), packages.len());
         println!(
             "references {total} | RESOLVED {resolved} ({:.1}%)",
             100.0 * resolved as f64 / total.max(1) as f64
@@ -764,16 +854,6 @@ mod corpus {
             println!("  {n:>8}  {rung}");
         }
         println!("\nby reason:");
-        let mut head: BTreeMap<String, usize> = BTreeMap::new();
-        for facts in read_all(&homes) {
-            for r in &resolve(facts, &GRAMMAR, &world).references {
-                if let Resolution::Unresolved { reason, evidence } = &r.target
-                    && reason.as_label() == "no_import_in_scope"
-                {
-                    *head.entry(evidence.name.clone()).or_default() += 1;
-                }
-            }
-        }
         let mut ranked_head: Vec<_> = head.iter().collect();
         ranked_head.sort_by_key(|(n, c)| (std::cmp::Reverse(**c), *n));
         println!("  no_import_in_scope head: {:?}\n", &ranked_head[..ranked_head.len().min(14)]);
@@ -782,67 +862,6 @@ mod corpus {
         for (reason, n) in ranked {
             println!("  {n:>8}  {reason}");
         }
-
-        // THE CHECK THAT CAUGHT THE RUST VERSION OF THIS. Handing the ladder a
-        // qualified path is only safe if an unbound one falls through to a miss
-        // rather than being placed first-party by another rung. A first-party
-        // identity no declaration mints is that failure, visible.
-        let minted: BTreeSet<String> = read_all(&homes)
-            .iter()
-            .flat_map(|f| f.symbols.iter())
-            .map(|s| s.fqn.as_str().to_string())
-            .collect();
-        let mut dangling: BTreeMap<String, usize> = BTreeMap::new();
-        let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
-        let mut by_rung: BTreeMap<&'static str, usize> = BTreeMap::new();
-        for facts in read_all(&homes) {
-            for r in &resolve(facts, &GRAMMAR, &world).references {
-                if let Resolution::Resolved { fqn, via } = &r.target
-                    && !fqn.as_str().starts_with("lib")
-                    && !minted.contains(fqn.as_str())
-                {
-                    *dangling.entry(fqn.as_str().to_string()).or_default() += 1;
-                    *by_kind.entry(format!("{:?}", r.kind)).or_default() += 1;
-                    *by_rung.entry(via.as_label()).or_default() += 1;
-                }
-            }
-        }
-        let dangling_total: usize = dangling.values().sum();
-        let mut worst_dangling: Vec<_> = dangling.iter().collect();
-        worst_dangling.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
-        println!(
-            "\nfirst-party edges naming no declaration: {dangling_total} across {} identities",
-            dangling.len()
-        );
-        for (fqn, n) in worst_dangling.iter().take(6) {
-            println!("  {n:>6}  {fqn}");
-        }
-
-        // Edges naming a member that is not in the source. Two guesses were
-        // checked and only the second held.
-        //
-        // WRONG: that the two sides spell the empty module differently. They do
-        // not — both produce `[java, com.sg.dayamed.entity, Patient, item]`,
-        // compared segment by segment.
-        //
-        // RIGHT, and it was this harness's own bug: `@Generated` as a SUBSTRING
-        // matches `@GeneratedValue`, so every JPA entity was dropped from the
-        // corpus while other files went on resolving to it. 41,990 -> 26,995,
-        // and 413 files came back.
-        //
-        // WHAT IS LEFT IS MOSTLY REAL. The head is now members rather than
-        // types: `Patient.getUserDetails` is a Lombok `@Getter`, generated at
-        // compile time and in no source file; `UserDetailsRepository.findById`
-        // is inherited from Spring Data's `JpaRepository`. Both are targets that
-        // exist only after something else runs, which is what
-        // `Reason::MacroExpansion` names — and the ladder currently mints a
-        // first-party identity for them instead, which is a wrong edge (R4).
-        println!(
-            "\nKNOWN BROKEN: {dangling_total} first-party edges name a member no source \
-             declares — chiefly Lombok accessors and inherited Spring Data methods."
-        );
-        println!("  by ref kind: {by_kind:?}");
-        println!("  by rung:     {by_rung:?}");
 
         assert_eq!(
             resolved + reasons.values().sum::<usize>(),
@@ -853,6 +872,389 @@ mod corpus {
             reasons.get("unplaced").is_none_or(|n| *n == 0),
             "{} references reached no verdict — the ladder returned without answering",
             reasons.get("unplaced").copied().unwrap_or(0)
+        );
+    }
+
+    /// **The two barriers, over a corpus nobody here wrote.**
+    ///
+    /// The same measurement `acceptance` runs over this repository's Rust and
+    /// TypeScript, pointed at Java — see [`crate::indexer::barrier`] for what
+    /// the two barriers are and why the measurement is shared rather than
+    /// copied.
+    ///
+    /// Java is the sharpest of the three corpora for this. Its tests are 871
+    /// JUnit files under `src/test/java` written by somebody else years before
+    /// this indexer existed, so a test edge here is evidence about the reader
+    /// and not about a convention the reader's authors also wrote.
+    ///
+    ///     SENSEI_CORPUS=~/Work/Dayamed cargo test -p senseid --bin senseid -- \
+    ///       --ignored --nocapture indexer::lang::java::corpus::the_two_barriers
+    #[test]
+    #[ignore]
+    fn the_two_barriers_over_a_corpus_nobody_here_wrote() {
+        use crate::indexer::barrier::{Unit, two_barriers};
+
+        let corpus = placed_corpus();
+        if corpus.is_empty() {
+            println!("SENSEI_CORPUS unset or holds no .java — nothing to measure.");
+            return;
+        }
+        let units: Vec<Unit<'_>> = corpus
+            .iter()
+            .map(|p| Unit { path: p.path.as_str(), text: p.text.as_str(), facts: &p.facts })
+            .collect();
+        let per = two_barriers(&units);
+        let java = per.get("java").expect("a java corpus produced java nodes");
+
+        // RATCHETS, measured, in the direction that can only improve. Shares
+        // rather than counts where the population moves: the corpus is a
+        // checkout that a person may add a module to, and a count floor would
+        // fail on growth or pass on regression depending on which moved faster.
+        let share = |n: usize| 100.0 * n as f64 / java.nodes as f64;
+        assert!(java.nodes > 10_000, "{} java source nodes is not this corpus", java.nodes);
+        // The CATEGORICAL check first, and it is the one that mattered for
+        // TypeScript: a language whose tests reach nothing at all is a reader
+        // defect, never a property of the code. 871 JUnit files cannot name
+        // nought.
+        assert!(
+            java.no_test < java.nodes,
+            "not one java source node is named by a test, and {} JUnit files are in the \
+             corpus — that is the reader, not the code",
+            units.iter().filter(|u| u.path.contains("/src/test/")).count()
+        );
+        // MEASURED over 5,088 hand-written files: 23,593 nodes, 14,854 (63.0%)
+        // with no direct test edge, 9,478 (40.2%) transitively exercised,
+        // 14,561 (61.7%) with no source edge, 11,395 (48.3%) reached by
+        // nothing at all. A point of slack on each, because the corpus is a
+        // checkout somebody may add a module to.
+        assert!(
+            share(java.no_test) <= 64.0,
+            "{:.1}% of java source nodes have no direct test edge, up from the 63.0% measured",
+            share(java.no_test)
+        );
+        assert!(
+            share(java.neither) <= 49.0,
+            "{:.1}% of java source nodes are reached by NOTHING, up from the 48.3% measured",
+            share(java.neither)
+        );
+    }
+
+    /// **The 26,995 first-party edges that name a member no source declares,
+    /// SPLIT.**
+    ///
+    /// The number was recorded as "chiefly Lombok accessors and inherited
+    /// Spring Data methods" and that reading was never checked. A count nobody
+    /// has decomposed is a count nobody can act on, and the head of this one —
+    /// `ApplicationConstants.SUCCESS` at 456 — is neither Lombok nor Spring
+    /// Data: it is a `public static final String` sitting in plain sight in
+    /// `util/ApplicationConstants.java`.
+    ///
+    /// Every bucket below is computed from the facts, in this order, so a
+    /// reference lands in exactly one and the first match wins:
+    ///
+    /// 1. **the declaration is there, under a different REACH.** The walk mints
+    ///    a field declaration at [`Reach::Field`] and `refer_to_member` mints
+    ///    every member use site at [`Reach::Item`], so a first-party field READ
+    ///    can never meet its own declaration. Checked by minting the `field`
+    ///    form of the same identity through `fqn::refer` and asking whether the
+    ///    scan declares THAT.
+    /// 2. **a first-party SUPERTYPE declares it.** `extends`/`implements` are
+    ///    recorded, and a member reached through a subtype names the subtype.
+    /// 3. **Lombok.** The owning type carries `@Getter`/`@Data`/`@Builder`/…
+    ///    and the member is one of the accessors that annotation synthesises.
+    ///    Generated at compile time, in no source file.
+    /// 4. **Spring Data.** The owning type is an interface extending one of
+    ///    `JpaRepository` and friends, and the method comes from there.
+    /// 5. **the owning type declares no members at all here.** An INSTRUMENT
+    ///    gap rather than a corpus fact — an interface's constants are
+    ///    `constant_declaration` in the grammar and the walk reads only
+    ///    `field_declaration`.
+    /// 6. **the owning type is not declared by this scan.**
+    /// 7. the remainder, with its head printed.
+    ///
+    /// ```text
+    /// SENSEI_CORPUS=~/Work/Dayamed cargo test -p senseid --bin senseid -- \
+    ///   --ignored --nocapture indexer::lang::java::corpus::the_first_party_edges
+    /// ```
+    #[test]
+    #[ignore]
+    fn the_first_party_edges_that_name_no_declaration_are_a_measured_and_split_set() {
+        use std::collections::BTreeSet;
+
+        use crate::indexer::facts::{RelationKind, SymbolKind};
+        use crate::indexer::fqn::{self, Form, Reach};
+
+        let corpus = placed_corpus();
+        if corpus.is_empty() {
+            println!("SENSEI_CORPUS unset or holds no .java — nothing to measure.");
+            return;
+        }
+
+        let declared: BTreeSet<&str> =
+            corpus.iter().flat_map(|p| p.facts.symbols.iter().map(|s| s.fqn.as_str())).collect();
+        // Two indexes read off the DECLARATIONS, both keyed by the type's
+        // SIMPLE NAME rather than by its identity, because a supertype is
+        // written as a bare name and may live in any package of the scan.
+        // Keyed by identity, every supertype in another package reads as
+        // unknown and the inheritance buckets collapse into the remainder.
+        let mut declares_member: BTreeSet<(&str, &str)> = BTreeSet::new();
+        let mut kind_of: BTreeMap<&str, SymbolKind> = BTreeMap::new();
+        for Placed { facts, .. } in &corpus {
+            for symbol in &facts.symbols {
+                let Ok(parsed) = fqn::parse(symbol.fqn.as_str()) else { continue };
+                match parsed.tail.as_slice() {
+                    [ty, member] => {
+                        declares_member.insert((ty, member));
+                    }
+                    [name] => {
+                        kind_of.insert(name, symbol.kind);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // Which types own a member at all, and which annotations and
+        // supertypes each type carries. All three are read off RELATIONS, which
+        // is the vocabulary that states them — no `SymbolKind` filter
+        // substitutes, because which kinds are type-owned differs per language.
+        let mut owns_something: BTreeSet<&str> = BTreeSet::new();
+        let mut decorated: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        let mut supertypes: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for Placed { facts, .. } in &corpus {
+            for relation in &facts.relations {
+                // The other end's NAME, wherever it ended up: a resolved parent
+                // carries it as the segment before the reach, an unresolved one
+                // carries it as the evidence the walk wrote down. Reading only
+                // the resolved side would lose every annotation whose package
+                // the file did not import.
+                let named = match &relation.parent {
+                    Resolution::Resolved { fqn, .. } => {
+                        fqn::parse(fqn.as_str()).ok().and_then(|p| p.tail.last().copied())
+                    }
+                    Resolution::Unresolved { evidence, .. } => Some(evidence.name.as_str()),
+                };
+                match relation.kind {
+                    RelationKind::Owns => {
+                        if let Resolution::Resolved { fqn, .. } = &relation.parent {
+                            owns_something.insert(fqn.as_str());
+                        }
+                    }
+                    RelationKind::Decorates => {
+                        if let Some(name) = named {
+                            decorated.entry(relation.child.as_str()).or_default().insert(name);
+                        }
+                    }
+                    RelationKind::Extends | RelationKind::Implements => {
+                        if let Some(name) = named {
+                            supertypes.entry(relation.child.as_str()).or_default().insert(name);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        /// What Lombok writes for you. `@Data` is the umbrella and implies most
+        /// of the others.
+        const LOMBOK: &[&str] = &[
+            "Getter",
+            "Setter",
+            "Data",
+            "Value",
+            "Builder",
+            "SuperBuilder",
+            "ToString",
+            "EqualsAndHashCode",
+            "AllArgsConstructor",
+            "NoArgsConstructor",
+            "RequiredArgsConstructor",
+            "Accessors",
+        ];
+        /// The members those annotations synthesise, beyond `get*`/`set*`/`is*`.
+        const SYNTHESISED: &[&str] =
+            &["builder", "toBuilder", "toString", "equals", "hashCode", "canEqual"];
+        /// What javac writes onto every enum declaration, in no source file.
+        const ENUM_SYNTHESISED: &[&str] =
+            &["values", "valueOf", "ordinal", "name", "compareTo", "getDeclaringClass"];
+        /// Spring Data's repository supertypes: every method on one of these is
+        /// inherited, and the interface that extends it declares none of them.
+        const SPRING_DATA: &[&str] = &[
+            "JpaRepository",
+            "CrudRepository",
+            "PagingAndSortingRepository",
+            "MongoRepository",
+            "JpaSpecificationExecutor",
+            "Repository",
+            "ReactiveCrudRepository",
+        ];
+
+        let mut buckets: BTreeMap<&'static str, usize> = BTreeMap::new();
+        let mut remainder: BTreeMap<String, usize> = BTreeMap::new();
+        let mut by_rung: BTreeMap<&'static str, usize> = BTreeMap::new();
+        let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
+        let mut identities: BTreeSet<String> = BTreeSet::new();
+        let mut total = 0usize;
+        // A sample per bucket, so a reading can be checked against the source
+        // rather than believed.
+        let mut sample: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
+
+        for Placed { facts, .. } in &corpus {
+            for reference in &facts.references {
+                let Resolution::Resolved { fqn, via } = &reference.target else { continue };
+                let Ok(parsed) = fqn::parse(fqn.as_str()) else { continue };
+                if parsed.origin == fqn::Origin::Lib || declared.contains(fqn.as_str()) {
+                    continue;
+                }
+                total += 1;
+                identities.insert(fqn.as_str().to_string());
+                *by_rung.entry(via.as_label()).or_default() += 1;
+                *by_kind.entry(format!("{:?}", reference.kind)).or_default() += 1;
+
+                // A one-segment tail names a TYPE, not a member of one.
+                let [ty, member] = parsed.tail.as_slice() else {
+                    let bucket = "names a TYPE this scan does not declare";
+                    *buckets.entry(bucket).or_default() += 1;
+                    sample.entry(bucket).or_default().push(parsed.tail.join(" of "));
+                    continue;
+                };
+                // The SAME identity at the field reach. Minted through the
+                // grammar rather than spelled, so the two sides cannot disagree
+                // about how a member is encoded.
+                let as_a_field = fqn::refer(&Form::Member {
+                    lang: Language::Java,
+                    package: parsed.package,
+                    module: "",
+                    ty,
+                    member,
+                    reach: Reach::Field,
+                })
+                .map(|f| declared.contains(f.as_str()))
+                .unwrap_or(false);
+                let owner = fqn::refer(&Form::Item {
+                    lang: Language::Java,
+                    package: parsed.package,
+                    module: "",
+                    name: ty,
+                    reach: Reach::Item,
+                });
+                let owner = owner.as_ref().map(|f| f.as_str()).unwrap_or("");
+                let annotations = decorated.get(owner);
+                let lombok_on_the_type =
+                    annotations.is_some_and(|a| a.iter().any(|n| LOMBOK.contains(n)));
+                let an_accessor = member.starts_with("get")
+                    || member.starts_with("set")
+                    || member.starts_with("is")
+                    || SYNTHESISED.contains(member);
+                let parents = supertypes.get(owner);
+                // A supertype of OURS that declares this member. ONE level,
+                // stated rather than implied: a deeper chain is a closure, and
+                // this is a split rather than a resolver.
+                let a_parent_declares_it = parents
+                    .is_some_and(|ns| ns.iter().any(|n| declares_member.contains(&(*n, member))));
+                // Every supertype names a type this scan never opened, so the
+                // member can only have come from outside it — `getClass` off
+                // `java.lang.Object`, `findColumn` off `java.sql.ResultSet`.
+                let all_parents_are_foreign =
+                    parents.is_some_and(|ns| ns.iter().all(|n| !kind_of.contains_key(n)));
+                // What javac writes onto every enum, in no source file.
+                let enum_synthesised =
+                    kind_of.get(ty) == Some(&SymbolKind::Enum) && ENUM_SYNTHESISED.contains(member);
+
+                let bucket = if as_a_field {
+                    "the declaration IS here, at the field reach"
+                } else if a_parent_declares_it {
+                    "a first-party SUPERTYPE declares it"
+                } else if lombok_on_the_type && an_accessor {
+                    "Lombok synthesises it"
+                } else if parents.is_some_and(|s| s.iter().any(|n| SPRING_DATA.contains(n))) {
+                    "Spring Data's repository declares it"
+                } else if enum_synthesised {
+                    "javac synthesises it on every enum"
+                } else if !declared.contains(owner) {
+                    "the owning type is not declared by this scan"
+                } else if all_parents_are_foreign {
+                    "inherited from a supertype this scan never opened"
+                } else if !owns_something.contains(owner) {
+                    "the owning type declares no member at all — the walk's gap"
+                } else {
+                    "unexplained"
+                };
+                *buckets.entry(bucket).or_default() += 1;
+                let entry = sample.entry(bucket).or_default();
+                if entry.len() < 4 {
+                    entry.push(format!("{ty}.{member}"));
+                }
+                if bucket == "unexplained" {
+                    *remainder.entry(format!("{ty}.{member}")).or_default() += 1;
+                }
+            }
+        }
+
+        println!(
+            "\n## Java: first-party edges naming no declaration — {total} across {} identities\n",
+            identities.len()
+        );
+        println!("  by ref kind: {by_kind:?}");
+        println!("  by rung:     {by_rung:?}\n");
+        let mut ranked: Vec<(&&str, &usize)> = buckets.iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        for (bucket, n) in &ranked {
+            println!("  {n:>7}  {:>5.1}%  {bucket}", 100.0 * **n as f64 / total.max(1) as f64);
+            for example in sample.get(**bucket).into_iter().flatten() {
+                println!("             {example}");
+            }
+        }
+        // ── what the field-reach fix would cost, and it is not nothing ──────
+        //
+        // The second bucket is a plain defect: `field_declaration` mints a
+        // declaration at `Reach::Field` and `refer_to_member` mints EVERY
+        // member use site at `Reach::Item`, so a first-party field read can
+        // never meet its own declaration. Passing the use site's reach through
+        // would land all of them.
+        //
+        // It is NOT a one-line change, and this is the number that says so: an
+        // `enum_constant` is declared at `Reach::Item`, so `Status.ACTIVE` is a
+        // `field_access` whose declaration is an ITEM. Minting `Field` for
+        // every field access would land the first group and UNLAND this one —
+        // dangling edges traded for dangling edges. Both sides are measured
+        // here so the trade is a decision and not a discovery.
+        let mut reads_landing: BTreeMap<&'static str, usize> = BTreeMap::new();
+        for Placed { facts, .. } in &corpus {
+            for reference in &facts.references {
+                if reference.kind != crate::indexer::facts::RefKind::Reads {
+                    continue;
+                }
+                let Resolution::Resolved { fqn, .. } = &reference.target else { continue };
+                if !declared.contains(fqn.as_str()) {
+                    continue;
+                }
+                let Ok(parsed) = fqn::parse(fqn.as_str()) else { continue };
+                let fqn::Origin::Local { reach, .. } = parsed.origin else { continue };
+                *reads_landing.entry(reach.as_str()).or_default() += 1;
+            }
+        }
+        println!("\n  field READS that land today, by the reach they land on: {reads_landing:?}");
+
+        let mut worst: Vec<(&String, &usize)> = remainder.iter().collect();
+        worst.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        println!("\n  the unexplained remainder's head, {} distinct:", remainder.len());
+        for (what, n) in worst.iter().take(20) {
+            println!("    {n:>5}  {what}");
+        }
+
+        // THE RATCHET. Measured; it may fall and must not rise. A dangling edge
+        // is not a WRONG edge and R4 prefers it to one, but a reader following
+        // "who calls this" gets the same nothing they would get if the caller
+        // did not exist.
+        assert!(
+            total <= 27_000,
+            "{total} first-party java edges name an identity no declaration mints, up from \
+             the 26,995 measured"
+        );
+        assert_eq!(
+            buckets.values().sum::<usize>(),
+            total,
+            "the buckets must partition every dangling edge, or the split is hiding some"
         );
     }
 }
