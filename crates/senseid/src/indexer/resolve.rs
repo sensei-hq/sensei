@@ -1929,6 +1929,102 @@ mod tests {
         assert_placed(file_of(&scanned, "src/h.rs"), "rust·p·db·PgStore·ping·item");
     }
 
+    /// **The same binding, in TypeScript** — red-first, and the rung above was
+    /// reaching nothing here at all.
+    ///
+    /// The ladder half is language-neutral and has been since the Rust twin
+    /// landed: it reads [`Observation::BoundToTheResultOf`], climbs the callee,
+    /// looks the return type up and checks the member. Only the Rust WALK ever
+    /// recorded that observation, so in TypeScript the rung was handed a bare
+    /// `m` with nothing beside it and fell through every time.
+    ///
+    /// Both reaches, in one fixture, because they take different paths through
+    /// the walk and only one of them was ever exercised on the Rust side: a
+    /// member CALL is [`Reach::Item`] and a member READ is [`Reach::Field`],
+    /// and `Field` is the whole of the column this is aimed at.
+    ///
+    /// MEASURED over this repository before building it: 3,065 unresolved
+    /// TypeScript member reads have a bare receiver the same file binds with
+    /// `const x = callee(...)`, 1,869 of those callees state exactly one return
+    /// type, and 1,174 of those types declare the member being read — 323
+    /// distinct (type, member) pairs.
+    #[test]
+    fn a_typescript_binding_the_source_never_typed_is_typed_by_the_call_that_bound_it() {
+        let scanned = scan_of(
+            &javascript::TypeScriptAdapter,
+            &[
+                (
+                    "lib/mount",
+                    "src/lib/mount.ts",
+                    "export class Mounted {\n\
+                     \x20   container = null;\n\
+                     \x20   destroy(): void {}\n\
+                     }\n\
+                     export function mountIt(): Mounted { return new Mounted(); }\n",
+                ),
+                (
+                    "lib/spec",
+                    "src/lib/spec.ts",
+                    "import { mountIt } from './mount';\n\
+                     export function go() {\n\
+                     \x20   const m = mountIt();\n\
+                     \x20   m.destroy();\n\
+                     \x20   return m.container;\n\
+                     }\n",
+                ),
+            ],
+        );
+        let reading = file_of(&scanned, "src/lib/spec.ts");
+        assert_placed(reading, "typescript·p·lib/mount·Mounted·container·field");
+        assert_placed(reading, "typescript·p·lib/mount·Mounted·destroy·item");
+    }
+
+    /// **S1 over the new table.** A name REBOUND to something the walk cannot
+    /// type no longer holds what the earlier call handed back.
+    ///
+    /// The type table has said this since 04b S1 and the callee table has to
+    /// say it in the same breath, because it is the same staleness: `m` was a
+    /// `Mounted` until `make()` ran, and a callee left standing would type
+    /// whatever `make` returns as a `Mounted` and mint a member on it. A wrong
+    /// edge points at a real node and nothing downstream can tell it from a
+    /// right one (R4) — which is why this asserts the ABSENCE and not just the
+    /// presence above.
+    ///
+    /// MUTATION: drop the `from_calls.remove` from [`Flow::bind`]. The second
+    /// `m.destroy()` then reaches `Mounted::destroy` and the count is 2.
+    #[test]
+    fn a_typescript_binding_rebound_to_something_untypable_forgets_the_call() {
+        let scanned = scan_of(
+            &javascript::TypeScriptAdapter,
+            &[
+                (
+                    "lib/mount",
+                    "src/lib/mount.ts",
+                    "export class Mounted { destroy(): void {} }\n\
+                     export function mountIt(): Mounted { return new Mounted(); }\n",
+                ),
+                (
+                    "lib/spec",
+                    "src/lib/spec.ts",
+                    "import { mountIt } from './mount';\n\
+                     export function go(make) {\n\
+                     \x20   let m = mountIt();\n\
+                     \x20   m.destroy();\n\
+                     \x20   m = make();\n\
+                     \x20   m.destroy();\n\
+                     }\n",
+                ),
+            ],
+        );
+        let got = targets(file_of(&scanned, "src/lib/spec.ts"));
+        let reached = got.iter().filter(|t| *t == "typescript·p·lib/mount·Mounted·destroy·item");
+        assert_eq!(
+            reached.count(),
+            1,
+            "the call before the reassignment reaches it and the one after cannot; got {got:?}"
+        );
+    }
+
     /// **The table is Rust-shaped and must stay a no-op everywhere else.**
     ///
     /// `Form::TraitMember` is minted at exactly ONE site in the whole
