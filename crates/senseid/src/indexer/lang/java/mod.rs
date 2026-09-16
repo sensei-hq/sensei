@@ -667,19 +667,26 @@ mod corpus {
         let homes = TypeHomes::of(
             first.iter().flat_map(|f| f.symbols.iter().map(|s| (f.package.as_str(), s))),
         );
+        // The second pass, COMPLETE, before anything is placed — every barrier
+        // artifact below comes off it. `declared_members` in particular cannot
+        // come off `first`: a member's identity carries its TYPE's module, so
+        // the pre-barrier pass spells those members differently.
+        let anchored = read_all(&homes);
         // Every package this scan declares. In Java that IS the namespace, so
         // the set is exact rather than a prefix.
-        let first_party: BTreeSet<String> = first.iter().map(|f| f.package.clone()).collect();
-        let first_party_members: BTreeSet<String> = first
+        let first_party: BTreeSet<String> = anchored.iter().map(|f| f.package.clone()).collect();
+        let first_party_members: BTreeSet<String> = anchored
             .iter()
             .flat_map(|f| f.symbols.iter())
             .filter(|s| matches!(s.kind, SymbolKind::Method | SymbolKind::Field))
             .map(|s| s.name.clone())
             .collect();
+        let declared_members = crate::indexer::resolve::members_declared_by(anchored.iter());
         let scanned = BTreeSet::new();
         let world = World {
             first_party: &first_party,
             first_party_members: &first_party_members,
+            declared_members: &declared_members,
             scanned: &scanned,
         };
 
@@ -691,7 +698,7 @@ mod corpus {
         let mut library_imports = 0usize;
         let mut nodes = 0usize;
         let mut placed_relations = 0usize;
-        for facts in read_all(&homes) {
+        for facts in anchored {
             let placed = resolve(facts, &GRAMMAR, &world);
             nodes += placed.symbols.len();
             placed_relations += placed

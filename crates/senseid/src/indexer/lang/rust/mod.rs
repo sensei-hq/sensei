@@ -386,6 +386,7 @@ mod tests {
             &crate::indexer::resolve::World {
                 first_party: &first_party,
                 first_party_members: &BTreeSet::new(),
+                declared_members: &BTreeSet::new(),
                 scanned: &scanned,
             },
         );
@@ -1447,6 +1448,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
             &World {
                 first_party: &first_party,
                 first_party_members: &BTreeSet::new(),
+                declared_members: &BTreeSet::new(),
                 scanned: &BTreeSet::new(),
             },
         );
