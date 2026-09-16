@@ -1,59 +1,33 @@
-# Checkpoint — the indexer
+# Checkpoint
 
-**Slice: FIELD. TypeScript done (df60a271); rust Field untouched and is next.
-Workspace suite 0 failed, clippy 0, fmt clean. Stage 10 cutover still gated.**
-Read `docs/plans/indexer-sequence.md`, then `docs/design/indexer.md`.
-Canonical reports — do not retype their numbers:
+**Slice** — indexer-v2, driving the per-kind `lost` column to zero. Method.
 
-    cargo test -p senseid --bin senseid -- --ignored --nocapture indexer::acceptance::
-      report | every_first_party_edge_names_a_declaration_this_scan_holds
-      every_source_node_is_reached_by_a_test_and_then_by_other_source
-    SENSEI_CORPUS=~/Work/Dayamed … indexer::lang::java::corpus
+**Done**
 
-Two commits, and the ORDER matters — the metric was fixed first and
-re-baselined, so the walk fix is neither credited nor blamed for its movement.
+- `59002bf9` a use site reaches the member a trait impl supplies. New
+  `SuppliedMembers` table + `Rung::SuppliedByATraitImpl`. 395 trait-supplied
+  methods existed and zero were linked; the use side could not mint the trait
+  segment. rust Method lost 797 → 724.
+- `04289f5f` a binding the source never typed is typed by the call that bound
+  it. `Observation::BoundToTheResultOf` + `what_that_call_returns` +
+  `considered_here`. `let s = pg_store().await` x306 in one file was the
+  dominant shape. rust Method lost 724 → 591, Field 1480 → 1433.
 
-1. `173c8f8d` the bare-name set is keyed by LANGUAGE as well as reach. A
-   TypeScript use site cannot mint a rust identity. 183 rust + 55 ts field
-   declarations were lost on the other language's evidence. No edge moved.
-2. `df60a271` the JavaScript reader now consults the type table it was already
-   being handed. `member_of` filed every member under the READING file's
-   module; of 1,997 candidates minted at field reach, none named a real
-   declaration. 936 differed only in that segment, 938 were minted on `Record`
-   and friends.
+**Remaining** — rust Method 591, ts Method 75, rust Field 1433, ts Field 2467.
+Every remaining lost Method is ONE cause: a receiver nothing types. The three
+sub-shapes, largest first, are in the report and each needs a decision:
+cross-type field tables (`state.pg`), the `Arc<T>` / `Result<T>` unwrapping rule
+in `simple_type_name`, and the same binding-callee fact for TypeScript.
 
-Current `lost` (`exact` + `by name`), after both:
+**Next command**
 
-| rust | | typescript | |
-|---|---|---|---|
-| Field | 1,478 | Field | 2,467 |
-| Method | 797 | Const | 145 |
-| Function | 8 | Function | 146 (5 exact) |
-| Const / Static / Module `*` | 0 | Method 75, Static 22, Property 3 |
+    cargo test -p senseid --bin senseid -- --ignored --nocapture \
+      indexer::acceptance::every_source_node_is_reached_by_a_test_and_then_by_other_source
 
-ts RESOLVED 24,095 → 24,856, all +761 through `declared_by_its_type`. Dangling
-first-party edges UNMOVED at rust 335 / ts 561 — every new edge is real.
+**Open questions** — the metric itself is still a by-NAME upper bound within a
+language; `TraceRecorder::is_empty` is "named" by 906 sites spelling `is_empty`.
+Narrowing further needs the receiver's type, which is the missing thing.
 
-## Next — largest first, all measured
-
-1. **rust Field 1,478.** NOT the ladder: 91% of unresolved field sites never
-   reach it. `binding_of`/`param_bindings` refuse if-let (1,455), closure
-   params (1,046), for-bindings (940) and `let x = f()` (914). Needs
-   `World::returns` reachable from a NAMED binding, not just a `call()`
-   receiver.
-2. **rust Method 797** — the same receiver typing, one reach up.
-3. **ts Field 2,467** — now honestly ReceiverTypeUnknown (10,817) rather than
-   mis-minted. Same receiver work, in the other language.
-4. Re-export tables; macro-call and function-as-value use sites.
-
-## Known-broken — do not build on
-
-- `binding_of` (rust/walk.rs:409) MIS-TYPES `let p = T::new().parse()` as `T`,
-  a live wrong edge. A one-hop return-type lookup was tried and REVERTED: it
-  costs 18 real `PgStore` edges, because `T::connect().await.unwrap()` needs
-  plumbing hops AND a cross-file return type. Do it with #1, not before.
-- `acceptance.rs` is `#[cfg(test)]` at its PARENT, so `barrier::test_boundary`
-  reads its `#[test]` fns as source. Fourth classifier bug of this probe.
-- `constructor` is a node (33 ts); no use site can ever name one.
-- Java 26,995 dangling stands; Lombok 10,403 + Spring Data 2,529 not attempted.
-- A7: 525 colliding identities. A2 ts drops 14; java 9.
+**Known broken** — none here. `indexer::lib_indexer::tests::
+real_dbd_single_file_has_deploy_component` (`--ignored`) reads the hardcoded
+path `/Users/Jerry/Developer/dbd-rs`, which is not checked out on this machine.
