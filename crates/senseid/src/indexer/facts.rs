@@ -582,11 +582,51 @@ pub struct Relation {
 /// What an import brings into scope.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Binding {
-    /// Binds exactly this name — the last path segment, or the alias.
+    /// Binds exactly this name, and the SPECIFIER already names the thing bound
+    /// — the last path segment, or the alias. Rust's `use a::b::C`, Java's
+    /// `import a.b.C`, and JavaScript's `import * as ns from './m'`, where the
+    /// bound name IS the module the specifier spells.
     Name(String),
+    /// Binds a MEMBER of what the specifier names, which the specifier
+    /// therefore does NOT spell: JavaScript's
+    /// `import { kindFor } from './buckets'`, where the clause carries the name
+    /// and the string carries only the module.
+    ///
+    /// Distinct from [`Binding::Name`] because the ladder has to spell the
+    /// target differently for each, and the difference is a property of the
+    /// CLAUSE rather than of the language: both shapes appear in one JavaScript
+    /// file, so a per-language flag cannot tell them apart. MEASURED: without
+    /// the distinction, 3,865 first-party TypeScript import edges named the
+    /// module instead of the member and not one of them reached a declaration.
+    ///
+    /// TWO names, because an alias makes them different questions.
+    /// `import { kindFor as kf }` is looked up in this file as `kf` and reaches
+    /// `kindFor` in the other module; carrying one string would either fail
+    /// every lookup or name a member the other module does not declare. Rust
+    /// keeps its alias in the specifier and splits it off
+    /// ([`crate::indexer::resolve::Grammar::names_the_binding`]); a JavaScript
+    /// specifier has nowhere to put one.
+    MemberOf {
+        /// What this file calls it — the lookup key at a use site here.
+        local: String,
+        /// What the other module declares it as — the segment of the target.
+        member: String,
+    },
     /// A glob. It binds an unknown set of names, so a name that MIGHT have come
     /// from here is not proof that it did (R4).
     Glob,
+}
+
+impl Binding {
+    /// The name brought into scope, for the two variants that bind exactly one.
+    /// Shared so a caller that only needs "which name" cannot come to disagree
+    /// with the ladder about what a binding binds.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Binding::Name(name) | Binding::MemberOf { local: name, .. } => Some(name.as_str()),
+            Binding::Glob => None,
+        }
+    }
 }
 
 /// Whether an import crosses out of the scanned source.
@@ -757,7 +797,11 @@ mod tests {
     }
 
     fn all_bindings() -> Vec<Binding> {
-        vec![Binding::Name("PgStore".to_string()), Binding::Glob]
+        vec![
+            Binding::Name("PgStore".to_string()),
+            Binding::MemberOf { local: "kf".to_string(), member: "kindFor".to_string() },
+            Binding::Glob,
+        ]
     }
 
     fn all_import_origins() -> Vec<ImportOrigin> {
@@ -872,10 +916,10 @@ mod tests {
 
         for b in all_bindings() {
             match b {
-                Binding::Name(_) | Binding::Glob => {}
+                Binding::Name(_) | Binding::MemberOf { .. } | Binding::Glob => {}
             }
         }
-        assert_eq!(all_bindings().len(), 2);
+        assert_eq!(all_bindings().len(), 3);
 
         for o in all_import_origins() {
             match o {

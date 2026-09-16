@@ -427,15 +427,8 @@ fn an_import_named_target_resolves() {
     for read in &corpus {
         let language = read.facts.language.as_str();
         let separator = lang::adapter_for(read.facts.language).grammar().path_separator;
-        let bound: BTreeSet<&str> = read
-            .facts
-            .imports
-            .iter()
-            .filter_map(|i| match &i.binds {
-                super::facts::Binding::Name(name) => Some(name.as_str()),
-                super::facts::Binding::Glob => None,
-            })
-            .collect();
+        let bound: BTreeSet<&str> =
+            read.facts.imports.iter().filter_map(|i| i.binds.name()).collect();
         if bound.is_empty() {
             continue;
         }
@@ -497,6 +490,119 @@ fn an_import_named_target_resolves() {
             "{language}: {n} references name a head an import binds and did not resolve \
              (ratchet {ceiling}). An import names its target, so this is the grammar or the \
              ladder being wrong, not an unknowable answer"
+        );
+    }
+}
+
+/// A8. Every RESOLVED edge that names one of ours names a declaration this scan
+/// actually holds.
+///
+/// The measurement that was missing, and its absence is why a whole language's
+/// import rung could be broken in plain sight. `report` counts a reference as
+/// RESOLVED the moment a rung answers; it never asks whether the identity that
+/// rung minted exists. So 3,865 TypeScript import edges — every first-party one
+/// there was — pointed at nodes no file declares, and each was counted a
+/// success by the histogram, by A1, and by the resolve-share ratchet alike.
+///
+/// A DANGLING edge is not a wrong edge and R4 prefers it to one. But it is not a
+/// success either: a reader following "who calls this" gets nothing, which is
+/// the same answer they would get if the caller did not exist.
+///
+/// Split by RUNG, because that is what makes it actionable. A rung with a high
+/// dangling count is one function to go and read; a single total is a number
+/// nobody can act on. Library targets are excluded by [`fqn::parse`] rather than
+/// by a string test — R5 says an external is named and never opened, so nothing
+/// this scan declares could confirm one.
+#[test]
+#[ignore]
+fn every_first_party_edge_names_a_declaration_this_scan_holds() {
+    let corpus = read_the_corpus();
+    let declared: BTreeSet<&str> =
+        corpus.iter().flat_map(|r| r.facts.symbols.iter().map(|s| s.fqn.as_str())).collect();
+
+    // (language, fact, rung) -> (landed, dangling), plus the worst offenders.
+    //
+    // A REFERENCE and a RELATION are split because they are different claims —
+    // "this use site reaches that" against "this declaration hangs off that" —
+    // and they are minted by different code. Merged, the larger one hides the
+    // smaller: rust's 652 dangling relation parents and its 298 dangling
+    // reference targets have nothing to do with each other.
+    let mut tally: BTreeMap<(&str, &str, &str), (usize, usize)> = BTreeMap::new();
+    let mut examples: BTreeMap<&str, BTreeMap<&str, usize>> = BTreeMap::new();
+    for read in &corpus {
+        let language = read.facts.language.as_str();
+        let targets = read
+            .facts
+            .references
+            .iter()
+            .map(|r| ("reference", &r.target))
+            .chain(read.facts.relations.iter().map(|r| ("relation", &r.parent)));
+        for (fact, target) in targets {
+            let Resolution::Resolved { fqn, via } = target else { continue };
+            // An external names a package we never open, so there is no
+            // declaration of ours for it to match and counting it either way
+            // would be meaningless.
+            match super::fqn::parse(fqn.as_str()) {
+                Ok(parsed) if parsed.origin == super::fqn::Origin::Lib => continue,
+                // An identity that will not parse is a defect of its own, and
+                // it is one A7 and the fqn suite own. Counted as dangling here
+                // rather than skipped, because it certainly is not landed.
+                Err(_) => {}
+                Ok(_) => {}
+            }
+            let slot = tally.entry((language, fact, via.as_label())).or_default();
+            if declared.contains(fqn.as_str()) {
+                slot.0 += 1;
+            } else {
+                slot.1 += 1;
+                *examples.entry(language).or_default().entry(fqn.as_str()).or_default() += 1;
+            }
+        }
+    }
+
+    println!("\n## A8: first-party edges, and whether the target is declared\n");
+    println!(
+        "  {:<12} {:<10} {:<26} {:>8} {:>10}",
+        "language", "fact", "rung", "landed", "DANGLING"
+    );
+    let mut dangling_by_language: BTreeMap<&str, usize> = BTreeMap::new();
+    for ((language, fact, rung), (landed, dangling)) in &tally {
+        println!("  {language:<12} {fact:<10} {rung:<26} {landed:>8} {dangling:>10}");
+        *dangling_by_language.entry(language).or_default() += dangling;
+    }
+    for (language, worst) in &examples {
+        let mut top: Vec<(&&str, &usize)> = worst.iter().collect();
+        top.sort_by_key(|(fqn, n)| (std::cmp::Reverse(**n), **fqn));
+        println!("\n  {language}: {} distinct dangling targets, worst 10:", worst.len());
+        for (fqn, n) in top.into_iter().take(10) {
+            println!("    {n:>5}  {fqn}");
+        }
+    }
+
+    // THE RATCHET, per language. Measured, and it moved a long way to get here:
+    // typescript stood at 3,865 dangling with ZERO landed before the import
+    // clause was read, which is the whole of its first-party import traffic.
+    //
+    // What the remainder is, decomposed rather than absorbed:
+    //
+    // - rust 987 = 652 RELATION parents + 298 imports + 37 rooted paths. The
+    //   652 are one shape: an `Owns` relation from an `impl PgStore` block
+    //   mints its parent at the module the IMPL sits in, where the struct is
+    //   declared one module out. The member's own identity goes through
+    //   `TypeHomes` and is right; the relation's parent does not. Pre-existing,
+    //   found by this test, and its own slice — see `docs/backlog.md`.
+    // - typescript 561 = 523 in one re-export barrel (`e2e/fixtures` passes
+    //   Playwright's `test` and `expect` straight through) plus 38 in
+    //   `lib/components/kit/index`. Both are `export { x } from './y'`, where
+    //   the target IS the module named and the declaration is one module
+    //   further on. Following a barrel needs a cross-file re-export table,
+    //   which is the lookup deferred to #174.
+    for (language, ceiling) in [("rust", 1_200usize), ("typescript", 700)] {
+        let n = dangling_by_language.get(language).copied().unwrap_or(0);
+        assert!(
+            n <= ceiling,
+            "{language}: {n} resolved first-party edges name an identity no declaration \
+             mints (ratchet {ceiling}). A rung answered and the answer reaches nothing"
         );
     }
 }

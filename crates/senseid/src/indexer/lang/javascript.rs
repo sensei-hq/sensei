@@ -154,6 +154,9 @@ pub const GRAMMAR: Grammar = Grammar {
     // specifier — so listing a placeholder root here would make some real
     // directory called `crate` root a path by accident.
     roots: &[(".", Root::Here), ("..", Root::Up)],
+    // A specifier is a FILE path, so its last segment carries an extension the
+    // declaration side already dropped. The SAME function `module_path` uses.
+    module_segment,
     relative_to_directory: true,
     // A JavaScript module reaches an external ONLY through an import; `a.b` is
     // a property access, not a package path.
@@ -736,14 +739,28 @@ pub fn module_path(file: &str, package_root: &str) -> String {
         segments.remove(0);
     }
     if let Some(last) = segments.last_mut() {
-        // `.d.ts` and `.spec.ts` are ONE extension each as far as a module path
-        // is concerned; `file_stem` would leave `.d` and `.spec` behind.
-        let stem = last.split('.').next().unwrap_or(last.as_str());
-        if !stem.is_empty() {
-            *last = stem.to_string();
-        }
+        *last = module_segment(last).to_string();
     }
     segments.join("/")
+}
+
+/// The module segment a FILE NAME reduces to: its name with every extension
+/// dropped.
+///
+/// `.d.ts` and `.spec.ts` are ONE extension each as far as a module path is
+/// concerned; `file_stem` would leave `.d` and `.spec` behind.
+///
+/// Hung on [`Grammar::module_segment`] as well as called here, because the two
+/// sides of an import have to agree: the declaration side reduces
+/// `src/lib/buckets.ts` and the use site reduces the specifier `./buckets.js`,
+/// and a second spelling of this rule is how they would come to disagree. An
+/// empty stem — a dotfile like `.eslintrc` — is left alone rather than reduced
+/// to nothing.
+pub fn module_segment(segment: &str) -> &str {
+    match segment.split('.').next() {
+        Some(stem) if !stem.is_empty() => stem,
+        _ => segment,
+    }
 }
 
 /// Reduce the source text of a TypeScript type to the one segment that names
@@ -2189,9 +2206,22 @@ impl Walk<'_> {
         };
         for specifier in specifiers {
             let binds = match specifier {
-                ImportDeclarationSpecifier::ImportSpecifier(s) => {
-                    Binding::Name(s.local.name.to_string())
-                }
+                // A NAMED import binds a member of the module, and the
+                // specifier spells only the module — so which member is a fact
+                // only the clause carries. `imported` and `local` differ under
+                // an alias, and each answers a different question.
+                ImportDeclarationSpecifier::ImportSpecifier(s) => Binding::MemberOf {
+                    local: s.local.name.to_string(),
+                    member: s.imported.name().to_string(),
+                },
+                // A DEFAULT import binds whatever the module exports as its
+                // default, under a name this file chose. The module does not
+                // declare that name, so the specifier — which names the module
+                // — is the closest thing written down to the target.
+                //
+                // This corpus says the same: 317 of them, almost all
+                // `import Widget from './Widget.svelte'`, where the component
+                // IS the module and the module is the right target.
                 ImportDeclarationSpecifier::ImportDefaultSpecifier(s) => {
                     Binding::Name(s.local.name.to_string())
                 }
@@ -2229,9 +2259,16 @@ impl Walk<'_> {
             let origin = import_origin(&path);
             let at = self.span(e.span);
             for specifier in &e.specifiers {
+                // A re-export names a MEMBER of the other module for exactly
+                // the reason a named import does. `local` is what that module
+                // calls it and `exported` is what this one passes on, which is
+                // the same two questions an alias asks.
                 self.found.imports.push(Import {
                     path: path.clone(),
-                    binds: Binding::Name(specifier.local.name().to_string()),
+                    binds: Binding::MemberOf {
+                        local: specifier.exported.name().to_string(),
+                        member: specifier.local.name().to_string(),
+                    },
                     origin: origin.clone(),
                     at,
                 });

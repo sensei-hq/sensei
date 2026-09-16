@@ -17,6 +17,34 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 
 
+## Indexer — 1,213 first-party edges resolve onto nothing (A8, measured 2026-09-15)
+
+Found by the new barrier `every_first_party_edge_names_a_declaration_this_scan_holds`,
+added with the TypeScript import fix. It asks the one question `report` never did:
+a rung answered — does the identity it minted exist? Ratcheted at rust 1,200 /
+typescript 700; the numbers below are what is inside those.
+
+Two causes, unrelated to each other, both pre-existing and both out of that slice.
+
+1. **rust, 652 — an `Owns` relation's PARENT is minted at the impl's module.**
+   `impl PgStore` in `db/pg_store/graph.rs` emits its member-ownership relations
+   with parent `…db::pg_store::graph·PgStore·item`, while `pub struct PgStore` is
+   declared one module out in `db/pg_store/mod.rs`. The MEMBER's own identity is
+   right — it goes through `TypeHomes` — so this is the relation side alone
+   having missed the same barrier the reference side was taught in `1220cd97`.
+   Worst offenders are 95 (`graph`), 79 (`folders`), 49 (`sessions`).
+
+2. **typescript, 561 — a re-export barrel is not followed.**
+   `export { expect } from '@playwright/test'` in `e2e/fixtures.ts` means an
+   importer's `expect` is minted at `e2e/fixtures·expect`, which that file does
+   not declare — it passes it through. 523 of the 561 are that one barrel
+   (`expect` 377, `test` 146); the other 38 are `lib/components/kit/index`.
+   Needs a cross-file re-export table, which is the same lookup deferred for
+   JavaScript's `index` resolution.
+
+Remaining and separate: rust 298 `through_an_import` and 37 `rooted_in_this_package`,
+which include the 73 edition-2018 uniform-path imports already noted below.
+
 ## Indexer — Java's 26,995 edges at members nothing declares (measured 2026-09-15)
 
 `SENSEI_CORPUS=~/Work/Dayamed … indexer::lang::java::corpus` prints this every

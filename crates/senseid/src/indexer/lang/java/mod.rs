@@ -189,6 +189,9 @@ pub static GRAMMAR: LazyLock<Grammar> = LazyLock::new(|| Grammar {
     // `crate::`, no `super::`, no `./` — every import is an absolute name from
     // the root of the classpath, so no spelling roots a path anywhere but there.
     roots: &[],
+    // An import names a class on the classpath, never a file, so there is no
+    // extension in it — and Java's separator is the dot a stem rule would cut.
+    module_segment: crate::indexer::lang::common::already_a_module_segment,
     // Java has no `import x as y`. A name is imported under its own last
     // segment or not at all.
     names_the_binding: None,
