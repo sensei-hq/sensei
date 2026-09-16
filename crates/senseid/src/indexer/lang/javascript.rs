@@ -1702,6 +1702,12 @@ impl Walk<'_> {
     /// call graph with no node to point at.
     fn variables(&mut self, v: &VariableDeclaration<'_>, scope: &Scope, flow: &mut Flow) {
         for declarator in &v.declarations {
+            // A dynamic `import()` states a dependency in a string literal just
+            // as a static clause does, so it is recorded as the import it is —
+            // before anything below reads the binding.
+            if let Some(path) = declarator.init.as_ref().and_then(dynamic_import_of) {
+                self.dynamic_import(path, &declarator.id, declarator.span);
+            }
             // A function initialiser bound to a PLAIN NAME is walked once, by
             // the typed arm at the end of this loop, which gives its body the
             // declaration's own scope. Walking it here as well emitted every
@@ -2352,6 +2358,58 @@ impl Walk<'_> {
         }
     }
 
+    /// `const { go } = await import('./api')` — the same two bindings a static
+    /// clause makes, from the other spelling.
+    ///
+    /// A test that has to register a mock before its subject loads has no other
+    /// way to write the import, so without this the subject's whole suite
+    /// reaches nothing. MEASURED: the five TypeScript functions a use site named
+    /// by EXACT identity while the edge stayed missing are all this shape.
+    ///
+    /// An ARRAY pattern is not an import clause — `const [a] = await import(m)`
+    /// destructures the module object by position, which names no export — and
+    /// a nested pattern binds nothing the other module declares either. Both
+    /// fall through rather than inventing a member name (R4).
+    fn dynamic_import(&mut self, path: &str, id: &BindingPattern<'_>, at: OxcSpan) {
+        let origin = import_origin(path);
+        let at = self.span(at);
+        match id {
+            // Bound to ONE name, so the binding IS the module — which is what a
+            // namespace is. Recorded as one so `member_of` keeps telling
+            // `api.thing()` from a method call on a type called `api`.
+            BindingPattern::BindingIdentifier(local) => {
+                self.namespaces.insert(local.name.to_string());
+                self.found.imports.push(Import {
+                    path: path.to_string(),
+                    binds: Binding::Name(local.name.to_string()),
+                    origin,
+                    at,
+                });
+            }
+            BindingPattern::ObjectPattern(o) => {
+                for property in &o.properties {
+                    // A COMPUTED key names no export that can be read here, and
+                    // only a plain identifier is a name this file then uses.
+                    let (Some(member), BindingPattern::BindingIdentifier(local)) =
+                        (property.key.static_name(), &property.value)
+                    else {
+                        continue;
+                    };
+                    self.found.imports.push(Import {
+                        path: path.to_string(),
+                        binds: Binding::MemberOf {
+                            local: local.name.to_string(),
+                            member: member.to_string(),
+                        },
+                        origin: origin.clone(),
+                        at,
+                    });
+                }
+            }
+            BindingPattern::ArrayPattern(_) | BindingPattern::AssignmentPattern(_) => {}
+        }
+    }
+
     fn export_named(&mut self, e: &ExportNamedDeclaration<'_>, scope: &Scope, flow: &mut Flow) {
         if let Some(declaration) = &e.declaration {
             let before = self.found.symbols.len();
@@ -2508,6 +2566,23 @@ fn private_name(id: &PrivateIdentifier<'_>) -> String {
 
 /// Every plain name a binding pattern binds. A nested destructure binds several
 /// and this names all of them, because each has to be CLEARED.
+/// The specifier of a dynamic `import('./m')`, seen through any `await`.
+///
+/// Only a STRING LITERAL answers. `import(chosenAtRuntime)` names a module that
+/// is not written down anywhere, and picking one would be exactly the
+/// fabrication R4 forbids — so it is no answer, and the site stays a miss that
+/// says so.
+fn dynamic_import_of<'a>(init: &'a Expression<'a>) -> Option<&'a str> {
+    match init {
+        Expression::AwaitExpression(a) => dynamic_import_of(&a.argument),
+        Expression::ImportExpression(i) => match &i.source {
+            Expression::StringLiteral(s) => Some(s.value.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn bound_names(pattern: &BindingPattern<'_>) -> Vec<String> {
     let mut out = Vec::new();
     collect_bound(pattern, &mut out);
@@ -3145,6 +3220,62 @@ mod tests {
         );
         let namespace = facts.imports.iter().find(|i| i.path == "./api").expect("the import");
         assert_eq!(namespace.binds, Binding::Name("api".to_string()));
+    }
+
+    /// `const { go } = await import('./api')` is an IMPORT, and binds exactly
+    /// what the static clause binds.
+    ///
+    /// The specifier is a literal written in the source, so this asks nothing
+    /// of the ladder that a static import does not — externality still comes
+    /// from the string, never from absence (R6). What makes it worth reading is
+    /// that nothing else can: the test that needs a module mocked before it
+    /// loads has no other way to spell the import, so the subject's whole test
+    /// suite goes dark.
+    ///
+    /// MEASURED over this repository: 195 dynamic imports in 89 first-party
+    /// files, and the five TypeScript functions whose declaration a use site
+    /// named by EXACT identity while the edge stayed missing are all this one
+    /// shape — `resolveTenantAccess`, `principalIdForSession`, `listUserOrgs`,
+    /// `getUserOrg`, `provisionOnSignIn`.
+    #[test]
+    fn a_destructured_dynamic_import_binds_its_members_like_a_static_clause() {
+        let facts = facts(
+            "const { go, stop: halt } = await import('./api');\nexport function run() { go(); }\n",
+        );
+        let bound: Vec<&Binding> =
+            facts.imports.iter().filter(|i| i.path == "./api").map(|i| &i.binds).collect();
+        assert_eq!(
+            bound,
+            vec![
+                &Binding::MemberOf { local: "go".to_string(), member: "go".to_string() },
+                // The ALIAS keeps both halves, for the reason `Binding::MemberOf`
+                // records: the two names answer different questions.
+                &Binding::MemberOf { local: "halt".to_string(), member: "stop".to_string() },
+            ],
+            "a dynamic import binds members of the module it names, exactly as the static \
+             clause does"
+        );
+    }
+
+    /// And a dynamic import bound to ONE name binds a module, not a member.
+    ///
+    /// The same distinction `import * as api` draws, reached by the other
+    /// spelling — so `api.thing()` has to stay an export of that module rather
+    /// than becoming a member of a type called `api`.
+    #[test]
+    fn a_dynamic_import_bound_to_one_name_is_a_namespace() {
+        let facts =
+            facts("const api = await import('./api');\nexport function go() { api.thing(); }\n");
+        let whole = facts.imports.iter().find(|i| i.path == "./api").expect("the import");
+        assert_eq!(whole.binds, Binding::Name("api".to_string()));
+        let call = member_targets(&facts)
+            .into_iter()
+            .find(|(name, _)| name == "thing")
+            .expect("the member call is a reference");
+        assert_eq!(
+            call.1, "Unplaced",
+            "the ladder places it through the import; it is not a member of a type called `api`"
+        );
     }
 
     /// The module path keeps its trailing `index`, and the doc on
