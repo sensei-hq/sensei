@@ -166,6 +166,8 @@ pub enum ObservationRow {
     Receiver(String),
     ImportInScope(String),
     UnplacedType(String),
+    /// See [`Observation::BoundToTheResultOf`].
+    BoundToTheResultOf(String),
     Candidate(String),
 }
 
@@ -216,6 +218,7 @@ fn observation_row_of(observation: &Observation) -> ObservationRow {
         Observation::Receiver(text) => ObservationRow::Receiver(text.clone()),
         Observation::ImportInScope(text) => ObservationRow::ImportInScope(text.clone()),
         Observation::UnplacedType(text) => ObservationRow::UnplacedType(text.clone()),
+        Observation::BoundToTheResultOf(text) => ObservationRow::BoundToTheResultOf(text.clone()),
         Observation::Candidate(fqn) => ObservationRow::Candidate(fqn.as_str().to_string()),
     }
 }
@@ -715,6 +718,7 @@ fn observation_prop(observation: &ObservationRow) -> serde_json::Value {
         ObservationRow::Receiver(text) => ("receiver", text),
         ObservationRow::ImportInScope(text) => ("import_in_scope", text),
         ObservationRow::UnplacedType(text) => ("unplaced_type", text),
+        ObservationRow::BoundToTheResultOf(text) => ("bound_to_the_result_of", text),
         ObservationRow::Candidate(text) => ("candidate", text),
     };
     serde_json::json!({ "saw": saw, "text": text })
@@ -726,6 +730,7 @@ fn observation_from_prop(value: &serde_json::Value) -> Option<ObservationRow> {
         "receiver" => ObservationRow::Receiver(text),
         "import_in_scope" => ObservationRow::ImportInScope(text),
         "unplaced_type" => ObservationRow::UnplacedType(text),
+        "bound_to_the_result_of" => ObservationRow::BoundToTheResultOf(text),
         "candidate" => ObservationRow::Candidate(text),
         _ => return None,
     })
