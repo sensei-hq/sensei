@@ -3574,6 +3574,95 @@ mod tests {
         );
     }
 
+    /// **S1 over the ELEMENT table.** A name rebound to something the walk
+    /// cannot type no longer holds what the earlier array's elements were.
+    ///
+    /// [`Flow::bind`] clears all three tables in one breath and its doc says so;
+    /// nothing held it there, and the element clear could be deleted with every
+    /// test still green. The staleness is the same one S1 is about, one table
+    /// over: `rows` was a `T[]` until it was reassigned, and an element left
+    /// standing types the second callback's parameter as a `T` — a wrong edge
+    /// pointing at a real node, which R4 ranks below no edge at all.
+    ///
+    /// MUTATION: drop `self.elements.remove(name)` from [`Flow::bind`]. The
+    /// second callback then reaches `T·m` too and the count is 2.
+    #[test]
+    fn an_array_rebound_to_something_untypable_forgets_its_element_type() {
+        let facts = facts(
+            "class T { m() {} }\n\
+             export function go(rows: T[], other) {\n\
+             \x20 rows.map((r) => r.m());\n\
+             \x20 rows = other;\n\
+             \x20 rows.map((r) => r.m());\n\
+             }\n",
+        );
+        let got = member_targets(&facts);
+        let reached = got.iter().filter(|(_, target)| target.ends_with("T·m·item"));
+        assert_eq!(
+            reached.count(),
+            1,
+            "the callback before the reassignment is handed a `T` and the one after cannot be; \
+             got {got:?}"
+        );
+    }
+
+    /// **S2 over the ELEMENT table.** Where control flow joins, the element type
+    /// survives only if every arm agrees — and an arm that reassigned the array
+    /// does not.
+    ///
+    /// The third table joins by the same intersection the other two do, which is
+    /// what [`agreed`] exists to guarantee; nothing held that either. The arm
+    /// that KEEPS the element is written first on purpose: `Flow::join` starts
+    /// from the first arm, so a fixture whose first arm has already lost the
+    /// element passes whether the intersection runs or not.
+    ///
+    /// MUTATION: drop the `agreed(&mut out.elements, …)` line from
+    /// [`Flow::join`]. The read after the join then reaches `T·m` and the count
+    /// is 2.
+    #[test]
+    fn two_branches_holding_different_arrays_leave_the_element_type_unknown() {
+        let facts = facts(
+            "class T { m() {} }\n\
+             export function go(rows: T[], c, make) {\n\
+             \x20 if (c) { rows.map((r) => r.m()); } else { rows = make(); }\n\
+             \x20 rows.map((r) => r.m());\n\
+             }\n",
+        );
+        let got = member_targets(&facts);
+        let reached = got.iter().filter(|(_, target)| target.ends_with("T·m·item"));
+        assert_eq!(
+            reached.count(),
+            1,
+            "only one arm still holds the array, so after the join nothing does; got {got:?}"
+        );
+    }
+
+    /// **The element type travels into a closure**, on the same terms the
+    /// binding's own type does: a name this file never assigns to still holds
+    /// what it held when the body runs.
+    ///
+    /// [`Walk::captured`] carries all three tables and nothing held the element
+    /// one there either — and this is the shape nearly every real callback is
+    /// in, because the `.map` is almost always inside some other function.
+    ///
+    /// MUTATION: drop the `outer.elements` loop from [`Walk::captured`]. The
+    /// nested body then has no element for `rows` and `r.m()` is a miss.
+    #[test]
+    fn a_nested_function_keeps_the_element_type_of_an_array_nothing_reassigns() {
+        let facts = facts(
+            "class T { m() {} }\n\
+             export function go(rows: T[]) {\n\
+             \x20 function inner() { rows.map((r) => r.m()); }\n\
+             \x20 return inner();\n\
+             }\n",
+        );
+        let got = member_targets(&facts);
+        assert!(
+            got.iter().any(|(_, target)| target.ends_with("T·m·item")),
+            "`rows` is never reassigned, so the closure knows what its elements are; got {got:?}"
+        );
+    }
+
     /// A callback on a receiver whose ELEMENT type is unknown stays unknown.
     /// The narrowing is what keeps this off `Array`-shaped members of types
     /// that are not arrays: a `Bag` with its own `map` gets nothing.

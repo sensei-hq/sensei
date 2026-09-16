@@ -335,7 +335,8 @@ impl<'a> Walk<'a> {
     /// a clone, so nothing recorded here escapes the block.
     ///
     /// Shadowing works by construction: a second `let x` overwrites the first
-    /// from that point on, which is what Rust does.
+    /// from that point on, which is what Rust does — [`Walk::forget`] is the
+    /// half of "overwrites" that a bare `insert` does not do.
     fn block(&mut self, node: Node<'_>, scope: &Scope) {
         let mut scope = scope.clone();
         let mut cursor = node.walk();
@@ -344,6 +345,12 @@ impl<'a> Walk<'a> {
             if child.kind() != "let_declaration" {
                 continue;
             }
+            // WHATEVER these names held, they no longer hold it. Before the two
+            // reads below and never instead of them, so a `let` the walk CAN
+            // read replaces the answer and one it cannot read removes it.
+            if let Some(pattern) = child.child_by_field_name("pattern") {
+                self.forget(&mut scope, pattern);
+            }
             // A type the source STATED always wins. The callee is recorded only
             // where there is none, so a lookup can never overrule a declaration.
             if let Some((name, ty)) = self.binding_of(child) {
@@ -351,6 +358,36 @@ impl<'a> Walk<'a> {
             } else if let Some((name, callee)) = self.bound_to_a_call(child) {
                 scope.bound_to_a_call.insert(name, callee);
             }
+        }
+    }
+
+    /// **S1, which this walk had only half of.** Everything a binding form's
+    /// names held before it ran, dropped — from BOTH tables, because they go
+    /// stale independently.
+    ///
+    /// `let h = raw(); let h = h.finish();` is ordinary Rust and neither table
+    /// can read the second line: `binding_of` finds no stated type, and
+    /// `bound_to_a_call` refuses a method call on purpose. Without this the
+    /// first line's answer stood, and every later `h.<member>` was typed as a
+    /// `Raw` — a wrong edge pointing at a real node, which R4 ranks below no
+    /// edge at all. The TypeScript walk has cleared on rebinding since 04b S1;
+    /// this is the same rule, one language over.
+    ///
+    /// Every `identifier` UNDER the pattern, not only a pattern that IS one, so
+    /// `let (a, b) = …` forgets both. The over-reading a struct pattern's
+    /// shorthand might cause is safe in the one direction that matters: this
+    /// only ever REMOVES, so the worst it can do is lose a type the walk knew
+    /// and leave an honest miss (R4).
+    fn forget(&self, scope: &mut Scope, pattern: Node<'_>) {
+        let mut cursor = pattern.walk();
+        let mut pending = vec![pattern];
+        while let Some(node) = pending.pop() {
+            if node.kind() == "identifier" {
+                let name = self.text(node);
+                scope.bindings.remove(name);
+                scope.bound_to_a_call.remove(name);
+            }
+            pending.extend(node.named_children(&mut cursor));
         }
     }
 
@@ -383,6 +420,12 @@ impl<'a> Walk<'a> {
         }
 
         let mut inner = scope.clone();
+        // A loop pattern BINDS, so it forgets what its names held outside the
+        // loop for exactly the reason a `let` does — `for h in hs` after
+        // `let h: Raw = …` is the same staleness with a different keyword.
+        if let Some(pattern) = node.child_by_field_name("pattern") {
+            self.forget(&mut inner, pattern);
+        }
         if let Some(pattern) = node.child_by_field_name("pattern")
             // Only a plain name. A destructuring pattern binds several names of
             // several types, and giving each the element type is false.

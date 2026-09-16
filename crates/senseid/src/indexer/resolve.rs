@@ -351,6 +351,61 @@ pub struct SuppliedMembers {
     ambiguous: BTreeSet<Fqn>,
 }
 
+/// How a member identity hangs off the type named in it — see [`hung_on`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Hung<'a> {
+    /// The module the TYPE lives in, empty at the package root. One segment,
+    /// because the grammar mints no second one.
+    pub module: &'a str,
+    pub supplied: Supplied<'a>,
+}
+
+/// Which of the two member forms an identity is in, once the type has been
+/// found among its segments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Supplied<'a> {
+    /// [`Form::Member`] — the type declares it itself, and the type segment
+    /// stands immediately to the left of the member.
+    Inherently,
+    /// [`Form::TraitMember`] — a trait impl supplies it, so exactly one segment
+    /// stands between the type and the member and that segment is the trait. A
+    /// spelling no use site can mint; see [`SuppliedMembers`].
+    ByATrait(&'a str),
+}
+
+/// Read a MEMBER identity's segments against the NAME of the type it hangs off:
+/// which module that type lives in, and whether a trait supplied the member.
+///
+/// ONE function because three callers needed this derivation and only two of
+/// them wrote it carefully. [`SuppliedMembers::of`] had it guarded and
+/// [`Ladder::types_home_of`] had a third copy with no guards at all, which
+/// searched from the LEFT and so read an enum variant named `Widget` as the
+/// type `Widget` and handed back `a::Kind` as a module. Three near-identical
+/// derivations of one fact is the shape a wrong edge hides in.
+///
+/// The type is looked for from the RIGHT and only in the two positions the
+/// grammar admits, so a MODULE or a MEMBER spelled like the type it hangs off
+/// cannot be taken for it. An identity in neither form answers `None` rather
+/// than being read as the nearest one: a guessed shape keys on a string no use
+/// site mints (R4).
+pub fn hung_on<'a>(tail: &[&'a str], ty: &str) -> Option<Hung<'a>> {
+    let (_member, head) = tail.split_last()?;
+    let at = head.iter().rposition(|segment| *segment == ty)?;
+    let supplied = match head.len() - at {
+        1 => Supplied::Inherently,
+        2 => Supplied::ByATrait(head[at + 1]),
+        _ => return None,
+    };
+    // The module is one segment or it is absent; the grammar mints no third
+    // shape, so anything else is an identity this cannot read.
+    let module = match head[..at] {
+        [] => "",
+        [module] => module,
+        _ => return None,
+    };
+    Some(Hung { module, supplied })
+}
+
 /// What [`SuppliedMembers::lookup`] found. Total, like
 /// [`Home`](super::lang::Home): there is no variant meaning "nothing", so a
 /// caller has to say what it does about each case rather than substituting a
@@ -398,24 +453,14 @@ impl SuppliedMembers {
                 let Some(ty) = owner.tail.last() else { continue };
                 let Ok(child) = fqn::parse(relation.child.as_str()) else { continue };
                 let Origin::Local { lang, reach } = child.origin else { continue };
-                let Some((member, head)) = child.tail.split_last() else { continue };
-                // Where the TYPE sits, looked for to the LEFT of the member so a
-                // member spelled like the type it hangs off cannot be taken for
-                // it.
-                let Some(at) = head.iter().rposition(|segment| segment == ty) else { continue };
-                // EXACTLY one segment between the type and the member, and that
-                // is the trait. Nothing else is the form this table is about,
-                // and a table that guessed at an unfamiliar shape would key it
-                // on a string no use site mints.
-                if head.len() != at + 2 {
+                let Some((member, _)) = child.tail.split_last() else { continue };
+                // Only the TRAIT form. Nothing else is what this table is
+                // about, and a table that guessed at an unfamiliar shape would
+                // key it on a string no use site mints.
+                let Some(Hung { module, supplied: Supplied::ByATrait(_) }) =
+                    hung_on(&child.tail, ty)
+                else {
                     continue;
-                }
-                // The module is one segment or it is absent; the grammar mints
-                // no third shape.
-                let module = match &head[..at] {
-                    [] => "",
-                    [module] => module,
-                    _ => continue,
                 };
                 let Ok(collapsed) = fqn::refer(&Form::Member {
                     lang,
@@ -876,7 +921,7 @@ impl<'a> Ladder<'a> {
         let minted = fqn::refer(&Form::Member {
             lang: self.grammar.language,
             package: self.package,
-            module: &module,
+            module,
             ty,
             member: &evidence.name,
             reach: evidence.reach,
@@ -891,17 +936,45 @@ impl<'a> Ladder<'a> {
         }
     }
 
-    /// The module a type lives in, from the identities the scan declared.
+    /// The module a type of THIS package and THIS language lives in, from the
+    /// identities the scan declared — or nothing, where the scan does not say
+    /// exactly one thing.
     ///
     /// Read off `declared_members` rather than from a second table: a member's
     /// identity already carries its type's module, and deriving it here from
     /// the same set the rung checks against is what stops the two disagreeing.
-    fn types_home_of(&self, ty: &str) -> Option<String> {
-        self.world.declared_members.iter().find_map(|member| {
-            let parsed = fqn::parse(member.as_str()).ok()?;
-            let at = parsed.tail.iter().position(|segment| *segment == ty)?;
-            Some(parsed.tail[..at].join(self.grammar.module_separator))
-        })
+    ///
+    /// Three narrowings, and each of them is a wrong edge this rung was minting.
+    /// The PACKAGE and the LANGUAGE, because that set holds every package and
+    /// every language of the scan in one, while [`Ladder::member_of`] mints with
+    /// the use site's own — so a home borrowed from a neighbour names a module
+    /// of a package that does not have one. The SHAPE, through [`hung_on`],
+    /// because a member spelled like the type is not the type. And AMBIGUITY,
+    /// which is the rule [`TypeHomes`](super::lang::TypeHomes) has followed
+    /// since it existed: two homes is not one home, and answering with the one
+    /// that sorts first is a coin toss recorded as a fact (R4, R6).
+    ///
+    /// Every match is read, never just the first, because the last entry is the
+    /// one that can prove the first was not alone.
+    fn types_home_of(&self, ty: &str) -> Option<&'a str> {
+        let mut home: Option<&'a str> = None;
+        for member in self.world.declared_members {
+            let Ok(parsed) = fqn::parse(member.as_str()) else { continue };
+            if parsed.package != self.package {
+                continue;
+            }
+            let Origin::Local { lang, .. } = parsed.origin else { continue };
+            if lang != self.grammar.language {
+                continue;
+            }
+            let Some(hung) = hung_on(&parsed.tail, ty) else { continue };
+            match home {
+                Some(first) if first != hung.module => return None,
+                Some(_) => {}
+                None => home = Some(hung.module),
+            }
+        }
+        home
     }
 
     /// Plumbing is filtered wherever it lands, so the histogram has one bucket
@@ -1510,29 +1583,67 @@ mod tests {
     /// could pass while the real scan failed, which is the one thing a harness
     /// must not be able to do.
     fn scan_of(
-        adapter: &dyn LanguageAdapter,
+        adapter: &'static dyn LanguageAdapter,
         files: &[(&str, &str, &str)],
     ) -> Vec<(String, FileFacts)> {
-        let read_all = |types: &TypeHomes| -> Vec<(String, FileFacts)> {
+        let across: Vec<(&str, &str, &str, &str)> =
+            files.iter().map(|(module, path, text)| ("p", *module, *path, *text)).collect();
+        scan_read_by(&across, |_| adapter)
+    }
+
+    /// A scan over SEVERAL PACKAGES AND SEVERAL LANGUAGES AT ONCE, each file
+    /// read by the adapter its extension dispatches to — which is what a real
+    /// scan is, and what the single-package helpers above cannot express.
+    ///
+    /// The barrier artifacts are built over ALL of the files together, one set
+    /// for the whole scan, exactly as `acceptance::read_the_corpus` builds them.
+    /// That is the condition a rung which SEARCHES one of those sets has to be
+    /// correct under, and a harness holding one package of one language can pass
+    /// while the rung reads a home off somebody else's declaration.
+    ///
+    /// `files` are `(package, module, path, text)`.
+    fn scan_across(files: &[(&str, &str, &str, &str)]) -> Vec<(String, FileFacts)> {
+        scan_read_by(files, |path| {
+            let ext = path.rsplit_once('.').map(|(_, e)| format!(".{e}"));
+            ext.as_deref()
+                .and_then(crate::indexer::lang::adapter_for_ext)
+                .unwrap_or_else(|| panic!("no adapter claims {path}"))
+        })
+    }
+
+    /// The two passes, the barrier between them, and the ladder — written once.
+    ///
+    /// The helpers above differ only in WHO reads a given file. Everything after
+    /// that is the shared pipeline, and a second copy of it is how a fixture
+    /// comes to exercise a pipeline the real scan does not run.
+    fn scan_read_by(
+        files: &[(&str, &str, &str, &str)],
+        reader: impl Fn(&str) -> &'static dyn LanguageAdapter,
+    ) -> Vec<(String, FileFacts)> {
+        let read_all = |types: &TypeHomes| -> Vec<(String, String, FileFacts)> {
             files
                 .iter()
-                .map(|(module, path, text)| {
-                    let facts = adapter
-                        .read(&Source { package: "p", module, path, text }, types)
+                .map(|(package, module, path, text)| {
+                    let facts = reader(path)
+                        .read(&Source { package, module, path, text }, types)
                         .unwrap_or_else(|e| panic!("{path}: {e:?}"));
-                    ((*path).to_string(), facts)
+                    ((*package).to_string(), (*path).to_string(), facts)
                 })
                 .collect()
         };
         let first = read_all(&TypeHomes::unknown());
-        let homes =
-            TypeHomes::of(first.iter().flat_map(|(_, f)| f.symbols.iter().map(|s| ("p", s))));
+        let homes = TypeHomes::of(
+            first
+                .iter()
+                .flat_map(|(package, _, f)| f.symbols.iter().map(|s| (package.as_str(), s))),
+        );
         let anchored = read_all(&homes);
 
-        let first_party: BTreeSet<String> = ["p".to_string()].into_iter().collect();
-        let declared_members = members_declared_by(anchored.iter().map(|(_, f)| f));
-        let supplied_members = SuppliedMembers::of(anchored.iter().map(|(_, f)| f));
-        let returns = returns_declared_by(anchored.iter().map(|(_, f)| f));
+        let first_party: BTreeSet<String> =
+            files.iter().map(|(package, ..)| (*package).to_string()).collect();
+        let declared_members = members_declared_by(anchored.iter().map(|(_, _, f)| f));
+        let supplied_members = SuppliedMembers::of(anchored.iter().map(|(_, _, f)| f));
+        let returns = returns_declared_by(anchored.iter().map(|(_, _, f)| f));
         let world = World {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
@@ -1543,7 +1654,10 @@ mod tests {
         };
         anchored
             .into_iter()
-            .map(|(path, facts)| (path, resolve(facts, adapter.grammar(), &world)))
+            .map(|(_, path, facts)| {
+                let grammar = crate::indexer::lang::adapter_for(facts.language).grammar();
+                (path, resolve(facts, grammar, &world))
+            })
             .collect()
     }
 
@@ -1862,6 +1976,153 @@ mod tests {
         );
     }
 
+    /// **Two modules of one package answering to one type name give a returned
+    /// receiver NO home.** Red-first: the rung took the first match in fqn
+    /// order, which is a coin toss recorded as a fact.
+    ///
+    /// `TypeHomes` has refused this since it existed — two homes is not one
+    /// home, and [`Home::Ambiguous`](super::lang::Home) is a different answer
+    /// from a miss. [`Ladder::types_home_of`] derives the same fact from a
+    /// different set and did not refuse it, so `make()` below was typed as the
+    /// `Widget` of whichever module sorts first.
+    ///
+    /// MEASURED over this repository: 89 calls reach the rung with an ambiguous
+    /// type name, and 28 placements were right only because the sort order
+    /// happened to agree with the source.
+    #[test]
+    fn two_modules_answering_to_one_type_name_leave_a_returned_receiver_unplaced() {
+        let scanned = scan(&[
+            (
+                "a",
+                "src/a.rs",
+                "pub struct Widget;\nimpl Widget { pub fn ping(&self) -> u32 { 0 } }\n",
+            ),
+            (
+                "b",
+                "src/b.rs",
+                "pub struct Widget;\nimpl Widget { pub fn ping(&self) -> u32 { 1 } }\n",
+            ),
+            (
+                "c",
+                "src/c.rs",
+                "use crate::b::Widget;\n\
+                 pub fn make() -> Widget { Widget }\n\
+                 pub fn go() -> u32 { make().ping() }\n",
+            ),
+        ]);
+        let got = targets(file_of(&scanned, "src/c.rs"));
+        assert!(
+            !got.iter().any(|t| t == "rust·p·a·Widget·ping·item"),
+            "the source says `make` returns `b`'s `Widget` and the scan cannot tell which of the \
+             two it is; placing the one that sorts first is a wrong edge to a real node, which \
+             R4 ranks below no edge at all. got {got:?}"
+        );
+    }
+
+    /// **A MEMBER spelled like a type is not that type.** Red-first: the rung
+    /// searched a member identity from the LEFT, so an enum variant named
+    /// `Widget` answered for the struct `Widget` and handed back `a::Kind` as a
+    /// module.
+    ///
+    /// The same trap [`SuppliedMembers::of`] documents and guards — "looked for
+    /// to the LEFT of the member so a member spelled like the type it hangs off
+    /// cannot be taken for it" — and the third copy of that derivation had no
+    /// guard at all.
+    ///
+    /// MEASURED over this repository: 35 placements chose a home that is
+    /// provably not a module.
+    ///
+    /// `Kind` sits at the PACKAGE ROOT so that the segment to the left of the
+    /// variant is a single one and passes the module-shape check — otherwise
+    /// two guards cover this between them and neither is load-bearing alone.
+    ///
+    /// MUTATION: search the whole tail in [`hung_on`] rather than the part of
+    /// it to the left of the member — `Kind` is then `Widget`'s home.
+    #[test]
+    fn a_member_spelled_like_a_type_does_not_supply_that_types_home() {
+        let scanned = scan(&[
+            ("", "src/lib.rs", "pub enum Kind { Widget, Gadget }\n"),
+            (
+                "z",
+                "src/z.rs",
+                "pub struct Widget;\n\
+                 impl Widget { pub fn ping(&self) -> u32 { 0 } }\n\
+                 pub fn make() -> Widget { Widget }\n",
+            ),
+            ("u", "src/u.rs", "use crate::z::make;\npub fn go() -> u32 { make().ping() }\n"),
+        ]);
+        assert_placed(file_of(&scanned, "src/u.rs"), "rust·p·z·Widget·ping·item");
+    }
+
+    /// **Another PACKAGE declaring the same type name does not supply its
+    /// home.** Red-first, and only expressible in a scan that holds two
+    /// packages: the barrier artifacts are one set for the whole scan, and the
+    /// rung read a home out of it without ever asking whose package it was.
+    ///
+    /// The sibling tables both key on the package —
+    /// [`TypeHomes::lookup`](super::lang::TypeHomes::lookup) takes it as an
+    /// argument, and a member identity carries it — and the ladder mints with
+    /// the USE SITE's package, so a module borrowed from another package names
+    /// nothing.
+    #[test]
+    fn a_type_name_another_package_declares_does_not_supply_its_home() {
+        let scanned = scan_across(&[
+            (
+                "a",
+                "m",
+                "a/src/m.rs",
+                "pub struct Widget;\nimpl Widget { pub fn ping(&self) -> u32 { 0 } }\n",
+            ),
+            (
+                "z",
+                "deep",
+                "z/src/deep.rs",
+                "pub struct Widget;\n\
+                 impl Widget { pub fn ping(&self) -> u32 { 1 } }\n\
+                 pub fn make() -> Widget { Widget }\n",
+            ),
+            (
+                "z",
+                "u",
+                "z/src/u.rs",
+                "use crate::deep::make;\npub fn go() -> u32 { make().ping() }\n",
+            ),
+        ]);
+        assert_placed(file_of(&scanned, "z/src/u.rs"), "rust·z·deep·Widget·ping·item");
+    }
+
+    /// **And another LANGUAGE declaring it does not either.** The same clause,
+    /// on the other dimension the barrier artifacts are shared across: one
+    /// `declared_members` holds every language of the scan, `rust` sorts before
+    /// `typescript`, and the rung was minting a TypeScript identity under a
+    /// Rust module.
+    #[test]
+    fn a_type_name_another_language_declares_does_not_supply_its_home() {
+        let scanned = scan_across(&[
+            (
+                "p",
+                "a",
+                "src/a.rs",
+                "pub struct Widget;\nimpl Widget { pub fn ping(&self) -> u32 { 0 } }\n",
+            ),
+            (
+                "p",
+                "lib/w",
+                "src/lib/w.ts",
+                "export class Widget { ping(): number { return 0 } }\n\
+                 export function make(): Widget { return new Widget(); }\n",
+            ),
+            (
+                "p",
+                "lib/u",
+                "src/lib/u.ts",
+                "import { make } from './w';\n\
+                 export function go() { return make().ping(); }\n",
+            ),
+        ]);
+        assert_placed(file_of(&scanned, "src/lib/u.ts"), "typescript·p·lib/w·Widget·ping·item");
+    }
+
     /// **A binding whose type the source never states, typed by the CALL that
     /// bound it.** Red-first, and the largest single shape left in the lost
     /// column after the trait-impl rung landed.
@@ -1900,6 +2161,56 @@ mod tests {
             ),
         ]);
         assert_placed(file_of(&scanned, "src/h.rs"), "rust·p·db·PgStore·ping·item");
+    }
+
+    /// **S1 IN RUST.** A `let` REPLACES what the name held, so a rebinding the
+    /// walk cannot type leaves the name holding nothing.
+    ///
+    /// The TypeScript walk has said this since 04b S1 — [`Flow::bind`] clears
+    /// all three of its tables and
+    /// `a_typescript_binding_rebound_to_something_untypable_forgets_the_call`
+    /// is what holds it there. The Rust walk never did: its two tables are only
+    /// ever WRITTEN to, so a second `let` the walk cannot read left the first
+    /// one's answer standing and every later use site was typed by it.
+    ///
+    /// `let h = raw(); let h = h.finish();` is valid, idiomatic Rust and neither
+    /// table can read the second line — `binding_of` finds no stated type and
+    /// `bound_to_a_call` refuses a method call, on purpose, because its own
+    /// receiver is untyped. So the answer for `h` must be nothing, and it was
+    /// `raw`. Both tables are exercised, because they go stale independently,
+    /// and both binding FORMS are, because a `for` pattern rebinds a name
+    /// exactly as a `let` does.
+    ///
+    /// MUTATION, and each of the two is checked on its own: drop the `forget`
+    /// call from `Walk::block`, then the one from `Walk::for_expression`. Each
+    /// puts `ping` back on `Raw`, which is a wrong edge to a real node (R4).
+    #[test]
+    fn a_rust_binding_rebound_to_something_untypable_forgets_what_it_held() {
+        let scanned = scan(&[
+            (
+                "r",
+                "src/r.rs",
+                "pub struct Raw;\n\
+                 pub struct Done;\n\
+                 impl Raw { pub fn ping(&self) -> u32 { 0 } pub fn finish(&self) -> Done { Done } }\n\
+                 impl Done { pub fn ping(&self) -> u32 { 1 } }\n\
+                 pub fn raw() -> Raw { Raw }\n",
+            ),
+            (
+                "u",
+                "src/u.rs",
+                "use crate::r::{Raw, raw};\n\
+                 pub fn from_a_call() -> u32 { let h = raw(); let h = h.finish(); h.ping() }\n\
+                 pub fn from_a_stated_type(x: Raw) -> u32 { let h: Raw = x; let h = h.finish(); h.ping() }\n\
+                 pub fn from_a_loop(x: Raw) -> u32 { let h: Raw = x; for h in 0..3 { return h.ping(); } 0 }\n",
+            ),
+        ]);
+        let got = targets(file_of(&scanned, "src/u.rs"));
+        assert!(
+            !got.iter().any(|t| t == "rust·p·r·Raw·ping·item"),
+            "`h` is a `Done` by the time `ping` is called and the walk cannot read that; what it \
+             must not do is answer with what `h` USED to be. got {got:?}"
+        );
     }
 
     /// The same, with the plumbing between the call and the binding.
