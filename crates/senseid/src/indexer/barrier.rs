@@ -813,12 +813,7 @@ mod tests {
         );
         let anchored = read_all(&homes);
         let first_party: BTreeSet<String> = anchored.iter().map(|f| f.package.clone()).collect();
-        let first_party_members: BTreeSet<String> = anchored
-            .iter()
-            .flat_map(|f| f.symbols.iter())
-            .filter(|s| matches!(s.kind, SymbolKind::Method | SymbolKind::Field))
-            .map(|s| s.name.clone())
-            .collect();
+        let first_party_members = crate::indexer::resolve::member_names_of(anchored.iter());
         let declared_members = members_declared_by(anchored.iter());
         let supplied_members = crate::indexer::resolve::SuppliedMembers::of(anchored.iter());
         let returns = crate::indexer::resolve::returns_declared_by(anchored.iter());
