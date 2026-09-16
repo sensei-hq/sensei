@@ -208,6 +208,45 @@ impl SymbolKind {
             | Self::Property => true,
         }
     }
+
+    /// Whether a use site that went THROUGH A RECEIVER — `x.name`, `x.name()` —
+    /// can name a declaration of this kind.
+    ///
+    /// A companion to [`can_be_named`](Self::can_be_named) and the same kind of
+    /// question: not "did anything name it" but "could a use site of this SHAPE
+    /// have produced its identity at all". A receiver asks the type of `x` for
+    /// one of its members, so what comes back is a member of that type. A
+    /// `const`, a `let` and a free `function` are members of nothing — they are
+    /// reached by their bare name or through an import, never through a dot.
+    ///
+    /// The one dotted spelling that does reach a module's exports is a
+    /// NAMESPACE import, `api.thing()`. That is not an exception here: the walk
+    /// already refuses to read a namespace as a receiver, because its members
+    /// are the module's exports and not a type's, so such a site never presents
+    /// itself as receiver-carried in the first place.
+    ///
+    /// Everything else answers `true`, and the types answer it for a reason
+    /// rather than by default: `Outer.Inner` is a receiver-shaped way to name a
+    /// nested type, and a TypeScript enum variant really is read as
+    /// `Direction.Up`. Narrowing those would drop evidence that a use site
+    /// genuinely could have produced.
+    pub fn can_be_reached_through_a_receiver(self) -> bool {
+        match self {
+            Self::Function | Self::Const | Self::Static => false,
+            Self::Method
+            | Self::Field
+            | Self::Property
+            | Self::Class
+            | Self::Struct
+            | Self::Enum
+            | Self::EnumVariant
+            | Self::Interface
+            | Self::Trait
+            | Self::TypeAlias
+            | Self::Macro
+            | Self::Module => true,
+        }
+    }
 }
 
 /// How far a declaration is visible. Read by singleton detection (R8) and by
