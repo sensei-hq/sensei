@@ -26,7 +26,9 @@ use super::barrier;
 use super::facts::{FileFacts, RefKind, RelationKind, Resolution, SymbolKind};
 use super::fqn::Reach;
 use super::lang::{self, Source, TypeHomes};
-use super::resolve::{SuppliedMembers, World, members_declared_by, resolve, returns_declared_by};
+use super::resolve::{
+    SuppliedMembers, World, member_names_of, members_declared_by, resolve, returns_declared_by,
+};
 
 /// The directory a file's package is rooted at, from the file's own path.
 ///
@@ -120,12 +122,7 @@ pub(super) fn read_the_corpus() -> Vec<Read> {
     // from: every member name any first-party type declares. A member the scan
     // declares NOWHERE cannot become a first-party edge, so the ladder labels
     // it the boundary rather than counting it as a miss.
-    let first_party_members: BTreeSet<String> = anchored
-        .iter()
-        .flat_map(|r| r.facts.symbols.iter())
-        .filter(|s| matches!(s.kind, SymbolKind::Method | SymbolKind::Field | SymbolKind::Property))
-        .map(|s| s.name.clone())
-        .collect();
+    let first_party_members = member_names_of(anchored.iter().map(|r| &r.facts));
     let declared_members = members_declared_by(anchored.iter().map(|r| &r.facts));
     let supplied_members = SuppliedMembers::of(anchored.iter().map(|r| &r.facts));
     let returns = returns_declared_by(anchored.iter().map(|r| &r.facts));
@@ -856,16 +853,10 @@ fn what_the_untyped_receivers_are() {
 fn where_going_deeper_would_pay() {
     let corpus = read_the_corpus();
 
-    // Every member name any first-party type declares.
-    let mut ours: BTreeSet<&str> = BTreeSet::new();
-    for read in &corpus {
-        for symbol in &read.facts.symbols {
-            if matches!(symbol.kind, SymbolKind::Method | SymbolKind::Field | SymbolKind::Property)
-            {
-                ours.insert(symbol.name.as_str());
-            }
-        }
-    }
+    // Every member name any first-party type declares — the same set the
+    // ladder is handed as `World::first_party_members`, so this ceiling is
+    // measured against the boundary the resolver actually applied.
+    let ours = member_names_of(corpus.iter().map(|r| &r.facts));
 
     let mut could_be_ours: BTreeMap<&str, usize> = BTreeMap::new();
     let mut boundary: BTreeMap<&str, usize> = BTreeMap::new();

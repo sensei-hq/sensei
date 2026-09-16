@@ -554,7 +554,7 @@ mod corpus {
     fn placed_corpus() -> Vec<Placed> {
         use std::collections::BTreeSet;
 
-        use crate::indexer::facts::{FileFacts, SymbolKind};
+        use crate::indexer::facts::FileFacts;
         use crate::indexer::resolve::{World, resolve};
 
         let sources = sources();
@@ -588,12 +588,7 @@ mod corpus {
         // Every package this scan declares. In Java that IS the namespace, so
         // the set is exact rather than a prefix.
         let first_party: BTreeSet<String> = anchored.iter().map(|f| f.package.clone()).collect();
-        let first_party_members: BTreeSet<String> = anchored
-            .iter()
-            .flat_map(|f| f.symbols.iter())
-            .filter(|s| matches!(s.kind, SymbolKind::Method | SymbolKind::Field))
-            .map(|s| s.name.clone())
-            .collect();
+        let first_party_members = crate::indexer::resolve::member_names_of(anchored.iter());
         let declared_members = crate::indexer::resolve::members_declared_by(anchored.iter());
         let supplied_members = crate::indexer::resolve::SuppliedMembers::of(anchored.iter());
         let returns = crate::indexer::resolve::returns_declared_by(anchored.iter());
