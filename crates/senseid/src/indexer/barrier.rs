@@ -130,6 +130,99 @@ fn area_of(path: &str) -> String {
 /// result — a count alone cannot be argued with, and every wrong diagnosis this
 /// measurement has produced was a count somebody explained before they split
 /// it.
+/// One row of the by-kind report.
+#[derive(Default)]
+pub(super) struct Kind {
+    pub(super) nodes: usize,
+    pub(super) linked: usize,
+    /// Called from a NON-test caller.
+    pub(super) from_source: usize,
+    /// Called from a test.
+    pub(super) from_test: usize,
+    /// Unlinked, and NO use site anywhere names it. Nothing calls it, so the
+    /// graph has nothing to lose — an entry point, a registered handler, a
+    /// public surface, or genuinely dead.
+    pub(super) never_named: usize,
+    /// Unlinked, and a use site DOES name it but did not connect. The ladder
+    /// failed. This is the only column that is a defect.
+    pub(super) named_but_lost: usize,
+}
+
+/// Every declared node by KIND, and for each: linked, or unlinked and why.
+///
+/// The split that matters is the last two columns. "Nothing reaches it" alone
+/// cannot tell a task the scheduler calls by string from an edge the resolver
+/// dropped, and those need opposite responses — one is the code, one is us.
+///
+/// The signal separating them is whether any UNRESOLVED reference names the
+/// node. If something tried to name it and the ladder came back empty, that is
+/// a miss. If nothing names it at all, the graph never had an edge to lose.
+///
+/// The name match is deliberately generous — a bare name, not an identity —
+/// because an unresolved reference HAS no identity, that is what unresolved
+/// means. So `named_but_lost` is an UPPER bound: a std `is_empty` colliding
+/// with a first-party `is_empty` counts. It is the right way round, because a
+/// number that overstates a defect gets investigated and one that understates
+/// it gets trusted.
+pub(super) fn by_kind(units: &[Unit<'_>]) -> BTreeMap<&'static str, BTreeMap<String, Kind>> {
+    let mut from_source: BTreeSet<&str> = BTreeSet::new();
+    let mut from_test: BTreeSet<&str> = BTreeSet::new();
+    let mut named: BTreeSet<&str> = BTreeSet::new();
+    for unit in units {
+        let boundary = test_boundary(unit.path, unit.text, unit.facts.language);
+        for r in &unit.facts.references {
+            let caller_is_a_test = r.at.start_line >= boundary;
+            match &r.target {
+                Resolution::Resolved { fqn, .. } => {
+                    if caller_is_a_test {
+                        from_test.insert(fqn.as_str());
+                    } else {
+                        from_source.insert(fqn.as_str());
+                    }
+                }
+                Resolution::Unresolved { evidence, .. } => {
+                    named.insert(evidence.name.as_str());
+                }
+            }
+        }
+        for rel in &unit.facts.relations {
+            if let Resolution::Resolved { fqn, .. } = &rel.parent {
+                from_source.insert(fqn.as_str());
+            }
+        }
+    }
+
+    let mut out: BTreeMap<&'static str, BTreeMap<String, Kind>> = BTreeMap::new();
+    for unit in units {
+        let language = unit.facts.language.as_str();
+        let boundary = test_boundary(unit.path, unit.text, unit.facts.language);
+        for symbol in &unit.facts.symbols {
+            if symbol.span.start_line >= boundary {
+                continue; // a test: the harness calls it, never us
+            }
+            let row =
+                out.entry(language).or_default().entry(format!("{:?}", symbol.kind)).or_default();
+            row.nodes += 1;
+            let by_source = from_source.contains(symbol.fqn.as_str());
+            let by_test = from_test.contains(symbol.fqn.as_str());
+            if by_source {
+                row.from_source += 1;
+            }
+            if by_test {
+                row.from_test += 1;
+            }
+            if by_source || by_test {
+                row.linked += 1;
+            } else if named.contains(symbol.name.as_str()) {
+                row.named_but_lost += 1;
+            } else {
+                row.never_named += 1;
+            }
+        }
+    }
+    out
+}
+
 pub(super) fn two_barriers(units: &[Unit<'_>]) -> BTreeMap<&'static str, Tally> {
     // Where each file's test region begins. Past it, a declaration is a test.
     // By POSITION rather than by module name: the modules in this repository
@@ -262,6 +355,35 @@ pub(super) fn two_barriers(units: &[Unit<'_>]) -> BTreeMap<&'static str, Tally> 
     let test_nodes = side.values().filter(|t| **t).count();
     println!("  test files in corpus: {test_files} | test-side declarations: {test_nodes}");
     println!("  transitively exercised from tests: {} (closure over {hops} hops)", exercised.len());
+    // The table: what was identified, and who calls it.
+    //
+    // `not called` is the only column that needs explaining, and every entry in
+    // it is listed below with a reason. `lost` inside it is a resolver defect —
+    // something names it and the ladder came back empty. The target is zero.
+    for (language, kinds) in by_kind(units) {
+        println!("\n## {language}\n");
+        println!(
+            "  {:<14} {:>7} {:>8} {:>12} {:>12} {:>7}",
+            "kind", "nodes", "calls", "test calls", "not called", "lost"
+        );
+        let mut rows: Vec<_> = kinds.iter().collect();
+        rows.sort_by_key(|(_, k)| std::cmp::Reverse(k.nodes));
+        let (mut n, mut s, mut t, mut u, mut m) = (0, 0, 0, 0, 0);
+        for (kind, k) in rows {
+            let not_called = k.never_named + k.named_but_lost;
+            println!(
+                "  {kind:<14} {:>7} {:>8} {:>12} {:>12} {:>7}",
+                k.nodes, k.from_source, k.from_test, not_called, k.named_but_lost
+            );
+            n += k.nodes;
+            s += k.from_source;
+            t += k.from_test;
+            u += not_called;
+            m += k.named_but_lost;
+        }
+        println!("  {:<14} {n:>7} {s:>8} {t:>12} {u:>12} {m:>7}", "TOTAL");
+    }
+
     println!("\n## Two barriers, per language\n");
     println!(
         "  {:<12} {:>7} {:>12} {:>16} {:>14} {:>10}",
