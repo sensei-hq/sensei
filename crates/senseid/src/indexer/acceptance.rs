@@ -22,6 +22,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::barrier;
 use super::facts::{FileFacts, RefKind, RelationKind, Resolution, SymbolKind};
 use super::fqn::Reach;
 use super::lang::{self, Source, TypeHomes};
@@ -42,10 +43,17 @@ fn package_root_of(path: &str) -> &str {
     }
 }
 
-/// One file's facts, with the package that owns it.
+/// One file's facts, with the package that owns it and the text it was read
+/// from.
+///
+/// The TEXT is kept because the coverage barrier needs it — a `#[cfg(test)]`
+/// region is a property of the source and of nothing else — and re-opening the
+/// file at that point would make the measurement depend on the disk still
+/// holding what the walk read.
 pub(super) struct Read {
     pub(super) package: String,
     pub(super) path: String,
+    pub(super) text: String,
     pub(super) facts: FileFacts,
 }
 
@@ -81,7 +89,12 @@ pub(super) fn read_the_corpus() -> Vec<Read> {
             // A file the grammar rejects is a FACT this harness reports (A9),
             // not one it hides.
             if let Ok(facts) = adapter.read(&source, types) {
-                out.push(Read { package: package.clone(), path: path.clone(), facts });
+                out.push(Read {
+                    package: package.clone(),
+                    path: path.clone(),
+                    text: text.clone(),
+                    facts,
+                });
             }
         }
         out
@@ -1442,357 +1455,25 @@ fn every_type_owned_declaration_says_which_type_owns_it() {
     }
 }
 
-/// **Two barriers, and every miss has to be explainable.**
+/// **Two barriers, and every miss has to be explainable** — over THIS
+/// repository's Rust and TypeScript.
 ///
-/// A class is one node; an independent function is one node. Each should appear
-/// as the CALLEE end of some edge, and which end the caller sits on says a
-/// different thing:
-///
-/// 1. **Reached by a test.** With high coverage, a source node nothing tests is
-///    either untested or an edge the graph lost. This is the easier barrier and
-///    the one to clear first, because a test calls its subject directly and by
-///    name — the simplest edge there is.
-/// 2. **Reached by other source.** A node only tests reach is exercised but not
-///    USED, which is either a genuine entry point (a task the scheduler calls, a
-///    handler a router registers, a public library surface) or a gap.
-///
-/// Neither is asserted at zero. The point is the decomposition: a graph is good
-/// when every miss has a name, and the names here are few and checkable.
+/// The measurement itself lives in [`super::barrier`], because Java runs the
+/// same two barriers over a corpus nobody here wrote and a second copy of a
+/// measurement is not a second measurement. What stays here is the corpus: this
+/// repository's own source, read and placed by [`read_the_corpus`].
 #[test]
 #[ignore]
 fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
     let corpus = read_the_corpus();
-
-    // Where each file's test region begins. Past it, a declaration is a test.
-    // By POSITION rather than by module name: the modules here are called
-    // `forge_token_observe_tests`, `probe_classification`,
-    // `adjacency_policy_tests`, and matching the name `tests` misclassified
-    // 1,562 of them as source.
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("the crate sits two levels below the workspace root");
-    let mut boundary: BTreeMap<&str, u32> = BTreeMap::new();
-    for read in &corpus {
-        let at = std::fs::read_to_string(root.join(&read.path))
-            .ok()
-            .and_then(|text| {
-                text.lines()
-                    .position(|l| l.trim_start().starts_with("#[cfg(test)]"))
-                    .map(|i| i as u32 + 1)
-            })
-            .unwrap_or(u32::MAX);
-        boundary.insert(read.path.as_str(), at);
-    }
-    // A WHOLE FILE of tests. `crates/senseid/src/db/pg_store/tests.rs` carries no
-    // `#[cfg(test)]` of its own — the attribute sits on the `mod tests;` in the
-    // parent — so the boundary scan finds nothing and calls all 15,000 lines of
-    // it SOURCE. That one file put 1,758 tests into the "nothing reaches it"
-    // bucket, and is most of why rust read as 81% untested.
-    //
-    // Matched on the STEM: the path is `…/tests.rs`, a file, which the `/tests/`
-    // directory pattern does not catch.
-    let a_test_file = |path: &str| {
-        let stem = path.rsplit('/').next().unwrap_or(path);
-        path.contains(".test.")
-            || path.contains(".spec.")
-            || path.contains("/tests/")
-            || stem == "tests.rs"
-            || stem.ends_with("_tests.rs")
-    };
-
-    // Every declared identity, and which side of the line it sits on.
-    let mut side: BTreeMap<&str, bool> = BTreeMap::new(); // true = test
-    for read in &corpus {
-        let at = boundary[read.path.as_str()];
-        for symbol in &read.facts.symbols {
-            side.insert(
-                symbol.fqn.as_str(),
-                a_test_file(&read.path) || symbol.span.start_line >= at,
-            );
-        }
-    }
-
-    // For each identity: is it reached from a test, and from source?
-    let mut by_test: BTreeSet<&str> = BTreeSet::new();
-    let mut by_source: BTreeSet<&str> = BTreeSet::new();
-    for read in &corpus {
-        let at = boundary[read.path.as_str()];
-        let file_is_a_test = a_test_file(&read.path);
-        for reference in &read.facts.references {
-            let Resolution::Resolved { fqn, .. } = &reference.target else { continue };
-            // The CALLER's side. A use site at file scope belongs to the file,
-            // which `side` may not hold — treat that as source, which is the
-            // conservative reading: it can only make barrier 2 look better
-            // satisfied, never barrier 1.
-            let from_a_test = side
-                .get(reference.from.as_str())
-                .copied()
-                .unwrap_or(file_is_a_test || reference.at.start_line >= at);
-            // A node calling ITSELF proves nothing about being reached.
-            if reference.from.as_str() == fqn.as_str() {
-                continue;
-            }
-            if from_a_test {
-                by_test.insert(fqn.as_str());
-            } else {
-                by_source.insert(fqn.as_str());
-            }
-        }
-        for relation in &read.facts.relations {
-            if let Resolution::Resolved { fqn, .. } = &relation.parent {
-                by_source.insert(fqn.as_str());
-            }
-        }
-    }
-
-    // TRANSITIVE reach from the tests. A test calls an entry point, which calls
-    // the internals; every one of those is exercised without ever being NAMED
-    // by a test. One hop measures naming, the closure measures exercise, and
-    // conflating them is what makes a healthy graph look like 19% coverage.
-    let mut calls_from: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for read in &corpus {
-        for reference in &read.facts.references {
-            if let Resolution::Resolved { fqn, .. } = &reference.target
-                && reference.from.as_str() != fqn.as_str()
-            {
-                calls_from.entry(reference.from.as_str()).or_default().push(fqn.as_str());
-            }
-        }
-    }
-    let mut exercised: BTreeSet<&str> = by_test.clone();
-    let mut frontier: Vec<&str> = exercised.iter().copied().collect();
-    let mut hops = 0u32;
-    while !frontier.is_empty() && hops < 40 {
-        let mut next = Vec::new();
-        for node in frontier {
-            for called in calls_from.get(node).into_iter().flatten() {
-                if exercised.insert(called) {
-                    next.push(*called);
-                }
-            }
-        }
-        frontier = next;
-        hops += 1;
-    }
-
-    let a_node = |kind: SymbolKind| {
-        matches!(
-            kind,
-            SymbolKind::Function
-                | SymbolKind::Method
-                | SymbolKind::Class
-                | SymbolKind::Struct
-                | SymbolKind::Enum
-                | SymbolKind::Trait
-                | SymbolKind::Interface
-        )
-    };
-
-    #[derive(Default)]
-    struct Tally {
-        nodes: usize,
-        exercised: usize,
-        no_test: usize,
-        no_source: usize,
-        neither: usize,
-    }
-    let mut per: BTreeMap<&str, Tally> = BTreeMap::new();
-    let mut untested: Vec<String> = Vec::new();
-    let mut unused: Vec<String> = Vec::new();
-    let mut neither: Vec<String> = Vec::new();
-    // The same set, kept as facts rather than as formatted lines, because the
-    // decomposition below is the point of the barrier and a `Vec<String>` can
-    // only be sorted.
-    let mut orphans: Vec<(&str, SymbolKind, &str, &str)> = Vec::new();
-    for read in &corpus {
-        let language = read.facts.language.as_str();
-        for symbol in read.facts.symbols.iter().filter(|s| a_node(s.kind)) {
-            if side[symbol.fqn.as_str()] {
-                continue; // a test node: the harness calls it, not us
-            }
-            let t = per.entry(language).or_default();
-            t.nodes += 1;
-            let tested = by_test.contains(symbol.fqn.as_str());
-            let used = by_source.contains(symbol.fqn.as_str());
-            if exercised.contains(symbol.fqn.as_str()) {
-                t.exercised += 1;
-            }
-            if !tested {
-                t.no_test += 1;
-                untested.push(format!("{} {}:{}", symbol.name, read.path, symbol.span.start_line));
-            }
-            if !used {
-                t.no_source += 1;
-                unused.push(format!("{} {}:{}", symbol.name, read.path, symbol.span.start_line));
-            }
-            if !tested && !used {
-                t.neither += 1;
-                neither
-                    .push(format!("{:<44} {}:{}", symbol.name, read.path, symbol.span.start_line));
-                orphans.push((language, symbol.kind, read.path.as_str(), symbol.name.as_str()));
-            }
-        }
-    }
-
-    println!(
-        "\n  identities reached from a test: {} | from source: {}",
-        by_test.len(),
-        by_source.len()
-    );
-    let test_files = corpus.iter().filter(|r| a_test_file(&r.path)).count();
-    let test_nodes = side.values().filter(|t| **t).count();
-    println!("  test files in corpus: {test_files} | test-side declarations: {test_nodes}");
-    println!("  transitively exercised from tests: {} (closure over {hops} hops)", exercised.len());
-    println!("\n## Two barriers, per language\n");
-    println!(
-        "  {:<12} {:>7} {:>12} {:>16} {:>14} {:>10}",
-        "", "nodes", "no test edge", "exercised (all hops)", "no source edge", "neither"
-    );
-    for language in super::facts::Language::all() {
-        let l = language.as_str();
-        let Some(t) = per.get(l) else { continue };
-        if t.nodes == 0 {
-            continue;
-        }
-        let pct = |n: usize| 100.0 * n as f64 / t.nodes as f64;
-        println!(
-            "  {l:<12} {:>7} {:>7} {:>4.0}% {:>11} {:>4.0}% {:>9} {:>4.0}% {:>5} {:>4.0}%",
-            t.nodes,
-            t.no_test,
-            pct(t.no_test),
-            t.exercised,
-            pct(t.exercised),
-            t.no_source,
-            pct(t.no_source),
-            t.neither,
-            pct(t.neither)
-        );
-    }
-
-    let head = |what: &str, mut list: Vec<String>| {
-        list.sort();
-        println!("\n  {what}, first 25 of {}:", list.len());
-        for line in list.iter().take(25) {
-            println!("    {line}");
-        }
-    };
-    head("BARRIER 1 — no test reaches it", untested);
-    head("BARRIER 2 — no source reaches it", unused);
-    // Rust first, because the `#`-prefixed JavaScript privates sort to the top
-    // and are already a KNOWN defect — the walk reads no `PrivateFieldExpression`
-    // at the call site. Showing them again buries everything else.
-    let mut rust_only: Vec<String> =
-        neither.iter().filter(|l| l.contains("crates/")).cloned().collect();
-    rust_only.sort();
-    println!("\n  NEITHER, rust only — first 25 of {}:", rust_only.len());
-    for line in rust_only.iter().take(25) {
-        println!("    {line}");
-    }
-
-    // ── what is LEFT, decomposed ─────────────────────────────────────────────
-    //
-    // The goal is not a smaller number, it is a number every entry of which has
-    // a name. A count alone cannot be argued with; these three splits can, and
-    // every wrong diagnosis this measurement has produced was a count somebody
-    // explained before they split it.
-    //
-    // "Named by nothing" is separated from "named and not placed" because they
-    // are different work: the first is a node with genuinely no caller — an
-    // entry point, or dead code — and the second is an edge the resolver lost.
-    let mut named_by: BTreeMap<&str, BTreeMap<String, usize>> = BTreeMap::new();
-    for read in &corpus {
-        for reference in &read.facts.references {
-            if let Resolution::Unresolved { reason, evidence } = &reference.target {
-                *named_by
-                    .entry(evidence.name.as_str())
-                    .or_default()
-                    .entry(format!("{reason:?}"))
-                    .or_default() += 1;
-            }
-        }
-    }
-    // The area a path belongs to, at the grain a person navigates: the crate or
-    // app, then the directory under its source root. Deeper would make every
-    // file its own area and say nothing.
-    let area_of = |path: &str| -> String {
-        let segments: Vec<&str> = path.split('/').collect();
-        let root = match segments.iter().position(|s| *s == "src") {
-            Some(at) => at,
-            None => return segments.first().copied().unwrap_or(path).to_string(),
-        };
-        segments[..=(root + 1).min(segments.len() - 1)].join("/")
-    };
-
-    for language in super::facts::Language::all() {
-        let l = language.as_str();
-        let mine: Vec<&(&str, SymbolKind, &str, &str)> =
-            orphans.iter().filter(|(lang, ..)| *lang == l).collect();
-        if mine.is_empty() {
-            continue;
-        }
-        let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
-        let mut by_area: BTreeMap<String, usize> = BTreeMap::new();
-        let mut by_why: BTreeMap<&str, usize> = BTreeMap::new();
-        // The one bucket the goal is actually about: a node no UNRESOLVED use
-        // site names, so there is no miss to go and chase. Sampled rather than
-        // counted, because the readings left need a person and there are three
-        // of them, all three VERIFIED against the source:
-        //
-        // - a registered entry point — `tasks::handlers::advance_run` is
-        //   reached through the task table in `tasks/mod.rs`, which names it as
-        //   a string, so no call edge exists to find;
-        // - reached only from INSIDE a macro invocation — `doctor::blue` is
-        //   called once, as an argument to `println!`. The walk emits no
-        //   reference from inside a macro at all (see `Reason::MacroExpansion`),
-        //   so the use site is not a miss either — it does not exist;
-        // - genuinely dead.
-        //
-        // A count here is therefore an upper bound on dead code and nothing
-        // more, which is why it is printed as a sample beside its reading.
-        let mut nothing_names_it: Vec<String> = Vec::new();
-        for (_, kind, path, name) in &mine {
-            *by_kind.entry(format!("{kind:?}")).or_default() += 1;
-            *by_area.entry(area_of(path)).or_default() += 1;
-            let why = match named_by.get(name) {
-                None => "named by no use site at all",
-                Some(reasons) => reasons
-                    .iter()
-                    .max_by_key(|(reason, n)| (**n, std::cmp::Reverse((*reason).clone())))
-                    .map(|(reason, _)| match reason.as_str() {
-                        "ReceiverTypeUnknown" => "named, receiver untyped",
-                        "ExternalBoundary" => "named, read as outside",
-                        "NoImportInScope" => "named, nothing binds it",
-                        "AmbiguousCandidates" => "named, two candidates",
-                        "Plumbing" => "named, filtered as plumbing",
-                        _ => "named, other reason",
-                    })
-                    .unwrap_or("named by no use site at all"),
-            };
-            *by_why.entry(why).or_default() += 1;
-            if !named_by.contains_key(name) {
-                nothing_names_it.push(format!("{name:<40} {path}"));
-            }
-        }
-        let ranked = |map: &BTreeMap<String, usize>, take: usize| -> Vec<String> {
-            let mut v: Vec<(&String, &usize)> = map.iter().collect();
-            v.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
-            v.into_iter().take(take).map(|(k, n)| format!("{n} {k}")).collect()
-        };
-        println!("\n## What is left in NEITHER — {l}, {} nodes\n", mine.len());
-        println!("  by kind: {}", ranked(&by_kind, 8).join(" | "));
-        println!("  by area: {}", ranked(&by_area, 12).join(" | "));
-        let mut why: Vec<(&&str, &usize)> = by_why.iter().collect();
-        why.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
-        for (what, n) in why {
-            println!("  {n:>6}  {what}");
-        }
-        nothing_names_it.sort();
-        println!("  nothing names it — first 15 of {}:", nothing_names_it.len());
-        for line in nothing_names_it.iter().take(15) {
-            println!("      {line}");
-        }
-    }
-
+    let units: Vec<barrier::Unit<'_>> = corpus
+        .iter()
+        .map(|read| barrier::Unit {
+            path: read.path.as_str(),
+            text: read.text.as_str(),
+            facts: &read.facts,
+        })
+        .collect();
+    let per = barrier::two_barriers(&units);
     assert!(per.values().map(|t| t.nodes).sum::<usize>() > 0, "no source nodes at all");
 }

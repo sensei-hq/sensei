@@ -19,6 +19,10 @@ pub mod llms_indexer;
 /// needs from it, and the legacy producer is not that reader.
 #[cfg(test)]
 pub mod acceptance;
+/// The two coverage barriers, over any corpus — see the module docs for why it
+/// is not simply a test in `acceptance`.
+#[cfg(test)]
+pub mod barrier;
 pub mod facts;
 pub mod fqn;
 pub mod impact;
