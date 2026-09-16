@@ -1,42 +1,41 @@
 # Checkpoint
 
-**Slice** — indexer-v2, driving the per-kind `lost` column to zero. The
-TypeScript tail: Const, Static, Function. All three are at ZERO.
+**Slice** — indexer-v2, driving the per-kind `lost` column to zero. Sweep
+round 1: the largest row was ts Field 2467, and it is a receiver-typing gap.
 
 **Done**
 
-- `498b0f42` a name reached through a receiver is no evidence about a binding.
-  Third narrowing of the bare-name match, after reach and language. `xs.slice()`
-  asks a type for a member; a const, a `let` and a free function are members of
-  nothing. MEASURED first: 100% of the carriers for all three kinds were
-  `StaticMemberExpression`, in every language — `arr.map` 542, `arr.filter` 288,
-  `Date.now` 47. ts Const 145→0, Static 22→0, Function 146→5, rust Function 8→0.
-  No edge moved: `calls` and `not called` byte-identical.
-- `5c06f35f` a dynamic import is an import. `const { go } = await import('./m')`
-  states its dependency in a literal, so it is recorded as one; bound to one
-  name it is a namespace. All five `exact` losses — the strongest evidence the
-  barrier has — were this shape. ts Function lost 5→0, test calls 537→598.
-- `b967c09b` one boundary set (`resolve::member_names_of`). It was built four
-  ways; two omitted `Property`, so the barrier fixtures and the Java harness
-  resolved against a narrower boundary than the measurement beside them.
+- `d7f8d009` a TypeScript binding is typed by the call that bound it. The
+  ladder rung has been language-neutral since the Rust twin; only the Rust WALK
+  ever recorded `BoundToTheResultOf`, so in TS the rung got a bare `m` and fell
+  through. `Flow` grows a callee table beside the type one — clears on rebind,
+  intersects at a join, travels into a closure. Only `await f()`, `f()!` and
+  `(f())` are peeled; a method hop is not, because the plumbing list holds
+  `map`/`filter`/`find` and would type an array as its element (R4).
+  ts Field lost 2467→2246, ts Method 75→59, ts TOTAL 2545→2308; rust TOTAL
+  2025→2025. `ts declared_by_its_type` landed 1327→1794, DANGLING still 0.
+- Earlier: `498b0f42` receiver narrowing, `5c06f35f` dynamic import,
+  `b967c09b` one boundary set. The TypeScript Const/Static/Function tail is 0.
 
-**Remaining** — ts Field 2467, rust Field 1433, rust Method 592, ts Method 75,
-ts Property 3. Const/Static `lost` is zero but `not called` is 2707/320: nothing
-names them at all, because neither walk emits a reference for a bare identifier
-read. That is a deliberate spec decision (javascript.rs:1965, rust/walk.rs:922),
-not a resolver gap, and overturning it is the open question below.
+**Remaining** — ts Field 2246, rust Field 1433, rust Method 592, ts Method 59,
+ts Property 3. Two causes were REFUTED by probe this round and should not be
+re-tried: all 2470 lost ts fields are owned by a declared type something links
+(so the types are reachable), and a non-exported-declaration narrowing reaches
+only 95 of them.
 
 **Next command**
 
     cargo test -p senseid --bin senseid -- --ignored --nocapture \
       indexer::acceptance::every_source_node_is_reached_by_a_test_and_then_by_other_source
 
-**Open questions** — (1) should a bare identifier READ be a reference? Decides
-whether ts Const 2707 / rust Const 436 are defects or definitions. (2) `$lib`
-resolves to a fabricated library node for 1,456 references; fixing it needs the
-app/dojo/website package split first. (3) the metric is still a by-name upper
-bound within a language for the MEMBER kinds.
+**Open questions** — (1) `type_segment` reduces `Promise<Project>` to
+`Promise`, so an async TS callee types nothing; worth ~52 more (type, member)
+pairs, and needs the peeler to say whether an `await` was stripped. (2) should
+a bare identifier READ be a reference? Decides ts Const 2707 / rust Const 436.
+(3) the metric is still a by-name upper bound within a language for the MEMBER
+kinds — 1036 of the 2470 share their name with 10+ other field declarations.
 
 **Known broken** — none here. `indexer::lib_indexer::tests::
 real_dbd_single_file_has_deploy_component` (`--ignored`) reads the hardcoded
-path `/Users/Jerry/Developer/dbd-rs`, which is not checked out on this machine.
+path `/Users/Jerry/Developer/dbd-rs`, which is not checked out on this machine;
+verified failing identically on the pre-change tree.
