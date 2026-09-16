@@ -267,10 +267,28 @@ pub(super) enum Lost {
 /// that member read was the evidence blaming the resolver for `base`.
 pub(super) struct NamedBy<'a> {
     exact: BTreeSet<&'a str>,
-    /// Keyed by the LANGUAGE and by [`Reach::as_str`] — the labels both are
-    /// already written and read under everywhere else, so the two sides of the
-    /// lookup cannot spell either differently.
-    by_reach: BTreeMap<(Language, &'static str), BTreeSet<&'a str>>,
+    /// Keyed by the LANGUAGE, by [`Reach::as_str`] and by [`Via`] — the first
+    /// two labels are already written and read under everywhere else, so the
+    /// two sides of the lookup cannot spell either differently.
+    by_reach: BTreeMap<(Language, &'static str, Via), BTreeSet<&'a str>>,
+}
+
+/// HOW a use site went looking for its target, as far as its evidence shows.
+///
+/// The third narrowing of the bare-name match, and the same argument as the
+/// other two: a use site of one shape cannot produce the identity of a
+/// declaration another shape mints. Here the shape is whether the site had a
+/// RECEIVER — [`Observation::Receiver`] is recorded by the one place that turns
+/// a receiver into a type, so it is a fact about the syntax and not a guess.
+///
+/// [`SymbolKind::can_be_reached_through_a_receiver`] is the other half and owns
+/// the reasoning; this type only says which bucket a site went into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Via {
+    /// `x.name` — the site asked some receiver's type for a member.
+    AReceiver,
+    /// A bare name, a path, or an import: no receiver was involved.
+    NameAlone,
 }
 
 impl<'a> NamedBy<'a> {
@@ -308,8 +326,12 @@ impl<'a> NamedBy<'a> {
             }
         }
         if !minted {
+            let via = match evidence.saw.iter().any(|o| matches!(o, Observation::Receiver(_))) {
+                true => Via::AReceiver,
+                false => Via::NameAlone,
+            };
             self.by_reach
-                .entry((language, evidence.reach.as_str()))
+                .entry((language, evidence.reach.as_str(), via))
                 .or_default()
                 .insert(evidence.name.as_str());
         }
@@ -347,7 +369,20 @@ impl<'a> NamedBy<'a> {
             // nothing here, so no use site in this corpus reaches it.
             return Lost::Nothing;
         };
-        match self.by_reach.get(&(lang, reach.as_str())).is_some_and(|names| names.contains(name)) {
+        // Which SHAPES of use site could have produced this declaration's
+        // identity. A kind no receiver can reach is looked up in the
+        // `NameAlone` bucket only, so a member read that happens to spell it is
+        // not mistaken for the edge it lost.
+        let vias: &[Via] = match kind.can_be_reached_through_a_receiver() {
+            true => &[Via::AReceiver, Via::NameAlone],
+            false => &[Via::NameAlone],
+        };
+        let named = vias.iter().any(|via| {
+            self.by_reach
+                .get(&(lang, reach.as_str(), *via))
+                .is_some_and(|names| names.contains(name))
+        });
+        match named {
             true => Lost::ByName,
             false => Lost::Nothing,
         }
@@ -900,7 +935,7 @@ mod tests {
         let named = NamedBy {
             exact: BTreeSet::from([a_module.as_str(), a_function.as_str()]),
             by_reach: BTreeMap::from([(
-                (Language::Rust, Reach::Mod.as_str()),
+                (Language::Rust, Reach::Mod.as_str(), Via::NameAlone),
                 BTreeSet::from(["inner"]),
             )]),
         };
@@ -997,6 +1032,74 @@ mod tests {
         );
     }
 
+    /// A name reached THROUGH A RECEIVER is no evidence about a binding, for
+    /// the same reason the reach and the language are not: a use site of that
+    /// shape could not have produced the declaration's identity.
+    ///
+    /// `xs.slice(...)` asks the type of `xs` for a member. A `const` is a
+    /// member of nothing — it is reached by its bare name, or through an
+    /// import, and never through a dot. The one dotted spelling that does
+    /// reach a module's exports is a NAMESPACE import, and `member_of` already
+    /// refuses to treat that as a receiver at all, so it never lends a name
+    /// here.
+    ///
+    /// MEASURED over this repository: every one of the 145 TypeScript `Const`,
+    /// 22 `Static` and 141 `Function` declarations reported lost was named
+    /// ONLY by receiver-carried sites — 4,241, 1,242 and 6,410 of them
+    /// respectively, and not one site of any other shape. The names say it
+    /// plainly: `arr.map`, `arr.filter`, `arr.slice`, `Date.now`,
+    /// `console.error`. Rust's 8 `Function` losses are the same collision —
+    /// a free `fn walk` "named" by 35 `x.walk` field reads.
+    #[test]
+    fn a_name_reached_through_a_receiver_is_not_a_lost_edge_for_a_binding() {
+        let rows = report_over(&[
+            (
+                "app/src/lib/limits.ts",
+                "const slice = 3;\nexport function cap(): number {\n\x20   return slice;\n}\n",
+            ),
+            // UNTYPED receiver, for the reason the sibling above records: a
+            // typed one mints a candidate, and a use site that minted an
+            // identity does not also lend its bare name.
+            (
+                "app/src/lib/rows.ts",
+                "export function firstTwo(xs) {\n\x20   return xs.slice(0, 2);\n}\n",
+            ),
+        ]);
+
+        let ts = rows.get("typescript").expect("the typescript fixture produced rows");
+        let konst = ts.get(&SymbolKind::Const).expect("the fixture declares a const");
+        assert_eq!(
+            (konst.lost(), konst.never_named),
+            (0, 1),
+            "the only `slice` anybody reaches is a member of some receiver's type, and a const \
+             is a member of no type"
+        );
+    }
+
+    /// And the same narrowing must NOT reach a member, which is exactly what a
+    /// receiver-carried site does name.
+    ///
+    /// The sibling above and this one are one rule read from both sides. Widen
+    /// it to every kind and this fixture's field silently stops being reported;
+    /// the field row is the whole of the column being driven to zero, so a
+    /// narrowing that swallowed it would read as progress.
+    #[test]
+    fn a_name_reached_through_a_receiver_is_still_a_lost_edge_for_a_member() {
+        let rows = report_over(&[
+            ("app/src/lib/row.ts", "export class Row {\n\x20   slice = 3;\n}\n"),
+            ("app/src/lib/peek.ts", "export function peek(xs) {\n\x20   return xs.slice;\n}\n"),
+        ]);
+
+        let ts = rows.get("typescript").expect("the typescript fixture produced rows");
+        let field = ts.get(&SymbolKind::Field).expect("the class declares a field");
+        assert_eq!(
+            (field.lost(), field.never_named),
+            (1, 0),
+            "a field IS reached through a receiver, so a receiver-carried name is the very \
+             evidence that its edge went missing"
+        );
+    }
+
     /// A header that names a supertype is a use site, and for one language it
     /// is the ONLY record of that use site.
     ///
@@ -1063,8 +1166,11 @@ mod tests {
 
         let named = NamedBy {
             exact: BTreeSet::from([widget.as_str()]),
+            // THROUGH A RECEIVER, because `widget.draw()` is: a method is
+            // exactly the kind such a site can name, so the narrowing must
+            // leave the name match below standing.
             by_reach: BTreeMap::from([(
-                (Language::Rust, Reach::Item.as_str()),
+                (Language::Rust, Reach::Item.as_str(), Via::AReceiver),
                 BTreeSet::from(["draw"]),
             )]),
         };
@@ -1127,7 +1233,7 @@ mod tests {
             "the walk said which node it meant, and that is what is recorded"
         );
         assert_eq!(
-            named.by_reach.get(&(Language::Rust, Reach::Item.as_str())),
+            named.by_reach.get(&(Language::Rust, Reach::Item.as_str(), Via::NameAlone)),
             Some(&BTreeSet::from(["resize"])),
             "only the use site with no identity of its own falls back to its bare name"
         );
