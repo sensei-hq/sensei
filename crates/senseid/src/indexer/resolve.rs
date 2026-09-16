@@ -291,6 +291,31 @@ pub fn members_declared_by<'a>(files: impl IntoIterator<Item = &'a FileFacts>) -
         .collect()
 }
 
+/// Every member NAME any first-party type declares, for
+/// [`World::first_party_members`].
+///
+/// The sibling of [`members_declared_by`] and a weaker question on purpose:
+/// that one asks which member IDENTITIES exist, this one only which names do.
+/// The ladder uses it to tell somebody else's member from a miss of ours, so it
+/// has to say yes on a bare name with no type attached.
+///
+/// One function because it was four, and two of them disagreed — the barrier's
+/// fixture world and the Java corpus harness left [`SymbolKind::Property`] out,
+/// so they resolved against a narrower boundary than the corpus measurement
+/// they are read beside. A set that decides what counts as external is not a
+/// thing to spell twice.
+pub fn member_names_of<'a>(files: impl IntoIterator<Item = &'a FileFacts>) -> BTreeSet<String> {
+    files
+        .into_iter()
+        .flat_map(|facts| facts.symbols.iter())
+        // The three kinds a TYPE owns. An accessor is one of them: a language
+        // that spells a getter differently from a field still declares a member
+        // that `x.name` reaches.
+        .filter(|s| matches!(s.kind, SymbolKind::Method | SymbolKind::Field | SymbolKind::Property))
+        .map(|s| s.name.clone())
+        .collect()
+}
+
 /// Which declaration answers to a member spelling a use site can mint, WHERE
 /// THE TWO DIFFER.
 ///
@@ -1420,7 +1445,7 @@ mod tests {
     use crate::indexer::fqn;
     use crate::indexer::lang::{LanguageAdapter, Source, TypeHomes, javascript, rust};
     use crate::indexer::resolve::{
-        SuppliedMembers, World, members_declared_by, resolve, returns_declared_by,
+        SuppliedMembers, World, member_names_of, members_declared_by, resolve, returns_declared_by,
     };
     use crate::indexer::{module_of, package_of};
 
@@ -1912,6 +1937,45 @@ mod tests {
     /// identity it mints already IS the spelling a use site can reach, and the
     /// table must come out empty rather than keyed on something.
     ///
+    /// The boundary set holds every member name a first-party type declares —
+    /// and an ACCESSOR declares one.
+    ///
+    /// The set decides whether an unplaceable `x.name` is somebody else's
+    /// member or a miss of ours, so leaving a kind out of it silently relabels
+    /// our own members as the boundary. It was built in four places, and two of
+    /// them left [`SymbolKind::Property`] out, which meant the fixture harness
+    /// and the Java corpus were resolving against a different boundary than the
+    /// measurement they are compared with.
+    ///
+    /// MUTATION: drop `Property` from [`member_names_of`] and `setupComplete`
+    /// below goes missing.
+    #[test]
+    fn the_member_names_a_scan_declares_include_an_accessor() {
+        let files: &[(&str, &str, &str)] = &[(
+            "lib/state",
+            "src/lib/state.ts",
+            "export class AppState {\n\
+             \x20   ready = false;\n\
+             \x20   get setupComplete(): boolean { return this.ready }\n\
+             \x20   reset(): void { this.ready = false }\n\
+             }\n",
+        )];
+        let scanned = scan_of(&javascript::TypeScriptAdapter, files);
+        let names = member_names_of(scanned.iter().map(|(_, f)| f));
+        assert!(
+            names.contains("setupComplete"),
+            "a getter is a member this scan declares; without it an `x.setupComplete` \
+             nobody can place reads as somebody else's member. got {names:?}"
+        );
+        // The kinds that were never in doubt, so a builder that returned
+        // everything could not pass this either.
+        assert!(names.contains("ready") && names.contains("reset"), "got {names:?}");
+        assert!(
+            !names.contains("AppState"),
+            "the TYPE is not one of its own members. got {names:?}"
+        );
+    }
+
     /// Asserted rather than assumed, because the lookup this feeds is shared by
     /// every language: an entry here would put a TypeScript or Java member
     /// behind a second, weaker spelling for no gain.
