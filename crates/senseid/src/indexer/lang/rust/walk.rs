@@ -331,6 +331,20 @@ impl<'a> Walk<'a> {
             self.node(value, scope);
         }
 
+        // The PATTERN, which was skipped entirely — the walk went from the
+        // collection straight to the body. A destructuring pattern NAMES a
+        // type: `for Placed { facts, .. } in &corpus` writes `Placed` down, and
+        // the graph had no edge for it. Walked in the OUTER scope for the same
+        // reason the collection is, since nothing it binds is in scope yet.
+        //
+        // A2 is what makes this safe to walk wholesale rather than by picking
+        // the shapes: the independent counter counts the same node kinds, so an
+        // over-count would fail it as loudly as the under-count did. It is 0
+        // files disagreeing across the corpus either way.
+        if let Some(pattern) = node.child_by_field_name("pattern") {
+            self.node(pattern, scope);
+        }
+
         let mut inner = scope.clone();
         if let Some(pattern) = node.child_by_field_name("pattern")
             // Only a plain name. A destructuring pattern binds several names of

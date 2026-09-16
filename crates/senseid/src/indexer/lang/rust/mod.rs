@@ -718,6 +718,39 @@ mod tests {
         assert_eq!(shown, vec!["rust·p·m·Cfg·script·item".to_string()]);
     }
 
+    /// A `for` PATTERN names types, and the walk was not reading it at all.
+    ///
+    /// `for_expression` walked the collection and the body and skipped the
+    /// pattern between them, so `for Placed { facts, .. } in &corpus` never
+    /// emitted a use site for `Placed`. The type is written down in the source
+    /// and the graph had no edge for it.
+    ///
+    /// FOUND BY A2, not by reading: the independent counter counts the
+    /// `type_identifier` in a struct pattern and the walk emitted nothing, so
+    /// the first file in this repository to use the shape took A2 from 0 files
+    /// disagreeing to 1, at 644 references against 649.
+    ///
+    /// MUTATION: drop the `self.node(pattern, scope)` from `for_expression` and
+    /// this returns no `Holder` at all.
+    #[test]
+    fn a_for_pattern_names_the_type_it_destructures() {
+        let shown: Vec<String> = targets(
+            "pub struct Cfg;\n\
+             pub struct Holder { pub items: Vec<Cfg> }\n\
+             pub fn go(all: &[Holder]) { for Holder { items } in all { let _ = items; } }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "Holder")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(
+            shown,
+            vec!["rust·p·m·Holder·item".to_string(), "rust·p·m·Holder·item".to_string()],
+            "the parameter's element type and the pattern's own name are two use sites"
+        );
+    }
+
     /// `Box<dyn Trait>` resolves to the TRAIT METHOD.
     ///
     /// The concrete impl is unknowable — that is what dynamic dispatch means —
