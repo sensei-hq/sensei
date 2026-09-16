@@ -1787,6 +1787,21 @@ impl Walk<'_> {
                 self.emit(scope, RefKind::Reads, m.span, miss);
                 self.expression(&m.object, scope, flow);
             }
+            // `this.#count`, read. The same shape as the static member above and
+            // it had no arm at all, so 167 of these fell to the catch-all and
+            // were dropped — and A2's counter shared the blind spot, so the
+            // subtraction that is meant to catch a drop came out zero.
+            Expression::PrivateFieldExpression(p) => {
+                let miss = self.name_member(
+                    &p.object,
+                    &private_name(&p.field),
+                    "PrivateFieldExpression",
+                    scope,
+                    flow,
+                );
+                self.emit(scope, RefKind::Reads, p.span, miss);
+                self.expression(&p.object, scope, flow);
+            }
             Expression::ComputedMemberExpression(m) => {
                 // The member is an EXPRESSION, so which member is reached is not
                 // knowable without running it. Named as a miss rather than
@@ -1828,6 +1843,17 @@ impl Walk<'_> {
                     );
                     self.emit(scope, RefKind::Writes, m.span, miss);
                     self.expression(&m.object, scope, flow);
+                }
+                SimpleAssignmentTarget::PrivateFieldExpression(p) => {
+                    let miss = self.name_member(
+                        &p.object,
+                        &private_name(&p.field),
+                        "PrivateFieldExpression",
+                        scope,
+                        flow,
+                    );
+                    self.emit(scope, RefKind::Writes, p.span, miss);
+                    self.expression(&p.object, scope, flow);
                 }
                 SimpleAssignmentTarget::ComputedMemberExpression(m) => {
                     self.expression(&m.object, scope, flow);
@@ -1986,6 +2012,17 @@ impl Walk<'_> {
                 self.emit(scope, RefKind::Writes, m.span, miss);
                 self.expression(&m.object, scope, flow);
             }
+            AssignmentTarget::PrivateFieldExpression(p) => {
+                let miss = self.name_member(
+                    &p.object,
+                    &private_name(&p.field),
+                    "PrivateFieldExpression",
+                    scope,
+                    flow,
+                );
+                self.emit(scope, RefKind::Writes, p.span, miss);
+                self.expression(&p.object, scope, flow);
+            }
             AssignmentTarget::ComputedMemberExpression(m) => {
                 // `byProject[r.projectId] = g`. Which member is written is not
                 // knowable without running it — the same reason a computed READ
@@ -2031,6 +2068,15 @@ impl Walk<'_> {
             ),
             Expression::StaticMemberExpression(m) => {
                 self.name_member_called(&m.object, &m.property.name, scope, flow)
+            }
+            // `this.#hydrate()`. A private method call is a member call in every
+            // way that matters — the receiver types the same, the name is the
+            // same one the declaration minted — and it reached the catch-all
+            // below, where `DynamicDispatch` with no observations made it
+            // terminal: the ladder climbs for `Unplaced` and there was no
+            // candidate to climb to.
+            Expression::PrivateFieldExpression(p) => {
+                self.name_member_called(&p.object, &private_name(&p.field), scope, flow)
             }
             Expression::ParenthesizedExpression(p) => self.name_callee(&p.expression, scope, flow),
             Expression::TSNonNullExpression(n) => self.name_callee(&n.expression, scope, flow),
@@ -2374,10 +2420,25 @@ fn is_a_function(expression: &Expression<'_>) -> bool {
 fn property_name(key: &PropertyKey<'_>) -> Option<String> {
     match key {
         PropertyKey::StaticIdentifier(id) => Some(id.name.to_string()),
-        PropertyKey::PrivateIdentifier(id) => Some(format!("#{}", id.name)),
+        PropertyKey::PrivateIdentifier(id) => Some(private_name(id)),
         PropertyKey::StringLiteral(s) => Some(s.value.to_string()),
         _ => None,
     }
+}
+
+/// What a `#private` member is CALLED, hash included.
+///
+/// The hash is part of the name and not decoration: `#n` and `n` are two
+/// different members that a class may declare side by side, and dropping it
+/// would merge them onto one node. One function, called by the DECLARATION side
+/// through [`property_name`] and by every use-site arm, because the two sides
+/// agreeing on this string is the whole of what makes a private member
+/// reachable.
+///
+/// The fqn separator is a middle dot, not a hash, so a hashed segment is a legal
+/// one and there is no encoding collision.
+fn private_name(id: &PrivateIdentifier<'_>) -> String {
+    format!("#{}", id.name)
 }
 
 /// Every plain name a binding pattern binds. A nested destructure binds several
@@ -2469,7 +2530,9 @@ fn assigned_in(body: &[Statement<'_>]) -> Vec<String> {
 fn as_member<'a, 'b>(callee: &'b Expression<'a>) -> Option<&'b Expression<'a>> {
     matches!(
         callee,
-        Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
+        Expression::StaticMemberExpression(_)
+            | Expression::ComputedMemberExpression(_)
+            | Expression::PrivateFieldExpression(_)
     )
     .then_some(callee)
 }
@@ -2479,6 +2542,7 @@ fn member_object<'a, 'b>(member: &'b Expression<'a>) -> &'b Expression<'a> {
     match member {
         Expression::StaticMemberExpression(m) => &m.object,
         Expression::ComputedMemberExpression(m) => &m.object,
+        Expression::PrivateFieldExpression(m) => &m.object,
         other => other,
     }
 }
@@ -2498,6 +2562,7 @@ fn expression_kind(expression: &Expression<'_>) -> &'static str {
     match expression {
         Expression::CallExpression(_) => "CallExpression",
         Expression::ComputedMemberExpression(_) => "ComputedMemberExpression",
+        Expression::PrivateFieldExpression(_) => "PrivateFieldExpression",
         Expression::ConditionalExpression(_) => "ConditionalExpression",
         Expression::ArrowFunctionExpression(_) => "ArrowFunctionExpression",
         Expression::FunctionExpression(_) => "FunctionExpression",
@@ -2575,6 +2640,71 @@ mod tests {
     /// `name -> candidate identity or reason`.
     fn member_targets(facts: &FileFacts) -> Vec<(String, String)> {
         targets(facts)
+    }
+
+    /// A private member is a use site in every position a public one is.
+    ///
+    /// The hash is the ONLY difference between each pair below, so the assertion
+    /// is a property rather than a hand-counted number — and three of the four
+    /// pairs were 0 against 1 before this, because `PrivateFieldExpression` had
+    /// no arm in `expression`, in `assignment`, or in the update arm. The fourth
+    /// reached the walk and came out `DynamicDispatch` with nothing to climb.
+    ///
+    /// MUTATION: delete any one of the four new arms and that row goes to 0.
+    #[test]
+    fn a_private_field_is_a_use_site_in_every_position_a_public_one_is() {
+        // READ, WRITE, UPDATE and CALL, each with its public twin, so the
+        // assertion is "the hash changes nothing" rather than a hand-counted
+        // number. Three of these four emitted NOTHING AT ALL before: only the
+        // call reached the walk, and it reached it as a shape with no arm.
+        let shapes = [
+            ("read", "return this.#n;", "return this.n;"),
+            ("write", "this.#n = 3;", "this.n = 3;"),
+            ("update", "this.#n++;", "this.n++;"),
+            ("call", "this.#m();", "this.m();"),
+        ];
+        for (what, private, public) in shapes {
+            let of = |body: &str, members: &str| {
+                let facts = js_facts(&format!("class T {{ {members}\n  go() {{ {body} }} }}\n"));
+                facts
+                    .references
+                    .iter()
+                    .filter(|r| matches!(r.kind, RefKind::Calls | RefKind::Reads | RefKind::Writes))
+                    .count()
+            };
+            let hashed = of(private, "#n = 0;\n  #m() {}");
+            let plain = of(public, "n = 0;\n  m() {}");
+            assert_eq!(
+                hashed, plain,
+                "`{private}` produced {hashed} references and `{public}` produced {plain} — \
+                 a {what} of a private member is the same use site as a {what} of a public one"
+            );
+            assert!(hashed > 0, "`{private}` produced no reference at all");
+        }
+    }
+
+    /// The RECEIVER of a private access is an expression in its own right.
+    ///
+    /// `this.boxes[0].#hydrate(api)` is one call plus a computed member plus a
+    /// static member, and the walk saw one of the three: the call arm recursed
+    /// into a callee it had no arm for, so the receiver was never reached.
+    ///
+    /// MUTATION: drop `p.object` from the new call arm's recursion — this falls
+    /// from 3 references to 1.
+    #[test]
+    fn the_receiver_of_a_private_access_is_walked_like_any_other() {
+        let facts = js_facts("class T { #m() {} go() { this.boxes[0].#m(); } }\n");
+        let sites = facts
+            .references
+            .iter()
+            .filter(|r| matches!(r.kind, RefKind::Calls | RefKind::Reads | RefKind::Writes))
+            .count();
+        assert_eq!(
+            sites,
+            3,
+            "expected the call, the index and the property; got {:?}",
+            targets(&facts)
+        );
     }
 
     /// A function initialiser is walked ONCE, whichever pattern binds it.
@@ -3051,7 +3181,7 @@ mod tests {
             self.calls += 1;
             self.seen.push((call.span.start, call.span.end));
             // The callee is READ BY the call, whatever shape it is.
-            if let Some(member) = as_member(&call.callee) {
+            if let Some(member) = a_member_expression(&call.callee) {
                 self.absorbed.insert((member.span().start, member.span().end));
             }
             oxc_ast_visit::walk::walk_call_expression(self, call);
@@ -3078,6 +3208,41 @@ mod tests {
             }
             oxc_ast_visit::walk::walk_computed_member_expression(self, member);
         }
+
+        /// `this.#count`. The THIRD member shape the grammar has, and the one
+        /// this counter did not enumerate — so 167 of them were dropped by the
+        /// walk and counted zero by the check that exists to catch drops.
+        ///
+        /// That is the lesson worth more than the 167: a counter built by
+        /// listing the shapes the WALK handles cannot find a shape the walk
+        /// does not handle. It has to be built from the shapes the GRAMMAR has.
+        /// `oxc_ast_visit::Visit` has one method per node kind, and the three
+        /// member kinds are `StaticMemberExpression`, `ComputedMemberExpression`
+        /// and this — so the list above was two thirds of a closed set.
+        fn visit_private_field_expression(&mut self, member: &PrivateFieldExpression<'a>) {
+            if !self.absorbed.contains(&(member.span.start, member.span.end)) {
+                self.members += 1;
+                self.seen.push((member.span.start, member.span.end));
+            }
+            oxc_ast_visit::walk::walk_private_field_expression(self, member);
+        }
+    }
+
+    /// Whether an expression IS a member access, for the counter's own reading
+    /// of the grammar.
+    ///
+    /// Deliberately NOT the walk's `as_member`. A2's value is that it is an
+    /// independent count, and a counter that asks the walk what counts as a
+    /// member inherits the walk's blind spots — which is exactly how a shape
+    /// missing from both sides subtracted to zero and looked like agreement.
+    fn a_member_expression<'a, 'b>(callee: &'b Expression<'a>) -> Option<&'b Expression<'a>> {
+        matches!(
+            callee,
+            Expression::StaticMemberExpression(_)
+                | Expression::ComputedMemberExpression(_)
+                | Expression::PrivateFieldExpression(_)
+        )
+        .then_some(callee)
     }
 
     /// The independent count over one source, in the dialect its path states.
@@ -3188,6 +3353,15 @@ mod tests {
         //               an optional-chained computed member
         //    73 ->  14  a PARAMETER DEFAULT (`now: Date = new Date()`) and a
         //               COMPUTED KEY (`{ [f(x)]: false }`)
+        //
+        // A FOURTH pass did not move this number and is the most important of
+        // the four. `PrivateFieldExpression` was missing from the walk AND from
+        // the counter above, so 167 dropped references subtracted to zero and
+        // read as agreement. Teaching the counter alone took the drop 14 -> 181;
+        // teaching the walk took it back to 14, with both totals up by 167
+        // (walk 50,092 -> 50,259). A2 cannot find a shape neither side
+        // enumerates, which is why the counter is now built from the visitor's
+        // node kinds rather than from the walk's arm list.
         //
         // Every one was found by reading the printout below. None was found by
         // reasoning about the grammar, and the one time a shape was guessed at
