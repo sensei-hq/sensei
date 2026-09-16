@@ -939,32 +939,46 @@ mod tests {
         out
     }
 
-    /// **THE MERGE CONTRACT.** The declaration side and the reference side,
-    /// handed the same symbol, must produce the same string (spec §2).
+    /// Every shape encodes to the segments it was built from, in order.
     ///
-    /// Everything downstream rests on this and nothing tested it directly. A7's
-    /// collision count and the corpus dangling-edge counts are both DOWNSTREAM
-    /// measurements: they say something broke without saying what, which is why
-    /// diagnosing a Java mismatch needed a throwaway probe rather than a test to
-    /// consult.
+    /// THIS TEST USED TO ASSERT THE MERGE CONTRACT AND COULD NOT FAIL. `define`
+    /// and `refer` are both `encode(form)`, so it compared a value with itself;
+    /// swapping the type and member segments inside `encode` left it green while
+    /// four other tests went red. It was written while hunting exactly that
+    /// class of defect, which is the whole reason it is worth saying plainly
+    /// here rather than quietly deleting it.
+    ///
+    /// The contract itself is tested at
+    /// `the_definition_side_and_the_reference_side_mint_byte_identical_fqns`,
+    /// which asserts against LITERAL expected strings and therefore can fail.
+    /// What that one does not have is breadth — it is a hand-written table. This
+    /// one covers every `Form` against every `Language`, so it is kept, pointed
+    /// at a property the encoder can actually break: segment order and count.
     #[test]
-    fn define_and_refer_agree_on_every_shape_in_every_language() {
+    fn every_shape_encodes_to_the_segments_it_was_built_from() {
         for (label, form) in every_shape() {
-            let defined = define(&form);
-            let referred = refer(&form);
-            match (&defined, &referred) {
-                (Ok(d), Ok(r)) => assert_eq!(
-                    d.as_str(),
-                    r.as_str(),
-                    "{label}: the two sides mint different strings for one symbol"
-                ),
-                (Err(d), Err(r)) => assert_eq!(
-                    format!("{d:?}"),
-                    format!("{r:?}"),
-                    "{label}: the two sides refuse it for different reasons"
-                ),
-                _ => panic!("{label}: one side minted and the other refused"),
-            }
+            let Ok(minted) = define(&form) else { continue };
+            let got: Vec<&str> = minted.as_str().split(SEP).collect();
+            // What the grammar says the segments ARE, in order, with the empty
+            // module dropped the way `encode` drops it.
+            let want: Vec<&str> = match &form {
+                Form::Item { lang, package, module, name, reach } => {
+                    [lang.as_str(), package, module, name, reach.as_str()].into_iter().collect()
+                }
+                Form::Member { lang, package, module, ty, member, reach } => {
+                    [lang.as_str(), package, module, ty, member, reach.as_str()]
+                        .into_iter()
+                        .collect()
+                }
+                Form::TraitMember { lang, package, module, ty, tr, member, reach } => {
+                    [lang.as_str(), package, module, ty, tr, member, reach.as_str()]
+                        .into_iter()
+                        .collect()
+                }
+                Form::Lib { package, member } => [LIB, package, member].into_iter().collect(),
+            };
+            let want: Vec<&str> = want.into_iter().filter(|s| !s.is_empty()).collect();
+            assert_eq!(got, want, "{label}: {minted} is not the segments it was built from");
         }
     }
 
