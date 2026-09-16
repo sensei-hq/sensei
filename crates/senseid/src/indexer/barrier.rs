@@ -248,6 +248,14 @@ pub(super) enum Lost {
 /// matched across a reach boundary is a collision by construction, never a lost
 /// edge.
 ///
+/// The LANGUAGE narrows it the same way and for the same reason, one segment
+/// further left: the language is the first segment of every identity, so a
+/// TypeScript use site cannot produce a Rust declaration's fqn. MEASURED: 183
+/// Rust field declarations and 55 TypeScript ones were reported as lost edges
+/// on the strength of a use site in the other language — `hardware.rs` declares
+/// `ram_gb`, no Rust use site spells it, and the desktop app reading `ram_gb`
+/// off a JSON payload was the whole of the evidence.
+///
 /// MEASURED over this repository: narrowing by reach drops 1,304 name matches,
 /// and the drop is one-sided in a way that says what it is — 1,278 of them are
 /// declarations at item reach whose name appears only at FIELD reach, i.e. a
@@ -259,10 +267,10 @@ pub(super) enum Lost {
 /// that member read was the evidence blaming the resolver for `base`.
 pub(super) struct NamedBy<'a> {
     exact: BTreeSet<&'a str>,
-    /// Keyed by [`Reach::as_str`], the label the reach is already written and
-    /// read under everywhere else, so the two sides of the lookup cannot spell
-    /// it differently.
-    by_reach: BTreeMap<&'static str, BTreeSet<&'a str>>,
+    /// Keyed by the LANGUAGE and by [`Reach::as_str`] — the labels both are
+    /// already written and read under everywhere else, so the two sides of the
+    /// lookup cannot spell either differently.
+    by_reach: BTreeMap<(Language, &'static str), BTreeSet<&'a str>>,
 }
 
 impl<'a> NamedBy<'a> {
@@ -280,7 +288,7 @@ impl<'a> NamedBy<'a> {
             let relations = unit.facts.relations.iter().map(|r| &r.parent);
             for target in references.chain(relations) {
                 if let Resolution::Unresolved { evidence, .. } = target {
-                    named.saw(evidence);
+                    named.saw(unit.facts.language, evidence);
                 }
             }
         }
@@ -291,7 +299,7 @@ impl<'a> NamedBy<'a> {
     /// never as well: a walk that got as far as minting a candidate has said
     /// which node it meant, and letting its bare name stand too would put that
     /// use site behind every other declaration that shares the name.
-    fn saw(&mut self, evidence: &'a Evidence) {
+    fn saw(&mut self, language: Language, evidence: &'a Evidence) {
         let mut minted = false;
         for observation in &evidence.saw {
             if let Observation::Candidate(fqn) = observation {
@@ -301,7 +309,7 @@ impl<'a> NamedBy<'a> {
         }
         if !minted {
             self.by_reach
-                .entry(evidence.reach.as_str())
+                .entry((language, evidence.reach.as_str()))
                 .or_default()
                 .insert(evidence.name.as_str());
         }
@@ -331,12 +339,15 @@ impl<'a> NamedBy<'a> {
         // back cannot fail — and if it ever does, that is a defect in the
         // identity and not a node to quietly report as unnamed.
         let parsed = fqn::parse(fqn).expect("a declaration carries an identity this can read");
-        let Origin::Local { reach, .. } = parsed.origin else {
+        // The LANGUAGE and the REACH both come off the declaration's own
+        // identity rather than from the caller, so neither can disagree with
+        // the string the node is filed under.
+        let Origin::Local { lang, reach } = parsed.origin else {
             // An external carries no reach (see `Form::Lib`) and declares
             // nothing here, so no use site in this corpus reaches it.
             return Lost::Nothing;
         };
-        match self.by_reach.get(reach.as_str()).is_some_and(|names| names.contains(name)) {
+        match self.by_reach.get(&(lang, reach.as_str())).is_some_and(|names| names.contains(name)) {
             true => Lost::ByName,
             false => Lost::Nothing,
         }
@@ -741,11 +752,23 @@ mod tests {
         let read_all = |types: &TypeHomes| -> Vec<FileFacts> {
             files
                 .iter()
-                .filter_map(|(path, text)| {
+                .map(|(path, text)| {
                     let ext = format!(".{}", path.rsplit('.').next().unwrap_or(""));
-                    let adapter = lang::adapter_for_ext(&ext)?;
-                    let source = Source { package: "unnamed", module: "", path, text };
-                    adapter.read(&source, types).ok()
+                    let adapter = lang::adapter_for_ext(&ext)
+                        .unwrap_or_else(|| panic!("no adapter reads {path}"));
+                    // The module is DERIVED, the way the corpus reader derives
+                    // it, and not left empty. A TypeScript file with no module
+                    // path has no identity at all, so an empty one made the
+                    // reader hand back an error the old `filter_map` swallowed —
+                    // and `report_over` zips this list against `files`, so a
+                    // silently dropped file pairs every later file's text with
+                    // the wrong facts.
+                    let module = adapter
+                        .module_path(path, crate::indexer::acceptance::package_root_of(path));
+                    let source = Source { package: "unnamed", module: &module, path, text };
+                    adapter
+                        .read(&source, types)
+                        .unwrap_or_else(|e| panic!("{path} could not be read: {e:?}"))
                 })
                 .collect()
         };
@@ -874,7 +897,10 @@ mod tests {
 
         let named = NamedBy {
             exact: BTreeSet::from([a_module.as_str(), a_function.as_str()]),
-            by_reach: BTreeMap::from([(Reach::Mod.as_str(), BTreeSet::from(["inner"]))]),
+            by_reach: BTreeMap::from([(
+                (Language::Rust, Reach::Mod.as_str()),
+                BTreeSet::from(["inner"]),
+            )]),
         };
 
         assert_eq!(
@@ -920,6 +946,52 @@ mod tests {
             (konst.lost_exact, konst.lost_by_name, konst.never_named),
             (0, 0, 1),
             "and the same four characters at field reach are no evidence about a const"
+        );
+    }
+
+    /// A name is shared across LANGUAGES as well, and THAT match is impossible
+    /// by construction rather than merely unlikely.
+    ///
+    /// The language is the FIRST SEGMENT of every identity, so a TypeScript use
+    /// site cannot produce a Rust declaration's fqn — the same argument the
+    /// reach narrowing makes, one segment further left, and costing just as
+    /// little. Without it the bare-name set is one pool that every language
+    /// pours into and every language drinks from.
+    ///
+    /// MEASURED over this repository: 183 Rust field declarations and 55
+    /// TypeScript ones were reported as lost edges on the strength of a use site
+    /// in the OTHER language. `crates/bootstrap/src/hardware.rs:37` declares
+    /// `ram_gb` and no unresolved Rust use site spells it; the desktop app reads
+    /// `ram_gb` off a JSON payload, and that read was the evidence.
+    ///
+    /// MUTATION: drop the language from the `by_reach` key and the Rust field
+    /// below is reported lost again.
+    #[test]
+    fn a_name_that_collides_across_a_language_is_not_a_lost_edge() {
+        let rows = report_over(&[
+            ("crates/x/src/lib.rs", "pub struct Hw {\n\x20   pub ram_gb: usize,\n}\n"),
+            // The receiver is deliberately UNTYPED. A typed one mints a
+            // candidate, and a use site that minted an identity does not also
+            // lend its bare name — so a fixture written that way would pass
+            // with the pooling still in place.
+            ("app/src/lib/hw.ts", "export function peek(v): number { return v.ram_gb; }\n"),
+        ]);
+
+        let rust = rows.get("rust").expect("the rust fixture produced rows");
+        let field = rust.get(&SymbolKind::Field).expect("the struct declares a field");
+        assert_eq!(
+            (field.lost(), field.never_named),
+            (0, 1),
+            "the only `ram_gb` anybody reads is in another language, which can never mint a \
+             rust identity"
+        );
+        // And the reading really did happen, so the fixture is not passing by
+        // having produced no evidence at all.
+        let ts = rows.get("typescript").expect("the typescript fixture produced rows");
+        assert_eq!(
+            ts.get(&SymbolKind::Function).map(|f| f.nodes),
+            Some(1),
+            "the typescript file was read; a fixture that produced nothing would pass vacuously"
         );
     }
 
@@ -989,7 +1061,10 @@ mod tests {
 
         let named = NamedBy {
             exact: BTreeSet::from([widget.as_str()]),
-            by_reach: BTreeMap::from([(Reach::Item.as_str(), BTreeSet::from(["draw"]))]),
+            by_reach: BTreeMap::from([(
+                (Language::Rust, Reach::Item.as_str()),
+                BTreeSet::from(["draw"]),
+            )]),
         };
 
         assert_eq!(
@@ -1041,8 +1116,8 @@ mod tests {
         };
 
         let mut named = NamedBy { exact: BTreeSet::new(), by_reach: BTreeMap::new() };
-        named.saw(&considered);
-        named.saw(&named_only);
+        named.saw(Language::Rust, &considered);
+        named.saw(Language::Rust, &named_only);
 
         assert_eq!(
             named.exact,
@@ -1050,7 +1125,7 @@ mod tests {
             "the walk said which node it meant, and that is what is recorded"
         );
         assert_eq!(
-            named.by_reach.get(Reach::Item.as_str()),
+            named.by_reach.get(&(Language::Rust, Reach::Item.as_str())),
             Some(&BTreeSet::from(["resize"])),
             "only the use site with no identity of its own falls back to its bare name"
         );

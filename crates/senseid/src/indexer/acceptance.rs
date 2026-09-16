@@ -36,7 +36,7 @@ use super::resolve::{World, members_declared_by, resolve, returns_declared_by};
 /// every identity that file declares — which collapsed four different `Row`
 /// types onto one fqn and reported 1,111 identity collisions that were the
 /// harness's own doing.
-fn package_root_of(path: &str) -> &str {
+pub(super) fn package_root_of(path: &str) -> &str {
     match path.find("/src/") {
         Some(at) => &path[..at],
         None => path.split('/').next().unwrap_or("."),
