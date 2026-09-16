@@ -850,22 +850,39 @@ pub fn type_segment(raw: &str) -> Result<String, FqnError> {
 #[derive(Clone, PartialEq, Eq)]
 struct Flow {
     types: BTreeMap<String, String>,
+    /// Which CALL a binding the source never typed was bound to the result of.
+    ///
+    /// Beside [`Flow::types`] and never inside it, because a callee name is not
+    /// a type: what it hands back is written on a declaration that may be in
+    /// another file, so only a completed scan can say (R6). The walk records
+    /// the name it read and the ladder does the lookup.
+    from_calls: BTreeMap<String, String>,
 }
 
 impl Flow {
     fn empty() -> Self {
-        Self { types: BTreeMap::new() }
+        Self { types: BTreeMap::new(), from_calls: BTreeMap::new() }
     }
 
     fn get(&self, name: &str) -> Option<&str> {
         self.types.get(name).map(String::as_str)
     }
 
+    fn callee_of(&self, name: &str) -> Option<&str> {
+        self.from_calls.get(name).map(String::as_str)
+    }
+
     /// **S1.** Record what the most recent assignment said. An assignment the
     /// walk cannot type CLEARS the binding rather than leaving the previous type
     /// in place — "I no longer know" is the truth, and keeping a stale type is
     /// the fabrication (R4).
+    ///
+    /// Clearing takes the CALL with it. A rebound name no longer holds what the
+    /// earlier call handed back, and a callee left standing here would type the
+    /// new value as the old one — the same staleness one line up, one table
+    /// over.
     fn bind(&mut self, name: &str, ty: Option<String>) {
+        self.from_calls.remove(name);
         match ty {
             Some(ty) => {
                 self.types.insert(name.to_string(), ty);
@@ -876,15 +893,32 @@ impl Flow {
         }
     }
 
+    /// **S1's other half.** The source states no type, but it does say the value
+    /// is whatever `callee` handed back.
+    ///
+    /// Recorded only where [`Flow::bind`] found no stated type, so a type the
+    /// source WROTE is never overruled by one a lookup would find — the same
+    /// order the Rust walk uses for the same reason.
+    fn bound_to_the_result_of(&mut self, name: &str, callee: &str) {
+        self.types.remove(name);
+        self.from_calls.insert(name.to_string(), callee.to_string());
+    }
+
     /// **S2.** Where control flow joins, a name keeps its type only if every arm
     /// agrees. Which arm ran is not knowable, so the join is the INTERSECTION
     /// and an empty intersection is an honest unknown — not "the last arm wins".
+    ///
+    /// The callee table joins by the same rule and in the same breath: two arms
+    /// calling two different functions leave a value this walk cannot name, and
+    /// keeping either one would be picking an arm.
     fn join(arms: &[Flow]) -> Flow {
         let Some((first, rest)) = arms.split_first() else {
             return Flow::empty();
         };
         let mut out = first.clone();
         out.types.retain(|name, ty| rest.iter().all(|arm| arm.get(name) == Some(ty.as_str())));
+        out.from_calls
+            .retain(|name, of| rest.iter().all(|arm| arm.callee_of(name) == Some(of.as_str())));
         out
     }
 }
@@ -1386,6 +1420,14 @@ impl Walk<'_> {
                 inner.bind(name, Some(ty.clone()));
             }
         }
+        // Which call bound a name travels into the closure on the same terms
+        // its type does: a name nothing reassigns still holds what that call
+        // handed back when the body runs.
+        for (name, callee) in &outer.from_calls {
+            if !self.reassigned.contains(name) {
+                inner.bound_to_the_result_of(name, callee);
+            }
+        }
         inner
     }
 
@@ -1768,7 +1810,18 @@ impl Walk<'_> {
             let ty = self
                 .annotated_type(declarator.type_annotation.as_deref())
                 .or_else(|| declarator.init.as_ref().and_then(|e| self.stated_type(e)));
+            let stated = ty.is_some();
             flow.bind(&id.name, ty);
+            // Neither route STATED a type. The initialiser may still say which
+            // call produced the value, and what that call returns is written on
+            // a declaration this file may not hold — so the walk records the
+            // callee and the ladder reads the return type off the scan (R6).
+            if !stated
+                && let Some(init) = &declarator.init
+                && let Some(callee) = self.result_of_a_call(init)
+            {
+                flow.bound_to_the_result_of(&id.name, &callee);
+            }
 
             // A function assigned to a name is a function BODY, and its own
             // flow state, for the reason `function_body` records.
@@ -2192,13 +2245,19 @@ impl Walk<'_> {
         }
 
         let Some(ty) = self.receiver_type(object, scope, flow) else {
-            return Miss::because(
-                Reason::ReceiverTypeUnknown,
-                node_kind,
-                member,
-                reach,
-                vec![Observation::Receiver(self.text_of(object.span()).to_string())],
-            );
+            // Nothing in this file types the receiver. If it is a local the
+            // source never typed but DID bind to a call, say which call: the
+            // ladder has a completed pass and can read what that call returns,
+            // which this file cannot (R6). The receiver text rides alongside
+            // either way, because that is what the source WROTE and the
+            // histogram counts it.
+            let mut saw = vec![Observation::Receiver(self.text_of(object.span()).to_string())];
+            if let Expression::Identifier(id) = object
+                && let Some(callee) = flow.callee_of(&id.name)
+            {
+                saw.push(Observation::BoundToTheResultOf(callee.to_string()));
+            }
+            return Miss::because(Reason::ReceiverTypeUnknown, node_kind, member, reach, saw);
         };
         // The TYPE's home, not the reading file's. A member's identity carries
         // the module its type lives in, and the declaration side already names
@@ -2280,6 +2339,41 @@ impl Walk<'_> {
             }
             Expression::ParenthesizedExpression(p) => self.stated_type(&p.expression),
             Expression::TSNonNullExpression(n) => self.stated_type(&n.expression),
+            _ => None,
+        }
+    }
+
+    /// The CALL an initialiser ultimately is, with the wrappers that hand back
+    /// the same value peeled off the outside.
+    ///
+    /// The other side of [`Walk::stated_type`]: that one answers where the
+    /// source WROTE a type, this one answers where it wrote none but did say
+    /// which call produced the value. Only [`Walk::member_of`] reads the result,
+    /// and only to record it as [`Observation::BoundToTheResultOf`] — the type
+    /// itself is a cross-file lookup the ladder does (R6).
+    ///
+    /// Three wrappers, and each hands back the identical value: `await f()`,
+    /// `f()!` and `(f())` are all `f()`. A METHOD hop is not one of them. The
+    /// grammar's plumbing list exists to LABEL a miss and holds `map`, `filter`
+    /// and `find`, every one of which hands back something of a different type
+    /// from its receiver — reading `all.filter(p)` as `all` would type an array
+    /// as its element and mint a member on the wrong node (R4).
+    ///
+    /// Only a BARE callee. `api.fetchThing()` reaches its declaration through a
+    /// receiver this walk has not typed, which is the very question being asked,
+    /// and a dotted name handed to the ladder is read as a path instead.
+    ///
+    /// Bounded by the nesting of the expression, so it terminates: each arm
+    /// recurses on a strictly smaller node.
+    fn result_of_a_call(&self, value: &Expression<'_>) -> Option<String> {
+        match value {
+            Expression::AwaitExpression(a) => self.result_of_a_call(&a.argument),
+            Expression::ParenthesizedExpression(p) => self.result_of_a_call(&p.expression),
+            Expression::TSNonNullExpression(n) => self.result_of_a_call(&n.expression),
+            Expression::CallExpression(c) => match &c.callee {
+                Expression::Identifier(id) => Some(id.name.to_string()),
+                _ => None,
+            },
             _ => None,
         }
     }
