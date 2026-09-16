@@ -1,11 +1,12 @@
 # Checkpoint — the indexer
 
-**Slice: both TypeScript defects fixed. The import CLAUSE now names the member
-(3,304 edges that pointed at nothing now land), and a `#private` member is a use
-site in every position a public one is (+221 edges, 0 dangling). TypeScript's
-categorical zero is gone: no test edge 100% -> 71%, exercised 0% -> 37%, reached
-by nothing 993 -> 517. Suite 3,513 / 0, clippy + fmt clean. Stage 10 cutover
-still gated.**
+**Slice: Java. The two coverage barriers are now ONE implementation
+(`indexer/barrier.rs`) run over both corpora, taught Java's JUnit convention via
+`languages::is_test_path`. Java's first barrier numbers: 23,593 nodes, 63% no
+test edge, 40% exercised, 48% reached by nothing. Java's 26,995 dangling edges
+are decomposed into 10 named buckets — the "chiefly Lombok and Spring Data"
+reading was two thirds wrong. Suite 3,514 / 0, clippy + fmt clean. Stage 10
+cutover still gated.**
 
 Read `docs/plans/indexer-sequence.md`, then `docs/design/indexer.md`.
 
@@ -15,45 +16,48 @@ Read `docs/plans/indexer-sequence.md`, then `docs/design/indexer.md`.
       indexer::acceptance::report
       indexer::acceptance::every_first_party_edge_names_a_declaration_this_scan_holds
       indexer::acceptance::every_source_node_is_reached_by_a_test_and_then_by_other_source
-      indexer::lang::javascript::tests::the_reference_count_equals_an_independent_count_of_use_sites
     SENSEI_CORPUS=~/Work/Dayamed … indexer::lang::java::corpus
 
 ## Done in this slice
 
-- **A8, `every_first_party_edge_names_a_declaration_this_scan_holds`** — the
-  measurement that was missing. `report` counts a reference RESOLVED the moment a
-  rung answers and never asks whether the identity exists, so a whole language's
-  import rung was broken in plain sight. Split by language, fact and rung.
-- **`Binding::MemberOf { local, member }`** — the walk states whether the
-  specifier already spells the bound name. NOT a per-language flag: `import * as`
-  and `import { }` sit in one file, and a flag breaks the namespace case.
-- **`Grammar::module_segment`** — the language's own file-stem rule, the same
-  function `javascript::module_path` applies to the declaration side.
-- **`PrivateFieldExpression`** in `name_callee`, `expression`, `assignment` and
-  the update arm, plus `visit_private_field_expression` in A2's counter — fixed
-  counter FIRST, watched A2 go 14 -> 181, then the walk took it back to 14.
+- **`indexer/barrier.rs`** — the two barriers, extracted so both corpora run one
+  copy. `acceptance` supplies this repo's Rust and TypeScript; `lang::java::corpus`
+  supplies `SENSEI_CORPUS`.
+- **One test-vs-source classifier**, delegating to `languages::is_test_path` —
+  already the source of truth for `nodes.is_test` and already Java-aware. Taught
+  it the `_tests.rs` stem it was missing (5 real files). The inline
+  `#[cfg(test)]` region stays, because no path can show it.
+- **Java interface inheritance** — `interface_declaration` states its parents in
+  an `extends_interfaces` child with NO field name, so every Java interface read
+  as having no parents. Same change stopped a clause's type ARGUMENTS being
+  recorded as supertypes (`extends JpaRepository<User, Long>` was emitting
+  `UserRepository extends Long`).
+- **Rust `for` patterns** — `for_expression` skipped the pattern between the
+  collection and the body, so `for Placed { .. } in &corpus` named no type.
+  Found by A2 going 0 -> 1 files disagreeing.
 
 ## Next
 
-1. **Cause B, the largest remaining**: 761 of rust's 1,133 orphans are
-   `ReceiverTypeUnknown`. Needs a barrier table of first-party return types plus
-   `await_expression` unwrapping in `Walk::binding_of` (walk.rs:382).
-2. **A8's two finds, both pre-existing** (detail in `docs/backlog.md`): 652 rust
-   `Owns` relation parents minted at the impl's module instead of the type's
-   home, and 561 typescript re-export-barrel targets.
-3. Trait-impl members: a use site mints `Type-member`, the declaration is
-   `Type-Trait-member`. Neither rung reaches it.
+1. **Java's field reach** — 9,932 of the 26,995 are a declaration at
+   `Reach::Field` against a use site at `Reach::Item`. NOT a one-liner: 2,856
+   field reads land today and every one lands on an `item` (enum constants), so
+   the naive change trades dangling for dangling. Detail in `docs/backlog.md`.
+2. **Cause B, rust**: 761 of rust's orphans are `ReceiverTypeUnknown`. Java has
+   the same shape at 41,969, plus a same-package rung it has no equivalent of.
+3. A8's two finds (652 rust `Owns` parents, 561 typescript barrel targets).
 
 ## Known-broken — do not build on
 
-- 251 rust nodes are named by no use site: registered task handlers and callees
-  used only inside a macro (the walk emits nothing from inside one). An upper
-  bound on dead code, not a count of it.
-- Java: 26,995 first-party edges name a member no source declares (Lombok,
-  Spring Data). Unmoved by this slice — re-measured, identical.
-- A7: 708 colliding identities. A2 TypeScript drops 14 ours.
+- Java: 26,995 dangling, decomposed. 10,403 Lombok + 2,529 Spring Data are
+  compile-time synthesis and deliberately NOT attempted; 9,932 field-reach and
+  2,356 interface-constant are indexer defects with their own slice.
+- Java barrier 2 is 62% for two measured reasons: a same-package reference needs
+  no import and no rung places one (33,597 misses), and a local's type does not
+  survive to the next statement (41,969 misses).
+- 252 rust nodes are named by no use site: registered task handlers and callees
+  used only inside a macro. An upper bound on dead code, not a count of it.
+- A7: 525 colliding identities. A2 TypeScript drops 14 ours; Java 9.
 - `indexer::lib_indexer::tests::real_dbd_single_file_has_deploy_component` needs
-  a sibling `dbd-rs` checkout at a hard-coded absolute path and fails without
-  one. Environmental, `#[ignore]`d, not in the gate.
+  a sibling `dbd-rs` checkout at a hard-coded absolute path. `#[ignore]`d.
 - `delete_folder` issues a path-prefix DELETE (`process.rs`); 09 S7 forbids it.
 - `library_content.package_name` has no writer.

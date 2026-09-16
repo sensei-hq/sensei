@@ -45,22 +45,128 @@ Two causes, unrelated to each other, both pre-existing and both out of that slic
 Remaining and separate: rust 298 `through_an_import` and 37 `rooted_in_this_package`,
 which include the 73 edition-2018 uniform-path imports already noted below.
 
+## Indexer — FIXED: a rust `for` pattern named no type (2026-09-15)
+
+`Walk::for_expression` walked the collection and then the body and skipped the
+PATTERN between them, so `for Placed { facts, .. } in &corpus` emitted no use
+site for `Placed`. Found by A2 rather than by reading: the independent counter
+counts the `type_identifier` in a struct pattern, and the first file in this
+repository to use the shape took A2 from 0 files disagreeing to 1 (644 walked
+against 649 counted). Walking the pattern wholesale is safe because A2 counts
+the same node kinds from the other side — an over-count would fail it as loudly
+— and it is 0 files disagreeing across the whole corpus after the fix.
+
+## Indexer — the two coverage barriers over Java (measured 2026-09-15)
+
+The measurement now lives in `indexer/barrier.rs` and is run over BOTH corpora —
+`acceptance` supplies this repository's Rust and TypeScript,
+`lang::java::corpus` supplies `SENSEI_CORPUS`. Java's first numbers, over 5,088
+hand-written files and 887 test files:
+
+| | nodes | no test edge | exercised | no source edge | reached by NOTHING |
+|---|---:|---:|---:|---:|---:|
+| rust | 4,374 | 3,408 (78%) | 2,598 (59%) | 1,275 (29%) | 1,131 (26%) |
+| typescript | 2,186 | 1,543 (71%) | 821 (38%) | 811 (37%) | 508 (23%) |
+| **java** | **23,593** | **14,854 (63%)** | **9,478 (40%)** | **14,561 (62%)** | **11,395 (48%)** |
+
+Java clears barrier 1 better than either of ours and barrier 2 far worse. The
+11,395 split, printed by the test: 4,064 named but nothing binds the name, 3,924
+named with the receiver untyped, 3,109 named by no use site at all, 298
+plumbing. 11,347 of them are Methods.
+
+Two causes of the barrier-2 figure are known and neither is the graph being
+right about dead code:
+
+1. **A same-package reference needs no import, and no rung places one.** Maven
+   puts a JUnit test in the SAME package as its subject, and Java requires no
+   import within a package — so `new Greeter()` in `GreeterTest` is a bare name
+   the ladder cannot place. 33,597 `no_import_in_scope` misses, headed by
+   `List`, `ArrayList`, `Patient`, `UserDetails`. A rung that places a bare name
+   against the other files of one Java package would take most of it.
+2. **A local's type does not survive to the next statement.** `walk.rs` puts a
+   `local_variable_declaration`'s binding into a scope it passes only to that
+   node's own children, so `Greeter g = new Greeter(); g.greet();` types `g` for
+   the first statement and not the second. 41,969 `receiver_type_unknown`.
+
+Both are the Java shape of Rust's cause B and want their own slice.
+
 ## Indexer — Java's 26,995 edges at members nothing declares (measured 2026-09-15)
 
-`SENSEI_CORPUS=~/Work/Dayamed … indexer::lang::java::corpus` prints this every
-run. 26,995 first-party edges across 1,007 identities name a member that is in
-no source file. Head:
+`SENSEI_CORPUS=~/Work/Dayamed … indexer::lang::java::corpus::the_first_party_edges`
+prints this every run. 26,995 first-party edges across 2,981 identities name a
+member that is in no source file.
 
-    456  ApplicationConstants.SUCCESS
-    379  Patient.getUserDetails          <- Lombok @Getter
-    335  ApplicationConstants.PATIENT
-    283  UserDetailsRepository.findById  <- inherited from JpaRepository
+**The "chiefly Lombok and Spring Data" reading was two thirds wrong, and the
+split says so.** Measured over 5,088 hand-written files, first match wins:
 
-Two causes, both real: Lombok writes accessors at compile time (1,868 files in
-that corpus carry `@Getter`/`@Setter`/`@Data`), and Spring Data inherits methods
-from library interfaces. Both are targets that exist only after something else
-runs — what `Reason::MacroExpansion` names — and the walk mints a first-party
-identity instead, which is a wrong edge (R4).
+| edges | share | cause |
+|------:|------:|-------|
+| 10,403 | 38.5% | Lombok synthesises it (`@Getter`/`@Data` on the type, `get*`/`set*`/`is*`/`builder`/…) |
+|  9,932 | 36.8% | **the declaration IS here, at the field reach** — an indexer defect |
+|  2,529 |  9.4% | Spring Data's repository declares it (`interface X extends JpaRepository`) |
+|  2,356 |  8.7% | the owning type declares no member at all — the walk's gap |
+|  1,044 |  3.9% | names a TYPE this scan does not declare |
+|    345 |  1.3% | the owning type is not declared by this scan |
+|    170 |  0.6% | inherited from a supertype this scan never opened (`java.sql.ResultSet`) |
+|    102 |  0.4% | javac synthesises it on every enum (`values`, `valueOf`, …) |
+|     98 |  0.4% | unexplained |
+|     16 |  0.1% | a first-party SUPERTYPE declares it |
+
+Head verified against the source, not assumed: `ApplicationConstants.SUCCESS`
+(456) is `public static final String SUCCESS = "success";` on line 176 of
+`util/ApplicationConstants.java` — neither Lombok nor Spring Data.
+`Patient.getUserDetails` (379) is a `@Getter` on line 27 of `entity/Patient.java`
+with no such method in the file. `UserDetailsRepository.findById` (283) is
+`interface UserDetailsRepository extends JpaRepository<UserDetails, Long>`.
+
+### 1. The field reach — 9,932, and NOT a one-line fix
+
+`field_declaration` mints a declaration at `Reach::Field` (`java/walk.rs`) and
+`refer_to_member` mints EVERY member use site at `Reach::Item`, so a first-party
+field READ can never meet its own declaration. Passing the use site's reach
+through would land all 9,932.
+
+**What stops it being a one-liner, measured:** an `enum_constant` is declared at
+`Reach::Item`, so `Status.ACTIVE` is a `field_access` whose declaration is an
+ITEM. The test prints `field READS that land today, by the reach they land on:
+{"item": 2856}` — every field read that lands today lands on an `item`, so
+minting `Field` for every field access would land 9,932 and unland 2,856:
+dangling edges traded for dangling edges. The real fix is both sides at once —
+the use site carries its reach AND an enum constant is declared at the reach it
+is actually reached by — and that is a reach-grammar decision, not a patch.
+
+### 2. The interface-constant gap — 2,356
+
+An interface body holds `constant_declaration` nodes (confirmed against
+tree-sitter-java's `node-types.json`); the walk's dispatch reads only
+`field_declaration`. So `interface APIErrorFields { String FILE_UPLOAD = "file"; }`
+declares nothing, owns nothing, and is reached by nothing — it shows up in the
+coverage barrier as an unreached node as well as here. Teaching the walk needs
+A2's independent counter taught FIRST (its `TYPED` list has no
+`constant_declaration` either, so the two holes currently cancel and read as
+agreement — the same shape as the JavaScript `PrivateFieldExpression` hole).
+Fixing it alone moves 2,356 edges from this bucket into the field-reach bucket
+rather than landing them, so it is worth doing only WITH the reach fix.
+
+### 3. Lombok and Spring Data — 12,932 together, and deliberately not attempted
+
+Both are targets that exist only after something else runs — what
+`Reason::MacroExpansion` names — and the walk mints a first-party identity
+instead, which is a wrong edge (R4). Synthesising the declarations is the only
+way to land them, and synthesising declarations no source carries is exactly
+what R4 is about; it needs its own design, not a patch inside a measurement
+slice.
+
+### FIXED on the way here: an interface's supertypes were invisible
+
+`class_declaration` states its parents in the NAMED fields `superclass` and
+`interfaces`; `interface_declaration` states its in an `extends_interfaces`
+child the grammar gives NO field name, so `child_by_field_name` found nothing
+and every Java interface read as having no parents. 2,756 dangling edges were
+labelled "unexplained" purely because of it. Fixed, red-first, in
+`java/walk.rs::type_declaration`. The same change stopped a supertype clause's
+type ARGUMENTS being recorded as supertypes — `extends JpaRepository<User, Long>`
+was emitting `UserRepository extends Long`, a wrong edge R4 ranks below no edge.
 
 ### The path in: the walk PLACES instead of stating
 
