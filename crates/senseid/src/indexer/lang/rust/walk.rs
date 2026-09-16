@@ -6,7 +6,7 @@
 //! language look like to the ladder"; this file answers "what did the parser
 //! just hand me". The identity rules are read here and decided there.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use tree_sitter::Node;
 
@@ -66,7 +66,7 @@ pub(super) fn walk<'a>(
         package: source.package,
         types,
         declared_fields: BTreeMap::new(),
-        declared_here: BTreeSet::new(),
+        declared_here: BTreeMap::new(),
         symbols: Vec::new(),
         references: Vec::new(),
         relations: Vec::new(),
@@ -75,7 +75,9 @@ pub(super) fn walk<'a>(
     // Struct fields FIRST, over the whole tree: an `impl` block may appear
     // before the struct it is about, and a single-pass walk would reach
     // `self.field` with nothing recorded for it.
-    walk.collect_declared_fields(root);
+    // Seeded with the FILE's module, so a type declared at file scope is homed
+    // there and one inside `mod tests` is homed a segment deeper.
+    walk.collect_declared_fields(root, source.module);
     walk.children(root, &scope);
     Found {
         symbols: walk.symbols,
@@ -228,14 +230,25 @@ struct Walk<'a> {
     /// of a struct declared elsewhere in the file — possibly after it. A scope
     /// only flows downward and could not reach them.
     declared_fields: BTreeMap<String, BTreeMap<String, String>>,
-    /// Every type name THIS FILE declares.
+    /// Every type THIS FILE declares, and THE MODULE IT WAS DECLARED IN.
+    ///
+    /// The module matters and a name alone is not a home. A member's identity
+    /// carries the module its TYPE lives in — that is the merge contract (§2) —
+    /// so a call inside `mod tests` to a type declared at file scope must name
+    /// the member under the TYPE's module, not the caller's.
+    ///
+    /// MEASURED before this was a map: `SenseiConfig::brew_install_script` was
+    /// declared with `config` as its module segment at config.rs:220 and called
+    /// with `config::tests` at config.rs:459 — same file, same type, one segment
+    /// apart, and so never merging.
+    /// A test calling its own file's subject IS this shape, so it was systematic.
     ///
     /// The nearest home there is, and the one `TypeHomes` cannot supply: it is
     /// built from a completed pass over the whole scan, so a single-file read
     /// is handed an empty one. Consulting the file first is also simply
     /// correct — a type declared here lives here, whatever a later barrier
     /// says.
-    declared_here: BTreeSet<String>,
+    declared_here: BTreeMap<String, String>,
     symbols: Vec<Symbol>,
     references: Vec<Reference>,
     relations: Vec<Relation>,
@@ -249,9 +262,9 @@ impl<'a> Walk<'a> {
     /// `TypeHomes` cannot supply — that table is a barrier artifact built from a
     /// completed pass, so a single-file read gets an empty one and every local
     /// type would read as external.
-    fn home_of<'s>(&'s self, scope: &'s Scope, ty: &str) -> Home<'s> {
-        if self.declared_here.contains(ty) {
-            return Home::Ours { module: scope.module.as_str() };
+    fn home_of(&self, ty: &str) -> Home<'_> {
+        if let Some(module) = self.declared_here.get(ty) {
+            return Home::Ours { module: module.as_str() };
         }
         self.types.lookup(self.package, ty)
     }
@@ -632,11 +645,20 @@ impl<'a> Walk<'a> {
     /// See [`Scope::fields`].
     /// Walk the whole tree once for struct field types. See
     /// [`Walk::declared_fields`].
-    fn collect_declared_fields(&mut self, node: Node<'_>) {
+    fn collect_declared_fields(&mut self, node: Node<'_>, module: &str) {
+        // A nested `mod x` extends the module path for everything inside it —
+        // which is the whole point: a type declared at file scope and one
+        // declared in `mod tests` do not live in the same module, and a member
+        // of either must be named under the one that declares its type.
+        let here = match (node.kind(), self.field_text(node, "name")) {
+            ("mod_item", Some(name)) if module.is_empty() => name.to_string(),
+            ("mod_item", Some(name)) => format!("{module}::{name}"),
+            _ => module.to_string(),
+        };
         if matches!(node.kind(), "struct_item" | "union_item" | "enum_item" | "trait_item")
             && let Some(name) = self.field_text(node, "name")
         {
-            self.declared_here.insert(name.to_string());
+            self.declared_here.insert(name.to_string(), here.clone());
         }
         if matches!(node.kind(), "struct_item" | "union_item")
             && let Some(name) = self.field_text(node, "name")
@@ -648,7 +670,7 @@ impl<'a> Walk<'a> {
         }
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
-            self.collect_declared_fields(child);
+            self.collect_declared_fields(child, &here);
         }
     }
 
@@ -818,7 +840,7 @@ impl<'a> Walk<'a> {
         // where the type lives — or has been told two places — the block's own
         // module stands, which is the previous behaviour and is right whenever
         // the type is declared here.
-        let home = match self.home_of(scope, &ty) {
+        let home = match self.home_of(&ty) {
             Home::Ours { module } => module.to_string(),
             // This block DECLARES these members, so they are ours wherever the
             // type came from — `impl MyTrait for PathBuf` puts our methods in
@@ -1008,7 +1030,7 @@ impl<'a> Walk<'a> {
         // USE SITE's module here is what made a call resolve only when the
         // caller happened to share a module with the impl block — the two sides
         // agreeing is the merge contract (§2), not an optimisation.
-        match self.home_of(scope, ty) {
+        match self.home_of(ty) {
             Home::Ours { module } => {
                 let considered = considered(fqn::refer(&Form::Member {
                     lang: Language::Rust,
@@ -1181,7 +1203,7 @@ impl<'a> Walk<'a> {
                 // 1,138 sites. An
                 // empty candidate list leaves the bare path for the ladder,
                 // which resolves it through the import that brought `Vec` in.
-                Ok(ty) => match self.home_of(scope, &ty) {
+                Ok(ty) => match self.home_of(&ty) {
                     Home::Ours { module } => considered(fqn::refer(&Form::Member {
                         lang,
                         package,

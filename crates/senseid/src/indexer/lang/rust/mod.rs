@@ -389,6 +389,7 @@ mod tests {
                 first_party: &first_party,
                 first_party_members: &BTreeSet::new(),
                 declared_members: &BTreeSet::new(),
+                returns: &std::collections::BTreeMap::new(),
                 scanned: &scanned,
             },
         );
@@ -1484,6 +1485,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
                 first_party: &first_party,
                 first_party_members: &BTreeSet::new(),
                 declared_members: &BTreeSet::new(),
+                returns: &std::collections::BTreeMap::new(),
                 scanned: &BTreeSet::new(),
             },
         );
@@ -2152,5 +2154,64 @@ fn helper() -> u32 { 0 }
             }
         }
         assert!(total > 1_000, "the corpus produced only {total} relations; that is not it");
+    }
+
+    /// **A member's module segment is the module its TYPE lives in — the same
+    /// on both sides, or the two never merge (spec §2).**
+    ///
+    /// A `#[cfg(test)] mod tests` calling its own file's type is the case that
+    /// exposes it, and it is everywhere: a test calling its subject IS this
+    /// shape. MEASURED before the fix, from the corpus:
+    ///
+    ///     declared at config.rs:220   …config·SenseiConfig·brew_install_script·item
+    ///     called  at config.rs:459    …config::tests·SenseiConfig·brew_install_script·item
+    ///
+    /// One segment apart, same file, same type. The use site took ITS OWN
+    /// module because `Walk::declared_here` recorded only type NAMES, so the
+    /// home fell back to the scope. A name is not a home.
+    #[test]
+    fn a_member_is_named_by_its_types_module_not_the_callers() {
+        let facts = crate::indexer::walked_rust(
+            "config",
+            "src/config.rs",
+            "pub struct Config;\n\
+             impl Config {\n\
+               pub fn script(&self) -> u32 { 0 }\n\
+             }\n\
+             mod tests {\n\
+               use super::Config;\n\
+               fn t() { let c = Config; c.script(); }\n\
+             }\n",
+        );
+
+        let declared = facts
+            .symbols
+            .iter()
+            .find(|s| s.name == "script")
+            .expect("the fixture declares script")
+            .fqn
+            .clone();
+
+        let called = facts
+            .references
+            .iter()
+            .filter(|r| r.kind == RefKind::Calls)
+            .find_map(|r| match &r.target {
+                Resolution::Resolved { fqn, .. } => Some(fqn.as_str().to_string()),
+                Resolution::Unresolved { evidence, .. } => {
+                    evidence.saw.iter().find_map(|o| match o {
+                        Observation::Candidate(fqn) => Some(fqn.as_str().to_string()),
+                        _ => None,
+                    })
+                }
+            })
+            .expect("the fixture calls script");
+
+        assert_eq!(
+            called,
+            declared.as_str(),
+            "the call site inside `mod tests` named the member under ITS module; the \
+             declaration named it under the type's. Two spellings of one symbol never merge."
+        );
     }
 }
