@@ -522,6 +522,22 @@ fn an_import_named_target_resolves() {
 /// success either: a reader following "who calls this" gets nothing, which is
 /// the same answer they would get if the caller did not exist.
 ///
+/// # What this CANNOT see, and it is the other half of R4
+///
+/// A WRONG edge. The only question asked here is whether the target exists, and
+/// a wrong edge points at a node that does — that is what makes it the worse of
+/// the two. So this test running byte-identical across a change is evidence
+/// about dangling edges and about nothing else, and reading "A8 unchanged" as
+/// "no wrong edge was introduced" is reading a number that was never measured.
+///
+/// It has already happened: three defects in `Ladder::types_home_of` each
+/// placed a member on a type whose home came from another module, another
+/// package or another language, every one of those targets was a real
+/// declaration, and this table did not move. Nothing structural can separate
+/// them — a wrong edge and a right one differ only in what the SOURCE meant —
+/// so the cover for that class is a fixture stating the intended target, and
+/// `resolve.rs` carries one per clause.
+///
 /// Split by RUNG, because that is what makes it actionable. A rung with a high
 /// dangling count is one function to go and read; a single total is a number
 /// nobody can act on. Library targets are excluded by [`fqn::parse`] rather than
