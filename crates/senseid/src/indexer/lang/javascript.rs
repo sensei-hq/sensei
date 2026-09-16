@@ -2689,8 +2689,12 @@ mod tests {
     /// static member, and the walk saw one of the three: the call arm recursed
     /// into a callee it had no arm for, so the receiver was never reached.
     ///
-    /// MUTATION: drop `p.object` from the new call arm's recursion — this falls
-    /// from 3 references to 1.
+    /// MUTATION, and its symptom is not the one to expect: drop the
+    /// `PrivateFieldExpression` arm from `member_object` and this goes to FOUR,
+    /// not to one. The call arm then recurses into the whole private expression
+    /// instead of into its object, and the read arm — which now exists — emits
+    /// `#m` a second time. A duplicate edge, which is why the assertion is an
+    /// exact count rather than a lower bound.
     #[test]
     fn the_receiver_of_a_private_access_is_walked_like_any_other() {
         let facts = js_facts("class T { #m() {} go() { this.boxes[0].#m(); } }\n");
