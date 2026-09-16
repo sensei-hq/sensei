@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::facts::{FileFacts, RefKind, RelationKind, Resolution, SymbolKind};
 use super::fqn::Reach;
 use super::lang::{self, Source, TypeHomes};
-use super::resolve::{World, resolve};
+use super::resolve::{World, members_declared_by, resolve};
 
 /// The directory a file's package is rooted at, from the file's own path.
 ///
@@ -91,6 +91,12 @@ pub(super) fn read_the_corpus() -> Vec<Read> {
     let homes = TypeHomes::of(
         first.iter().flat_map(|r| r.facts.symbols.iter().map(|s| (r.package.as_str(), s))),
     );
+    // The SECOND pass, complete, before anything is placed. Every barrier
+    // artifact below is taken off it rather than off `first`, and for
+    // `declared_members` that is not a tidiness point: a member's identity
+    // carries the module its TYPE lives in, so the pre-barrier pass spells
+    // those members differently and a set taken from it would match nothing.
+    let anchored = read_all(&homes);
 
     // AND THE LADDER. A walk states what it SAW; a target is placed by
     // resolution (R7), so a harness that reads without resolving sees almost
@@ -101,19 +107,21 @@ pub(super) fn read_the_corpus() -> Vec<Read> {
     // from: every member name any first-party type declares. A member the scan
     // declares NOWHERE cannot become a first-party edge, so the ladder labels
     // it the boundary rather than counting it as a miss.
-    let first_party_members: BTreeSet<String> = first
+    let first_party_members: BTreeSet<String> = anchored
         .iter()
         .flat_map(|r| r.facts.symbols.iter())
         .filter(|s| matches!(s.kind, SymbolKind::Method | SymbolKind::Field | SymbolKind::Property))
         .map(|s| s.name.clone())
         .collect();
+    let declared_members = members_declared_by(anchored.iter().map(|r| &r.facts));
     let scanned = BTreeSet::new();
     let world = World {
         first_party: &first_party,
         first_party_members: &first_party_members,
+        declared_members: &declared_members,
         scanned: &scanned,
     };
-    read_all(&homes)
+    anchored
         .into_iter()
         .map(|read| {
             let grammar = lang::adapter_for(read.facts.language).grammar();
@@ -1487,6 +1495,10 @@ fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
     let mut untested: Vec<String> = Vec::new();
     let mut unused: Vec<String> = Vec::new();
     let mut neither: Vec<String> = Vec::new();
+    // The same set, kept as facts rather than as formatted lines, because the
+    // decomposition below is the point of the barrier and a `Vec<String>` can
+    // only be sorted.
+    let mut orphans: Vec<(&str, SymbolKind, &str, &str)> = Vec::new();
     for read in &corpus {
         let language = read.facts.language.as_str();
         for symbol in read.facts.symbols.iter().filter(|s| a_node(s.kind)) {
@@ -1512,6 +1524,7 @@ fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
                 t.neither += 1;
                 neither
                     .push(format!("{:<44} {}:{}", symbol.name, read.path, symbol.span.start_line));
+                orphans.push((language, symbol.kind, read.path.as_str(), symbol.name.as_str()));
             }
         }
     }
@@ -1569,6 +1582,110 @@ fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
     println!("\n  NEITHER, rust only — first 25 of {}:", rust_only.len());
     for line in rust_only.iter().take(25) {
         println!("    {line}");
+    }
+
+    // ── what is LEFT, decomposed ─────────────────────────────────────────────
+    //
+    // The goal is not a smaller number, it is a number every entry of which has
+    // a name. A count alone cannot be argued with; these three splits can, and
+    // every wrong diagnosis this measurement has produced was a count somebody
+    // explained before they split it.
+    //
+    // "Named by nothing" is separated from "named and not placed" because they
+    // are different work: the first is a node with genuinely no caller — an
+    // entry point, or dead code — and the second is an edge the resolver lost.
+    let mut named_by: BTreeMap<&str, BTreeMap<String, usize>> = BTreeMap::new();
+    for read in &corpus {
+        for reference in &read.facts.references {
+            if let Resolution::Unresolved { reason, evidence } = &reference.target {
+                *named_by
+                    .entry(evidence.name.as_str())
+                    .or_default()
+                    .entry(format!("{reason:?}"))
+                    .or_default() += 1;
+            }
+        }
+    }
+    // The area a path belongs to, at the grain a person navigates: the crate or
+    // app, then the directory under its source root. Deeper would make every
+    // file its own area and say nothing.
+    let area_of = |path: &str| -> String {
+        let segments: Vec<&str> = path.split('/').collect();
+        let root = match segments.iter().position(|s| *s == "src") {
+            Some(at) => at,
+            None => return segments.first().copied().unwrap_or(path).to_string(),
+        };
+        segments[..=(root + 1).min(segments.len() - 1)].join("/")
+    };
+
+    for language in super::facts::Language::all() {
+        let l = language.as_str();
+        let mine: Vec<&(&str, SymbolKind, &str, &str)> =
+            orphans.iter().filter(|(lang, ..)| *lang == l).collect();
+        if mine.is_empty() {
+            continue;
+        }
+        let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
+        let mut by_area: BTreeMap<String, usize> = BTreeMap::new();
+        let mut by_why: BTreeMap<&str, usize> = BTreeMap::new();
+        // The one bucket the goal is actually about: a node no UNRESOLVED use
+        // site names, so there is no miss to go and chase. Sampled rather than
+        // counted, because the readings left need a person and there are three
+        // of them, all three VERIFIED against the source:
+        //
+        // - a registered entry point — `tasks::handlers::advance_run` is
+        //   reached through the task table in `tasks/mod.rs`, which names it as
+        //   a string, so no call edge exists to find;
+        // - reached only from INSIDE a macro invocation — `doctor::blue` is
+        //   called once, as an argument to `println!`. The walk emits no
+        //   reference from inside a macro at all (see `Reason::MacroExpansion`),
+        //   so the use site is not a miss either — it does not exist;
+        // - genuinely dead.
+        //
+        // A count here is therefore an upper bound on dead code and nothing
+        // more, which is why it is printed as a sample beside its reading.
+        let mut nothing_names_it: Vec<String> = Vec::new();
+        for (_, kind, path, name) in &mine {
+            *by_kind.entry(format!("{kind:?}")).or_default() += 1;
+            *by_area.entry(area_of(path)).or_default() += 1;
+            let why = match named_by.get(name) {
+                None => "named by no use site at all",
+                Some(reasons) => reasons
+                    .iter()
+                    .max_by_key(|(reason, n)| (**n, std::cmp::Reverse((*reason).clone())))
+                    .map(|(reason, _)| match reason.as_str() {
+                        "ReceiverTypeUnknown" => "named, receiver untyped",
+                        "ExternalBoundary" => "named, read as outside",
+                        "NoImportInScope" => "named, nothing binds it",
+                        "AmbiguousCandidates" => "named, two candidates",
+                        "Plumbing" => "named, filtered as plumbing",
+                        _ => "named, other reason",
+                    })
+                    .unwrap_or("named by no use site at all"),
+            };
+            *by_why.entry(why).or_default() += 1;
+            if !named_by.contains_key(name) {
+                nothing_names_it.push(format!("{name:<40} {path}"));
+            }
+        }
+        let ranked = |map: &BTreeMap<String, usize>, take: usize| -> Vec<String> {
+            let mut v: Vec<(&String, &usize)> = map.iter().collect();
+            v.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+            v.into_iter().take(take).map(|(k, n)| format!("{n} {k}")).collect()
+        };
+        println!("\n## What is left in NEITHER — {l}, {} nodes\n", mine.len());
+        println!("  by kind: {}", ranked(&by_kind, 8).join(" | "));
+        println!("  by area: {}", ranked(&by_area, 12).join(" | "));
+        let mut why: Vec<(&&str, &usize)> = by_why.iter().collect();
+        why.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        for (what, n) in why {
+            println!("  {n:>6}  {what}");
+        }
+        nothing_names_it.sort();
+        println!("  nothing names it — first 15 of {}:", nothing_names_it.len());
+        for line in nothing_names_it.iter().take(15) {
+            println!("      {line}");
+        }
     }
 
     assert!(per.values().map(|t| t.nodes).sum::<usize>() > 0, "no source nodes at all");
