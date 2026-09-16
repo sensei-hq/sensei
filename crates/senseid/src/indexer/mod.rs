@@ -274,6 +274,7 @@ pub(crate) fn walked_rust(module: &str, path: &str, text: &str) -> facts::FileFa
         &World {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
+            declared_members: &BTreeSet::new(),
             scanned: &BTreeSet::new(),
         },
     )

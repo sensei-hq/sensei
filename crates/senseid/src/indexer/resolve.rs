@@ -10,8 +10,14 @@
 //!
 //! 1. a declaration in the same file,
 //! 2. an import in scope that binds the head of the path,
-//! 3. a path rooted in the package being scanned,
-//! 4. the language's prelude — the names in scope with no import at all.
+//! 3. a member some TYPE of this scan was read declaring, in another file,
+//! 4. a path rooted in the package being scanned,
+//! 5. the language's prelude — the names in scope with no import at all.
+//!
+//! Rung 3 is below rung 2 on purpose and the ordering is measured, not
+//! aesthetic: an import is written in the source and can say the target belongs
+//! to another package, while the type table is keyed by (package, name) and can
+//! only ever answer within the use site's own.
 //!
 //! Anything that reaches the bottom is [`Reason`]-coded and keeps the evidence
 //! the walk gathered. Nothing is invented on the way down (R4).
@@ -36,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::facts::{
     Binding, Evidence, FileFacts, Fqn, Import, ImportOrigin, Language, Observation, Reason,
-    Reference, Relation, Resolution, Rung, Span, SymbolKind,
+    Reference, Relation, RelationKind, Resolution, Rung, Span, SymbolKind,
 };
 use super::fqn::{self, Form, Reach};
 
@@ -168,6 +174,24 @@ pub struct World<'a> {
     /// "not supplied", and then nothing is reclassified — the previous
     /// behaviour, and never a guess.
     pub first_party_members: &'a BTreeSet<String>,
+    /// Every member IDENTITY a first-party type declares.
+    ///
+    /// The sibling of [`World::first_party_members`] and a different question:
+    /// that one holds member NAMES, which is all a use site with an untyped
+    /// receiver can be compared against. This one holds whole identities, which
+    /// is what a use site whose receiver IS typed can be matched against
+    /// exactly.
+    ///
+    /// Taken from [`members_declared_by`] — the children of the `Owns`
+    /// relations of a completed pass — and not from a `SymbolKind` filter, for
+    /// the reason that filter is wrong: which kinds are type-owned differs per
+    /// language, and it is what made [`World::first_party_members`] unusable as
+    /// an inventory.
+    ///
+    /// A BARRIER artifact like the type table, so the answer does not depend on
+    /// which file came first (R6). Empty means "not supplied", and then nothing
+    /// resolves through it — the previous behaviour, and never a guess.
+    pub declared_members: &'a BTreeSet<Fqn>,
     /// Every identity minted before this file. It is here, and it is
     /// deliberately never read.
     ///
@@ -177,6 +201,26 @@ pub struct World<'a> {
     /// `resolving_a_file_does_not_depend_on_what_has_been_scanned_before_it` can
     /// hand the ladder the whole corpus and show the output does not move.
     pub scanned: &'a BTreeSet<Fqn>,
+}
+
+/// Every member identity the scan declares, for [`World::declared_members`].
+///
+/// Built from `RelationKind::Owns` because that IS the vocabulary for "this
+/// type declares this member" — the fact the rung needs — and because it is the
+/// only thing that cannot be stood in for by a `SymbolKind` filter without
+/// getting a different answer in each language.
+///
+/// Handed a COMPLETED pass, deliberately. A member's identity carries the
+/// module its TYPE lives in, which is only right once the type table has been
+/// applied, so a set taken off the first pass would hold the pre-barrier
+/// spellings and match nothing.
+pub fn members_declared_by<'a>(files: impl IntoIterator<Item = &'a FileFacts>) -> BTreeSet<Fqn> {
+    files
+        .into_iter()
+        .flat_map(|facts| facts.relations.iter())
+        .filter(|relation| relation.kind == RelationKind::Owns)
+        .map(|relation| relation.child.clone())
+        .collect()
 }
 
 /// Place every reference and every relation of one file against the ladder
@@ -325,16 +369,35 @@ impl<'a> Ladder<'a> {
         // declaration never merge, and the edge points at a real node that is
         // the wrong one (R4).
         //
-        // Only the OWNING TYPE places a field, which `declared_here` above
-        // already does when the file declares it.
-        if wanted.reach == Reach::Field {
+        // Only the OWNING TYPE places a field — `declared_here` when the file
+        // declares it, `declared_by_its_type` when another file of the same scan
+        // does. Both match a whole identity, REACH INCLUDED, so neither is a
+        // path rung and neither is what this guard is aimed at.
+        let a_field = wanted.reach == Reach::Field;
+        if !a_field && let Placed::Proven(fqn) = self.through_an_import(&wanted, at) {
+            return Resolution::Resolved { fqn, via: Rung::ThroughAnImport };
+        }
+        // Below the import and above the glob, and both halves of that are
+        // measured.
+        //
+        // BELOW the import, because an import is WRITTEN DOWN and this rung's
+        // candidate is assembled: the type table is keyed by (package, name)
+        // and answers with a home in the USE SITE's package, so it cannot see a
+        // name that came from a sibling crate. MEASURED: `collective/inbox.rs`
+        // imports `dojo_protocol::ArtifactKind` while `senseid` declares an
+        // `ArtifactKind` of its own, and with this rung above the import rung
+        // all 6 of its use sites pointed at the wrong crate's type (R4).
+        //
+        // ABOVE the glob, because a glob binds an unknown set and this proves a
+        // declaration was read.
+        if let Placed::Proven(fqn) = self.declared_by_its_type(evidence) {
+            return Resolution::Resolved { fqn, via: Rung::DeclaredByItsType };
+        }
+        if a_field {
             return Resolution::Unresolved {
                 reason: self.filtered(Reason::NoImportInScope, evidence),
                 evidence: evidence.clone(),
             };
-        }
-        if let Placed::Proven(fqn) = self.through_an_import(&wanted, at) {
-            return Resolution::Resolved { fqn, via: Rung::ThroughAnImport };
         }
         if let Placed::Proven(fqn) = self.through_a_glob(&wanted, at) {
             return Resolution::Resolved { fqn, via: Rung::ThroughAGlob };
@@ -400,9 +463,48 @@ impl<'a> Ladder<'a> {
     /// very same file declares it, the two sides have already met and there is
     /// nothing left to prove.
     fn declared_here(&self, evidence: &Evidence) -> Placed {
+        self.first_candidate(evidence, |fqn| self.declared.contains(fqn.as_str()))
+    }
+
+    /// Rung 1b. The same proof, one file further out: a candidate that some
+    /// TYPE in this scan was read declaring as its member.
+    ///
+    /// Rust puts an `impl` block wherever it likes — this repository has 24 for
+    /// `PgStore` alone, spread over as many files — so "the declaration is in
+    /// another file" is the ordinary case for a method, not an edge case. Both
+    /// sides already mint one string for it, because the walk anchors a member
+    /// on its TYPE's home rather than on the module the `impl` sits in; what was
+    /// missing was a rung willing to say the two had met. MEASURED: 2,427 rust
+    /// and 539 typescript references, against 742 declarations that had no
+    /// inbound edge at all.
+    ///
+    /// It looks up IDENTITIES rather than names, so nothing here is a guess: the
+    /// candidate is minted only when the receiver's type was read off a
+    /// declaration and the barrier type table gave that type one unambiguous
+    /// home, and the set it is checked against is what a type was read
+    /// declaring. Two facts meeting, neither of them inferred.
+    ///
+    /// It is NOT the whole of "declared somewhere in this scan", and the
+    /// restriction is the measured half of the rung — see
+    /// [`World::declared_members`] and
+    /// `a_bare_name_matching_another_files_declaration_is_not_proof_of_anything`.
+    ///
+    /// R6 is untouched. The set is a barrier artifact — built from a completed
+    /// pass, never accumulated as files go by — so it holds the same answer
+    /// whichever file is resolved first. That is the whole difference between it
+    /// and [`World::scanned`], which is carried and deliberately never read.
+    fn declared_by_its_type(&self, evidence: &Evidence) -> Placed {
+        self.first_candidate(evidence, |fqn| self.world.declared_members.contains(fqn))
+    }
+
+    /// The first identity the walk CONSIDERED that some predicate proves. Shared
+    /// by the two rungs above, which differ only in where they look the
+    /// candidate up — and a second copy of this loop is how they would come to
+    /// disagree about what a candidate is.
+    fn first_candidate(&self, evidence: &Evidence, proves: impl Fn(&Fqn) -> bool) -> Placed {
         for observation in &evidence.saw {
             if let Observation::Candidate(fqn) = observation
-                && self.declared.contains(fqn.as_str())
+                && proves(fqn)
             {
                 return Placed::Proven(fqn.clone());
             }
@@ -810,7 +912,7 @@ mod tests {
     use crate::indexer::fqn;
     use crate::indexer::lang::rust;
     use crate::indexer::lang::{Source, TypeHomes};
-    use crate::indexer::resolve::{World, resolve};
+    use crate::indexer::resolve::{World, members_declared_by, resolve};
     use crate::indexer::{module_of, package_of};
 
     fn placed(reference: &Reference) -> &str {
@@ -842,9 +944,195 @@ mod tests {
             &World {
                 first_party: &first_party,
                 first_party_members: &BTreeSet::new(),
+                declared_members: &BTreeSet::new(),
                 scanned: &scanned,
             },
         )
+    }
+
+    /// A whole SCAN of several files, run the way a real one is: every file
+    /// walked once so the type table can be built, every file walked again with
+    /// it, the barrier artifacts taken off that completed pass, and only then
+    /// the ladder.
+    ///
+    /// A one-file fixture cannot express what a barrier artifact is FOR. The
+    /// defect this exists to measure — a member whose declaration is in another
+    /// file of the same scan — is invisible to a harness that only ever holds
+    /// one file, which is why the single-file helper above passes empty sets and
+    /// keeps the behaviour it always had.
+    ///
+    /// `files` are `(module, path, text)`.
+    fn scan(files: &[(&str, &str, &str)]) -> Vec<(String, FileFacts)> {
+        let read_all = |types: &TypeHomes| -> Vec<(String, FileFacts)> {
+            files
+                .iter()
+                .map(|(module, path, text)| {
+                    let facts = rust::read(&Source { package: "p", module, path, text }, types)
+                        .unwrap_or_else(|e| panic!("{path}: {e:?}"));
+                    ((*path).to_string(), facts)
+                })
+                .collect()
+        };
+        let first = read_all(&TypeHomes::unknown());
+        let homes =
+            TypeHomes::of(first.iter().flat_map(|(_, f)| f.symbols.iter().map(|s| ("p", s))));
+        let anchored = read_all(&homes);
+
+        let first_party: BTreeSet<String> = ["p".to_string()].into_iter().collect();
+        let declared_members = members_declared_by(anchored.iter().map(|(_, f)| f));
+        let world = World {
+            first_party: &first_party,
+            first_party_members: &BTreeSet::new(),
+            declared_members: &declared_members,
+            scanned: &BTreeSet::new(),
+        };
+        anchored
+            .into_iter()
+            .map(|(path, facts)| (path, resolve(facts, &rust::GRAMMAR, &world)))
+            .collect()
+    }
+
+    /// One file of a [`scan`], by path.
+    fn file_of<'a>(scanned: &'a [(String, FileFacts)], path: &str) -> &'a FileFacts {
+        &scanned
+            .iter()
+            .find(|(p, _)| p == path)
+            .unwrap_or_else(|| panic!("{path} is not in this scan"))
+            .1
+    }
+
+    /// Rung 1b, red-first. A method declared in an `impl` block that sits in a
+    /// DIFFERENT FILE from its type — Rust's most ordinary shape, and 24 of this
+    /// repo's own `impl PgStore` blocks — is reached from a third file.
+    ///
+    /// Both sides already mint the same string: `TypeHomes` gives the walk the
+    /// TYPE's home, so the declaration in `folders.rs` and the call in
+    /// `watcher.rs` both name `p·db·PgStore·add_watch_root`. The only thing that
+    /// was missing is a rung willing to say so, because `declared_here` reads
+    /// THIS FILE's declarations alone.
+    ///
+    /// MEASURED at 2,427 rust and 539 typescript references, 742 distinct
+    /// declarations that had no inbound edge at all.
+    #[test]
+    fn a_member_declared_in_another_file_of_this_scan_resolves_to_it() {
+        let scanned = scan(&[
+            ("db", "src/db.rs", "pub struct PgStore { pub url: String }\n"),
+            (
+                "db::folders",
+                "src/db/folders.rs",
+                "use crate::db::PgStore;\n\
+                 impl PgStore { pub fn add_watch_root(&self) -> u32 { 0 } }\n",
+            ),
+            (
+                "watcher",
+                "src/watcher.rs",
+                "use crate::db::PgStore;\n\
+                 pub fn start(store: &PgStore) -> u32 { store.add_watch_root() }\n",
+            ),
+        ]);
+
+        let caller = file_of(&scanned, "src/watcher.rs");
+        assert_placed(caller, "rust·p·db·PgStore·add_watch_root·item");
+        let call =
+            caller.references.iter().find(|r| r.kind == RefKind::Calls).expect("one call site");
+        let Resolution::Resolved { via, .. } = &call.target else {
+            panic!("the call is not placed: {:?}", call.target)
+        };
+        assert_eq!(
+            *via,
+            Rung::DeclaredByItsType,
+            "the proof is the declaration, so the rung must say so rather than claiming an \
+             import named it"
+        );
+    }
+
+    /// The other half of the same rung, and the reason it is restricted to
+    /// members rather than to every declaration the scan holds.
+    ///
+    /// A bare-name candidate is minted at the USE SITE's own module (see
+    /// `considered_path`), so it is a guess about where the name lives rather
+    /// than a fact read off a declaration. Matching one across files therefore
+    /// proves nothing — it only says two files claimed one module path.
+    ///
+    /// That is not hypothetical. MEASURED: `SignInOverlay.svelte` and
+    /// `SignInOverlay.spec.svelte.ts` both reduce to the module
+    /// `lib/components/SignInOverlay`, and a rung that matched any declaration
+    /// resolved 68 references — the component calling its own `onClose` prop —
+    /// onto locals declared in its SPEC file. A wrong edge in place of a missing
+    /// one is exactly what R4 forbids, so the rung takes its set from
+    /// `RelationKind::Owns`: what a TYPE declares, which a bare name never is.
+    #[test]
+    fn a_bare_name_matching_another_files_declaration_is_not_proof_of_anything() {
+        let scanned = scan(&[
+            ("m", "src/one.rs", "pub fn helper() -> u32 { 0 }\n"),
+            ("m", "src/two.rs", "pub fn caller() -> u32 { helper() }\n"),
+        ]);
+        let got = targets(file_of(&scanned, "src/two.rs"));
+        assert!(
+            got.iter().any(|t| t == "NoImportInScope(helper)"),
+            "a bare name that another file happens to declare under the same module is not \
+             a proven target; got {got:?}"
+        );
+    }
+
+    /// Where the new rung sits, as a property rather than as a comment.
+    ///
+    /// The type table is keyed by (package, name), so it answers with a home in
+    /// the USE SITE's own package and cannot see that the name came from
+    /// somewhere else. An import can: it is written down, and its specifier
+    /// says which side of the boundary the target is on. So the import outranks
+    /// the candidate, and this is the case that proves the difference is not
+    /// academic.
+    ///
+    /// MEASURED, and found by moving the rung: `crates/senseid/src/collective/
+    /// inbox.rs` imports `dojo_protocol::ArtifactKind` while `senseid` declares
+    /// an `ArtifactKind` of its own in `materialize.rs`. With the candidate rung
+    /// above the import rung, all 6 of its use sites resolved onto the WRONG
+    /// crate's type — a real node, the wrong one, which is precisely the trade
+    /// R4 refuses.
+    #[test]
+    fn an_import_outranks_a_candidate_built_from_a_same_named_type_of_ours() {
+        let scanned = scan(&[
+            ("materialize", "src/materialize.rs", "pub enum ArtifactKind { Skill, Agent }\n"),
+            (
+                "inbox",
+                "src/inbox.rs",
+                "use dojo_protocol::ArtifactKind;\n\
+                 pub fn mirror() -> u32 { let _ = ArtifactKind::Skill; 0 }\n",
+            ),
+        ]);
+        let got = targets(file_of(&scanned, "src/inbox.rs"));
+        assert!(
+            got.iter().any(|t| t == "lib·dojo_protocol·ArtifactKind::Skill"),
+            "the import names the package the type comes from; got {got:?}"
+        );
+        assert!(
+            !got.iter().any(|t| t == "rust·p·materialize·ArtifactKind·Skill·item"),
+            "a same-named type of our own is not what this file imported; got {got:?}"
+        );
+    }
+
+    /// A FIELD across files, which the field guard must not swallow.
+    ///
+    /// The guard exists to keep a PATH rung from answering a field — an import
+    /// binds a path head and `Type::field` is not a path Rust admits. Neither
+    /// candidate rung is a path rung: both match a whole identity with the reach
+    /// on it, so a field can only ever meet a field. Without this the guard
+    /// returns before the new rung is ever asked, and every cross-file field
+    /// read stays a miss.
+    #[test]
+    fn a_field_of_a_type_declared_in_another_file_is_still_placed_by_its_owner() {
+        let scanned = scan(&[
+            ("db", "src/db.rs", "pub struct PgStore { pub url: String }\n"),
+            (
+                "watcher",
+                "src/watcher.rs",
+                "use crate::db::PgStore;\n\
+                 pub fn show(store: &PgStore) -> usize { store.url.len() }\n",
+            ),
+        ]);
+        let caller = file_of(&scanned, "src/watcher.rs");
+        assert_placed(caller, "rust·p·db·PgStore·url·field");
     }
 
     /// Every reference's outcome, as text: the identity it was placed at, or the
@@ -913,6 +1201,7 @@ mod tests {
             [
                 "declared_here",
                 "through_an_import",
+                "declared_by_its_type",
                 "through_a_glob",
                 "rooted_in_this_package",
                 "fully_qualified_external",
@@ -1307,6 +1596,7 @@ mod tests {
         let world = World {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
+            declared_members: &BTreeSet::new(),
             scanned: &scanned,
         };
 
@@ -1455,6 +1745,7 @@ mod tests {
         let world = World {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
+            declared_members: &BTreeSet::new(),
             scanned: &BTreeSet::new(),
         };
 
@@ -1565,6 +1856,7 @@ mod tests {
         let world = World {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
+            declared_members: &BTreeSet::new(),
             scanned: &scanned,
         };
         let mut resolved = 0usize;
@@ -1665,6 +1957,7 @@ mod tests {
                 &World {
                     first_party: &first_party,
                     first_party_members: &BTreeSet::new(),
+                    declared_members: &BTreeSet::new(),
                     scanned: &nothing,
                 },
             );
@@ -1674,6 +1967,7 @@ mod tests {
                 &World {
                     first_party: &first_party,
                     first_party_members: &BTreeSet::new(),
+                    declared_members: &BTreeSet::new(),
                     scanned: &everything,
                 },
             );
@@ -1733,6 +2027,7 @@ mod tests {
                     &World {
                         first_party: &first_party,
                         first_party_members: &BTreeSet::new(),
+                        declared_members: &BTreeSet::new(),
                         scanned: &scanned,
                     },
                 );
@@ -1816,6 +2111,7 @@ mod tests {
         let world = World {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
+            declared_members: &BTreeSet::new(),
             scanned: &scanned,
         };
         let mut resolved = 0usize;
