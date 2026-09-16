@@ -131,7 +131,11 @@ impl Language {
 /// The set is spec §3.1 verbatim. Fields, properties and enum variants are in
 /// it because "what shape is this data" is a question the graph must answer
 /// (A5), and because pattern detection reads field types (R8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// Ordered so a report can key a map by the kind itself instead of by its
+/// label. The order is the declaration order and ranks nothing — a report that
+/// wants a meaningful order sorts by what it is measuring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum SymbolKind {
     Function,
     Method,
@@ -157,6 +161,53 @@ pub enum SymbolKind {
     /// An accessor pair that presents as a slot. Kept apart from
     /// [`SymbolKind::Field`] because one is storage and the other is code.
     Property,
+}
+
+impl SymbolKind {
+    /// Whether any reference can NAME a declaration of this kind.
+    ///
+    /// A property of the KIND rather than a filter inside one report, so every
+    /// consumer reads the same answer instead of re-deciding it. A
+    /// classification spread across call sites drifts, and then two counts of
+    /// the same corpus disagree about what they counted.
+    ///
+    /// It is a question about identity. A reference's target identity ends in
+    /// the [`Reach`] its use SYNTAX implies, and a declaration's identity ends
+    /// in the reach its own form minted, so an edge can only exist where the
+    /// two spell the same reach. [`SymbolKind::Module`] is the one kind minted
+    /// at [`Reach::Mod`], and [`Reach::Mod`] is the one reach no use site ever
+    /// mints: a module is entered by an IMPORT, which every walk records as an
+    /// import and not as a reference, and a path `a::b::c()` targets `c`, never
+    /// `a`. A module is a CONTAINER — the things inside it are what get called
+    /// — so it has no callee edge that could go missing, and a count of modules
+    /// nothing reached is a count rather than a defect.
+    ///
+    /// Every other kind is namable, including the ones that are read rather
+    /// than CALLED. Those are the ones at risk of being lumped in with a
+    /// module, because a report of what nothing calls lists them side by side:
+    /// a const and a static are read, a field and a property are read and
+    /// written, a type alias is named in a signature, an enum variant is read
+    /// and constructed, and a macro is reached by `name!`. Every one of those
+    /// is a reference, so every one of them can lose one.
+    pub fn can_be_named(self) -> bool {
+        match self {
+            Self::Module => false,
+            Self::Function
+            | Self::Method
+            | Self::Class
+            | Self::Struct
+            | Self::Enum
+            | Self::EnumVariant
+            | Self::Interface
+            | Self::Trait
+            | Self::TypeAlias
+            | Self::Const
+            | Self::Static
+            | Self::Macro
+            | Self::Field
+            | Self::Property => true,
+        }
+    }
 }
 
 /// How far a declaration is visible. Read by singleton detection (R8) and by
@@ -857,6 +908,49 @@ mod tests {
             }
         }
         assert_eq!(all_declared_types().len(), 2);
+    }
+
+    /// The one classification, pinned in one place.
+    ///
+    /// Written as "which kinds are NOT namable" rather than arm by arm,
+    /// because arm by arm is a restatement of the match and would pass
+    /// whatever the match said.
+    #[test]
+    fn a_module_is_the_one_declaration_kind_no_reference_can_name() {
+        let unnamable: Vec<SymbolKind> =
+            all_symbol_kinds().into_iter().filter(|k| !k.can_be_named()).collect();
+        assert_eq!(
+            unnamable,
+            vec![SymbolKind::Module],
+            "a module is entered by an import and its CONTENTS are what get named; \
+             every other kind is the target of some reference"
+        );
+    }
+
+    /// The kinds a reader is most likely to lump in with a module, each with
+    /// the reference kind that reaches it.
+    ///
+    /// These are all things that are DECLARED and then read rather than
+    /// called, so a report of what nothing calls lists them — and the wrong
+    /// lesson to draw from that is that nothing can name them either. A read
+    /// is a reference; an import is not.
+    #[test]
+    fn a_kind_that_is_read_rather_than_called_is_still_one_a_reference_names() {
+        for (kind, reached_by) in [
+            (SymbolKind::Const, RefKind::Reads),
+            (SymbolKind::Static, RefKind::Reads),
+            (SymbolKind::Field, RefKind::Writes),
+            (SymbolKind::Property, RefKind::Reads),
+            (SymbolKind::TypeAlias, RefKind::TypeUse),
+            (SymbolKind::EnumVariant, RefKind::Constructs),
+            (SymbolKind::Macro, RefKind::MacroInvokes),
+        ] {
+            assert!(
+                kind.can_be_named(),
+                "{kind:?} is reached by {reached_by:?}, so an edge to it can be lost and \
+                 the report must keep asking about it"
+            );
+        }
     }
 
     #[test]
