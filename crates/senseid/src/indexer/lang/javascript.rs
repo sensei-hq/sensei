@@ -44,7 +44,7 @@ use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType, Span as OxcSpan};
 
 use super::common::{Miss, considered};
-use super::{LanguageAdapter, ReadError, Source, TypeHomes};
+use super::{Home, LanguageAdapter, ReadError, Source, TypeHomes};
 use crate::indexer::facts::{
     Binding, DeclaredType, FileFacts, Fqn, Import, ImportOrigin, Language, Observation, Param,
     Reason, RefKind, Reference, Relation, RelationKind, Resolution, Rung, Span, Symbol, SymbolKind,
@@ -80,13 +80,8 @@ impl LanguageAdapter for TypeScriptAdapter {
         &GRAMMAR
     }
 
-    fn read(&self, source: &Source<'_>, _types: &TypeHomes) -> Result<FileFacts, ReadError> {
-        // The table is not consulted, and that is a property of the LANGUAGE
-        // rather than a gap. A class's members are declared inside its own
-        // body, so the module a member is named in is the module the class is
-        // declared in by construction — there is no `impl` block to sit
-        // somewhere else. Rust needs the table; this does not.
-        read(source)
+    fn read(&self, source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadError> {
+        read(source, types)
     }
 
     fn file_fqn(&self, package: &str, module: &str, path: &str) -> Result<Fqn, FqnError> {
@@ -119,13 +114,8 @@ impl LanguageAdapter for JavaScriptAdapter {
         &GRAMMAR
     }
 
-    fn read(&self, source: &Source<'_>, _types: &TypeHomes) -> Result<FileFacts, ReadError> {
-        // The table is not consulted, and that is a property of the LANGUAGE
-        // rather than a gap. A class's members are declared inside its own
-        // body, so the module a member is named in is the module the class is
-        // declared in by construction — there is no `impl` block to sit
-        // somewhere else. Rust needs the table; this does not.
-        read(source)
+    fn read(&self, source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadError> {
+        read(source, types)
     }
 
     fn file_fqn(&self, package: &str, module: &str, path: &str) -> Result<Fqn, FqnError> {
@@ -298,10 +288,10 @@ const PLUMBING: &[&str] = &[
 ];
 
 /// Parse one file once (R1) and return everything that parse saw (spec §3).
-pub fn read(source: &Source<'_>) -> Result<FileFacts, ReadError> {
+pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadError> {
     let from =
         file_fqn(source.package, source.module, source.path).map_err(ReadError::NoFileIdentity)?;
-    let found = read_file(source, from)?;
+    let found = read_file(source, types, from)?;
     Ok(FileFacts {
         language: Language::TypeScript,
         package: source.package.to_string(),
@@ -344,7 +334,7 @@ impl Found {
 
 /// Read a whole `.js`/`.ts` file. The Svelte path is [`read_component`], which
 /// has several blocks and markup to thread one walk through.
-fn read_file(source: &Source<'_>, from: Fqn) -> Result<Found, ReadError> {
+fn read_file(source: &Source<'_>, types: &TypeHomes, from: Fqn) -> Result<Found, ReadError> {
     let (text, offset, syntax_path) = (source.text, 0u32, source.path);
     let source_type = SourceType::from_path(syntax_path)
         .map_err(|e| ReadError::GrammarUnavailable(e.to_string()))?;
@@ -363,6 +353,8 @@ fn read_file(source: &Source<'_>, from: Fqn) -> Result<Found, ReadError> {
         text,
         offset,
         lines: &lines,
+        types,
+        declared_here: types_declared_in(&parsed.program.body).into_iter().collect(),
         namespaces: BTreeSet::new(),
         reassigned: assigned_in(&parsed.program.body).into_iter().collect(),
         found: Found::empty(),
@@ -389,6 +381,7 @@ fn read_file(source: &Source<'_>, from: Fqn) -> Result<Found, ReadError> {
 /// markup would type nothing.
 pub(super) fn read_component<'a>(
     source: &Source<'a>,
+    types: &TypeHomes,
     blocks: &[super::svelte::ScriptBlock],
     from: Fqn,
 ) -> Result<Found, ReadError> {
@@ -416,6 +409,13 @@ pub(super) fn read_component<'a>(
     }
     let reassigned =
         parsed_blocks.iter().flat_map(|(_, _, parsed)| assigned_in(&parsed.program.body)).collect();
+    // And for the same reason the types a component declares are the whole
+    // component's: a class in the module block is the home of its members
+    // however many instance blocks read them.
+    let declared_here = parsed_blocks
+        .iter()
+        .flat_map(|(_, _, parsed)| types_declared_in(&parsed.program.body))
+        .collect();
 
     let mut walk = Walk {
         package: source.package,
@@ -423,6 +423,8 @@ pub(super) fn read_component<'a>(
         text: source.text,
         offset: 0,
         lines: &lines,
+        types,
+        declared_here,
         namespaces: BTreeSet::new(),
         reassigned,
         found: Found::empty(),
@@ -939,6 +941,33 @@ struct Walk<'a> {
     /// a reader can find.
     offset: u32,
     lines: &'a LineIndex,
+    /// Where each type is declared. See [`TypeHomes`] — the walk is TOLD this,
+    /// never looks it up, and an absent entry is the BOUNDARY rather than a
+    /// licence to use the reading file's own module.
+    ///
+    /// It was once argued that this language does not need the table, because a
+    /// class owns its members lexically and there is no `impl` block to sit
+    /// somewhere else. That is true of the DECLARATION side and says nothing
+    /// about the REFERENCE side: `b.error` is written in whatever file happens
+    /// to hold `b`, and the member's identity carries the module its TYPE lives
+    /// in. MEASURED: 936 field reads minted a candidate whose only defect was
+    /// that segment, and not one of the 1,997 candidates minted at field reach
+    /// named a declaration this scan holds.
+    types: &'a TypeHomes,
+    /// Every type THIS FILE declares.
+    ///
+    /// Consulted before the table, for the reason the Rust walk consults its own
+    /// first: the table is a barrier artifact built from a COMPLETED pass, so
+    /// the pass that builds it is handed an empty one and every local type would
+    /// read as external. A type declared here lives here, whatever a later
+    /// barrier says.
+    ///
+    /// A SET and not a map, because there is one answer: a class, an interface
+    /// and an enum all name their members under `module_of`, which is this
+    /// file's module for every container the language admits. Rust needs a map
+    /// there — a type declared at file scope and used from `mod tests` is one
+    /// module segment apart — and this language has no such split.
+    declared_here: BTreeSet<String>,
     /// Names bound by `import * as ns`. A namespace is a MODULE, and its
     /// members are that module's exports — a different lookup from a method on
     /// a type, and conflating them mints members on a thing that has none
@@ -973,6 +1002,18 @@ impl Walk<'_> {
     /// and it would have gone on to NAME a symbol. A bad span is now loud.
     fn text_of(&self, span: OxcSpan) -> &str {
         &self.text[span.start as usize..span.end as usize]
+    }
+
+    /// Where a type lives: THIS FILE first, then the scan, then outside.
+    ///
+    /// The same three-way answer the Rust walk gives, and for the same reasons —
+    /// see [`Walk::declared_here`] for why the file is asked first, and
+    /// [`Home`] for why "two of ours share the name" is not a miss.
+    fn home_of(&self, ty: &str) -> Home<'_> {
+        if self.declared_here.contains(ty) {
+            return Home::Ours { module: self.module };
+        }
+        self.types.lookup(self.package, ty)
     }
 
     /// The module path a declaration found here is named in. One place, so a
@@ -2153,19 +2194,43 @@ impl Walk<'_> {
                 vec![Observation::Receiver(self.text_of(object.span()).to_string())],
             );
         };
-        Miss::unplaced(
-            node_kind,
-            member,
-            reach,
-            considered(fqn::refer(&Form::Member {
-                lang: Language::TypeScript,
-                package: self.package,
-                module: self.module,
-                ty: &ty,
+        // The TYPE's home, not the reading file's. A member's identity carries
+        // the module its type lives in, and the declaration side already names
+        // it that way — the two sides agreeing is the merge contract (§2), so
+        // filing a use site under the module that happens to be READING it is
+        // two identities for one field.
+        let saw = || vec![Observation::Receiver(self.text_of(object.span()).to_string())];
+        match self.home_of(&ty) {
+            Home::Ours { module } => Miss::unplaced(
+                node_kind,
                 member,
                 reach,
-            })),
-        )
+                considered(fqn::refer(&Form::Member {
+                    lang: Language::TypeScript,
+                    package: self.package,
+                    module,
+                    ty: &ty,
+                    member,
+                    reach,
+                })),
+            ),
+            // Two first-party types answer to this name, so there is no one
+            // home and picking would be a coin toss recorded as a fact.
+            Home::Ambiguous => {
+                Miss::because(Reason::AmbiguousCandidates, node_kind, member, reach, saw())
+            }
+            // NOTHING OF OURS DECLARES THIS TYPE. The receiver IS known — it was
+            // read off an annotation, an assertion or a `new` — and it is
+            // outside, so this is the boundary and not a lookup that failed.
+            //
+            // `Record`, `HTMLElement`, `Partial`, `URL`: filing their members
+            // under the reading file's module minted a first-party member of a
+            // type this scan does not declare, which is the fabrication the Rust
+            // walk stopped doing at 6,109 sites (R4). MEASURED here at 938.
+            Home::NotOurs => {
+                Miss::because(Reason::ExternalBoundary, node_kind, member, reach, saw())
+            }
+        }
     }
 
     /// What a receiver's type IS, when something states it.
@@ -2498,6 +2563,41 @@ fn declared_in(body: &[Statement<'_>]) -> Vec<String> {
     out
 }
 
+/// Every TYPE a run of statements declares, however deep — the three kinds a
+/// member can hang off in this language.
+///
+/// A whole-tree pass and not a running set, for the reason the Rust walk reads
+/// its struct fields the same way: a class may be declared AFTER the function
+/// that constructs it, and a scope only flows downward. Depth matters too — a
+/// `namespace`, an `export` clause and a conditional block all wrap a
+/// declaration that still names its members under this file's module.
+fn types_declared_in(body: &[Statement<'_>]) -> Vec<String> {
+    struct Declared {
+        names: Vec<String>,
+    }
+    impl<'a> oxc_ast_visit::Visit<'a> for Declared {
+        fn visit_class(&mut self, class: &Class<'a>) {
+            if let Some(id) = &class.id {
+                self.names.push(id.name.to_string());
+            }
+            oxc_ast_visit::walk::walk_class(self, class);
+        }
+        fn visit_ts_interface_declaration(&mut self, i: &TSInterfaceDeclaration<'a>) {
+            self.names.push(i.id.name.to_string());
+            oxc_ast_visit::walk::walk_ts_interface_declaration(self, i);
+        }
+        fn visit_ts_enum_declaration(&mut self, e: &TSEnumDeclaration<'a>) {
+            self.names.push(e.id.name.to_string());
+            oxc_ast_visit::walk::walk_ts_enum_declaration(self, e);
+        }
+    }
+    let mut found = Declared { names: Vec::new() };
+    for statement in body {
+        oxc_ast_visit::Visit::visit_statement(&mut found, statement);
+    }
+    found.names
+}
+
 /// Names a run of statements ASSIGNS anywhere inside it, however deep.
 ///
 /// What a loop body has to clear before it is read: on the second pass the body
@@ -2609,12 +2709,31 @@ mod tests {
     use super::*;
 
     fn facts(text: &str) -> FileFacts {
-        read(&Source { package: "pkg", module: "lib/fixture", path: "src/lib/fixture.ts", text })
-            .expect("the fixture parses")
+        read(
+            &Source { package: "pkg", module: "lib/fixture", path: "src/lib/fixture.ts", text },
+            &TypeHomes::unknown(),
+        )
+        .expect("the fixture parses")
     }
 
     fn js_facts(text: &str) -> FileFacts {
-        read(&Source { package: "pkg", module: "lib/fixture", path: "src/lib/fixture.js", text })
+        read(
+            &Source { package: "pkg", module: "lib/fixture", path: "src/lib/fixture.js", text },
+            &TypeHomes::unknown(),
+        )
+        .expect("the fixture parses")
+    }
+
+    /// One file of a scan that has already run its type barrier — the module,
+    /// the path and the table the walk is TOLD.
+    ///
+    /// Through the ADAPTER rather than through `read`, because the table is a
+    /// [`LanguageAdapter::read`] argument and a helper that side-stepped the
+    /// trait could keep passing while the real pipeline ignored what it was
+    /// handed. That is the defect these tests exist for.
+    fn read_in(module: &str, path: &str, text: &str, types: &TypeHomes) -> FileFacts {
+        TypeScriptAdapter
+            .read(&Source { package: "pkg", module, path, text }, types)
             .expect("the fixture parses")
     }
 
@@ -3287,9 +3406,10 @@ mod tests {
                 continue;
             }
             let module = module_path(&path, ".");
-            let Ok(facts) =
-                read(&Source { package: "web", module: &module, path: &path, text: &text })
-            else {
+            let Ok(facts) = read(
+                &Source { package: "web", module: &module, path: &path, text: &text },
+                &TypeHomes::unknown(),
+            ) else {
                 continue;
             };
             let ours = facts
@@ -3537,6 +3657,100 @@ mod tests {
         assert!(
             file_fqn("pkg", "", "src/index.ts").is_err(),
             "a file with no module path has no identity, and inventing one is fabrication"
+        );
+    }
+    /// A member of a type NOTHING FIRST-PARTY DECLARES is the boundary, and the
+    /// walk mints no identity for it.
+    ///
+    /// The receiver is known here — `Record<string, string>` is written down —
+    /// and it is the language's, not ours. Filing `hooks` under the reading
+    /// file's own module invents a first-party member of a type this scan does
+    /// not declare, which is the exact fabrication the Rust walk stopped doing
+    /// at 6,109 sites (R4). MEASURED in TypeScript: 938 field reads minted one,
+    /// 644 of them on `Record` alone.
+    ///
+    /// MUTATION: answer `Home::NotOurs` with the use site's module and a
+    /// candidate appears in place of the reason.
+    #[test]
+    fn a_receiver_of_a_type_no_first_party_declares_mints_no_member_on_it() {
+        let facts = read_in(
+            "lib/fixture",
+            "src/lib/fixture.ts",
+            "export function go(r: Record<string, string>): string { return r.hooks; }\n",
+            &TypeHomes::unknown(),
+        );
+        let hooks: Vec<String> = targets(&facts)
+            .into_iter()
+            .filter(|(name, _)| name == "hooks")
+            .map(|(_, t)| t)
+            .collect();
+        assert_eq!(
+            hooks,
+            vec!["ExternalBoundary".to_string()],
+            "the receiver IS typed and the type is outside, so this is the boundary and not a \
+             first-party member nobody declared"
+        );
+    }
+
+    /// TWO first-party modules answering to one type name is not one home, and
+    /// picking the first is a coin toss recorded as a fact.
+    ///
+    /// The negative half of the rung above: the table can say `Ours`, and it can
+    /// also say it knows two places. A walk that collapses the second into the
+    /// first mints a member on whichever module sorted earlier, and the edge
+    /// points at a real node that is the wrong one (R4).
+    ///
+    /// MUTATION: fold `Home::Ambiguous` in with `Home::Ours` and a candidate
+    /// naming one of the two `Widget`s appears here.
+    #[test]
+    fn two_first_party_modules_answering_to_one_type_name_mint_no_member() {
+        let unknown = TypeHomes::unknown();
+        let a = read_in("lib/a", "src/lib/a.ts", "export class Widget { m() {} }\n", &unknown);
+        let b = read_in("lib/b", "src/lib/b.ts", "export class Widget { m() {} }\n", &unknown);
+        let homes = TypeHomes::of(a.symbols.iter().chain(b.symbols.iter()).map(|s| ("pkg", s)));
+
+        let caller = read_in(
+            "lib/c",
+            "src/lib/c.ts",
+            "export function go(w: Widget): void { w.m(); }\n",
+            &homes,
+        );
+        let m: Vec<String> =
+            targets(&caller).into_iter().filter(|(name, _)| name == "m").map(|(_, t)| t).collect();
+        assert_eq!(
+            m,
+            vec!["AmbiguousCandidates".to_string()],
+            "two homes is a different answer from one home, and the walk must not resolve it \
+             by picking"
+        );
+    }
+
+    /// A type the file declares ITSELF is placed by the file, whatever a later
+    /// barrier says — and that is what keeps every single-file fixture, and the
+    /// first of the scan's two passes, working.
+    ///
+    /// The type table is a BARRIER artifact built from a completed pass, so the
+    /// pass that builds it is handed an empty one. Without the file's own answer
+    /// first, every locally declared type would read as external on that pass
+    /// and the table would be built from a walk that had already given up.
+    ///
+    /// MUTATION: drop the file's own declarations from `home_of` and this goes
+    /// red with `ExternalBoundary` while the table is empty.
+    #[test]
+    fn a_type_this_file_declares_is_its_own_home_even_with_no_table() {
+        let facts = read_in(
+            "lib/fixture",
+            "src/lib/fixture.ts",
+            "export function go(): void { const w = new Widget(); w.m(); }\n\
+             export class Widget { m(): void {} }\n",
+            &TypeHomes::unknown(),
+        );
+        let m: Vec<String> =
+            targets(&facts).into_iter().filter(|(name, _)| name == "m").map(|(_, t)| t).collect();
+        assert_eq!(
+            m,
+            vec!["typescript\u{b7}pkg\u{b7}lib/fixture\u{b7}Widget\u{b7}m\u{b7}item".to_string()],
+            "the nearest home there is, and it is read before the table is consulted"
         );
     }
 }

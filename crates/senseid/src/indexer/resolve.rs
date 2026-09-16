@@ -1491,6 +1491,42 @@ mod tests {
         assert_placed(caller, "rust·p·db·PgStore·url·field");
     }
 
+    /// The SAME question in TypeScript, and it is not the same answer for free.
+    ///
+    /// Rust's half above works because the Rust walk is TOLD where a type lives
+    /// and names the member under the type's home. The JavaScript reader was
+    /// handed that table and threw it away, filing every member under the module
+    /// of the file doing the READING — so the two sides of one field spelled two
+    /// identities and could never meet, whatever the ladder did.
+    ///
+    /// MEASURED over this repository: 936 unresolved TypeScript field reads
+    /// minted a candidate whose only defect was the module segment, and NOT ONE
+    /// of the 1,997 candidates minted at field reach named a declaration this
+    /// scan holds.
+    ///
+    /// MUTATION: put the reading file's own module back in `member_of` and this
+    /// goes red while the rust twin above stays green — which is the whole point
+    /// of having both.
+    #[test]
+    fn a_typescript_field_is_named_under_the_module_its_class_is_declared_in() {
+        let scanned = scan_of(
+            &javascript::TypeScriptAdapter,
+            &[
+                ("e2e/helpers", "app/e2e/helpers.ts", "export class ErrBuf { error = ''; }\n"),
+                (
+                    "e2e/tests/activity",
+                    "app/e2e/tests/activity.ts",
+                    "import { ErrBuf } from '../helpers';\n\
+                     export function show(): string { const b = new ErrBuf(); return b.error; }\n",
+                ),
+            ],
+        );
+        assert_placed(
+            file_of(&scanned, "app/e2e/tests/activity.ts"),
+            "typescript·p·e2e/helpers·ErrBuf·error·field",
+        );
+    }
+
     /// Rung 2, red-first, for a language whose specifier does NOT name the
     /// binding.
     ///
