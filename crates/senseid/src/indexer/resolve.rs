@@ -1325,6 +1325,40 @@ mod tests {
         );
     }
 
+    /// A JavaScript PRIVATE member, reached from inside its own class.
+    ///
+    /// The declaration side has always spelled it with the hash — `property_name`
+    /// turns a `PrivateIdentifier` into `#hydrate` — and `this` inside a class
+    /// body already types to that class. So both halves of the identity were
+    /// there and the two never met, because the use site `this.#hydrate(api)` is
+    /// a `PrivateFieldExpression`, a shape the walk had no arm for anywhere.
+    ///
+    /// A call fell to the callee catch-all and came out `DynamicDispatch` with
+    /// an EMPTY observation list, which is terminal by construction: the ladder
+    /// climbs only for `Unplaced`, and with no candidate there is nothing to
+    /// climb to. A read or a write was dropped outright.
+    ///
+    /// MEASURED at 25 private methods and 45 private fields declared with no
+    /// inbound edge, against 58 call sites and 167 reads and writes.
+    #[test]
+    fn a_private_member_is_reached_from_inside_the_class_that_declares_it() {
+        let scanned = scan_of(
+            &javascript::TypeScriptAdapter,
+            &[(
+                "lib/scan",
+                "src/lib/scan.ts",
+                "export class ScanState {\n\
+                 \x20 #api = 0;\n\
+                 \x20 #hydrate(n: number): number { return n + this.#api; }\n\
+                 \x20 start(n: number): number { return this.#hydrate(n); }\n\
+                 }\n",
+            )],
+        );
+        let facts = file_of(&scanned, "src/lib/scan.ts");
+        assert_placed(facts, "typescript·p·lib/scan·ScanState·#hydrate·item");
+        assert_placed(facts, "typescript·p·lib/scan·ScanState·#api·field");
+    }
+
     /// Every reference's outcome, as text: the identity it was placed at, or the
     /// reason it was not and the name that defeated the ladder. Written this way
     /// so an assertion names what it wants instead of indexing into a vector.
