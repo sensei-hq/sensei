@@ -26,7 +26,7 @@ use super::barrier;
 use super::facts::{FileFacts, RefKind, RelationKind, Resolution, SymbolKind};
 use super::fqn::Reach;
 use super::lang::{self, Source, TypeHomes};
-use super::resolve::{World, members_declared_by, resolve};
+use super::resolve::{World, members_declared_by, resolve, returns_declared_by};
 
 /// The directory a file's package is rooted at, from the file's own path.
 ///
@@ -127,11 +127,13 @@ pub(super) fn read_the_corpus() -> Vec<Read> {
         .map(|s| s.name.clone())
         .collect();
     let declared_members = members_declared_by(anchored.iter().map(|r| &r.facts));
+    let returns = returns_declared_by(anchored.iter().map(|r| &r.facts));
     let scanned = BTreeSet::new();
     let world = World {
         first_party: &first_party,
         first_party_members: &first_party_members,
         declared_members: &declared_members,
+        returns: &returns,
         scanned: &scanned,
     };
     anchored
