@@ -195,11 +195,16 @@ pub async fn reconcile(
     let here = stated.located();
     let now = stated.claims();
     let before = store.claims_of_file(folder_id, &here.path).await?;
+    // The one identity this file claims by EXISTING rather than by declaring.
+    // The brake subtracts it so that a file which declares nothing is still
+    // recognised as declaring nothing once it emits a module for itself.
+    let its_own_module =
+        persist::file_identity_of(here.language, &here.package, &here.module, &here.path)?;
 
     // R10.3's brake. Only an INFERRED emptiness is braked: a file that is
     // `Gone` was observed to be absent, and re-reading it would only re-observe
     // that.
-    let braked = match brake(stated, &before, &now, again) {
+    let braked = match brake(stated, &its_own_module, &before, &now, again) {
         Ok(brake) => brake,
         Err(held) => {
             return Ok(Reconciled {
@@ -328,21 +333,40 @@ async fn drop_stale_occurrences(
 /// [`Reconciled`] rather than propagating it.
 fn brake(
     stated: &Stated,
+    its_own_module: &str,
     before: &BTreeSet<String>,
     now: &BTreeSet<String>,
     again: &dyn Fn() -> Result<Stated, String>,
 ) -> Result<Brake, Held> {
     // A file that is GONE was observed to be absent. Nothing was inferred from a
     // parse, so there is nothing to confirm.
-    if matches!(stated, Stated::Gone(_)) || !now.is_empty() || before.is_empty() {
+    if matches!(stated, Stated::Gone(_)) || declared(now, its_own_module) > 0 || before.is_empty() {
         return Ok(Brake::NotNeeded);
     }
     match again() {
         // The file really does declare nothing now.
-        Ok(second) if second.claims().is_empty() => Ok(Brake::Confirmed),
-        Ok(second) => Err(Held::SecondReadClaimed(second.claims().len())),
+        Ok(second) if declared(&second.claims(), its_own_module) == 0 => Ok(Brake::Confirmed),
+        Ok(second) => Err(Held::SecondReadClaimed(declared(&second.claims(), its_own_module))),
         Err(why) => Err(Held::SecondReadFailed(why)),
     }
+}
+
+/// How many identities a read claims BEYOND the file's own existence.
+///
+/// The brake asks "did this read declare nothing", and a file's own module is
+/// not a declaration the file made — it is the file being there at all. Once
+/// every parsed file emits one [`SymbolKind::Module`] for itself, `claims()` is
+/// never empty for a parsed file, so a trigger written as `now.is_empty()`
+/// would never fire again and R10.3's damaged-parse defence would be gone for
+/// every language at once — silently, because nothing fails when a brake stops
+/// braking.
+///
+/// Subtracting exactly one known identity rather than filtering by kind: the
+/// claim sets are strings, the file identity is the one string this file is
+/// entitled to claim for free, and a kind test would need the symbols the brake
+/// deliberately does not take.
+fn declared(claims: &BTreeSet<String>, its_own_module: &str) -> usize {
+    claims.iter().filter(|claim| claim.as_str() != its_own_module).count()
 }
 
 #[cfg(test)]
@@ -750,6 +774,62 @@ mod tests {
         assert_eq!(done.wrote, Wrote::Nothing, "and must not write the half it did read either");
         assert_eq!(node_rows(&store, &folder, None).await, nodes, "no node moved");
         assert_eq!(edge_rows(&store, &folder, None).await, edges, "no edge moved");
+    }
+
+    /// R10.3's brake must survive a file declaring its own MODULE.
+    ///
+    /// The brake's trigger is "this read claims nothing". Once every parsed
+    /// file emits one [`SymbolKind::Module`] for itself, no parsed file ever
+    /// claims nothing again — `claims()` is exactly the symbol fqn set — so the
+    /// trigger would never fire and the damaged-parse defence would be GONE,
+    /// silently and for every language at once. A truncated read that today
+    /// prunes nothing until a second read agrees would instead apply its empty
+    /// diff and demote every real declaration in the file.
+    ///
+    /// So the trigger is re-anchored on what a file claims BEYOND its own
+    /// existence. Landed BEFORE any file-module is emitted, so the property
+    /// never has a window in which it is dead.
+    ///
+    /// Tested against `brake` directly rather than through `reconciled`,
+    /// because the claim sets are the brake's actual inputs and a DB round trip
+    /// would only re-derive them.
+    #[test]
+    fn a_file_claiming_nothing_but_its_own_module_still_trips_the_brake() {
+        let its_own_module =
+            persist::file_identity_of(Language::Rust, "bell", "bell", "src/bell.rs")
+                .expect("a rust file has a module identity");
+
+        let before = BTreeSet::from(["rust·bell·bell·toll·item".to_string()]);
+        let now = BTreeSet::from([its_own_module.clone()]);
+        let damaged = stated("bell", "src/bell.rs", "//! the read was truncated");
+        let intact = || Ok(stated("bell", "src/bell.rs", "pub fn toll() {}"));
+
+        assert_eq!(
+            brake(&damaged, &its_own_module, &before, &now, &intact),
+            Err(Held::SecondReadClaimed(1)),
+            "a file whose ONLY claim is its own module has declared nothing, and the second \
+             read found a declaration — so the first read was damaged"
+        );
+    }
+
+    /// The other half: a file that really did lose its declarations still
+    /// reconciles, and is not held forever by its own module identity.
+    #[test]
+    fn a_file_emptied_down_to_its_own_module_is_confirmed_not_held() {
+        let its_own_module =
+            persist::file_identity_of(Language::Rust, "bell", "bell", "src/bell.rs")
+                .expect("a rust file has a module identity");
+
+        let before = BTreeSet::from(["rust·bell·bell·toll·item".to_string()]);
+        let now = BTreeSet::from([its_own_module.clone()]);
+        let emptied = stated("bell", "src/bell.rs", "//! nothing");
+        let agrees = || Ok(stated("bell", "src/bell.rs", "//! nothing"));
+
+        assert_eq!(
+            brake(&emptied, &its_own_module, &before, &now, &agrees),
+            Ok(Brake::Confirmed),
+            "both reads agree it declares nothing of its own, so the diff applies"
+        );
     }
 
     /// A second read that FAILS is not a confirmation. An unreadable file is not
