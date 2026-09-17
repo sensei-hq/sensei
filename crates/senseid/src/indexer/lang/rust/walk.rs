@@ -13,7 +13,7 @@ use tree_sitter::Node;
 use super::super::common::{Miss, considered};
 use super::super::{Home, Source, TypeHomes};
 use super::MODULE;
-use super::types::{element_type, simple_type_name};
+use super::types::{element_type, extracted_type, simple_type_name};
 use super::types::{type_path, type_segment};
 use crate::indexer::facts::{
     Binding, DeclaredType, Fqn, Import, ImportOrigin, Language, Observation, Param, Reason,
@@ -768,16 +768,62 @@ impl<'a> Walk<'a> {
             .filter(|p| p.kind() == "parameter")
             .filter_map(|p| {
                 let pattern = p.child_by_field_name("pattern")?;
-                // Only a plain name. A destructuring parameter binds several
-                // names of several types, and giving each the whole type is
-                // false.
-                if pattern.kind() != "identifier" {
-                    return None;
+                let ty = self.text(p.child_by_field_name("type")?);
+                match pattern.kind() {
+                    "identifier" => {
+                        simple_type_name(ty).map(|t| (self.text(pattern).to_string(), t))
+                    }
+                    // `State(state): State<AppState>` — a wrapper binding ONE
+                    // name. The old rule refused every pattern that was not a
+                    // bare identifier, on the grounds that a destructuring
+                    // parameter binds several names of several types. True of
+                    // `(a, b): (X, Y)`; false here, and the type is written
+                    // beside it.
+                    "tuple_struct_pattern" => self.one_binding_of(pattern, ty),
+                    // Still refused: several names, or a shape nothing states.
+                    _ => None,
                 }
-                let ty = p.child_by_field_name("type")?;
-                simple_type_name(self.text(ty)).map(|t| (self.text(pattern).to_string(), t))
             })
             .collect()
+    }
+
+    /// The `(name, type)` a ONE-BINDING tuple-struct pattern states, or `None`.
+    ///
+    /// Three gates, in this order, and the order is the point:
+    ///
+    /// 1. EXACTLY ONE binding. `Pair(a, b)` binds two names and no single type
+    ///    belongs to both — this is the case the blanket refusal was written
+    ///    for, and it stays refused. Checked FIRST, so a field-0 lookup can
+    ///    never make a two-name pattern look answerable.
+    /// 2. A FIRST-PARTY newtype is read from its own declaration: field 0's
+    ///    declared type, which states what it holds instead of assuming it.
+    /// 3. Otherwise an EXTERNAL wrapper on the named list, where the single
+    ///    type argument is the answer. Anything else states nothing.
+    fn one_binding_of(&self, pattern: Node<'_>, ty: &str) -> Option<(String, String)> {
+        let mut cursor = pattern.walk();
+        let children: Vec<Node<'_>> = pattern.named_children(&mut cursor).collect();
+        // The FIRST child is the constructor — `State` in `State(state)` — and
+        // the bindings are what follow it. Counting every identifier instead
+        // would count the constructor as a binding and refuse every one-name
+        // pattern as if it bound two.
+        let [_constructor, bound @ ..] = &children[..] else { return None };
+        // Exactly one, and a plain name: `Pair(a, b)` binds two names that no
+        // single type belongs to, and `Wrap(Inner(x))` binds through a nested
+        // pattern this does not follow.
+        let [name] = bound else { return None };
+        if name.kind() != "identifier" {
+            return None;
+        }
+        let name = self.text(*name).to_string();
+
+        // The wrapper's own name, off the declared TYPE rather than the
+        // pattern: the type is what a lookup is keyed by, and a pattern may
+        // spell a path (`axum::extract::State(s)`) the declaration never does.
+        let head = simple_type_name(ty)?;
+        if let Some(declared) = self.declared_fields.get(&head).and_then(|f| f.get("0")) {
+            return simple_type_name(declared).map(|t| (name, t));
+        }
+        extracted_type(ty).map(|t| (name, t))
     }
 
     /// A struct, union, enum or trait: a named type whose body declares members
@@ -821,6 +867,17 @@ impl<'a> Walk<'a> {
             return BTreeMap::new();
         };
         let mut cursor = body.walk();
+        // A TUPLE STRUCT names its fields by POSITION. Keyed by the index, in
+        // the same spelling [`Walk::positional_fields`] uses when it emits
+        // them — field "0", then "1" — so the type of a field and the identity
+        // of that field cannot disagree about what it is called.
+        if body.kind() == "ordered_field_declaration_list" {
+            return body
+                .children_by_field_name("type", &mut cursor)
+                .enumerate()
+                .map(|(position, ty)| (position.to_string(), self.text(ty).to_string()))
+                .collect();
+        }
         body.named_children(&mut cursor)
             .filter(|c| c.kind() == "field_declaration")
             .filter_map(|f| {
