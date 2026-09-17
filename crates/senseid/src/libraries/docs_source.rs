@@ -46,6 +46,18 @@ impl DocRoute {
             DocRoute::Local => "local",
         }
     }
+
+    /// The route a stored `sensei.library_source_type` came from — the inverse
+    /// of [`DocRoute::as_source_type`], and here rather than at the query so
+    /// the two directions cannot drift apart. A value this module does not know
+    /// reads as [`DocRoute::Local`], which is what an unlabelled local page is.
+    pub fn of_source_type(source_type: Option<&str>) -> Self {
+        match source_type {
+            Some("llms.txt") => DocRoute::Website,
+            Some("http") => DocRoute::GitHub,
+            _ => DocRoute::Local,
+        }
+    }
 }
 
 /// A source that could serve this library's docs, and the version it holds.
@@ -97,6 +109,33 @@ impl VersionFit {
 pub struct DocChoice {
     pub route: DocRoute,
     pub fit: VersionFit,
+}
+
+impl DocChoice {
+    /// Whether one HELD version — its version string and the
+    /// `library_source_type` it was stored under — is the one this choice
+    /// names.
+    ///
+    /// A caller gets a choice back and still has to find the row that serves
+    /// it, and that map-back belongs here rather than at the query: it has to
+    /// ask the same question [`choose_docs`] asked, and a second spelling of
+    /// "is this the pinned release" is a second answer waiting to disagree.
+    ///
+    /// The ROUTE alone never names a row. Two versions of one library are held
+    /// through the same route whenever their `source_type` agrees, which is the
+    /// ordinary case, so route alone admits both and a caller scanning an
+    /// unordered result set takes whichever came back first. On the EXACT path
+    /// that is an UNLABELLED answer about a release the caller does not run —
+    /// the one outcome this module exists to prevent (R4).
+    pub fn is_served_by(&self, version: &str, source_type: Option<&str>, pinned: &str) -> bool {
+        DocRoute::of_source_type(source_type) == self.route
+            && match &self.fit {
+                VersionFit::Exact => same_version(version, pinned, &parse_semver(pinned)),
+                VersionFit::Mismatch { serves, .. } => version == serves,
+                // Nothing stated a version, so no version can disqualify a row.
+                VersionFit::Unknown => true,
+            }
+    }
 }
 
 /// Pick the documentation source to serve for a pinned version (S9). PURE.
@@ -186,6 +225,58 @@ mod tests {
 
     fn c(route: DocRoute, version: Option<&str>) -> DocCandidate {
         DocCandidate { route, version: version.map(str::to_string) }
+    }
+
+    /// An EXACT choice names one held version, not every version stored the
+    /// same way.
+    ///
+    /// The two versions of a library a store holds are normally stored through
+    /// the SAME route, so route alone does not tell them apart. The caller
+    /// finds its row by scanning what the database returned, and that query has
+    /// no total order — so a map-back on route alone serves whichever row came
+    /// back first and labels it EXACT. MEASURED: this failed
+    /// `docs_are_served_for_the_version_a_folder_pins_and_labelled_when_they_cannot_be`
+    /// intermittently, serving 3.0.0's pages to a folder pinned at 1.2.0 with
+    /// no caveat — a confident answer about an API the caller does not have,
+    /// which is the one outcome this module exists to prevent (R4).
+    ///
+    /// The held versions are listed NEWEST FIRST on purpose: in the pinned
+    /// order the bug cannot show.
+    #[test]
+    fn an_exact_choice_is_served_only_by_the_release_that_was_pinned() {
+        let held = [("3.0.0", Some("local")), ("1.2.0", Some("local"))];
+        let choice = choose_docs(
+            "1.2.0",
+            &[c(DocRoute::Local, Some("3.0.0")), c(DocRoute::Local, Some("1.2.0"))],
+        )
+        .unwrap();
+        assert_eq!(choice.fit, VersionFit::Exact, "1.2.0 is held, so the fit is exact");
+
+        let served: Vec<&str> = held
+            .iter()
+            .filter(|(v, st)| choice.is_served_by(v, *st, "1.2.0"))
+            .map(|(v, _)| *v)
+            .collect();
+        assert_eq!(served, ["1.2.0"], "only the pinned release serves an exact choice");
+    }
+
+    /// `v1.2.0` and `1.2.0` are one release, so the map-back has to ask
+    /// [`same_version`] rather than compare strings — the same predicate
+    /// `choose_docs` used to call the fit exact.
+    #[test]
+    fn a_held_version_spelled_with_a_v_still_serves_the_pin_it_matches() {
+        let choice = choose_docs("1.2.0", &[c(DocRoute::Local, Some("v1.2.0"))]).unwrap();
+        assert_eq!(choice.fit, VersionFit::Exact);
+        assert!(choice.is_served_by("v1.2.0", Some("local"), "1.2.0"));
+    }
+
+    /// A stored `library_source_type` reads back as the route that wrote it.
+    #[test]
+    fn a_stored_source_type_reads_back_as_the_route_that_wrote_it() {
+        for route in [DocRoute::Website, DocRoute::GitHub, DocRoute::Local] {
+            assert_eq!(DocRoute::of_source_type(Some(route.as_source_type())), route);
+        }
+        assert_eq!(DocRoute::of_source_type(None), DocRoute::Local, "an unlabelled page is local");
     }
 
     #[test]
