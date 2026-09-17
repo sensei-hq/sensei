@@ -1,39 +1,39 @@
 # Checkpoint
 
-**Slice** — indexer-v2, receiver typing. rust `lost` **2048 → 1855** this
-session. Rationale: `/sensei:session status` + commit bodies.
+**Slice** — indexer-v2, reach correctness. Full plan + the ~25 breaking tests:
+`/sensei:session status` + commit bodies.
 
-**Done** — 24 commits. `binding_of` segment fix (582ce311). Container
-reporting (e7bf8ae6, a9d5c427): a container's row is its COUNT only — `not
-called` was the wrong word, `not imported` a false claim. One-binding
-destructured params (e256f572): Field calls 758→936, lost 1441→1248.
-Gate: fmt clean, clippy `-D warnings` 0, workspace 3575 / 0.
+**Done** — 27 commits. rust: `binding_of` segment fix (582ce311), container
+reporting (e7bf8ae6, a9d5c427), one-binding destructured params (e256f572,
+lost 2048→1855). **java reach fix (86543e96)** — a field declaration mints at
+`Reach::Field` but every member use site was minted at `Reach::Item`, so a
+field read could never meet its own declaration: **Field calls 0→3190**, TOTAL
+lost 8697→8550. File-module step 1/10 (b983367a): re-anchored R10.3's brake,
+which `now.is_empty()` would have killed silently once every file claims
+itself. Gate: fmt clean, clippy 0, workspace 3580/0, java ratchets 4/4.
 
-**FQN scheme is not the gap — don't re-open.** Field FQNs are already
-type-qualified (`Form::Member.ty`, `Required::Yes`, fqn.rs:237-242). The
-qualifier is unfillable at the USE site and the walk won't invent one, so it
-records a bare name — hence `lost_exact = 0` is guaranteed.
+**Corrected** — "+1262 file-modules" here was WRONG: 373 of 389 rust file
+identities already come from `mod x;`, so rust gains ~16. Web 946→622 distinct.
 
-**5347 untyped field reads** — 2290 closure/match · **632 destructured param,
-FIXED** · 616 path call · 595 plain call · 446 method chain (external, rightly
-refused) · 378 chained/indexed · 150 call receiver. **Grading:** unresolved
-SITES by `Reason`; `lost` is the alarm only (reliably 0 good, high = look).
+**Unpredicted cost** — java EnumVariant calls 280→38. The move strands nothing
+in the WALK but does in the LADDER (`refer_to_member`'s unresolved branch still
+emits `Reach::Item`), and that stays so deliberately: threading Field hits the
+field guard before `through_an_import`, stripping library edges off every
+`Lib.FIELD` read. Net +2933 for −242 — fix the guard, not the reach.
 
-**Next — the file-module node.** User-approved, unchanged.
+**Next — file-module steps 2-10**, ordered, red-first: exclude the file's own
+identity from `Ladder::blocks` (a whole-file span otherwise doubles the last
+module segment at every site) → re-pin `enumerable()` → emit in rust (389
+files, 0 collisions) → emit in javascript (272 fqns multi-claimed) → add
+`RelationKind::Contains`, no emission → emit it → wire `persist::owners()` with
+explicit Owns-over-Contains → guard that Contains never becomes a declared
+member → re-measure every `#[ignore]d` ratchet by running it.
 
-1. One `SymbolKind::Module` per FILE, at `Reach::Mod`, from `FileFacts.module`.
-2. `RelationKind::Contains` — feeds `parent_id` alongside `Owns`. MUST NOT be
-   read by `members_declared_by` (resolve.rs:285-292), or a member call
-   resolves onto a module (R4).
-3. `RefKind::Imports` — import→module edges.
+`Contains` feeds `parent_id` ONLY, no edge row: `edge_kind.ddl` has no
+'contains' and graph.rs:1810 already deleted 7,916 rows of that shape.
 
-Missing: no `Contains` variant (facts.rs:666-682); `parent_id` fed only by
-`Owns` (reconcile.rs:1129). The 325 Module nodes are inline `mod` blocks; the
-+1262 file-modules land in the container count, harmless now.
-
-    cargo test -p senseid --bin senseid -- --ignored --nocapture \
-      indexer::acceptance::every_source_node_is_reached_by_a_test_and_then_by_other_source
-
-**Open** — bare identifier READ a reference? (ts Const 2707 / rust Const 436).
-`Arc<T>` in `simple_type_name`. **Known broken** —
-`real_dbd_single_file_has_deploy_component` reads an absent `~/Developer/dbd-rs`.
+**Step 11 (imports)** — decided, not built: `can_be_named()==false` restated as
+"call-shaped", `ReachedBy::Import` gets real columns, module lost derives from
+Imports evidence. Needs a per-shape target rule — `use a::b::C` names an ITEM.
+Java excluded. **TS/Svelte** — decomposed, not started, RE-MEASURE first: the
+numbers predate 7 indexer commits including one attacking the same bucket.
