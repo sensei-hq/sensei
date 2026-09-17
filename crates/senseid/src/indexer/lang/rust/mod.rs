@@ -566,6 +566,114 @@ mod tests {
         );
     }
 
+    /// A parameter destructured by a ONE-BINDING wrapper is typed, and the
+    /// type is the one written in the signature beside it.
+    ///
+    /// `param_bindings` refused every pattern that was not a bare identifier,
+    /// on the grounds that "a destructuring parameter binds several names of
+    /// several types". That is true of `(a, b): (X, Y)` and false of this: one
+    /// name, and the type argument is right there. MEASURED on this workspace:
+    /// 470 parameters take this shape and ALL of them are the four axum
+    /// extractors — `State` 240, `Path` 105, `Json` 78, `Query` 47 — worth 632
+    /// otherwise-untyped field reads, the single largest recoverable group.
+    #[test]
+    fn a_one_binding_extractor_parameter_is_typed_by_its_type_argument() {
+        let resolved: Vec<String> = targets(
+            "pub struct AppState;\n\
+             impl AppState { pub fn pg(&self) -> u32 { 1 } }\n\
+             pub fn go(State(state): State<AppState>) -> u32 { state.pg() }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "pg")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(
+            resolved,
+            vec!["rust·p·m·AppState·pg·item".to_string()],
+            "`State(state): State<AppState>` binds one name, and the signature states its type"
+        );
+    }
+
+    /// A FIRST-PARTY newtype is typed from its own DECLARATION, not from the
+    /// type argument — because we indexed the declaration and it is the only
+    /// thing that actually says what field 0 holds.
+    ///
+    /// The two halves are different rules on purpose. `State<AppState>` is
+    /// external: nothing tells us its field 0 is its type argument except that
+    /// we listed it. `Wrap(Config)` is ours: the answer is read, not assumed.
+    #[test]
+    fn a_one_binding_first_party_newtype_is_typed_by_its_declared_field() {
+        let resolved: Vec<String> = targets(
+            "pub struct Config;\n\
+             impl Config { pub fn width(&self) -> u32 { 1 } }\n\
+             pub struct Wrap(Config);\n\
+             pub fn go(Wrap(c): Wrap) -> u32 { c.width() }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "width")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(
+            resolved,
+            vec!["rust·p·m·Config·width·item".to_string()],
+            "the declaration says field 0 is a `Config`, so the binding is one"
+        );
+    }
+
+    /// SEVERAL names is still refused, which is the case the original blanket
+    /// rule was actually written for.
+    ///
+    /// `Pair`'s field 0 IS a `Config`, so a rule that looked up field 0 without
+    /// first counting the bindings would type `a` and look correct here — and
+    /// then type `b` as a `Config` too on a `Pair(Config, Widget)`. The count
+    /// is the guard, not the lookup.
+    #[test]
+    fn a_parameter_binding_several_names_is_still_refused() {
+        let shown: Vec<String> = targets(
+            "pub struct Config;\n\
+             impl Config { pub fn width(&self) -> u32 { 1 } }\n\
+             pub struct Pair(Config, Config);\n\
+             pub fn go(Pair(a, _b): Pair) -> u32 { a.width() }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "width")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(
+            shown,
+            vec!["UNRESOLVED(ReceiverTypeUnknown) width".to_string()],
+            "two names, and attributing one field's type to both is the false claim"
+        );
+    }
+
+    /// A wrapper that is NEITHER first-party NOR on the list states nothing.
+    ///
+    /// The list is what keeps this narrow. `struct W<T>(Vec<T>)` has a single
+    /// type argument and a single field, and its field is NOT its argument — so
+    /// unwrapping any single-argument generic would mint `u32` where the truth
+    /// is `Vec<u32>`, and a wrong receiver type mints a wrong key (R4).
+    #[test]
+    fn a_one_binding_wrapper_we_know_nothing_about_is_refused() {
+        let shown: Vec<String> = targets(
+            "pub struct Config;\n\
+             impl Config { pub fn width(&self) -> u32 { 1 } }\n\
+             pub fn go(Mystery(m): Mystery<Config>) -> u32 { m.width() }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "width")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(
+            shown,
+            vec!["UNRESOLVED(ReceiverTypeUnknown) width".to_string()],
+            "nothing here says what `Mystery`'s field 0 holds, so nothing is claimed"
+        );
+    }
+
     /// A binding the walk cannot type stays UNRESOLVED. It does not fall back to
     /// the enclosing type, and it does not guess from the member name — a wrong
     /// receiver type mints a wrong identity, and R4 ranks that below no answer.
