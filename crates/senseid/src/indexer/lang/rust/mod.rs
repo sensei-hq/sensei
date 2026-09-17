@@ -475,6 +475,97 @@ mod tests {
         assert_eq!(resolved, vec!["rust·p·m·Config·script·item".to_string()]);
     }
 
+    /// A QUALIFIED associated call names its type in the second-to-last
+    /// segment, and the walk must read that one rather than the first.
+    ///
+    /// `Config::from_env()` worked only by accident: a two-segment path puts the
+    /// type first, so reading the head found it. Add a module in front and the
+    /// head is `crate` — which names no type, so the binding went untyped and
+    /// every member read off it became `ReceiverTypeUnknown`. MEASURED on this
+    /// workspace: 644 `let` bindings take this shape, including the
+    /// `sensei_bootstrap::SenseiConfig::from_env()` behind `cfg.db_url`.
+    ///
+    /// The LAST segment is the associated function, so the type is the one
+    /// before it. This is the arm that differs from the two below, which is why
+    /// it is tested apart from them.
+    #[test]
+    fn a_qualified_associated_call_names_its_type_in_the_segment_before_the_call() {
+        let resolved: Vec<String> = targets(
+            "pub struct Config;\n\
+             impl Config {\n\
+               pub fn from_env() -> Self { Config }\n\
+               pub fn script(&self) -> u32 { 1 }\n\
+             }\n\
+             pub fn go() -> u32 {\n\
+               let cfg = crate::m::Config::from_env();\n\
+               cfg.script()\n\
+             }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "script")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(
+            resolved,
+            vec!["rust·p·m·Config·script·item".to_string()],
+            "`crate::m::Config::from_env` names `Config`, not `crate`"
+        );
+    }
+
+    /// A QUALIFIED struct literal names its type in the LAST segment — the
+    /// opposite end from the associated call above, because no function name
+    /// follows it.
+    #[test]
+    fn a_qualified_struct_literal_names_its_type_in_the_last_segment() {
+        let resolved: Vec<String> = targets(
+            "pub struct Config { pub width: u32 }\n\
+             impl Config { pub fn script(&self) -> u32 { 1 } }\n\
+             pub fn go() -> u32 {\n\
+               let cfg = crate::m::Config { width: 1 };\n\
+               cfg.script()\n\
+             }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "script")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(
+            resolved,
+            vec!["rust·p·m·Config·script·item".to_string()],
+            "a qualified struct literal names `Config`, not `crate`"
+        );
+    }
+
+    /// A QUALIFIED unit struct names its own type, also in the last segment.
+    ///
+    /// Its own test rather than a case of the one above: a unit struct reaches
+    /// the walk as a bare path with no literal and no call around it, so it
+    /// arrives on a different arm and a fix to the other two would leave it
+    /// untyped.
+    #[test]
+    fn a_qualified_unit_struct_names_its_type_in_the_last_segment() {
+        let resolved: Vec<String> = targets(
+            "pub struct Provider;\n\
+             impl Provider { pub fn script(&self) -> u32 { 1 } }\n\
+             pub fn go() -> u32 {\n\
+               let p = crate::m::Provider;\n\
+               p.script()\n\
+             }\n",
+        )
+        .into_iter()
+        .filter(|(name, _)| name == "script")
+        .map(|(_, shown)| shown)
+        .collect();
+
+        assert_eq!(
+            resolved,
+            vec!["rust·p·m·Provider·script·item".to_string()],
+            "`crate::m::Provider` names `Provider`, not `crate`"
+        );
+    }
+
     /// A binding the walk cannot type stays UNRESOLVED. It does not fall back to
     /// the enclosing type, and it does not guess from the member name — a wrong
     /// receiver type mints a wrong identity, and R4 ranks that below no answer.

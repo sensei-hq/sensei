@@ -461,7 +461,8 @@ impl<'a> Walk<'a> {
     ///
     /// - `let x: T = …` — the annotation.
     /// - `let x = T::assoc(…)` / `let x = T { … }` — an initialiser whose path
-    ///   begins with the type.
+    ///   names the type. WHERE in the path it names it differs by shape, and
+    ///   the match below is what says which.
     ///
     /// Everything else returns `None`. `let x = helper()` names no type;
     /// inferring one from the function's return type is a different capability
@@ -487,12 +488,22 @@ impl<'a> Walk<'a> {
         }
 
         let value = node.child_by_field_name("value")?;
-        let path = match value.kind() {
-            // `T::assoc(…)`
-            "call_expression" => self.field_text(value, "function")?,
-            // `T { … }`
+        // Each shape says WHERE in its path the type is, because they disagree
+        // and a shared answer is wrong for two of the three. What they have in
+        // common is that the answer is handed to `simple_type_name` whole:
+        // that function already reads a path's last segment, so peeling one
+        // here as well would be a second place that decides what a path names.
+        let names_the_type = match value.kind() {
+            // `T::assoc(…)` — the last segment is the FUNCTION, so the type is
+            // the one before it. Reading the path's head instead worked only
+            // while the path was `T::assoc`; with a module or crate in front,
+            // the head is `crate`/`sensei_bootstrap` and names no type, so the
+            // binding went untyped and every member read off it was lost.
+            "call_expression" => self.field_text(value, "function")?.rsplit_once("::")?.0,
+            // `T { … }` — nothing follows the type, so the path names it.
             "struct_expression" => self.field_text(value, "name")?,
-            // `let p = MacOSProvider;` — a UNIT STRUCT names its own type.
+            // `let p = MacOSProvider;` — a UNIT STRUCT names its own type, and
+            // like the literal above it has no trailing segment to drop.
             //
             // `simple_type_name` requires a capitalised head, which is what
             // keeps a `let x = some_fn;` out. A `const` in PascalCase would slip
@@ -502,8 +513,7 @@ impl<'a> Walk<'a> {
             "identifier" | "scoped_identifier" => self.text(value),
             _ => return None,
         };
-        let head = path.split("::").next()?;
-        simple_type_name(head).map(|t| (name, t))
+        simple_type_name(names_the_type).map(|t| (name, t))
     }
 
     /// The `(name, callee)` a `let` binds when it states no type but its value
