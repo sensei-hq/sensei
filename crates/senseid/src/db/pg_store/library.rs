@@ -173,34 +173,16 @@ impl PgStore {
                 let candidates: Vec<DocCandidate> = rows
                     .iter()
                     .map(|(_, version, st)| DocCandidate {
-                        route: match st.as_deref() {
-                            Some("llms.txt") => DocRoute::Website,
-                            Some("http") => DocRoute::GitHub,
-                            _ => DocRoute::Local,
-                        },
+                        route: DocRoute::of_source_type(st.as_deref()),
                         version: Some(version.clone()),
                     })
                     .collect();
                 let choice = choose_docs(pin, &candidates)
                     .ok_or_else(|| "get_library_docs: no candidate".to_string())?;
-                // Map the chosen route+version back to its row.
+                // Map the choice back to the row that serves it.
                 let picked = rows
                     .iter()
-                    .find(|(_, v, st)| {
-                        let route = match st.as_deref() {
-                            Some("llms.txt") => DocRoute::Website,
-                            Some("http") => DocRoute::GitHub,
-                            _ => DocRoute::Local,
-                        };
-                        route == choice.route
-                            && match &choice.fit {
-                                crate::libraries::docs_source::VersionFit::Mismatch {
-                                    serves,
-                                    ..
-                                } => v == serves,
-                                _ => true,
-                            }
-                    })
+                    .find(|(_, v, st)| choice.is_served_by(v, st.as_deref(), pin))
                     .ok_or_else(|| "get_library_docs: choice did not map back".to_string())?;
                 (picked.0, Some(picked.1.clone()), choice.fit.label())
             }
