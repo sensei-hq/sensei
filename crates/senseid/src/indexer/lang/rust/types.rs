@@ -104,10 +104,32 @@ pub(super) fn element_type(collection: &str) -> Option<String> {
         return simple_type_name(inner.split(';').next().unwrap_or(inner));
     }
 
+    single_type_argument(t, SINGLE_ELEMENT_CONTAINERS)
+}
+
+/// The type a ONE-BINDING wrapper hands the name it binds — `State<AppState>`
+/// yields `AppState`.
+///
+/// For an EXTERNAL wrapper only. A first-party newtype is read from its own
+/// declaration instead, which states what field 0 holds rather than assuming
+/// it; this function exists because nothing in the index describes
+/// `axum::extract::State`, and a list is the only honest way to say what we
+/// know about it.
+pub(super) fn extracted_type(text: &str) -> Option<String> {
+    let t = text.trim().trim_start_matches('&').trim_start();
+    single_type_argument(t, SINGLE_FIELD_EXTRACTORS)
+}
+
+/// The single type argument `t` states, when its head is one of `allowed`.
+///
+/// Shared by [`element_type`] and [`extracted_type`], which ask the same
+/// question of the same syntax and differ only in which heads they accept. Two
+/// copies would be two places for the comma rule to be forgotten.
+fn single_type_argument(t: &str, allowed: &[&str]) -> Option<String> {
     let (head, inner) = t.split_once('<')?;
     let inner = inner.strip_suffix('>')?;
     // ONE type parameter. A pair means a map, and a map's element is a tuple.
-    if inner.contains(',') || !SINGLE_ELEMENT_CONTAINERS.contains(&head.trim()) {
+    if inner.contains(',') || !allowed.contains(&head.trim()) {
         return None;
     }
     simple_type_name(inner)
@@ -118,6 +140,24 @@ pub(super) fn element_type(collection: &str) -> Option<String> {
 /// `Iterator` impl says, which is not stated here.
 const SINGLE_ELEMENT_CONTAINERS: &[&str] =
     &["Vec", "VecDeque", "HashSet", "BTreeSet", "BinaryHeap", "Option", "Box", "Rc", "Arc"];
+
+/// External wrappers whose single field IS their type argument, so destructuring
+/// one in a parameter position hands the binding that argument.
+///
+/// A list for the same reason [`DEREF_WRAPPERS`] is one: the fact is about a
+/// type we do not index and cannot read. `struct W<T>(Vec<T>)` has one field and
+/// one type argument and its field is NOT its argument, so unwrapping any
+/// single-argument generic would mint `u32` where the truth is `Vec<u32>` (R4).
+///
+/// MEASURED rather than guessed: these four are EVERY one-binding destructured
+/// parameter in this workspace — `State` 240, `Path` 105, `Json` 78, `Query` 47
+/// — and nothing was added on the suspicion it might appear later.
+///
+/// `Path` here is the extractor, never `std::path::Path`. The two cannot be
+/// confused: this fires only on a tuple-struct PATTERN (`Path(id)`), and
+/// `std::path::Path` is unsized with no such pattern — a `&Path` parameter is a
+/// plain identifier and goes down the ordinary route.
+const SINGLE_FIELD_EXTRACTORS: &[&str] = &["State", "Path", "Json", "Query"];
 
 /// Types that deref to their parameter, so a member call on one is ambiguous
 /// between the wrapper and the inner type. See [`simple_type_name`].
