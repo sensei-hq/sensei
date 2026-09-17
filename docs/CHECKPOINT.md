@@ -10,18 +10,14 @@ destructured params (e256f572): Field calls 758→936, lost 1441→1248.
 Gate: fmt clean, clippy `-D warnings` 0, workspace 3575 / 0.
 
 **FQN scheme is not the gap — don't re-open.** Field FQNs are already
-type-qualified (`Form::Member.ty`, `Required::Yes`, fqn.rs:237-242) and
-`Reach::Field` already splits a field from a same-named method. The qualifier
-is unfillable at the USE site and the walk won't invent one, so it records a
-bare name. Hence `lost_exact = 0` is guaranteed: exact evidence needs a
-candidate, a candidate needs the type.
+type-qualified (`Form::Member.ty`, `Required::Yes`, fqn.rs:237-242). The
+qualifier is unfillable at the USE site and the walk won't invent one, so it
+records a bare name — hence `lost_exact = 0` is guaranteed.
 
 **5347 untyped field reads** — 2290 closure/match · **632 destructured param,
 FIXED** · 616 path call · 595 plain call · 446 method chain (external, rightly
-refused) · 378 chained/indexed · 150 call receiver.
-
-**Grading** — unresolved SITES by `Reason`; `lost` is the alarm only
-(reliably 0 good, high = investigate).
+refused) · 378 chained/indexed · 150 call receiver. **Grading:** unresolved
+SITES by `Reason`; `lost` is the alarm only (reliably 0 good, high = look).
 
 **Next — the file-module node.** User-approved, unchanged.
 
