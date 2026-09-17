@@ -604,10 +604,25 @@ struct Ladder<'a> {
 
 impl<'a> Ladder<'a> {
     fn new(facts: &'a FileFacts, grammar: &'a Grammar, world: &'a World<'a>) -> Self {
+        // The file's OWN module identity, which is a block this file sits IN
+        // rather than one nested inside it.
+        //
+        // `module_at` seeds from the file's module path and then appends every
+        // enclosing module block. An inline `mod b { }` really does add a
+        // segment; a per-file module does not — its span covers the whole file,
+        // so it encloses every site, and `a::b` would become `a::b::b` for
+        // every path rooted in this package. Filtered by IDENTITY and not by
+        // span or name: the identity is a string the adapter already mints,
+        // whereas a name test would also drop a genuine inline `mod b` inside
+        // `b.rs`, and a span test would depend on the emitter's choice of span.
+        let its_own = super::lang::adapter_for(facts.language)
+            .file_fqn(&facts.package, &facts.module, &facts.path)
+            .ok();
         let mut blocks: Vec<(Span, &str)> = facts
             .symbols
             .iter()
             .filter(|s| s.kind == SymbolKind::Module)
+            .filter(|s| its_own.as_ref() != Some(&s.fqn))
             .map(|s| (s.span, s.name.as_str()))
             .collect();
         // Outermost first, so reading them in order spells the module path. A
@@ -1557,6 +1572,85 @@ mod tests {
                 scanned: &scanned,
             },
         )
+    }
+
+    /// **A file's OWN module symbol must not extend the module path of what it
+    /// contains.**
+    ///
+    /// `module_at` seeds from the file's own module path and then appends the
+    /// name of every [`SymbolKind::Module`] block enclosing the span. That is
+    /// right for an inline `mod b { }`, which really does add a segment. It is
+    /// wrong for the file-module about to be emitted per FILE: its span covers
+    /// the whole file, so it encloses every site in it, and `a::b` becomes
+    /// `a::b::b` for every path rooted in this package — a fabricated module in
+    /// all 1,335 corpus files at once, with no compile error and no wrong type,
+    /// just resolution silently ceasing to match.
+    ///
+    /// The file-module is therefore filtered out of [`Ladder`]'s blocks by
+    /// IDENTITY rather than by span or by name: the file's own identity is a
+    /// string the adapter already mints, and a name test would also drop a
+    /// genuine inline `mod b` inside `b.rs`.
+    ///
+    /// Landed BEFORE the emission, so the doubling never reaches a corpus.
+    #[test]
+    fn a_files_own_module_symbol_does_not_extend_the_module_path_of_what_it_contains() {
+        use crate::indexer::facts::{DeclaredType, Span, Symbol, SymbolKind, Visibility};
+
+        let text = "pub fn helper() -> u32 { 1 }\npub fn go() -> u32 { self::helper() }\n";
+        let mut facts = rust::read(
+            &Source { package: "p", module: "a::b", path: "src/a/b.rs", text },
+            &TypeHomes::unknown(),
+        )
+        .expect("the fixture parses");
+
+        // The file-module the emission will add: the file's OWN identity, named
+        // after its last module segment, spanning the whole file.
+        let its_own = rust::RustAdapter
+            .file_fqn("p", "a::b", "src/a/b.rs")
+            .expect("a rust file has an identity");
+        facts.symbols.push(Symbol {
+            fqn: its_own,
+            kind: SymbolKind::Module,
+            name: "b".to_string(),
+            span: Span { start_line: 1, start_col: 1, end_line: 99, end_col: 99 },
+            visibility: Visibility::Public,
+            docstring: None,
+            declared_type: DeclaredType::Unstated,
+            params: Vec::new(),
+        });
+
+        let scanned = BTreeSet::new();
+        let resolved = resolve(
+            facts,
+            &rust::GRAMMAR,
+            &World {
+                first_party: &BTreeSet::from(["p".to_string()]),
+                first_party_members: &BTreeSet::new(),
+                declared_members: &BTreeSet::new(),
+                supplied_members: &SuppliedMembers::unknown(),
+                returns: &std::collections::BTreeMap::new(),
+                scanned: &scanned,
+            },
+        );
+
+        let helper: Vec<String> = resolved
+            .references
+            .iter()
+            .map(|r| match &r.target {
+                Resolution::Resolved { fqn, .. } => fqn.as_str().to_string(),
+                Resolution::Unresolved { reason, evidence } => {
+                    format!("UNRESOLVED({reason:?}) {}", evidence.name)
+                }
+            })
+            .filter(|shown| shown.contains("helper"))
+            .collect();
+
+        assert_eq!(
+            helper,
+            vec!["rust\u{00B7}p\u{00B7}a::b\u{00B7}helper\u{00B7}item".to_string()],
+            "`self::helper` sits in module `a::b`, not `a::b::b` — the file's own module \
+             symbol names the file, it does not nest inside it"
+        );
     }
 
     /// A whole SCAN of several files, run the way a real one is: every file
