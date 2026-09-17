@@ -277,7 +277,20 @@ impl<'a> Walk<'a> {
         // enums, at 16 emitted against 34 counted.
         self.children(scope, node);
         let Some(name) = self.field_text(node, "name") else { return };
-        let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
+        // [`Reach::Field`], because a field access is the ONLY shape that
+        // reaches one: `Status.ACTIVE` is a `field_access`, and this walk
+        // records references for `method_invocation`,
+        // `object_creation_expression` and `field_access` alone — a bare
+        // `ACTIVE` behind `import static` is not a reference it emits, so there
+        // is nothing at item reach left to strand.
+        //
+        // The other half of the field-reach fix, and it has to move WITH it.
+        // Threading the use site's reach through `refer_to_member` lands 9,932
+        // field edges; leaving the constant at `Reach::Item` would unland 2,856
+        // in the same change — dangling edges traded for dangling edges. The
+        // reach a declaration is minted at is a fact about how the language
+        // reaches it, and Java reaches its enum constants through a dot.
+        let Ok(fqn) = self.declare(scope, name, Reach::Field) else { return };
         self.owned_by_the_enclosing_type(scope, &fqn, span(node));
         self.symbols.push(Symbol {
             fqn,
@@ -616,7 +629,7 @@ impl<'a> Walk<'a> {
                     // No receiver is a call on `this` or a static import.
                     None => self.unplaced(name, node, Reach::Item),
                     Some(object) => match self.type_of(scope, object) {
-                        Some(ty) => self.refer_to_member(&ty, name, node),
+                        Some(ty) => self.refer_to_member(&ty, name, node, Reach::Item),
                         None => self.missed(name, node, Reason::ReceiverTypeUnknown, Reach::Item),
                     },
                 };
@@ -641,7 +654,7 @@ impl<'a> Walk<'a> {
                 let Some(field) = self.field_text(node, "field") else { return };
                 let target =
                     match node.child_by_field_name("object").and_then(|o| self.type_of(scope, o)) {
-                        Some(ty) => self.refer_to_member(&ty, field, node),
+                        Some(ty) => self.refer_to_member(&ty, field, node, Reach::Field),
                         None => self.missed(field, node, Reason::ReceiverTypeUnknown, Reach::Field),
                     };
                 self.references.push(Reference {
@@ -689,12 +702,22 @@ impl<'a> Walk<'a> {
 
     /// A member of a type this scope named. Placed only when the scan declares
     /// that type; otherwise the bare name goes to the ladder.
-    fn refer_to_member(&self, ty: &str, member: &str, at: Node<'_>) -> Resolution {
+    fn refer_to_member(&self, ty: &str, member: &str, at: Node<'_>, reach: Reach) -> Resolution {
         let Ok(ty) = super::type_segment(ty) else {
             return self.missed(member, at, Reason::UnhandledForm, Reach::Item);
         };
         // Only when the scan DECLARES the type. Anything else goes to the
         // ladder as a path, which knows the imports and can name the library.
+        //
+        // THE REACH IS THE USE SITE'S, not a constant. A declaration's identity
+        // ends in the reach its own form minted — a field at `Reach::Field`, a
+        // method at `Reach::Item` — so a use site that mints one fixed reach can
+        // only ever meet half of them. Minting `Item` here meant a first-party
+        // field READ could never meet its own declaration: the two strings
+        // differed in exactly one segment. MEASURED on the Dayamed corpus:
+        // 22,316 field declarations and ZERO field edges, with 9,932 edges
+        // naming a member whose declaration was sitting there under the other
+        // reach.
         if matches!(self.types.lookup(self.package, &ty), Home::Ours { .. })
             && let Ok(fqn) = fqn::refer(&Form::Member {
                 lang: Language::Java,
@@ -702,7 +725,7 @@ impl<'a> Walk<'a> {
                 module: "",
                 ty: &ty,
                 member,
-                reach: Reach::Item,
+                reach,
             })
         {
             return Resolution::Resolved { fqn, via: Rung::DeclaredHere };
