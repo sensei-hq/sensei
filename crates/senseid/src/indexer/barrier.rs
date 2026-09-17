@@ -205,53 +205,65 @@ impl Kind {
     }
 
     /// This row as the CONTAINER table prints it, in [`container_headings`]
-    /// order.
+    /// order: the COUNT, and nothing else.
     ///
-    /// The four evidence columns are OMITTED rather than printed as zeros. A
-    /// container has no edge that could go missing, so a `lost` of 0 beside one
-    /// is not a measurement that came out clean — it is a question that was
-    /// never asked, and a zero in a defect column invites the reader to treat
-    /// it as one that was answered.
-    fn container_cells(&self) -> [String; 4] {
-        [self.nodes, self.from_source, self.from_test, self.not_called()].map(|n| n.to_string())
+    /// Every other column is dropped rather than printed as a zero, and the
+    /// reach columns are the ones that matter here. A container's `from_source`
+    /// and `from_test` are 0 because no walk emits an import edge, not because
+    /// nothing imports these modules — every one of them is imported all over
+    /// this repository. Printing that 0, under any heading, states a
+    /// measurement nobody took: `not called` was the wrong word for it and
+    /// `not imported` was an outright false claim. Both were the same 325 rows
+    /// of noise this table exists to remove.
+    ///
+    /// The evidence columns go for the related reason: a container has no edge
+    /// that could go missing, so a `lost` of 0 is a question never asked, and a
+    /// zero in a defect column reads as one that was answered clean.
+    fn container_cells(&self) -> [String; 1] {
+        [self.nodes].map(|n| n.to_string())
     }
 }
 
-/// The three columns whose MEANING depends on how the kind is reached.
+/// The columns whose MEANING depends on how the kind is reached — and whether
+/// the graph records enough to have any.
 ///
-/// The whole of the fix for a container reported as `not called`: a module is
-/// entered by an import, so the column that counts what reached it says
-/// `imports`, and the column that counts what did not says `not imported`.
-/// Derived from [`ReachedBy`] and therefore from the kind itself, so a kind
-/// cannot be printed under the wrong vocabulary.
-fn reach_headings(reached: ReachedBy) -> [&'static str; 3] {
+/// [`ReachedBy::Call`] has three: a reference names a callable, the walk
+/// records references, so both how much reached it and how much did not are
+/// measured facts.
+///
+/// [`ReachedBy::Import`] has NONE, and that is a statement about the GRAPH
+/// rather than about modules. Nothing emits an import edge yet, so whether a
+/// module was entered is not something this report can answer, and inventing a
+/// column for it would put a number where a capability is missing.
+fn reach_headings(reached: ReachedBy) -> &'static [&'static str] {
     match reached {
-        ReachedBy::Call => ["calls", "test calls", "not called"],
-        ReachedBy::Import => ["imports", "test imports", "not imported"],
+        ReachedBy::Call => &["calls", "test calls", "not called"],
+        ReachedBy::Import => &[],
     }
 }
 
 /// The callable table's columns, in order. Beside [`Kind::cells`] so a heading
-/// and the number under it cannot be reordered apart.
+/// and the number under it cannot be reordered apart, and pinned the same
+/// width by `every_table_has_one_cell_per_heading`.
 fn call_headings() -> [&'static str; 8] {
-    let [reached, by_test, unreached] = reach_headings(ReachedBy::Call);
-    ["nodes", reached, by_test, unreached, "lost", "exact", "by name", "narrowed"]
+    let reach = reach_headings(ReachedBy::Call);
+    ["nodes", reach[0], reach[1], reach[2], "lost", "exact", "by name", "narrowed"]
 }
 
-/// The container table's columns. Beside [`Kind::container_cells`], and short
-/// for the reason given there.
-fn container_headings() -> [&'static str; 4] {
-    let [reached, by_test, unreached] = reach_headings(ReachedBy::Import);
-    ["nodes", reached, by_test, unreached]
+/// The container table's one column. Beside [`Kind::container_cells`], and one
+/// column for the reason given there.
+fn container_headings() -> [&'static str; 1] {
+    ["nodes"]
 }
 
 /// Every kind's row folded into one total PER WAY OF BEING REACHED.
 ///
-/// Two totals rather than one, because one total has to pick a vocabulary and
-/// either choice is wrong for half its input. It matters at the scale this
-/// corpus is heading for: one file yields one module, so 389 Rust files
-/// contribute 389 containers, and a combined `not called` would report mostly
-/// uncalled modules — a number that looks like a large defect and is not one.
+/// Two totals rather than one, because a combined total has to pick a
+/// vocabulary and either choice is wrong for half its input. It matters at the
+/// scale this corpus is heading for: one file yields one module, so 389 Rust
+/// files contribute 389 containers, and a combined `not called` would report
+/// mostly uncalled modules — a number that looks like a large defect and is
+/// not one.
 fn totals_by_reach(kinds: &BTreeMap<SymbolKind, Kind>) -> BTreeMap<ReachedBy, Kind> {
     let mut totals: BTreeMap<ReachedBy, Kind> = BTreeMap::new();
     for (kind, row) in kinds {
@@ -742,8 +754,9 @@ pub(super) fn two_barriers(units: &[Unit<'_>]) -> BTreeMap<&'static str, Tally> 
         section(ReachedBy::Call, &call_headings().map(str::to_string), false);
         if totals.contains_key(&ReachedBy::Import) {
             println!(
-                "\n  CONTAINERS — entered by an IMPORT, never called. Totalled apart because \
-                 no reference can name one, so `not called` is not a statement about one."
+                "\n  CONTAINERS — how many were declared, and that is the whole claim. \
+                 Nothing calls one, so there is no `not called`, no miss and no `lost` \
+                 here, and none of it is folded into the table above."
             );
             section(ReachedBy::Import, &container_headings().map(str::to_string), true);
         }
@@ -999,24 +1012,61 @@ mod tests {
         );
     }
 
-    /// A zero has to say WHY it is zero, or the next reader spends a morning
-    /// looking for the edges a container never had.
+    /// A CONTAINER GETS NO REACH COLUMN AT ALL — not `not called`, and not
+    /// `not imported` either.
     ///
-    /// The explanation used to be a `*` on the label and a footnote under the
-    /// table. It is now the column HEADING itself, which is stronger: a
-    /// footnote explains a number that still reads `not called`, whereas a
-    /// heading that says `not imported` leaves nothing to explain away.
+    /// `not imported` was the second wrong answer here and worse than the
+    /// first. `not called` was merely the wrong word; `not imported: 325`
+    /// is a false CLAIM, because every one of those modules is imported all
+    /// over this repository. What is missing is not the imports, it is the
+    /// EDGES: nothing emits an import edge yet, so the graph cannot say
+    /// whether a module was entered, and a column of 325 asserts that it can.
+    ///
+    /// That is the same shape as the rule against fabricating a value on a
+    /// failure path: an honest zero is only honest when the thing genuinely is
+    /// zero, never when it stands in for a measurement nobody took. And the
+    /// point of the exercise was to REMOVE a misleading 325, not to reword it.
+    ///
+    /// So a container's row is its count, which the container test above
+    /// already calls the one true statement available. When `RefKind::Imports`
+    /// lands, that step adds the columns along with the edges that fill them.
     #[test]
-    fn the_reach_columns_are_headed_by_the_way_the_kind_is_reached() {
+    fn a_container_is_counted_and_nothing_further_is_claimed_about_it() {
         assert_eq!(
             reach_headings(ReachedBy::Import),
-            ["imports", "test imports", "not imported"],
-            "a module is entered by an import, so that is what its columns count"
+            [] as [&str; 0],
+            "no import edges exist, so there is no reach the table can report"
         );
         assert_eq!(
             reach_headings(ReachedBy::Call),
             ["calls", "test calls", "not called"],
-            "and a kind a reference can name is still counted in calls"
+            "a callable is reached by references the graph DOES record, so its reach is reportable"
+        );
+        assert_eq!(
+            container_headings(),
+            ["nodes"],
+            "the container table is the count and nothing else"
+        );
+    }
+
+    /// A heading and the number under it cannot drift apart in COUNT either.
+    ///
+    /// The guard for the whole two-table arrangement: adding a column to the
+    /// headings and forgetting the cells (or the reverse) prints a table whose
+    /// numbers sit under the wrong words, which is exactly the class of defect
+    /// this section was rewritten twice to remove.
+    #[test]
+    fn every_table_has_one_cell_per_heading() {
+        let row = Kind::default();
+        assert_eq!(
+            call_headings().len(),
+            row.cells().len(),
+            "the callable table's headings and cells must be the same width"
+        );
+        assert_eq!(
+            container_headings().len(),
+            row.container_cells().len(),
+            "and the container table's"
         );
     }
 
@@ -1050,9 +1100,9 @@ mod tests {
              not in this total at all"
         );
         assert_eq!(
-            (container.nodes, container.not_called()),
-            (1, 1),
-            "the module is counted, in its own total, under its own heading"
+            container.container_cells(),
+            ["1"],
+            "the module's whole row is its count — no unreached column is claimed for it"
         );
         assert_eq!(
             container.lost(),
