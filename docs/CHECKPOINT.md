@@ -3,10 +3,10 @@
 **Slice** — indexer-v2. Receiver typing, and the grading decision that had
 blocked three slices is now made.
 
-**Done** — 21 commits. `binding_of` segment fix (582ce311), red-first, 3 tests
+**Done** — 22 commits. `binding_of` segment fix (582ce311), red-first, 3 tests
 — one per arm, because the arms need DIFFERENT segment rules and a one-arm fix
-leaves one red. Gate at HEAD: fmt clean, clippy `-D warnings` 0, workspace 3569
-passed / 0 failed.
+leaves one red. Container labelling (e7bf8ae6) — see below. Gate at HEAD: fmt
+clean, clippy `-D warnings` 0, workspace 3570 passed / 0 failed.
 
 **DECISION (user, this session) — grade on unresolved SITES by `Reason`, not on
 `lost`.** `lost` stays printed as an upper bound for comparability only.
@@ -41,9 +41,14 @@ acceptance.rs:89. **Missing:** `RelationKind` has no `Contains`
 confirmed: walk.rs:599 fires only for `"mod_item"`, so the 325 Module nodes are
 inline `mod` blocks.
 
-**Expect `not called` +~1262 — NOT a regression.** `Module` is `can_be_named`
-false (facts.rs:194), so a file-module reads `lost` 0 by construction, and the
-corpus has 389 rust + 873 web files. Pin it before the number moves.
+**The ~1262 jump is now harmless** (e7bf8ae6, user's call — better than my plan
+to merely document it). `reached_by` supplies the vocabulary half of
+`can_be_named`, derived from it. Containers table separately under `imports |
+test imports | not imported`, without the evidence columns, and are out of the
+callable TOTAL: rust 8573→8256 nodes, 3525→3203 `not called`, with the
+container total (325/325) printed so the old figure is reconstructible. So the
+389 rust + 873 web file-modules land in `not imported`, and once step 3 lands
+`imports` is the column that measures it.
 
     cargo test -p senseid --bin senseid -- --ignored --nocapture \
       indexer::acceptance::every_source_node_is_reached_by_a_test_and_then_by_other_source
