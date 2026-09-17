@@ -310,6 +310,137 @@ mod tests {
         assert!(JavaAdapter.type_segment("<>").is_err());
     }
 
+    /// Read a fixture the way the corpus does: once to learn where the types
+    /// live, then again with those homes, because `refer_to_member` places a
+    /// member only when the scan DECLARES its type.
+    fn twice(text: &str) -> crate::indexer::facts::FileFacts {
+        let source =
+            Source { package: "unnamed", module: "", path: "src/main/java/p/F.java", text };
+        let first = walk::read(&source, &TypeHomes::unknown()).expect("the fixture parses");
+        // Keyed on the package the FILE declares, not the one the Source was
+        // handed: Java reads `package p;` out of the source, so that is the
+        // package every identity is filed under and the one a lookup must use.
+        let declared_package = first.package.clone();
+        let homes = TypeHomes::of(first.symbols.iter().map(|s| (declared_package.as_str(), s)));
+        walk::read(&source, &homes).expect("the fixture parses")
+    }
+
+    fn resolved_reads(facts: &crate::indexer::facts::FileFacts) -> Vec<String> {
+        use crate::indexer::facts::{RefKind, Resolution};
+        facts
+            .references
+            .iter()
+            .filter(|r| r.kind == RefKind::Reads)
+            .filter_map(|r| match &r.target {
+                Resolution::Resolved { fqn, .. } => Some(fqn.as_str().to_string()),
+                Resolution::Unresolved { .. } => None,
+            })
+            .collect()
+    }
+
+    fn declared_of(
+        facts: &crate::indexer::facts::FileFacts,
+        kind: crate::indexer::facts::SymbolKind,
+    ) -> Vec<String> {
+        facts
+            .symbols
+            .iter()
+            .filter(|s| s.kind == kind)
+            .map(|s| s.fqn.as_str().to_string())
+            .collect()
+    }
+
+    /// **A first-party FIELD READ must meet its own declaration.**
+    ///
+    /// `field_declaration` mints at [`Reach::Field`] and `refer_to_member`
+    /// minted EVERY member use site at [`Reach::Item`], so the two strings
+    /// differed in exactly one segment and could never match. That is the whole
+    /// of why this corpus reports 22,316 Java fields and ZERO field edges:
+    /// 9,932 edges name a member whose declaration is sitting right there,
+    /// under the other reach.
+    #[test]
+    fn a_field_read_names_the_field_declaration_and_not_an_item() {
+        let facts = twice(
+            "package p;\n\
+             class Holder {\n\
+             \x20   String name;\n\
+             \x20   String peek(Holder h) { return h.name; }\n\
+             }\n",
+        );
+
+        assert_eq!(
+            resolved_reads(&facts),
+            declared_of(&facts, crate::indexer::facts::SymbolKind::Field),
+            "the read must name the identity the declaration minted, segment for segment"
+        );
+    }
+
+    /// **An ENUM CONSTANT is reached the same way, and must not be traded away.**
+    ///
+    /// This test is GREEN before the field-reach change and must stay green
+    /// after it. `Status.ACTIVE` is a `field_access`, so once a field access
+    /// mints [`Reach::Field`] its declaration has to be at that reach too —
+    /// otherwise the change lands 9,932 edges and unlands 2,856, trading
+    /// dangling edges for dangling edges.
+    ///
+    /// Moving the declaration is safe because a `field_access` is the ONLY
+    /// shape that reaches one: the Java walk records references for
+    /// `method_invocation`, `object_creation_expression` and `field_access`
+    /// alone, so a bare `ACTIVE` behind `import static` is not a reference this
+    /// walk emits and has nothing to strand.
+    #[test]
+    fn an_enum_constant_read_names_the_constant_declaration() {
+        let facts = twice(
+            "package p;\n\
+             enum Status { ACTIVE, IDLE }\n\
+             class Use {\n\
+             \x20   Status pick() { return Status.ACTIVE; }\n\
+             }\n",
+        );
+
+        assert_eq!(
+            resolved_reads(&facts),
+            vec![declared_of(&facts, crate::indexer::facts::SymbolKind::EnumVariant)[0].clone()],
+            "the constant read must name the constant declaration"
+        );
+    }
+
+    /// **A METHOD CALL still names an ITEM**, and this is the other guard.
+    ///
+    /// Green today, and it goes red the moment the reach is threaded through
+    /// `refer_to_member` indiscriminately rather than per use site. A method is
+    /// declared at item reach and reached by a call, which is not a field
+    /// access — the two use sites must carry different reaches through the one
+    /// function.
+    #[test]
+    fn a_method_call_still_names_an_item() {
+        use crate::indexer::facts::{RefKind, Resolution};
+        let facts = twice(
+            "package p;\n\
+             class Holder {\n\
+             \x20   String name() { return \"x\"; }\n\
+             \x20   String peek(Holder h) { return h.name(); }\n\
+             }\n",
+        );
+
+        let called: Vec<String> = facts
+            .references
+            .iter()
+            .filter(|r| r.kind == RefKind::Calls)
+            .filter_map(|r| match &r.target {
+                Resolution::Resolved { fqn, .. } => Some(fqn.as_str().to_string()),
+                Resolution::Unresolved { .. } => None,
+            })
+            .collect();
+
+        assert_eq!(
+            called,
+            vec!["java·p·Holder·name·item".to_string()],
+            "a call names the method's own identity, which is minted at item reach — `peek` is \
+             the caller and is never itself called, so it is not in this list"
+        );
+    }
+
     #[test]
     fn the_module_segment_is_empty_because_the_package_carries_everything() {
         assert_eq!(
