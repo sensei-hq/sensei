@@ -1,46 +1,58 @@
 # Checkpoint
 
-**Slice** — indexer-v2. The `lost` account is complete and green. Next: the
-file-module node, which both containment and import edges need.
+**Slice** — indexer-v2. Receiver typing, and the grading decision that had
+blocked three slices is now made.
 
-**Done** — 20 commits. `lost` is 0 for 9 of 11 rust kinds and 6 of 9 typescript
-kinds. Gate at HEAD: fmt clean, clippy 0, 3566 passed / 0 failed.
+**Done** — 21 commits. `binding_of` segment fix (582ce311), red-first, 3 tests
+— one per arm, because the arms need DIFFERENT segment rules and a one-arm fix
+leaves one red. Gate at HEAD: fmt clean, clippy `-D warnings` 0, workspace 3569
+passed / 0 failed.
 
-**Remaining `lost` — DEFECTS, all one cause (untyped receiver).** rust Field
-1441, rust Method 603, ts Field 2118, ts Method 59, ts Property 3.
-`config().daemon_url()` (bootstrap/src/lib.rs:47) chains off a call, not a
-binding; `cfg.db_url` (api/server.rs:110) because `binding_of` reads the HEAD of
-`sensei_bootstrap::SenseiConfig::from_env`, a crate name.
+**DECISION (user, this session) — grade on unresolved SITES by `Reason`, not on
+`lost`.** `lost` stays printed as an upper bound for comparability only.
+Grounds: `lost_exact` is 0 on every row of both languages and cannot be
+anything else — barrier.rs:357-374 makes the exact and by-name channels
+mutually exclusive, and an untyped receiver (the whole remaining defect class)
+cannot mint a candidate. `lost_by_name` is set-membership on the bare NAME
+(`verdict()`, barrier.rs:401-436): one unresolved `.id` blames all 126 unreached
+declarations spelled `id`. Inflated on one side, blind on the other. Barrier
+verified deterministic across two runs.
 
-**FINDING (this session, verified).** A Rust FILE emits no Module node —
-`module_item` fires only for `"mod_item"` (lang/rust/walk.rs:599), so the 325
-Module nodes are inline `mod` blocks, mostly `mod tests`. Consequences: an
-import→module edge has no target for `use crate::indexer::resolve::…`, and
-top-level items have `nodes.parent_id` NULL because no file-module can parent
-them. `nodes.parent_id` already exists and is fed ONLY by `RelationKind::Owns`
-(reconcile.rs:1129), which is type→member only — so the containment tree is two
-levels deep.
+**My sizing was wrong — recorded so it is not repeated.** I estimated the fix
+at ~60-70 first-party receivers from 644 matching `let` bindings. Actual: 3
+receivers reclassified (596→593 receiver-untyped), 0 new first-party edges,
+`lost` unchanged. I sized the SHAPE without checking which later rung covers
+it: `bound_to_a_call` (04289f5f) already types the first-party half from the
+callee's declared return type via the `returns` map (barrier.rs:879). Before
+sizing a walk fix, check which later rung already covers it.
 
-**Next — forward-only, user-approved design**
+**Next — the file-module node.** Design user-approved, unchanged.
 
 1. One `SymbolKind::Module` per FILE, at `Reach::Mod`, from `FileFacts.module`.
-2. `RelationKind::Contains` — file-module → top-level items, inline mod → its
-   items. Feeds `parent_id` alongside `Owns`. MUST NOT be read by
-   `members_declared_by`: widening `Owns` would let a member call resolve onto a
-   module (a fabricated edge, R4).
+2. `RelationKind::Contains` — feeds `parent_id` alongside `Owns`. MUST NOT be
+   read by `members_declared_by` (resolve.rs:285-292) or a member call resolves
+   onto a module (R4).
 3. `RefKind::Imports` — import→module edges, now that a target exists.
+
+Present: `SymbolKind::Module` facts.rs:154, `Reach::Mod` fqn.rs:116 (minted at
+:400, :831), `FileFacts.module` facts.rs:782, module_path per file
+acceptance.rs:89. **Missing:** `RelationKind` has no `Contains`
+(facts.rs:666-682); `parent_id` fed only by `Owns` (reconcile.rs:1129). Cause
+confirmed: walk.rs:599 fires only for `"mod_item"`, so the 325 Module nodes are
+inline `mod` blocks.
+
+**Expect `not called` +~1262 — NOT a regression.** `Module` is `can_be_named`
+false (facts.rs:194), so a file-module reads `lost` 0 by construction, and the
+corpus has 389 rust + 873 web files. Pin it before the number moves.
 
     cargo test -p senseid --bin senseid -- --ignored --nocapture \
       indexer::acceptance::every_source_node_is_reached_by_a_test_and_then_by_other_source
 
-**Open questions — (1) IS BLOCKING, asked, unanswered.** Grade on `lost` or on
-unresolved SITE counts? `lost` is a by-name upper bound that CANNOT reach zero:
-952 unresolved `.id` reads blame all 126 field declarations spelled `id`. Three
-slices have now raised it. (2) should a bare identifier READ be a reference?
-Decides ts Const 2707 / rust Const 436 `not called`; both walks chose "no".
-(3) `Arc<T>` unwrapping in `simple_type_name`.
+**Open questions — neither blocking now.** (2) should a bare identifier READ be
+a reference? Decides ts Const 2707 / rust Const 436 `not called`; both walks
+chose "no". (3) `Arc<T>` unwrapping in `simple_type_name`.
 
 **Known broken** — `lib_indexer::tests::real_dbd_single_file_has_deploy_
-component` (`--ignored`) reads a hardcoded `~/Developer/dbd-rs` that does not
-exist here. The barrier counts acceptance.rs's own 14 `#[ignore]` tests as
-source: +14 rust Function `not called`, no `lost`.
+component` (`--ignored`) reads a hardcoded `~/Developer/dbd-rs`, verified absent
+here. The barrier counts acceptance.rs's own 14 `#[ignore]` tests as source:
++14 rust Function `not called`, no `lost`.
