@@ -28,7 +28,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::facts::{Evidence, FileFacts, Language, Observation, Resolution, SymbolKind};
+use super::facts::{Evidence, FileFacts, Language, Observation, ReachedBy, Resolution, SymbolKind};
 use super::fqn::{self, Origin, Reach};
 
 /// One file of a corpus: what the walk read, and the text it was read from.
@@ -189,7 +189,7 @@ impl Kind {
         self.narrowed_out += other.narrowed_out;
     }
 
-    /// This row as the table prints it, in [`HEADINGS`] order.
+    /// This row as the CALLABLE table prints it, in [`call_headings`] order.
     fn cells(&self) -> [String; 8] {
         [
             self.nodes,
@@ -203,36 +203,77 @@ impl Kind {
         ]
         .map(|n| n.to_string())
     }
+
+    /// This row as the CONTAINER table prints it, in [`container_headings`]
+    /// order.
+    ///
+    /// The four evidence columns are OMITTED rather than printed as zeros. A
+    /// container has no edge that could go missing, so a `lost` of 0 beside one
+    /// is not a measurement that came out clean — it is a question that was
+    /// never asked, and a zero in a defect column invites the reader to treat
+    /// it as one that was answered.
+    fn container_cells(&self) -> [String; 4] {
+        [self.nodes, self.from_source, self.from_test, self.not_called()].map(|n| n.to_string())
+    }
 }
 
-/// The by-kind table's columns, in order. Beside [`Kind::cells`] so a heading
-/// and the number under it cannot be reordered apart.
-const HEADINGS: [&str; 8] =
-    ["nodes", "calls", "test calls", "not called", "lost", "exact", "by name", "narrowed"];
+/// The three columns whose MEANING depends on how the kind is reached.
+///
+/// The whole of the fix for a container reported as `not called`: a module is
+/// entered by an import, so the column that counts what reached it says
+/// `imports`, and the column that counts what did not says `not imported`.
+/// Derived from [`ReachedBy`] and therefore from the kind itself, so a kind
+/// cannot be printed under the wrong vocabulary.
+fn reach_headings(reached: ReachedBy) -> [&'static str; 3] {
+    match reached {
+        ReachedBy::Call => ["calls", "test calls", "not called"],
+        ReachedBy::Import => ["imports", "test imports", "not imported"],
+    }
+}
 
-/// One line of the by-kind table — the heading, a kind, or the total.
+/// The callable table's columns, in order. Beside [`Kind::cells`] so a heading
+/// and the number under it cannot be reordered apart.
+fn call_headings() -> [&'static str; 8] {
+    let [reached, by_test, unreached] = reach_headings(ReachedBy::Call);
+    ["nodes", reached, by_test, unreached, "lost", "exact", "by name", "narrowed"]
+}
+
+/// The container table's columns. Beside [`Kind::container_cells`], and short
+/// for the reason given there.
+fn container_headings() -> [&'static str; 4] {
+    let [reached, by_test, unreached] = reach_headings(ReachedBy::Import);
+    ["nodes", reached, by_test, unreached]
+}
+
+/// Every kind's row folded into one total PER WAY OF BEING REACHED.
+///
+/// Two totals rather than one, because one total has to pick a vocabulary and
+/// either choice is wrong for half its input. It matters at the scale this
+/// corpus is heading for: one file yields one module, so 389 Rust files
+/// contribute 389 containers, and a combined `not called` would report mostly
+/// uncalled modules — a number that looks like a large defect and is not one.
+fn totals_by_reach(kinds: &BTreeMap<SymbolKind, Kind>) -> BTreeMap<ReachedBy, Kind> {
+    let mut totals: BTreeMap<ReachedBy, Kind> = BTreeMap::new();
+    for (kind, row) in kinds {
+        totals.entry(kind.reached_by()).or_default().absorb(row);
+    }
+    totals
+}
+
+/// One line of a by-kind table — the heading, a kind, or the total.
 ///
 /// One function because the widths belong in one place. Three copies of a
 /// format string is three things to keep in step, and a heading that has
-/// drifted off its column is read as a different measurement.
-fn a_row(label: &str, cells: [String; 8]) {
-    let [nodes, calls, test_calls, not_called, lost, exact, by_name, narrowed] = cells;
-    println!(
-        "  {label:<16} {nodes:>7} {calls:>8} {test_calls:>12} {not_called:>12} {lost:>7} \
-         {exact:>7} {by_name:>8} {narrowed:>9}"
-    );
-}
-
-/// A kind's label in the table, marked if no reference can name one.
-///
-/// The marker is derived from [`SymbolKind::can_be_named`] at the moment of
-/// printing rather than stored on the row, so there is exactly one answer to
-/// "can this be named" and the table cannot disagree with the count beside it.
-fn label_of(kind: SymbolKind) -> String {
-    match kind.can_be_named() {
-        true => format!("{kind:?}"),
-        false => format!("{kind:?} *"),
+/// drifted off its column is read as a different measurement. It takes a SLICE
+/// so the short container row and the long callable row share those widths and
+/// the two tables line up under each other.
+fn a_row(label: &str, cells: &[String]) {
+    const WIDTHS: [usize; 8] = [7, 8, 12, 12, 7, 7, 8, 9];
+    let mut line = format!("  {label:<16}");
+    for (cell, width) in cells.iter().zip(WIDTHS) {
+        line.push_str(&format!(" {cell:>width$}"));
     }
+    println!("{line}");
 }
 
 /// How strongly an unresolved use site points at a node no edge reached.
@@ -670,27 +711,41 @@ pub(super) fn two_barriers(units: &[Unit<'_>]) -> BTreeMap<&'static str, Tally> 
     // carried this very identity, `by name` is a use site that spelled the name
     // at the right reach and could be a namesake. See [`NamedBy`].
     //
-    // A kind marked `*` is one no reference can name. Its row is a count, and
-    // its `lost` is zero because the question has no other answer for a
-    // container — not because a resolver cleared it.
+    // CONTAINERS are tabled separately, under headings that name what actually
+    // reaches them. Nothing calls a module, so it can appear in neither the
+    // `calls` column nor the `not called` one without the number being read as
+    // a defect somebody should close.
     for (language, kinds) in &by_kind(units) {
         println!("\n## {language}\n");
-        a_row("kind", HEADINGS.map(str::to_string));
-        let mut rows: Vec<_> = kinds.iter().collect();
-        rows.sort_by_key(|(_, k)| std::cmp::Reverse(k.nodes));
-        let mut total = Kind::default();
-        let mut containers = false;
-        for (kind, k) in rows {
-            containers |= !kind.can_be_named();
-            a_row(&label_of(*kind), k.cells());
-            total.absorb(k);
-        }
-        a_row("TOTAL", total.cells());
-        if containers {
+        let totals = totals_by_reach(kinds);
+
+        let section = |reached: ReachedBy, headings: &[String], short: bool| {
+            let Some(total) = totals.get(&reached) else { return };
+            let mut rows: Vec<_> =
+                kinds.iter().filter(|(kind, _)| kind.reached_by() == reached).collect();
+            rows.sort_by_key(|(_, k)| std::cmp::Reverse(k.nodes));
+            a_row("kind", headings);
+            for (kind, k) in rows {
+                let cells = match short {
+                    true => k.container_cells().to_vec(),
+                    false => k.cells().to_vec(),
+                };
+                a_row(&format!("{kind:?}"), &cells);
+            }
+            let cells = match short {
+                true => total.container_cells().to_vec(),
+                false => total.cells().to_vec(),
+            };
+            a_row("TOTAL", &cells);
+        };
+
+        section(ReachedBy::Call, &call_headings().map(str::to_string), false);
+        if totals.contains_key(&ReachedBy::Import) {
             println!(
-                "  * a CONTAINER: a reference cannot name one, so it has no callee edge to \
-                 lose and `lost` reads 0 by construction. The `calls` columns are the check."
+                "\n  CONTAINERS — entered by an IMPORT, never called. Totalled apart because \
+                 no reference can name one, so `not called` is not a statement about one."
             );
+            section(ReachedBy::Import, &container_headings().map(str::to_string), true);
         }
     }
 
@@ -947,15 +1002,62 @@ mod tests {
     /// A zero has to say WHY it is zero, or the next reader spends a morning
     /// looking for the edges a container never had.
     ///
-    /// The marker is the whole of that explanation in the printed table, so it
-    /// is pinned rather than left to survive on nobody noticing it.
+    /// The explanation used to be a `*` on the label and a footnote under the
+    /// table. It is now the column HEADING itself, which is stronger: a
+    /// footnote explains a number that still reads `not called`, whereas a
+    /// heading that says `not imported` leaves nothing to explain away.
     #[test]
-    fn a_kind_no_reference_can_name_is_marked_in_the_table() {
-        assert_eq!(label_of(SymbolKind::Module), "Module *", "a container is marked as one");
+    fn the_reach_columns_are_headed_by_the_way_the_kind_is_reached() {
         assert_eq!(
-            label_of(SymbolKind::Function),
-            "Function",
-            "and a kind that can lose an edge carries no mark, so the mark means something"
+            reach_headings(ReachedBy::Import),
+            ["imports", "test imports", "not imported"],
+            "a module is entered by an import, so that is what its columns count"
+        );
+        assert_eq!(
+            reach_headings(ReachedBy::Call),
+            ["calls", "test calls", "not called"],
+            "and a kind a reference can name is still counted in calls"
+        );
+    }
+
+    /// The two totals do not fold together, and THIS is the claim that matters
+    /// once one file yields one module: a corpus of 389 Rust files contributes
+    /// 389 containers, and a single `not called` total carrying them reports
+    /// the overwhelming majority of its own column as uncalled modules.
+    ///
+    /// The fixture is the smallest corpus with both: one module (a container)
+    /// and one function nothing calls (a callable). Folded, `not called` reads
+    /// 2 and says nothing true about either.
+    #[test]
+    fn a_container_is_totalled_apart_from_what_can_be_called() {
+        let rows = report_over(&[(
+            "crates/x/src/lib.rs",
+            "pub mod inner {\n\
+             \x20   pub fn f() {}\n\
+             }\n\
+             pub fn never_called() {}\n",
+        )]);
+        let rust = rows.get("rust").expect("the rust fixture produced rows");
+        let totals = totals_by_reach(rust);
+
+        let callable = totals.get(&ReachedBy::Call).expect("the fixture declares callable kinds");
+        let container = totals.get(&ReachedBy::Import).expect("and one container");
+
+        assert_eq!(
+            (callable.nodes, callable.not_called()),
+            (2, 2),
+            "`never_called` and the module's own `f` are callable and uncalled; the module is \
+             not in this total at all"
+        );
+        assert_eq!(
+            (container.nodes, container.not_called()),
+            (1, 1),
+            "the module is counted, in its own total, under its own heading"
+        );
+        assert_eq!(
+            container.lost(),
+            0,
+            "and a container still has no edge to lose — the split does not invent one"
         );
     }
 
