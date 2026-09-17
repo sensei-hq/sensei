@@ -163,7 +163,38 @@ pub enum SymbolKind {
     Property,
 }
 
+/// How a declaration is REACHED, and therefore what a report's reach columns
+/// are counting for it.
+///
+/// The vocabulary half of [`SymbolKind::can_be_named`]. That function answers
+/// the question as a boolean, which is all a resolver needs; a REPORT also has
+/// to name the thing it counted, and a column headed `not called` over a kind
+/// nothing can call is how a count gets read as a defect. One enum rather than
+/// a bool at the print site, so a third way of being reached — were one ever
+/// added — arrives as a non-exhaustive match instead of a silently wrong label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ReachedBy {
+    /// A reference names it: a call, a read, a write, a `name!`.
+    Call,
+    /// An import enters it. No reference ever names it, so "nothing called it"
+    /// is not a statement that can be made about one.
+    Import,
+}
+
 impl SymbolKind {
+    /// How a declaration of this kind is reached.
+    ///
+    /// DERIVED from [`can_be_named`](Self::can_be_named) rather than matched
+    /// again, because they are one classification and two matches over the same
+    /// variants are two things to keep in step. The argument for which side a
+    /// kind falls on lives on that function; this one only supplies the word.
+    pub fn reached_by(self) -> ReachedBy {
+        match self.can_be_named() {
+            true => ReachedBy::Call,
+            false => ReachedBy::Import,
+        }
+    }
+
     /// Whether any reference can NAME a declaration of this kind.
     ///
     /// A property of the KIND rather than a filter inside one report, so every
@@ -991,6 +1022,21 @@ mod tests {
             vec![SymbolKind::Module],
             "a module is entered by an import and its CONTENTS are what get named; \
              every other kind is the target of some reference"
+        );
+
+        // And the same classification under the name a REPORT needs. Asserted
+        // here rather than in its own test because it is not a second fact:
+        // `reached_by` is derived from `can_be_named`, and the reason to pin
+        // both together is that a reader changing one arm should see every
+        // consequence of it in one failure.
+        let imported: Vec<SymbolKind> = all_symbol_kinds()
+            .into_iter()
+            .filter(|k| k.reached_by() == ReachedBy::Import)
+            .collect();
+        assert_eq!(
+            imported, unnamable,
+            "the kinds an import reaches are exactly the kinds no reference can name, so a \
+             report cannot head one of them `not called`"
         );
     }
 
