@@ -352,6 +352,19 @@ pub enum RefKind {
     /// Invokes a macro. A distinct kind because what a macro expands to is not
     /// parsed, so a call INSIDE the expansion is not a fact this walk has.
     MacroInvokes,
+    /// ENTERS a module. The one reference kind whose target is a
+    /// [`SymbolKind::Module`], and the only one that mints [`Reach::Mod`].
+    ///
+    /// Emitted ONLY where the specifier names a module — see
+    /// `lang::common::specifier_names_a_module`. A `use a::b::C;` names an item
+    /// and gets none, because minting `mod` for it would produce an identity no
+    /// declaration carries.
+    ///
+    /// Distinct from the other kinds rather than folded into `Reads`, because
+    /// what it reaches is categorically different: every other kind names
+    /// something a call could also name, and this one names the container they
+    /// live in.
+    Imports,
 }
 
 /// Why a reference could not be resolved.
@@ -896,6 +909,7 @@ mod tests {
             RefKind::Constructs,
             RefKind::TypeUse,
             RefKind::MacroInvokes,
+            RefKind::Imports,
         ]
     }
 
@@ -1082,10 +1096,11 @@ mod tests {
                 | RefKind::Writes
                 | RefKind::Constructs
                 | RefKind::TypeUse
-                | RefKind::MacroInvokes => {}
+                | RefKind::MacroInvokes
+                | RefKind::Imports => {}
             }
         }
-        assert_eq!(all_ref_kinds().len(), 6);
+        assert_eq!(all_ref_kinds().len(), 7);
 
         for r in all_reasons() {
             match r {
