@@ -3,6 +3,7 @@ pub mod cross_repo;
 pub mod doc_indexer;
 pub mod lib_indexer;
 pub mod llms_indexer;
+pub mod placement;
 
 // ── the indexer (docs/design/indexer.md, docs/plans/indexer-sequence.md) ─────
 // Deliberately without a caller. The LEGACY code-graph indexer under
@@ -247,10 +248,27 @@ pub(crate) fn workspace_relative(path: &str) -> String {
 /// spellings of a string that is a SEGMENT OF EVERY FQN a file declares.
 #[cfg(test)]
 pub(crate) fn module_of(path: &str) -> String {
-    match path.split_once("/src/") {
-        Some((crate_root, _)) => lang::rust::module_path(path, crate_root),
-        None => String::new(),
+    // The crate root is found the way `package_of` finds it — by walking up for
+    // the manifest — and NOT by splitting on `/src/`.
+    //
+    // The split looked equivalent and was not, for every file a package holds
+    // OUTSIDE `src/`: `build.rs`, `tests/*.rs`, `examples/*.rs` are each their
+    // own crate root, and the split returned an EMPTY module for all of them.
+    // An empty module is the LIBRARY crate root's, so every declaration in
+    // `tests/e2e_index.rs` minted the identity a declaration of the same name
+    // in `src/lib.rs` mints — two files claiming one symbol (spec §2), which is
+    // the break this string exists to prevent.
+    //
+    // MEASURED over this repository: 6 of 390 rust files, caught by the test
+    // that pins this helper against `indexer::placement`, the production seam.
+    let mut dir = std::path::Path::new(path);
+    while let Some(parent) = dir.parent() {
+        if parent.join("Cargo.toml").exists() {
+            return lang::rust::module_path(path, &parent.to_string_lossy());
+        }
+        dir = parent;
     }
+    String::new()
 }
 
 /// One Rust source, walked and then placed against the shared ladder — the two
