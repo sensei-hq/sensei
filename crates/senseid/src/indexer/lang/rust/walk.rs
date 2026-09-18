@@ -996,6 +996,31 @@ impl<'a> Walk<'a> {
             self.children(node, scope);
             return;
         };
+        // A `mod` DECLARES a module only when the module's body is here.
+        //
+        // `mod x;` names a module whose body is another FILE, and that file
+        // declares itself — same identity, by construction, because `file_fqn`
+        // mints it exactly the way this arm would. Emitting a Symbol here as
+        // well put TWO resolved definitions on one node with different
+        // `file_id`, `line_start` and `is_exported`, and the upsert
+        // (graph.rs:824-836) arbitrates only stub-vs-definition: every
+        // definition column is gated on `EXCLUDED.resolved`, which both writers
+        // set, so the LAST WRITER WINS. Proven by running the production SQL in
+        // a rolled-back transaction: `declared_in` flipped to the parent,
+        // `is_exported` was destroyed (only the parent can see `pub`), and the
+        // span was overwritten. Under parallel per-file indexing the winner is
+        // whoever commits second — order dependence, which R6/A6 forbid.
+        //
+        // The legacy walk has always read it this way (`rust_lang.rs` descends
+        // only `if let Some(body)`), and the shipped graph therefore has one
+        // declarer per module. This restores that, and leaves the parent's
+        // `mod x;` to become a containment RELATION once `Contains` exists —
+        // which is the stub-then-promote path: the relation names the child's
+        // identity, minting a stub if that file has not been indexed yet, and
+        // the stub is merged into the real declaration when it is.
+        if node.child_by_field_name("body").is_none() {
+            return;
+        }
         let symbol =
             self.symbol(node, scope, name, SymbolKind::Module, MODULE, DeclaredType::Unstated);
         let mut inner = self.push(symbol, scope);
