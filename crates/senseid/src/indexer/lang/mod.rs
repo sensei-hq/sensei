@@ -40,6 +40,7 @@
 pub mod common;
 pub mod java;
 pub mod javascript;
+pub mod python;
 pub mod rust;
 pub mod svelte;
 
@@ -343,6 +344,7 @@ pub fn all_adapters() -> &'static [&'static dyn LanguageAdapter] {
     &[
         &rust::RustAdapter,
         &java::JavaAdapter,
+        &python::PythonAdapter,
         &javascript::TypeScriptAdapter,
         &javascript::JavaScriptAdapter,
         &svelte::SvelteAdapter,
@@ -538,6 +540,13 @@ mod tests {
                    private int width;\n\
                    public int wide() { return this.width; }\n\
                  }\n"
+            }
+            // Written as one string with explicit newlines rather than with `\`
+            // continuations, because Python's indentation IS its syntax and a
+            // continuation eats the leading whitespace of the next line.
+            "python" => {
+                "class Widget:\n    def wide(self):\n        return 1\n\n\
+                 def free():\n    w = Widget()\n    return w.wide()\n"
             }
             "svelte" => {
                 "<script>\n\

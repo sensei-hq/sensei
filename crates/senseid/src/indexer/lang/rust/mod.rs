@@ -98,7 +98,7 @@ pub const GRAMMAR: crate::indexer::resolve::Grammar = crate::indexer::resolve::G
     // Rust lints every type into `CamelCase` and every module into
     // `snake_case`, so the name states which of the two a segment is. See
     // `Grammar::names_a_type` for what a misread costs.
-    names_a_type: |segment| segment.starts_with(|c: char| c.is_uppercase()),
+    names_a_type: crate::indexer::lang::common::names_a_type_by_leading_case,
     prelude: PRELUDE,
     plumbing: PLUMBING,
 };
