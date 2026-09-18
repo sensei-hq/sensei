@@ -547,9 +547,11 @@ fn edge_rows_of(facts: &FileFacts, file: &str) -> Vec<EdgeRow> {
 
     for relation in &facts.relations {
         let Relation { kind, child, parent, at } = relation;
+        // A relation with no edge kind is not an edge. See `relation_edge_kind`.
+        let Some(edge_kind) = relation_edge_kind(*kind) else { continue };
         let (key, outcome) = target_key_and_outcome(parent);
         grouped
-            .entry((child.as_str().to_string(), relation_edge_kind(*kind), key))
+            .entry((child.as_str().to_string(), edge_kind, key))
             .or_default()
             .push(Occurrence::Structure { kind: *kind, at: *at, outcome });
     }
@@ -600,12 +602,28 @@ fn reference_edge_kind(kind: RefKind) -> &'static str {
 /// [`RelationKind::Owns`] being a separate kind: an inherent `impl Foo { }` owns
 /// its members and inherits nothing, and an `extends` row for it would be a
 /// false inheritance edge that pattern detection reads as real.
-fn relation_edge_kind(kind: RelationKind) -> &'static str {
-    match kind {
+fn relation_edge_kind(kind: RelationKind) -> Option<&'static str> {
+    Some(match kind {
         RelationKind::Extends => "extends",
         RelationKind::Implements | RelationKind::TraitImpl | RelationKind::Mixin => "implements",
         RelationKind::Decorates | RelationKind::Owns => "references",
-    }
+        // CONTAINMENT IS NOT AN EDGE. `nodes.parent_id` already carries it, and
+        // `graph_nodes.ddl` says so in as many words: a grouping view needs no
+        // `contains` edge kind. `sensei.edge_kind` has no such value either, and
+        // dbd diffs an enum POSITIONALLY while Postgres cannot drop a value, so
+        // an appended one is permanent.
+        //
+        // Nor is it free to add: `graph.rs`'s `prune_mislabelled_containment_extends`
+        // has already DELETED 7,916 rows of exactly this shape, and
+        // `community.rs` counts 'references' in its adjacency without deduping,
+        // so a containment edge beside a containment parent_id would weight
+        // every module twice and make file-modules dominate god-node ranking.
+        //
+        // `Option` rather than a label nobody writes: an unrepresentable edge
+        // cannot be written by accident, whereas a spare label is one `match`
+        // away from being.
+        RelationKind::Contains => return None,
+    })
 }
 
 fn relation_kind_label(kind: RelationKind) -> &'static str {
@@ -616,6 +634,11 @@ fn relation_kind_label(kind: RelationKind) -> &'static str {
         RelationKind::Mixin => "mixin",
         RelationKind::Decorates => "decorates",
         RelationKind::Owns => "owns",
+        // Never written: `relation_edge_kind` refuses Contains an edge kind, so
+        // no occurrence carrying this label ever reaches a row. Named anyway
+        // because the match is exhaustive and a panic arm would be a crash
+        // waiting for whoever gives containment an edge.
+        RelationKind::Contains => "contains",
     }
 }
 
@@ -1855,6 +1878,55 @@ pub fn widest(a: u32) -> u32 {
             named,
             vec!["rust·senseid·gadget·Gadget·borrowed·item->None".to_string()],
             "an unresolved edge carries the name and no target id — never a guessed node"
+        );
+    }
+
+    /// **CONTAINMENT IS NOT AN EDGE**, and this is where that is enforced
+    /// rather than intended.
+    ///
+    /// `nodes.parent_id` already carries it. An edge row beside it would be the
+    /// same fact twice: `graph.rs`'s `prune_mislabelled_containment_extends`
+    /// has already deleted 7,916 rows of that shape, `sensei.edge_kind` has no
+    /// `contains` value to file one under, and `community.rs` counts
+    /// `references` in its adjacency without deduping — so a second copy would
+    /// weight every module twice and let file-modules dominate god-node
+    /// ranking.
+    ///
+    /// Asserted against `edge_rows_of` DIRECTLY, with an `Owns` relation beside
+    /// the `Contains` one in the same facts. A test that only showed "no rows"
+    /// would also pass if the whole function had stopped working.
+    #[test]
+    fn a_contains_relation_is_not_an_edge_and_an_owns_relation_still_is() {
+        use crate::indexer::facts::{Relation, Resolution, Rung, Span};
+
+        let mut facts = walk_of("gadget", "src/gadget.rs", "pub struct Gadget { pub w: u32 }");
+        let owns = facts.relations.iter().filter(|r| r.kind == RelationKind::Owns).count();
+        assert!(owns > 0, "the fixture must contain an Owns relation to compare against");
+
+        let child = facts.symbols[0].fqn.clone();
+        let parent = facts.symbols[1].fqn.clone();
+        facts.relations.push(Relation {
+            kind: RelationKind::Contains,
+            child,
+            parent: Resolution::Resolved { fqn: parent, via: Rung::DeclaredHere },
+            at: Span { start_line: 1, start_col: 1, end_line: 1, end_col: 1 },
+        });
+
+        let rows = super::edge_rows_of(&facts, "src/gadget.rs");
+        let structural: Vec<&str> = rows
+            .iter()
+            .flat_map(|row| row.occurrences.iter())
+            .filter_map(|o| match o {
+                super::Occurrence::Structure { kind, .. } => {
+                    Some(super::relation_kind_label(*kind))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(structural.contains(&"owns"), "an Owns relation is still an edge: {structural:?}");
+        assert!(
+            !structural.contains(&"contains"),
+            "containment must reach no edge row at all: {structural:?}"
         );
     }
 
