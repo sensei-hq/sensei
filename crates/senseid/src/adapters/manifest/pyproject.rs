@@ -40,17 +40,36 @@ impl ManifestAdapter for PyprojectManifestAdapter {
             .is_some()
     }
 
+    /// PEP 621's `[project]` first, then Poetry's `[tool.poetry]`.
+    ///
+    /// BOTH, because reading only the first left a large share of the ecosystem
+    /// nameless. Poetry predates PEP 621 and states the same three fields in its
+    /// own table; a project that has migrated carries `[project]` and often
+    /// leaves the old table behind, so PEP 621 wins where both are present.
+    ///
+    /// MEASURED: a 103-file Poetry checkout produced no package name for any
+    /// file. The package is the SECOND SEGMENT of every fqn a file declares, so
+    /// that is not a missing label — it is 103 files with no identity.
     fn parse_manifest(&self, content: &str) -> ParsedManifest {
         let Ok(pyp) = content.parse::<toml::Value>() else {
             return ParsedManifest::default();
         };
-        let Some(proj) = pyp.get("project") else {
-            return ParsedManifest::default();
+        let pep_621 = pyp.get("project");
+        let poetry = pyp.get("tool").and_then(|t| t.get("poetry"));
+        // The tables are consulted per FIELD rather than picked once, so a
+        // manifest that states its name in one and its description in the other
+        // yields both instead of whichever table won.
+        let field = |key: &str| {
+            pep_621
+                .and_then(|t| t.get(key))
+                .or_else(|| poetry.and_then(|t| t.get(key)))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
         };
         ParsedManifest {
-            name: proj.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            version: proj.get("version").and_then(|v| v.as_str()).map(|s| s.to_string()),
-            description: proj.get("description").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            name: field("name"),
+            version: field("version"),
+            description: field("description"),
         }
     }
 
@@ -165,6 +184,41 @@ mod tests {
             include = "x"
         "#;
         assert!(!PyprojectManifestAdapter.is_workspace_root(src));
+    }
+
+    /// **POETRY STATES ITS METADATA IN `[tool.poetry]`, NOT `[project]`.**
+    ///
+    /// MEASURED: reading only PEP 621 left every file of a 103-file Poetry
+    /// checkout with no package name at all, which means no identity — the
+    /// package is the second segment of every fqn a file declares. Poetry
+    /// predates PEP 621 and a large share of the ecosystem still ships this
+    /// shape, so it is the common case rather than a legacy corner.
+    #[test]
+    fn a_poetry_manifest_states_its_name_where_poetry_puts_it() {
+        let poetry = "[tool.poetry]\nname = \"ai-hedge-fund\"\nversion = \"1.0.0\"\n\
+                      description = \"an example\"\n";
+        let parsed = PyprojectManifestAdapter.parse_manifest(poetry);
+        assert_eq!(parsed.name.as_deref(), Some("ai-hedge-fund"));
+        assert_eq!(parsed.version.as_deref(), Some("1.0.0"));
+        assert_eq!(parsed.description.as_deref(), Some("an example"));
+    }
+
+    /// PEP 621 WINS when a manifest carries both, because a project that has
+    /// migrated states the current answer in `[project]` and leaves the old
+    /// table behind for tooling that has not caught up.
+    #[test]
+    fn pep_621_wins_over_poetry_when_a_manifest_carries_both() {
+        let both = "[project]\nname = \"new-name\"\n\n[tool.poetry]\nname = \"old-name\"\n";
+        assert_eq!(PyprojectManifestAdapter.parse_manifest(both).name.as_deref(), Some("new-name"));
+    }
+
+    /// A manifest with neither table names nothing — and must not be given a
+    /// fabricated name, which would file every file under a package no
+    /// dependency edge spells.
+    #[test]
+    fn a_manifest_with_neither_table_names_nothing() {
+        let neither = "[build-system]\nrequires = [\"setuptools\"]\n";
+        assert_eq!(PyprojectManifestAdapter.parse_manifest(neither).name, None);
     }
 
     #[test]
