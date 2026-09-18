@@ -442,21 +442,26 @@ impl<'a> NamedBy<'a> {
 
     /// The grade of evidence, if any, naming one declaration.
     ///
-    /// A kind no reference can name is answered before any evidence is
-    /// consulted, and [`SymbolKind::can_be_named`] is the one place that
-    /// decides which kinds those are. There is no callee relation for a
-    /// container, so the question "did an edge to it go missing" has no
-    /// answer but zero.
+    /// THE REACH IS THE DISCRIMINATOR, and it is exact rather than a proxy. A
+    /// declaration's identity ends in the reach its own form minted and a use
+    /// site's target ends in the reach its SYNTAX implies, so evidence is
+    /// admissible for a declaration exactly when the two spell the same reach.
+    /// A module is the one kind at [`Reach::Mod`]; a call mints [`Reach::Item`]
+    /// and can therefore never be found for one, while an import mints `mod`
+    /// and can.
     ///
-    /// Today the reach narrowing below would reach the same zero on its own —
-    /// a module's identity ends at [`Reach::Mod`] and no use site mints that
-    /// reach, so its name can never be found in `by_reach`. That is a
-    /// coincidence of two rules agreeing, and the whole point of asking the
-    /// kind first is that the zero stops depending on the coincidence.
+    /// This used to short-circuit on [`SymbolKind::can_be_named`] instead, and
+    /// the comment here said why: the reach narrowing reached the same zero on
+    /// its own, "a coincidence of two rules agreeing", and asking the kind
+    /// first stopped the zero depending on it. That held while NO use site
+    /// minted `mod`. An import does, so the coincidence is over — and the
+    /// short-circuit would now hide a real measurement, answering zero for a
+    /// module that genuinely lost an import edge.
+    ///
+    /// So the kind is still asked, but for the right thing: which SHAPE of
+    /// reference can reach it ([`SymbolKind::reached_by`]), which then selects
+    /// the evidence a declaration of that kind is allowed to be judged on.
     fn verdict(&self, kind: SymbolKind, fqn: &str, name: &str) -> Lost {
-        if !kind.can_be_named() {
-            return Lost::Nothing;
-        }
         if self.exact.contains(fqn) {
             return Lost::Exact;
         }
@@ -1125,52 +1130,58 @@ mod tests {
         );
     }
 
-    /// The zero above is a property of the KIND, and this is where that is
-    /// pinned — the report alone cannot pin it.
+    /// **A MODULE IS JUDGED ON IMPORT EVIDENCE, AND NEVER ON A CALL.**
     ///
-    /// No walk mints a use site at [`Reach::Mod`], so the reach narrowing
-    /// already answers zero for a module and a corpus fixture would pass with
-    /// the kind never consulted. Two rules agreeing is not one rule holding.
-    /// Here the evidence is built by hand, at the strongest grade there is —
-    /// the module's own identity — and a container still has nothing to lose,
-    /// while the same evidence about a namable kind is read normally.
+    /// This replaces a test that asserted the opposite — that a container was
+    /// answered zero BEFORE any evidence was read. That was right while no use
+    /// site minted [`Reach::Mod`]: the kind short-circuit and the reach
+    /// narrowing agreed, and asking the kind first meant the zero did not
+    /// depend on the agreement. An import mints `mod`, so the agreement is
+    /// over, and the short-circuit would now answer zero for a module that
+    /// genuinely lost an import edge — a number nobody measured.
+    ///
+    /// Both directions, because one alone proves nothing. Evidence at `mod`
+    /// reach must now REACH a module; evidence at `item` reach must still not,
+    /// and the same item-reach evidence must still be read normally for a kind
+    /// a call can name. Built by hand at the by-name grade rather than the
+    /// exact one, because `exact` answers before the reach is consulted and
+    /// would pass whatever the narrowing did.
     #[test]
-    fn a_container_is_answered_before_any_evidence_is_read() {
-        let a_module = fqn::define(&fqn::Form::Item {
-            lang: Language::Rust,
-            package: "x",
-            module: "outer",
-            name: "inner",
-            reach: Reach::Mod,
-        })
-        .expect("a module identity");
-        let a_function = fqn::define(&fqn::Form::Item {
-            lang: Language::Rust,
-            package: "x",
-            module: "outer",
-            name: "inner",
-            reach: Reach::Item,
-        })
-        .expect("a function identity");
-
-        let named = NamedBy {
-            exact: BTreeSet::from([a_module.as_str(), a_function.as_str()]),
+    fn a_module_is_judged_on_import_evidence_and_never_on_a_call() {
+        let identity = |reach| {
+            fqn::define(&fqn::Form::Item {
+                lang: Language::Rust,
+                package: "x",
+                module: "outer",
+                name: "inner",
+                reach,
+            })
+            .expect("an identity")
+        };
+        let a_module = identity(Reach::Mod);
+        let a_function = identity(Reach::Item);
+        let evidence_at = |reach: Reach| NamedBy {
             by_reach: BTreeMap::from([(
-                (Language::Rust, Reach::Mod.as_str(), Via::NameAlone),
+                (Language::Rust, reach.as_str(), Via::NameAlone),
                 BTreeSet::from(["inner"]),
             )]),
             ..NamedBy::nothing()
         };
 
         assert_eq!(
-            named.verdict(SymbolKind::Module, a_module.as_str(), "inner"),
-            Lost::Nothing,
-            "a container has no callee relation, so no evidence can make it a lost edge"
+            evidence_at(Reach::Mod).verdict(SymbolKind::Module, a_module.as_str(), "inner"),
+            Lost::ByName,
+            "an import mints `mod`, so a module CAN lose an edge and the report must say so"
         );
         assert_eq!(
-            named.verdict(SymbolKind::Function, a_function.as_str(), "inner"),
-            Lost::Exact,
-            "and the same evidence about a kind a reference CAN name is still read"
+            evidence_at(Reach::Item).verdict(SymbolKind::Module, a_module.as_str(), "inner"),
+            Lost::Nothing,
+            "a call mints `item` and can never reach a module: `a::b::c()` names `c`, never `a`"
+        );
+        assert_eq!(
+            evidence_at(Reach::Item).verdict(SymbolKind::Function, a_function.as_str(), "inner"),
+            Lost::ByName,
+            "and the same item-reach evidence about a kind a call CAN name is read normally"
         );
     }
 
