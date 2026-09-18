@@ -34,10 +34,11 @@ impl LanguageAdapter for PythonAdapter {
     fn fqn_output(
         &self,
         abs_path: &str,
-        _rel_path: &str,
+        rel_path: &str,
         content: &str,
     ) -> Option<super::fqn::FqnFileOutput> {
-        python_fqn::python_file_context(abs_path).map(|ctx| python_fqn::produce_fqns(content, &ctx))
+        python_fqn::python_file_context(abs_path, rel_path)
+            .map(|ctx| python_fqn::produce_fqns(content, &ctx))
     }
 
     fn parse_to_ir(&self, source: &str, file_path: &str) -> crate::ir::IRParsedFile {
@@ -1137,16 +1138,54 @@ pub(crate) mod python_fqn {
     /// module `manage`. With no marker anywhere the old answer also stands —
     /// nothing on disk says where the path begins, and inventing a root would
     /// mint a package the interpreter never sees.
-    fn named_from_the_import_root(file: &std::path::Path, stem: &str) -> FileFqnContext {
+    /// The repository the scan is walking, recovered from the two paths the
+    /// adapter is already handed: `rel_path` is `abs_path` relative to it.
+    ///
+    /// NOT a marker to hunt for. The scan is git-folder based, so this boundary
+    /// was established before any file was read — it just was not threaded down
+    /// to the one place that walks the filesystem.
+    ///
+    /// `None` when the two do not line up, and the caller treats that as "no
+    /// boundary known" and refuses to walk rather than walking unbounded.
+    fn repo_root_of(abs_path: &str, rel_path: &str) -> Option<std::path::PathBuf> {
+        let abs = abs_path.replace('\\', "/");
+        let rel = rel_path.replace('\\', "/");
+        let root = abs.strip_suffix(rel.trim_start_matches('/'))?;
+        let root = root.trim_end_matches('/');
+        // AN EMPTY ROOT IS NOT A ROOT. `router.rs` falls back to the full
+        // absolute path when `strip_prefix` misses, which would leave nothing
+        // here — and `Path::new("").starts_with("")` is TRUE, so an empty root
+        // makes every bound below it vacuous and restores the unbounded climb
+        // this function exists to prevent.
+        match root.is_empty() {
+            true => None,
+            false => Some(std::path::PathBuf::from(root)),
+        }
+    }
+
+    fn named_from_the_import_root(
+        file: &std::path::Path,
+        stem: &str,
+        repo_root: Option<&std::path::Path>,
+    ) -> FileFqnContext {
         const MARKERS: &[&str] = &["pyproject.toml", "setup.py", "setup.cfg"];
         let itself = || FileFqnContext { package: stem.to_string(), module: String::new() };
 
-        let mut marked = file.parent();
-        while let Some(dir) = marked {
-            if MARKERS.iter().any(|m| dir.join(m).is_file()) {
+        // NO KNOWN BOUNDARY, NO WALK. An unbounded climb reads the filesystem
+        // above the repository, where nothing is part of this scan.
+        let Some(repo_root) = repo_root else { return itself() };
+
+        let mut marked = None;
+        let mut dir = file.parent();
+        while let Some(cur) = dir {
+            if MARKERS.iter().any(|m| cur.join(m).is_file()) {
+                marked = Some(cur);
                 break;
             }
-            marked = dir.parent();
+            if cur == repo_root {
+                break;
+            }
+            dir = cur.parent().filter(|p| p.starts_with(repo_root));
         }
         let Some(project) = marked else { return itself() };
         // A src-layout: `src` is on the path, so the name begins below it.
@@ -1173,12 +1212,20 @@ pub(crate) mod python_fqn {
         }
     }
 
-    pub(crate) fn python_file_context(abs_path: &str) -> Option<FileFqnContext> {
+    pub(crate) fn python_file_context(abs_path: &str, rel_path: &str) -> Option<FileFqnContext> {
         let file = std::path::Path::new(abs_path);
+        let repo_root = repo_root_of(abs_path, rel_path);
         let stem = file.file_stem().and_then(|s| s.to_str())?.to_string();
         let mut pkg_dirs: Vec<String> = Vec::new(); // nearest-first
         let mut d = file.parent();
         while let Some(cur) = d {
+            // BOUNDED AT THE REPOSITORY for the same reason the marker walk is:
+            // an `__init__.py` in a directory above the checkout is not part of
+            // this scan, and absorbing it would prepend a package segment no
+            // importer inside the repository ever writes.
+            if !repo_root.as_deref().is_some_and(|r| cur.starts_with(r)) {
+                break;
+            }
             if cur.join("__init__.py").is_file() {
                 if let Some(n) = cur.file_name().and_then(|n| n.to_str()) {
                     pkg_dirs.push(n.to_string());
@@ -1189,7 +1236,7 @@ pub(crate) mod python_fqn {
             }
         }
         if pkg_dirs.is_empty() {
-            return Some(named_from_the_import_root(file, &stem));
+            return Some(named_from_the_import_root(file, &stem, repo_root.as_deref()));
         }
         pkg_dirs.reverse(); // top-first: [package, sub, …]
         let package = pkg_dirs[0].clone();
@@ -1211,6 +1258,72 @@ mod tests {
 
     // ── FQN producer (Phase 6.2) ────────────────────────────────────────────
     use crate::languages::fqn::{FileFqnContext, FqnFileOutput};
+
+    /// A root that cannot be established yields NO walk at all.
+    ///
+    /// `router.rs` hands the full absolute path as `rel_path` when its
+    /// `strip_prefix` misses, and the empty root that falls out of that is a
+    /// prefix of every path — so treating it as a boundary would bound nothing.
+    /// Fail closed: the file is its own module, which is what the rule said
+    /// before any of this walking existed.
+    #[test]
+    fn a_boundary_that_cannot_be_established_stops_the_walk_rather_than_widening_it() {
+        let outside = tempfile::tempdir().expect("a temp dir");
+        std::fs::write(outside.path().join("pyproject.toml"), "[project]\nname = \"other\"\n")
+            .expect("write");
+        let repo = outside.path().join("repo");
+        std::fs::create_dir_all(repo.join("pkg")).expect("mkdir");
+        let file = repo.join("pkg/mod.py");
+        std::fs::write(&file, "").expect("write");
+
+        let abs = file.to_str().expect("utf8");
+        // `rel_path` IS the absolute path — the shape router.rs produces on a
+        // failed strip. The root computes to empty and must not be trusted.
+        let ctx = super::python_fqn::python_file_context(abs, abs).expect("a context");
+        assert_eq!(
+            (ctx.package.as_str(), ctx.module.as_str()),
+            ("mod", ""),
+            "no establishable root, so no climb — not a climb bounded by nothing"
+        );
+    }
+
+    /// **THE IMPORT-ROOT SEARCH MUST NOT LEAVE THE REPOSITORY.**
+    ///
+    /// The walk climbed `dir.parent()` until it ran out of filesystem, so a
+    /// `pyproject.toml` in ANY ancestor became the import root for every python
+    /// file beneath it. A checkout under a directory that happens to hold one
+    /// would have its package read from a project it is not part of — and the
+    /// package is the first segment of every dotted name `classify` compares
+    /// against, so it is the whole file's resolution, not a label.
+    ///
+    /// The boundary was never missing. The scan is GIT-FOLDER BASED: it
+    /// establishes a repository and then walks the files inside it, and the
+    /// adapter is handed `rel_path` — this file relative to that root — beside
+    /// `abs_path`. The two together name the root, and this walk was ignoring
+    /// the one that carries it.
+    #[test]
+    fn the_import_root_is_never_read_from_outside_the_repository() {
+        let outside = tempfile::tempdir().expect("a temp dir");
+        // A project marker ABOVE the repository being scanned.
+        std::fs::write(outside.path().join("pyproject.toml"), "[project]\nname = \"other\"\n")
+            .expect("write");
+
+        let repo = outside.path().join("repo");
+        std::fs::create_dir_all(repo.join("pkg")).expect("mkdir");
+        std::fs::write(repo.join("pkg/mod.py"), "").expect("write");
+
+        let ctx = super::python_fqn::python_file_context(
+            repo.join("pkg/mod.py").to_str().expect("utf8"),
+            "pkg/mod.py",
+        )
+        .expect("a context");
+        assert_eq!(
+            (ctx.package.as_str(), ctx.module.as_str()),
+            ("mod", ""),
+            "the repository holds no marker, so the file is its own module — \
+             borrowing the one above it would name a project this file is not in"
+        );
+    }
 
     /// **A FILE OUTSIDE AN `__init__.py` CHAIN IS STILL IN A PACKAGE.**
     ///
@@ -1243,9 +1356,11 @@ mod tests {
         // PEP 420: a package with NO __init__.py anywhere.
         std::fs::create_dir_all(at("mypkg/sub")).expect("mkdir");
         std::fs::write(at("mypkg/sub/mod.py"), "").expect("write");
-        let ctx =
-            super::python_fqn::python_file_context(at("mypkg/sub/mod.py").to_str().expect("utf8"))
-                .expect("a context");
+        let ctx = super::python_fqn::python_file_context(
+            at("mypkg/sub/mod.py").to_str().expect("utf8"),
+            "mypkg/sub/mod.py",
+        )
+        .expect("a context");
         assert_eq!(
             (ctx.package.as_str(), ctx.module.as_str()),
             ("mypkg", "sub.mod"),
@@ -1257,6 +1372,7 @@ mod tests {
         std::fs::write(at("src/lib2/deep/thing.py"), "").expect("write");
         let ctx = super::python_fqn::python_file_context(
             at("src/lib2/deep/thing.py").to_str().expect("utf8"),
+            "src/lib2/deep/thing.py",
         )
         .expect("a context");
         assert_eq!(
@@ -1268,8 +1384,11 @@ mod tests {
         // A SCRIPT at the import root is its own top-level module, which is
         // what the old fallback said — correct THERE, and only there.
         std::fs::write(at("manage.py"), "").expect("write");
-        let ctx = super::python_fqn::python_file_context(at("manage.py").to_str().expect("utf8"))
-            .expect("a context");
+        let ctx = super::python_fqn::python_file_context(
+            at("manage.py").to_str().expect("utf8"),
+            "manage.py",
+        )
+        .expect("a context");
         assert_eq!((ctx.package.as_str(), ctx.module.as_str()), ("manage", ""));
 
         // AND THE CHAIN RULE IS UNCHANGED where it applies.
@@ -1280,6 +1399,7 @@ mod tests {
         std::fs::write(at("classic/inner/leaf.py"), "").expect("write");
         let ctx = super::python_fqn::python_file_context(
             at("classic/inner/leaf.py").to_str().expect("utf8"),
+            "classic/inner/leaf.py",
         )
         .expect("a context");
         assert_eq!((ctx.package.as_str(), ctx.module.as_str()), ("classic", "inner.leaf"));
