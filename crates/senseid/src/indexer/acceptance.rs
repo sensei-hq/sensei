@@ -73,10 +73,20 @@ pub(super) fn read_the_corpus() -> Vec<Read> {
         sources.push((package, rel, text));
     }
     for (rel, text) in super::corpus_web_sources() {
-        // The three front ends are one package for this purpose. Their real
-        // package names come from a manifest the corpus reader does not open,
-        // and a wrong package would split one symbol into three.
-        sources.push(("web".to_string(), rel, text));
+        // ONE PACKAGE PER FRONT END, named after its directory.
+        //
+        // They were one package called `web`, on the grounds that the real names
+        // live in manifests this reader does not open and a wrong package would
+        // split one symbol into three. It does the opposite: `app/`, `dojo/` and
+        // `website/` are three separate applications that import nothing from
+        // each other, so filing them together MERGES two declarations that are
+        // genuinely distinct — `dojo/src/app.d.ts` and `website/src/app.d.ts`
+        // both minting `typescript·web·app·mod`.
+        //
+        // The directory is not the manifest name, but it is one package per
+        // package, which is the property every identity depends on.
+        let package = rel.split('/').next().unwrap_or("web").to_string();
+        sources.push((package, rel, text));
     }
 
     let read_all = |types: &TypeHomes| -> Vec<Read> {
@@ -1106,9 +1116,12 @@ fn no_two_declarations_mint_one_identity() {
 
     // THE RATCHET. Lower it when a collision is repaired; never raise it to
     // make a run pass.
-    const KNOWN: usize = 525;
+    // LOWERED, not raised. Giving each front end its own package repaired 11
+    // cross-app false merges — two apps' `src/app.d.ts` were one identity —
+    // and the file-module emission added none that survive it.
+    const KNOWN: usize = 514;
     const KNOWN_RUST: usize = 3;
-    const KNOWN_TYPESCRIPT: usize = 522;
+    const KNOWN_TYPESCRIPT: usize = 511;
     assert!(
         collisions.len() <= KNOWN,
         "identity collisions rose to {} (ratchet {KNOWN}) — two declarations under one \
