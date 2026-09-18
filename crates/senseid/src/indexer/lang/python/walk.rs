@@ -235,24 +235,22 @@ impl<'a> Walk<'a> {
             // A decorator wraps the definition it applies to; the definition is
             // what declares a name. The decorator itself is a use site, and it
             // is read by the expression walk below.
-            "decorated_definition" => {
-                let mut cursor = node.walk();
-                for child in node.children(&mut cursor) {
-                    match child.kind() {
-                        "decorator" => self.expression(scope, child),
-                        _ => self.node(scope, child),
-                    }
-                }
-            }
+            // A decorator wraps the definition it applies to and is itself a
+            // use site; both are ordinary children of this node.
+            "decorated_definition" => self.children(scope, node),
             "class_definition" => self.class(scope, node),
             "function_definition" => self.function(scope, node),
             "assignment" => self.assignment(scope, node),
-            // A block introduces no scope of its own in Python — a name bound
-            // inside an `if` is visible after it — so the same scope walks in.
-            _ => {
-                self.expression(scope, node);
+            // A CALL IS EMITTED HERE AND THE WALK CONTINUES THROUGH IT, exactly
+            // once. `outer(inner())` is two use sites, and the inner one is
+            // reached by descending rather than by a second traversal.
+            "call" => {
+                self.call(scope, node);
                 self.children(scope, node);
             }
+            // A block introduces no scope of its own in Python — a name bound
+            // inside an `if` is visible after it — so the same scope walks in.
+            _ => self.children(scope, node),
         }
     }
 
@@ -306,7 +304,7 @@ impl<'a> Walk<'a> {
         // A BASE CLASS IS A USE SITE. `class Nurse(Practitioner)` reads
         // `Practitioner` exactly as a call would.
         if let Some(bases) = node.child_by_field_name("superclasses") {
-            self.expression(scope, bases);
+            self.node(scope, bases);
         }
 
         let inner = Scope {
@@ -458,7 +456,7 @@ impl<'a> Walk<'a> {
         }
 
         if let Some(right) = node.child_by_field_name("right") {
-            self.expression(scope, right);
+            self.node(scope, right);
         }
         if let Some(raw) = self.field_text(node, "type") {
             let target = self.refer_to_type(raw, node);
@@ -472,20 +470,6 @@ impl<'a> Walk<'a> {
     }
 
     // ── use sites ────────────────────────────────────────────────────────────
-
-    /// Walk an expression, emitting a reference for every call in it.
-    fn expression(&mut self, scope: &Scope, node: Node<'_>) {
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            if child.kind() == "call" {
-                self.call(scope, child);
-            }
-            self.expression(scope, child);
-        }
-        if node.kind() == "call" {
-            self.call(scope, node);
-        }
-    }
 
     fn call(&mut self, scope: &Scope, node: Node<'_>) {
         let Some(callee) = node.child_by_field_name("function") else { return };
@@ -899,6 +883,33 @@ mod tests {
             ),
             other => panic!("expected the annotation to be read, got {other:?}"),
         }
+    }
+
+    /// **ONE CALL SITE, ONE REFERENCE.** A traversal that reaches a node twice
+    /// emits its use site twice, and every count built on references —
+    /// fan-in, the miss histogram, the coverage barrier — is then inflated by a
+    /// factor nobody can see from the inside.
+    ///
+    /// My own fixtures could not catch this, because they all used `.find()` on
+    /// the first matching reference and a duplicate reads exactly like the
+    /// original. It took the corpus: 103 files produced 37,973 references
+    /// against 1,487 symbols.
+    #[test]
+    fn a_call_site_emits_exactly_one_reference() {
+        let facts = read_py("def f():\n    return g()\n");
+        let calls: Vec<&Reference> =
+            facts.references.iter().filter(|r| r.kind == RefKind::Calls).collect();
+        assert_eq!(calls.len(), 1, "one call in the source, {} emitted", calls.len());
+    }
+
+    /// The same, for a call nested inside another expression — the shape a
+    /// double-walking traversal multiplies rather than merely doubles.
+    #[test]
+    fn a_nested_call_is_not_counted_once_per_level_of_nesting() {
+        let facts = read_py("def f():\n    return outer(inner(deep()))\n");
+        let calls: Vec<&Reference> =
+            facts.references.iter().filter(|r| r.kind == RefKind::Calls).collect();
+        assert_eq!(calls.len(), 3, "three calls in the source, {} emitted", calls.len());
     }
 
     /// Python states visibility in the NAME, and a dunder is public. A rule that
