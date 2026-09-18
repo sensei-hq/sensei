@@ -470,3 +470,193 @@ mod tests {
         assert!(type_segment("\"\"").is_err());
     }
 }
+
+#[cfg(test)]
+mod corpus {
+    use super::*;
+    use crate::indexer::facts::Resolution;
+    use crate::indexer::placement;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    /// **THE ADAPTER, ON REAL PYTHON, THROUGH THE REAL SEAM.**
+    ///
+    /// Every other test in this module runs on a string literal I wrote, which
+    /// proves the walk does what I expected and nothing about whether what I
+    /// expected is what Python code looks like. This one takes a checkout,
+    /// derives each file's package and module with
+    /// [`crate::indexer::placement`] exactly as the processor will, and reads
+    /// it — so a parse that fails, a manifest that names nothing, or a module
+    /// rule that disagrees with the corpus shows up as a number rather than as
+    /// a surprise at cutover.
+    ///
+    ///     SENSEI_PY_CORPUS=~/Developer/ai-hedge-fund \
+    ///       cargo test -p senseid --bin senseid -- --ignored --nocapture python::corpus
+    #[test]
+    #[ignore = "walks the checkout named by SENSEI_PY_CORPUS"]
+    fn the_adapter_reads_a_real_python_corpus() {
+        // Absent on a machine with no python checkout, which is most of them.
+        // The house pattern: say so and return, rather than fail a suite for a
+        // fixture that is deliberately not in the repository.
+        let Ok(root) = std::env::var("SENSEI_PY_CORPUS") else {
+            println!("SENSEI_PY_CORPUS unset — nothing to read. See this test's docs.");
+            return;
+        };
+        let root = PathBuf::from(root);
+        let manifests: Vec<PathBuf> = ignore::WalkBuilder::new(&root)
+            .build()
+            .filter_map(Result::ok)
+            .map(|e| e.into_path())
+            // Only what an adapter can READ. `setup.py` and `setup.cfg` look
+            // like manifests and no registered adapter parses either, so
+            // counting them would make a file's package depend on which of two
+            // files the walk yielded first.
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .and_then(crate::adapters::manifest::manifest_adapter_for_filename)
+                    .is_some()
+            })
+            .collect();
+
+        let files: Vec<PathBuf> = ignore::WalkBuilder::new(&root)
+            .build()
+            .filter_map(Result::ok)
+            .map(|e| e.into_path())
+            .filter(|p| p.extension().is_some_and(|e| e == "py" || e == "pyi"))
+            .collect();
+        assert!(!files.is_empty(), "{} holds no python", root.display());
+
+        let mut unplaced = 0usize;
+        let mut unreadable: Vec<String> = Vec::new();
+        let mut modules: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+        let (mut symbols, mut references, mut imports) = (0usize, 0usize, 0usize);
+        let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
+        let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+        let mut read = 0usize;
+        let mut callable_lines = 0usize;
+
+        for file in &files {
+            let Some(manifest) = placement::owning_manifest(file, &root, &manifests) else {
+                unplaced += 1;
+                continue;
+            };
+            let Ok(manifest_text) = std::fs::read_to_string(&manifest) else {
+                unplaced += 1;
+                continue;
+            };
+            let Some(package) = placement::package_named_by(&manifest, &manifest_text) else {
+                unplaced += 1;
+                continue;
+            };
+            let package_root = manifest.parent().expect("a manifest has a directory");
+            let placed = placement::placement_of(file, &package, package_root, Language::Python);
+            let Ok(text) = std::fs::read_to_string(file) else { continue };
+            callable_lines += self::corpus::callable_lines(&text);
+
+            let source = Source {
+                package: &placed.package,
+                module: &placed.module,
+                path: &file.to_string_lossy(),
+                text: &text,
+            };
+            match PythonAdapter.read(&source, &TypeHomes::unknown()) {
+                Ok(facts) => {
+                    read += 1;
+                    symbols += facts.symbols.len();
+                    for symbol in &facts.symbols {
+                        *kinds.entry(format!("{:?}", symbol.kind)).or_default() += 1;
+                    }
+                    references += facts.references.len();
+                    imports += facts.imports.len();
+                    modules.entry(placed.module.clone()).or_default().push(file.clone());
+                    for reference in &facts.references {
+                        if let Resolution::Unresolved { reason, .. } = &reference.target {
+                            *reasons.entry(format!("{reason:?}")).or_default() += 1;
+                        }
+                    }
+                }
+                Err(e) => unreadable.push(format!("{}: {e:?}", file.display())),
+            }
+        }
+
+        let mut histogram: Vec<(&String, &usize)> = reasons.iter().collect();
+        histogram.sort_by(|a, b| b.1.cmp(a.1));
+        println!("\n── {} ──", root.display());
+        println!("  files {}  read {read}  unplaced {unplaced}", files.len());
+        println!("  symbols {symbols}  references {references}  imports {imports}");
+        println!("  distinct modules {}", modules.len());
+        println!("  by kind {kinds:?}");
+        for (reason, count) in histogram.iter().take(8) {
+            println!("  {count:>7}  {reason}");
+        }
+
+        // A COLLISION IS A DEFECT UNLESS PYTHON ITSELF HAS IT. Two files minting
+        // one module means every declaration in one overwrites the other's — so
+        // the only acceptable collision is the one the language cannot resolve
+        // either: `a.py` beside `a/__init__.py`, where CPython's own finder lets
+        // the directory shadow the file. That is a real bug in the corpus, found
+        // rather than caused, and it is REPORTED instead of asserted away.
+        //
+        // MEASURED: one such pair in a 94-file checkout (`src/config.py` and
+        // `src/config/__init__.py`). Anything with a different shape is mine.
+        let mut theirs = 0usize;
+        let mut mine: Vec<String> = Vec::new();
+        for (module, claimants) in modules.iter().filter(|(m, c)| c.len() > 1 && !m.is_empty()) {
+            match shadowed_by_a_package_directory(claimants) {
+                true => theirs += 1,
+                false => mine.push(format!("{module}: {claimants:?}")),
+            }
+        }
+        if theirs > 0 {
+            println!("  {theirs} module(s) the corpus itself cannot disambiguate");
+        }
+        assert!(
+            mine.is_empty(),
+            "{} module path(s) collide for a reason python does NOT have: {:?}",
+            mine.len(),
+            mine.iter().take(5).collect::<Vec<_>>()
+        );
+        assert!(unreadable.is_empty(), "{} files did not read: {:?}", unreadable.len(), unreadable);
+        assert!(read > 0, "nothing was read, so this proved nothing");
+
+        // **EVERY `def` AND `class` IN THE CORPUS, EXACTLY ONCE.**
+        //
+        // The strongest check available without a second implementation to
+        // compare against: the source states how many callables it declares, one
+        // per line, and the walk must emit that many. A miss shows up as a
+        // shortfall and the double-count that the reference total hid for one
+        // commit would show up as a surplus.
+        //
+        // MEASURED on a 94-file checkout: 367 lines, 367 symbols — 42 classes,
+        // 257 functions, 68 methods.
+        let declared: usize = kinds.get("Class").copied().unwrap_or_default()
+            + kinds.get("Function").copied().unwrap_or_default()
+            + kinds.get("Method").copied().unwrap_or_default();
+        assert_eq!(
+            declared, callable_lines,
+            "the corpus writes {callable_lines} `def`/`class` lines and the walk emitted \
+             {declared} callables"
+        );
+    }
+
+    /// How many callables the SOURCE says it declares — one per `def`/`class`
+    /// line. A deliberately dumb count, because its whole value is being derived
+    /// some way other than the walk derives its answer.
+    fn callable_lines(text: &str) -> usize {
+        text.lines()
+            .filter(|line| {
+                let t = line.trim_start();
+                t.starts_with("def ") || t.starts_with("class ") || t.starts_with("async def ")
+            })
+            .count()
+    }
+
+    /// Whether a set of files claiming one module is the `a.py` beside
+    /// `a/__init__.py` shape — the ambiguity python's own import system has.
+    fn shadowed_by_a_package_directory(claimants: &[PathBuf]) -> bool {
+        claimants.len() == 2
+            && claimants.iter().any(|p| p.file_name().is_some_and(|n| n == "__init__.py"))
+            && claimants.iter().any(|p| p.file_name().is_some_and(|n| n != "__init__.py"))
+    }
+}
