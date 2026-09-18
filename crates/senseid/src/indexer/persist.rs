@@ -2402,13 +2402,18 @@ pub fn widest(a: u32) -> u32 {
             // genuinely have one identity — the open question is whether an
             // anonymous declaration is a symbol at all.
             "rust·senseid·tasks::handlers::embed·_·item",
-            // Two INTEGRATION-test files, each declaring one of these. They
-            // live under `tests/`, not `src/`, so the corpus helper's
-            // split-on-`/src/` leaves their module path EMPTY and both files
-            // mint at the package root. A harness defect, not a walk defect:
-            // `module_of` is `#[cfg(test)]` and documented as a guess.
-            "rust·senseid·base_url·item",
-            "rust·senseid·main·item",
+            // `base_url` and `main` USED TO BE HERE, and are not defects that
+            // were argued away — `module_of` was fixed and they stopped
+            // colliding. It had guessed the crate root by splitting on
+            // `/src/`, which left an EMPTY module for every file a package
+            // holds outside it, so `build.rs`'s `fn main` minted the identity
+            // `src/main.rs`'s mints. It now walks up for the manifest, the way
+            // `package_of` always did.
+            //
+            // What made a KNOWN-AND-ACCEPTED entry get fixed was writing the
+            // production seam (`indexer::placement`) and pinning the two
+            // against each other over the corpus: the disagreement was
+            // mechanical, and 6 of 390 files named themselves.
         ];
 
         let collided: Vec<&String> =
