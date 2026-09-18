@@ -599,8 +599,9 @@ mod tests {
             crate::indexer::persist::read_back(&store, &folder).await.expect("the rows read back");
         assert_eq!(
             stored.symbols.iter().map(|s| s.fqn.as_str()).collect::<Vec<&str>>(),
-            vec!["rust·senseid·bell·kept·item"],
-            "only what the file still declares reads back as a definition"
+            vec!["rust·senseid·bell·kept·item", "rust·senseid·bell·mod"],
+            "only what the file still declares reads back as a definition — which now \
+             includes the file's OWN module, because a file is a module and says so"
         );
 
         let row = node_row(&store, &folder, gone).await.expect("the node must SURVIVE as a stub");
@@ -796,10 +797,10 @@ mod tests {
     #[test]
     fn a_file_claiming_nothing_but_its_own_module_still_trips_the_brake() {
         let its_own_module =
-            persist::file_identity_of(Language::Rust, "bell", "bell", "src/bell.rs")
+            persist::file_identity_of(Language::Rust, "senseid", "bell", "src/bell.rs")
                 .expect("a rust file has a module identity");
 
-        let before = BTreeSet::from(["rust·bell·bell·toll·item".to_string()]);
+        let before = BTreeSet::from(["rust·senseid·bell·toll·item".to_string()]);
         let now = BTreeSet::from([its_own_module.clone()]);
         let damaged = stated("bell", "src/bell.rs", "//! the read was truncated");
         let intact = || Ok(stated("bell", "src/bell.rs", "pub fn toll() {}"));
@@ -817,10 +818,10 @@ mod tests {
     #[test]
     fn a_file_emptied_down_to_its_own_module_is_confirmed_not_held() {
         let its_own_module =
-            persist::file_identity_of(Language::Rust, "bell", "bell", "src/bell.rs")
+            persist::file_identity_of(Language::Rust, "senseid", "bell", "src/bell.rs")
                 .expect("a rust file has a module identity");
 
-        let before = BTreeSet::from(["rust·bell·bell·toll·item".to_string()]);
+        let before = BTreeSet::from(["rust·senseid·bell·toll·item".to_string()]);
         let now = BTreeSet::from([its_own_module.clone()]);
         let emptied = stated("bell", "src/bell.rs", "//! nothing");
         let agrees = || Ok(stated("bell", "src/bell.rs", "//! nothing"));
@@ -889,13 +890,17 @@ mod tests {
 
         assert_eq!(done.braked, Brake::Confirmed);
         assert_eq!((done.released, done.demoted), (1, 1));
-        assert!(
+        assert_eq!(
             crate::indexer::persist::read_back(&store, &folder)
                 .await
                 .expect("the rows read back")
                 .symbols
-                .is_empty(),
-            "the file states nothing, so the graph must record nothing it states"
+                .iter()
+                .map(|s| s.fqn.as_str())
+                .collect::<Vec<&str>>(),
+            vec!["rust·senseid·bell·mod"],
+            "the file states nothing OF ITS OWN, so the graph records nothing but the file \
+             itself — which is still there and is still a module"
         );
     }
 
@@ -932,7 +937,12 @@ mod tests {
 
         assert_eq!(done.braked, Brake::NotNeeded, "an observed absence needs no confirming read");
         assert_eq!(done.wrote, Wrote::Nothing);
-        assert_eq!((done.released, done.demoted), (2, 2));
+        assert_eq!(
+            (done.released, done.demoted),
+            (3, 3),
+            "the two declarations AND the file's own module, which a deleted file also \
+             stops claiming"
+        );
         assert_eq!(
             edge_rows(&store, &folder, None).await,
             Vec::<serde_json::Value>::new(),
@@ -1023,9 +1033,9 @@ mod tests {
         let declared_by = node_row(&store, &folder, child_module).await.expect("the module node");
         assert_eq!(
             declared_by["file_path"],
-            serde_json::json!("src/lib.rs"),
-            "the fixture must reproduce the shape: the child's module node is declared by the \
-             PARENT, so its file_path is the parent's"
+            serde_json::json!("src/child.rs"),
+            "the child declares its OWN module now — `pub mod child;` in the parent names a \
+             module whose body is elsewhere, and a name is not a declaration"
         );
         let child_edges = edge_rows(&store, &folder, Some("src/child.rs")).await;
         assert!(
@@ -1149,9 +1159,9 @@ mod tests {
             "nothing changed in the file, so nothing may be released, demoted or dropped"
         );
         assert_eq!(
-            claimed, 4,
-            "the file still declares its struct, its field, its method and \
-                                its function"
+            claimed, 5,
+            "the file still declares its struct, its field, its method, its function — \
+             and itself, which is a module"
         );
         assert_eq!(contested, vec![]);
         assert_eq!(braked, Brake::NotNeeded);
@@ -1260,10 +1270,37 @@ mod tests {
 
         let old_first = run(["src/first.rs", "src/second.rs"]).await;
         let new_first = run(["src/second.rs", "src/first.rs"]).await;
+
+        // THE MOVED SYMBOL is the subject, and it is order-independent whole.
+        let moved = |rows: &[serde_json::Value]| -> Vec<serde_json::Value> {
+            rows.iter().filter(|r| r["fqn"] != "rust·senseid·shared·mod").cloned().collect()
+        };
         assert_eq!(
-            old_first, new_first,
+            moved(&old_first),
+            moved(&new_first),
             "a claim is a SET member, not a winner, so which file the scan reaches first cannot \
              change the graph (R6)"
+        );
+
+        // THE MODULE NODE is claimed by BOTH files here, and its scalar columns
+        // (file_path, span) are therefore last-writer-wins. That is not a defect
+        // this test can report, because the input cannot occur: this fixture
+        // hands two files one module path by hand, and neither language's rule
+        // produces that. Rust maps 382 files to 382 identities; the web rule
+        // maps 925 to 925 since it stopped dropping non-omittable extensions.
+        //
+        // What R6 DOES guarantee about it is asserted instead — the claim SET,
+        // which is a set and merges either way round.
+        let claims = |rows: &[serde_json::Value]| -> serde_json::Value {
+            rows.iter()
+                .find(|r| r["fqn"] == "rust·senseid·shared·mod")
+                .expect("the module node")["props"]["claims"]
+                .clone()
+        };
+        assert_eq!(
+            claims(&old_first),
+            claims(&new_first),
+            "both files claim the module, and a claim set does not depend on arrival order"
         );
     }
 

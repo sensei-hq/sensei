@@ -25,7 +25,9 @@ mod types;
 mod walk;
 
 use super::{LanguageAdapter, ReadError, Source, TypeHomes};
-use crate::indexer::facts::{FileFacts, Fqn, Language};
+use crate::indexer::facts::{
+    DeclaredType, FileFacts, Fqn, Language, Symbol, SymbolKind, Visibility,
+};
 use crate::indexer::fqn::{self, Form, FqnError, Reach};
 use crate::indexer::resolve::{Grammar, Root};
 
@@ -248,7 +250,40 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
     // identity rule and the walk owns none.
     let from =
         file_fqn(source.package, source.module, source.path).map_err(ReadError::NoFileIdentity)?;
-    let found = walk::walk(source, types, tree.root_node(), from);
+    let mut found = walk::walk(source, types, tree.root_node(), from.clone());
+
+    // THE FILE DECLARES ITS OWN MODULE, and is the only thing that does.
+    //
+    // A file IS a module in Rust, and until now nothing said so: `module_item`
+    // fired only for an inline `mod x { }`, so every `Module` node in the graph
+    // was a `mod tests` block and a file had no node of its own. That left an
+    // import no target to point at and every top-level item no parent.
+    //
+    // Emitted HERE rather than in the walk because it is not something the
+    // source says — there is no AST node for it. The independent declaration
+    // counter walks tree-sitter nodes, so it cannot see this one, and that is
+    // a fact about the file rather than a disagreement (see the count test).
+    //
+    // The span is the whole file, which is true and is what gives it a real
+    // `line_end`. Resolution is protected from it separately: `Ladder::new`
+    // filters this identity out of its module blocks, because a block covering
+    // the whole file would otherwise append its own name to the module path of
+    // everything inside it.
+    found.symbols.insert(
+        0,
+        Symbol {
+            fqn: from,
+            kind: SymbolKind::Module,
+            name: module_name_of(source.module, source.path),
+            span: whole_file(tree.root_node()),
+            // A module's own visibility is stated by the `mod x;` in its parent,
+            // which is a different file. Unstated here rather than guessed.
+            visibility: Visibility::Private,
+            docstring: None,
+            declared_type: DeclaredType::Unstated,
+            params: Vec::new(),
+        },
+    );
 
     Ok(FileFacts {
         language: Language::Rust,
@@ -260,6 +295,30 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
         relations: found.relations,
         imports: found.imports,
     })
+}
+
+/// The NAME segment of a file's own module identity — the last segment of its
+/// module path, or the crate-root stem for a file the module tree does not
+/// name. Reads the same two cases [`file_fqn`] does, so the name beside the
+/// identity cannot disagree with the name inside it.
+fn module_name_of(module: &str, path: &str) -> String {
+    match module.rsplit_once("::") {
+        Some((_, name)) => name.to_string(),
+        None if module.is_empty() => crate_root(path).to_string(),
+        None => module.to_string(),
+    }
+}
+
+/// A span covering the whole file, for the one symbol with no AST node of its
+/// own.
+fn whole_file(root: tree_sitter::Node<'_>) -> crate::indexer::facts::Span {
+    let end = root.end_position();
+    crate::indexer::facts::Span {
+        start_line: 1,
+        start_col: 1,
+        end_line: end.row as u32 + 1,
+        end_col: end.column as u32 + 1,
+    }
 }
 
 /// The identity of the file itself, which is the identity of the module it
@@ -1193,7 +1252,6 @@ pub fn free(w: &Widget) -> u32 { w.width }
         got.sort_unstable();
 
         let mut expected = vec![
-            "rust·p·m·inner·mod",
             "rust·p·m·MAX·item",
             "rust·p·m·NAME·item",
             "rust·p·m·Alias·item",
@@ -1218,6 +1276,10 @@ pub fn free(w: &Widget) -> u32 { w.width }
             "rust·p·m·Widget·Draw·SIDES·item",
             "rust·p·m·Widget·Draw·draw·item",
             "rust·p·m·free·item",
+            // The FILE's own module. `pub mod inner;` no longer declares
+            // `inner` — that module's body is another file, and that file
+            // declares it. What this file declares of its own is itself.
+            "rust·p·m·mod",
         ];
         expected.sort_unstable();
 
@@ -1322,15 +1384,25 @@ pub fn free(w: &Widget) -> u32 { w.width }
                 "rust·p·a::b·c·mod",
                 "rust·p·a::b·f·item",
                 "rust·p·a·b·mod",
+                // The file itself, module `a`. The inline `mod b { }` still
+                // declares `b`, because b's body IS here.
+                "rust·p·a·mod",
             ]
         );
     }
 
     /// At the crate root the module segment is empty, which the grammar drops.
+    ///
+    /// The file's own module is the counter-example beside it: a crate root is
+    /// the one file no `mod` declaration names, so its identity is minted under
+    /// the reserved `crate` segment from its own file stem — which is exactly
+    /// why `CRATE_ROOT` is a reserved word no declaration can mint.
     #[test]
     fn a_declaration_at_the_crate_root_carries_no_module_segment() {
         let facts = facts("", "pub fn main() {}");
-        assert_eq!(fqns(&facts), vec!["rust·p·main·item"]);
+        let mut got = fqns(&facts);
+        got.sort_unstable();
+        assert_eq!(got, vec!["rust·p·crate·fixture·mod", "rust·p·main·item"]);
     }
 
     /// `impl Trait for (A, B)` names no type, so its members have no identity in
@@ -1463,6 +1535,11 @@ pub fn free(w: &Widget) -> u32 { w.width }
             if !inside_an_attribute(node) && !inside_an_unnameable_impl(node) {
                 if DECLARATION_KINDS.contains(&node.kind())
                     && node.child_by_field_name("name").is_some()
+                    // A `mod` declares a module only when the module's BODY is
+                    // here. `mod x;` names a module living in another file, and
+                    // that file declares it — stated in tree-sitter terms, from
+                    // the grammar, so this side stays independent of the walk.
+                    && !(node.kind() == "mod_item" && node.child_by_field_name("body").is_none())
                 {
                     count += 1;
                 }
@@ -1571,6 +1648,18 @@ pub fn free(w: &Widget) -> u32 { w.width }
     /// Step 3's load-bearing check, over this repo's own rust rather than a
     /// fixture: if the walk emits fewer symbols than there are declaration nodes
     /// it is dropping declarations, and if it emits more it is inventing them.
+    ///
+    /// EXACTLY ONE symbol per file has no declaration node, and it is the file's
+    /// OWN module. A file is a module in Rust, but nothing in the file says so —
+    /// there is no AST node to count, because the declaration is the file's
+    /// existence. `count_declarations` walks tree-sitter nodes, so it
+    /// structurally cannot see this one; the `+ 1` is that fact, not slack in
+    /// the check.
+    ///
+    /// A pseudo-kind in `DECLARATION_KINDS` would have been the wrong repair:
+    /// the counter's whole value is that it is derived from the GRAMMAR and not
+    /// from the walk, and teaching it about a symbol the grammar does not
+    /// contain would make the two sides agree by construction.
     #[test]
     fn the_symbol_count_equals_an_independent_count_of_declaration_nodes() {
         let mut disagreements = Vec::new();
@@ -1580,7 +1669,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
                 &TypeHomes::unknown(),
             )
             .unwrap_or_else(|e| panic!("{path}: {e:?}"));
-            let expected = count_declarations(parse(&text).root_node());
+            let expected = count_declarations(parse(&text).root_node()) + 1;
             if facts.symbols.len() != expected {
                 disagreements.push(format!(
                     "{path}: walk produced {}, independent count says {}",
