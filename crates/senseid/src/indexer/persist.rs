@@ -592,6 +592,15 @@ fn reference_edge_kind(kind: RefKind) -> &'static str {
     match kind {
         RefKind::Calls | RefKind::MacroInvokes => "calls",
         RefKind::Reads | RefKind::Writes | RefKind::Constructs | RefKind::TypeUse => "references",
+        // `imports` ALREADY EXISTS in `sensei.edge_kind`, so this is the one
+        // widening that needs no DDL change — which matters, because dbd diffs
+        // an enum positionally and Postgres cannot drop a value.
+        //
+        // Its own bucket and not `references`, for the reason `calls` is kept
+        // for calls alone: "what imports this module" is a question a reader
+        // asks, and folding it in with reads and writes would make the answer
+        // unrecoverable from the edge kind.
+        RefKind::Imports => "imports",
     }
 }
 
@@ -649,6 +658,7 @@ fn edge_kind_holds_uses(label: &str) -> &'static [RefKind] {
     match label {
         "calls" => &[RefKind::Calls, RefKind::MacroInvokes][..],
         "references" => &[RefKind::Reads, RefKind::Writes, RefKind::Constructs, RefKind::TypeUse],
+        "imports" => &[RefKind::Imports],
         _ => &[],
     }
 }
@@ -684,6 +694,7 @@ fn ref_kind_label(kind: RefKind) -> &'static str {
         RefKind::Constructs => "constructs",
         RefKind::TypeUse => "type_use",
         RefKind::MacroInvokes => "macro_invokes",
+        RefKind::Imports => "imports",
     }
 }
 
@@ -695,6 +706,7 @@ fn ref_kind_from_label(label: &str) -> Option<RefKind> {
         "constructs" => RefKind::Constructs,
         "type_use" => RefKind::TypeUse,
         "macro_invokes" => RefKind::MacroInvokes,
+        "imports" => RefKind::Imports,
         _ => return None,
     })
 }
