@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::facts::{
     Binding, DeclaredType, Evidence, FileFacts, Fqn, Import, ImportOrigin, Language, Observation,
-    Reason, Reference, Relation, RelationKind, Resolution, Rung, Span, SymbolKind,
+    Reason, RefKind, Reference, Relation, RelationKind, Resolution, Rung, Span, SymbolKind,
 };
 use super::fqn::{self, Form, Origin, Reach};
 
@@ -532,7 +532,17 @@ pub fn resolve(facts: FileFacts, grammar: &Grammar, world: &World<'_>) -> FileFa
     let references: Vec<Reference> = facts
         .references
         .iter()
-        .map(|r| Reference { target: ladder.place(&r.target, r.at), ..r.clone() })
+        .map(|r| Reference {
+            // An IMPORT is routed apart because its evidence is a PATH and not
+            // a name: the ladder's rungs look names up, and a specifier has to
+            // be reduced instead. Total in, total out is untouched — this
+            // places a reference the walk emitted, it does not mint one.
+            target: match r.kind {
+                RefKind::Imports => ladder.place_entered(&r.target, r.at, &facts.imports),
+                _ => ladder.place(&r.target, r.at),
+            },
+            ..r.clone()
+        })
         .collect();
     // Structure needs no special case here. A relation's parent carries the
     // same `Evidence` a reference's target does, and the walk stated its reach
@@ -1423,6 +1433,68 @@ impl<'a> Ladder<'a> {
         }
     }
 
+    /// The MODULE an import enters, for an import whose specifier names one.
+    ///
+    /// Reuses [`Ladder::specifier`] — the one owner of "what package-relative
+    /// path does this string mean", which already handles the alias, the
+    /// trailing glob or `self`, the external package head and the relative
+    /// root. A second reading of a specifier is how the two sides of an import
+    /// come to disagree.
+    ///
+    /// The identity is minted by the adapter's `file_fqn`, which is the
+    /// function the FILE declares itself under. That is the whole point: a
+    /// reference must mint the string the declaration minted, and the surest
+    /// way is to call the same code (spec §2).
+    ///
+    /// An external package we do not scan is `Unbound` — a miss. We index no
+    /// declarations for a library, so there is no module of theirs to point at,
+    /// and inventing one would be a node nothing ever declares (R5).
+    fn entered_module(&self, import: &Import) -> Placed {
+        let Rooted::At(segments) = self.specifier(import) else {
+            return Placed::Unbound;
+        };
+        let module = segments.join(self.grammar.module_separator);
+        if module.is_empty() {
+            return Placed::Unbound;
+        }
+        let package = match &import.origin {
+            ImportOrigin::Local => self.package,
+            ImportOrigin::External { package } => match self.owned_by_this_scan(package) {
+                Some(owned) => owned,
+                None => return Placed::Unbound,
+            },
+        };
+        match super::lang::adapter_for(self.grammar.language).file_fqn(package, &module, "") {
+            Ok(fqn) => Placed::Proven(fqn),
+            Err(_) => Placed::Unbound,
+        }
+    }
+
+    /// Place an [`RefKind::Imports`] reference, which climbs no ladder: a
+    /// specifier is not a name to look up, it is a path to reduce.
+    ///
+    /// The import is found by SPAN because the reference was emitted AT it —
+    /// both sides come from one walk over one file, and two imports on one line
+    /// is not a thing any of these grammars admit.
+    fn place_entered(&self, target: &Resolution, at: Span, imports: &[Import]) -> Resolution {
+        let Resolution::Unresolved { evidence, .. } = target else {
+            return target.clone();
+        };
+        let entered = imports.iter().find(|i| i.at == at).map(|i| self.entered_module(i));
+        match entered {
+            Some(Placed::Proven(fqn)) => Resolution::Resolved { fqn, via: Rung::ThroughAnImport },
+            // NOT `Unplaced`, which means "the ladder has not run on this yet".
+            // It has run: the specifier reduced to a module in a package this
+            // scan does not own, or to nothing at all. That is where our world
+            // ends, which is exactly what `ExternalBoundary` records — and an
+            // import of a library module is the commonest reference there is.
+            _ => Resolution::Unresolved {
+                reason: Reason::ExternalBoundary,
+                evidence: evidence.clone(),
+            },
+        }
+    }
+
     /// Whether an import binds at a given use site: within the innermost block
     /// that contains the import, or file-wide when it sits in no block.
     fn binds_at(&self, import: &Import, at: Span) -> bool {
@@ -1694,6 +1766,50 @@ mod tests {
         assert!(
             !members_declared_by(std::iter::once(&owned)).is_empty(),
             "ownership still declares members"
+        );
+    }
+
+    /// **AN IMPORT LANDS ON THE MODULE THE OTHER FILE DECLARES.**
+    ///
+    /// The whole point of the file-module work, end to end: `other.rs` declares
+    /// its own module, `m.rs` globs it, and the two identities meet. Before the
+    /// file-module existed there was nothing for an import to point at.
+    ///
+    /// Two files, because a one-file fixture cannot show the merge — the
+    /// declaration has to come from somewhere this file did not write.
+    #[test]
+    fn a_glob_import_lands_on_the_module_another_file_declares() {
+        use crate::indexer::facts::RefKind;
+
+        let scanned = scan(&[
+            ("other", "src/other.rs", "pub fn deep() {}\n"),
+            ("m", "src/m.rs", "use crate::other::*;\npub fn go() { deep() }\n"),
+        ]);
+        let importer = file_of(&scanned, "src/m.rs");
+
+        let entered: Vec<String> = importer
+            .references
+            .iter()
+            .filter(|r| r.kind == RefKind::Imports)
+            .map(|r| match &r.target {
+                Resolution::Resolved { fqn, via } => format!("{:?} {}", via, fqn.as_str()),
+                Resolution::Unresolved { reason, evidence } => {
+                    format!("UNRESOLVED({reason:?}) {}", evidence.name)
+                }
+            })
+            .collect();
+
+        assert_eq!(
+            entered,
+            vec!["ThroughAnImport rust·p·other·mod".to_string()],
+            "the glob enters `other`, and `other.rs` declares exactly that identity"
+        );
+
+        // The target is not invented: the other file really does declare it.
+        let declared = file_of(&scanned, "src/other.rs");
+        assert!(
+            declared.symbols.iter().any(|s| s.fqn.as_str() == "rust·p·other·mod"),
+            "the module the import landed on is one the other file declares"
         );
     }
 

@@ -221,8 +221,16 @@ impl Kind {
     /// The evidence columns go for the related reason: a container has no edge
     /// that could go missing, so a `lost` of 0 is a question never asked, and a
     /// zero in a defect column reads as one that was answered clean.
-    fn container_cells(&self) -> [String; 1] {
-        [self.nodes].map(|n| n.to_string())
+    fn container_cells(&self) -> [String; 6] {
+        [
+            self.nodes,
+            self.from_source,
+            self.from_test,
+            self.not_called(),
+            self.lost(),
+            self.narrowed_out,
+        ]
+        .map(|n| n.to_string())
     }
 }
 
@@ -240,7 +248,12 @@ impl Kind {
 fn reach_headings(reached: ReachedBy) -> &'static [&'static str] {
     match reached {
         ReachedBy::Call => &["calls", "test calls", "not called"],
-        ReachedBy::Import => &[],
+        // NOW REAL. These were empty while nothing emitted an import edge, and
+        // the count alone was the whole claim a container could make. An import
+        // reference mints `Reach::Mod`, so "how many modules is nothing
+        // importing" is a measurement rather than an assertion about a
+        // capability we did not have.
+        ReachedBy::Import => &["imports", "test imports", "not imported"],
     }
 }
 
@@ -254,8 +267,9 @@ fn call_headings() -> [&'static str; 8] {
 
 /// The container table's one column. Beside [`Kind::container_cells`], and one
 /// column for the reason given there.
-fn container_headings() -> [&'static str; 1] {
-    ["nodes"]
+fn container_headings() -> [&'static str; 6] {
+    let reach = reach_headings(ReachedBy::Import);
+    ["nodes", reach[0], reach[1], reach[2], "lost", "narrowed"]
 }
 
 /// Every kind's row folded into one total PER WAY OF BEING REACHED.
@@ -772,9 +786,9 @@ pub(super) fn two_barriers(units: &[Unit<'_>]) -> BTreeMap<&'static str, Tally> 
         section(ReachedBy::Call, &call_headings().map(str::to_string), false);
         if totals.contains_key(&ReachedBy::Import) {
             println!(
-                "\n  CONTAINERS — how many were declared, and that is the whole claim. \
-                 Nothing calls one, so there is no `not called`, no miss and no `lost` \
-                 here, and none of it is folded into the table above."
+                "\n  CONTAINERS — entered by an IMPORT, never called. Counted apart because \
+                 `not called` is not a statement about one, and none of it is folded \
+                 into the table above."
             );
             section(ReachedBy::Import, &container_headings().map(str::to_string), true);
         }
@@ -1031,8 +1045,8 @@ mod tests {
         );
     }
 
-    /// A CONTAINER GETS NO REACH COLUMN AT ALL — not `not called`, and not
-    /// `not imported` either.
+    /// A CONTAINER IS MEASURED UNDER THE WORD THAT REACHES IT — `imports`, and
+    /// never `calls`.
     ///
     /// `not imported` was the second wrong answer here and worse than the
     /// first. `not called` was merely the wrong word; `not imported: 325`
@@ -1053,8 +1067,8 @@ mod tests {
     fn a_container_is_counted_and_nothing_further_is_claimed_about_it() {
         assert_eq!(
             reach_headings(ReachedBy::Import),
-            [] as [&str; 0],
-            "no import edges exist, so there is no reach the table can report"
+            ["imports", "test imports", "not imported"],
+            "an import mints `mod`, so what entered a module is a measurement the table takes"
         );
         assert_eq!(
             reach_headings(ReachedBy::Call),
@@ -1063,8 +1077,8 @@ mod tests {
         );
         assert_eq!(
             container_headings(),
-            ["nodes"],
-            "the container table is the count and nothing else"
+            ["nodes", "imports", "test imports", "not imported", "lost", "narrowed"],
+            "a container is counted AND measured, under the word that reaches it"
         );
     }
 
@@ -1119,9 +1133,9 @@ mod tests {
              not in this total at all"
         );
         assert_eq!(
-            container.container_cells(),
-            ["2"],
-            "the module's whole row is its count — no unreached column is claimed for it"
+            container.container_cells()[0],
+            "2",
+            "both containers are counted: the inline `mod inner` and the FILE"
         );
         assert_eq!(
             container.lost(),
