@@ -50,6 +50,7 @@ pub(super) fn walk<'a>(
     from: Fqn,
 ) -> Found {
     let scope = Scope {
+        holder: from.clone(),
         module: source.module.to_string(),
         fn_scope: Vec::new(),
         container: Container::File,
@@ -108,6 +109,14 @@ struct Scope {
     container: Container,
     /// The symbol a use site found here sits inside — [`Reference::from`].
     from: Fqn,
+    /// The nearest enclosing MODULE, as an identity.
+    ///
+    /// NOT [`Scope::from`], which is the nearest enclosing SYMBOL and changes at
+    /// every declaration — a function's body sees `from` as the function. This
+    /// changes only at a module boundary, which is what containment is measured
+    /// against: it starts as the file's own identity and an inline `mod`
+    /// replaces it.
+    holder: Fqn,
     /// The type a declaration found here is a member of, as an IDENTITY.
     owner: Owner,
     /// Field name -> the TYPE it is declared with, for the CURRENT type.
@@ -633,17 +642,30 @@ impl<'a> Walk<'a> {
     fn push(&mut self, symbol: Result<Symbol, FqnError>, scope: &Scope) -> Scope {
         match symbol {
             Ok(symbol) => {
-                if let Owner::Type(owner) = &scope.owner {
+                // A member is OWNED by its type. Everything else written
+                // directly in a module is CONTAINED by that module. Exactly one
+                // of the two, because both feed `nodes.parent_id` and a child
+                // with two parents has none.
+                let structure = match &scope.owner {
+                    // Proven, not guessed: this identity was minted by the
+                    // same rule that named the member, from a declaration
+                    // this walk read, so the two sides cannot disagree.
+                    Owner::Type(owner) => Some((RelationKind::Owns, owner.clone())),
+                    // DIRECTLY in it, which is what the empty function chain
+                    // says. A declaration inside a function body is held by
+                    // that body, and calling it a child of the module would put
+                    // a local `const` beside the file's public surface as if
+                    // the two were the same kind of thing.
+                    _ if scope.fn_scope.is_empty() => {
+                        Some((RelationKind::Contains, scope.holder.clone()))
+                    }
+                    _ => None,
+                };
+                if let Some((kind, parent)) = structure {
                     self.relations.push(Relation {
-                        kind: RelationKind::Owns,
+                        kind,
                         child: symbol.fqn.clone(),
-                        // Proven, not guessed: this identity was minted by the
-                        // same rule that named the member, from a declaration
-                        // this walk read, so the two sides cannot disagree.
-                        parent: Resolution::Resolved {
-                            fqn: owner.clone(),
-                            via: Rung::DeclaredHere,
-                        },
+                        parent: Resolution::Resolved { fqn: parent, via: Rung::DeclaredHere },
                         at: symbol.span,
                     });
                 }
@@ -1024,6 +1046,10 @@ impl<'a> Walk<'a> {
         let symbol =
             self.symbol(node, scope, name, SymbolKind::Module, MODULE, DeclaredType::Unstated);
         let mut inner = self.push(symbol, scope);
+        // What is written inside this `mod` is held by it, not by the file.
+        // `push` set `from` to the module's own identity, which is the same
+        // string — read from there so the two cannot be minted apart.
+        inner.holder = inner.from.clone();
         inner.module = if scope.module.is_empty() {
             name.to_string()
         } else {

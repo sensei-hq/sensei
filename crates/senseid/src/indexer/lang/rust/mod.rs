@@ -2252,6 +2252,46 @@ fn helper() -> u32 { 0 }
 
     /// Every relation as `kind child -> parent`, so an assertion names the fact
     /// it wants instead of indexing into a vector.
+    /// **A MODULE CONTAINS THE DECLARATIONS WRITTEN IN IT**, and that is what
+    /// finally gives `nodes.parent_id` a value for a top-level item.
+    ///
+    /// Until now `parent_id` was fed only by `Owns`, which is type -> member, so
+    /// the containment tree was two levels deep and everything at file scope
+    /// hung off nothing. The file-module is the missing top.
+    ///
+    /// Three claims in one fixture, because they are one rule seen from three
+    /// sides: a free item is contained by its FILE; an inline `mod` is itself
+    /// contained by the file; and an item inside that `mod` is contained by the
+    /// `mod` and NOT by the file.
+    ///
+    /// A member is NOT here. `Widget::new` is owned by `Widget`, and a member
+    /// that also claimed a module parent would give `parent_id` two answers.
+    #[test]
+    fn a_module_contains_the_declarations_written_directly_in_it() {
+        let facts = facts(
+            "m",
+            "pub fn free() {}\n\
+             pub struct Widget;\n\
+             impl Widget { pub fn new() -> Widget { Widget } }\n\
+             pub mod inner { pub fn deep() {} }\n",
+        );
+        let mut contains: Vec<String> =
+            relations(&facts).into_iter().filter(|r| r.starts_with("Contains ")).collect();
+        contains.sort_unstable();
+
+        assert_eq!(
+            contains,
+            vec![
+                "Contains rust·p·m::inner·deep·item -> rust·p·m·inner·mod".to_string(),
+                "Contains rust·p·m·Widget·item -> rust·p·m·mod".to_string(),
+                "Contains rust·p·m·free·item -> rust·p·m·mod".to_string(),
+                "Contains rust·p·m·inner·mod -> rust·p·m·mod".to_string(),
+            ],
+            "the file holds what is written at file scope, the inline `mod` holds its own, \
+             and `Widget::new` is owned by `Widget` rather than contained by either"
+        );
+    }
+
     fn relations(facts: &FileFacts) -> Vec<String> {
         facts
             .relations
@@ -2274,7 +2314,9 @@ fn helper() -> u32 { 0 }
         facts
             .relations
             .iter()
-            .filter(|r| r.kind != RelationKind::Owns)
+            // Neither ownership NOR containment is inheritance. `!= Owns`
+            // alone would read every `Contains` as a supertype.
+            .filter(|r| !matches!(r.kind, RelationKind::Owns | RelationKind::Contains))
             .map(|r| format!("{:?} {}", r.kind, r.child.as_str()))
             .collect()
     }
@@ -2321,6 +2363,8 @@ fn helper() -> u32 { 0 }
         assert_eq!(
             relations(&facts),
             vec![
+                // The trait is written at file scope, so the file holds it.
+                "Contains rust·p·m·Sub·item -> rust·p·m·mod",
                 "Extends rust·p·m·Sub·item -> Unplaced(Super)",
                 "Extends rust·p·m·Sub·item -> Unplaced(Send)",
             ],
@@ -2354,8 +2398,9 @@ fn helper() -> u32 { 0 }
         // A free item is owned by nothing. Naming the file or the module as its
         // owner would be an edge the source never states.
         assert!(
-            !owned.iter().any(|r| r.contains("·free·item ->")),
-            "a free function is owned by no type; got {owned:?}"
+            !owned.iter().any(|r| r.starts_with("Owns ") && r.contains("·free·item ->")),
+            "a free function is owned by no TYPE; it is contained by its module, which is a \
+             different relation and a different column-feeder: {owned:?}"
         );
     }
 
@@ -2372,7 +2417,10 @@ fn helper() -> u32 { 0 }
         );
         assert_eq!(
             relations(&facts),
-            vec!["Owns rust·p·m·Draw·draw·item -> rust·p·m·Draw·item"],
+            vec![
+                "Contains rust·p·m·Draw·item -> rust·p·m·mod",
+                "Owns rust·p·m·Draw·draw·item -> rust·p·m·Draw·item",
+            ],
             "the tuple impl names no type, so it hangs no relation; the trait's own \
              declaration still owns its member"
         );

@@ -1047,8 +1047,9 @@ pub async fn write(
     })
 }
 
-/// The type each declaration is a member OF, read off the ownership relations
-/// the same walk produced (spec §3.3).
+/// The parent each declaration hangs off in `nodes.parent_id`: the TYPE it is a
+/// member of, or failing that the MODULE it is written in — read off the
+/// structural relations the same walk produced (spec §3.3).
 ///
 /// Read off the RELATIONS rather than re-derived from the fqn, for the reason
 /// `Owner` exists in the walk at all: a member's identity does not spell its
@@ -1057,20 +1058,36 @@ pub async fn write(
 /// carries a trait segment its type's does not. Re-minting an owner from a
 /// member's key would produce a parent no declaration ever minted.
 ///
-/// An `Owns` whose parent the ladder could not place is skipped, not defaulted:
+/// A relation whose parent the ladder could not place is skipped, not defaulted:
 /// a member parented on a guess is a containment the source does not state (R4).
 fn owners(facts: &FileFacts) -> HashMap<&str, &str> {
-    facts
+    fn placed(relation: &Relation) -> Option<&str> {
+        match &relation.parent {
+            Resolution::Resolved { fqn: parent, .. } => Some(parent.as_str()),
+            Resolution::Unresolved { .. } => None,
+        }
+    }
+    // CONTAINMENT FIRST, OWNERSHIP OVER IT. Both feed one column, so a child
+    // named by both needs a stated winner rather than whichever the map wrote
+    // last — an order-dependent parent is the defect R6 forbids, and a HashMap
+    // gives no guarantee at all about which insert survives.
+    //
+    // Ownership wins because it is the more specific fact: `Widget::new` sits
+    // in a module too, but what a reader wants from `parent_id` is the TYPE it
+    // is a member of. The walk emits exactly one of the two per declaration
+    // today; this makes the outcome stated rather than lucky.
+    let mut parents: HashMap<&str, &str> = facts
         .relations
         .iter()
-        .filter(|relation| relation.kind == RelationKind::Owns)
-        .filter_map(|relation| match &relation.parent {
-            Resolution::Resolved { fqn: parent, .. } => {
-                Some((relation.child.as_str(), parent.as_str()))
-            }
-            Resolution::Unresolved { .. } => None,
-        })
-        .collect()
+        .filter(|relation| relation.kind == RelationKind::Contains)
+        .filter_map(|relation| Some((relation.child.as_str(), placed(relation)?)))
+        .collect();
+    for relation in facts.relations.iter().filter(|r| r.kind == RelationKind::Owns) {
+        if let Some(parent) = placed(relation) {
+            parents.insert(relation.child.as_str(), parent);
+        }
+    }
+    parents
 }
 
 /// The node an identity names, creating the STUB shape if nothing has written
@@ -1881,6 +1898,58 @@ pub fn widest(a: u32) -> u32 {
         );
     }
 
+    /// **A CHILD NAMED BY BOTH TAKES THE OWNS PARENT**, whichever order the
+    /// relations arrive in.
+    ///
+    /// Both kinds feed one column. The walk emits exactly one per declaration
+    /// today, so nothing currently depends on this — which is precisely why it
+    /// is pinned now rather than after something does. A `HashMap` gives no
+    /// guarantee about which insert survives, so "it works" would have meant
+    /// "it happened to".
+    ///
+    /// Run BOTH orders against the same facts: a rule that is really
+    /// last-write-wins passes one and fails the other.
+    #[test]
+    fn a_child_named_by_both_owns_and_contains_takes_the_owns_parent() {
+        use crate::indexer::facts::{Relation, Resolution, Rung, Span};
+
+        let base = walk_of("gadget", "src/gadget.rs", "pub struct Gadget { pub w: u32 }");
+        // The FIELD, its TYPE, and the FILE-MODULE — three distinct identities,
+        // so the two candidate parents genuinely differ and the assertion can
+        // tell them apart.
+        let child = base.symbols[2].fqn.clone();
+        let a_type = base.symbols[1].fqn.clone();
+        let a_module = base.symbols[0].fqn.clone();
+        assert_ne!(a_type, a_module, "the fixture must offer two DIFFERENT parents");
+        let at = Span { start_line: 1, start_col: 1, end_line: 1, end_col: 1 };
+        let relation = |kind, parent: &crate::indexer::facts::Fqn| Relation {
+            kind,
+            child: child.clone(),
+            parent: Resolution::Resolved { fqn: parent.clone(), via: Rung::DeclaredHere },
+            at,
+        };
+
+        for order in [
+            [RelationKind::Owns, RelationKind::Contains],
+            [RelationKind::Contains, RelationKind::Owns],
+        ] {
+            let mut facts = base.clone();
+            facts.relations.clear();
+            for kind in order {
+                let parent = match kind {
+                    RelationKind::Owns => &a_type,
+                    _ => &a_module,
+                };
+                facts.relations.push(relation(kind, parent));
+            }
+            assert_eq!(
+                super::owners(&facts).get(child.as_str()).copied(),
+                Some(a_type.as_str()),
+                "ownership is the more specific fact and wins in either order: {order:?}"
+            );
+        }
+    }
+
     /// **CONTAINMENT IS NOT AN EDGE**, and this is where that is enforced
     /// rather than intended.
     ///
@@ -1942,8 +2011,16 @@ pub fn widest(a: u32) -> u32 {
         persisted(&store, &folder, &facts).await.expect("the facts persist");
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
 
-        let expected: Vec<persist::RelationRow> =
-            facts.relations.iter().map(persist::RelationRow::of).collect();
+        let expected: Vec<persist::RelationRow> = facts
+            .relations
+            .iter()
+            // CONTAINMENT REACHES THE DATABASE AS `parent_id`, NOT AS AN EDGE,
+            // so it is not a row this round trip can find. The assertion that
+            // it arrives at all is
+            // `every_ownership_relation_the_walk_read_is_a_parent_id_in_the_database`.
+            .filter(|r| r.kind != RelationKind::Contains)
+            .map(persist::RelationRow::of)
+            .collect();
         assert!(!expected.is_empty(), "the fixture must exercise some relations");
         same_rows(stored.relations.clone(), expected, "every structural fact the walk saw");
 
@@ -1953,7 +2030,7 @@ pub fn widest(a: u32) -> u32 {
             stored
                 .relations
                 .iter()
-                .filter(|r| r.kind != RelationKind::Owns)
+                .filter(|r| !matches!(r.kind, RelationKind::Owns | RelationKind::Contains))
                 .map(|r| format!("{:?} {:?}", r.kind, r.parent))
                 .collect(),
         );
@@ -2012,7 +2089,12 @@ pub fn widest(a: u32) -> u32 {
             (
                 facts.symbols.len(),
                 facts.references.len(),
-                facts.relations.len(),
+                // MINUS CONTAINMENT, which reaches the database as `parent_id`
+                // and not as an edge row. Subtracted here rather than dropped
+                // from the walk, because it IS a fact the walk produced — the
+                // test that proves it arrived is
+                // `every_ownership_relation_the_walk_read_is_a_parent_id_in_the_database`.
+                facts.relations.iter().filter(|r| r.kind != RelationKind::Contains).count(),
                 facts.imports.len()
             ),
             "symbols, references, relations, imports"
@@ -2471,7 +2553,16 @@ pub fn widest(a: u32) -> u32 {
                 symbols.insert(row.fqn.clone(), row);
             }
             references.extend(facts.references.iter().map(persist::ReferenceRow::of));
-            relations.extend(facts.relations.iter().map(persist::RelationRow::of));
+            // Containment reaches the database as `parent_id` rather than as an
+            // edge row, so it is not a row this comparison can find. See
+            // `relation_edge_kind`.
+            relations.extend(
+                facts
+                    .relations
+                    .iter()
+                    .filter(|r| r.kind != RelationKind::Contains)
+                    .map(persist::RelationRow::of),
+            );
             imports.extend(facts.imports.iter().map(|i| persist::ImportRow::of(i, &file)));
 
             let written =
@@ -2840,13 +2931,17 @@ pub fn widest(a: u32) -> u32 {
             );
         }
 
-        // And the other way: a free item is a member of NOTHING, so the column
-        // is not simply being filled with whatever was in hand.
+        // And the other way. A free item is a member of no TYPE — it is
+        // contained by its FILE, which is a different relation reaching the
+        // same column. Asserting the module rather than deleting the check,
+        // because the half that matters is that the column is not simply being
+        // filled with whatever was in hand: a free function parented on
+        // `Gadget` would be a containment the source never states.
         let free = "rust·senseid·gadget·widest·item";
         assert_eq!(
             containment.get(free).map(Option::as_deref),
-            Some(None),
-            "{free} is declared at file scope and is owned by no type"
+            Some(Some("rust·senseid·gadget·mod")),
+            "{free} is declared at file scope, so its parent is the FILE and never a type"
         );
     }
 

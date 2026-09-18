@@ -1653,6 +1653,50 @@ mod tests {
         );
     }
 
+    /// **A CONTAINMENT RELATION NEVER BECOMES A DECLARED MEMBER.**
+    ///
+    /// The R4 lock on the one hard constraint of the file-module work.
+    /// `members_declared_by` feeds the ladder's member rung: an identity in that
+    /// set is one `x.foo()` is allowed to land on. It filters on `Owns`, which
+    /// is type -> member. Widening it to admit `Contains` — which is module ->
+    /// declaration — would let a member call resolve onto a MODULE, and the
+    /// module would be a real node, so the edge would look perfectly good.
+    ///
+    /// This is not hypothetical here. resolve.rs records that admitting extra
+    /// relation kinds to a member lookup once "passed all 319 unit tests and
+    /// all 13 corpus checks while silently gaining 11 edges" — a widening is
+    /// invisible to everything except a test that states the exclusion.
+    ///
+    /// Written as "facts containing ONLY containment yield nothing" so it fails
+    /// the moment anyone writes `matches!(kind, Owns | Contains)`, and cannot
+    /// pass vacuously: the fixture is asserted to carry the relations first.
+    #[test]
+    fn a_contains_relation_never_becomes_a_declared_member() {
+        let mut facts = ladder("m", "pub fn free() {}\npub struct Widget;\n");
+        facts.relations.retain(|r| r.kind == RelationKind::Contains);
+        assert!(
+            !facts.relations.is_empty(),
+            "the fixture must carry containment, or this asserts nothing at all"
+        );
+
+        assert_eq!(
+            members_declared_by(std::iter::once(&facts)),
+            BTreeSet::new(),
+            "a module holds declarations; it does not DECLARE MEMBERS, and a member rung that \
+             read containment would let `x.free()` land on the file itself"
+        );
+
+        // Anti-vacuity from the other side: the SAME lookup does answer for an
+        // Owns relation, so the empty result above is the filter working and
+        // not the function being broken.
+        let mut owned = ladder("m", "pub struct Widget;\nimpl Widget { pub fn go(&self) {} }\n");
+        owned.relations.retain(|r| r.kind == RelationKind::Owns);
+        assert!(
+            !members_declared_by(std::iter::once(&owned)).is_empty(),
+            "ownership still declares members"
+        );
+    }
+
     /// A whole SCAN of several files, run the way a real one is: every file
     /// walked once so the type table can be built, every file walked again with
     /// it, the barrier artifacts taken off that completed pass, and only then
@@ -2526,8 +2570,13 @@ mod tests {
         // nothing for the filter to exclude and the test proves nothing —
         // which is how the sibling above came to look like a guard.
         assert!(
-            facts.relations.iter().any(|r| r.kind != RelationKind::Owns),
-            "the fixture must contain a relation the filter has to reject"
+            facts
+                .relations
+                .iter()
+                .any(|r| !matches!(r.kind, RelationKind::Owns | RelationKind::Contains)),
+            "the fixture must contain a relation the filter has to reject — and a `Contains` \
+             does not count, because every file scope now has one and the guard would pass \
+             without ever exercising an inheritance relation"
         );
 
         let declared = members_declared_by(std::iter::once(&facts));
@@ -3183,7 +3232,13 @@ mod tests {
         let got: Vec<String> = facts
             .relations
             .iter()
-            .filter(|r| r.kind != crate::indexer::facts::RelationKind::Owns)
+            .filter(|r| {
+                !matches!(
+                    r.kind,
+                    crate::indexer::facts::RelationKind::Owns
+                        | crate::indexer::facts::RelationKind::Contains
+                )
+            })
             .map(|r| match &r.parent {
                 Resolution::Resolved { fqn, .. } => {
                     format!("{:?} -> {}", r.kind, fqn.as_str())
