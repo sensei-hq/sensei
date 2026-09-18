@@ -47,7 +47,15 @@ pub struct Placement {
 pub fn owning_manifest(file: &Path, repo_root: &Path, manifests: &[PathBuf]) -> Option<PathBuf> {
     let mut dir = file.parent()?;
     loop {
-        if let Some(here) = manifests.iter().find(|m| m.parent() == Some(dir)) {
+        // SEVERAL MANIFESTS IN ONE DIRECTORY IS REAL, so the tie is broken by
+        // name rather than by the order the caller's walk happened to yield.
+        // MEASURED: a checkout with `pyproject.toml` beside `setup.py` at its
+        // root placed all 94 of its files or none of them depending on which
+        // the directory walk returned first — `setup.py` has no registered
+        // adapter, so it names nothing and every file under it goes unplaced.
+        // Whichever answer is right, it must not change between two runs over
+        // an unchanged tree (R6).
+        if let Some(here) = manifests.iter().filter(|m| m.parent() == Some(dir)).min() {
             return Some(here.clone());
         }
         if dir == repo_root {
@@ -131,6 +139,27 @@ mod tests {
             Some(p("/r/app/package.json")),
             "and a different ecosystem's manifest owns the same subtree's web files"
         );
+    }
+
+    /// A directory holding SEVERAL manifests resolves to the same one every
+    /// run, whatever order the caller's walk yielded them in.
+    ///
+    /// The mutation that must break this: restore `.find()` in place of
+    /// `.min()`. The answer then tracks the argument order, and a file's
+    /// package — the second segment of every identity it declares — changes
+    /// between two runs over an unchanged tree (R6).
+    #[test]
+    fn a_directory_with_two_manifests_resolves_the_same_way_every_run() {
+        let root = p("/r");
+        let file = p("/r/src/a.py");
+        let one = vec![p("/r/pyproject.toml"), p("/r/setup.py")];
+        let other = vec![p("/r/setup.py"), p("/r/pyproject.toml")];
+        assert_eq!(
+            owning_manifest(&file, &root, &one),
+            owning_manifest(&file, &root, &other),
+            "the answer must not depend on the order the walk yielded"
+        );
+        assert_eq!(owning_manifest(&file, &root, &one), Some(p("/r/pyproject.toml")));
     }
 
     /// The walk stops at the repo root rather than following the filesystem
