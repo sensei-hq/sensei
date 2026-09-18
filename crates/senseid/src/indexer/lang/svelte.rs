@@ -83,10 +83,13 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
     // two would leave the markup typing nothing.
     let mut found = javascript::read_component(source, types, &blocks, from.clone())?;
     // A component is a module like any other file. See `common::file_module`.
+    let its_own = from.clone();
     found.symbols.insert(
         0,
         super::common::file_module(from, javascript::module_name_of(source.module), source.text),
     );
+    let entered = super::common::import_references(Language::TypeScript, &found.imports, &its_own);
+    found.references.extend(entered);
 
     Ok(FileFacts {
         language: Language::TypeScript,
