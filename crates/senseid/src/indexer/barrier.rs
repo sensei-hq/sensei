@@ -1002,12 +1002,13 @@ mod tests {
         let module = rust.get(&SymbolKind::Module).expect("the module is counted, in the table");
         assert_eq!(
             (module.nodes, module.from_source, module.from_test),
-            (1, 0, 0),
-            "the count is the statement the table can make about a container"
+            (2, 0, 0),
+            "TWO containers now: the inline `mod inner`, and the FILE, which is \
+             itself a module and now says so"
         );
         assert_eq!(
             (module.lost(), module.never_named),
-            (0, 1),
+            (0, 2),
             "and `lost` is 0: an unplaceable `v.inner` is a member read, not a module entry"
         );
     }
@@ -1101,7 +1102,7 @@ mod tests {
         );
         assert_eq!(
             container.container_cells(),
-            ["1"],
+            ["2"],
             "the module's whole row is its count — no unreached column is claimed for it"
         );
         assert_eq!(
