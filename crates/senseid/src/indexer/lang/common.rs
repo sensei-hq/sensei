@@ -13,8 +13,8 @@
 #![allow(dead_code)]
 
 use crate::indexer::facts::{
-    DeclaredType, Evidence, Fqn, Observation, Reason, Resolution, Span, Symbol, SymbolKind,
-    Visibility,
+    Binding, DeclaredType, Evidence, Fqn, Language, Observation, Reason, Resolution, Span, Symbol,
+    SymbolKind, Visibility,
 };
 use crate::indexer::fqn::{FqnError, Reach};
 
@@ -239,5 +239,79 @@ mod tests {
             Vec::new(),
         );
         assert_eq!(named.reason, Reason::DynamicDispatch);
+    }
+}
+
+/// Whether an import's SPECIFIER names a MODULE — the question that decides
+/// whether it can be emitted as a reference to one.
+///
+/// One owner, because getting it wrong is silent: a specifier that names an
+/// ITEM, emitted at [`Reach::Mod`], mints an identity no declaration carries
+/// and the edge dangles once per import line across the whole corpus.
+///
+/// It turns on the BINDING, not the language, for two of the three shapes:
+///
+/// - [`Binding::Glob`] — `use a::b::*`, `export * from './m'`. The specifier is
+///   the thing being globbed, which is a module in every language that has one.
+/// - [`Binding::MemberOf`] — `import { kindFor } from './buckets'`. The clause
+///   carries the name and the string carries ONLY the module, which is what
+///   this variant exists to record.
+/// - [`Binding::Name`] — the one that differs, because here the specifier
+///   spells the thing bound. In JavaScript that thing is reached THROUGH a
+///   module specifier (`import * as ns from './m'`, `import Foo from './foo'`),
+///   so the string still names a module. In Rust and Java it is a path to the
+///   item itself.
+///
+/// RUST'S `Name` IS REFUSED RATHER THAN GUESSED, and this is the measured
+/// reason the whole rule exists. `use a::b;` imports a MODULE and
+/// `use a::b::C;` imports an ITEM, and both arrive here as `Name` — the last
+/// segment is a module in one and a type in the other, and nothing in the
+/// importing file says which. Emitting either at `Reach::Mod` is right half the
+/// time, and R4 ranks a miss above an edge that is wrong half the time.
+pub fn specifier_names_a_module(language: Language, binding: &Binding) -> bool {
+    match binding {
+        Binding::Glob | Binding::MemberOf { .. } => true,
+        Binding::Name(_) => match language {
+            Language::TypeScript => true,
+            Language::Rust | Language::Java => false,
+        },
+    }
+}
+
+#[cfg(test)]
+mod module_specifier_tests {
+    use super::*;
+
+    /// The rule, stated as the three shapes rather than as a list of languages.
+    #[test]
+    fn a_specifier_names_a_module_when_it_carries_only_the_module() {
+        let a_name = Binding::Name("C".to_string());
+        let a_member = Binding::MemberOf { local: "kindFor".into(), member: "kindFor".into() };
+
+        for language in [Language::Rust, Language::TypeScript, Language::Java] {
+            assert!(
+                specifier_names_a_module(language, &Binding::Glob),
+                "a glob globs a MODULE, in every language that has one: {language:?}"
+            );
+            assert!(
+                specifier_names_a_module(language, &a_member),
+                "a member clause carries the name, so the string carries only the module: \
+                 {language:?}"
+            );
+        }
+
+        assert!(
+            specifier_names_a_module(Language::TypeScript, &a_name),
+            "`import Foo from './foo'` reaches Foo THROUGH a module specifier"
+        );
+        assert!(
+            !specifier_names_a_module(Language::Rust, &a_name),
+            "`use a::b;` and `use a::b::C;` are both Name and only one names a module — so \
+             neither is emitted, because guessing is right half the time"
+        );
+        assert!(
+            !specifier_names_a_module(Language::Java, &a_name),
+            "every java import names a TYPE"
+        );
     }
 }
