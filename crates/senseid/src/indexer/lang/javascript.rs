@@ -291,7 +291,11 @@ const PLUMBING: &[&str] = &[
 pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadError> {
     let from =
         file_fqn(source.package, source.module, source.path).map_err(ReadError::NoFileIdentity)?;
-    let found = read_file(source, types, from)?;
+    let mut found = read_file(source, types, from.clone())?;
+    // The file declares its own module. See `common::file_module`.
+    found
+        .symbols
+        .insert(0, super::common::file_module(from, module_name_of(source.module), source.text));
     Ok(FileFacts {
         language: Language::TypeScript,
         package: source.package.to_string(),
@@ -677,6 +681,16 @@ fn markup_expression(raw: &str) -> Option<MarkupExpression<'_>> {
 /// No package-root special case, and that is a consequence of [`module_path`]
 /// dropping NOTHING but the extension: every file's module path is non-empty,
 /// so there is no file whose identity has to be recovered from its stem.
+/// The NAME segment of a file's own module identity — the last path segment.
+/// Splits the same way [`file_fqn`] does, so the name beside an identity cannot
+/// disagree with the name inside it.
+pub fn module_name_of(module: &str) -> &str {
+    match module.rsplit_once('/') {
+        Some((_, name)) => name,
+        None => module,
+    }
+}
+
 pub fn file_fqn(package: &str, module: &str, _path: &str) -> Result<Fqn, FqnError> {
     let (parent, name) = match module.rsplit_once('/') {
         Some((parent, name)) => (parent, name),

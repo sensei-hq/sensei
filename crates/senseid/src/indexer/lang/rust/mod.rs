@@ -25,9 +25,7 @@ mod types;
 mod walk;
 
 use super::{LanguageAdapter, ReadError, Source, TypeHomes};
-use crate::indexer::facts::{
-    DeclaredType, FileFacts, Fqn, Language, Symbol, SymbolKind, Visibility,
-};
+use crate::indexer::facts::{FileFacts, Fqn, Language};
 use crate::indexer::fqn::{self, Form, FqnError, Reach};
 use crate::indexer::resolve::{Grammar, Root};
 
@@ -252,37 +250,16 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
         file_fqn(source.package, source.module, source.path).map_err(ReadError::NoFileIdentity)?;
     let mut found = walk::walk(source, types, tree.root_node(), from.clone());
 
-    // THE FILE DECLARES ITS OWN MODULE, and is the only thing that does.
-    //
-    // A file IS a module in Rust, and until now nothing said so: `module_item`
-    // fired only for an inline `mod x { }`, so every `Module` node in the graph
-    // was a `mod tests` block and a file had no node of its own. That left an
-    // import no target to point at and every top-level item no parent.
-    //
-    // Emitted HERE rather than in the walk because it is not something the
-    // source says — there is no AST node for it. The independent declaration
-    // counter walks tree-sitter nodes, so it cannot see this one, and that is
-    // a fact about the file rather than a disagreement (see the count test).
-    //
-    // The span is the whole file, which is true and is what gives it a real
-    // `line_end`. Resolution is protected from it separately: `Ladder::new`
-    // filters this identity out of its module blocks, because a block covering
-    // the whole file would otherwise append its own name to the module path of
-    // everything inside it.
+    // The file declares its own module, and is the only thing that does.
+    // `module_item` no longer declares a body-less `mod x;`, so the file is the
+    // single declarer of its own identity. See `common::file_module`.
     found.symbols.insert(
         0,
-        Symbol {
-            fqn: from,
-            kind: SymbolKind::Module,
-            name: module_name_of(source.module, source.path),
-            span: whole_file(tree.root_node()),
-            // A module's own visibility is stated by the `mod x;` in its parent,
-            // which is a different file. Unstated here rather than guessed.
-            visibility: Visibility::Private,
-            docstring: None,
-            declared_type: DeclaredType::Unstated,
-            params: Vec::new(),
-        },
+        crate::indexer::lang::common::file_module(
+            from,
+            &module_name_of(source.module, source.path),
+            source.text,
+        ),
     );
 
     Ok(FileFacts {
@@ -306,18 +283,6 @@ fn module_name_of(module: &str, path: &str) -> String {
         Some((_, name)) => name.to_string(),
         None if module.is_empty() => crate_root(path).to_string(),
         None => module.to_string(),
-    }
-}
-
-/// A span covering the whole file, for the one symbol with no AST node of its
-/// own.
-fn whole_file(root: tree_sitter::Node<'_>) -> crate::indexer::facts::Span {
-    let end = root.end_position();
-    crate::indexer::facts::Span {
-        start_line: 1,
-        start_col: 1,
-        end_line: end.row as u32 + 1,
-        end_col: end.column as u32 + 1,
     }
 }
 
