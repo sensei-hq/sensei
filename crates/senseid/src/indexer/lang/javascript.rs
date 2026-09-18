@@ -702,14 +702,24 @@ const MODULE: Reach = Reach::Mod;
 /// A file's package-relative MODULE PATH, from its path alone.
 ///
 /// Relative to `<package_root>/src` (or the package root itself), with the
-/// extension dropped and **nothing else**:
+/// OMITTABLE extension dropped and **nothing else**:
 ///
 /// | file | module |
 /// |---|---|
 /// | `src/lib/store.ts` | `lib/store` |
 /// | `src/index.ts` | `index` |
 /// | `src/lib/store/index.ts` | `lib/store/index` |
-/// | `routes/+page.svelte` | `routes/+page` |
+/// | `src/types.d.ts` | `types` |
+/// | `routes/+page.ts` | `routes/+page` |
+/// | `routes/+page.svelte` | `routes/+page.svelte` |
+/// | `lib/scan-state.svelte.ts` | `lib/scan-state.svelte` |
+/// | `lib/buckets.spec.ts` | `lib/buckets.spec` |
+///
+/// **Only what an import may omit comes off**, which is the same trade the
+/// trailing `index` is kept for. Dropping every extension reduced 925 front-end
+/// files to 619 identities: `+page.svelte` collided with `+page.ts` 40 times,
+/// `+layout` 7 times, and `X.spec.ts` shadowed the `X.ts` it tests. See
+/// [`OMITTABLE`].
 ///
 /// **The trailing `index` is deliberately KEPT, and it is a trade rather than
 /// an oversight.** Dropping it would mirror Rust's `mod.rs` rule and it would
@@ -759,11 +769,45 @@ pub fn module_path(file: &str, package_root: &str) -> String {
 /// empty stem — a dotfile like `.eslintrc` — is left alone rather than reduced
 /// to nothing.
 pub fn module_segment(segment: &str) -> &str {
-    match segment.split('.').next() {
-        Some(stem) if !stem.is_empty() => stem,
-        _ => segment,
+    let mut end = segment.len();
+    let mut dropped = false;
+    while let Some(dot) = segment[..end].rfind('.') {
+        // `dot == 0` is a DOTFILE (`.eslintrc`), whose leading dot is part of
+        // the name and not an extension.
+        if dot == 0 || !OMITTABLE.contains(&&segment[dot + 1..end]) {
+            break;
+        }
+        end = dot;
+        dropped = true;
+    }
+    // `.d.ts` is ONE extension. An ambient declaration describes the module it
+    // sits beside rather than being a module of its own, and an import names
+    // that module — so `types.d.ts` reduces to `types`, like the `.ts` it
+    // declares. Only after an omittable extension came off, so a file honestly
+    // named `report.d` keeps its name.
+    if dropped
+        && let Some(dot) = segment[..end].rfind('.')
+        && dot > 0
+        && &segment[dot + 1..end] == "d"
+    {
+        end = dot;
+    }
+    match end {
+        0 => segment,
+        _ => &segment[..end],
     }
 }
+
+/// The extensions a JavaScript or TypeScript import may leave out.
+///
+/// This list is the whole of why an extension is dropped at all: a specifier
+/// writes `./store`, so an identity minted as `store.ts` would never meet it.
+/// An extension NOT on this list must be written to be imported, and dropping
+/// it merges files the language keeps apart — `./+page.svelte` and `./+page`
+/// name two different files, and 441 imports in this repository write the
+/// former. `.svelte` and `.vue` are the cases that matter; `.spec` and
+/// `.config` are not extensions at all and are kept for the same reason.
+const OMITTABLE: &[&str] = &["ts", "tsx", "js", "jsx", "mjs", "cjs", "cts", "mts"];
 
 /// Reduce the source text of a TypeScript type to the one segment that names
 /// it.
@@ -3796,17 +3840,73 @@ mod tests {
     /// [`module_path`] says why: dropping it collides two real files onto one
     /// identity.
     #[test]
-    fn a_module_path_drops_the_extension_and_nothing_else() {
+    fn a_module_path_drops_only_the_extensions_an_import_may_omit() {
+        // Omittable: a specifier never writes these, so the identity must not
+        // either, or the two sides mint different strings and never meet.
         assert_eq!(module_path("src/lib/store.ts", "."), "lib/store");
         assert_eq!(module_path("src/index.ts", "."), "index");
         assert_eq!(module_path("src/lib/store/index.ts", "."), "lib/store/index");
-        assert_eq!(module_path("src/routes/+page.svelte", "."), "routes/+page");
         assert_eq!(module_path("src/types.d.ts", "."), "types");
+
+        // NOT omittable. A Svelte import writes its extension — 441 of them in
+        // this repository do — so `./+page.svelte` and `./+page` are two
+        // specifiers naming two files, and the identity has to keep them apart.
+        assert_eq!(module_path("src/routes/+page.svelte", "."), "routes/+page.svelte");
+        assert_eq!(module_path("src/routes/+page.ts", "."), "routes/+page");
+        assert_ne!(
+            module_path("src/routes/+page.svelte", "."),
+            module_path("src/routes/+page.ts", "."),
+            "a component and its loader are two files and two modules"
+        );
+
+        // A rune module keeps the `.svelte` it is imported by and loses the
+        // `.ts` it is not: `./scan-state.svelte` resolves to
+        // `scan-state.svelte.ts`, so both sides reduce to the same string.
+        assert_eq!(module_path("src/lib/scan-state.svelte.ts", "."), "lib/scan-state.svelte");
+
+        // A SPEC is its own module. `./buckets` does not resolve to
+        // `buckets.spec.ts`, and reducing both to `buckets` made a test file
+        // claim the identity of the module it tests.
+        assert_eq!(module_path("src/lib/buckets.spec.ts", "."), "lib/buckets.spec");
+        assert_ne!(
+            module_path("src/lib/buckets.ts", "."),
+            module_path("src/lib/buckets.spec.ts", "."),
+            "two real files must not reduce to one identity"
+        );
+
         assert_ne!(
             module_path("src/index.ts", "."),
             module_path("src/index/index.ts", "."),
             "two real files must not reduce to one identity"
         );
+    }
+
+    /// The rule above, over every file the three front ends actually contain.
+    ///
+    /// The spelling assertions are examples; THIS is the property. Two files
+    /// reducing to one identity is the failure spec §2 exists to prevent, and
+    /// it cannot be checked by picking cases — the shape that collides is
+    /// whichever one nobody thought of. MEASURED before the fix: 925 files
+    /// reduced to 619 identities, 266 of them claimed by more than one file —
+    /// 40 `+page.svelte`/`+page.ts` pairs, 7 `+layout` pairs, and a long tail of
+    /// `X.spec.ts` shadowing `X.ts`.
+    #[test]
+    fn no_two_files_of_the_front_ends_reduce_to_one_module_path() {
+        use std::collections::BTreeMap;
+
+        let mut mints: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (path, _) in crate::indexer::corpus_web_sources() {
+            mints.entry(module_path(&path, ".")).or_default().push(path);
+        }
+        let collisions: Vec<&Vec<String>> =
+            mints.values().filter(|files| files.len() > 1).collect();
+        assert!(
+            collisions.is_empty(),
+            "{} module paths are claimed by more than one file: {:?}",
+            collisions.len(),
+            &collisions[..collisions.len().min(5)]
+        );
+        assert!(mints.len() > 500, "the corpus reader found almost nothing: {}", mints.len());
     }
 
     /// The reader, over a codebase NOBODY HERE WROTE.
