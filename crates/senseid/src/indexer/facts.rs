@@ -710,6 +710,19 @@ pub enum RelationKind {
     /// emitting an `Extends` for an inherent impl would be a false edge that
     /// pattern detection reads as real.
     Owns,
+    /// Lexical containment: a module holds the declarations written inside it.
+    ///
+    /// The file-module holds its top-level items; an inline `mod x { }` holds
+    /// its own. It feeds `nodes.parent_id` and NOTHING ELSE — see
+    /// `persist::relation_edge_kind`, which refuses to give it an edge kind.
+    ///
+    /// NOT [`RelationKind::Owns`], and the distance between them is the point.
+    /// `Owns` says a TYPE declares a MEMBER, and it is what
+    /// `resolve::members_declared_by` reads to decide that `x.foo()` can land on
+    /// `Foo::foo`. A module declares no members: widening that lookup to admit
+    /// containment would let a member call resolve onto a module, which is a
+    /// fabricated edge (R4).
+    Contains,
 }
 
 /// One structural fact, emitted by the same walk that emits symbols (D5).
@@ -942,6 +955,7 @@ mod tests {
             RelationKind::Mixin,
             RelationKind::Decorates,
             RelationKind::Owns,
+            RelationKind::Contains,
         ]
     }
 
@@ -1117,10 +1131,11 @@ mod tests {
                 | RelationKind::TraitImpl
                 | RelationKind::Mixin
                 | RelationKind::Decorates
-                | RelationKind::Owns => {}
+                | RelationKind::Owns
+                | RelationKind::Contains => {}
             }
         }
-        assert_eq!(all_relation_kinds().len(), 6);
+        assert_eq!(all_relation_kinds().len(), 7);
 
         for b in all_bindings() {
             match b {
