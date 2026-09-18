@@ -12,8 +12,63 @@
 // No caller until cutover — see the note in `indexer/mod.rs`.
 #![allow(dead_code)]
 
-use crate::indexer::facts::{Evidence, Fqn, Observation, Reason, Resolution};
+use crate::indexer::facts::{
+    DeclaredType, Evidence, Fqn, Observation, Reason, Resolution, Span, Symbol, SymbolKind,
+    Visibility,
+};
 use crate::indexer::fqn::{FqnError, Reach};
+
+/// The symbol a FILE declares by existing: its own module.
+///
+/// One owner for all three adapters, because a file is a module in every
+/// language this indexes and the shape of that statement is not a property of
+/// any grammar. The identity is minted by the language (`file_fqn`) and the
+/// NAME is its last segment, which only the language can split — so both arrive
+/// as arguments and nothing here reads syntax.
+///
+/// There is no AST node for it. A file being a module is not something the file
+/// says; it is what the file IS. So it is built here and prepended, and every
+/// independent declaration counter that walks parse nodes is told to expect
+/// exactly one symbol it cannot see.
+///
+/// VISIBILITY IS PRIVATE, and that is a refusal rather than a default: a
+/// module's own visibility is stated by whatever names it from outside — Rust's
+/// `pub mod x;`, sitting in a different file — and this side cannot see it.
+/// Recording `Public` because most modules are would be a fact nobody read.
+pub fn file_module(fqn: Fqn, name: &str, text: &str) -> Symbol {
+    Symbol {
+        fqn,
+        kind: SymbolKind::Module,
+        name: name.to_string(),
+        span: whole_file(text),
+        visibility: Visibility::Private,
+        docstring: None,
+        declared_type: DeclaredType::Unstated,
+        params: Vec::new(),
+    }
+}
+
+/// A span covering the whole file, counted from the TEXT.
+///
+/// From the text rather than from a parse tree, because the three adapters hold
+/// three different trees and a file's extent is the same fact in all of them —
+/// and because a tree's root may stop short of a trailing newline, which would
+/// make one language's file-module span disagree with another's for no reason a
+/// reader could act on.
+pub fn whole_file(text: &str) -> Span {
+    // Counted in one pass, and WITHOUT defaulting the last line: an empty file
+    // has no last line, and substituting an empty one would be a read that
+    // failed wearing the shape of one that succeeded (R4). Zero lines is
+    // spelled as zero, and the floor is applied where it means something — a
+    // span starts at line 1 whether or not there is a line there.
+    let mut lines = 0u32;
+    let mut last_width = 0u32;
+    for line in text.lines() {
+        lines += 1;
+        last_width = line.chars().count() as u32;
+    }
+    Span { start_line: 1, start_col: 1, end_line: lines.max(1), end_col: last_width + 1 }
+}
 
 /// What a walk has to say about a use site it did not place: the bucket, the
 /// name, the node kind that names the bucket in the histogram, and the material
