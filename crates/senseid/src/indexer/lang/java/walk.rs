@@ -61,8 +61,21 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
         imports: Vec::new(),
     };
     walk.imports_of(root);
+    let its_own = file.clone();
     let scope = Scope { from: file, container: Container::File, locals: BTreeMap::new() };
     walk.children(&scope, root);
+
+    // THE FILE DECLARES ITS OWN MODULE. The identity already existed and was
+    // already the scope every use site here is filed under — it was simply
+    // never emitted, so Java's top-level types hung off nothing and
+    // `nodes.parent_id` had no value for one.
+    //
+    // NO IMPORT REFERENCE goes with it, and that is a fact about Java rather
+    // than an omission: every Java import names a TYPE (`java.util.List`), so
+    // there is no module for one to enter. See
+    // `common::specifier_names_a_module`, which refuses Java's `Binding::Name`
+    // for exactly this reason.
+    walk.symbols.insert(0, super::super::common::file_module(its_own, stem, source.text));
 
     Ok(FileFacts {
         language: Language::Java,
@@ -152,9 +165,19 @@ impl<'a> Walk<'a> {
     /// language. Java emitted NONE of these and every test passed, because no
     /// check compared the languages on it. 54,192 declarations, zero edges.
     fn owned_by_the_enclosing_type(&mut self, scope: &Scope, child: &Fqn, at: Span) {
-        let Container::Type { .. } = &scope.container else { return };
+        // A member is OWNED by its type; a top-level declaration is CONTAINED by
+        // the file. Exactly one of the two, because both feed `nodes.parent_id`
+        // and a child with two parents has none.
+        //
+        // `scope.from` is the right parent either way and that is not a
+        // coincidence: at file scope it IS the file's own identity, which is
+        // what the file now declares itself under.
+        let kind = match &scope.container {
+            Container::Type { .. } => RelationKind::Owns,
+            Container::File => RelationKind::Contains,
+        };
         self.relations.push(Relation {
-            kind: RelationKind::Owns,
+            kind,
             child: child.clone(),
             // Proven, not guessed: `scope.from` is the identity this walk minted
             // for the enclosing type, from a declaration it read in this file.
