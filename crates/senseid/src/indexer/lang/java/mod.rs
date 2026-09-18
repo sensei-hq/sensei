@@ -168,15 +168,13 @@ const PLUMBING: &[&str] = &[
     "join",
 ];
 
-/// A Java type name starts with an upper-case letter.
+/// A Java type name starts with an upper-case letter — a convention the JLS does
+/// not enforce but the whole ecosystem's tooling assumes.
 ///
-/// A convention rather than a rule, and the strongest one any of the three
-/// languages has: the JLS does not enforce it, but it is universal in practice
-/// and the whole ecosystem's tooling assumes it. A lower-case class would be
-/// filed as a module segment, which is a miss and not a wrong edge.
-fn names_a_type(segment: &str) -> bool {
-    segment.chars().next().is_some_and(char::is_uppercase)
-}
+/// The RULE is shared, because three languages here decide it identically and
+/// had three spellings of it. Kept under Java's own name so the walk and this
+/// module's tests read as Java.
+use crate::indexer::lang::common::names_a_type_by_leading_case as names_a_type;
 
 pub static GRAMMAR: LazyLock<Grammar> = LazyLock::new(|| Grammar {
     language: Language::Java,

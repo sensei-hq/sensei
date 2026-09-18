@@ -174,6 +174,28 @@ pub fn already_a_module_segment(segment: &str) -> &str {
     segment
 }
 
+/// [`crate::indexer::resolve::Grammar::names_a_type`] for a language that states
+/// the answer in the CASE of the name.
+///
+/// Three languages here decide it the same way and spelled it three times —
+/// Rust as a closure, Java as a private `fn`, and Python would have been a
+/// third. What differs between them is only how load-bearing the convention is,
+/// and that belongs in each grammar's comment rather than in three copies of
+/// one line:
+///
+/// - **Rust** lints it. `CamelCase` types and `snake_case` modules are what
+///   `rustc` itself warns about, so the name is as good as a declaration.
+/// - **Java** does not, but the JLS convention is universal and the whole
+///   ecosystem's tooling assumes it.
+/// - **Python** does not either; PEP 8's CapWords is the same universal
+///   convention, and `snake_case` modules are the import system's own habit.
+///
+/// A misread costs a MISS and never a wrong edge — a lower-case class is filed
+/// as a module segment and resolves to nothing, which R4 ranks above guessing.
+pub fn names_a_type_by_leading_case(segment: &str) -> bool {
+    segment.starts_with(char::is_uppercase)
+}
+
 /// An identity the walk CONSIDERED, as evidence — never as a resolution. One
 /// that could not even be minted leaves no observation behind rather than a
 /// placeholder one.
@@ -272,7 +294,14 @@ pub fn specifier_names_a_module(language: Language, binding: &Binding) -> bool {
     match binding {
         Binding::Glob | Binding::MemberOf { .. } => true,
         Binding::Name(_) => match language {
-            Language::TypeScript => true,
+            // Python joins TypeScript rather than Rust, and for a reason the
+            // language states rather than a convention: `import x` REQUIRES x
+            // to be a module. There is no `import os.path.join` — importing an
+            // item is spelled `from os.path import join`, which arrives here as
+            // `MemberOf` with the module in the specifier. So the ambiguity the
+            // Rust arm refuses to guess at does not exist in Python: a `Name`
+            // binding's specifier has nothing in it but a module path.
+            Language::TypeScript | Language::Python => true,
             Language::Rust | Language::Java => false,
         },
     }
