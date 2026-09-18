@@ -163,55 +163,64 @@ pub enum SymbolKind {
     Property,
 }
 
-/// How a declaration is REACHED, and therefore what a report's reach columns
-/// are counting for it.
+/// How a declaration is REACHED — which SHAPE of reference can name it.
 ///
-/// The vocabulary half of [`SymbolKind::can_be_named`]. That function answers
-/// the question as a boolean, which is all a resolver needs; a REPORT also has
-/// to name the thing it counted, and a column headed `not called` over a kind
-/// nothing can call is how a count gets read as a defect. One enum rather than
-/// a bool at the print site, so a third way of being reached — were one ever
-/// added — arrives as a non-exhaustive match instead of a silently wrong label.
+/// THE OWNER of that question. It was a label derived from
+/// [`SymbolKind::can_be_named`], which made the two inseparable: a bool cannot
+/// say "reachable, but not by a call", so a module could only be all-or-nothing
+/// and a report had to choose between counting it as uncalled or not counting
+/// it at all.
+///
+/// The distinction is real in the grammar. A module is entered by an IMPORT and
+/// never by a call — `crate::installer::install(..)` names `install`, not
+/// `installer` — so the two shapes reach different kinds and a reader asking
+/// "did an edge go missing" has to say which shape of edge.
+///
+/// Both sides read this one answer: the report to head its columns and to
+/// decide whether evidence is admissible, and the walks to decide which
+/// [`RefKind`] an import may emit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ReachedBy {
-    /// A reference names it: a call, a read, a write, a `name!`.
+    /// A CALL-SHAPED reference names it: a call, a read, a write, a `name!`, a
+    /// path. Every kind but one.
     Call,
-    /// An import enters it. No reference ever names it, so "nothing called it"
-    /// is not a statement that can be made about one.
+    /// An IMPORT enters it. No call-shaped reference ever names one, which is
+    /// why "nothing called it" is not a statement that can be made about a
+    /// module — and why an import edge it loses is a different measurement
+    /// rather than no measurement.
     Import,
 }
 
 impl SymbolKind {
-    /// How a declaration of this kind is reached.
-    ///
-    /// DERIVED from [`can_be_named`](Self::can_be_named) rather than matched
-    /// again, because they are one classification and two matches over the same
-    /// variants are two things to keep in step. The argument for which side a
-    /// kind falls on lives on that function; this one only supplies the word.
+    /// How a declaration of this kind is reached. THE classification; every
+    /// other question about reachability is derived from it.
     pub fn reached_by(self) -> ReachedBy {
-        match self.can_be_named() {
-            true => ReachedBy::Call,
-            false => ReachedBy::Import,
+        match self {
+            Self::Module => ReachedBy::Import,
+            _ => ReachedBy::Call,
         }
     }
 
-    /// Whether any reference can NAME a declaration of this kind.
+    /// Whether a CALL-SHAPED reference can name a declaration of this kind.
     ///
-    /// A property of the KIND rather than a filter inside one report, so every
-    /// consumer reads the same answer instead of re-deciding it. A
-    /// classification spread across call sites drifts, and then two counts of
-    /// the same corpus disagree about what they counted.
+    /// DERIVED from [`reached_by`](Self::reached_by), which owns the
+    /// classification. Kept as its own function because "can a call name this"
+    /// is what every consumer actually asks, and spelling it out at each call
+    /// site would be the same match written many times.
+    ///
+    /// **It does NOT mean "unreachable".** A module is reached, by an import —
+    /// that is `ReachedBy::Import`, not an absence. The name is about the shape
+    /// of the reference, and a report that reads it as "nothing can reach this"
+    /// will print a module under `not called` and be wrong.
     ///
     /// It is a question about identity. A reference's target identity ends in
     /// the [`Reach`] its use SYNTAX implies, and a declaration's identity ends
     /// in the reach its own form minted, so an edge can only exist where the
     /// two spell the same reach. [`SymbolKind::Module`] is the one kind minted
-    /// at [`Reach::Mod`], and [`Reach::Mod`] is the one reach no use site ever
-    /// mints: a module is entered by an IMPORT, which every walk records as an
-    /// import and not as a reference, and a path `a::b::c()` targets `c`, never
-    /// `a`. A module is a CONTAINER — the things inside it are what get called
-    /// — so it has no callee edge that could go missing, and a count of modules
-    /// nothing reached is a count rather than a defect.
+    /// at [`Reach::Mod`], and the one reach no CALL ever mints: a path
+    /// `a::b::c()` targets `c`, never `a`. An import is the exception and mints
+    /// exactly that reach, which is why the two are told apart by shape rather
+    /// than by a bool.
     ///
     /// Every other kind is namable, including the ones that are read rather
     /// than CALLED. Those are the ones at risk of being lumped in with a
@@ -221,23 +230,7 @@ impl SymbolKind {
     /// and constructed, and a macro is reached by `name!`. Every one of those
     /// is a reference, so every one of them can lose one.
     pub fn can_be_named(self) -> bool {
-        match self {
-            Self::Module => false,
-            Self::Function
-            | Self::Method
-            | Self::Class
-            | Self::Struct
-            | Self::Enum
-            | Self::EnumVariant
-            | Self::Interface
-            | Self::Trait
-            | Self::TypeAlias
-            | Self::Const
-            | Self::Static
-            | Self::Macro
-            | Self::Field
-            | Self::Property => true,
-        }
+        matches!(self.reached_by(), ReachedBy::Call)
     }
 
     /// Whether a use site that went THROUGH A RECEIVER — `x.name`, `x.name()` —
