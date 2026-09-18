@@ -559,6 +559,66 @@ mod tests {
         }
     }
 
+    /// **NO ADAPTER TOUCHES THE FILESYSTEM.**
+    ///
+    /// The task hierarchy is scan root → scan repo → find files →
+    /// `indexer(repo, file)`, so a language adapter indexes ONE file and is
+    /// TOLD where it sits: [`Source`] carries `package`, `module` and TEXT
+    /// rather than a path to open. Everything positional was decided by the
+    /// scan, which established the repository boundary before any file was
+    /// read, and `indexer::placement` turns that into a package name from the
+    /// manifest list the scan already gathered.
+    ///
+    /// THIS IS NOT A STYLE RULE. The shipped `languages::python` adapter
+    /// ignored the `rel_path` it was handed and climbed `dir.parent()` until it
+    /// ran out of filesystem, looking for a `pyproject.toml`. A stray marker in
+    /// any ancestor became the import root — and from below that marker the
+    /// first path segment is the CHECKOUT'S OWN FOLDER NAME, so every file came
+    /// out as package `repo`. The package is the first segment a dotted import
+    /// is compared against, so that is the file's whole resolution rather than a
+    /// label. It was latent on the machine it was written on, which is exactly
+    /// why a reviewer would not see it.
+    ///
+    /// Two further reasons beyond correctness: an adapter that reads the disk
+    /// cannot be tested on string literals, and per-file IO under a parallel
+    /// repo walk is work repeated once per file for an answer the scan has
+    /// already computed once.
+    ///
+    /// If a language needs something that is not in the file's text, it is the
+    /// SCAN's job to supply it — extend [`Source`] or `placement`, do not look
+    /// it up from here.
+    #[test]
+    fn no_adapter_reads_the_filesystem() {
+        // Each is a way to ask the disk a question. `parent` is absent on
+        // purpose: adapters legitimately parse the module path OUT of a path
+        // string, which is pure text work — what makes a climb a climb is
+        // pairing it with one of these.
+        const ASKS_THE_DISK: &[&str] =
+            &["is_file(", "is_dir(", "exists(", "read_to_string(", "read_dir(", "metadata("];
+
+        let mut read = 0;
+        let mut found: Vec<String> = Vec::new();
+        for (path, body) in crate::indexer::guard_sources() {
+            if !path.starts_with("lang") {
+                continue;
+            }
+            read += 1;
+            for (n, line) in crate::indexer::outside_tests(&body).lines().enumerate() {
+                let code = line.split_once("//").map_or(line, |(before, _)| before);
+                if let Some(call) = ASKS_THE_DISK.iter().find(|c| code.contains(**c)) {
+                    found.push(format!("{path}:{} `{call}`", n + 1));
+                }
+            }
+        }
+        assert!(read > 4, "the guard read {read} adapter sources, so it proves little");
+        assert!(
+            found.is_empty(),
+            "an adapter indexes ONE file from the text it was handed and never asks the \
+             filesystem anything — the scan already decided where the file sits:\n  {}",
+            found.join("\n  ")
+        );
+    }
+
     /// The trait exists so a caller asks the registry rather than writing its
     /// own arm. This is the guard that says so, and it reads the sources because
     /// the defect it prevents is a `match` somebody adds later.
