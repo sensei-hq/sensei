@@ -362,7 +362,16 @@ fn report() {
         let floor = match *language {
             "rust" => 47.7,
             "typescript" => 39.4,
-            _ => 0.0,
+            // NOT a default, and `_ => 0.0` is why: every share is `>= 0.0`, so
+            // a language absent from this table got a gate that passed
+            // unconditionally — present in the report, measured by nothing. The
+            // next language added would have inherited it in silence, which is
+            // the one failure mode a ratchet cannot survive.
+            other => panic!(
+                "no resolution floor is recorded for `{other}`. Run this test, read the share \
+                 it reports, and record it here — a language in the corpus with no floor is \
+                 not gated at all"
+            ),
         };
         assert!(
             share >= floor,
