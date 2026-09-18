@@ -769,9 +769,13 @@ mod tests {
                 "`{encoded}` is not a whole fqn"
             );
         }
+        // `python` STOOD HERE and had to move: this build reads it now, so the
+        // fixture was asserting the opposite of what it claims. The replacement
+        // is a language no adapter is planned for, which is what the case needs
+        // — a label the registry genuinely cannot answer for.
         assert_eq!(
-            parse("python·p·x·item"),
-            Err(FqnError::UnknownLanguage { found: "python".to_string() }),
+            parse("cobol·p·x·item"),
+            Err(FqnError::UnknownLanguage { found: "cobol".to_string() }),
             "a language this build cannot read is an error, not a silent Rust"
         );
         assert_eq!(

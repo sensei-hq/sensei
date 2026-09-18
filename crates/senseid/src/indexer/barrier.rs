@@ -87,13 +87,13 @@ fn test_boundary(path: &str, text: &str, language: Language) -> u32 {
 /// Rust is the only language here that does: `#[cfg(test)] mod tests` sits in
 /// the same file as the code it exercises, so no path convention can find it
 /// and the marker has to be read out of the text. Java's JUnit tests are
-/// separate files under `src/test/java` and TypeScript's are `*.spec.ts`
-/// siblings — both are answered by the path, and neither has an in-file
-/// marker to look for.
+/// separate files under `src/test/java`, TypeScript's are `*.spec.ts`
+/// siblings, and Python's are `test_*.py` under pytest's discovery rule — all
+/// three are answered by the path, and none has an in-file marker to look for.
 fn inline_tests_begin(text: &str, language: Language) -> Option<u32> {
     let marker = match language {
         Language::Rust => "#[cfg(test)]",
-        Language::TypeScript | Language::Java => return None,
+        Language::TypeScript | Language::Java | Language::Python => return None,
     };
     text.lines().position(|l| l.trim_start().starts_with(marker)).map(|i| i as u32 + 1)
 }
