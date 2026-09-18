@@ -92,13 +92,14 @@ pub enum Language {
     /// JavaScript, TypeScript, and the script block of a Svelte component.
     TypeScript,
     Java,
+    Python,
 }
 
 impl Language {
     /// Every language this build can read. Exhaustively matched below, so a new
     /// variant does not compile until it is listed here too.
     pub fn all() -> &'static [Language] {
-        &[Language::Rust, Language::TypeScript, Language::Java]
+        &[Language::Rust, Language::TypeScript, Language::Java, Language::Python]
     }
 
     /// The label this language occupies the leading fqn segment with. Paired
@@ -108,6 +109,7 @@ impl Language {
             Self::Rust => "rust",
             Self::TypeScript => "typescript",
             Self::Java => "java",
+            Self::Python => "python",
         }
     }
 
@@ -119,6 +121,7 @@ impl Language {
             "rust" => Some(Self::Rust),
             "typescript" => Some(Self::TypeScript),
             "java" => Some(Self::Java),
+            "python" => Some(Self::Python),
             _ => None,
         }
     }
@@ -985,10 +988,10 @@ mod tests {
     fn every_declaration_fact_variant_is_constructible() {
         for l in all_languages() {
             match l {
-                Language::Rust | Language::TypeScript | Language::Java => {}
+                Language::Rust | Language::TypeScript | Language::Java | Language::Python => {}
             }
         }
-        assert_eq!(all_languages().len(), 3);
+        assert_eq!(all_languages().len(), 4);
 
         for k in all_symbol_kinds() {
             match k {
