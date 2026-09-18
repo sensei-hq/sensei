@@ -253,6 +253,7 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
     // The file declares its own module, and is the only thing that does.
     // `module_item` no longer declares a body-less `mod x;`, so the file is the
     // single declarer of its own identity. See `common::file_module`.
+    let its_own = from.clone();
     found.symbols.insert(
         0,
         crate::indexer::lang::common::file_module(
@@ -261,6 +262,12 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
             source.text,
         ),
     );
+
+    // ...and an import that names a MODULE is this file entering it. See
+    // `common::import_references`.
+    let entered =
+        crate::indexer::lang::common::import_references(Language::Rust, &found.imports, &its_own);
+    found.references.extend(entered);
 
     Ok(FileFacts {
         language: Language::Rust,
@@ -1597,6 +1604,18 @@ pub fn free(w: &Widget) -> u32 { w.width }
         let mut stack = vec![root];
         while let Some(node) = stack.pop() {
             let parent_kind = node.parent().map(|p| p.kind()).unwrap_or_default();
+            // A GLOB IMPORT is a use site of the module it globs, and the
+            // grammar has a node for exactly that. Counting `use_wildcard`
+            // rather than reading the text keeps this side derived from the
+            // parse, and gets `use a::{b::*, c::*}` right for free — two
+            // wildcards, two modules entered, which is what the walk emits.
+            //
+            // A NAMED import is not counted, because the walk deliberately
+            // emits none: `use a::b;` and `use a::b::C;` are the same shape and
+            // only one of them names a module.
+            if node.kind() == "use_wildcard" {
+                count += 1;
+            }
             if USE_SITE_KINDS.contains(&node.kind())
                 && !is_named_by_its_parent(node)
                 && !PATH_PARENTS.contains(&parent_kind)
@@ -2289,6 +2308,50 @@ fn helper() -> u32 { 0 }
             ],
             "the file holds what is written at file scope, the inline `mod` holds its own, \
              and `Widget::new` is owned by `Widget` rather than contained by either"
+        );
+    }
+
+    /// **A GLOB IMPORT IS A REFERENCE TO A MODULE; A NAMED ONE IS NOT.**
+    ///
+    /// `use a::b::*` names the module `a::b` — that is what is being globbed —
+    /// so it is the one Rust shape that can point at a [`SymbolKind::Module`],
+    /// and the file-module work is what finally gave it a target.
+    ///
+    /// `use a::b::C` is REFUSED, and the refusal is the point. It arrives as the
+    /// same `Binding::Name` as `use a::b;`, which imports a MODULE — the last
+    /// segment is a type in one and a module in the other, and nothing in this
+    /// file says which. Emitting either at `Reach::Mod` is right half the time.
+    #[test]
+    fn a_glob_import_references_the_module_it_globs_and_a_named_import_does_not() {
+        use crate::indexer::facts::RefKind;
+
+        let facts = facts(
+            "m",
+            "use crate::other::*;\n\
+             use crate::thing::Widget;\n\
+             pub fn go(w: Widget) -> u32 { 1 }\n",
+        );
+        let imported: Vec<String> = facts
+            .references
+            .iter()
+            .filter(|r| r.kind == RefKind::Imports)
+            .map(|r| match &r.target {
+                Resolution::Resolved { fqn, .. } => fqn.as_str().to_string(),
+                Resolution::Unresolved { reason, evidence } => {
+                    format!("{reason:?}({})", evidence.name)
+                }
+            })
+            .collect();
+
+        assert_eq!(
+            imported.len(),
+            1,
+            "one import names a module here — the glob — and `use crate::thing::Widget` does \
+             not: {imported:?}"
+        );
+        assert!(
+            imported[0].contains("other"),
+            "and it names the module being globbed: {imported:?}"
         );
     }
 

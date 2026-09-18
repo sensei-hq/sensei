@@ -13,8 +13,8 @@
 #![allow(dead_code)]
 
 use crate::indexer::facts::{
-    Binding, DeclaredType, Evidence, Fqn, Language, Observation, Reason, Resolution, Span, Symbol,
-    SymbolKind, Visibility,
+    Binding, DeclaredType, Evidence, Fqn, Import, Language, Observation, Reason, RefKind,
+    Reference, Resolution, Span, Symbol, SymbolKind, Visibility,
 };
 use crate::indexer::fqn::{FqnError, Reach};
 
@@ -314,4 +314,43 @@ mod module_specifier_tests {
             "every java import names a TYPE"
         );
     }
+}
+
+/// One [`RefKind::Imports`] reference per import whose specifier names a
+/// module — the file ENTERING that module.
+///
+/// Built here and not in either walk, for the same reason [`file_module`] is:
+/// it is derived entirely from facts both walks already produce, and a second
+/// copy would be a second answer to "is this an import of a module".
+///
+/// UNRESOLVED, always. The specifier is a PATH, and turning a path into a
+/// module identity needs the roots, the package boundary and the relative rule
+/// — which live in the resolution ladder and not in a walk that never reaches
+/// outside its own file (R7). So the walk states what it saw and the ladder
+/// places it, exactly as it does for a callee.
+///
+/// The evidence carries the specifier VERBATIM as its name and [`Reach::Mod`]
+/// as its reach. That reach is the discriminator downstream: an import is the
+/// only thing that mints it, so nothing else can be mistaken for one.
+pub fn import_references(language: Language, imports: &[Import], from: &Fqn) -> Vec<Reference> {
+    imports
+        .iter()
+        .filter(|import| specifier_names_a_module(language, &import.binds))
+        .map(|import| Reference {
+            // An import belongs to the FILE, which is the module it enters
+            // things INTO — the same identity the file declares for itself.
+            from: from.clone(),
+            kind: RefKind::Imports,
+            at: import.at,
+            target: Resolution::Unresolved {
+                reason: Reason::Unplaced,
+                evidence: Evidence {
+                    name: import.path.clone(),
+                    node_kind: "import".to_string(),
+                    reach: Reach::Mod,
+                    saw: Vec::new(),
+                },
+            },
+        })
+        .collect()
 }
