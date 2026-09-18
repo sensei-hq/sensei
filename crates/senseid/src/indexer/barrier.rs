@@ -28,7 +28,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::facts::{Evidence, FileFacts, Language, Observation, ReachedBy, Resolution, SymbolKind};
+use super::facts::{
+    Evidence, FileFacts, Language, Observation, ReachedBy, RelationKind, Resolution, SymbolKind,
+};
 use super::fqn::{self, Origin, Reach};
 
 /// One file of a corpus: what the walk read, and the text it was read from.
@@ -525,6 +527,17 @@ pub(super) fn by_kind(units: &[Unit<'_>]) -> BTreeMap<&'static str, BTreeMap<Sym
             }
         }
         for rel in &unit.facts.relations {
+            // CONTAINMENT IS NOT A REACH. A supertype or an owning type is
+            // NAMED by the declaration that points at it — `impl Draw for
+            // Widget` writes `Draw` — so counting it as reached from source is
+            // reading what the file says. A `Contains` points the other way:
+            // the parent HOLDS the child and the child's declaration names it
+            // nowhere. Counting it would mark every module reached by the mere
+            // existence of something inside it, which is the trivial-reach
+            // noise the container split was built to remove.
+            if rel.kind == RelationKind::Contains {
+                continue;
+            }
             if let Resolution::Resolved { fqn, .. } = &rel.parent {
                 from_source.insert(fqn.as_str());
             }

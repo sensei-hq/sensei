@@ -440,11 +440,19 @@ mod tests {
         // construction — an R6 order-independence comparison over whole rows
         // would fail on an identity that says nothing about the graph. The path
         // is the fact the assertion is about.
+        //
+        // `parent_id` is the same shape and gets the same treatment: OUT, with
+        // the parent's FQN in. Dropping it outright would stop the comparison
+        // saying anything about containment at all, which is the half of
+        // `nodes.parent_id` an R6 test most needs to cover now that a module
+        // fills it for every file-scope declaration.
         let rows: Vec<(serde_json::Value,)> = sqlx_core::query_as::query_as(
-            "SELECT (to_jsonb(n) - 'id' - 'folder_id' - 'embedding' - 'file_id')
+            "SELECT (to_jsonb(n) - 'id' - 'folder_id' - 'embedding' - 'file_id' - 'parent_id')
                     || jsonb_build_object('file_path', to_jsonb(np.file_path))
+                    || jsonb_build_object('parent_fqn', to_jsonb(p.fqn))
                FROM sensei.nodes n
                LEFT JOIN sensei.node_paths np ON np.node_id = n.id
+               LEFT JOIN sensei.nodes p ON p.id = n.parent_id
               WHERE n.folder_id = $1 AND ($2::text IS NULL OR n.props -> 'claims' ? $2)
               ORDER BY n.fqn, n.name",
         )
