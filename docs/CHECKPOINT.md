@@ -1,39 +1,39 @@
 # Checkpoint
 
-**Slice** — indexer-v2. **File-module steps 1-11 COMPLETE**, and the processor
-seam under them exists. Detail: `/sensei:session`.
+**Slice** — indexer-v2. **Python is now a v2 language**, and the seam under it
+places real checkouts. Detail: `/sensei:session`.
 
-**Done since d0dfdd8f** — step 11 `RefKind::Imports` (`verdict()` returns an
-edge kind, so a module import is an edge instead of a short-circuit) · java
-file-module · `a9d5c427` the container row counts only, no "not imported" ·
-`8e01c92e` a python file outside an `__init__.py` chain is still in a package
-(SHIPPED indexer — it was filing first-party code as a library) · `9c49a87b`
-**`indexer::placement`**, the seam that answers "which package is this file in".
+**Done since 8e01c92e** — `9c49a87b` `indexer::placement`, the seam that answers
+"which package is this file in" · `04daaa3e` the python adapter (grammar, walk,
+identity rules) · `ecb9718f` **shipped** manifest fix: poetry states its name in
+`[tool.poetry]` · `f221b76a` one directory, two manifests, one answer every run
+· `fbb0ac84` the walk's double traversal, and the corpus test that found it.
 
-**Measured** — the seam was pinned against the `#[cfg(test)]` harness over this
-repo's rust and 6 of 390 files disagreed. The harness was wrong: `module_of`
-split on `/src/`, so `build.rs` and `tests/*.rs` got an EMPTY module — the
-library crate root's — and `build.rs`'s `fn main` minted `src/main.rs`'s
-identity. A7 rust collisions **5 → 3**.
+**Measured** — five python checkouts, 239 files, all placed, all read. The
+conservation property holds on every one: **every `def`/`class` line produces
+exactly one Class/Function/Method symbol** (Ethico 367/367, ai-hedge-fund 577,
+llm-gateway 248, revamp 53, 202410 42, green-card 41). A7 rust collisions 5 → 3.
 
-**Gate at HEAD** — fmt clean, clippy `-D warnings` 0, workspace **3595/0**,
-ignored 31/35, python 30/30. The 4 ignored failures are pre-existing and proven
-so (dbd-rs path, gateway config, two installer-hook tests).
+**Gate at HEAD** — fmt clean, clippy `-D warnings` 0, workspace **3620/0**,
+ignored 32/36. The 4 ignored failures are pre-existing and proven so (dbd-rs
+path, gateway config, two installer-hook tests).
 
-**Don't re-derive** — `placement` composes `adapters::manifest` (10 ecosystems)
-rather than adding an eleventh reader. A manifest stating no name yields NONE:
-a virtual workspace root and a private `package.json` are both legitimate, and
-a folder-derived name is one no dependency edge spells. `build.rs` keeps module
-`"build"` DELIBERATELY — with `""` its declarations collide with lib's.
+**Don't re-derive** — my fixtures could not catch the double traversal: every
+walk test used `.find()` and a duplicate reads like the original. Twelve tests,
+four mutation-probed, all blind. The corpus caught it (37,973 refs / 103 files).
+**Prefer a conservation property over a count.** `build.rs` keeps module
+`"build"` deliberately — with `""` its declarations collide with lib's. Python's
+`Name` binding names a module (unlike Rust's) because `import x` REQUIRES x to
+be a module; an item arrives as `from a import b`.
 
-**Next — port python to a v2 adapter.** Ranked #1 of the remaining six: ~29k
-files, the largest corpus outside rust/ts, and the seam it was waiting on is
-now in. v2 has 4 adapters (rust, js, ts, svelte); the SHIPPED `languages/`
-indexer has 11 and still produces the graph, so it must keep working.
+**Next — wire the seam into a production processor.** `placement` and the four
+adapters are still `#![allow(dead_code)]`: `pipeline.rs` stops at the structure
+barrier and nothing outside `indexer/` calls any of it. That is the cutover, and
+it is what makes any of this reach the graph.
 
-**Open for the user** — should `.git` be a last-resort python import-root
-marker? It would place ~251 of the 308 markerless files, but a VCS boundary is
-not a python import root. Not decided quietly.
+**Open for the user** — should `.git` be a last-resort python import-root marker
+for the SHIPPED indexer? It would place ~251 of 308 markerless files, but a VCS
+boundary is not a python import root. Not decided quietly.
 
 **Also open** — kotlin/vue deferred, sql/c/swift/go/scala/dart dropped.
 TS/Svelte receiver typing: decomposed, not started; **re-measure first**.
