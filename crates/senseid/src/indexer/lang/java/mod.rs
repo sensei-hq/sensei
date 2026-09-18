@@ -310,6 +310,57 @@ mod tests {
         assert!(JavaAdapter.type_segment("<>").is_err());
     }
 
+    /// **A JAVA FILE DECLARES ITS OWN MODULE**, like every other file.
+    ///
+    /// Java's identity has no module segment — the `package` header is the whole
+    /// namespace — so the file identity is minted from the package plus the file
+    /// STEM, at `Reach::Mod`. That identity already existed and was already used
+    /// as the scope every use site is filed under; it was simply never emitted
+    /// as a declaration, so Java's top-level types hung off nothing.
+    ///
+    /// Two files in one package cannot share a stem — Java permits one public
+    /// type per file and names the file after it — so this mints no collision.
+    #[test]
+    fn a_java_file_declares_its_own_module() {
+        let facts = twice(
+            "package p;\n\
+             class Holder {\n\
+             \x20   String name;\n\
+             }\n",
+        );
+
+        let modules: Vec<&str> = facts
+            .symbols
+            .iter()
+            .filter(|s| s.kind == crate::indexer::facts::SymbolKind::Module)
+            .map(|s| s.fqn.as_str())
+            .collect();
+        assert_eq!(
+            modules,
+            vec!["java·p·F·mod"],
+            "the file is named by its stem under the package it declares"
+        );
+
+        // And it holds what the file writes at top level, which is what gives
+        // `nodes.parent_id` a value for a Java type.
+        let contains: Vec<String> = facts
+            .relations
+            .iter()
+            .filter(|r| r.kind == crate::indexer::facts::RelationKind::Contains)
+            .map(|r| match &r.parent {
+                crate::indexer::facts::Resolution::Resolved { fqn, .. } => {
+                    format!("{} -> {}", r.child.as_str(), fqn.as_str())
+                }
+                crate::indexer::facts::Resolution::Unresolved { .. } => "UNRESOLVED".to_string(),
+            })
+            .collect();
+        assert_eq!(
+            contains,
+            vec!["java·p·Holder·item -> java·p·F·mod".to_string()],
+            "the class is contained by the file; its FIELD is owned by the class instead"
+        );
+    }
+
     /// Read a fixture the way the corpus does: once to learn where the types
     /// live, then again with those homes, because `refer_to_member` places a
     /// member only when the scan DECLARES its type.
