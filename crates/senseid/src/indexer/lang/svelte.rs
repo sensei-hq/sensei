@@ -81,7 +81,12 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
     let blocks = script_blocks(source.text);
     // ONE walk over the blocks and the markup — see `read_component` for why
     // two would leave the markup typing nothing.
-    let found = javascript::read_component(source, types, &blocks, from)?;
+    let mut found = javascript::read_component(source, types, &blocks, from.clone())?;
+    // A component is a module like any other file. See `common::file_module`.
+    found.symbols.insert(
+        0,
+        super::common::file_module(from, javascript::module_name_of(source.module), source.text),
+    );
 
     Ok(FileFacts {
         language: Language::TypeScript,
@@ -248,9 +253,15 @@ mod tests {
     /// A component with no script is a component, not a failed read: its markup
     /// is still use sites, and `Ok` with no symbols is the honest answer.
     #[test]
-    fn a_component_with_no_script_reads_its_markup_and_declares_nothing() {
+    fn a_component_with_no_script_declares_only_itself() {
         let facts = facts("<p>{title}</p>\n");
-        assert!(facts.symbols.is_empty(), "nothing is declared here");
+        assert_eq!(
+            facts.symbols.iter().map(|s| s.fqn.as_str()).collect::<Vec<&str>>(),
+            vec!["typescript·pkg·lib·Comp·mod"],
+            "a component with no script declares nothing OF ITS OWN — but it is still a \
+             module, and a file that declares no node has nothing an import can point at"
+        );
+        assert_eq!(facts.symbols[0].kind, crate::indexer::facts::SymbolKind::Module);
         assert_eq!(facts.language, Language::TypeScript);
     }
 
