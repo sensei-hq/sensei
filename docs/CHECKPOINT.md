@@ -1,39 +1,39 @@
 # Checkpoint
 
-**Slice** — indexer-v2. **File-module steps 1-10 COMPLETE.** Every file declares
-its own module; containment feeds `nodes.parent_id`. Detail: `/sensei:session`.
+**Slice** — indexer-v2. **File-module steps 1-11 COMPLETE**, and the processor
+seam under them exists. Detail: `/sensei:session`.
 
-**Done** — 33 commits: b983367a brake · a78ef0c6 `Ladder::blocks` filter ·
-65b3c844 omittable-only extensions · e6dff723 rust emission · ef194750
-js+svelte · 8e4e803f `Contains`, unrepresentable as an edge · bcd39d22 walks
-emit it, `owners()` reads it, anti-widening guard · d0dfdd8f per-app packages.
+**Done since d0dfdd8f** — step 11 `RefKind::Imports` (`verdict()` returns an
+edge kind, so a module import is an edge instead of a short-circuit) · java
+file-module · `a9d5c427` the container row counts only, no "not imported" ·
+`8e01c92e` a python file outside an `__init__.py` chain is still in a package
+(SHIPPED indexer — it was filing first-party code as a library) · `9c49a87b`
+**`indexer::placement`**, the seam that answers "which package is this file in".
 
-**Measured** — rust Module 325→382 (one per file), typescript 0→633. Both
-callable tables UNCHANGED (rust lost 1855, ts lost 2180): a container
-contributes to neither. Web identities 619→925 (267 collisions→0). The A7
-identity ratchet came DOWN, 525→514.
+**Measured** — the seam was pinned against the `#[cfg(test)]` harness over this
+repo's rust and 6 of 390 files disagreed. The harness was wrong: `module_of`
+split on `/src/`, so `build.rs` and `tests/*.rs` got an EMPTY module — the
+library crate root's — and `build.rs`'s `fn main` minted `src/main.rs`'s
+identity. A7 rust collisions **5 → 3**.
 
-**Gate at HEAD** — fmt clean, clippy `-D warnings` 0, workspace **3586/0**,
-ignored 30/34, java corpus 4/4 (`SENSEI_CORPUS=~/Work/Dayamed`). The 4 ignored
-failures are pre-existing and PROVEN so — stashed, re-ran at HEAD, all 4 still
-fail (dbd-rs path, gateway config, two installer-hook tests).
+**Gate at HEAD** — fmt clean, clippy `-D warnings` 0, workspace **3595/0**,
+ignored 31/35, python 30/30. The 4 ignored failures are pre-existing and proven
+so (dbd-rs path, gateway config, two installer-hook tests).
 
-**Don't re-derive** — steps 7+8 had to be one commit (between them a `Contains`
-reaches the DB nowhere). Containment is NOT a reach; counting it in
-`from_source` marks every module reached by anything inside it. The A7 break was
-the harness, not the emission: all three front ends were one package, so two
-apps' `src/app.d.ts` were already one identity. Two repo guards fire on
-COMMENTS, not code — describe a forbidden literal, never spell it.
+**Don't re-derive** — `placement` composes `adapters::manifest` (10 ecosystems)
+rather than adding an eleventh reader. A manifest stating no name yields NONE:
+a virtual workspace root and a private `package.json` are both legitimate, and
+a folder-derived name is one no dependency edge spells. `build.rs` keeps module
+`"build"` DELIBERATELY — with `""` its declarations collide with lib's.
 
-**Next — step 11 (`RefKind::Imports`)**, decided, NOT built. Keep
-`can_be_named()==false` restated as "call-shaped"; give `ReachedBy::Import` real
-columns; derive the module lost count from Imports evidence. **Needs a
-per-shape target rule first** — `use a::b::C` names an ITEM, so emitting it at
-`Reach::Mod` dangles once per `use` line. Only a glob / grouped `self` / bare
-mod / JS specifier names a module. Java excluded.
+**Next — port python to a v2 adapter.** Ranked #1 of the remaining six: ~29k
+files, the largest corpus outside rust/ts, and the seam it was waiting on is
+now in. v2 has 4 adapters (rust, js, ts, svelte); the SHIPPED `languages/`
+indexer has 11 and still produces the graph, so it must keep working.
 
-**Then the remaining languages.** v2 has 4 adapters; the SHIPPED legacy indexer
-has 11 (python, kotlin, sql, swift, c, vue) and produces the graph today, so it
-must keep working. Corpora: python ~29k, sql ~865, kotlin 245, vue 41, swift 6.
+**Open for the user** — should `.git` be a last-resort python import-root
+marker? It would place ~251 of the 308 markerless files, but a VCS boundary is
+not a python import root. Not decided quietly.
 
-**Also open** — TS/Svelte receiver typing: decomposed, not started; re-measure.
+**Also open** — kotlin/vue deferred, sql/c/swift/go/scala/dart dropped.
+TS/Svelte receiver typing: decomposed, not started; **re-measure first**.
