@@ -1,40 +1,42 @@
 # Checkpoint
 
-**Slice** — indexer-v2. **Python is now a v2 language**, and the seam under it
-places real checkouts. Detail: `/sensei:session`.
+**Slice** — indexer-v2. **Stage 4 exists end to end**: a repository loads,
+places, walks twice, and resolves. Detail: `/sensei:session`.
 
-**Done since 8e01c92e** — `9c49a87b` `indexer::placement`, the seam that answers
-"which package is this file in" · `04daaa3e` the python adapter (grammar, walk,
-identity rules) · `ecb9718f` **shipped** manifest fix: poetry states its name in
-`[tool.poetry]` · `f221b76a` one directory, two manifests, one answer every run
-· `fbb0ac84` the walk's double traversal, and the corpus test that found it.
+**Done** — `34ba2594` `index::index_repo`, the composition nothing had
+(read → barrier → resolve) · `3b47cf19` `index::load_repo`, the IO half ·
+`83593528` the no-filesystem guard · `b62545f7` shipped python walk bounded.
 
-**Measured** — five python checkouts, 239 files, all placed, all read. The
-conservation property holds on every one: **every `def`/`class` line produces
-exactly one Class/Function/Method symbol** (Ethico 367/367, ai-hedge-fund 577,
-llm-gateway 248, revamp 53, 202410 42, green-card 41). A7 rust collisions 5 → 3.
+**Measured over THIS repository** — 2,309 files, 1,367 loaded, 942 unclaimed,
+**0 unplaced, 0 unreadable**, 15 packages. 96,297 references resolved / 96,794
+unresolved (ExternalBoundary 31,922 · ReceiverTypeUnknown 28,328 · Plumbing
+22,466). No `Unplaced` survives the ladder; no module claimed by two files.
 
-**Gate at HEAD** — fmt clean, clippy `-D warnings` 0, workspace **3623/0**,
-ignored 32/36 (4 pre-existing: dbd-rs path, gateway config, 2 installer hooks).
+**Two defects the composition caught in its first hour** — python relative
+imports resolved to the IMPORTING file (`from . import a` → a self-edge; 79 in
+two corpora). Cause: the dot is python's separator AND its relative prefix, and
+`segments()` drops empties, so the dots never reached the roots table. Depth is
+now counted off the raw specifier pre-split (`Grammar::relative_depth_prefix`).
+The 309 remaining self-edges are all `use super::*` in inline test modules —
+correct, and the detector asserts the SHAPE so a new cause still fails.
 
-**Architecture, now enforced** — scan root → scan repo → find files →
-`indexer(repo, file)`. An adapter indexes ONE file, is TOLD its
-`(package, module)`, and composes relative imports as strings. `b62545f7` bounded
-the shipped python walk that climbed to `/`; `83593528` is the guard that fails
-the build on any `is_file`/`read_to_string`/`read_dir` under `lang/`.
+**Gate at HEAD** — fmt clean, clippy `-D warnings` 0, workspace **3632/0**,
+ignored 33/37 (4 pre-existing: dbd-rs path, gateway config, 2 installer hooks).
 
-**Don't re-derive** — my fixtures missed the double traversal: every walk test
-used `.find()` and a duplicate reads like the original. Twelve tests, four
-mutation-probed, all blind; the corpus caught it (37,973 refs / 103 files).
-**Prefer a conservation property over a count.** `build.rs` keeps module
-`"build"` deliberately — with `""` its declarations collide with lib's. Python's
-`Name` binding names a module (unlike Rust's) because `import x` REQUIRES x to
-be a module; an item arrives as `from a import b`.
+**Don't re-derive** — scan root → scan repo → files → `indexer(repo, file)`; an
+adapter indexes ONE file and is TOLD its `(package, module)`. `TypeHomes`/`World`
+are the repo-scoped lookups, built once between the two passes; within a pass no
+file depends on another, so it is parallelisable as it stands. Two passes are
+needed for IDENTITY, not existence — a stub is promotable only if both sides
+spell the same string, and the member spelling carries the type's home. Prefer a
+conservation property over a count, and a shape assertion over `is_empty()` when
+a detector has known-benign hits.
 
-**Next — wire the seam into a production processor.** `placement` and the four
-adapters are still `#![allow(dead_code)]`: `pipeline.rs` stops at the structure
-barrier and nothing outside `indexer/` calls any of it. That is the cutover, and
-it is what makes any of this reach the graph.
+**Next — persist + dispatch.** `persist::write(store, folder_id, facts)` is the
+remaining wire; `RepoResult.folder_id` is the scope it wants. Then per
+`docs/spec/indexer/10-cutover.md`: differential harness (S1) and BEFORE numbers
+(S6) come before any switch, **rust only** (S3/D4), all three deletion triggers
+re-pointed together (S4), graph WIPED not migrated (S4b).
 
-**Also open** — kotlin/vue deferred, sql/c/swift/go/scala/dart dropped.
-TS/Svelte receiver typing: decomposed, not started; **re-measure first**.
+**Also open** — a self-loop edge may be worth dropping at write time. kotlin/vue
+deferred. TS/Svelte receiver typing: decomposed, **re-measure first**.
