@@ -151,6 +151,9 @@ pub const GRAMMAR: Grammar = Grammar {
     // A JavaScript module reaches an external ONLY through an import; `a.b` is
     // a property access, not a package path.
     paths_name_packages: false,
+    // `../` is a TOKEN and `/` is the separator, so the dots survive the split
+    // and the roots table above reads them.
+    relative_depth_prefix: None,
     // The binding is stated in the import CLAUSE (`import { a as b }`), not in
     // the specifier string, so there is nothing in the path for the ladder to
     // split off.

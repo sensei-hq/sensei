@@ -36,7 +36,6 @@ mod walk;
 use super::{Grammar, LanguageAdapter, ReadError, Source, TypeHomes};
 use crate::indexer::facts::{FileFacts, Fqn, Language};
 use crate::indexer::fqn::{self, Form, FqnError, Reach, Segment};
-use crate::indexer::resolve::Root;
 
 /// Python, from `.py` and `.pyi`.
 pub struct PythonAdapter;
@@ -97,7 +96,13 @@ pub const GRAMMAR: Grammar = Grammar {
     // Python's relative imports, and no third. There is no `crate` — an absolute
     // import names a top-level module, and whether that module is ours is
     // answered by `first_party`, not by a keyword.
-    roots: &[(".", Root::Here), ("..", Root::Up)],
+    // EMPTY, and that is a fact about python rather than an omission. Its
+    // relative imports state depth by REPEATING the dot — `.mod`, `..mod` —
+    // and the dot is also the separator, so they are not tokens in the path at
+    // all. `relative_depth_prefix` below is what reads them; there is nothing
+    // left for a roots table to match, and an absolute import names a
+    // top-level module whose ownership `first_party` answers, not a keyword.
+    roots: &[],
     // A specifier is already a dotted module path. `from a.b import C` carries
     // `a.b` and nothing else — the file name never appears in it.
     module_segment: crate::indexer::lang::common::already_a_module_segment,
@@ -116,6 +121,8 @@ pub const GRAMMAR: Grammar = Grammar {
     // in the statement (`import a.b as c`, `from a import b as c`) and the walk
     // reads the alias off the AST, so by the time the ladder sees a specifier
     // the path is all that is left in it.
+    // `.mod` is a sibling, `..mod` one level up, `...mod` two.
+    relative_depth_prefix: Some('.'),
     names_the_binding: None,
     // NONE for the same reason, and it is a real difference from Java rather
     // than a shortcut: Java's `import java.util.*;` puts the star INSIDE the
@@ -358,6 +365,72 @@ pub fn file_fqn(package: &str, module: &str, path: &str) -> Result<Fqn, FqnError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::indexer::facts::{RefKind, Resolution};
+    use crate::indexer::index::{Placed, index_repo};
+
+    /// **EVERY RELATIVE DEPTH PYTHON CAN WRITE, RESOLVED.**
+    ///
+    /// The dot is python's separator AND its relative prefix, so the dots are
+    /// discarded by tokenizing and the depth has to be read off the raw
+    /// specifier. Before that, all four of these reduced to the importing
+    /// file's OWN module and every relative import in the corpus became a
+    /// self-edge — resolved, pointing at the wrong node, and invisible to any
+    /// count of misses.
+    ///
+    /// Read from `pkg/sub/here.py`, which is module `pkg.sub.here`:
+    #[test]
+    fn a_relative_import_names_the_module_its_dots_count_to() {
+        for (specifier, want) in [
+            // one dot — the containing package
+            ("from . import x", "python·p·pkg·sub·mod"),
+            // one dot + a name — a sibling module
+            ("from .other import x", "python·p·pkg.sub·other·mod"),
+            // two dots — one level up from the containing package
+            ("from .. import x", "python·p·pkg·mod"),
+            // two dots + a name — that level's child
+            ("from ..cousin import x", "python·p·pkg·cousin·mod"),
+        ] {
+            let text = format!("{specifier}\n");
+            let here = Placed {
+                path: "pkg/sub/here.py",
+                package: "p",
+                module: "pkg.sub.here",
+                text: &text,
+            };
+            let indexed = index_repo(&[here], &["p".to_string()].into_iter().collect());
+            let entered = indexed[0]
+                .references
+                .iter()
+                .find(|r| r.kind == RefKind::Imports)
+                .unwrap_or_else(|| panic!("`{specifier}` emitted no import edge"));
+            match &entered.target {
+                Resolution::Resolved { fqn, .. } => {
+                    assert_eq!(fqn.to_string(), want, "`{specifier}`")
+                }
+                other => panic!("`{specifier}` did not resolve: {other:?}"),
+            }
+        }
+    }
+
+    /// Ascending past the top of the package tree is NOWHERE, not the root.
+    ///
+    /// `from ... import x` in `pkg/a.py` asks for the parent of the parent of
+    /// `pkg`, which does not exist. Clamping to the top would name a real
+    /// module the source never asked for — a wrong edge, which R4 ranks below
+    /// the miss this produces instead.
+    #[test]
+    fn ascending_past_the_top_names_nothing_rather_than_the_root() {
+        let a =
+            Placed { path: "pkg/a.py", package: "p", module: "pkg.a", text: "from ... import x\n" };
+        let indexed = index_repo(&[a], &["p".to_string()].into_iter().collect());
+        let entered =
+            indexed[0].references.iter().find(|r| r.kind == RefKind::Imports).expect("an import");
+        assert!(
+            matches!(entered.target, Resolution::Unresolved { .. }),
+            "climbing past the top resolved to something: {:?}",
+            entered.target
+        );
+    }
 
     /// The table in [`module_path`]'s own doc, executed. A doc that drifts from
     /// the rule is worse than no doc, and this rule is a segment of every

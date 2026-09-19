@@ -192,6 +192,8 @@ pub static GRAMMAR: LazyLock<Grammar> = LazyLock::new(|| Grammar {
     module_segment: crate::indexer::lang::common::already_a_module_segment,
     // Java has no `import x as y`. A name is imported under its own last
     // segment or not at all.
+    // No relative imports at all — every java import is absolute.
+    relative_depth_prefix: None,
     names_the_binding: None,
     wildcard: Some("*"),
     paths_name_packages: true,

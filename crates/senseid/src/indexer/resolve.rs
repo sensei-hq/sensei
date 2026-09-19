@@ -78,6 +78,23 @@ pub struct Grammar {
     /// The walk keeps a specifier verbatim, so the ladder has to know where the
     /// path stops. `None` where the specifier never carries the binding —
     /// TypeScript states it in the import clause, not in the string.
+    /// The character a language REPEATS at the start of a specifier to state
+    /// relative depth, where every other language here names each level with a
+    /// token of its own (`super::`, `../`).
+    ///
+    /// Python writes `.mod` for a sibling, `..mod` for one level up, `...mod`
+    /// for two — and that character is also its module separator, so the dots
+    /// do not survive tokenizing at all: [`Ladder::segments`] drops empty
+    /// segments, which is correct for a trailing `a::` and fatal for a bare
+    /// `.`. The depth is therefore counted off the RAW string, which is the
+    /// only place it still exists, and the split then yields exactly the
+    /// remainder.
+    ///
+    /// `None` leaves the roots table above as the whole rule. Getting this
+    /// wrong is not a miss: with the dots discarded the specifier reduces to
+    /// the importing file's OWN module, and the import becomes a self-edge —
+    /// which R4 ranks below emitting nothing.
+    pub relative_depth_prefix: Option<char>,
     pub names_the_binding: Option<&'static str>,
     /// What a specifier ends with when it binds a whole module instead of one
     /// name. Also verbatim in the specifier, so also the ladder's to read off.
@@ -1219,7 +1236,10 @@ impl<'a> Ladder<'a> {
         if !self.is_a_root(head) {
             return Placed::Unbound;
         }
-        match self.relative_to(&wanted.segments, at) {
+        // DEPTH 0: this rung is the token-root path (`self::x`, `../x`), and a
+        // language spells depth one way or the other. The guard above already
+        // required a root TOKEN, which a repeated-prefix language has none of.
+        match self.relative_to(&wanted.segments, at, 0) {
             Rooted::At(segments) => self.identity(self.package, &segments, wanted.reach),
             Rooted::Nowhere => Placed::Unbound,
         }
@@ -1334,8 +1354,22 @@ impl<'a> Ladder<'a> {
 
     /// Read a path's leading root words against the module the path is written
     /// in, leaving package-relative segments.
-    fn relative_to(&self, segments: &[String], at: Span) -> Rooted {
+    fn relative_to(&self, segments: &[String], at: Span, depth: usize) -> Rooted {
         let mut base = self.module_at(at);
+        // A REPEATED-PREFIX language counts from the file's directory: the
+        // first repetition is the containing package, each further one ascends.
+        // The roots table below plays no part — a language spells depth one way
+        // or the other, never both.
+        if depth > 0 {
+            base.pop();
+            for _ in 1..depth {
+                if base.pop().is_none() {
+                    return Rooted::Nowhere;
+                }
+            }
+            base.extend(segments.iter().cloned());
+            return Rooted::At(base);
+        }
         // A directory-relative language counts from the folder the file sits
         // in, so the file's own segment comes off before any `..` is read. Done
         // once, on seeing the first root: `../..` pops twice from the
@@ -1388,6 +1422,12 @@ impl<'a> Ladder<'a> {
             Some((path, _alias)) => path,
             None => import.path.as_str(),
         };
+        // BEFORE the split, which discards the empty segments a repeated dot
+        // tokenizes to.
+        let depth = self
+            .grammar
+            .relative_depth_prefix
+            .map_or(0, |c| path.chars().take_while(|x| *x == c).count());
         let mut segments = self.split_module(path);
         // A grouped `self` (`use a::{self}`) binds the module the group is on,
         // not a member called `self`; a wildcard binds that module's contents
@@ -1428,7 +1468,7 @@ impl<'a> Ladder<'a> {
                     let reduce = self.grammar.module_segment;
                     *last = reduce(last).to_string();
                 }
-                self.relative_to(&segments, import.at)
+                self.relative_to(&segments, import.at, depth)
             }
         }
     }

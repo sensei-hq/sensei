@@ -93,6 +93,8 @@ pub const GRAMMAR: crate::indexer::resolve::Grammar = crate::indexer::resolve::G
     relative_to_directory: false,
     // `serde_json::json!(..)` is a complete use with no `use` anywhere.
     paths_name_packages: true,
+    // Rust names each level with a token: `super::super::x`.
+    relative_depth_prefix: None,
     names_the_binding: Some(" as "),
     wildcard: Some("*"),
     // Rust lints every type into `CamelCase` and every module into
