@@ -140,11 +140,180 @@ fn read_one(placed: &Placed<'_>, types: &TypeHomes) -> Option<FileFacts> {
     adapter.read(&source, types).ok()
 }
 
+/// One file, read off disk and placed: everything [`index_repo`] needs, owned.
+///
+/// Separate from [`Placed`], which borrows, because the IO half has to own the
+/// text it read before it can lend it out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Loaded {
+    pub path: String,
+    pub package: String,
+    pub module: String,
+    pub text: String,
+}
+
+impl Loaded {
+    pub fn placed(&self) -> Placed<'_> {
+        Placed { path: &self.path, package: &self.package, module: &self.module, text: &self.text }
+    }
+}
+
+/// Why a file the scan found produced nothing to index.
+///
+/// Counted rather than discarded: a repository where every file is `Unclaimed`
+/// has produced an empty graph for a reason, and a summary that reported only
+/// "0 files indexed" could not say which reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Skipped {
+    /// No adapter claims the extension. The common case by count — a repo is
+    /// mostly not source.
+    Unclaimed,
+    /// An adapter claims it, but no manifest at or above it names a package.
+    /// The file has no identity to declare anything under, and inventing one
+    /// would mint a package no dependency edge ever spells.
+    Unplaced,
+    /// The bytes would not read as text.
+    Unreadable,
+}
+
+/// The files of one repository, loaded and placed, plus what was skipped and
+/// why.
+///
+/// THE IO HALF, and the only part of stage 4 that touches a disk. It reads;
+/// every decision it makes is delegated — the adapter registry says who claims
+/// an extension, `placement` says which package and module, and `index_repo`
+/// says what the text means.
+pub fn load_repo(
+    repo_root: &std::path::Path,
+    files: &[std::path::PathBuf],
+    manifests: &[std::path::PathBuf],
+) -> (Vec<Loaded>, BTreeSet<String>, Vec<(String, Skipped)>) {
+    let mut loaded = Vec::new();
+    let mut first_party = BTreeSet::new();
+    let mut skipped = Vec::new();
+    // One read per manifest, not one per file: a repository has thousands of
+    // files and tens of manifests, and the nearest-manifest walk asks about the
+    // same few over and over.
+    let mut named: std::collections::HashMap<std::path::PathBuf, Option<String>> =
+        std::collections::HashMap::new();
+
+    for file in files {
+        let shown = file.to_string_lossy().to_string();
+        let Some(ext) = file.extension().and_then(|e| e.to_str()) else {
+            skipped.push((shown, Skipped::Unclaimed));
+            continue;
+        };
+        let Some(adapter) = lang::adapter_for_ext(&format!(".{ext}")) else {
+            skipped.push((shown, Skipped::Unclaimed));
+            continue;
+        };
+        let Some(manifest) = super::placement::owning_manifest(file, repo_root, manifests) else {
+            skipped.push((shown, Skipped::Unplaced));
+            continue;
+        };
+        let package = named
+            .entry(manifest.clone())
+            .or_insert_with(|| {
+                std::fs::read_to_string(&manifest)
+                    .ok()
+                    .and_then(|text| super::placement::package_named_by(&manifest, &text))
+            })
+            .clone();
+        let Some(package) = package else {
+            skipped.push((shown, Skipped::Unplaced));
+            continue;
+        };
+        let Ok(text) = std::fs::read_to_string(file) else {
+            skipped.push((shown, Skipped::Unreadable));
+            continue;
+        };
+        let root = manifest.parent().unwrap_or(repo_root);
+        let placement = super::placement::placement_of(file, &package, root, adapter.language());
+        // FROM THE MANIFEST, not from what parsed: a package whose files all
+        // fail to read is still ours, and deciding otherwise would make an
+        // import of it a library (R5).
+        first_party.insert(placement.package.clone());
+        loaded.push(Loaded {
+            path: shown,
+            package: placement.package,
+            module: placement.module,
+            text,
+        });
+    }
+    (loaded, first_party, skipped)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::indexer::facts::{RefKind, Resolution};
+
+    /// **THE WHOLE STAGE, OVER A REAL TREE ON DISK.**
+    ///
+    /// Every other test here runs on string literals, which proves the
+    /// composition does what I meant and nothing about whether the pieces meet:
+    /// the manifest reader, the nearest-manifest walk, the module rule and the
+    /// adapter registry each have their own tests and had never been asked to
+    /// agree on one directory. This is that question.
+    #[test]
+    fn a_repository_on_disk_loads_places_and_resolves_across_its_files() {
+        let tmp = tempfile::tempdir().expect("a temp dir");
+        let root = tmp.path();
+        let write = |rel: &str, text: &str| {
+            let at = root.join(rel);
+            std::fs::create_dir_all(at.parent().expect("a parent")).expect("mkdir");
+            std::fs::write(&at, text).expect("write");
+            at
+        };
+
+        let manifest = write("Cargo.toml", "[package]\nname = \"demo\"\n");
+        let a = write(
+            "src/a.rs",
+            "pub struct Widget { pub w: u32 }\n             impl Widget { pub fn wide(&self) -> u32 { self.w } }\n",
+        );
+        let b =
+            write("src/b.rs", "use crate::a::Widget;\npub fn go(x: &Widget) -> u32 { x.wide() }\n");
+        // Claimed by no adapter, and a file with no manifest above it inside
+        // the repo — the two skip reasons, present on purpose.
+        let readme = write("README.md", "# demo\n");
+
+        let (loaded, first_party, skipped) =
+            load_repo(root, &[a, b, readme.clone(), manifest], &[root.join("Cargo.toml")]);
+
+        assert_eq!(loaded.len(), 2, "the two rust files");
+        assert_eq!(
+            first_party,
+            packages(&["demo"]),
+            "the package comes from the manifest the scan found, not from a path"
+        );
+        assert_eq!(
+            loaded.iter().map(|l| l.module.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b"],
+            "the module rule is the language's, applied against the manifest's directory"
+        );
+        assert!(
+            skipped.iter().any(|(p, why)| p.ends_with("README.md") && *why == Skipped::Unclaimed),
+            "the markdown file is skipped as unclaimed: {skipped:?}"
+        );
+
+        let placed: Vec<Placed<'_>> = loaded.iter().map(Loaded::placed).collect();
+        let indexed = index_repo(&placed, &first_party);
+
+        let resolved: BTreeSet<String> = indexed
+            .iter()
+            .flat_map(|f| f.references.iter())
+            .filter_map(|r| match &r.target {
+                Resolution::Resolved { fqn, .. } => Some(fqn.to_string()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            resolved.contains("rust·demo·a·Widget·wide·item"),
+            "b.rs's call reaches the method a.rs declares, with the package the \
+             manifest names: {resolved:?}"
+        );
+    }
 
     fn packages(names: &[&str]) -> BTreeSet<String> {
         names.iter().map(|s| s.to_string()).collect()
@@ -356,5 +525,147 @@ mod tests {
         let indexed = index_repo(&files, &packages(&["p"]));
         let paths: Vec<&str> = indexed.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, vec!["src/a.rs", "src/b.rs", "src/c.rs"]);
+    }
+}
+
+#[cfg(test)]
+mod corpus {
+    use super::*;
+    use crate::indexer::facts::{Reason, Resolution};
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    /// **THE WHOLE OF STAGE 4, OVER THIS REPOSITORY.**
+    ///
+    /// The last thing that can be checked before a database is involved: load,
+    /// place, walk twice, resolve — at corpus scale, on a tree nobody wrote as
+    /// a fixture. What it is looking for is the class of defect a fixture
+    /// cannot have: a package the manifests name that no file lands in, a
+    /// module two files claim, a resolved edge pointing at the file it came
+    /// from.
+    ///
+    ///     cargo test -p senseid --bin senseid -- --ignored --nocapture index::corpus
+    #[test]
+    #[ignore = "walks this repository"]
+    fn this_repository_loads_places_and_resolves() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("the workspace root")
+            .to_path_buf();
+
+        let mut files = Vec::new();
+        let mut manifests = Vec::new();
+        for entry in ignore::WalkBuilder::new(&root).build().filter_map(Result::ok) {
+            let path = entry.into_path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+            if crate::adapters::manifest::manifest_adapter_for_filename(name).is_some() {
+                manifests.push(path);
+            } else if path.is_file() {
+                files.push(path);
+            }
+        }
+        assert!(manifests.len() > 3, "found {} manifests", manifests.len());
+
+        let (loaded, first_party, skipped) = load_repo(&root, &files, &manifests);
+        let placed: Vec<Placed<'_>> = loaded.iter().map(Loaded::placed).collect();
+        let indexed = index_repo(&placed, &first_party);
+
+        let mut why: BTreeMap<String, usize> = BTreeMap::new();
+        for (_, reason) in &skipped {
+            *why.entry(format!("{reason:?}")).or_default() += 1;
+        }
+        let (mut resolved, mut unresolved) = (0usize, 0usize);
+        let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
+        let mut self_edges: Vec<String> = Vec::new();
+        for facts in &indexed {
+            let own = super::super::lang::adapter_for(facts.language)
+                .file_fqn(&facts.package, &facts.module, &facts.path)
+                .map(|f| f.to_string());
+            for reference in &facts.references {
+                match &reference.target {
+                    Resolution::Resolved { fqn, .. } => {
+                        resolved += 1;
+                        // A FILE IMPORTING ITSELF is the shape that exposed
+                        // python's relative-import defect, and it is invisible
+                        // in any count of misses: it resolves.
+                        if reference.kind == crate::indexer::facts::RefKind::Imports
+                            && own.as_deref() == Ok(fqn.to_string().as_str())
+                        {
+                            let spec = facts
+                                .imports
+                                .iter()
+                                .find(|i| i.at == reference.at)
+                                .map(|i| format!("{:?} binds {:?}", i.path, i.binds))
+                                .unwrap_or_default();
+                            self_edges.push(format!("{}: {spec}", facts.path));
+                        }
+                    }
+                    Resolution::Unresolved { reason, .. } => {
+                        unresolved += 1;
+                        *reasons.entry(format!("{reason:?}")).or_default() += 1;
+                        assert_ne!(
+                            *reason,
+                            Reason::Unplaced,
+                            "{}: `Unplaced` means the ladder never ran on this reference",
+                            facts.path
+                        );
+                    }
+                }
+            }
+        }
+
+        let mut top: Vec<(&String, &usize)> = reasons.iter().collect();
+        top.sort_by(|a, b| b.1.cmp(a.1));
+        println!("\n── {} ──", root.display());
+        println!("  files {}  loaded {}  skipped {why:?}", files.len(), loaded.len());
+        println!("  packages {}  indexed {}", first_party.len(), indexed.len());
+        println!("  references: {resolved} resolved, {unresolved} unresolved");
+        for (reason, count) in top.iter().take(6) {
+            println!("  {count:>7}  {reason}");
+        }
+
+        // **A SELF-EDGE IS EXPECTED IN EXACTLY ONE SHAPE, AND SUSPECT IN ANY
+        // OTHER.**
+        //
+        // `use super::*` inside an inline `#[cfg(test)] mod tests` names the
+        // enclosing file's own module, so the edge is RIGHT — 309 of them here,
+        // every one that shape. It is still a self-loop, which carries no
+        // information for a traversal; whether the writer should drop one is a
+        // separate question and is recorded rather than decided here.
+        //
+        // The assertion is on the SHAPE, not the count, because this detector
+        // is what caught python's relative imports resolving to the importing
+        // file — a wrong edge that is invisible to every count of misses, since
+        // it resolves. Asserting `is_empty()` would have meant deleting the
+        // detector; asserting a count would rot on the next test module added.
+        let unexplained: Vec<&String> =
+            self_edges.iter().filter(|e| !e.contains("\"super::*\" binds Glob")).collect();
+        println!("  self-edges {} (all `use super::*`)", self_edges.len());
+        assert!(
+            unexplained.is_empty(),
+            "{} import(s) resolved to the importing file for a reason other than an \
+             inline test module's `use super::*`:\n  {}",
+            unexplained.len(),
+            unexplained.iter().take(5).map(|s| s.as_str()).collect::<Vec<_>>().join("\n  ")
+        );
+        // A MODULE IS ONE FILE'S. Two files minting one means every declaration
+        // in the second overwrites the first's, and which wins is scan order.
+        let mut claimed: BTreeMap<(String, String), Vec<&str>> = BTreeMap::new();
+        for facts in &indexed {
+            claimed
+                .entry((facts.package.clone(), facts.module.clone()))
+                .or_default()
+                .push(facts.path.as_str());
+        }
+        let collided: Vec<_> =
+            claimed.iter().filter(|((_, m), f)| f.len() > 1 && !m.is_empty()).collect();
+        assert!(
+            collided.is_empty(),
+            "{} module path(s) claimed by more than one file: {:?}",
+            collided.len(),
+            collided.iter().take(4).collect::<Vec<_>>()
+        );
+        assert!(resolved > 0, "nothing resolved at all, so this proved nothing");
     }
 }
