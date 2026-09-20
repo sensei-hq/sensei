@@ -3795,14 +3795,31 @@ mod tests {
              (R4): {:?}",
             invented.iter().take(12).collect::<Vec<_>>()
         );
-        // 588 of 4,676 = 12.6% when this was written. The ceiling is a ratchet:
-        // the defect is recorded, and it is not allowed to spread while it waits
-        // for the seam decision above.
+        // 588 of 4,676 = 12.6% when this was written; 655 of 5,474 = 11.9% now.
+        // The ceiling is a ratchet: the defect is recorded, and it is not
+        // allowed to spread while it waits for the seam decision above.
+        //
+        // **THE COUNT ROSE AND THE SHARE FELL, AND NEITHER IS THIS DEFECT
+        // MOVING.** Both numbers grew because the corpus did. Stage 11's fix to
+        // the impl owner's module (`module: &home`) was MEASURED against this
+        // ratchet and moved it by exactly nothing: `home` only differs from the
+        // block's own module when the FILE states where the type lives, and the
+        // shape this ratchet counts is `use super::*` followed by
+        // `impl PgStore { }` — a glob, which states no home, so `home_of` falls
+        // back to the block's module and the two are the same string.
+        //
+        // Recorded because it is the attribution that a lowered ceiling would
+        // have hidden: this defect is waiting on the import rung, not on the
+        // anchoring.
         let share = 100 * count / total;
+        // PRINTED, not only asserted. A ratchet that reports nothing on success
+        // can only ever be lowered by somebody who edits the test to find out
+        // where it stands — which is how a ceiling outlives the defect under it.
+        println!("\n  split-impl anchoring: {count} of {total} ownership edges ({share}%)");
         assert!(
-            share <= 13,
+            share <= 12,
             "{count} of {total} ownership edges ({share}%) are anchored on a module that \
-             declares nothing, up from the 12.6% this defect was measured at. Worst: {:?}",
+             declares nothing, up from the 11.9% this defect now measures. Worst: {:?}",
             worst.iter().take(12).collect::<Vec<_>>()
         );
     }

@@ -2548,6 +2548,49 @@ fn helper() -> u32 { 0 }
         );
     }
 
+    /// **THE `TraitImpl` EDGE AND THE METHOD NODE MUST NAME THE SAME TYPE**
+    /// (stage 11, §5).
+    ///
+    /// `impl Draw for Box2` inside a file that merely IMPORTS `Box2` states two
+    /// facts about one type, and they were minted under two different modules.
+    /// The block's members were already anchored on the type's own home — that
+    /// is what `home` is for, and it is the whole of the split-`impl` fix — but
+    /// the owner identity the edge points at was minted from the BLOCK's module.
+    ///
+    /// So the file emitted `TraitImpl -> rust·p·start·Box2·item`, an identity no
+    /// declaration anywhere mints, while putting `draw` on
+    /// `rust·p·shape·Box2·item`, which is the real one. A dangling edge beside a
+    /// correct node, from one `impl` header.
+    ///
+    /// This is not a hypothetical shape. Rust puts `impl` blocks anywhere, and
+    /// `impl <someone else's trait> for <our type>` in a third file is ordinary.
+    ///
+    /// The mutation that must break it: `module: &home` back to
+    /// `module: &scope.module` in `Walk::impl_block`.
+    #[test]
+    fn the_trait_impl_edge_names_the_type_at_its_own_home() {
+        let facts = facts(
+            "start",
+            "use crate::shape::Box2;\n\
+             pub trait Draw { fn draw(&self) -> u32; }\n\
+             impl Draw for Box2 { fn draw(&self) -> u32 { 0 } }\n",
+        );
+
+        assert_eq!(
+            inheritance(&facts),
+            vec!["TraitImpl rust·p·shape·Box2·item"],
+            "the edge names Box2 where Box2 LIVES — which this file states, in its own import \
+             — and not where the impl block happens to sit. All of it: {:?}",
+            relations(&facts)
+        );
+        assert!(
+            fqns(&facts).contains(&"rust·p·shape·Box2·draw·item"),
+            "and the method the same block declares names the same type, so the edge and the \
+             node agree; got {:?}",
+            fqns(&facts)
+        );
+    }
+
     /// A supertrait is the one thing Rust spells the way `extends` is spelled:
     /// `trait Sub: Super` states that every `Sub` is a `Super`. A lifetime in
     /// the same bound list names no type, so it yields no relation rather than
