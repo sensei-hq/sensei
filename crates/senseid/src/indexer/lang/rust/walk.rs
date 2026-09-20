@@ -1160,10 +1160,19 @@ impl<'a> Walk<'a> {
         inner.owner = Owner::Nobody;
         // A use site in the impl header sits inside no member, so it belongs to
         // the type the impl is about.
+        //
+        // AT `home`, NOT AT THIS BLOCK'S MODULE, and for the same reason the
+        // container above is. An `impl` block states facts about a type that
+        // lives wherever it was declared, and this file may only have imported
+        // it. Minting the owner under `scope.module` made ONE header emit two
+        // identities for one type: the members went to the type's home (right)
+        // and both the `Owns` parent and the `TraitImpl` target went to the
+        // block's own module (an identity no declaration mints), so a correct
+        // node sat under a dangling parent.
         if let Ok(owner) = fqn::define(&Form::Item {
             lang: Language::Rust,
             package: self.package,
-            module: &scope.module,
+            module: &home,
             name: &ty,
             reach: Reach::Item,
         }) {
