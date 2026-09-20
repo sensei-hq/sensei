@@ -227,14 +227,6 @@ pub struct World<'a> {
     /// which file came first (R6). Empty means "not supplied", and then nothing
     /// resolves through it — the previous behaviour, and never a guess.
     pub declared_members: &'a BTreeSet<Fqn>,
-    /// The same question one step weaker, for the members whose two spellings
-    /// cannot agree: which declaration answers to the collapsed spelling a use
-    /// site is able to mint. See [`SuppliedMembers`].
-    ///
-    /// Consulted only after [`World::declared_members`] has been asked for an
-    /// exact match, so an inherent declaration outranks one a trait supplies —
-    /// which is the order the language resolves them in.
-    pub supplied_members: &'a SuppliedMembers,
     /// What each declaration RETURNS, so a call on the result of a call can be
     /// typed. Empty means "not supplied" and nothing is chased — never a guess.
     pub returns: &'a BTreeMap<Fqn, String>,
@@ -331,207 +323,6 @@ pub fn member_names_of<'a>(files: impl IntoIterator<Item = &'a FileFacts>) -> BT
         .filter(|s| matches!(s.kind, SymbolKind::Method | SymbolKind::Field | SymbolKind::Property))
         .map(|s| s.name.clone())
         .collect()
-}
-
-/// Which declaration answers to a member spelling a use site can mint, WHERE
-/// THE TWO DIFFER.
-///
-/// One language puts a segment in a member's identity that no use site can
-/// know. A method declared inside `impl Display for Widget` is declared with the
-/// trait as a segment of its identity, between the type and the member, and that
-/// qualifier is not decoration: it is what keeps `Display::fmt` and `Debug::fmt`
-/// on one type from becoming one symbol. A use site writing `w.fmt()` has no way
-/// to know which trait supplies the name — that is what dispatch decides — so
-/// the only spelling it can ever mint is the collapsed one, with the trait
-/// segment absent.
-///
-/// So the merge contract needs a LOOKUP on the reference side rather than a
-/// second mint. The value handed back is a string a DECLARATION produced; this
-/// table never assembles an identity for a declaration it did not read (R4).
-///
-/// Holds only the members whose two spellings differ, because the ones whose
-/// spellings agree are already answered — exactly — by
-/// [`World::declared_members`], and an inherent declaration outranks a trait's
-/// in the language as it does on the ladder.
-///
-/// A BARRIER artifact like the type table: built from a completed pass, so the
-/// answer does not depend on which file came first (R6).
-///
-/// MEASURED over this repository before the rung existed: 395 trait-supplied
-/// methods and not one of them linked, against 663 of 1,211 for the inherent
-/// ones. 326 of the 797 lost rust methods were this and nothing else.
-pub struct SuppliedMembers {
-    answers: BTreeMap<Fqn, Fqn>,
-    /// Spellings TWO declarations answer to. Kept rather than dropped: "I know
-    /// two" is a different answer from "I know none", and a caller that cannot
-    /// tell them apart resolves the first by picking.
-    ambiguous: BTreeSet<Fqn>,
-}
-
-/// How a member identity hangs off the type named in it — see [`hung_on`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Hung<'a> {
-    /// The module the TYPE lives in, empty at the package root. One segment,
-    /// because the grammar mints no second one.
-    pub module: &'a str,
-    pub supplied: Supplied<'a>,
-}
-
-/// Which of the two member forms an identity is in, once the type has been
-/// found among its segments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Supplied<'a> {
-    /// [`Form::Member`] — the type declares it itself, and the type segment
-    /// stands immediately to the left of the member.
-    Inherently,
-    /// [`Form::TraitMember`] — a trait impl supplies it, so exactly one segment
-    /// stands between the type and the member and that segment is the trait. A
-    /// spelling no use site can mint; see [`SuppliedMembers`].
-    ByATrait(&'a str),
-}
-
-/// Read a MEMBER identity's segments against the NAME of the type it hangs off:
-/// which module that type lives in, and whether a trait supplied the member.
-///
-/// ONE function because three callers needed this derivation and only two of
-/// them wrote it carefully. [`SuppliedMembers::of`] had it guarded and
-/// [`Ladder::types_home_of`] had a third copy with no guards at all, which
-/// searched from the LEFT and so read an enum variant named `Widget` as the
-/// type `Widget` and handed back `a::Kind` as a module. Three near-identical
-/// derivations of one fact is the shape a wrong edge hides in.
-///
-/// The type is looked for from the RIGHT and only in the two positions the
-/// grammar admits, so a MODULE or a MEMBER spelled like the type it hangs off
-/// cannot be taken for it. An identity in neither form answers `None` rather
-/// than being read as the nearest one: a guessed shape keys on a string no use
-/// site mints (R4).
-pub fn hung_on<'a>(tail: &[&'a str], ty: &str) -> Option<Hung<'a>> {
-    let (_member, head) = tail.split_last()?;
-    let at = head.iter().rposition(|segment| *segment == ty)?;
-    let supplied = match head.len() - at {
-        1 => Supplied::Inherently,
-        2 => Supplied::ByATrait(head[at + 1]),
-        _ => return None,
-    };
-    // The module is one segment or it is absent; the grammar mints no third
-    // shape, so anything else is an identity this cannot read.
-    let module = match head[..at] {
-        [] => "",
-        [module] => module,
-        _ => return None,
-    };
-    Some(Hung { module, supplied })
-}
-
-/// What [`SuppliedMembers::lookup`] found. Total, like
-/// [`Home`](super::lang::Home): there is no variant meaning "nothing", so a
-/// caller has to say what it does about each case rather than substituting a
-/// third.
-pub enum Supplier<'a> {
-    /// Exactly one declaration answers to the spelling.
-    One(&'a Fqn),
-    /// Two or more do, and nothing at the use site says which. A wrong edge to
-    /// a real node is the one thing R4 ranks below a missing one.
-    Several,
-    /// None does.
-    Nobody,
-}
-
-impl SuppliedMembers {
-    /// No table at all — what a caller that has not run the barrier gets, and
-    /// what the ladder had before this existed. Nothing resolves through it,
-    /// which is the previous behaviour and never a guess.
-    pub fn unknown() -> Self {
-        Self { answers: BTreeMap::new(), ambiguous: BTreeSet::new() }
-    }
-
-    /// Build from a COMPLETED pass, from the `Owns` relations: the parent names
-    /// the TYPE and the child is the member's own identity.
-    ///
-    /// The owner is needed and cannot be done without. A member's identity reads
-    /// module then type then member, or module then type then TRAIT then member,
-    /// the module is one joined segment, and the module is dropped when empty —
-    /// so three segments is either a member in a module or a trait member at the
-    /// package root, and the string alone cannot say which. Reading the owner's
-    /// type NAME settles it. Doing without it was the first version of this and
-    /// it called 213 plain members trait ones.
-    ///
-    /// The owner's MODULE is not used, deliberately. An `impl` block sits
-    /// wherever it likes, so the owner's module is the block's and the member's
-    /// is the type's home; taking the module off the child is what makes the key
-    /// the same string [`Ladder::member_of`] mints.
-    pub fn of<'a>(files: impl IntoIterator<Item = &'a FileFacts>) -> Self {
-        let mut answers: BTreeMap<Fqn, Fqn> = BTreeMap::new();
-        let mut ambiguous: BTreeSet<Fqn> = BTreeSet::new();
-        for facts in files {
-            for relation in facts.relations.iter().filter(|r| r.kind == RelationKind::Owns) {
-                let Resolution::Resolved { fqn: owner, .. } = &relation.parent else { continue };
-                let Ok(owner) = fqn::parse(owner.as_str()) else { continue };
-                let Some(ty) = owner.tail.last() else { continue };
-                let Ok(child) = fqn::parse(relation.child.as_str()) else { continue };
-                let Origin::Local { lang, reach } = child.origin else { continue };
-                let Some((member, _)) = child.tail.split_last() else { continue };
-                // Only the TRAIT form. Nothing else is what this table is
-                // about, and a table that guessed at an unfamiliar shape would
-                // key it on a string no use site mints.
-                let Some(Hung { module, supplied: Supplied::ByATrait(_) }) =
-                    hung_on(&child.tail, ty)
-                else {
-                    continue;
-                };
-                let Ok(collapsed) = fqn::refer(&Form::Member {
-                    lang,
-                    package: child.package,
-                    module,
-                    ty,
-                    member,
-                    reach,
-                }) else {
-                    continue;
-                };
-                // Ambiguity is final. Without this a third declaration of the
-                // same spelling would re-fill the slot the second emptied, and
-                // the table would then depend on the order the files arrived in
-                // (R6).
-                if ambiguous.contains(&collapsed) {
-                    continue;
-                }
-                match answers.get(&collapsed).map(|first| *first == relation.child) {
-                    Some(true) => {}
-                    Some(false) => {
-                        answers.remove(&collapsed);
-                        ambiguous.insert(collapsed);
-                    }
-                    None => {
-                        answers.insert(collapsed, relation.child.clone());
-                    }
-                }
-            }
-        }
-        Self { answers, ambiguous }
-    }
-
-    /// Which declaration answers to a minted spelling — a TOTAL answer, for the
-    /// reason [`TypeHomes::lookup`](super::lang::TypeHomes::lookup) gives.
-    pub fn lookup(&self, minted: &Fqn) -> Supplier<'_> {
-        if self.ambiguous.contains(minted) {
-            return Supplier::Several;
-        }
-        match self.answers.get(minted) {
-            Some(declared) => Supplier::One(declared),
-            None => Supplier::Nobody,
-        }
-    }
-
-    /// How many spellings have ONE answer. For a report; a table that silently
-    /// came out empty would make the rung a no-op nobody noticed.
-    pub fn len(&self) -> usize {
-        self.answers.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.answers.is_empty()
-    }
 }
 
 /// Place every reference and every relation of one file against the ladder
@@ -757,20 +548,13 @@ impl<'a> Ladder<'a> {
         if let Placed::Proven(fqn) = self.declared_by_its_type(evidence) {
             return Resolution::Resolved { fqn, via: Rung::DeclaredByItsType };
         }
-        // Directly below it, because it is the same fact one degree less
-        // certain: the type declares the member, but through a trait, so the
-        // candidate and the declaration cannot be the same string and the
-        // spelling has to be looked up. An INHERENT declaration therefore wins,
-        // as it does in the language.
-        //
-        // Above the field guard, and on the correct side of it. The guard
-        // forbids a PATH rung from serving a field; this is an owning-type
-        // lookup keyed on a whole identity, reach included, so it is the same
-        // kind of proof as the two rungs above it and not the kind the guard is
-        // aimed at.
-        if let Placed::Proven(fqn) = self.supplied_by_a_trait_impl(evidence) {
-            return Resolution::Resolved { fqn, via: Rung::SuppliedByATraitImpl };
-        }
+        // A RUNG STOOD HERE and it is GONE rather than moved: the collapsed
+        // -spelling lookup, which asked a repo-wide table which declaration
+        // answered to a string no use site could mint. It existed because a
+        // trait method's declaration and its use site spelled two strings; S8
+        // keys a method on its type and its name, so the rung above already
+        // places everything this one placed. See the guard in this module's
+        // tests, which is what keeps it from growing back.
         if a_field {
             return Resolution::Unresolved {
                 reason: self.filtered(Reason::NoImportInScope, evidence),
@@ -951,13 +735,13 @@ impl<'a> Ladder<'a> {
     /// `declared_members` check is what stops a name match becoming an edge
     /// (R4); it is the same set the sibling rung uses.
     ///
-    /// Two questions in the order the language asks them. An EXACT match on the
-    /// minted spelling first, which is an inherent declaration; then the
-    /// [`SuppliedMembers`] lookup, which is one a trait impl answers to under a
-    /// spelling this side cannot mint. Same order and same two tables as
-    /// [`Ladder::declared_by_its_type`] and
-    /// [`Ladder::supplied_by_a_trait_impl`], so a receiver typed by the walk and
-    /// one typed here cannot reach different declarations.
+    /// ONE question, where there used to be two. The second was a lookup into a
+    /// repo-wide table for the spelling a trait impl answered to but no use site
+    /// could mint; S8 keys a method on its type and its name, so the spelling
+    /// this side mints IS the one the declaration made, and an exact match is
+    /// the whole of it. Same table as [`Ladder::declared_by_its_type`], so a
+    /// receiver typed by the walk and one typed here cannot reach different
+    /// declarations.
     fn member_of(&self, ty: &str, evidence: &Evidence) -> Option<(Fqn, Rung)> {
         let module = self.types_home_of(ty)?;
         let minted = fqn::refer(&Form::Member {
@@ -969,13 +753,7 @@ impl<'a> Ladder<'a> {
             reach: evidence.reach,
         })
         .ok()?;
-        if self.world.declared_members.contains(&minted) {
-            return Some((minted, Rung::DeclaredByItsType));
-        }
-        match self.world.supplied_members.lookup(&minted) {
-            Supplier::One(declared) => Some((declared.clone(), Rung::SuppliedByATraitImpl)),
-            Supplier::Several | Supplier::Nobody => None,
-        }
+        self.world.declared_members.contains(&minted).then_some((minted, Rung::DeclaredByItsType))
     }
 
     /// The module a type of THIS package and THIS language lives in, from the
@@ -990,8 +768,9 @@ impl<'a> Ladder<'a> {
     /// The PACKAGE and the LANGUAGE, because that set holds every package and
     /// every language of the scan in one, while [`Ladder::member_of`] mints with
     /// the use site's own — so a home borrowed from a neighbour names a module
-    /// of a package that does not have one. The SHAPE, through [`hung_on`],
-    /// because a member spelled like the type is not the type. And AMBIGUITY,
+    /// of a package that does not have one. The SHAPE, through
+    /// [`Ladder::module_of_the_member_of`], because a member spelled like the
+    /// type is not the type. And AMBIGUITY,
     /// which is the rule [`TypeHomes`](super::lang::TypeHomes) has followed
     /// since it existed: two homes is not one home, and answering with the one
     /// that sorts first is a coin toss recorded as a fact (R4, R6).
@@ -1009,14 +788,49 @@ impl<'a> Ladder<'a> {
             if lang != self.grammar.language {
                 continue;
             }
-            let Some(hung) = hung_on(&parsed.tail, ty) else { continue };
+            let Some(module) = Self::module_of_the_member_of(&parsed.tail, ty) else {
+                continue;
+            };
             match home {
-                Some(first) if first != hung.module => return None,
+                Some(first) if first != module => return None,
                 Some(_) => {}
-                None => home = Some(hung.module),
+                None => home = Some(module),
             }
         }
         home
+    }
+
+    /// The module a MEMBER identity says its type lives in, given that type's
+    /// NAME — or `None` when the identity is not a member of that type at all.
+    ///
+    /// This replaces a derivation that had to answer a second question the
+    /// grammar no longer asks: whether a trait supplied the member, i.e.
+    /// whether ONE segment stood between the type and the member. Since S8 no
+    /// declaration carries a trait segment, so a member of `ty` is exactly
+    /// `[module?] <ty> <member>` and nothing else.
+    ///
+    /// The type is looked for from the RIGHT and only in the one position the
+    /// grammar admits, which is the defect that older derivation was extracted
+    /// to fix: a search from the left read an enum variant named `Widget` as the type
+    /// `Widget` and handed back `a::Kind` as a module. An identity in any other
+    /// shape answers `None` rather than being read as the nearest one — a
+    /// guessed shape keys on a string no use site mints (R4).
+    fn module_of_the_member_of<'t>(tail: &[&'t str], ty: &str) -> Option<&'t str> {
+        let (_member, head) = tail.split_last()?;
+        // The type stands immediately left of the member. `rposition` rather
+        // than a bare index so a MODULE spelled like the type cannot be taken
+        // for it — the module segment is what remains to its left.
+        let at = head.iter().rposition(|segment| *segment == ty)?;
+        if at + 1 != head.len() {
+            return None;
+        }
+        // The module is one segment or it is absent; the grammar mints no third
+        // shape, so anything else is an identity this cannot read.
+        match head[..at] {
+            [] => Some(""),
+            [module] => Some(module),
+            _ => None,
+        }
     }
 
     /// Plumbing is filtered wherever it lands, so the histogram has one bucket
@@ -1092,31 +906,6 @@ impl<'a> Ladder<'a> {
     fn declared_by_its_type(&self, evidence: &Evidence) -> Placed {
         self.first_candidate(evidence, |fqn| {
             Placed::proven_if(fqn, self.world.declared_members.contains(fqn))
-        })
-    }
-
-    /// Rung 1c. The same proof again, one degree less certain: no declaration
-    /// carries the candidate's spelling, but exactly one answers to it.
-    ///
-    /// A member supplied by `impl Display for Widget` is declared with `Display`
-    /// as a segment between `Widget` and `fmt`. A use site writing `w.fmt()`
-    /// knows the type and the member and cannot know the trait — dispatch decides
-    /// that — so the candidate it mints has no trait segment, and the two sides
-    /// never meet however well the receiver is typed. MEASURED: 395 such methods
-    /// in this repository, of which zero were linked.
-    ///
-    /// It is the ONE rung that returns an identity other than the candidate, and
-    /// that is exactly what makes it a lookup and not a second mint: the string
-    /// handed back was produced by a declaration, read out of
-    /// [`SuppliedMembers`], never assembled here (R4). Two declarations
-    /// answering to one spelling is [`Supplier::Several`] and places nothing.
-    ///
-    /// Below [`Ladder::declared_by_its_type`] because an inherent declaration
-    /// outranks a trait's, which is the order the language resolves them in.
-    fn supplied_by_a_trait_impl(&self, evidence: &Evidence) -> Placed {
-        self.first_candidate(evidence, |fqn| match self.world.supplied_members.lookup(fqn) {
-            Supplier::One(declared) => Placed::Proven(declared.clone()),
-            Supplier::Several | Supplier::Nobody => Placed::Unbound,
         })
     }
 
@@ -1645,7 +1434,7 @@ mod tests {
     use crate::indexer::fqn;
     use crate::indexer::lang::{LanguageAdapter, Source, TypeHomes, javascript, rust};
     use crate::indexer::resolve::{
-        SuppliedMembers, World, member_names_of, members_declared_by, resolve, returns_declared_by,
+        World, member_names_of, members_declared_by, resolve, returns_declared_by,
     };
     use crate::indexer::{module_of, package_of};
 
@@ -1679,7 +1468,6 @@ mod tests {
                 first_party: &first_party,
                 first_party_members: &BTreeSet::new(),
                 declared_members: &BTreeSet::new(),
-                supplied_members: &SuppliedMembers::unknown(),
                 returns: &std::collections::BTreeMap::new(),
                 scanned: &scanned,
             },
@@ -1739,7 +1527,6 @@ mod tests {
                 first_party: &BTreeSet::from(["p".to_string()]),
                 first_party_members: &BTreeSet::new(),
                 declared_members: &BTreeSet::new(),
-                supplied_members: &SuppliedMembers::unknown(),
                 returns: &std::collections::BTreeMap::new(),
                 scanned: &scanned,
             },
@@ -1936,13 +1723,11 @@ mod tests {
         let first_party: BTreeSet<String> =
             files.iter().map(|(package, ..)| (*package).to_string()).collect();
         let declared_members = members_declared_by(anchored.iter().map(|(_, _, f)| f));
-        let supplied_members = SuppliedMembers::of(anchored.iter().map(|(_, _, f)| f));
         let returns = returns_declared_by(anchored.iter().map(|(_, _, f)| f));
         let world = World {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &declared_members,
-            supplied_members: &supplied_members,
             returns: &returns,
             scanned: &BTreeSet::new(),
         };
@@ -2017,7 +1802,7 @@ mod tests {
     /// the difference is worth keeping in view. The declaration inside
     /// `impl Provider for MacOSProvider` used to carry the TRAIT as a segment,
     /// so the two sides minted different strings and a repo-wide table
-    /// (`SuppliedMembers`) was built at a barrier to translate between them.
+    /// was built at a barrier to translate between them.
     ///
     /// A merge key must be what BOTH sides can produce. The caller writing
     /// `p.resolvers()` can never spell the trait — that is what dispatch
@@ -2376,10 +2161,11 @@ mod tests {
     /// `Widget` answered for the struct `Widget` and handed back `a::Kind` as a
     /// module.
     ///
-    /// The same trap [`SuppliedMembers::of`] documents and guards — "looked for
-    /// to the LEFT of the member so a member spelled like the type it hangs off
-    /// cannot be taken for it" — and the third copy of that derivation had no
-    /// guard at all.
+    /// The same trap the collapsed-spelling table's builder documented and
+    /// guarded — "looked for to the LEFT of the member so a member spelled like
+    /// the type it hangs off cannot be taken for it" — while a third copy of
+    /// that derivation had no guard at all. Both are gone and the one that
+    /// remains is [`Ladder::module_of_the_member_of`], which keeps the rule.
     ///
     /// MEASURED over this repository: 35 placements chose a home that is
     /// provably not a module.
@@ -2388,8 +2174,9 @@ mod tests {
     /// variant is a single one and passes the module-shape check — otherwise
     /// two guards cover this between them and neither is load-bearing alone.
     ///
-    /// MUTATION: search the whole tail in [`hung_on`] rather than the part of
-    /// it to the left of the member — `Kind` is then `Widget`'s home.
+    /// MUTATION: search the whole tail in
+    /// [`Ladder::module_of_the_member_of`] rather than the part of it to the
+    /// left of the member — `Kind` is then `Widget`'s home.
     #[test]
     fn a_member_spelled_like_a_type_does_not_supply_that_types_home() {
         let scanned = scan(&[
@@ -2735,71 +2522,64 @@ mod tests {
         );
     }
 
-    /// **THE COLLAPSED-SPELLING TABLE IS EMPTY, BECAUSE NO DECLARATION CARRIES
-    /// A TRAIT SEGMENT ANY MORE** (stage 11, S8).
+    /// **THE COLLAPSED-SPELLING MACHINERY HAS NO CALLER** (stage 11, §6 step 2b
+    /// and §10 bullet 2).
     ///
-    /// This is the bridge, and the reason it exists rather than the deletion
-    /// simply landing: `SuppliedMembers` held the members whose two spellings
-    /// DIFFER, and rust was the only language that produced one. With the trait
-    /// out of the key nothing differs, so the table answers nothing — and that
-    /// has to be shown BEFORE the table is deleted, or the deletion is a change
-    /// whose effect on the graph nobody measured.
+    /// The table and everything around it — the two member-shape types, the
+    /// derivation that told them apart, the total-answer enum, the `World`
+    /// field and the rung — existed for ONE reason: a declaration and
+    /// a use site of one trait method spelled two different strings, so the
+    /// merge contract needed a repo-wide lookup between them. S8 removed the
+    /// mismatch, so the translator answers nothing
+    /// (`the_table_is_empty_because_no_declaration_carries_a_trait_segment`
+    /// measured that BEFORE the deletion), and a translator nobody needs is a
+    /// door the barrier comes back through.
     ///
-    /// It inverts the assertion it replaces, which read: "rust puts the trait in
-    /// the identity, so exactly one member needs a second spelling."
+    /// A guard rather than only a deletion, because the deletion is a one-time
+    /// act and this is the rule that outlives it.
     ///
-    /// **ANTI-VACUITY MATTERS MORE HERE THAN ANYWHERE.** An empty table is what
-    /// a completely broken builder returns too, so each half first asserts that
-    /// the fixture DID declare the member through an `Owns` relation — which is
-    /// the input `SuppliedMembers::of` reads. Without that, deleting the body of
-    /// `of` would pass this test.
+    /// **KNOWN LIMIT, stated so nobody reads more into a green than it means.**
+    /// `guard_sources()` reads what this indexer OWNS, which does not include
+    /// `index.rs`, `acceptance.rs` or `barrier.rs`. Those three are proven by
+    /// the BUILD — they fail to compile while a call site survives — and by the
+    /// `rg` in the commit message. This guard's job is stopping re-introduction
+    /// in the files it does read.
+    ///
+    /// The needles are ASSEMBLED so the guard does not match its own source,
+    /// which is the idiom `no_fqn_is_built_by_string_formatting_outside_this_file`
+    /// already uses for the same reason.
     #[test]
-    fn the_table_is_empty_because_no_declaration_carries_a_trait_segment() {
-        let owned_members = |files: &[(String, FileFacts)]| -> Vec<String> {
-            files
-                .iter()
-                .flat_map(|(_, f)| f.relations.iter())
-                .filter(|r| r.kind == RelationKind::Owns)
-                .map(|r| r.child.to_string())
-                .collect()
-        };
-
-        let files: &[(&str, &str, &str)] = &[(
-            "lib/w",
-            "src/lib/w.ts",
-            "export interface Remedy { fix(): number }\n\
-             export class Fixer implements Remedy { fix(): number { return 0 } }\n",
-        )];
-        let scanned = scan_of(&javascript::TypeScriptAdapter, files);
+    fn the_collapsed_spelling_machinery_has_no_caller() {
+        let needles = [
+            format!("Supplied{}", "Members"),
+            format!("supplied_{}", "members"),
+            format!("hung_{}", "on"),
+            format!("Supplied::By{}", "ATrait"),
+            format!("SuppliedBy{}", "ATraitImpl"),
+            format!("supplied_by_a_{}", "trait_impl"),
+        ];
+        let mut read = 0;
+        let mut found: Vec<String> = Vec::new();
+        for (path, body) in crate::indexer::guard_sources() {
+            read += 1;
+            for (n, line) in crate::indexer::outside_tests(&body).lines().enumerate() {
+                for needle in &needles {
+                    if line.contains(needle.as_str()) {
+                        found.push(format!("{path}:{} {}", n + 1, line.trim()));
+                    }
+                }
+            }
+        }
+        // The guard must prove it read the tree it names. An empty `found` over
+        // an empty corpus is the vacuous pass this exists to prevent.
+        assert!(read > 5, "the guard read {read} files, so an empty result means nothing");
         assert!(
-            owned_members(&scanned).iter().any(|m| m.contains("Fixer") && m.contains("fix")),
-            "the typescript fixture must actually declare Fixer::fix, or an empty table below \
-             proves only that the builder was handed nothing; got {:?}",
-            owned_members(&scanned)
-        );
-        assert!(
-            SuppliedMembers::of(scanned.iter().map(|(_, f)| f)).is_empty(),
-            "typescript never put the interface in the identity, so it never needed a second \
-             spelling"
-        );
-
-        let rust = scan(&[(
-            "m",
-            "src/m.rs",
-            "pub trait Remedy { fn fix(&self) -> u32; }\n\
-             pub struct Fixer;\n\
-             impl Remedy for Fixer { fn fix(&self) -> u32 { 0 } }\n",
-        )]);
-        assert!(
-            owned_members(&rust).contains(&"rust·p·m·Fixer·fix·item".to_string()),
-            "and the rust fixture must declare `Fixer::fix` under the ONE key both sides mint; \
-             got {:?}",
-            owned_members(&rust)
-        );
-        assert!(
-            SuppliedMembers::of(rust.iter().map(|(_, f)| f)).is_empty(),
-            "and now neither does rust — the trait is an edge, so the declaration and the use \
-             site spell one string and there is nothing left for this table to translate"
+            found.is_empty(),
+            "{} site(s) still reach for the collapsed-spelling translator. A method is keyed on \
+             its type and its name (S8), so there is nothing left to translate and this is the \
+             one door the barrier can come back through:\n  {}",
+            found.len(),
+            found.join("\n  ")
         );
     }
 
@@ -3197,7 +2977,6 @@ mod tests {
                 "declared_here",
                 "through_an_import",
                 "declared_by_its_type",
-                "supplied_by_a_trait_impl",
                 "through_a_glob",
                 "rooted_in_this_package",
                 "fully_qualified_external",
@@ -3599,7 +3378,6 @@ mod tests {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &BTreeSet::new(),
-            supplied_members: &SuppliedMembers::unknown(),
             returns: &std::collections::BTreeMap::new(),
             scanned: &scanned,
         };
@@ -3750,7 +3528,6 @@ mod tests {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &BTreeSet::new(),
-            supplied_members: &SuppliedMembers::unknown(),
             returns: &std::collections::BTreeMap::new(),
             scanned: &BTreeSet::new(),
         };
@@ -3880,7 +3657,6 @@ mod tests {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &BTreeSet::new(),
-            supplied_members: &SuppliedMembers::unknown(),
             returns: &std::collections::BTreeMap::new(),
             scanned: &scanned,
         };
@@ -3983,7 +3759,6 @@ mod tests {
                     first_party: &first_party,
                     first_party_members: &BTreeSet::new(),
                     declared_members: &BTreeSet::new(),
-                    supplied_members: &SuppliedMembers::unknown(),
                     returns: &std::collections::BTreeMap::new(),
                     scanned: &nothing,
                 },
@@ -3995,7 +3770,6 @@ mod tests {
                     first_party: &first_party,
                     first_party_members: &BTreeSet::new(),
                     declared_members: &BTreeSet::new(),
-                    supplied_members: &SuppliedMembers::unknown(),
                     returns: &std::collections::BTreeMap::new(),
                     scanned: &everything,
                 },
@@ -4057,7 +3831,6 @@ mod tests {
                         first_party: &first_party,
                         first_party_members: &BTreeSet::new(),
                         declared_members: &BTreeSet::new(),
-                        supplied_members: &SuppliedMembers::unknown(),
                         returns: &std::collections::BTreeMap::new(),
                         scanned: &scanned,
                     },
@@ -4143,7 +3916,6 @@ mod tests {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &BTreeSet::new(),
-            supplied_members: &SuppliedMembers::unknown(),
             returns: &std::collections::BTreeMap::new(),
             scanned: &scanned,
         };

@@ -298,7 +298,6 @@ pub(crate) fn walked_rust(module: &str, path: &str, text: &str) -> facts::FileFa
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &BTreeSet::new(),
-            supplied_members: &resolve::SuppliedMembers::unknown(),
             returns: &std::collections::BTreeMap::new(),
             scanned: &BTreeSet::new(),
         },

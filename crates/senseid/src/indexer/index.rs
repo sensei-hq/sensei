@@ -45,9 +45,7 @@ use std::collections::BTreeSet;
 
 use super::facts::FileFacts;
 use super::lang::{self, Source, TypeHomes};
-use super::resolve::{
-    self, SuppliedMembers, World, member_names_of, members_declared_by, returns_declared_by,
-};
+use super::resolve::{self, World, member_names_of, members_declared_by, returns_declared_by};
 
 /// One file of a repository: where the scan decided it sits, and its text.
 ///
@@ -100,7 +98,6 @@ pub fn index_repo<'a>(files: &[Placed<'a>], first_party: &BTreeSet<String>) -> V
 
     let first_party_members = member_names_of(&anchored);
     let declared_members = members_declared_by(&anchored);
-    let supplied_members = SuppliedMembers::of(&anchored);
     let returns = returns_declared_by(&anchored);
     // EMPTY, deliberately. `World::scanned` means "files read so far", and
     // reading absence as externality is the order dependence spec §2 exists to
@@ -110,7 +107,6 @@ pub fn index_repo<'a>(files: &[Placed<'a>], first_party: &BTreeSet<String>) -> V
         first_party,
         first_party_members: &first_party_members,
         declared_members: &declared_members,
-        supplied_members: &supplied_members,
         returns: &returns,
         scanned: &scanned,
     };
@@ -745,7 +741,22 @@ mod corpus {
         println!("\n── {} ──", root.display());
         println!("  files {}  loaded {}  skipped {why:?}", files.len(), loaded.len());
         println!("  packages {}  indexed {}", first_party.len(), indexed.len());
-        println!("  references: {resolved} resolved, {unresolved} unresolved");
+        // **READ BOTH COLUMNS AND THEIR TOTAL, NEVER `resolved` ALONE.**
+        //
+        // The corpus IS this repository, so a commit that deletes production
+        // code deletes the references in it, and `resolved` falls without the
+        // resolver having changed at all. MEASURED, and it cost an hour before
+        // it was written down: removing the collapsed-spelling table took
+        // resolved 96,420 -> 96,336 and looked like a regression. Unresolved
+        // fell too, 96,926 -> 96,879, and the TOTAL fell by 131 — which is the
+        // signature of a smaller corpus. A resolver regression holds the total
+        // still and moves references from one column to the other.
+        //
+        // The deleted rung, checked separately, had placed ZERO references.
+        println!(
+            "  references: {resolved} resolved, {unresolved} unresolved, {} total",
+            resolved + unresolved
+        );
 
         for (reason, count) in top.iter().take(6) {
             println!("  {count:>7}  {reason}");

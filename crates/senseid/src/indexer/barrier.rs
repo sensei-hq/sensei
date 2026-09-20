@@ -390,10 +390,9 @@ enum Via {
 
 impl<'a> NamedBy<'a> {
     /// No evidence at all — the base a caller fills one table of, and what
-    /// [`NamedBy::of`] starts from. The idiom [`TypeHomes::unknown`] and
-    /// [`SuppliedMembers::unknown`] already use, here for the same reason: a
-    /// literal repeated at four sites is four places to forget a table when a
-    /// fourth is added.
+    /// [`NamedBy::of`] starts from. The idiom [`TypeHomes::unknown`] already
+    /// uses, here for the same reason: a literal repeated at four sites is four
+    /// places to forget a table when a fourth is added.
     fn nothing() -> Self {
         Self { exact: BTreeSet::new(), by_reach: BTreeMap::new(), any_name: BTreeSet::new() }
     }
@@ -975,14 +974,12 @@ mod tests {
         let first_party: BTreeSet<String> = anchored.iter().map(|f| f.package.clone()).collect();
         let first_party_members = crate::indexer::resolve::member_names_of(anchored.iter());
         let declared_members = members_declared_by(anchored.iter());
-        let supplied_members = crate::indexer::resolve::SuppliedMembers::of(anchored.iter());
         let returns = crate::indexer::resolve::returns_declared_by(anchored.iter());
         let scanned = BTreeSet::new();
         let world = World {
             first_party: &first_party,
             first_party_members: &first_party_members,
             declared_members: &declared_members,
-            supplied_members: &supplied_members,
             returns: &returns,
             scanned: &scanned,
         };

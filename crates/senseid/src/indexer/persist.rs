@@ -2546,7 +2546,6 @@ pub fn widest(a: u32) -> u32 {
             first_party: &first_party,
             first_party_members: &BTreeSet::new(),
             declared_members: &BTreeSet::new(),
-            supplied_members: &crate::indexer::resolve::SuppliedMembers::unknown(),
             returns: &std::collections::BTreeMap::new(),
             scanned: &scanned,
         };
