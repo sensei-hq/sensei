@@ -80,7 +80,9 @@ pub struct Placed<'a> {
 pub fn index_repo<'a>(files: &[Placed<'a>], first_party: &BTreeSet<String>) -> Vec<FileFacts> {
     // PASS ONE, with no type table: every file read for the DECLARATIONS it
     // makes. Nothing here is anchored and nothing is kept but the symbols.
+    let t0 = std::time::Instant::now();
     let first = read_all(files, &TypeHomes::unknown());
+    let t_pass1 = t0.elapsed();
 
     // THE BARRIER. Where each type lives, across the whole repository.
     let homes = TypeHomes::of(
@@ -91,7 +93,10 @@ pub fn index_repo<'a>(files: &[Placed<'a>], first_party: &BTreeSet<String>) -> V
     // off THIS pass and not off `first`: a member's identity carries the module
     // its type lives in, so the pre-barrier pass spells those members
     // differently and a set taken from it would match nothing.
+    let t1 = std::time::Instant::now();
     let anchored = read_all(files, &homes);
+    let t_pass2 = t1.elapsed();
+    let t2 = std::time::Instant::now();
 
     let first_party_members = member_names_of(&anchored);
     let declared_members = members_declared_by(&anchored);
@@ -110,13 +115,17 @@ pub fn index_repo<'a>(files: &[Placed<'a>], first_party: &BTreeSet<String>) -> V
         scanned: &scanned,
     };
 
-    anchored
+    let out: Vec<FileFacts> = anchored
         .into_iter()
         .map(|facts| {
             let grammar = lang::adapter_for(facts.language).grammar();
             resolve::resolve(facts, grammar, &world)
         })
-        .collect()
+        .collect();
+    if std::env::var("SENSEI_TIME_STAGES").is_ok() {
+        eprintln!("  pass1 {:?}  pass2 {:?}  barrier+resolve {:?}", t_pass1, t_pass2, t2.elapsed());
+    }
+    out
 }
 
 /// One pass: every file read once, through the adapter its extension dispatches
@@ -247,7 +256,7 @@ pub fn load_repo(
 mod tests {
     use super::*;
 
-    use crate::indexer::facts::{RefKind, Resolution};
+    use crate::indexer::facts::{Observation, RefKind, Resolution};
 
     /// **THE WHOLE STAGE, OVER A REAL TREE ON DISK.**
     ///
@@ -312,6 +321,122 @@ mod tests {
             resolved.contains("rust·demo·a·Widget·wide·item"),
             "b.rs's call reaches the method a.rs declares, with the package the \
              manifest names: {resolved:?}"
+        );
+    }
+
+    /// What ONE file mints, on its own, with no knowledge of any other file.
+    #[test]
+    #[ignore = "a printout, not an assertion"]
+    fn show_the_minted_nodes_and_edges() {
+        let b = Placed {
+            path: "src/b.rs",
+            package: "demo",
+            module: "b",
+            text: "use crate::a::Widget;\n\
+                   pub struct Report { pub total: u32 }\n\
+                   impl Report {\n\
+                     pub fn build(w: &Widget) -> u32 { w.wide() }\n\
+                   }\n",
+        };
+        let out = index_repo(&[b], &["demo".to_string()].into_iter().collect());
+        let facts = &out[0];
+
+        println!(
+            "\n╔═ FILE {} ═ package={} module={} lang={}",
+            facts.path,
+            facts.package,
+            facts.module,
+            facts.language.as_str()
+        );
+        println!("╠═ NODES (declared by this file) ─────────────────────────────");
+        for s in &facts.symbols {
+            println!("║  {:<42} {:?}", s.fqn.to_string(), s.kind);
+        }
+        println!("╠═ NODES (referenced, not declared here → STUB) ──────────────");
+        for r in &facts.references {
+            if let crate::indexer::facts::Resolution::Resolved { fqn, .. } = &r.target {
+                if !facts.symbols.iter().any(|s| s.fqn == *fqn) {
+                    println!("║  {:<42} stub", fqn.to_string());
+                }
+            }
+        }
+        println!("╠═ EDGES ─────────────────────────────────────────────────────");
+        for rel in &facts.relations {
+            let parent = match &rel.parent {
+                crate::indexer::facts::Resolution::Resolved { fqn, .. } => fqn.to_string(),
+                _ => "?".into(),
+            };
+            println!("║  {:?}  {} → {}", rel.kind, parent, rel.child.as_str());
+        }
+        for r in &facts.references {
+            match &r.target {
+                crate::indexer::facts::Resolution::Resolved { fqn, via } => println!(
+                    "║  {:?}  {} → {}   [resolved via {:?}]",
+                    r.kind,
+                    r.from.as_str(),
+                    fqn.to_string(),
+                    via
+                ),
+                crate::indexer::facts::Resolution::Unresolved { reason, evidence } => println!(
+                    "║  {:?}  {} → ??   [HANGING: {:?}, saw {:?}]",
+                    r.kind,
+                    r.from.as_str(),
+                    reason,
+                    evidence.name
+                ),
+            }
+        }
+        println!("╚═════════════════════════════════════════════════════════════");
+    }
+
+    /// **ONE FILE, ON ITS OWN, MINTS THE STUB FOR AN IMPORTED TYPE'S MEMBER.**
+    ///
+    /// This is the property that removes the barrier. `use crate::a::Widget`
+    /// states where `Widget` lives, so a call on a `Widget` can be named
+    /// `a·Widget·wide` from this file alone — and when `a.rs` is indexed it
+    /// declares that same identity and the stub is promoted.
+    ///
+    /// The file already proves it has the information: the TYPE reference on
+    /// the parameter resolves `ThroughAnImport` on the line above. Only the
+    /// CALL failed, because `home_of` consulted the file's declarations and
+    /// then a global table, never the imports it had just used.
+    #[test]
+    fn one_file_names_the_member_of_a_type_it_imported() {
+        let b = Placed {
+            path: "src/b.rs",
+            package: "demo",
+            module: "b",
+            text: "use crate::a::Widget;\n\
+                   pub fn build(w: &Widget) -> u32 { w.wide() }\n",
+        };
+        // NO other file, so no barrier could possibly help.
+        let out = index_repo(&[b], &packages(&["demo"]));
+        let call = out[0]
+            .references
+            .iter()
+            .find(|r| r.kind == RefKind::Calls)
+            .expect("the body calls something");
+        // NAMED, not yet proven. The walk now mints the identity from the
+        // import alone — which is the half that removes the barrier. Promoting
+        // that name to an EDGE is the ladder's second gate
+        // (`declared_by_its_type`), which today requires the scan to have
+        // already seen the declaration; under the stub-and-heal model that
+        // existence question belongs to the persistence layer. Relaxing it
+        // blanket-style was MEASURED at +12,360 resolved references over this
+        // repository and broke 13 tests, `a_bare_name_matching_another_files_
+        // declaration_is_not_proof_of_anything` among them — so the relaxation
+        // has to distinguish "named from this file's own text" from "guessed",
+        // and that is the next increment, not this one.
+        let Resolution::Unresolved { evidence, .. } = &call.target else {
+            panic!("expected a named-but-unproven target, got {:?}", call.target)
+        };
+        assert!(
+            evidence.saw.iter().any(|o| matches!(
+                o,
+                Observation::Candidate(f) if f.to_string() == "rust·demo·a·Widget·wide·item"
+            )),
+            "the member was not named from the import alone: {:?}",
+            evidence.saw
         );
     }
 
@@ -621,6 +746,7 @@ mod corpus {
         println!("  files {}  loaded {}  skipped {why:?}", files.len(), loaded.len());
         println!("  packages {}  indexed {}", first_party.len(), indexed.len());
         println!("  references: {resolved} resolved, {unresolved} unresolved");
+
         for (reason, count) in top.iter().take(6) {
             println!("  {count:>7}  {reason}");
         }
@@ -667,5 +793,157 @@ mod corpus {
             collided.iter().take(4).collect::<Vec<_>>()
         );
         assert!(resolved > 0, "nothing resolved at all, so this proved nothing");
+    }
+}
+
+#[cfg(test)]
+mod barrier_necessity {
+    use super::*;
+    use crate::indexer::facts::{Binding, Resolution, SymbolKind};
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::PathBuf;
+
+    /// **IS THE BARRIER SUPPLYING ANYTHING THE FILE DOES NOT ALREADY STATE?**
+    ///
+    /// The type barrier exists so a member reference can carry the module its
+    /// TYPE lives in. The claim under test is that it is redundant: every file
+    /// that uses a type either declares it, imports it, or writes its path
+    /// inline, so the file is self-describing and a global table is supplying
+    /// an answer already present in the text.
+    ///
+    /// MUST run over the whole corpus, not a fixture — the whole question is
+    /// about references that cross files, and a single file has none.
+    ///
+    /// Classifies every RESOLVED member reference by where the file could have
+    /// learned the type's home on its own:
+    ///
+    /// - `local`    — the type is declared in this same file
+    /// - `imported` — an import in this file binds that exact name
+    /// - `glob`     — the file has a wildcard import, so the name MIGHT come
+    ///                through it; can only be confirmed with the target module
+    /// - `gap`      — none of the above. ONLY a global table could have
+    ///                supplied this, and it is the number that decides whether
+    ///                the barrier can be deleted.
+    ///
+    ///     cargo test -p senseid --bin senseid -- --ignored --nocapture barrier_necessity
+    #[test]
+    #[ignore = "walks this repository"]
+    fn every_resolved_member_is_traced_to_what_its_own_file_states() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("the workspace root")
+            .to_path_buf();
+
+        let mut files = Vec::new();
+        let mut manifests = Vec::new();
+        for entry in ignore::WalkBuilder::new(&root).build().filter_map(Result::ok) {
+            let path = entry.into_path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+            if crate::adapters::manifest::manifest_adapter_for_filename(name).is_some() {
+                manifests.push(path);
+            } else if path.is_file() {
+                files.push(path);
+            }
+        }
+        let (loaded, first_party, _) = load_repo(&root, &files, &manifests);
+        let placed: Vec<Placed<'_>> = loaded.iter().map(Loaded::placed).collect();
+        let indexed = index_repo(&placed, &first_party);
+
+        // Every type name the corpus declares anywhere, so a member fqn can be
+        // decomposed without guessing which segment is the type.
+        let mut type_names: BTreeSet<&str> = BTreeSet::new();
+        for facts in &indexed {
+            for symbol in &facts.symbols {
+                if matches!(
+                    symbol.kind,
+                    SymbolKind::Struct
+                        | SymbolKind::Enum
+                        | SymbolKind::Trait
+                        | SymbolKind::Class
+                        | SymbolKind::Interface
+                ) {
+                    type_names.insert(symbol.name.as_str());
+                }
+            }
+        }
+
+        // The file's TEXT, because a file can name a type without importing it:
+        // `crate::db::pg_store::PgStore::connect(..)` states the module inline
+        // and needs no import at all. Counting only imports read that as a gap.
+        let text_of: BTreeMap<&str, &str> =
+            loaded.iter().map(|l| (l.path.as_str(), l.text.as_str())).collect();
+        let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut gaps: BTreeMap<String, usize> = BTreeMap::new();
+        for facts in &indexed {
+            // What this file states about names, on its own.
+            let declares: BTreeSet<&str> = facts.symbols.iter().map(|s| s.name.as_str()).collect();
+            let mut binds: BTreeSet<&str> = BTreeSet::new();
+            let mut has_glob = false;
+            for import in &facts.imports {
+                match &import.binds {
+                    Binding::Name(n) => {
+                        binds.insert(n.as_str());
+                        // A path names every segment it passes through, so the
+                        // LAST is the name it brings in even when the binding
+                        // records the head.
+                        if let Some(last) = import.path.rsplit(['.', ':', '/']).next() {
+                            binds.insert(last);
+                        }
+                    }
+                    Binding::MemberOf { local, member } => {
+                        binds.insert(local.as_str());
+                        binds.insert(member.as_str());
+                    }
+                    Binding::Glob => has_glob = true,
+                }
+            }
+
+            for reference in &facts.references {
+                let Resolution::Resolved { fqn, .. } = &reference.target else { continue };
+                let encoded = fqn.to_string();
+                let Ok(parsed) = crate::indexer::fqn::parse(&encoded) else { continue };
+                // A MEMBER form ends in <Type> <member>; the type is the
+                // second-from-last tail segment and must be a type the corpus
+                // declares, which is what keeps a module segment from being
+                // read as one.
+                if parsed.tail.len() < 2 {
+                    continue;
+                }
+                let ty = parsed.tail[parsed.tail.len() - 2];
+                if !type_names.contains(ty) {
+                    continue;
+                }
+                let bucket = if declares.contains(ty) {
+                    "local"
+                } else if binds.contains(ty) {
+                    "imported"
+                } else if has_glob {
+                    "glob"
+                } else if text_of.get(facts.path.as_str()).is_some_and(|t| t.contains(ty)) {
+                    // Written somewhere in the file — an inline qualified path,
+                    // a turbofish, an annotation. The file states it.
+                    "spelled"
+                } else {
+                    *gaps.entry(format!("{ty} in {}", facts.path)).or_default() += 1;
+                    "gap: never named in the file"
+                };
+                *tally.entry(bucket).or_default() += 1;
+            }
+        }
+
+        let total: usize = tally.values().sum();
+        println!("\n── resolved member references, by what the FILE states ──");
+        for (bucket, count) in &tally {
+            println!("  {count:>7}  {bucket}  ({:.1}%)", *count as f64 * 100.0 / total as f64);
+        }
+        println!("  {total:>7}  total");
+        let mut worst: Vec<(&String, &usize)> = gaps.iter().collect();
+        worst.sort_by(|a, b| b.1.cmp(a.1));
+        println!("  distinct gap sites: {}", gaps.len());
+        for (what, count) in worst.iter().take(200) {
+            println!("    {count:>5}  {what}");
+        }
+        assert!(total > 0, "no member references classified, so this proved nothing");
     }
 }
