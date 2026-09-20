@@ -104,40 +104,32 @@ persistence layer has one input shape and no special case.
 
 ### The fqn — the part that must change
 
-- **S8. THE TRAIT STAYS IN THE FQN, AND THE CALL SITE LEARNS TO WRITE IT.**
+- **S8. A METHOD IS KEYED ON ITS TYPE AND ITS NAME. THE TRAIT IS AN EDGE.**
 
-  `<Box2 as Draw>::draw` and `<Box2 as Paint>::draw` are two methods and must
-  be two identities. The declaration side already does this —
-  `Form::TraitMember` mints `Report·Draw·draw`. The defect is on the USE side,
-  which mints `Report·draw` and drops the discriminator, and every workaround
-  downstream (`SuppliedMembers`, the collapsed spelling, the barrier that
-  builds it) exists to paper over that one missing segment.
+      rust·demo·shape·Box2·draw·item          the method
+      TraitImpl: rust·demo·draw·Draw → rust·demo·shape·Box2
 
-  **The trait IS in the AST at a qualified call, and the walk does not look for
-  it.** `bracketed_type` and `qualified_type` appear twice in the whole Rust
-  walk. Three call shapes, three answers:
+  Today the declaration mints `Box2·Draw·draw` and the use site mints
+  `Box2·draw`: two strings for one method, which is the entire reason
+  `SuppliedMembers` exists — a barrier-built table whose only job is to
+  translate between them. The trait segment is a segment the caller can never
+  produce, and a merge key must be what both sides can produce.
 
-  | written | trait available | mints |
-  |---|---|---|
-  | `<Box2 as Draw>::draw(&b)` | YES — `qualified_type` | `Box2·Draw·draw` |
-  | `Draw::draw(&b)` | YES — the path head, and it is a trait in scope | `Box2·Draw·draw` |
-  | `b.draw()` | NO — method syntax names no trait | `Box2·draw` |
+  **The two facts belong to two files and neither needs the other.** A caller
+  writing `b.draw()` is saying one thing: *Box2 is expected to have a method
+  `draw`*. It mints `Box2·draw` from the receiver type and the method name,
+  both in its own AST. That Box2 gets `draw` from `Draw` is discovered when
+  BOX2'S OWN FILE is scanned — `impl Draw for Box2` is right there — and is
+  recorded as a `TraitImpl` edge from that file. Nothing is lost and nothing is
+  looked up.
 
-  The first two are S8's work and are pure AST reading. The third is a fact
-  about Rust: method-call syntax writes no trait, and `rustc` itself resolves
-  it by looking at which in-scope trait supplies the name.
+  So `Box as Draw` and `Box as Paint` are both represented: two `TraitImpl`
+  edges into `Box2`, emitted by the file that writes them. What they do not do
+  is split the method key, because a caller cannot spell the difference and
+  `rustc` will not let one exist (`E0034`).
 
-- **S8b.** For method-call syntax the use site mints the UNQUALIFIED
-  `Box2·draw`, and the link to `Box2·Draw·draw` is made by stage 12 through
-  the `TraitImpl` edge ALREADY IN THE GRAPH — `impl Draw for Box2` emits
-  `TraitImpl: Draw → Box2` from the declaring file. That is a lookup over
-  persisted edges, not a barrier: it needs no second parse and no repo-scoped
-  table held in memory, and it is exactly the healing the stub model does
-  everywhere else.
-
-  Where two traits in scope supply one name, `TraitImpl` gives two answers and
-  the edge stays unlinked with `AmbiguousCandidates` — which is also what
-  `rustc` does (`E0034`).
+  `SuppliedMembers`, the collapsed spelling, and the barrier that builds it are
+  all deleted by this.
 
 - **S9.** A reference to a symbol this file does not declare is a node with
   `status: "referenced"` and NOTHING ELSE — no kind, no span, no visibility.
@@ -258,7 +250,7 @@ impl Draw for Report {
       "params": [ {"name":"self","position":0,"type":null},
                   {"name":"b","position":1,"type":"&Box2"} ] },
 
-    { "fqn": "rust·demo·report·Report·Draw·draw·item",
+    { "fqn": "rust·demo·report·Report·draw·item",
       "kind": "Method", "name": "draw", "status": "declared",
       "visibility": "Private", "declared_type": "u32", "span": [19,0,19,36],
       "params": [ {"name":"self","position":0,"type":null} ] },
@@ -286,7 +278,7 @@ impl Draw for Report {
       "to": "rust·demo·report·Report·add·item",
       "status": "linked", "via": "DeclaredHere", "at": [12,0] },
     { "kind": "Owns", "from": "rust·demo·report·Report·item",
-      "to": "rust·demo·report·Report·Draw·draw·item",
+      "to": "rust·demo·report·Report·draw·item",
       "status": "linked", "via": "DeclaredHere", "at": [19,0] },
     { "kind": "TraitImpl", "from": "rust·demo·draw·Draw·item",
       "to": "rust·demo·report·Report·item",
@@ -318,7 +310,7 @@ impl Draw for Report {
     { "kind": "Reads", "from": "rust·demo·report·Report·add·item",
       "to": "rust·demo·report·Report·total·field",
       "status": "linked", "via": "DeclaredHere", "at": [14,0] },
-    { "kind": "Reads", "from": "rust·demo·report·Report·Draw·draw·item",
+    { "kind": "Reads", "from": "rust·demo·report·Report·draw·item",
       "to": "rust·demo·report·Report·total·field",
       "status": "linked", "via": "DeclaredHere", "at": [19,24] }
   ]
@@ -327,9 +319,8 @@ impl Draw for Report {
 
 **The three lines that are the whole change**, against what the code emits today:
 
-1. `Report·Draw·draw·item` keeps its trait — unchanged. What changes is the
-   USE side: a qualified `Draw::draw(&r)` must mint the same string, which the
-   walk cannot do today because it never reads `qualified_type`. S8.
+1. `Report·draw·item` — today `Report·Draw·draw·item`. The trait leaves the
+   key and stays as the `TraitImpl` edge already emitted three lines above. S8.
 2. `Box2·area·item` linked `NamedByThisFile` — today `unlinked`,
    `NoImportInScope`, carrying `Candidate("rust·demo·shape·Box2·area·item")`.
    The walk had the right string and the gate refused it. S7.
@@ -342,8 +333,9 @@ compile error, so the message says what is wrong.
 
 | # | test | mutation that must break it |
 |---|---|---|
-| 1 | `a_qualified_trait_call_mints_the_declarations_identity` — `<Box2 as Draw>::draw` and `Draw::draw` both reach `Box2·Draw·draw` | drop the trait from the qualified path |
-| 2 | `two_traits_supplying_one_name_mint_two_identities` — `Box2·Draw·draw` ≠ `Box2·Paint·draw` | drop the trait segment |
+| 1 | `a_trait_method_mints_one_key_from_both_sides` — `impl Draw for Box2 { fn draw }` and a caller's `b.draw()` produce the same string | restore the trait segment |
+| 2 | `the_trait_survives_as_an_edge` — `TraitImpl: Draw → Box2` is emitted by Box2's own file | drop the relation |
+| 2b | `supplied_members_has_no_caller` — `rg --no-ignore -g '!target'`, count confirmed non-truncated | leave one call site |
 | 3 | `one_file_reaches_a_member_of_a_type_it_imported` — single file, no table | tag it `Candidate` instead of `Named` |
 | 4 | `a_name_match_alone_still_cannot_become_an_edge` | make `Candidate` unconditional |
 | 5 | `read_takes_no_cross_file_table` — the signature | re-add the parameter |
@@ -366,15 +358,15 @@ DIFFERENT way than the code derives its answer.
 | a file the grammar rejects | `ReadError`, and the caller counts it. Never a partial node set |
 | a type named nowhere in the file | the edge is `unlinked` with its evidence. 1.9% of members here — an imported factory's return type |
 | a wildcard import in scope | the target module's export list is a stage-12 lookup, not a barrier |
-| two traits supplying one name on one type | TWO nodes, correctly. A method call naming it stays unlinked with `AmbiguousCandidates`, which is what `rustc` does (`E0034`) |
+| two traits supplying one name on one type | one method node, two `TraitImpl` edges. `E0034` source; the collision is visible in A7 rather than silently refused |
 | a path outside the package root | no module. The filesystem must not enter an identity |
 
 ## 8. Verification
 
 | check | mutation |
 |---|---|
-| a qualified trait call mints the declaration's own string | ignore `qualified_type` |
-| `Box as Draw` and `Box as Paint` stay two identities | drop the trait segment |
+| declaration and caller mint ONE key for a trait method | restore the trait segment |
+| `Box as Draw` and `Box as Paint` both appear, as two `TraitImpl` edges | emit only the first |
 | a single file resolves a member of an imported type | drop the import rung from `home_of` |
 | a bare name match alone does not | make `Candidate` unconditional |
 | `read` cannot see another file | re-add the table parameter |
@@ -385,10 +377,11 @@ DIFFERENT way than the code derives its answer.
 
 ## 9. Watch out
 
-**The trait segment is not the defect — not reading it at the call site is.**
-`Box as Draw` and `Box as Paint` are genuinely two methods and an fqn that
-merged them would be wrong. The AST carries the trait at a qualified call and
-the walk looks for it twice in 1,700 lines. Fix the reader, not the identity.
+**A merge key must be what BOTH sides can produce.** The trait reads like
+precision in the key, and it is a segment no caller can spell — every
+workaround downstream (`SuppliedMembers`, the collapsed spelling, the barrier
+that builds it) exists to paper over that one mismatch. The trait is not lost:
+it is an edge, emitted by the file that writes `impl Draw for Box2`.
 
 **`Named` is not a licence.** It says the file's text establishes the
 identity. A receiver whose type the source never states is still
@@ -405,11 +398,10 @@ imports resolving to the importing file.
 
 ## 10. Definition of done
 
-- A qualified trait call mints the declaration's own identity; `Box as Draw`
-  and `Box as Paint` remain distinct
-- `SuppliedMembers` has no caller — method-syntax linking goes through the
-  persisted `TraitImpl` edge — verified with `rg --no-ignore -g '!target'` and
-  a confirmed non-truncated count
+- A trait method mints ONE key from both sides, and the trait is present as a
+  `TraitImpl` edge from the implementing file
+- `SuppliedMembers` has no caller, verified with `rg --no-ignore -g '!target'`
+  and a confirmed non-truncated count
 - `LanguageAdapter::read` takes no cross-file table
 - `index_file` is one parse, and the driver names no language
 - All three modes return the same shape
