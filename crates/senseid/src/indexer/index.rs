@@ -354,10 +354,10 @@ mod tests {
         }
         println!("╠═ NODES (referenced, not declared here → STUB) ──────────────");
         for r in &facts.references {
-            if let crate::indexer::facts::Resolution::Resolved { fqn, .. } = &r.target {
-                if !facts.symbols.iter().any(|s| s.fqn == *fqn) {
-                    println!("║  {:<42} stub", fqn.to_string());
-                }
+            if let crate::indexer::facts::Resolution::Resolved { fqn, .. } = &r.target
+                && !facts.symbols.iter().any(|s| s.fqn == *fqn)
+            {
+                println!("║  {:<42} stub", fqn);
             }
         }
         println!("╠═ EDGES ─────────────────────────────────────────────────────");
@@ -374,7 +374,7 @@ mod tests {
                     "║  {:?}  {} → {}   [resolved via {:?}]",
                     r.kind,
                     r.from.as_str(),
-                    fqn.to_string(),
+                    fqn,
                     via
                 ),
                 crate::indexer::facts::Resolution::Unresolved { reason, evidence } => println!(
@@ -820,10 +820,10 @@ mod barrier_necessity {
     /// - `local`    — the type is declared in this same file
     /// - `imported` — an import in this file binds that exact name
     /// - `glob`     — the file has a wildcard import, so the name MIGHT come
-    ///                through it; can only be confirmed with the target module
+    ///   through it; can only be confirmed with the target module
     /// - `gap`      — none of the above. ONLY a global table could have
-    ///                supplied this, and it is the number that decides whether
-    ///                the barrier can be deleted.
+    ///   supplied this, and it is the number that decides whether the barrier
+    ///   can be deleted.
     ///
     ///     cargo test -p senseid --bin senseid -- --ignored --nocapture barrier_necessity
     #[test]
