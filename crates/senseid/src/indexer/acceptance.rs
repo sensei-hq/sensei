@@ -1128,8 +1128,31 @@ fn no_two_declarations_mint_one_identity() {
     // LOWERED, not raised. Giving each front end its own package repaired 11
     // cross-app false merges — two apps' `src/app.d.ts` were one identity —
     // and the file-module emission added none that survive it.
-    const KNOWN: usize = 514;
-    const KNOWN_RUST: usize = 3;
+    //
+    // **RAISED ONCE, BY ONE, AND THIS IS THE JUSTIFICATION** — the exception the
+    // line above otherwise forbids. Stage 11's S8 keys a method on its type and
+    // its name and demotes the trait to a `TraitImpl` edge, so an inherent
+    // method and a same-named one a trait impl supplies become ONE node.
+    //
+    // That is not an accident of the implementation, it is the trade spec §7
+    // makes explicitly: a merge key must be what BOTH sides can produce, and a
+    // caller writing `p.status_all()` cannot spell which of the two it meant —
+    // that is what dispatch decides. The segment that told them apart could
+    // only ever be minted by one side, which is why a repo-wide translation
+    // table (`SuppliedMembers`) existed to bridge it.
+    //
+    // What S8 changes is WHERE the cost is visible. Before, the mismatch showed
+    // up as an edge silently refused — 22 references over 3 identities, which no
+    // ratchet counts and no reader of this table could see. Now it shows up
+    // here, as a collision, on every run.
+    //
+    // MEASURED over this whole repository, not predicted: rust 3 -> 4. Exactly
+    // ONE pair merges — `ModelProvisioning`'s inherent `status_all` and the one
+    // its `impl ReadinessProbe` supplies, which delegates to it. The shape
+    // permits more (any type with two traits supplying one name); this corpus
+    // contains no other instance.
+    const KNOWN: usize = 515;
+    const KNOWN_RUST: usize = 4;
     const KNOWN_TYPESCRIPT: usize = 511;
     assert!(
         collisions.len() <= KNOWN,
