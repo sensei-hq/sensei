@@ -2009,26 +2009,26 @@ mod tests {
         );
     }
 
-    /// **A method a trait impl supplies**, red-first, and the largest single
-    /// hole the per-kind table had: 326 of 797 lost rust methods.
+    /// **A method a trait impl supplies is reached by its OWN key** — the same
+    /// 326-of-797 hole, closed by deleting the mismatch instead of translating
+    /// it (stage 11, S8).
     ///
-    /// The two sides mint different strings and neither is wrong. A declaration
-    /// inside `impl Provider for MacOSProvider` carries the TRAIT as a segment,
-    /// because `Display::fmt` and `Debug::fmt` on one type are two symbols and
-    /// the qualifier is what keeps them apart. A use site writing
-    /// `p.resolvers()` has no way to know which trait supplies the name — that
-    /// is what dispatch decides — so it can only ever spell the collapsed form.
+    /// This test used to assert the opposite reading of the same fixture, and
+    /// the difference is worth keeping in view. The declaration inside
+    /// `impl Provider for MacOSProvider` used to carry the TRAIT as a segment,
+    /// so the two sides minted different strings and a repo-wide table
+    /// (`SuppliedMembers`) was built at a barrier to translate between them.
     ///
-    /// So the merge contract needs a LOOKUP, not a second mint: the use site
-    /// spells the collapsed identity, and the scan says which declaration
-    /// answers to it. What comes back is a string a declaration produced, never
-    /// one this side assembled.
+    /// A merge key must be what BOTH sides can produce. The caller writing
+    /// `p.resolvers()` can never spell the trait — that is what dispatch
+    /// decides — so the trait was never a segment the key could hold. It is now
+    /// an edge, emitted by the file that writes the impl, and the two sides mint
+    /// one string with nothing looked up.
     ///
-    /// MEASURED before the rung existed: 395 trait-supplied methods in this
-    /// repository and not one of them linked — 0%, against 663 of 1,211 for the
-    /// inherent ones.
+    /// So the rung is [`Rung::DeclaredByItsType`]: an exact identity match
+    /// against what some type was read declaring, not a weaker lookup.
     #[test]
-    fn a_method_a_trait_impl_supplies_is_reached_through_its_collapsed_spelling() {
+    fn a_method_a_trait_impl_supplies_is_reached_by_its_own_key() {
         let scanned = scan(&[
             ("provider", "src/provider.rs", "pub trait Provider { fn resolvers(&self) -> u32; }\n"),
             (
@@ -2047,7 +2047,7 @@ mod tests {
         ]);
 
         let caller = file_of(&scanned, "src/start.rs");
-        assert_placed(caller, "rust·p·macos·MacOSProvider·Provider·resolvers·item");
+        assert_placed(caller, "rust·p·macos·MacOSProvider·resolvers·item");
         let call =
             caller.references.iter().find(|r| r.kind == RefKind::Calls).expect("one call site");
         let Resolution::Resolved { via, .. } = &call.target else {
@@ -2055,22 +2055,34 @@ mod tests {
         };
         assert_eq!(
             *via,
-            Rung::SuppliedByATraitImpl,
-            "the proof is weaker than an exact identity match — one declaration was found to \
-             answer to a spelling nothing declares — so the histogram must not read it as the \
-             stronger claim"
+            Rung::DeclaredByItsType,
+            "the two sides mint one string, so the proof is an exact identity match against a \
+             declaration — not a lookup that translated one spelling into another"
         );
     }
 
-    /// The same lookup, refusing. TWO traits supplying one member name on one
-    /// type collapse onto one spelling, and nothing at the use site says which
-    /// was meant — that is what dispatch decides at runtime.
+    /// **TWO TRAITS SUPPLYING ONE MEMBER NAME ON ONE TYPE PLACE ONE NODE**, and
+    /// this test INVERTS with stage 11's S8.
     ///
-    /// Unbound, not the first of the two. A wrong edge to a real node is the one
-    /// thing R4 ranks below a missing one, and "I know two places" has to stay
-    /// distinguishable from "I know one".
+    /// It used to assert that neither was placed: the two declarations minted
+    /// `Box2·Wide·draw` and `Box2·Tall·draw`, the caller could only mint
+    /// `Box2·draw`, and a lookup with two answers had to refuse — "I know two
+    /// places" staying distinguishable from "I know one" (R4).
+    ///
+    /// There is nothing left to be ambiguous ABOUT. Both declarations now mint
+    /// `Box2·draw` and so does the caller, so the call lands on the one node
+    /// they share, and the two traits survive as two `TraitImpl` edges emitted
+    /// by the file that writes them.
+    ///
+    /// **The merge is real and it is not hidden.** Two declarations under one
+    /// identity are one node, which is exactly what A7
+    /// (`acceptance::no_two_declarations_mint_one_identity`) exists to count —
+    /// so the cost moved from a silently refused edge, which no measurement
+    /// sees, into a collision ratchet, which every run prints. Spec §7 makes
+    /// that trade on the grounds that a caller cannot spell the difference and
+    /// `rustc` will not let one exist to spell (`E0034`).
     #[test]
-    fn two_trait_impls_supplying_one_member_name_on_one_type_place_neither() {
+    fn two_trait_impls_supplying_one_member_name_on_one_type_place_one_node() {
         let scanned = scan(&[
             (
                 "shape",
@@ -2090,27 +2102,49 @@ mod tests {
         ]);
 
         let caller = file_of(&scanned, "src/start.rs");
-        let call =
-            caller.references.iter().find(|r| r.kind == RefKind::Calls).expect("one call site");
-        assert!(
-            matches!(call.target, Resolution::Unresolved { .. }),
-            "two traits supply `draw`, so the lookup has two answers and must give neither; \
-             got {:?}",
-            call.target
+        assert_placed(caller, "rust·p·shape·Box2·draw·item");
+
+        // And the two traits are both still represented — as edges, from the
+        // file that writes them. Nothing was given up, it moved.
+        let declaring = file_of(&scanned, "src/shape.rs");
+        let traits: Vec<String> = declaring
+            .relations
+            .iter()
+            .filter(|r| r.kind == RelationKind::TraitImpl)
+            .map(|r| match &r.parent {
+                Resolution::Resolved { fqn, .. } => fqn.to_string(),
+                Resolution::Unresolved { evidence, .. } => evidence.name.clone(),
+            })
+            .collect();
+        assert_eq!(
+            traits,
+            vec!["rust·p·shape·Wide·item".to_string(), "rust·p·shape·Tall·item".to_string()],
+            "`Box as Wide` and `Box as Tall` are two TraitImpl edges into one method node"
         );
     }
 
-    /// An INHERENT declaration of the same name outranks the trait's, because
-    /// that is what the language does: inherent method resolution runs before
-    /// any trait's.
+    /// **AN INHERENT DECLARATION AND THE ONE A TRAIT IMPL SUPPLIES ARE ONE
+    /// NODE** — and this test no longer tests a PRECEDENCE, because there is no
+    /// longer anything to order.
+    ///
+    /// It used to: the inherent `Svc::status` minted `Svc·status` and the trait
+    /// impl's minted `Svc·Ready·status`, so the ladder had to try the exact
+    /// identity before the collapsed lookup or the edge that resolved correctly
+    /// became ambiguous. Under stage 11's S8 both mint `Svc·status`, the
+    /// collapsed lookup is gone, and the rung order it needed is gone with it.
+    ///
+    /// What is left is the CONSEQUENCE, which is worth pinning on its own: the
+    /// two declarations are one identity, and the file therefore declares that
+    /// identity twice. Left as a bare "the call resolves" this would pass
+    /// whatever happened, so the collision is asserted directly.
     ///
     /// MEASURED, and the only pair of its kind in this repository:
     /// `ModelProvisioning` declares an inherent `status_all` and also an
     /// `impl ReadinessProbe for ModelProvisioning` whose `status_all` delegates
-    /// to it. The exact identity match has to be tried before the collapsed
-    /// lookup or the edge that resolves correctly today becomes ambiguous.
+    /// to it. It is the single entry S8 added to the A7 ratchet — see
+    /// `persist::tests::the_identities_this_repos_rust_cannot_keep_apart_are_a_known_and_bounded_set`.
     #[test]
-    fn an_inherent_member_outranks_the_one_a_trait_impl_supplies() {
+    fn an_inherent_member_and_the_one_a_trait_impl_supplies_are_one_node() {
         let scanned = scan(&[
             (
                 "probe",
@@ -2130,6 +2164,26 @@ mod tests {
 
         let caller = file_of(&scanned, "src/start.rs");
         assert_placed(caller, "rust·p·probe·Svc·status·item");
+
+        // THE COST, stated rather than implied. Two declarations, one identity:
+        // every query about either answers for both, and which of the two a
+        // reader lands on is whichever the writer wrote last. The trade is spec
+        // §7's — a caller writing `s.status()` cannot spell the difference, so
+        // the segment that told them apart was never one both sides could mint.
+        let declaring = file_of(&scanned, "src/probe.rs");
+        let statuses: Vec<&str> = declaring
+            .symbols
+            .iter()
+            .map(|s| s.fqn.as_str())
+            .filter(|f| *f == "rust·p·probe·Svc·status·item")
+            .collect();
+        assert_eq!(
+            statuses.len(),
+            2,
+            "the inherent method and the trait impl's both mint ONE identity; the collision is \
+             counted by A7 rather than hidden by a refused edge. All of it: {:?}",
+            declaring.symbols.iter().map(|s| s.fqn.as_str()).collect::<Vec<_>>()
+        );
     }
 
     /// The other half of the same rung, and the reason it is restricted to
@@ -2244,11 +2298,15 @@ mod tests {
     /// ladder reading a unit struct or a call's return type — must reach the
     /// same declaration, or a method is callable from one shape and invisible
     /// from the other. `Ladder::member_of` is the one place that mints for the
-    /// second, so it has to ask the same two tables in the same order.
+    /// second, so it has to reach the same identity the walk would.
     ///
     /// Taken from the real miss: `crates/bootstrap/src/health/platforms/macos.rs`
     /// writes `MacOSProvider.resolvers()` against a `resolvers` that only
     /// `impl PlatformProvider for MacOSProvider` supplies.
+    ///
+    /// Under stage 11's S8 the expected identity loses its trait segment. What
+    /// the test is FOR is unchanged and is not about the trait at all: it is
+    /// that the ladder's own minting path and the walk's reach one declaration.
     #[test]
     fn a_unit_struct_receiver_reaches_a_member_its_trait_impl_supplies() {
         let scanned = scan(&[
@@ -2264,9 +2322,9 @@ mod tests {
         ]);
         let got = targets(file_of(&scanned, "src/u.rs"));
         assert!(
-            got.iter().any(|t| t == "rust·p·r·Fixer·Remedy·fix·item"),
-            "the receiver is typed and the member is declared, so the only thing between them \
-             is the trait segment the use site cannot know; got {got:?}"
+            got.iter().any(|t| t == "rust·p·r·Fixer·fix·item"),
+            "the receiver is typed and the member is declared, so the two sides meet — and \
+             they meet on the SAME string the walk would have minted; got {got:?}"
         );
     }
 
@@ -2677,11 +2735,35 @@ mod tests {
         );
     }
 
-    /// Asserted rather than assumed, because the lookup this feeds is shared by
-    /// every language: an entry here would put a TypeScript or Java member
-    /// behind a second, weaker spelling for no gain.
+    /// **THE COLLAPSED-SPELLING TABLE IS EMPTY, BECAUSE NO DECLARATION CARRIES
+    /// A TRAIT SEGMENT ANY MORE** (stage 11, S8).
+    ///
+    /// This is the bridge, and the reason it exists rather than the deletion
+    /// simply landing: `SuppliedMembers` held the members whose two spellings
+    /// DIFFER, and rust was the only language that produced one. With the trait
+    /// out of the key nothing differs, so the table answers nothing — and that
+    /// has to be shown BEFORE the table is deleted, or the deletion is a change
+    /// whose effect on the graph nobody measured.
+    ///
+    /// It inverts the assertion it replaces, which read: "rust puts the trait in
+    /// the identity, so exactly one member needs a second spelling."
+    ///
+    /// **ANTI-VACUITY MATTERS MORE HERE THAN ANYWHERE.** An empty table is what
+    /// a completely broken builder returns too, so each half first asserts that
+    /// the fixture DID declare the member through an `Owns` relation — which is
+    /// the input `SuppliedMembers::of` reads. Without that, deleting the body of
+    /// `of` would pass this test.
     #[test]
-    fn a_language_with_no_trait_qualifier_supplies_nothing_through_the_table() {
+    fn the_table_is_empty_because_no_declaration_carries_a_trait_segment() {
+        let owned_members = |files: &[(String, FileFacts)]| -> Vec<String> {
+            files
+                .iter()
+                .flat_map(|(_, f)| f.relations.iter())
+                .filter(|r| r.kind == RelationKind::Owns)
+                .map(|r| r.child.to_string())
+                .collect()
+        };
+
         let files: &[(&str, &str, &str)] = &[(
             "lib/w",
             "src/lib/w.ts",
@@ -2689,15 +2771,18 @@ mod tests {
              export class Fixer implements Remedy { fix(): number { return 0 } }\n",
         )];
         let scanned = scan_of(&javascript::TypeScriptAdapter, files);
-        let supplied = SuppliedMembers::of(scanned.iter().map(|(_, f)| f));
         assert!(
-            supplied.is_empty(),
-            "typescript declares its members under the spelling a use site mints, so nothing \
-             needs a second one"
+            owned_members(&scanned).iter().any(|m| m.contains("Fixer") && m.contains("fix")),
+            "the typescript fixture must actually declare Fixer::fix, or an empty table below \
+             proves only that the builder was handed nothing; got {:?}",
+            owned_members(&scanned)
+        );
+        assert!(
+            SuppliedMembers::of(scanned.iter().map(|(_, f)| f)).is_empty(),
+            "typescript never put the interface in the identity, so it never needed a second \
+             spelling"
         );
 
-        // And the rust side of the same claim, so the assertion above cannot
-        // pass because the builder is broken for everyone.
         let rust = scan(&[(
             "m",
             "src/m.rs",
@@ -2705,10 +2790,16 @@ mod tests {
              pub struct Fixer;\n\
              impl Remedy for Fixer { fn fix(&self) -> u32 { 0 } }\n",
         )]);
-        assert_eq!(
-            SuppliedMembers::of(rust.iter().map(|(_, f)| f)).len(),
-            1,
-            "rust puts the trait in the identity, so exactly one member needs a second spelling"
+        assert!(
+            owned_members(&rust).contains(&"rust·p·m·Fixer·fix·item".to_string()),
+            "and the rust fixture must declare `Fixer::fix` under the ONE key both sides mint; \
+             got {:?}",
+            owned_members(&rust)
+        );
+        assert!(
+            SuppliedMembers::of(rust.iter().map(|(_, f)| f)).is_empty(),
+            "and now neither does rust — the trait is an edge, so the declaration and the use \
+             site spell one string and there is nothing left for this table to translate"
         );
     }
 
@@ -4072,33 +4163,43 @@ mod tests {
         let mut worst: Vec<(&String, &usize)> = elsewhere.iter().collect();
         worst.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
 
-        // The trait-impl half, exactly. A declaration made inside
-        // `impl Trait for Type` carries a `Trait` segment, and NO use site can
-        // spell it: `x.default()` and `Type::default()` both mint the plain
-        // member form. So the declaration and every reference to it are two
-        // halves of one symbol — the same failure the reach rule closed for
-        // plain paths, one level in.
+        // **THE TRAIT-IMPL HALF IS NOW ZERO, AND THIS IS WHERE IT WAS 22.**
         //
-        // It is recorded here rather than fixed, and the reason is the
-        // measurement beside it: `supplied_by_a_trait` has no key with two
-        // entries, so dropping the `Trait` segment would close all of these and
-        // create no collision IN THIS CORPUS — but it would delete the only
-        // thing separating `<X as Display>::fmt` from `<X as Debug>::fmt`, a
-        // shape this corpus does not contain and therefore cannot ratchet. R4
-        // ranks the wrong edge that would produce below the missing one it
-        // removes. The real fix is the impl-set lookup spec §5 defers under
-        // trait dispatch, which is a query over the whole graph and not a thing
-        // a per-file ladder can answer without depending on scan order (R6).
+        // A declaration made inside `impl Trait for Type` used to carry a
+        // `Trait` segment that NO use site could spell — `x.default()` and
+        // `Type::default()` both mint the plain member form — so a declaration
+        // and every reference to it were two halves of one symbol. MEASURED
+        // here, at 22 references over 3 identities.
+        //
+        // The note that stood here said the fix was deferred, on the grounds
+        // that dropping the segment "would delete the only thing separating
+        // `<X as Display>::fmt` from `<X as Debug>::fmt`". Stage 11's S8 makes
+        // the opposite trade deliberately and states why: a merge key must be
+        // what BOTH sides can produce, the caller can never produce that
+        // segment, and the trait is not lost — it is a `TraitImpl` edge emitted
+        // by the file that writes the impl. The collision the old note feared
+        // is not refused silently; it is COUNTED, by A7's identity ratchet.
+        //
+        // NON-VACUOUS: `(0, 0)` is also what a broken `as_a_use_site_would_mint_it`
+        // returns, so the helper is exercised on a hand-built string of the old
+        // shape first. The corpus no longer contains one.
+        assert_eq!(
+            as_a_use_site_would_mint_it("rust·p·m·Widget·Draw·draw·item").as_deref(),
+            Some("rust·p·m·Widget·draw·item"),
+            "the detector must still recognise the shape it is looking for, or the zero below \
+             says only that it stopped looking"
+        );
         assert!(
-            supplied_by_a_trait.values().all(|declarations| declarations.len() == 1),
-            "two traits now supply one member name on one type, so the `Trait` segment is \
-             load-bearing in this corpus and the note below has to be re-decided: {:?}",
-            supplied_by_a_trait.iter().filter(|(_, d)| d.len() > 1).take(8).collect::<Vec<_>>()
+            supplied_by_a_trait.is_empty(),
+            "no rust declaration carries a trait segment any more (S8), so nothing in this \
+             corpus is in the two-consecutive-type-segments shape: {:?}",
+            supplied_by_a_trait.iter().take(8).collect::<Vec<_>>()
         );
         assert_eq!(
             (trait_shaped, through_a_trait.len()),
-            (22, 3),
-            "the references that a trait impl supplies and no use site can name moved: {:?}",
+            (0, 0),
+            "was 22 references over 3 identities; the trait left the key and the two halves \
+             met: {:?}",
             through_a_trait
         );
 

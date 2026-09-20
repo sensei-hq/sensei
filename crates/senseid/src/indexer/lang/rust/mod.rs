@@ -1246,9 +1246,13 @@ pub fn free(w: &Widget) -> u32 { w.width }
             "rust·p·m·Draw·draw·item",
             "rust·p·m·Widget·new·item",
             "rust·p·m·Widget·width·item",
-            "rust·p·m·Widget·Draw·Canvas·item",
-            "rust·p·m·Widget·Draw·SIDES·item",
-            "rust·p·m·Widget·Draw·draw·item",
+            // The trait impl's copies, keyed on the TYPE and the member with
+            // NO trait segment (stage 11, S8) — and still three symbols apart
+            // from the trait's OWN `Draw·Canvas` / `Draw·SIDES` / `Draw·draw`
+            // above, which is the property worth keeping: 3 + 3, not 3.
+            "rust·p·m·Widget·Canvas·item",
+            "rust·p·m·Widget·SIDES·item",
+            "rust·p·m·Widget·draw·item",
             "rust·p·m·free·item",
             // The FILE's own module. `pub mod inner;` no longer declares
             // `inner` — that module's body is another file, and that file
@@ -1258,6 +1262,132 @@ pub fn free(w: &Widget) -> u32 { w.width }
         expected.sort_unstable();
 
         assert_eq!(got, expected);
+    }
+
+    /// **A METHOD IS KEYED ON ITS TYPE AND ITS NAME. THE TRAIT IS AN EDGE**
+    /// (stage 11, S8).
+    ///
+    /// A merge key must be what BOTH sides can produce, and the trait is a
+    /// segment the caller can never spell — `b.draw()` says one thing, *Box2 is
+    /// expected to have a method `draw`*, and which trait supplies it is what
+    /// dispatch decides. So the declaration minting `Box2·Draw·draw` and the
+    /// use site minting `Box2·draw` were two strings for one method, and the
+    /// whole of `SuppliedMembers` — a repo-wide table built at a barrier — was
+    /// a translator between them.
+    ///
+    /// The two facts belong to two FILES and neither needs the other. This test
+    /// reads them off two independent walks, neither told anything about the
+    /// other, and requires the strings to be equal.
+    ///
+    /// The mutation that must break it: restore the trait segment — the
+    /// `Container::TraitImpl` arm of `Walk::declare`, minting `Form::TraitMember`.
+    #[test]
+    fn a_trait_method_mints_one_key_from_both_sides() {
+        // The DECLARATION, in the module `Box2` lives in.
+        let declared = facts(
+            "shape",
+            "pub trait Draw { fn draw(&self) -> u32; }\n\
+             pub struct Box2 { pub n: u32 }\n\
+             impl Draw for Box2 { fn draw(&self) -> u32 { 0 } }\n",
+        );
+        // The one named `draw` that hangs off BOX2. The trait declares a `draw`
+        // of its own and that is a different symbol, so the fixture would be
+        // ambiguous without saying which.
+        let minted_by_the_declaration: Vec<&str> = fqns(&declared)
+            .into_iter()
+            .filter(|f| f.contains("Box2") && f.ends_with("draw·item"))
+            .collect();
+
+        // The USE SITE, in another module, with no table and no sibling file —
+        // only `use crate::shape::Box2`, which is where it learns Box2's home.
+        let calling = facts(
+            "start",
+            "use crate::shape::Box2;\n\
+             pub fn go(b: &Box2) -> u32 { b.draw() }\n",
+        );
+        let minted_by_the_caller: Vec<String> = calling
+            .references
+            .iter()
+            .filter(|r| r.kind == RefKind::Calls)
+            .filter_map(|r| match &r.target {
+                Resolution::Unresolved { evidence, .. } => Some(evidence),
+                Resolution::Resolved { .. } => None,
+            })
+            .flat_map(|e| e.saw.iter())
+            .filter_map(|o| match o {
+                Observation::Candidate(fqn) => Some(fqn.to_string()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            minted_by_the_declaration,
+            vec!["rust·p·shape·Box2·draw·item"],
+            "the declaration keys the method on its TYPE and its NAME; the trait is not in \
+             the key. All of it: {:?}",
+            fqns(&declared)
+        );
+        assert_eq!(
+            minted_by_the_caller,
+            vec!["rust·p·shape·Box2·draw·item".to_string()],
+            "and the caller, reading Box2's home off its own import, mints the same string"
+        );
+    }
+
+    /// **TWO TRAITS SUPPLYING ONE NAME ON ONE TYPE: ONE METHOD NODE, TWO
+    /// `TraitImpl` EDGES** (stage 11, §7).
+    ///
+    /// Nothing is lost by taking the trait out of the key, because the trait was
+    /// never lost — it is an edge, emitted by the file that writes
+    /// `impl Wide for Box2`. `Box as Wide` and `Box as Tall` are both
+    /// represented; what they do not do is split the method key, because a
+    /// caller cannot spell the difference.
+    ///
+    /// The merge IS visible, and deliberately so: it shows up as an A7 identity
+    /// collision rather than as a silently refused edge. See the ratchet in
+    /// `acceptance::no_two_declarations_mint_one_identity`.
+    ///
+    /// The mutation that must break it: restore the trait segment.
+    #[test]
+    fn two_traits_on_one_type_are_one_method_node_and_two_edges() {
+        let facts = facts(
+            "shape",
+            "pub trait Wide { fn draw(&self) -> u32; }\n\
+             pub trait Tall { fn draw(&self) -> u32; }\n\
+             pub struct Box2 { pub n: u32 }\n\
+             impl Wide for Box2 { fn draw(&self) -> u32 { 0 } }\n\
+             impl Tall for Box2 { fn draw(&self) -> u32 { 1 } }\n",
+        );
+
+        let on_box2: BTreeSet<&str> =
+            fqns(&facts).into_iter().filter(|f| f.contains("Box2·")).collect();
+        assert_eq!(
+            on_box2,
+            BTreeSet::from([
+                "rust·p·shape·Box2·item",
+                "rust·p·shape·Box2·draw·item",
+                "rust·p·shape·Box2·n·field",
+            ]),
+            "two impls, ONE method node — a caller writing `b.draw()` can spell one string \
+             and this is it"
+        );
+
+        // And the two facts the key gave up are right there as edges, each
+        // emitted by the block that writes it.
+        let traits: Vec<String> = facts
+            .relations
+            .iter()
+            .filter(|r| r.kind == RelationKind::TraitImpl)
+            .map(|r| match &r.parent {
+                Resolution::Resolved { fqn, .. } => fqn.to_string(),
+                Resolution::Unresolved { evidence, .. } => evidence.name.clone(),
+            })
+            .collect();
+        assert_eq!(
+            traits,
+            vec!["Wide".to_string(), "Tall".to_string()],
+            "both traits survive as edges into Box2 — nothing is lost, it moved"
+        );
     }
 
     /// The collision the fqn grammar's trailing REACH exists to prevent,
@@ -2455,7 +2585,7 @@ fn helper() -> u32 { 0 }
             "Owns rust·p·m·Draw·Canvas·item -> rust·p·m·Draw·item",
             "Owns rust·p·m·Draw·SIDES·item -> rust·p·m·Draw·item",
             "Owns rust·p·m·Widget·new·item -> rust·p·m·Widget·item",
-            "Owns rust·p·m·Widget·Draw·draw·item -> rust·p·m·Widget·item",
+            "Owns rust·p·m·Widget·draw·item -> rust·p·m·Widget·item",
         ] {
             assert!(owned.contains(&expected.to_string()), "no relation {expected}; got {owned:?}");
         }

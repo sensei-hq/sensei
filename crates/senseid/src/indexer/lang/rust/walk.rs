@@ -233,10 +233,13 @@ enum Container {
     /// `db::pg_store::personas` declares members of the `PgStore` that lives in
     /// `db::pg_store`, so
     /// the block's own module is the wrong answer and was the one being used.
+    /// An `impl Trait for Type` body is THE SAME CONTAINER as an inherent one,
+    /// and that is stage 11's S8. The trait used to sit in the key, between the
+    /// type and the member; it is now an edge, emitted by
+    /// [`Walk::trait_impl`] from the very block that writes it. A merge key must
+    /// be what BOTH sides can produce, and no caller can spell which trait
+    /// supplies a name — that is what dispatch decides.
     Type { module: String, name: String },
-    /// An `impl Trait for Type` body. The trait qualifier is what keeps
-    /// `Display::fmt` and `Debug::fmt` on one type apart.
-    TraitImpl { module: String, ty: String, tr: String },
     /// An `impl` on a type with no name — a tuple, a slice, a unit. Its members
     /// have no identity in this grammar, and naming them as free items of the
     /// module would mint identities no use site could ever mint. A wrong edge is
@@ -361,10 +364,6 @@ impl<'a> Walk<'a> {
             Container::Type { module, name: ty } => {
                 let module = module.as_str();
                 fqn::define(&Form::Member { lang, package, module, ty, member, reach })
-            }
-            Container::TraitImpl { module, ty, tr } => {
-                let module = module.as_str();
-                fqn::define(&Form::TraitMember { lang, package, module, ty, tr, member, reach })
             }
             Container::Unnameable { raw } => Err(FqnError::NotATypeName { value: raw.clone() }),
         }
@@ -1107,7 +1106,11 @@ impl<'a> Walk<'a> {
     }
 
     /// An `impl` is not a declaration — it is a container for the ones inside
-    /// it. Which container depends on whether a trait is named.
+    /// it, and an inherent block and a trait block are the SAME container.
+    ///
+    /// Whether a trait is named decides an EDGE ([`Walk::trait_impl`]) and no
+    /// longer decides an identity: a method is keyed on its type and its name
+    /// (stage 11, S8), because that is the only spelling a caller can produce.
     fn impl_block(&mut self, node: Node<'_>, scope: &Scope) {
         let Some(ty) = node.child_by_field_name("type").map(|n| self.text(n)) else {
             self.children(node, scope);
@@ -1120,11 +1123,6 @@ impl<'a> Walk<'a> {
             self.children(node, &inner);
             return;
         };
-        let tr = node
-            .child_by_field_name("trait")
-            .map(|n| self.text(n))
-            .and_then(|raw| type_segment(raw).ok());
-
         // WHERE THE MEMBERS OF THIS BLOCK ARE NAMED. The type's own module, not
         // this block's: `impl PgStore` in `db::pg_store::personas` declares
         // members of the `PgStore` in `db::pg_store`. When the scan has not been told
@@ -1158,10 +1156,7 @@ impl<'a> Walk<'a> {
             // somebody to state.
             None => BTreeMap::new(),
         };
-        inner.container = match tr {
-            Some(tr) => Container::TraitImpl { module: home.clone(), ty: ty.clone(), tr },
-            None => Container::Type { module: home.clone(), name: ty.clone() },
-        };
+        inner.container = Container::Type { module: home.clone(), name: ty.clone() };
         inner.owner = Owner::Nobody;
         // A use site in the impl header sits inside no member, so it belongs to
         // the type the impl is about.
@@ -1281,7 +1276,6 @@ impl<'a> Walk<'a> {
         // Nothing else: a receiver the file does not type is reported as such.
         let self_type = match (&scope.container, receiver) {
             (Container::Type { name: ty, .. }, "self" | "Self") => Some(ty.as_str()),
-            (Container::TraitImpl { ty, .. }, "self" | "Self") => Some(ty.as_str()),
             // A local whose type the source stated.
             _ => scope.bindings.get(receiver).map(String::as_str).or_else(|| {
                 // `self.m().member` — the inner call resolves already, so the
@@ -1300,10 +1294,7 @@ impl<'a> Walk<'a> {
                 let returned = scope.returns.get(method)?;
                 // `Self` is this type — the container already knows which.
                 Some(match (returned.as_str(), &scope.container) {
-                    (
-                        "Self",
-                        Container::Type { name: ty, .. } | Container::TraitImpl { ty, .. },
-                    ) => ty.as_str(),
+                    ("Self", Container::Type { name: ty, .. }) => ty.as_str(),
                     _ => returned.as_str(),
                 })
             }),
@@ -1438,7 +1429,6 @@ impl<'a> Walk<'a> {
     fn concrete(&self, scope: &Scope, raw: &str) -> String {
         let ty = match &scope.container {
             Container::Type { name, .. } => name.as_str(),
-            Container::TraitImpl { ty, .. } => ty.as_str(),
             Container::File | Container::Unnameable { .. } => return raw.to_string(),
         };
         match raw.strip_prefix("Self") {
