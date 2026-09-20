@@ -422,7 +422,6 @@ mod tests {
                 first_party: &first_party,
                 first_party_members: &BTreeSet::new(),
                 declared_members: &BTreeSet::new(),
-                supplied_members: &crate::indexer::resolve::SuppliedMembers::unknown(),
                 returns: &std::collections::BTreeMap::new(),
                 scanned: &scanned,
             },
@@ -1272,7 +1271,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
     /// expected to have a method `draw`*, and which trait supplies it is what
     /// dispatch decides. So the declaration minting `Box2·Draw·draw` and the
     /// use site minting `Box2·draw` were two strings for one method, and the
-    /// whole of `SuppliedMembers` — a repo-wide table built at a barrier — was
+    /// whole of the collapsed-spelling table — repo-wide, built at a barrier — was
     /// a translator between them.
     ///
     /// The two facts belong to two FILES and neither needs the other. This test
@@ -1890,7 +1889,6 @@ pub fn free(w: &Widget) -> u32 { w.width }
                 first_party: &first_party,
                 first_party_members: &BTreeSet::new(),
                 declared_members: &BTreeSet::new(),
-                supplied_members: &crate::indexer::resolve::SuppliedMembers::unknown(),
                 returns: &std::collections::BTreeMap::new(),
                 scanned: &BTreeSet::new(),
             },
