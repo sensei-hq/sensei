@@ -26,9 +26,7 @@ use super::barrier;
 use super::facts::{FileFacts, RefKind, RelationKind, Resolution, SymbolKind};
 use super::fqn::Reach;
 use super::lang::{self, Source, TypeHomes};
-use super::resolve::{
-    SuppliedMembers, World, member_names_of, members_declared_by, resolve, returns_declared_by,
-};
+use super::resolve::{World, member_names_of, members_declared_by, resolve, returns_declared_by};
 
 /// The directory a file's package is rooted at, from the file's own path.
 ///
@@ -134,14 +132,12 @@ pub(super) fn read_the_corpus() -> Vec<Read> {
     // it the boundary rather than counting it as a miss.
     let first_party_members = member_names_of(anchored.iter().map(|r| &r.facts));
     let declared_members = members_declared_by(anchored.iter().map(|r| &r.facts));
-    let supplied_members = SuppliedMembers::of(anchored.iter().map(|r| &r.facts));
     let returns = returns_declared_by(anchored.iter().map(|r| &r.facts));
     let scanned = BTreeSet::new();
     let world = World {
         first_party: &first_party,
         first_party_members: &first_party_members,
         declared_members: &declared_members,
-        supplied_members: &supplied_members,
         returns: &returns,
         scanned: &scanned,
     };
@@ -1139,7 +1135,7 @@ fn no_two_declarations_mint_one_identity() {
     // caller writing `p.status_all()` cannot spell which of the two it meant —
     // that is what dispatch decides. The segment that told them apart could
     // only ever be minted by one side, which is why a repo-wide translation
-    // table (`SuppliedMembers`) existed to bridge it.
+    // table existed to bridge it.
     //
     // What S8 changes is WHERE the cost is visible. Before, the mismatch showed
     // up as an edge silently refused — 22 references over 3 identities, which no
