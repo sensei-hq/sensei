@@ -2255,23 +2255,22 @@ pub fn widest(a: u32) -> u32 {
     /// symbol that vanishes with nothing said is the exact defect this rewrite
     /// exists to remove.
     ///
-    /// The fixture is the real shape, not an invented one. It USED to be two
-    /// functions with a `static RE` apiece — that collision is now fixed, a
-    /// local being named under its function — so the fixture moved to the shape
-    /// that still collides and is arguably not a defect: a `#[cfg(feature)]` /
-    /// `#[cfg(not(feature))]` pair declares one name twice at MODULE scope.
-    /// Only one arm ever compiles; the walk reads text and cannot know which,
-    /// and the identity is the same either way.
+    /// THE FIXTURE HAS MOVED TWICE, because each shape it used got FIXED:
+    /// two functions with a `static RE` apiece (a local now named under its
+    /// function), then a `#[cfg(feature)]`/`#[cfg(not(feature))]` pair (now a
+    /// callable plus one arm per condition), then `const _` twice (an
+    /// anonymous declaration is no longer a symbol at all).
     ///
-    /// The identity it collides ON is `_`, not `status`, and that is a SECOND
-    /// finding this fixture surfaced rather than a typo: the walk is naming
-    /// these two functions `_`. Whatever reads the `name` field off a
-    /// `#[cfg]`-attributed `function_item` is getting the wrong node. Not
-    /// chased here — recorded, because the collision the test asserts is real
-    /// either way and the misnaming is a separate defect.
+    /// So it is now a shape that does NOT compile — two functions of one name
+    /// in one module — and that is deliberate. The subject is the WRITER: when
+    /// two declarations do mint one identity, it must say so rather than let
+    /// one overwrite the other. The walk reads text and does not typecheck, so
+    /// a fixture that rustc would reject still exercises exactly the path a
+    /// real collision takes, and it cannot be fixed out from under the test by
+    /// an identity rule getting sharper.
     #[tokio::test]
     async fn two_declarations_that_mint_one_identity_are_reported_and_not_silently_dropped() {
-        let facts = walk_of("collide", "src/collide.rs", "const _: () = ();\nconst _: () = ();");
+        let facts = walk_of("collide", "src/collide.rs", "pub fn twice() {}\npub fn twice() {}\n");
         let store = PgStore::connect_test().await.expect("the test database must be reachable");
         let folder = a_folder(&store, "collide").await;
 
@@ -2280,7 +2279,7 @@ pub fn widest(a: u32) -> u32 {
         assert_eq!(
             written.collisions,
             vec![persist::Collision {
-                fqn: "rust·senseid·collide·_·item".to_string(),
+                fqn: "rust·senseid·collide·twice·item".to_string(),
                 declarations: 2,
             }],
             "the write must NAME the identity two declarations shared"
@@ -2289,7 +2288,7 @@ pub fn widest(a: u32) -> u32 {
 
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
         assert_eq!(
-            stored.symbols.iter().filter(|s| s.name == "_").count(),
+            stored.symbols.iter().filter(|s| s.name == "twice").count(),
             1,
             "one identity is one row — which is what makes the count above the loss"
         );
@@ -2336,12 +2335,11 @@ pub fn widest(a: u32) -> u32 {
         // unrelated work is a ratchet nobody trusts.
         assert_eq!(
             lost,
-            1,
-            "19 before a local declaration was named under its enclosing function, 3 before that \
-             rule reached a METHOD body, and 2 before a `cfg`-gated declaration became a \
-             callable plus its arms; the ONE that remains is NOT that defect:\n\
-             - `const _` binds NO name, twice. Two anonymous declarations genuinely have one \
-               identity; the question is whether an anonymous declaration is a symbol at all.\n\
+            0,
+            "ZERO, and each step there was a defect repaired rather than tolerated: 19 before a \
+             local was named under its enclosing function, 3 before that rule reached a METHOD \
+             body, 2 before a `cfg`-gated declaration became a callable plus its arms, and 1 \
+             before an anonymous `const _` stopped being a symbol it never was.\n\
              {} affected identities out of {symbols} symbols:\n  {}\n\
              This stays the fqn grammar's to answer, not persistence's: the walk mints the \
              identity and `nodes_unique_fqn` merely applies it. The ratchet is here because \
@@ -2436,10 +2434,10 @@ pub fn widest(a: u32) -> u32 {
             // once the three files' members correctly named `db::pg_store`,
             // the four aliases stopped merely being wrong and started
             // colliding.
-            // `const _` binds NO name, twice. Two anonymous declarations
-            // genuinely have one identity — the open question is whether an
-            // anonymous declaration is a symbol at all.
-            "rust·senseid·tasks::handlers::embed·_·item",
+            // `embed·_·item` STOOD HERE and is FIXED. `const _` binds no name —
+            // `_` is not a path segment any use site can spell — so a node for
+            // it was one no reference could ever reach. Two in a file minting
+            // one identity was the symptom; the node was the defect.
             // `base_url` and `main` USED TO BE HERE, and are not defects that
             // were argued away — `module_of` was fixed and they stopped
             // colliding. It had guessed the crate root by splitting on
