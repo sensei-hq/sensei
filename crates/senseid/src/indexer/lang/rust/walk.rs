@@ -49,6 +49,7 @@ pub(super) fn walk<'a>(source: &Source<'a>, root: Node<'_>, from: Fqn) -> Found 
         module: source.module.to_string(),
         fn_scope: Vec::new(),
         container: Container::File,
+        container_at: 0,
         from,
         owner: Owner::Nobody,
         // The file scope binds nothing: a `let` lives in a block, and the file
@@ -103,6 +104,18 @@ struct Scope {
     /// ONE identity, and "where is `RE` defined" answered with whichever the
     /// scan wrote last.
     fn_scope: Vec<String>,
+    /// The [`Scope::fn_scope`] depth at which [`Scope::container`] was
+    /// established.
+    ///
+    /// What tells "the type whose `impl` block this body sits in" from "a type
+    /// declared BY this body". Both leave `container` naming a type, and the
+    /// two mean opposite things for what a declaration inside them is:
+    /// `impl Holder { fn sweep() { type Row; } }` declares a LOCAL, while
+    /// `fn parse() { enum Ev { A(String) } }` declares an enum whose variant
+    /// really is its member.
+    ///
+    /// A depth rather than a flag, because bodies nest.
+    container_at: usize,
     container: Container,
     /// The symbol a use site found here sits inside — [`Reference::from`].
     from: Fqn,
@@ -491,6 +504,35 @@ impl<'a> Walk<'a> {
         let package = self.package;
         let composed = scope.module_here();
         let module = composed.as_str();
+        // **A BODY DOES NOT DECLARE MEMBERS OF THE TYPE IT SITS IN.** A `type`,
+        // a `const` or a nested `fn` written inside `PgStore::sweep` is a LOCAL
+        // ITEM of that body: `PgStore` declares no such thing, and no use site
+        // can reach one through it.
+        //
+        // `module_here` has named a local under its enclosing function since
+        // the function-body rule landed, and it already reads `fn_scope`. What
+        // was missing is that the CONTAINER arms below never asked — inside a
+        // method the container is still the type, so the member arm won and the
+        // local was filed as a member of `PgStore`.
+        //
+        // MEASURED: four `type Row` aliases in four method bodies across
+        // `db/pg_store/`, all four on one identity. It sat on the
+        // known-collision list as "the function-body rule reaches free
+        // functions; a method body is the remaining shape". This is that shape.
+        //
+        // THE DEPTH IS THE WHOLE RULE, and a bare `!fn_scope.is_empty()` is
+        // wrong: `fn parse() { enum Ev { A(String) } }` declares an enum INSIDE
+        // a body whose variants and fields genuinely are its members. Measured
+        // when that shortcut shipped — two positional fields of two variants
+        // collapsed onto one identity in `transcript/zed.rs`. The container has
+        // to have been established OUTSIDE this body to be the wrong answer.
+        //
+        // The container is NOT cleared to do this, deliberately: `self` and
+        // `Self` inside a method are typed by reading it, so a body that forgot
+        // which type it was in would lose every receiver it can name.
+        if scope.fn_scope.len() > scope.container_at {
+            return fqn::define(&Form::Item { lang, package, module, name: member, reach });
+        }
         match &scope.container {
             Container::File => {
                 fqn::define(&Form::Item { lang, package, module, name: member, reach })
@@ -1150,6 +1192,7 @@ impl<'a> Walk<'a> {
         // A type declared HERE is named in this module, so its home is the
         // scope's own — no table needed and none consulted.
         inner.container = Container::Type { module: scope.module.clone(), name: name.to_string() };
+        inner.container_at = inner.fn_scope.len();
         if let Owner::Type(child) = &inner.owner {
             self.supertraits(node, scope, child.clone());
         }
@@ -1286,6 +1329,7 @@ impl<'a> Walk<'a> {
             format!("{}::{name}", scope.module)
         };
         inner.container = Container::File;
+        inner.container_at = inner.fn_scope.len();
         // A `mod` inside a function body re-roots the path: its contents are
         // reached as `<module>::<mod>::x`, not through the function.
         inner.fn_scope.clear();
@@ -1309,6 +1353,7 @@ impl<'a> Walk<'a> {
         let Ok(ty) = type_segment(ty) else {
             let mut inner = scope.clone();
             inner.container = Container::Unnameable { raw: ty.to_string() };
+            inner.container_at = inner.fn_scope.len();
             inner.owner = Owner::Nobody;
             self.children(node, &inner);
             return;
@@ -1348,6 +1393,7 @@ impl<'a> Walk<'a> {
             // somebody to state.
             None => BTreeMap::new(),
         };
+        inner.container_at = inner.fn_scope.len();
         inner.container = match node
             .child_by_field_name("trait")
             .map(|n| self.text(n))
