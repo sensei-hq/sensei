@@ -304,12 +304,11 @@ pub(crate) fn module_of(path: &str) -> String {
 pub(crate) fn walked_rust(module: &str, path: &str, text: &str) -> facts::FileFacts {
     use std::collections::BTreeSet;
 
-    use lang::{Source, TypeHomes, rust};
+    use lang::{Source, rust};
     use resolve::{World, resolve};
 
     let facts =
-        rust::read(&Source { package: "senseid", module, path, text }, &TypeHomes::unknown())
-            .expect("the fixture parses");
+        rust::read(&Source { package: "senseid", module, path, text }).expect("the fixture parses");
     let first_party: BTreeSet<String> = ["senseid".to_string()].into_iter().collect();
     resolve(
         facts,

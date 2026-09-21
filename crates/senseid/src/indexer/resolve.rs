@@ -1498,11 +1498,8 @@ mod tests {
     /// The same, in a scan that owns the source of other packages too. That set
     /// comes from the manifests and never from what has been read so far.
     fn ladder_among(module: &str, text: &str, first_party: &[&str]) -> FileFacts {
-        let facts = rust::read(
-            &Source { package: "p", module, path: "src/fixture.rs", text },
-            &TypeHomes::unknown(),
-        )
-        .expect("the fixture parses");
+        let facts = rust::read(&Source { package: "p", module, path: "src/fixture.rs", text })
+            .expect("the fixture parses");
         let first_party: BTreeSet<String> = first_party.iter().map(|p| (*p).to_string()).collect();
         let scanned = BTreeSet::new();
         resolve(
@@ -1541,11 +1538,9 @@ mod tests {
         use crate::indexer::facts::{DeclaredType, Span, Symbol, SymbolKind, Visibility};
 
         let text = "pub fn helper() -> u32 { 1 }\npub fn go() -> u32 { self::helper() }\n";
-        let mut facts = rust::read(
-            &Source { package: "p", module: "a::b", path: "src/a/b.rs", text },
-            &TypeHomes::unknown(),
-        )
-        .expect("the fixture parses");
+        let mut facts =
+            rust::read(&Source { package: "p", module: "a::b", path: "src/a/b.rs", text })
+                .expect("the fixture parses");
 
         // The file-module the emission will add: the file's OWN identity, named
         // after its last module segment, spanning the whole file.
@@ -1843,48 +1838,59 @@ mod tests {
         );
     }
 
-    /// **THE SAME REACH, FOR A FILE THAT STATES NOTHING** — and the test that
-    /// keeps [`Rung::DeclaredByItsType`] covered once S7 takes the ordinary
-    /// case away from it.
+    /// **THE SAME REACH, FOR A LANGUAGE WHOSE WALK STILL HAS A TABLE** — and
+    /// the test that keeps [`Rung::DeclaredByItsType`] covered.
     ///
-    /// A glob binds an unknown set of names, so `use super::*` does NOT say
-    /// where `PgStore` lives; the walk falls through to the type table and what
-    /// it mints is a `Candidate`. That identity still cannot become an edge on
-    /// its own — a repo-wide set of what some type was read declaring has to
-    /// agree — which is exactly the rung below `NamedByThisFile`.
+    /// S7 took the ordinary case away from that rung: a file which STATES where
+    /// a type lives places the member itself, `NamedByThisFile`, with nothing
+    /// agreeing. What is left for `DeclaredByItsType` is the identity a walk
+    /// minted from a repo-wide TABLE — a `Candidate`, which still cannot become
+    /// an edge until some type is found to have declared it.
     ///
-    /// Without this test the sibling above would be the only cover for either
-    /// rung, and a change that made every mint `Named` would pass it.
+    /// Written over TYPESCRIPT, and that is the point rather than a
+    /// convenience. S5 has taken the table off the RUST walk, so no Rust
+    /// fixture can reach this rung any more; the other four walks keep theirs
+    /// until §11 moves them, so the rung is live and must stay tested. Its
+    /// first draft was a Rust fixture using `use super::*`, which stopped
+    /// reaching the rung the moment the table went — a test that would have
+    /// been deleted with the thing it was covering.
+    ///
+    /// MUTATION: make `first_candidate` place a candidate unconditionally. The
+    /// rung stops being a proof and `a_bare_name_matching_another_files_
+    /// declaration_is_not_proof_of_anything` goes red beside this.
     #[test]
-    fn a_file_that_states_no_home_still_needs_the_declaration_to_agree() {
-        let scanned = scan(&[
-            ("db", "src/db.rs", "pub struct PgStore { pub url: String }\n"),
-            (
-                "db::folders",
-                "src/db/folders.rs",
-                "use crate::db::PgStore;\n\
-                 impl PgStore { pub fn add_watch_root(&self) -> u32 { 0 } }\n",
-            ),
-            (
-                "db::watcher",
-                "src/db/watcher.rs",
-                "use super::*;\n\
-                 pub fn start(store: &PgStore) -> u32 { store.add_watch_root() }\n",
-            ),
-        ]);
+    fn a_candidate_from_a_table_still_needs_the_declaration_to_agree() {
+        let scanned = scan_of(
+            &javascript::TypeScriptAdapter,
+            &[
+                (
+                    "lib/store",
+                    "src/lib/store.ts",
+                    "export class Store {\n  open(): number { return 0 }\n}\n",
+                ),
+                // NO import of `Store` anywhere in this file — the type is known
+                // only to the barrier's table, so what the walk mints for
+                // `s.open()` is a candidate and not a statement of this file's.
+                (
+                    "lib/start",
+                    "src/lib/start.ts",
+                    "export function go(s: Store): number { return s.open() }\n",
+                ),
+            ],
+        );
 
-        let caller = file_of(&scanned, "src/db/watcher.rs");
-        assert_placed(caller, "rust·p·db·PgStore·add_watch_root·item");
+        let caller = file_of(&scanned, "src/lib/start.ts");
         let call =
             caller.references.iter().find(|r| r.kind == RefKind::Calls).expect("one call site");
-        let Resolution::Resolved { via, .. } = &call.target else {
-            panic!("the call is not placed: {:?}", call.target)
+        let Resolution::Resolved { fqn, via } = &call.target else {
+            panic!("the call did not reach the member: {:?}", call.target)
         };
+        assert_eq!(fqn.to_string(), "typescript·p·lib/store·Store·open·item");
         assert_eq!(
             *via,
             Rung::DeclaredByItsType,
-            "a glob states no home, so the identity is a candidate and the proof has to be a \
-             declaration some type was read making — not this file's own text"
+            "the home came from the TABLE, not from this file, so the identity is a candidate \
+             and the proof has to be a declaration some type was read making"
         );
     }
 
@@ -3446,8 +3452,7 @@ mod tests {
                     path: &path,
                     text: &text,
                 };
-                let facts = rust::read(&source, &TypeHomes::unknown())
-                    .unwrap_or_else(|e| panic!("{path}: {e:?}"));
+                let facts = rust::read(&source).unwrap_or_else(|e| panic!("{path}: {e:?}"));
                 (path, facts)
             })
             .collect();
