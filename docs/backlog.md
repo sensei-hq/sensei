@@ -17,6 +17,120 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 
 
+## Indexer — WHERE THE 1,377 MISSING REFERENCES ARE (stage 11 §10, open 2026-09-21)
+
+**§10's done-gate is NOT met and this is the whole of what blocks it.**
+Resolved-reference count is 94,927 against a required ≥96,304. Short by 1,377.
+
+**Root cause, not a symptom.** `9c7622cf` deleted the repo-wide type table from
+the rust walk (spec S5) and cost 3,389 references in one commit. `ddda0619`
+added the glob-root rung (`use super::*` is the file writing down a module) and
+returned 1,050. The remaining 2,339 have NOT been located, and every hypothesis
+below is a hypothesis until somebody measures it.
+
+**THE MEASUREMENT THAT HAS BEEN TAKEN**, over every RESOLVED member reference
+at HEAD, by what its own file states:
+
+| bucket | count | share |
+|---|---|---|
+| `local` — the file declares the type | 6,691 | 48.2% |
+| `imported` — an import binds that name | 5,485 | 39.5% |
+| `glob` — reachable through a wildcard | 1,176 | 8.5% |
+| `spelled` — inline qualified path | 232 | 1.7% |
+| `gap` — the file states nothing (40 distinct sites) | 288 | 2.1% |
+| total | 13,872 | |
+
+    cargo test -p senseid --bin senseid -- --ignored --nocapture index::barrier_necessity
+
+The file states 97.9% of what resolves, which is stage 11's premise confirmed
+AFTER the table went rather than before. **It does not locate the 1,377** — it
+classifies what DID resolve, not what did not. Saying otherwise would be the
+error this entry exists to prevent.
+
+**THE MEASUREMENT THAT HAS NOT BEEN TAKEN, and is the next task.** Decompose
+the UNRESOLVED member references the same way. `index::barrier_necessity`
+already holds the classifier (`declares` / `binds` / `has_glob` / text search);
+point it at `Resolution::Unresolved` instead of `Resolved` and print the same
+table. One test, no design.
+
+**Hypotheses, ranked, each with the check that settles it** — none verified:
+
+1. **Two package-rooted globs.** `Walk::glob_rooted_here` answers `None` when a
+   file has two, because two candidate homes is a coin toss (R6). Check: count
+   files with >1 `crate`/`self`/`super`-rooted glob.
+2. **A qualified path longer than `<Ty>::<member>`.** `considered_path` returns
+   `Vec::new()` for a 3+ segment path, so `crate::db::pg_store::PgStore::connect`
+   mints no candidate. Check: count unresolved references whose evidence name
+   contains two or more `::`.
+3. **`Home::Ambiguous` is now unreachable in rust** — its only producer was the
+   table. Anything that used to land there now lands in `Unstated`. Check: it
+   should be 0 in the rust histogram; `AmbiguousCandidates` sat at 8,865 and has
+   not moved, so this is probably NOT it, which is worth knowing.
+
+**Spec contradiction to resolve while doing this.** §7 defers the wildcard
+export list to stage 12; §10 demands ≥96,304 AT stage 11. Both cannot hold. One
+of them must be amended and the amendment recorded, not worked around.
+
+## Indexer — a `cfg`-gated MEMBER cannot carry its condition (stage 11, open 2026-09-21)
+
+**`81f1552d` split `cfg`-gated FREE items into a callable plus one arm per
+condition. Gated MEMBERS are not split, and this is the design to finish it.**
+
+Worked example, `crates/logger/src/writer.rs`, all seven:
+
+```rust
+pub enum LogWriter {
+    #[cfg(feature = "pg")]  Pg(sqlx_postgres::PgPool),        // enum variant
+    #[cfg(feature = "api")] Api { base_url: String, .. },     // enum variant
+}
+pub struct BufferedState {
+    #[cfg(feature = "pg")] pub(crate) pool: Option<..>,       // field
+}
+impl LogWriter {
+    #[cfg(feature = "pg")]  pub fn pg(..) -> Arc<Self> { .. } // method
+    #[cfg(feature = "api")] pub fn api(..) -> Arc<Self> { .. }
+}
+```
+
+**Why it was deferred, and the reason first given was WRONG.** It was recorded
+as "the grammar has no shape for it". That is false and was corrected in review:
+the truth is that a new form has to be ADDED. Count the tail segments —
+
+| | form | tail |
+|---|---|---|
+| free item | `Item { module, name }` | 2 — a slot spare |
+| its arm | `Member { module, ty: name, member: cfg }` | 3 |
+| member | `Member { module, ty, member }` | 3 — full |
+| its arm needs | module + ty + member + cfg | 4 |
+
+**The proposal, which is sound.** Add `Form::MemberVariant { lang, package,
+module, ty, member, condition, reach }`. The apparent clash is with
+`Form::TraitMember` (`module·Ty·Trait·member`), also 4 tail segments, and
+`fqn::parse` deliberately cannot recover a form. But the discriminator is real
+and already enforced: a condition segment is `cfg:feature=pg` — lowercase,
+contains `:` — and `names_a_type` is leading-case, so every decomposer that
+matters already refuses it:
+
+- `Ladder::module_of_the_member_of` requires the type IMMEDIATELY left of the
+  member; the position check fails and it answers `None`.
+- `as_a_use_site_would_mint_it` requires two consecutive TYPE-NAMING segments.
+
+**What it costs today, measured rather than assumed.** A MISSING FACT, not a
+wrong edge. All seven are single-arm — there is no `#[cfg(not(feature = "pg"))]
+fn pg` — so nothing merges and no callees conflate. A7 rust is at ZERO, and a
+two-arm member pair would necessarily collide, so the corpus confirms it. The
+graph says `LogWriter::pg` exists full stop, when it exists only under the `pg`
+feature; "what does an api-only build contain" is unanswerable.
+
+That is strictly weaker than the free-item case `81f1552d` fixed, where two arms
+DID conflate their callees and produced a wrong edge. It is why this is next
+rather than urgent — not why it is impossible.
+
+**Blast radius when built**: `fqn.rs` (the form, `encode`, the doc table,
+`every_shape`, the round-trip property), `Walk::split_into_variant` (its
+`_ => return symbol` arm is exactly this case), and `count_gated` (which
+currently excludes members on the same ground and must stop).
+
 ## Indexer — a target no first-party declaration mints must resolve or be marked EXTERNAL (stage 11 S7, measured 2026-09-21)
 
 **Decided 2026-09-21, and it is an obligation on stage 12, not a defect in
