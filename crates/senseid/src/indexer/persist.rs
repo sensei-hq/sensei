@@ -636,6 +636,19 @@ fn relation_edge_kind(kind: RelationKind) -> Option<&'static str> {
         // cannot be written by accident, whereas a spare label is one `match`
         // away from being.
         RelationKind::Contains => return None,
+        // A VARIANT IS NOT AN EDGE EITHER, and for a sharper reason than
+        // containment. `sensei.edge_kind` has no value for it, and the nearest
+        // one — `implements` — would be a LIE that pattern detection reads as
+        // real: an interface has N implementations at runtime, a `cfg` leaves
+        // exactly one in the binary. Filing an arm as an implementation would
+        // name every conditionally-compiled function a strategy.
+        //
+        // Stage 11 EMITS the fact; deciding how the graph stores it is stage
+        // 12's, where the node and edge shape is being reshaped anyway. Until
+        // then the arms are nodes and the relation is carried but not written —
+        // which is honest, because a fact nobody can query is better than a
+        // fact filed under the wrong name (R4).
+        RelationKind::Variant => return None,
     })
 }
 
@@ -652,6 +665,8 @@ fn relation_kind_label(kind: RelationKind) -> &'static str {
         // because the match is exhaustive and a panic arm would be a crash
         // waiting for whoever gives containment an edge.
         RelationKind::Contains => "contains",
+        // Never written, for the reason `relation_edge_kind` gives.
+        RelationKind::Variant => "variant",
     }
 }
 
@@ -2036,7 +2051,12 @@ pub fn widest(a: u32) -> u32 {
             // so it is not a row this round trip can find. The assertion that
             // it arrives at all is
             // `every_ownership_relation_the_walk_read_is_a_parent_id_in_the_database`.
-            .filter(|r| r.kind != RelationKind::Contains)
+            //
+            // A VARIANT does not reach a row either, and for a sharper reason:
+            // `sensei.edge_kind` has no value for it and the nearest one would
+            // be a lie. Stage 11 emits the fact; stage 12 decides how the graph
+            // stores it. See `relation_edge_kind`.
+            .filter(|r| !matches!(r.kind, RelationKind::Contains | RelationKind::Variant))
             .map(persist::RelationRow::of)
             .collect();
         assert!(!expected.is_empty(), "the fixture must exercise some relations");
@@ -2316,13 +2336,10 @@ pub fn widest(a: u32) -> u32 {
         // unrelated work is a ratchet nobody trusts.
         assert_eq!(
             lost,
-            2,
-            "19 before a local declaration was named under its enclosing function, and 3 before \
-             that rule reached a METHOD body too; the two that remain are NOT that defect and \
-             each is a different question:\n\
-             - a `#[cfg(feature)]` / `#[cfg(not(feature))]` pair declares one name twice at \
-               MODULE scope. Only one arm compiles, the walk reads text and cannot know which, \
-               and the identity is the same either way — plausibly one to tolerate.\n\
+            1,
+            "19 before a local declaration was named under its enclosing function, 3 before that \
+             rule reached a METHOD body, and 2 before a `cfg`-gated declaration became a \
+             callable plus its arms; the ONE that remains is NOT that defect:\n\
              - `const _` binds NO name, twice. Two anonymous declarations genuinely have one \
                identity; the question is whether an anonymous declaration is a symbol at all.\n\
              {} affected identities out of {symbols} symbols:\n  {}\n\
@@ -2399,11 +2416,13 @@ pub fn widest(a: u32) -> u32 {
         // a local is now named under its enclosing function. The three that
         // remain are three different questions, none of them that one.
         let known = [
-            // A `#[cfg(feature)]` / `#[cfg(not(feature))]` pair. One name, two
-            // declarations, module scope; only one arm compiles and the walk
-            // reads text, so the identity is the same either way. Plausibly one
-            // to tolerate rather than repair.
-            "rust·senseid·api::handlers::model_provisioning·provision_status·item",
+            // `provision_status` STOOD HERE and is FIXED. A
+            // `#[cfg(feature)]`/`#[cfg(not(feature))]` pair is two BODIES of
+            // one function, both in the codebase and one in any binary. The
+            // walk now emits the callable a caller mints plus one ARM per
+            // condition, so the two arms are two identities and each carries
+            // its own outbound edges — which is the part that mattered: merged,
+            // the call graph claimed every build made every call.
             // `db::pg_store·PgStore·Row·item` STOOD HERE and is FIXED, not
             // argued away. Four `type Row = (..)` aliases in four method bodies
             // were named as members of `PgStore`, which declares no `Row` at
@@ -2592,7 +2611,9 @@ pub fn widest(a: u32) -> u32 {
                 facts
                     .relations
                     .iter()
-                    .filter(|r| r.kind != RelationKind::Contains)
+                    // Neither reaches a row — see `relation_edge_kind`, which
+                    // refuses both an edge kind and says why.
+                    .filter(|r| !matches!(r.kind, RelationKind::Contains | RelationKind::Variant))
                     .map(persist::RelationRow::of),
             );
             imports.extend(facts.imports.iter().map(|i| persist::ImportRow::of(i, &file)));

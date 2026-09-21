@@ -19,7 +19,7 @@ use crate::indexer::facts::{
     Binding, DeclaredType, Fqn, Import, ImportOrigin, Language, Observation, Param, Reason,
     RefKind, Reference, Relation, RelationKind, Resolution, Rung, Symbol, SymbolKind, Visibility,
 };
-use crate::indexer::fqn::{self, Form, FqnError, Reach};
+use crate::indexer::fqn::{self, Form, FqnError, Origin, Reach};
 
 /// [`Miss::unplaced`] for a tree-sitter walk: the shared constructor takes the
 /// node KIND, because the other language's parser has no `Node` to give it.
@@ -488,6 +488,98 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// Split a `cfg`-gated declaration into the CALLABLE a use site mints and
+    /// the ARM that implements it, emitting the callable and the relation and
+    /// handing back the arm.
+    ///
+    /// `#[cfg(feature = "x")] fn f` and `#[cfg(not(feature = "x"))] fn f` are
+    /// two BODIES of one function. Both are in the codebase — which is what
+    /// this indexer describes — and exactly one is in any given binary.
+    ///
+    /// **THE COST OF NOT DOING THIS IS A WRONG EDGE.** The arms have different
+    /// callees. Merged onto one node, the call graph claims every build makes
+    /// every call, which R4 ranks below making none. So an arm must be a NODE:
+    /// a condition recorded as a property has nothing to hang edges off.
+    ///
+    /// The ARM's identity is a `Form::Member` of the callable, keyed on the
+    /// condition the SOURCE WROTE. That needs no new form and cannot collide
+    /// with a real member, because `:`, `=` and `(` are not identifier
+    /// characters. A caller mints only the callable, so the merge contract is
+    /// untouched — nothing can name an arm from another file, which is correct:
+    /// nothing can call one.
+    ///
+    /// The callable is emitted ONCE however many arms there are, which is what
+    /// takes a two-armed declaration off the A7 collision list: it was one
+    /// identity minted twice, and the node a reader landed on carried whichever
+    /// arm's span the writer reached last.
+    fn split_into_variant(&mut self, node: Node<'_>, symbol: Symbol) -> Symbol {
+        let Some(condition) = self.condition_of(node) else { return symbol };
+        let Ok(parsed) = fqn::parse(symbol.fqn.as_str()) else { return symbol };
+        let Origin::Local { lang, reach } = parsed.origin else { return symbol };
+        let Some((_, head)) = parsed.tail.split_last() else { return symbol };
+        let module = match head {
+            [] => "",
+            [module] => module,
+            // A member of a type, gated. The arm would need a third segment the
+            // grammar has no shape for, so it is left whole rather than keyed
+            // on a string no reader could decompose (R4).
+            _ => return symbol,
+        };
+        let Ok(arm) = fqn::define(&Form::Member {
+            lang,
+            package: parsed.package,
+            module,
+            ty: &symbol.name,
+            member: &condition,
+            reach,
+        }) else {
+            return symbol;
+        };
+
+        // The CALLABLE, once. A second arm finds it already emitted and adds
+        // only its own relation.
+        if !self.symbols.iter().any(|s| s.fqn == symbol.fqn) {
+            self.symbols.push(Symbol { fqn: symbol.fqn.clone(), ..symbol.clone() });
+        }
+        self.relations.push(Relation {
+            kind: RelationKind::Variant,
+            child: arm.clone(),
+            parent: Resolution::Resolved { fqn: symbol.fqn, via: Rung::DeclaredHere },
+            at: symbol.span,
+        });
+        Symbol { fqn: arm, ..symbol }
+    }
+
+    /// The `cfg` condition on a declaration, normalised into one fqn segment —
+    /// or `None` for a declaration that carries none.
+    ///
+    /// `#[cfg(feature = "emb")]` becomes `cfg:feature=emb`. Whitespace and
+    /// quotes go because they are formatting; the structure stays, because
+    /// `not(feature = "emb")` is a different condition from `feature = "emb"`
+    /// and the two arms are told apart by exactly that.
+    ///
+    /// `cfg(test)` is deliberately NOT read here. An inline test module is
+    /// already handled by the test boundary, which every measurement reads, and
+    /// splitting 405 of them into arms would say nothing a reader wants.
+    fn condition_of(&self, node: Node<'_>) -> Option<String> {
+        // THE DECLARATION'S OWN PREVIOUS SIBLING, read on demand. An earlier
+        // cut carried the condition forward from the attribute as walk state,
+        // and it LEAKED: `#[cfg(unix)] let cmd = "which";` gates a statement,
+        // which pushes no symbol, so the condition was still standing when the
+        // next declaration arrived and gated something the source never gated.
+        // The corpus conservation property is what said so.
+        let raw = self.text(node.prev_named_sibling()?);
+        let inner = raw.strip_prefix("#[cfg(")?.strip_suffix(")]")?;
+        if inner == "test" {
+            return None;
+        }
+        let normalised: String = inner
+            .chars()
+            .filter(|c| !c.is_whitespace() && *c != '"' && *c != fqn::SEPARATOR)
+            .collect();
+        (!normalised.is_empty()).then(|| format!("cfg:{normalised}"))
+    }
+
     fn text(&self, node: Node<'_>) -> &'a str {
         &self.src[node.byte_range()]
     }
@@ -885,8 +977,8 @@ impl<'a> Walk<'a> {
     /// place every declaration passes through: a member declared in a type's
     /// body is owned by that type, whichever arm read it. Doing it per-arm would
     /// be six chances to forget one.
-    fn push(&mut self, symbol: Result<Symbol, FqnError>, scope: &Scope) -> Scope {
-        match symbol {
+    fn push(&mut self, node: Node<'_>, symbol: Result<Symbol, FqnError>, scope: &Scope) -> Scope {
+        match symbol.map(|s| self.split_into_variant(node, s)) {
             Ok(symbol) => {
                 // A member is OWNED by its type. Everything else written
                 // directly in a module is CONTAINED by that module. Exactly one
@@ -927,12 +1019,20 @@ impl<'a> Walk<'a> {
     /// returning a scope in which those members are owned by it. A declaration
     /// whose identity could not be minted owns nothing, because there would be
     /// nothing for the edge to point at (R4).
-    fn push_owner(&mut self, symbol: Result<Symbol, FqnError>, scope: &Scope) -> Scope {
-        let owner = symbol.as_ref().ok().map(|s| s.fqn.clone());
-        let mut inner = self.push(symbol, scope);
-        inner.owner = match owner {
-            Some(fqn) => Owner::Type(fqn),
-            None => Owner::Nobody,
+    fn push_owner(
+        &mut self,
+        node: Node<'_>,
+        symbol: Result<Symbol, FqnError>,
+        scope: &Scope,
+    ) -> Scope {
+        // Read off the RESULT, not off the input: a `cfg`-gated type is pushed
+        // as its ARM, and its members hang off the arm rather than off the
+        // callable — the callable has no body and declares nothing.
+        let declared = symbol.is_ok();
+        let mut inner = self.push(node, symbol, scope);
+        inner.owner = match declared {
+            true => Owner::Type(inner.from.clone()),
+            false => Owner::Nobody,
         };
         inner
     }
@@ -967,7 +1067,7 @@ impl<'a> Walk<'a> {
         };
         let declared = self.declared_type(node, "type");
         let symbol = self.symbol(node, scope, name, kind, reach, declared);
-        let inner = self.push(symbol, scope);
+        let inner = self.push(node, symbol, scope);
         self.children(node, &inner);
     }
 
@@ -987,7 +1087,7 @@ impl<'a> Walk<'a> {
             s.params = self.params(node);
             s
         });
-        let mut inner = self.push(symbol, scope);
+        let mut inner = self.push(node, symbol, scope);
         // A parameter's type is STATED in the signature, so the body knows the
         // type of every name the signature binds. Same rule as a `let`, one
         // level up — and the same refusal to guess: a parameter whose type is
@@ -1188,7 +1288,7 @@ impl<'a> Walk<'a> {
             return;
         };
         let symbol = self.symbol(node, scope, name, kind, Reach::Item, DeclaredType::Unstated);
-        let mut inner = self.push_owner(symbol, scope);
+        let mut inner = self.push_owner(node, symbol, scope);
         // A type declared HERE is named in this module, so its home is the
         // scope's own — no table needed and none consulted.
         inner.container = Container::Type { module: scope.module.clone(), name: name.to_string() };
@@ -1245,7 +1345,7 @@ impl<'a> Walk<'a> {
             Reach::Item,
             DeclaredType::Unstated,
         );
-        let mut inner = self.push_owner(symbol, scope);
+        let mut inner = self.push_owner(node, symbol, scope);
         if let Container::Type { module, name: enum_name } = &scope.container {
             inner.container =
                 Container::Type { module: module.clone(), name: format!("{enum_name}::{name}") };
@@ -1260,7 +1360,7 @@ impl<'a> Walk<'a> {
         };
         let declared = self.declared_type(node, "type");
         let symbol = self.symbol(node, scope, name, SymbolKind::Field, Reach::Field, declared);
-        let inner = self.push(symbol, scope);
+        let inner = self.push(node, symbol, scope);
         self.children(node, &inner);
     }
 
@@ -1273,7 +1373,7 @@ impl<'a> Walk<'a> {
             let name = position.to_string();
             let declared = DeclaredType::Stated(self.text(ty).to_string());
             let symbol = self.symbol(ty, scope, &name, SymbolKind::Field, Reach::Field, declared);
-            let inner = self.push(symbol, scope);
+            let inner = self.push(node, symbol, scope);
             // The type node is dispatched, not descended into: the field's type
             // is itself a use site and skipping it would lose the edge.
             self.node(ty, &inner);
@@ -1318,7 +1418,7 @@ impl<'a> Walk<'a> {
         }
         let symbol =
             self.symbol(node, scope, name, SymbolKind::Module, MODULE, DeclaredType::Unstated);
-        let mut inner = self.push(symbol, scope);
+        let mut inner = self.push(node, symbol, scope);
         // What is written inside this `mod` is held by it, not by the file.
         // `push` set `from` to the module's own identity, which is the same
         // string — read from there so the two cannot be minted apart.

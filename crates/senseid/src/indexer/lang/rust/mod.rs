@@ -1854,13 +1854,101 @@ pub fn free(w: &Widget) -> u32 { w.width }
     /// the counter's whole value is that it is derived from the GRAMMAR and not
     /// from the walk, and teaching it about a symbol the grammar does not
     /// contain would make the two sides agree by construction.
+    /// Every `cfg`-gated declaration, counted off the TREE — the second term of
+    /// the conservation identity.
+    ///
+    /// A gated declaration yields an ARM, and every arm of one name shares ONE
+    /// callable. So the extra nodes are the DISTINCT gated names per scope, not
+    /// the number of gated declarations — two arms of `provision_status` add
+    /// one node between them, not two. Getting that wrong was the first cut of
+    /// this term, and the corpus said so in seven files at once.
+    ///
+    /// INDEPENDENT BY CONSTRUCTION, which is the whole value of the property.
+    /// It reads node kinds and sibling order straight off the grammar and never
+    /// asks `Walk::condition_of` anything; a shared reader would make the two
+    /// sides agree because they are one derivation, and a conservation property
+    /// that cannot disagree measures nothing.
+    fn count_gated(root: tree_sitter::Node<'_>, text: &str) -> usize {
+        let mut callables: std::collections::BTreeSet<(usize, String)> =
+            std::collections::BTreeSet::new();
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            let mut cursor = node.walk();
+            let children: Vec<tree_sitter::Node<'_>> = node.named_children(&mut cursor).collect();
+            for (at, child) in children.iter().enumerate() {
+                stack.push(*child);
+                if child.kind() != "attribute_item" {
+                    continue;
+                }
+                let raw = &text[child.byte_range()];
+                let Some(inner) = raw.strip_prefix("#[cfg(").and_then(|r| r.strip_suffix(")]"))
+                else {
+                    continue;
+                };
+                // `cfg(test)` is not a variant — the inline test boundary
+                // already owns it, and 405 of them would say nothing a reader
+                // wants.
+                if inner == "test" {
+                    continue;
+                }
+                // The attribute gates whatever comes NEXT, and only a
+                // declaration the other side counts produces a node to pair
+                // with.
+                let gated = children.get(at + 1).filter(|n| {
+                    DECLARATION_KINDS.contains(&n.kind())
+                        && n.child_by_field_name("name").is_some()
+                        && !(n.kind() == "mod_item" && n.child_by_field_name("body").is_none())
+                });
+                // Keyed on the ENCLOSING node and the name: that pair is what
+                // decides whether two arms are arms of one callable, and it is
+                // read off the tree rather than from the walk.
+                // A MEMBER OF A TYPE IS NOT SPLIT, and the walk says so in as
+                // many words: an arm of `Widget::pg` would need a segment the
+                // grammar has no shape for, so `Walk::split_into_variant` leaves it
+                // whole rather than keying it on a string no reader could
+                // decompose (R4). `logger/src/writer.rs` is the corpus case —
+                // seven gated enum variants, fields and methods, none of them
+                // free items. This side excludes them on the same grammatical
+                // ground rather than by consulting the walk.
+                // `declaration_list` is BOTH a `mod` body and an `impl` body, so
+                // the kind alone cannot say it — the PARENT does. A fn in a mod
+                // is a free item and is split; a fn in an impl is a member and
+                // is not.
+                let free = match node.kind() {
+                    "field_declaration_list"
+                    | "enum_variant_list"
+                    | "ordered_field_declaration_list" => false,
+                    "declaration_list" => node.parent().is_some_and(|p| p.kind() == "mod_item"),
+                    _ => true,
+                };
+                if let Some(declaration) = gated.filter(|n| free && !inside_an_unnameable_impl(**n))
+                    && let Some(named) = declaration.child_by_field_name("name")
+                {
+                    callables.insert((node.id(), text[named.byte_range()].to_string()));
+                }
+            }
+        }
+        callables.len()
+    }
+
     #[test]
     fn the_symbol_count_equals_an_independent_count_of_declaration_nodes() {
         let mut disagreements = Vec::new();
         for (path, text) in repo_rust_sources() {
             let facts = read(&Source { package: "p", module: "m", path: &path, text: &text })
                 .unwrap_or_else(|e| panic!("{path}: {e:?}"));
-            let expected = count_declarations(parse(&text).root_node()) + 1;
+            // A CONSERVATION IDENTITY, not an equality, and the extra term is
+            // the point. A `cfg`-gated declaration yields TWO nodes: the
+            // callable a use site mints, and the arm that implements it. The
+            // flat scan counts the declaration once, so the two sides differ by
+            // exactly the number of gated declarations — counted here the same
+            // independent way, off the tree rather than off the walk.
+            //
+            // No tolerance. A tolerance is where a double-count hides, which is
+            // what this property exists to prevent.
+            let root = parse(&text);
+            let expected =
+                count_declarations(root.root_node()) + 1 + count_gated(root.root_node(), &text);
             if facts.symbols.len() != expected {
                 disagreements.push(format!(
                     "{path}: walk produced {}, independent count says {}",
@@ -2162,6 +2250,91 @@ pub fn free(w: &Widget) -> u32 { w.width }
             fqns(&facts).contains(&"rust·p·db·Holder·sweep·item"),
             "the METHOD is a member of its type; only what its BODY declares is not: {:?}",
             fqns(&facts)
+        );
+    }
+
+    /// **A `cfg`-GATED DECLARATION IS A VARIANT, AND BOTH ARMS ARE KEPT.**
+    ///
+    /// `#[cfg(feature = "x")] fn f` and `#[cfg(not(feature = "x"))] fn f` are
+    /// two BODIES of one function. Both are in the codebase — which is what
+    /// this indexer describes — and exactly one is in any given binary. A
+    /// graph that kept one arm would be describing a build; a graph that
+    /// merged them keeps a node whose span is whichever arm the writer reached
+    /// last.
+    ///
+    /// **THE COST OF MERGING IS A WRONG EDGE, not untidiness.** The two bodies
+    /// have DIFFERENT CALLEES. Collapsed onto one node, the call graph asserts
+    /// that the non-embedded build calls `merge` — false in half the builds,
+    /// and R4 ranks a wrong edge below a missing one. That is why the variants
+    /// have to be real NODES: a property list on one node has nothing to hang
+    /// outbound edges off.
+    ///
+    /// So one declaration becomes a shared CALLABLE plus one variant per arm:
+    /// callers mint the callable and nothing else, so the merge contract is
+    /// untouched, and each body's edges hang off its own variant.
+    ///
+    /// MEASURED over this repository: 52 non-test `cfg`-gated declarations,
+    /// of which one pair shares a name — `api/handlers/model_provisioning.rs`,
+    /// which is where this test's fixture comes from.
+    ///
+    /// MUTATION: return the plain identity from `Walk::variant_of` — the two
+    /// arms collapse onto one node and the `Variant` relations vanish.
+    #[test]
+    fn a_cfg_gated_declaration_keeps_both_arms_under_one_callable() {
+        let facts = facts(
+            "h",
+            "#[cfg(feature = \"emb\")]\n\
+             pub fn status() -> u32 { merge() }\n\
+             #[cfg(not(feature = \"emb\"))]\n\
+             pub fn status() -> u32 { 0 }\n",
+        );
+
+        let mut minted: Vec<&str> =
+            fqns(&facts).into_iter().filter(|f| f.contains("status")).collect();
+        minted.sort_unstable();
+        assert_eq!(
+            minted,
+            vec![
+                "rust·p·h·status·cfg:feature=emb·item",
+                "rust·p·h·status·cfg:not(feature=emb)·item",
+                "rust·p·h·status·item",
+            ],
+            "ONE callable, which is all a caller can spell, and one variant per arm carrying \
+             the condition the source wrote"
+        );
+
+        // THE PROPERTY THAT MATTERS. `merge()` is called by the embedded arm
+        // and by nothing else, so its edge hangs off THAT variant — never off
+        // the callable, which would claim every build makes the call.
+        let calls: Vec<String> = facts
+            .references
+            .iter()
+            .filter(|r| r.kind == RefKind::Calls)
+            .map(|r| r.from.as_str().to_string())
+            .collect();
+        assert_eq!(
+            calls,
+            vec!["rust·p·h·status·cfg:feature=emb·item".to_string()],
+            "the call belongs to the arm that makes it"
+        );
+
+        // And each arm says which callable it is an arm OF.
+        let variants: Vec<String> = facts
+            .relations
+            .iter()
+            .filter(|r| r.kind == RelationKind::Variant)
+            .map(|r| match &r.parent {
+                Resolution::Resolved { fqn, .. } => format!("{} -> {fqn}", r.child.as_str()),
+                Resolution::Unresolved { evidence, .. } => evidence.name.clone(),
+            })
+            .collect();
+        assert_eq!(
+            variants,
+            vec![
+                "rust·p·h·status·cfg:feature=emb·item -> rust·p·h·status·item".to_string(),
+                "rust·p·h·status·cfg:not(feature=emb)·item -> rust·p·h·status·item".to_string(),
+            ],
+            "each arm points at the callable it implements"
         );
     }
 
