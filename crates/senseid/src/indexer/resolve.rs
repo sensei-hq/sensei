@@ -4156,6 +4156,17 @@ mod tests {
         // to its real home or marked EXTERNAL, never left as a first-party node
         // nothing declares. Tracked in `docs/backlog.md`; this ceiling is what
         // stops the population growing in the meantime.
+        // **PRINTED ON SUCCESS, DELIBERATELY.** A ratchet silent while green can
+        // only be lowered by someone who edits the test to discover where it
+        // stands, so the headroom is never known at the moment it matters — the
+        // one before a change that spends it. This is the second ratchet in
+        // this slice to earn a print for that reason.
+        println!(
+            "  dangling first-party references: {other} of {resolved} over {} identities \
+             (ceiling 1,300, headroom {})",
+            elsewhere.len(),
+            1_300_i64 - other as i64
+        );
         assert!(
             other <= 1_300,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
