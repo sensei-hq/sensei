@@ -1160,8 +1160,8 @@ mod tests {
     }
 
     use crate::indexer::facts::{
-        Binding, DeclaredType, Evidence, Fqn, ImportOrigin, Reason, RefKind, RelationKind,
-        Resolution, Symbol, SymbolKind, Visibility,
+        Binding, DeclaredType, Evidence, Fqn, ImportOrigin, Observation, Reason, RefKind,
+        RelationKind, Resolution, Symbol, SymbolKind, Visibility,
     };
 
     /// One of every declaration the plan's step 3 names, in one file, so the
@@ -2028,6 +2028,79 @@ pub fn free(w: &Widget) -> u32 { w.width }
         assert!(
             named.iter().any(|f| f.ends_with("Widget\u{00B7}new\u{00B7}item")),
             "`Self::new()` reaches Widget::new: {named:?}"
+        );
+    }
+
+    /// **A GLOB ROOTED IN THIS PACKAGE IS THIS FILE NAMING A MODULE** (S6).
+    ///
+    /// `use super::*` inside `db::pg_store::graph` is the file writing down
+    /// `db::pg_store`. Resolving that root needs no export list, no table and
+    /// no other file — only the module the walk is already standing in. It is
+    /// the one shape the spec's §1 measured at 17.6% of every member reference
+    /// the barrier resolved, and dropping the table without it cost 3,389
+    /// references in one commit.
+    ///
+    /// A CANDIDATE, NOT A NAMED. The glob says where the name COULD come from,
+    /// not that it does — `PgStore` might be declared in the prelude, in
+    /// another glob, or nowhere. That is an inference about this file rather
+    /// than a statement by it, so it still needs a declaration to agree (R4,
+    /// and §9: `Named` is not a licence). The distinction is the whole of S7
+    /// and this is the case that tests it from the weak side.
+    ///
+    /// `crate::` and `self::` roots are the same fact spelled differently and
+    /// are handled with it; a BARE glob (`use serde::*`) names a package we do
+    /// not open and answers nothing (R5).
+    ///
+    /// MUTATION: return `None` from `glob_rooted_here` — the member falls back
+    /// to the impl block's own module and the first assertion goes red naming
+    /// the module it landed in instead.
+    #[test]
+    fn a_glob_rooted_in_this_package_names_the_module_its_names_come_from() {
+        // `graph.rs` declares nothing and imports nothing by name. Its ONLY
+        // statement about `PgStore` is the glob root.
+        let facts = facts(
+            "db::pg_store::graph",
+            "use super::*;\n\
+             pub fn wire(pg: &PgStore) -> u32 { pg.upsert() }\n",
+        );
+
+        let considered: Vec<String> = facts
+            .references
+            .iter()
+            .filter(|r| r.kind == RefKind::Calls)
+            .filter_map(|r| match &r.target {
+                Resolution::Unresolved { evidence, .. } => Some(evidence),
+                Resolution::Resolved { .. } => None,
+            })
+            .flat_map(Evidence::identities)
+            .map(Fqn::to_string)
+            .collect();
+        assert_eq!(
+            considered,
+            vec!["rust·p·db::pg_store·PgStore·upsert·item".to_string()],
+            "`super` from `db::pg_store::graph` is `db::pg_store`, which is where the member \
+             is named — the file said so and no table was asked"
+        );
+
+        // AND IT IS THE WEAK GRADE. A glob says where a name COULD come from.
+        let graded: Vec<&str> = facts
+            .references
+            .iter()
+            .filter_map(|r| match &r.target {
+                Resolution::Unresolved { evidence, .. } => Some(evidence),
+                Resolution::Resolved { .. } => None,
+            })
+            .flat_map(|e| e.saw.iter())
+            .filter_map(|o| match o {
+                Observation::Named(_) => Some("Named"),
+                Observation::Candidate(_) => Some("Candidate"),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !graded.contains(&"Named"),
+            "a glob is an inference about this file, not a statement by it, so nothing it \
+             yields may become an edge unaided: {graded:?}"
         );
     }
 
