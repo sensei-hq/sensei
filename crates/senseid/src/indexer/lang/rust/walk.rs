@@ -20,6 +20,7 @@ use crate::indexer::facts::{
     RefKind, Reference, Relation, RelationKind, Resolution, Rung, Symbol, SymbolKind, Visibility,
 };
 use crate::indexer::fqn::{self, Form, FqnError, Origin, Reach};
+use crate::indexer::resolve::{root_of, rooted_against};
 
 /// [`Miss::unplaced`] for a tree-sitter walk: the shared constructor takes the
 /// node KIND, because the other language's parser has no `Node` to give it.
@@ -528,35 +529,26 @@ impl<'a> Walk<'a> {
     ///
     /// One resolver for both rungs, at two grades: a by-name import is the
     /// file's own word and a glob only says a name COULD arrive that way. The
-    /// grading belongs to the callers; the arithmetic on the path is one thing
-    /// and is written once.
+    /// grading belongs to the callers; the arithmetic on the path is one thing.
+    ///
+    /// **AND IT IS NOT WRITTEN HERE.** `resolve::rooted_against` is that one
+    /// thing, driven by this language's own `Grammar::roots` — the same
+    /// function the ladder reads a rooted path with. What this adds is the
+    /// BASE and the precondition:
+    ///
+    /// - the base is the FILE's module, never a scope's. A `use super::*` at
+    ///   file scope is relative to the file, so climbing from a scope that had
+    ///   descended into an inline `mod` would climb from the wrong place.
+    /// - the path MUST start with a root. The ladder's caller may hand it a
+    ///   rootless path and mean "relative to here"; for a walk deciding whether
+    ///   a type is OURS, a bare `use serde::Serialize` names a package we do
+    ///   not open (R5) and must answer nothing.
     fn module_a_root_names(&self, segments: &[&str]) -> Option<String> {
-        let own = || self.module.split("::").filter(|s| !s.is_empty()).collect::<Vec<&str>>();
-        let (mut module, mut rest) = match segments.split_first() {
-            Some((&"crate", tail)) => (Vec::new(), tail),
-            Some((&"self", tail)) => (own(), tail),
-            Some((&"super", _)) => {
-                let mut climbed = own();
-                let mut rest = segments;
-                while let Some((&"super", tail)) = rest.split_first() {
-                    // Climbing past the package root leaves the package, and
-                    // nothing outside it is ours to name (R5).
-                    climbed.pop()?;
-                    rest = tail;
-                }
-                (climbed, rest)
-            }
-            _ => return None,
-        };
-        // A root may be followed by more roots only in the `super` chain above;
-        // anywhere else they are ordinary segments and this is a no-op.
-        while let Some((&"self", tail)) = rest.split_first() {
-            // `use self::a::*` and `use a::{self}` both reach here; `self` in
-            // the middle of a path names the module already reached.
-            rest = tail;
-        }
-        module.extend(rest);
-        Some(module.join("::"))
+        root_of(segments.first()?, &super::GRAMMAR)?;
+        let owned: Vec<String> = segments.iter().map(|s| (*s).to_string()).collect();
+        let base: Vec<String> =
+            self.module.split("::").filter(|s| !s.is_empty()).map(str::to_string).collect();
+        Some(rooted_against(&owned, base, &super::GRAMMAR)?.join("::"))
     }
 
     /// Split a `cfg`-gated declaration into the CALLABLE a use site mints and
