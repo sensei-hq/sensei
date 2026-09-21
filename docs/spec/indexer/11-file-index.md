@@ -63,8 +63,16 @@ persistence layer has one input shape and no special case.
 
 - **S1.** The driver NEVER matches on a language. It resolves an adapter from
   the extension, calls it, and stamps the result. `lang::tests::nothing_outside
-  _this_module_dispatches_on_a_language_by_hand` is the existing guard and it
-  covers this module.
+  _this_module_dispatches_on_a_language_by_hand` is the guard. It did NOT cover
+  this module when that sentence was first written: the guard iterates
+  `indexer::guard_sources()`, whose `OWNED` list named six files and `lang/`
+  and not `index.rs`, so it read every file except the driver the requirement
+  is about. It covers it from the increment that added `index.rs` to `OWNED` —
+  along with the fqn-separator, `Option`-for-a-resolution, defaulted-value,
+  collapsed-spelling and failed-read guards, all of which read the same list.
+  `index.rs` was already free of hand-written language arms; what it was not
+  free of was a doc-comment fqn and a `.ok()` on `adapter.read`, both of which
+  the guards caught the moment they could see the file.
 - **S2.** An extension no adapter claims yields `nodes: [], edges: []` and a
   stated reason — never a partial read and never an error. Most of a repo is
   not source: 942 of 2,309 files here.
