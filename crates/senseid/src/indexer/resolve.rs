@@ -545,6 +545,15 @@ impl<'a> Ladder<'a> {
         //
         // ABOVE the glob, because a glob binds an unknown set and this proves a
         // declaration was read.
+        //
+        // The two grades in order, stronger first. A `Named` is this file's own
+        // statement and needs no table; a `Candidate` is a name match and needs
+        // one. Both sit above the field guard and on the correct side of it:
+        // that guard forbids a PATH rung from serving a field, and these are
+        // owning-type lookups keyed on a whole identity, reach included.
+        if let Placed::Proven(fqn) = self.named_by_this_file(evidence) {
+            return Resolution::Resolved { fqn, via: Rung::NamedByThisFile };
+        }
         if let Placed::Proven(fqn) = self.declared_by_its_type(evidence) {
             return Resolution::Resolved { fqn, via: Rung::DeclaredByItsType };
         }
@@ -909,13 +918,48 @@ impl<'a> Ladder<'a> {
         })
     }
 
+    /// **Rung 1a. THIS FILE'S OWN TEXT established the identity, so it is placed
+    /// with nothing else agreeing** (stage 11, S7).
+    ///
+    /// The rung that removes the type barrier. Every rung around it asks the
+    /// SCAN a question — does some type declare this, does some module export
+    /// it — and the answers come from sets built after a completed pass. This
+    /// one asks the file, which the walk was already holding.
+    ///
+    /// The grading happens in the WALK, not here, and that is deliberate: only
+    /// the code that read the syntax knows whether the type's home came from a
+    /// declaration in this file, a package-rooted import in this file, or a
+    /// table. So this rung has no condition at all — an
+    /// [`Observation::Named`] is the walk's statement that the file proves it,
+    /// and re-deciding that here would be a second opinion formed with less
+    /// information.
+    ///
+    /// **What it does NOT claim** (§9): that the target exists. That is the
+    /// persistence layer's question, answered by minting a node on first
+    /// mention and promoting it when its own file arrives. Relaxing the
+    /// existence gate blanket-style was MEASURED at +12,360 resolved references
+    /// and broke 13 tests; the grading is what makes the relaxation safe, and
+    /// `a_bare_name_matching_another_files_declaration_is_not_proof_of_anything`
+    /// is what holds the other side of it.
+    fn named_by_this_file(&self, evidence: &Evidence) -> Placed {
+        for observation in &evidence.saw {
+            if let Observation::Named(fqn) = observation {
+                return Placed::Proven(fqn.clone());
+            }
+        }
+        Placed::Unbound
+    }
+
     /// The first identity the walk CONSIDERED that some predicate places. Shared
-    /// by the three rungs above, which differ only in where they look the
+    /// by the two rungs above, which differ only in where they look the
     /// candidate up — and a second copy of this loop is how they would come to
     /// disagree about what a candidate is.
     ///
-    /// The predicate returns a [`Placed`] rather than a bool because one of the
-    /// three answers with a DIFFERENT identity from the candidate it was handed.
+    /// Reads [`Observation::Candidate`] and NEVER [`Observation::Named`]. The
+    /// two walks over `saw` are separate on purpose: a `Named` needs no
+    /// predicate, and letting it fall through to one would make the stronger
+    /// grade answerable by the weaker rung's table — which is the barrier,
+    /// reintroduced one condition at a time.
     fn first_candidate(&self, evidence: &Evidence, places: impl Fn(&Fqn) -> Placed) -> Placed {
         for observation in &evidence.saw {
             if let Observation::Candidate(fqn) = observation
@@ -1749,15 +1793,20 @@ mod tests {
             .1
     }
 
-    /// Rung 1b, red-first. A method declared in an `impl` block that sits in a
-    /// DIFFERENT FILE from its type — Rust's most ordinary shape, and 24 of this
-    /// repo's own `impl PgStore` blocks — is reached from a third file.
+    /// A method declared in an `impl` block that sits in a DIFFERENT FILE from
+    /// its type — Rust's most ordinary shape, and 24 of this repo's own
+    /// `impl PgStore` blocks — is reached from a third file.
     ///
-    /// Both sides already mint the same string: `TypeHomes` gives the walk the
-    /// TYPE's home, so the declaration in `folders.rs` and the call in
-    /// `watcher.rs` both name `p·db·PgStore·add_watch_root`. The only thing that
-    /// was missing is a rung willing to say so, because `declared_here` reads
-    /// THIS FILE's declarations alone.
+    /// Both sides mint the same string, and this test is about WHY the caller
+    /// is allowed to act on it. It used to be `DeclaredByItsType`: the walk got
+    /// the type's home from the barrier table, so its identity was a
+    /// `Candidate`, and a repo-wide set of declared members had to confirm it.
+    ///
+    /// The caller never needed either. It writes `use crate::db::PgStore` — it
+    /// STATES where `PgStore` lives — so the identity is `Named` and
+    /// `NamedByThisFile` places it from the file alone (S7). The sibling test
+    /// below keeps `DeclaredByItsType` covered for the case where the file
+    /// genuinely says nothing.
     ///
     /// MEASURED at 2,427 rust and 539 typescript references, 742 distinct
     /// declarations that had no inbound edge at all.
@@ -1788,9 +1837,54 @@ mod tests {
         };
         assert_eq!(
             *via,
+            Rung::NamedByThisFile,
+            "the caller imports PgStore by a package-rooted path, so its own text states where \
+             the type lives and no repo-wide set is consulted"
+        );
+    }
+
+    /// **THE SAME REACH, FOR A FILE THAT STATES NOTHING** — and the test that
+    /// keeps [`Rung::DeclaredByItsType`] covered once S7 takes the ordinary
+    /// case away from it.
+    ///
+    /// A glob binds an unknown set of names, so `use super::*` does NOT say
+    /// where `PgStore` lives; the walk falls through to the type table and what
+    /// it mints is a `Candidate`. That identity still cannot become an edge on
+    /// its own — a repo-wide set of what some type was read declaring has to
+    /// agree — which is exactly the rung below `NamedByThisFile`.
+    ///
+    /// Without this test the sibling above would be the only cover for either
+    /// rung, and a change that made every mint `Named` would pass it.
+    #[test]
+    fn a_file_that_states_no_home_still_needs_the_declaration_to_agree() {
+        let scanned = scan(&[
+            ("db", "src/db.rs", "pub struct PgStore { pub url: String }\n"),
+            (
+                "db::folders",
+                "src/db/folders.rs",
+                "use crate::db::PgStore;\n\
+                 impl PgStore { pub fn add_watch_root(&self) -> u32 { 0 } }\n",
+            ),
+            (
+                "db::watcher",
+                "src/db/watcher.rs",
+                "use super::*;\n\
+                 pub fn start(store: &PgStore) -> u32 { store.add_watch_root() }\n",
+            ),
+        ]);
+
+        let caller = file_of(&scanned, "src/db/watcher.rs");
+        assert_placed(caller, "rust·p·db·PgStore·add_watch_root·item");
+        let call =
+            caller.references.iter().find(|r| r.kind == RefKind::Calls).expect("one call site");
+        let Resolution::Resolved { via, .. } = &call.target else {
+            panic!("the call is not placed: {:?}", call.target)
+        };
+        assert_eq!(
+            *via,
             Rung::DeclaredByItsType,
-            "the proof is the declaration, so the rung must say so rather than claiming an \
-             import named it"
+            "a glob states no home, so the identity is a candidate and the proof has to be a \
+             declaration some type was read making — not this file's own text"
         );
     }
 
@@ -1840,9 +1934,9 @@ mod tests {
         };
         assert_eq!(
             *via,
-            Rung::DeclaredByItsType,
-            "the two sides mint one string, so the proof is an exact identity match against a \
-             declaration — not a lookup that translated one spelling into another"
+            Rung::NamedByThisFile,
+            "the two sides mint one string, and the caller's own `use crate::macos::MacOSProvider` \
+             is what places it — no lookup, and no repo-wide set either"
         );
     }
 
@@ -2976,6 +3070,7 @@ mod tests {
             [
                 "declared_here",
                 "through_an_import",
+                "named_by_this_file",
                 "declared_by_its_type",
                 "through_a_glob",
                 "rooted_in_this_package",
@@ -3999,11 +4094,52 @@ mod tests {
         // generated by a `derive` that exists in no source file (spec §5). It
         // moves whenever anyone edits any rust in this workspace, and a ratchet
         // that fails on unrelated work is a ratchet nobody trusts.
+        //
+        // **RAISED 320 -> 1,300 BY S7, DELIBERATELY, AND THIS IS WHAT IT BOUGHT
+        // AND WHAT IT COST.**
+        //
+        // S7 lets an identity THIS FILE'S TEXT established become an edge with
+        // no repo-wide set agreeing, which is what removes the type barrier.
+        // The file is right about where the type lives in every case below; what
+        // it cannot know from one file is that the name it was handed does not
+        // DECLARE the member. So references the old gate refused as missing are
+        // now present and dangling: 1,260 over 358 identities, from ~320.
+        //
+        // MEASURED, and every one of the three causes is a declaration that is
+        // not in the source we walked rather than a home the file got wrong:
+        //
+        // - **A TYPE ALIAS.** 423 of them on one identity. `api/state.rs` says
+        //   `pub type AppState = Arc<SharedState>`, so `state.pg` names
+        //   `api::state·AppState·pg` while the field is declared on
+        //   `SharedState`. Following the alias is cross-file knowledge, which is
+        //   the barrier this stage exists to remove.
+        // - **AN IMPL A `derive` GENERATED.** `MemOutbox::default`,
+        //   `NewRun::default`, clap's `Cli::parse_from`. Spec §5: the impl
+        //   exists in no source file, so no walk can declare it.
+        // - **THE SPLIT-`impl` MIS-ANCHORING**, already ratcheted separately at
+        //   655 of 5,474. Here the DECLARATION is the mis-filed side: with no
+        //   table, `use super::*` states no home, so an `impl PgStore` in
+        //   `db/pg_store/folders.rs` anchors its members one module too deep
+        //   while the caller — which imports `PgStore` by a package-rooted path
+        //   — names the right one.
+        //
+        // **THE OBLIGATION THIS CREATES, and it is not discharged here.** Under
+        // stub-and-heal each of these mints a node on first mention that no
+        // declaration ever promotes — a ghost. S9 keeps it harmless (a
+        // `referenced` node is inserted only if ABSENT, so it can never
+        // overwrite a real declaration), and §4.3 makes finding them a stage-12
+        // query rather than an indexer output: `lost_exact` is a node with no
+        // inbound edge whose exact identity appears in some unlinked edge.
+        //
+        // What stage 12 MUST do with them is decided and recorded, not left
+        // implicit: a target no first-party declaration mints is to be resolved
+        // to its real home or marked EXTERNAL, never left as a first-party node
+        // nothing declares. Tracked in `docs/backlog.md`; this ceiling is what
+        // stops the population growing in the meantime.
         assert!(
-            other <= 320,
+            other <= 1_300,
             "{other} of {resolved} first-party references ({} distinct identities) name an \
-             identity no declaration mints, up from the 312 this was measured at — 309 of them \
-             before `indexer/reconcile.rs` itself joined the corpus. Worst: {:?}",
+             identity no declaration mints, up from the 1,260 S7 was measured at. Worst: {:?}",
             elsewhere.len(),
             worst.iter().take(12).collect::<Vec<_>>()
         );

@@ -1157,7 +1157,7 @@ mod tests {
     }
 
     use crate::indexer::facts::{
-        Binding, DeclaredType, ImportOrigin, Observation, Reason, RefKind, RelationKind,
+        Binding, DeclaredType, Evidence, Fqn, ImportOrigin, Reason, RefKind, RelationKind,
         Resolution, Symbol, SymbolKind, Visibility,
     };
 
@@ -1312,11 +1312,8 @@ pub fn free(w: &Widget) -> u32 { w.width }
                 Resolution::Unresolved { evidence, .. } => Some(evidence),
                 Resolution::Resolved { .. } => None,
             })
-            .flat_map(|e| e.saw.iter())
-            .filter_map(|o| match o {
-                Observation::Candidate(fqn) => Some(fqn.to_string()),
-                _ => None,
-            })
+            .flat_map(Evidence::identities)
+            .map(Fqn::to_string)
             .collect();
 
         assert_eq!(
@@ -1944,10 +1941,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
             .filter_map(|r| match &r.target {
                 Resolution::Resolved { fqn, .. } => Some(fqn.to_string()),
                 Resolution::Unresolved { evidence, .. } => {
-                    evidence.saw.iter().find_map(|o| match o {
-                        Observation::Candidate(fqn) => Some(fqn.to_string()),
-                        _ => None,
-                    })
+                    evidence.identities().next().map(Fqn::to_string)
                 }
             })
             .collect();
@@ -2030,7 +2024,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
                 params: Vec::new(),
             },
         )));
-        assert_eq!(homes.lookup("senseid", "PgStore"), Home::Ours { module: "db::pg_store" });
+        assert_eq!(homes.lookup("senseid", "PgStore"), Home::Tabled { module: "db::pg_store" });
 
         let told = read_with(&homes);
         assert!(
@@ -2045,10 +2039,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
             .iter()
             .filter_map(|r| match &r.target {
                 Resolution::Unresolved { evidence, .. } if evidence.name == "forge" => {
-                    evidence.saw.iter().find_map(|o| match o {
-                        Observation::Candidate(fqn) => Some(fqn.to_string()),
-                        _ => None,
-                    })
+                    evidence.identities().next().map(Fqn::to_string)
                 }
                 _ => None,
             })
@@ -2100,8 +2091,8 @@ pub fn free(w: &Widget) -> u32 { w.width }
         // The same name in a DIFFERENT package is a different type and keeps
         // its home.
         let elsewhere = TypeHomes::of(vec![("senseid", &one), ("cli", &two)]);
-        assert_eq!(elsewhere.lookup("senseid", "Config"), Home::Ours { module: "a" });
-        assert_eq!(elsewhere.lookup("cli", "Config"), Home::Ours { module: "b" });
+        assert_eq!(elsewhere.lookup("senseid", "Config"), Home::Tabled { module: "a" });
+        assert_eq!(elsewhere.lookup("cli", "Config"), Home::Tabled { module: "b" });
     }
 
     /// A2, and the load-bearing check of the whole rewrite. The legacy defect was a
@@ -2256,11 +2247,8 @@ fn helper() -> u32 { 0 }
                 Resolution::Unresolved { evidence, .. } => Some(evidence),
                 Resolution::Resolved { .. } => None,
             })
-            .flat_map(|e| e.saw.iter())
-            .filter_map(|o| match o {
-                Observation::Candidate(fqn) => Some(fqn.as_str()),
-                _ => None,
-            })
+            .flat_map(Evidence::identities)
+            .map(Fqn::as_str)
             .collect();
 
         for expected in [
@@ -2738,10 +2726,7 @@ fn helper() -> u32 { 0 }
             .find_map(|r| match &r.target {
                 Resolution::Resolved { fqn, .. } => Some(fqn.as_str().to_string()),
                 Resolution::Unresolved { evidence, .. } => {
-                    evidence.saw.iter().find_map(|o| match o {
-                        Observation::Candidate(fqn) => Some(fqn.as_str().to_string()),
-                        _ => None,
-                    })
+                    evidence.identities().next().map(|f| f.as_str().to_string())
                 }
             })
             .expect("the fixture calls script");

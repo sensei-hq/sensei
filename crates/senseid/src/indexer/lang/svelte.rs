@@ -172,7 +172,9 @@ mod tests {
                         .saw
                         .iter()
                         .find_map(|o| match o {
-                            Observation::Candidate(fqn) => Some(fqn.to_string()),
+                            Observation::Candidate(fqn) | Observation::Named(fqn) => {
+                                Some(fqn.to_string())
+                            }
                             _ => None,
                         })
                         .unwrap_or_else(|| format!("{reason:?}")),

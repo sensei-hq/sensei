@@ -566,7 +566,7 @@ impl<'a> Walk<'a> {
         let Ok(ty) = super::type_segment(ty) else {
             return self.missed(member, at, Reason::UnhandledForm, Reach::Item);
         };
-        if let Home::Ours { module } = self.types.lookup(self.package, &ty)
+        if let Home::Tabled { module } = self.types.lookup(self.package, &ty)
             && let Ok(fqn) = fqn::refer(&Form::Member {
                 lang: Language::Python,
                 package: self.package,

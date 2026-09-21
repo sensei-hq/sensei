@@ -99,16 +99,47 @@ pub enum ReadError {
 /// [`Home::NotOurs`] deliberately says nothing about WHICH outside — library or
 /// language built-in. That needs the grammar's prelude and the file's imports,
 /// neither of which this table has, and both of which the ladder does (R7).
+///
+/// **A HOME CARRIES HOW IT WAS LEARNED, AND THAT IS S7'S WHOLE MECHANISM.**
+/// [`Home::Stated`] and [`Home::Tabled`] hold the same string and make
+/// different claims: one is a fact this file's own text establishes, the other
+/// is an answer a repo-wide table supplied. A walk that could not tell them
+/// apart would have to grade every identity it mints the same way, and the
+/// choice is exactly whether an identity may become an edge on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Home<'a> {
-    /// This scan declares it, in `module`.
-    Ours { module: &'a str },
+    /// THIS FILE says so — it declares the type, or it imports it by a
+    /// package-rooted path. The identity minted from it is
+    /// [`Observation::Named`](super::facts::Observation::Named) and may become
+    /// an edge with nothing else agreeing, because the file proves it.
+    Stated { module: &'a str },
+    /// A repo-wide table says so, and this file says nothing. The identity
+    /// minted from it is
+    /// [`Observation::Candidate`](super::facts::Observation::Candidate) and
+    /// still needs a declaration to agree.
+    ///
+    /// SHORT-LIVED. It is the barrier's answer, and it has no producer left in
+    /// a language whose walk has lost its table.
+    Tabled { module: &'a str },
     /// Two or more first-party declarations answer to this name, so there is no
     /// one home. NOT a miss — a different answer, and one the caller must not
     /// resolve by picking.
     Ambiguous,
     /// Nothing this scan declares answers to the name.
     NotOurs,
+}
+
+impl<'a> Home<'a> {
+    /// The module, whichever way it was learned. For the callers that need the
+    /// string and genuinely do not care about the grade — placing the MEMBERS
+    /// of an `impl` block, which this file declares whatever it knows about the
+    /// type's home.
+    pub fn module(&self) -> Option<&'a str> {
+        match self {
+            Self::Stated { module } | Self::Tabled { module } => Some(module),
+            Self::Ambiguous | Self::NotOurs => None,
+        }
+    }
 }
 
 /// Where each type NAME is declared, for the packages being scanned.
@@ -204,7 +235,7 @@ impl TypeHomes {
     /// each case rather than substituting a third.
     pub fn lookup(&self, package: &str, ty: &str) -> Home<'_> {
         match self.homes.get(&(package.to_string(), ty.to_string())) {
-            Some(module) => Home::Ours { module: module.as_str() },
+            Some(module) => Home::Tabled { module: module.as_str() },
             None if self.ambiguous.contains(&(package.to_string(), ty.to_string())) => {
                 Home::Ambiguous
             }

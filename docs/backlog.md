@@ -17,6 +17,41 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 
 
+## Indexer — a target no first-party declaration mints must resolve or be marked EXTERNAL (stage 11 S7, measured 2026-09-21)
+
+**Decided 2026-09-21, and it is an obligation on stage 12, not a defect in
+stage 11.** S7 (`docs/spec/indexer/11-file-index.md` §3) lets an identity a
+file's OWN TEXT established become an edge with no repo-wide set agreeing —
+which is what removes the type barrier, and is worth +713 resolved references
+over this repository. The cost is that references the old existence gate
+refused as MISSING are now present and DANGLING: 1,260 over 358 identities,
+up from ~320. Ratcheted in
+`resolve::tests::the_references_that_name_no_declaration_are_a_measured_and_split_set`,
+which carries the full reasoning.
+
+The file is right about where the type lives in all three causes. What it
+cannot know from ONE file is that the name it was handed does not DECLARE the
+member:
+
+| cause | count | why one file cannot see it |
+|---|---|---|
+| a type ALIAS | 423 on one identity | `api/state.rs` says `pub type AppState = Arc<SharedState>`, so `state.pg` names `api::state·AppState·pg` while the field is declared on `SharedState`. Following the alias is cross-file knowledge |
+| an impl a `derive` GENERATED | `MemOutbox::default`, `NewRun::default`, clap's `Cli::parse_from` | spec §5 — the impl exists in no source file, so no walk can declare it |
+| the split-`impl` mis-anchoring | ratcheted separately at 655/5,474 | the DECLARATION is the mis-filed side: `use super::*` states no home, so `impl PgStore` in `db/pg_store/folders.rs` anchors one module too deep |
+
+**What stage 12 owes.** A target no first-party declaration mints must be
+resolved to its real home or marked EXTERNAL. It must NOT be left as a
+first-party node nothing declares — that is a ghost, and "who calls this"
+answers for it forever. S9 already keeps it harmless rather than correct: a
+`referenced` node is inserted only if ABSENT, so it can never overwrite a real
+declaration. §4.3 makes FINDING them a query (`lost_exact`: a node with no
+inbound edge whose exact identity appears in some unlinked edge) rather than
+an indexer output.
+
+Not fixable inside stage 11: each cause needs knowledge of another file, which
+is the barrier this stage exists to delete. The ceiling at 1,300 is what stops
+the population growing until stage 12 discharges it.
+
 ## Indexer — 1,213 first-party edges resolve onto nothing (A8, measured 2026-09-15)
 
 Found by the new barrier `every_first_party_edge_names_a_declaration_this_scan_holds`,
