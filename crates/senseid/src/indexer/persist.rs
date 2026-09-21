@@ -2316,15 +2316,15 @@ pub fn widest(a: u32) -> u32 {
         // unrelated work is a ratchet nobody trusts.
         assert_eq!(
             lost,
-            3,
-            "19 before a local declaration was named under its enclosing function; the three \
-             that remain are NOT that defect and each is a different question:\n\
+            2,
+            "19 before a local declaration was named under its enclosing function, and 3 before \
+             that rule reached a METHOD body too; the two that remain are NOT that defect and \
+             each is a different question:\n\
              - a `#[cfg(feature)]` / `#[cfg(not(feature))]` pair declares one name twice at \
                MODULE scope. Only one arm compiles, the walk reads text and cannot know which, \
                and the identity is the same either way — plausibly one to tolerate.\n\
              - `const _` binds NO name, twice. Two anonymous declarations genuinely have one \
                identity; the question is whether an anonymous declaration is a symbol at all.\n\
-             - a type declared inside a method body, which the container names as a MEMBER.\n\
              {} affected identities out of {symbols} symbols:\n  {}\n\
              This stays the fqn grammar's to answer, not persistence's: the walk mints the \
              identity and `nodes_unique_fqn` merely applies it. The ratchet is here because \
@@ -2404,25 +2404,19 @@ pub fn widest(a: u32) -> u32 {
             // reads text, so the identity is the same either way. Plausibly one
             // to tolerate rather than repair.
             "rust·senseid·api::handlers::model_provisioning·provision_status·item",
-            // A type declared inside a METHOD body, which the container names
-            // as a member of the enclosing type. The function-body rule reaches
-            // free functions; a method body is the remaining shape.
+            // `db::pg_store·PgStore·Row·item` STOOD HERE and is FIXED, not
+            // argued away. Four `type Row = (..)` aliases in four method bodies
+            // were named as members of `PgStore`, which declares no `Row` at
+            // all. `Walk::declare` now asks whether the container was
+            // established OUTSIDE the body it is standing in; if it was,
+            // nothing the body declares is its member.
             //
-            // FOUR declarations now, not two, and the identity moved from
-            // `db::pg_store::metrics·PgStore·Row` to `db::pg_store·PgStore·Row`.
-            // Both are the glob rung (S6) doing its job: `metrics.rs`,
-            // `reasons.rs` and `sessions.rs` each write `use super::*` then
-            // `impl PgStore`, so their members now correctly name the module
-            // `PgStore` actually lives in — which is the split-impl repair. Four
-            // local `type Row = (..)` aliases, each inside a different method
-            // body, then land on one identity.
-            //
-            // The AMPLIFICATION is the glob rung's; the DEFECT is not. A
-            // `type` inside a method body is not a member of the enclosing type
-            // at all, and naming it as one was wrong before it collided. The
-            // fix is the function-body rule reaching method bodies, which is
-            // what this entry has always been waiting for.
-            "rust·senseid·db::pg_store·PgStore·Row·item",
+            // It reached this list as "the function-body rule reaches free
+            // functions; a method body is the remaining shape", and stayed
+            // there across two sweeps. The glob rung (S6) is what forced it:
+            // once the three files' members correctly named `db::pg_store`,
+            // the four aliases stopped merely being wrong and started
+            // colliding.
             // `const _` binds NO name, twice. Two anonymous declarations
             // genuinely have one identity — the open question is whether an
             // anonymous declaration is a symbol at all.

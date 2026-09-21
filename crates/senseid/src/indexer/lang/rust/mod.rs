@@ -2104,6 +2104,67 @@ pub fn free(w: &Widget) -> u32 { w.width }
         );
     }
 
+    /// **A DECLARATION INSIDE A FUNCTION BODY IS A LOCAL ITEM, NEVER A MEMBER
+    /// OF THE TYPE WHOSE `impl` BLOCK THE FUNCTION SITS IN.**
+    ///
+    /// `module_here` has named a local under its enclosing function since the
+    /// function-body rule landed — but only for a FREE function. Inside a
+    /// method the container is still `Container::Type`, and `declare`'s
+    /// member arm reads the container's module and never asks whether it is
+    /// standing in a body. So `type Row = (..)` inside `PgStore::sweep` minted
+    /// `PgStore·Row·item`: a MEMBER of `PgStore`, which it is not. `PgStore`
+    /// declares no `Row`, nothing can reach one, and four such aliases in four
+    /// method bodies are one node.
+    ///
+    /// MEASURED over this repository: four `type Row` aliases in
+    /// `db/pg_store/{metrics,reasons,sessions}.rs`, all four inside method
+    /// bodies, all four on one identity. It sat on the known-collision list
+    /// as "the function-body rule reaches free functions; a method body is the
+    /// remaining shape".
+    ///
+    /// The free-function half is asserted beside it, because a fix that named
+    /// locals correctly in methods by breaking free functions would otherwise
+    /// pass.
+    ///
+    /// MUTATION: drop the `fn_scope` check from `Walk::declare` — the two
+    /// aliases collapse onto `Holder·Row·item` and `Row·item`, and the first
+    /// assertion names what it got.
+    #[test]
+    fn a_local_declared_in_a_method_body_is_not_a_member_of_the_enclosing_type() {
+        let facts = facts(
+            "db",
+            "pub struct Holder;\n\
+             impl Holder {\n\
+             \x20   pub fn sweep(&self) -> u32 {\n\
+             \x20       type Row = (u32, u32);\n\
+             \x20       0\n\
+             \x20   }\n\
+             }\n\
+             pub fn free() -> u32 {\n\
+             \x20   type Row = (u32, u32);\n\
+             \x20   0\n\
+             }\n",
+        );
+
+        let mut rows: Vec<&str> =
+            fqns(&facts).into_iter().filter(|f| f.ends_with("Row·item")).collect();
+        rows.sort_unstable();
+        assert_eq!(
+            rows,
+            vec!["rust·p·db::fn::free·Row·item", "rust·p·db::fn::sweep·Row·item"],
+            "each local is named under the FUNCTION that declares it — two bodies, two \
+             identities, and neither is a member of `Holder`"
+        );
+
+        // And the method itself is still a member, which is the half a careless
+        // fix would take with it.
+        assert!(
+            fqns(&facts).contains(&"rust·p·db·Holder·sweep·item"),
+            "the METHOD is a member of its type; only what its BODY declares is not: {:?}",
+            fqns(&facts)
+        );
+    }
+
     // ── anchoring a member to its type's module ──────────────────────────
 
     /// **A TYPE THIS FILE NEVER NAMES IS NOT THE EXTERNAL BOUNDARY** (R5, §2).
