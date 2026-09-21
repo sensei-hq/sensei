@@ -6,7 +6,7 @@
 //! language look like to the ladder"; this file answers "what did the parser
 //! just hand me". The identity rules are read here and decided there.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tree_sitter::Node;
 
@@ -68,6 +68,7 @@ pub(super) fn walk<'a>(
         package: source.package,
         types,
         declared_fields: BTreeMap::new(),
+        inherent_members: BTreeMap::new(),
         declared_here: BTreeMap::new(),
         symbols: Vec::new(),
         references: Vec::new(),
@@ -80,6 +81,7 @@ pub(super) fn walk<'a>(
     // Seeded with the FILE's module, so a type declared at file scope is homed
     // there and one inside `mod tests` is homed a segment deeper.
     walk.collect_declared_fields(root, source.module);
+    walk.collect_inherent_members(root);
     walk.children(root, &scope);
     Found {
         symbols: walk.symbols,
@@ -233,13 +235,22 @@ enum Container {
     /// `db::pg_store::personas` declares members of the `PgStore` that lives in
     /// `db::pg_store`, so
     /// the block's own module is the wrong answer and was the one being used.
-    /// An `impl Trait for Type` body is THE SAME CONTAINER as an inherent one,
-    /// and that is stage 11's S8. The trait used to sit in the key, between the
-    /// type and the member; it is now an edge, emitted by
-    /// [`Walk::trait_impl`] from the very block that writes it. A merge key must
-    /// be what BOTH sides can produce, and no caller can spell which trait
-    /// supplies a name — that is what dispatch decides.
+    /// A struct/enum/union body, a trait body, or an inherent `impl`.
     Type { module: String, name: String },
+    /// An `impl Trait for Type` body.
+    ///
+    /// **Almost always keyed exactly like an inherent one** — that is stage
+    /// 11's S8: a merge key must be what BOTH sides can produce, and a caller
+    /// writing `p.draw()` cannot spell which trait supplies `draw`. The trait
+    /// survives as the `TraitImpl` edge [`Walk::trait_impl`] emits.
+    ///
+    /// The container is still distinct because of the ONE case where the trait
+    /// must stay in the key: when the type ALSO declares that name inherently.
+    /// Rust resolves `p.name()` to the inherent method, deterministically, and
+    /// a caller wanting the other one writes `<P as Trait>::name`. Flattening
+    /// those two makes a deliberately non-recursive call into a self-loop. See
+    /// [`Walk::declare`].
+    TraitImpl { module: String, ty: String, tr: String },
     /// An `impl` on a type with no name — a tuple, a slice, a unit. Its members
     /// have no identity in this grammar, and naming them as free items of the
     /// module would mint identities no use site could ever mint. A wrong edge is
@@ -261,6 +272,20 @@ struct Walk<'a> {
     /// of a struct declared elsewhere in the file — possibly after it. A scope
     /// only flows downward and could not reach them.
     declared_fields: BTreeMap<String, BTreeMap<String, String>>,
+    /// Member names each type declares in an INHERENT `impl` block of THIS
+    /// FILE.
+    ///
+    /// The one thing that decides whether a trait impl's member keeps the trait
+    /// in its key. Collected over the whole tree before any body is walked, for
+    /// the reason [`Walk::collect_declared_fields`] gives: `impl Trait for P`
+    /// may be written above `impl P`, and a single-pass walk would key the
+    /// trait copy before it had seen the inherent one.
+    ///
+    /// Scoped to the FILE deliberately. A type whose inherent and trait impls
+    /// live in different files is not covered — the two then mint one identity
+    /// and A7 counts the collision, which is a far better failure than reaching
+    /// for a repo-wide table (R7, and the barrier this stage removes).
+    inherent_members: BTreeMap<String, BTreeSet<String>>,
     /// Every type THIS FILE declares, and THE MODULE IT WAS DECLARED IN.
     ///
     /// The module matters and a name alone is not a home. A member's identity
@@ -373,6 +398,36 @@ impl<'a> Walk<'a> {
             Container::Type { module, name: ty } => {
                 let module = module.as_str();
                 fqn::define(&Form::Member { lang, package, module, ty, member, reach })
+            }
+            // **THE ONE PLACE THE TRAIT STAYS IN A KEY** (S8, narrowed).
+            //
+            // Flat by default, because no caller can spell which trait supplies
+            // a name. Qualified when the type ALSO declares that name
+            // inherently, because then Rust itself keeps them apart — the
+            // inherent method wins `p.name()`, and `<P as Trait>::name` is how
+            // the other is reached. Merging those two turns a call written to
+            // AVOID recursion into a self-loop, and a wrong edge is worse than
+            // a missing one (R4).
+            Container::TraitImpl { module, ty, tr } => {
+                let module = module.as_str();
+                let shadowed = self
+                    .inherent_members
+                    .get(ty.as_str())
+                    .is_some_and(|names| names.contains(member));
+                match shadowed {
+                    true => fqn::define(&Form::TraitMember {
+                        lang,
+                        package,
+                        module,
+                        ty,
+                        tr,
+                        member,
+                        reach,
+                    }),
+                    false => {
+                        fqn::define(&Form::Member { lang, package, module, ty, member, reach })
+                    }
+                }
             }
             Container::Unnameable { raw } => Err(FqnError::NotATypeName { value: raw.clone() }),
         }
@@ -933,6 +988,32 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// Every member name an INHERENT `impl` block of this file declares, by
+    /// type. See [`Walk::inherent_members`].
+    ///
+    /// An `impl` with a `trait` field is skipped: what is being collected is
+    /// exactly the set that can SHADOW a trait's copy of a name.
+    fn collect_inherent_members(&mut self, node: Node<'_>) {
+        if node.kind() == "impl_item"
+            && node.child_by_field_name("trait").is_none()
+            && let Some(raw) = self.field_text(node, "type")
+            && let Ok(ty) = type_segment(raw)
+            && let Some(body) = node.child_by_field_name("body")
+        {
+            let mut cursor = body.walk();
+            let names: BTreeSet<String> = body
+                .named_children(&mut cursor)
+                .filter_map(|child| self.field_text(child, "name"))
+                .map(str::to_string)
+                .collect();
+            self.inherent_members.entry(ty).or_default().extend(names);
+        }
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            self.collect_inherent_members(child);
+        }
+    }
+
     fn field_types(&self, node: Node<'_>) -> BTreeMap<String, String> {
         let Some(body) = node.child_by_field_name("body") else {
             return BTreeMap::new();
@@ -1167,7 +1248,14 @@ impl<'a> Walk<'a> {
             // somebody to state.
             None => BTreeMap::new(),
         };
-        inner.container = Container::Type { module: home.clone(), name: ty.clone() };
+        inner.container = match node
+            .child_by_field_name("trait")
+            .map(|n| self.text(n))
+            .and_then(|raw| type_segment(raw).ok())
+        {
+            Some(tr) => Container::TraitImpl { module: home.clone(), ty: ty.clone(), tr },
+            None => Container::Type { module: home.clone(), name: ty.clone() },
+        };
         inner.owner = Owner::Nobody;
         // A use site in the impl header sits inside no member, so it belongs to
         // the type the impl is about.
@@ -1295,7 +1383,10 @@ impl<'a> Walk<'a> {
         // `self` inside a type's body, or a local whose type the source STATED.
         // Nothing else: a receiver the file does not type is reported as such.
         let self_type = match (&scope.container, receiver) {
-            (Container::Type { name: ty, .. }, "self" | "Self") => Some(ty.as_str()),
+            (
+                Container::Type { name: ty, .. } | Container::TraitImpl { ty, .. },
+                "self" | "Self",
+            ) => Some(ty.as_str()),
             // A local whose type the source stated.
             _ => scope.bindings.get(receiver).map(String::as_str).or_else(|| {
                 // `self.m().member` — the inner call resolves already, so the
@@ -1314,7 +1405,10 @@ impl<'a> Walk<'a> {
                 let returned = scope.returns.get(method)?;
                 // `Self` is this type — the container already knows which.
                 Some(match (returned.as_str(), &scope.container) {
-                    ("Self", Container::Type { name: ty, .. }) => ty.as_str(),
+                    (
+                        "Self",
+                        Container::Type { name: ty, .. } | Container::TraitImpl { ty, .. },
+                    ) => ty.as_str(),
                     _ => returned.as_str(),
                 })
             }),
@@ -1460,6 +1554,7 @@ impl<'a> Walk<'a> {
     fn concrete(&self, scope: &Scope, raw: &str) -> String {
         let ty = match &scope.container {
             Container::Type { name, .. } => name.as_str(),
+            Container::TraitImpl { ty, .. } => ty.as_str(),
             Container::File | Container::Unnameable { .. } => return raw.to_string(),
         };
         match raw.strip_prefix("Self") {

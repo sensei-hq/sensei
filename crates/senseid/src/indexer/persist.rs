@@ -2314,8 +2314,8 @@ pub fn widest(a: u32) -> u32 {
         // unrelated work is a ratchet nobody trusts.
         assert_eq!(
             lost,
-            4,
-            "19 before a local declaration was named under its enclosing function; the four \
+            3,
+            "19 before a local declaration was named under its enclosing function; the three \
              that remain are NOT that defect and each is a different question:\n\
              - a `#[cfg(feature)]` / `#[cfg(not(feature))]` pair declares one name twice at \
                MODULE scope. Only one arm compiles, the walk reads text and cannot know which, \
@@ -2323,17 +2323,6 @@ pub fn widest(a: u32) -> u32 {
              - `const _` binds NO name, twice. Two anonymous declarations genuinely have one \
                identity; the question is whether an anonymous declaration is a symbol at all.\n\
              - a type declared inside a method body, which the container names as a MEMBER.\n\
-             - RAISED FROM 3 BY STAGE 11's S8, and the one sanctioned raise: a method is now \
-               keyed on its type and its name, with the trait demoted to a `TraitImpl` edge, \
-               so an inherent method and a same-named one a trait impl supplies are ONE node. \
-               `ModelProvisioning` declares an inherent `status_all` and an \
-               `impl ReadinessProbe for ModelProvisioning` whose `status_all` delegates to it. \
-               MEASURED over this whole repository: this is the ONLY pair S8 merges — 3 -> 4, \
-               not the larger movement the shape allows. The trade is spec §7's and is made \
-               with its eyes open: a caller writes `p.status_all()` and CANNOT spell which of \
-               the two it meant, so the segment was never a key both sides could produce. What \
-               it costs is visible HERE, as a counted collision, instead of as the silently \
-               refused edge it used to be — which no measurement could see.\n\
              {} affected identities out of {symbols} symbols:\n  {}\n\
              This stays the fqn grammar's to answer, not persistence's: the walk mints the \
              identity and `nodes_unique_fqn` merely applies it. The ratchet is here because \
@@ -2419,18 +2408,6 @@ pub fn widest(a: u32) -> u32 {
             // genuinely have one identity — the open question is whether an
             // anonymous declaration is a symbol at all.
             "rust·senseid·tasks::handlers::embed·_·item",
-            // ADDED BY STAGE 11's S8, deliberately and as the only one: an
-            // inherent `status_all` and the `status_all` that
-            // `impl ReadinessProbe for ModelProvisioning` supplies. The trait
-            // left the key because no caller can spell it — `p.status_all()`
-            // says one thing — so the two are one node and the two `impl`
-            // blocks are two edges.
-            //
-            // This is the whole measured cost of S8 over this repository. Not
-            // predicted: MEASURED, by running this test. The shape allows more
-            // (any type with two traits supplying one name), and this corpus
-            // contains exactly one instance, an inherent-vs-trait pair.
-            "rust·senseid·api::model_provisioning·ModelProvisioning·status_all·item",
             // `base_url` and `main` USED TO BE HERE, and are not defects that
             // were argued away — `module_of` was fixed and they stopped
             // colliding. It had guessed the crate root by splitting on
