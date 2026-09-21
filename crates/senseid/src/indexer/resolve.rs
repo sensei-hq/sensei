@@ -189,6 +189,68 @@ pub enum Root {
     Up,
 }
 
+/// Which root a segment names in this grammar, if it names one at all.
+pub(crate) fn root_of(segment: &str, grammar: &Grammar) -> Option<Root> {
+    grammar.roots.iter().find(|(word, _)| *word == segment).map(|(_, root)| *root)
+}
+
+/// **THE ONE PLACE A ROOTED PATH IS READ AGAINST A MODULE.**
+///
+/// Takes a path's leading ROOT WORDS off against `base` and returns the
+/// package-relative segments — `None` when the path climbs PAST the package
+/// root, which is not a module of ours to name (R5).
+///
+/// Shared by the ladder and by a language's own walk, and that sharing is the
+/// point rather than a convenience. Three callers want the identical
+/// arithmetic on three different BASES:
+///
+/// - [`Ladder::relative_to`] reads it against the module a SPAN sits in, so an
+///   inline `mod b { use super::x; }` climbs from `b`.
+/// - a WALK reads it against the FILE's own module, because a `use super::*` at
+///   file scope is relative to the file — resolving it against a scope that had
+///   descended into a nested module would climb from the wrong place.
+///
+/// What differs between languages is entirely in [`Grammar`]: the `roots`
+/// table, and `relative_to_directory` for a language whose path is a FILE path
+/// and so carries the file's own segment. Rust reads `super` off the module
+/// (`a::b::c` → `a::b`); TypeScript reads `../x` off the directory
+/// (`lib/nested/store` → `lib/x`). One function, driven by the grammar, gets
+/// both right — and a second copy per language is how those two rules drift.
+///
+/// Does NOT handle a repeated-prefix language's depth counting
+/// (`Grammar::relative_depth_prefix`, Python's `from ..a import b`), which is a
+/// different reading of a different token and stays with its caller.
+pub(crate) fn rooted_against(
+    segments: &[String],
+    mut base: Vec<String>,
+    grammar: &Grammar,
+) -> Option<Vec<String>> {
+    // A directory-relative language counts from the folder the file sits in, so
+    // the file's own segment comes off before any `..` is read. Done ONCE, on
+    // seeing the first root: `../..` pops twice from the directory, not three
+    // times.
+    if grammar.relative_to_directory
+        && segments.first().is_some_and(|s| root_of(s, grammar).is_some())
+    {
+        base.pop();
+    }
+    let mut rest = segments;
+    while let Some(head) = rest.first() {
+        match root_of(head, grammar) {
+            Some(Root::Package) => base.clear(),
+            // Names the module the path is written in, which `base` already is.
+            Some(Root::Here) => {}
+            Some(Root::Up) => {
+                base.pop()?;
+            }
+            None => break,
+        }
+        rest = &rest[1..];
+    }
+    base.extend(rest.iter().cloned());
+    Some(base)
+}
+
 /// What the ladder is told about the scan it is part of.
 pub struct World<'a> {
     /// Every package this scan owns the source of, from the manifests — NOT from
@@ -1178,7 +1240,7 @@ impl<'a> Ladder<'a> {
 
     /// Which root a segment names, if it names one at all.
     fn root_of(&self, segment: &str) -> Option<Root> {
-        self.grammar.roots.iter().find(|(word, _)| *word == segment).map(|(_, root)| *root)
+        root_of(segment, self.grammar)
     }
 
     fn is_a_root(&self, segment: &str) -> bool {
@@ -1203,32 +1265,10 @@ impl<'a> Ladder<'a> {
             base.extend(segments.iter().cloned());
             return Rooted::At(base);
         }
-        // A directory-relative language counts from the folder the file sits
-        // in, so the file's own segment comes off before any `..` is read. Done
-        // once, on seeing the first root: `../..` pops twice from the
-        // directory, not three times.
-        if self.grammar.relative_to_directory && segments.first().is_some_and(|s| self.is_a_root(s))
-        {
-            base.pop();
+        match rooted_against(segments, base, self.grammar) {
+            Some(at) => Rooted::At(at),
+            None => Rooted::Nowhere,
         }
-        let mut rest = segments;
-        while let Some(head) = rest.first() {
-            match self.root_of(head) {
-                Some(Root::Package) => base.clear(),
-                // Names the module the path is written in, which `base` already
-                // is.
-                Some(Root::Here) => {}
-                Some(Root::Up) => {
-                    if base.pop().is_none() {
-                        return Rooted::Nowhere;
-                    }
-                }
-                None => break,
-            }
-            rest = &rest[1..];
-        }
-        base.extend(rest.iter().cloned());
-        Rooted::At(base)
     }
 
     /// The module path a span sits in: the file's own, extended by every module
