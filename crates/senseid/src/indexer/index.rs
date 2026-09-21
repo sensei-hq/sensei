@@ -1450,6 +1450,7 @@ mod barrier_necessity {
             loaded.iter().map(|l| (l.path.as_str(), l.text.as_str())).collect();
         let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
         let mut gaps: BTreeMap<String, usize> = BTreeMap::new();
+        let mut per_language: BTreeMap<(String, &str), usize> = BTreeMap::new();
         for facts in &indexed {
             let states =
                 FileStates::of(facts, text_of.get(facts.path.as_str()).copied().unwrap_or(""));
@@ -1474,6 +1475,7 @@ mod barrier_necessity {
                     *gaps.entry(format!("{ty} in {}", facts.path)).or_default() += 1;
                 }
                 *tally.entry(bucket).or_default() += 1;
+                *per_language.entry((format!("{:?}", facts.language), bucket)).or_default() += 1;
             }
         }
 
@@ -1483,6 +1485,16 @@ mod barrier_necessity {
             println!("  {count:>7}  {bucket}  ({:.1}%)", *count as f64 * 100.0 / total as f64);
         }
         println!("  {total:>7}  total");
+
+        // **PER LANGUAGE, AND THIS IS THE NUMBER §11 IS SEQUENCED ON.** An
+        // adapter may drop its table when the FILE already states what the
+        // table was supplying, so the `gap` row is that language's risk and
+        // the rest is what a file-only rung could recover. Rust's share says
+        // nothing about TypeScript's — the migration is one adapter at a time.
+        println!("\n── by LANGUAGE ──");
+        for ((language, bucket), count) in &per_language {
+            println!("  {count:>7}  {language:<12} {bucket}");
+        }
         let mut worst: Vec<(&String, &usize)> = gaps.iter().collect();
         worst.sort_by(|a, b| b.1.cmp(a.1));
         println!("  distinct gap sites: {}", gaps.len());
@@ -1581,6 +1593,7 @@ mod barrier_necessity {
         let mut tally: BTreeMap<(&str, &str), usize> = BTreeMap::new();
         let mut by_reason: BTreeMap<(&str, String), usize> = BTreeMap::new();
         let mut stated_sites: BTreeMap<String, usize> = BTreeMap::new();
+        let mut per_language: BTreeMap<(String, &str), usize> = BTreeMap::new();
         let mut unnameable = 0usize;
         // Hypothesis 2, counted directly rather than inferred from the buckets.
         let mut long_paths: BTreeMap<String, usize> = BTreeMap::new();
@@ -1611,6 +1624,11 @@ mod barrier_necessity {
                 let bucket = states.bucket_for(&ty);
                 *tally.entry((bucket, source)).or_default() += 1;
                 *by_reason.entry((bucket, format!("{reason:?}"))).or_default() += 1;
+                // SPLIT BY LANGUAGE, because the adapters are migrated off the
+                // table ONE AT A TIME (§11) and a total mixes a language that
+                // has lost its table with four that have not. Rust reaching
+                // zero in a bucket says nothing about TypeScript's share of it.
+                *per_language.entry((format!("{:?}", facts.language), bucket)).or_default() += 1;
                 // The file's own word on where the type lives — `Home::Stated`
                 // in the walk's own grading. These are the recoverable ones.
                 if bucket == "local" || bucket == "imported" {
@@ -1633,6 +1651,11 @@ mod barrier_necessity {
         }
         println!("  {total:>7}  total classified");
         println!("  {unnameable:>7}  name no first-party type at all (receiver, bare name)");
+
+        println!("\n── by LANGUAGE, because the table is dropped one adapter at a time ──");
+        for ((language, bucket), count) in &per_language {
+            println!("  {count:>7}  {language:<12} {bucket}");
+        }
 
         let recoverable: usize = per_bucket.get("local").copied().unwrap_or_default()
             + per_bucket.get("imported").copied().unwrap_or_default();
