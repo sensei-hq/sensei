@@ -125,8 +125,25 @@ pub enum Home<'a> {
     /// one home. NOT a miss — a different answer, and one the caller must not
     /// resolve by picking.
     Ambiguous,
-    /// Nothing this scan declares answers to the name.
+    /// THE FILE PLACED THE TYPE OUTSIDE. A verdict, and an IMPORT is the only
+    /// thing that may reach it (R5, spec §2): the file wrote
+    /// `use serde::Serialize`, so that is where our world ends and
+    /// [`Reason::ExternalBoundary`](crate::indexer::facts::Reason) is the honest
+    /// answer.
+    ///
+    /// A repo-wide table with no row for a name does NOT reach it. Absence is
+    /// not a finding — see [`Home::Unstated`].
     NotOurs,
+    /// THIS FILE SAYS NOTHING about where the type lives.
+    ///
+    /// Not a verdict, an OPEN QUESTION — and that distinction is exactly the
+    /// one [`Reason::casts_doubt`](crate::indexer::facts::Reason::casts_doubt)
+    /// turns on. Folded into [`Home::NotOurs`], every type the scan had not
+    /// placed was filed as `ExternalBoundary`, which `casts_doubt` EXCLUDES: the
+    /// doubt column then FALLS as the walk learns less, which is backwards. It
+    /// matters now because the table is on its way out, and the table is the
+    /// only producer `NotOurs` ever had.
+    Unstated,
 }
 
 impl<'a> Home<'a> {
@@ -137,7 +154,7 @@ impl<'a> Home<'a> {
     pub fn module(&self) -> Option<&'a str> {
         match self {
             Self::Stated { module } | Self::Tabled { module } => Some(module),
-            Self::Ambiguous | Self::NotOurs => None,
+            Self::Ambiguous | Self::NotOurs | Self::Unstated => None,
         }
     }
 }

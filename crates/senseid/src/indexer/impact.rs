@@ -585,19 +585,31 @@ pub fn viaparam(e: Mystery) { e.start(); }
         sites.sort_unstable();
         assert_eq!(
             sites,
-            [("receiver_type_unknown", "start")],
-            "the one it could not place is reported WITH the reason, not dropped"
+            [("no_import_in_scope", "start"), ("receiver_type_unknown", "start")],
+            "BOTH the ones it could not place are reported, each WITH its own reason. \
+             `blind` has a receiver the file never types; `viaparam` has one it types as \
+             `Mystery`, a name this file says nothing about — and saying nothing is an open \
+             question, not a verdict of externality (R5). Until stage 11's S6 split those two \
+             answers, `Mystery` read as `ExternalBoundary` and this assertion listed one site \
+             while the paragraph above it said two."
         );
-        // `viaparam`'s receiver is typed `Mystery`, which nothing declares — so
-        // it is the BOUNDARY, not doubt, and does not count against the answer.
-        // It read as `no_import_in_scope` until the walk stopped filing a type
-        // it does not declare under the using file's own module.
-        assert_eq!(impact.boundary_total, 1);
+        // BOTH unplaced sites count against the answer now. `viaparam`'s
+        // receiver is typed `Mystery`, a name this file neither declares nor
+        // imports — and stage 11's S6 says that is an OPEN QUESTION, not the
+        // boundary. The note here used to read "which nothing declares — so it
+        // is the BOUNDARY, not doubt"; absence of a declaration was never
+        // evidence of externality, which comes from the import (R5).
+        assert_eq!(impact.boundary_total, 2);
         assert!(
             impact.boundary.iter().all(|b| b.at.start_line > 0 && !b.file.is_empty()),
             "every boundary site is somewhere a person can go and look"
         );
-        assert_eq!(impact.confidence(), Some(0.5), "one placed, one doubted, one outside");
+        assert_eq!(
+            impact.confidence(),
+            Some(1.0 / 3.0),
+            "one placed of three, because two are doubted and NEITHER is outside — confidence \
+             fell when the walk stopped claiming to know that `Mystery` was somebody else's"
+        );
     }
 
     /// A miss cannot widen a radius it is already inside.
@@ -662,9 +674,13 @@ pub fn three(c: Mystery) { c.open(); }
 
         let counts = impact.by_reason();
         assert_eq!(counts.get("receiver_type_unknown"), Some(&2));
-        // `three(c: Mystery)` names a type nothing declares, so it is outside
-        // rather than doubt and is not in the tally at all.
-        assert_eq!(counts.get("no_import_in_scope"), None);
+        // `three(c: Mystery)` names a type THIS FILE SAYS NOTHING ABOUT, which
+        // is doubt and not a boundary. The comment here used to read "names a
+        // type nothing declares, so it is outside rather than doubt" — that is
+        // the inference stage 11's S6 refutes: externality comes from the
+        // IMPORT (R5), never from a table having no row. Reading absence as a
+        // verdict makes the doubt column FALL as the walk learns less.
+        assert_eq!(counts.get("no_import_in_scope"), Some(&1));
         assert_eq!(counts.values().sum::<usize>(), impact.boundary.len());
     }
 
