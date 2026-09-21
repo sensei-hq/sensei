@@ -2628,10 +2628,11 @@ mod tests {
     ///
     /// **KNOWN LIMIT, stated so nobody reads more into a green than it means.**
     /// `guard_sources()` reads what this indexer OWNS, which does not include
-    /// `index.rs`, `acceptance.rs` or `barrier.rs`. Those three are proven by
-    /// the BUILD — they fail to compile while a call site survives — and by the
-    /// `rg` in the commit message. This guard's job is stopping re-introduction
-    /// in the files it does read.
+    /// `acceptance.rs` or `barrier.rs`. Those two are `#[cfg(test)]` harnesses,
+    /// so `outside_tests` would hand this guard an empty string; they are
+    /// proven by the BUILD — they fail to compile while a call site survives —
+    /// and by the `rg` in the commit message. `index.rs` WAS on that list and
+    /// no longer is: the driver joined `OWNED`, so this guard reads it.
     ///
     /// The needles are ASSEMBLED so the guard does not match its own source,
     /// which is the idiom `no_fqn_is_built_by_string_formatting_outside_this_file`

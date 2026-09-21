@@ -55,8 +55,27 @@ pub mod structure;
 fn guard_sources() -> Vec<(String, String)> {
     /// Files, and directories whose whole contents this indexer owns. Adding a
     /// module outside these is a deliberate act that has to be recorded here.
-    const OWNED: &[&str] =
-        &["facts.rs", "fqn.rs", "impact.rs", "persist.rs", "reconcile.rs", "resolve.rs", "lang"];
+    ///
+    /// `index.rs` is the DRIVER, and it is on this list because every guard
+    /// below is a rule ABOUT it: spec stage 11 §3 S1 says the driver never
+    /// names a language, and the guard that checks that iterates this list.
+    /// While the driver was absent from it, that guard — and the fqn-separator,
+    /// `Option`-for-a-resolution, defaulted-value, collapsed-spelling and
+    /// failed-read guards — read every file except the one the requirement is
+    /// about. Six greens over a module none of them opened.
+    ///
+    /// `acceptance.rs` and `barrier.rs` stay off: both are `#[cfg(test)]`
+    /// harnesses, so `outside_tests` would hand every guard an empty string.
+    const OWNED: &[&str] = &[
+        "facts.rs",
+        "fqn.rs",
+        "impact.rs",
+        "index.rs",
+        "persist.rs",
+        "reconcile.rs",
+        "resolve.rs",
+        "lang",
+    ];
 
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/indexer");
     let mut out = Vec::new();
@@ -79,6 +98,7 @@ fn guard_sources() -> Vec<(String, String)> {
         "facts.rs",
         "fqn.rs",
         "impact.rs",
+        "index.rs",
         "persist.rs",
         "reconcile.rs",
         "resolve.rs",
