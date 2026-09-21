@@ -1065,6 +1065,15 @@ impl<'a> Walk<'a> {
             self.children(node, scope);
             return;
         };
+        // `const _: () = assert!(..)` BINDS NO NAME — that is the whole reason
+        // to write it. `_` is not a path segment any use site can spell, so a
+        // node for it is one no reference can ever reach, and two in a file
+        // mint one identity. The body is still walked: the assertion names real
+        // consts, and those references belong to whatever HOLDS the statement.
+        if name == "_" {
+            self.children(node, scope);
+            return;
+        }
         let declared = self.declared_type(node, "type");
         let symbol = self.symbol(node, scope, name, kind, reach, declared);
         let inner = self.push(node, symbol, scope);
@@ -1358,6 +1367,15 @@ impl<'a> Walk<'a> {
             self.children(node, scope);
             return;
         };
+        // `const _: () = assert!(..)` BINDS NO NAME — that is the whole reason
+        // to write it. `_` is not a path segment any use site can spell, so a
+        // node for it is one no reference can ever reach, and two in a file
+        // mint one identity. The body is still walked: the assertion names real
+        // consts, and those references belong to whatever HOLDS the statement.
+        if name == "_" {
+            self.children(node, scope);
+            return;
+        }
         let declared = self.declared_type(node, "type");
         let symbol = self.symbol(node, scope, name, SymbolKind::Field, Reach::Field, declared);
         let inner = self.push(node, symbol, scope);
