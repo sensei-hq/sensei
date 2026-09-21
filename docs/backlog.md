@@ -177,6 +177,63 @@ declares anything. `count_gated`, which reads node kinds straight off the tree
 and never asks the walk, stood at 20 against the walk's 27 until it learned the
 new rule — a delta of exactly 7.
 
+## Indexer — TypeScript's table cannot be deleted the way rust's was (stage 11 §11, measured 2026-09-21)
+
+**§11 says each adapter is "the same three changes — drop the table parameter,
+read the type's home from the file, tag `Named` vs `Candidate`". For
+TypeScript the first two are right and THE THIRD IS NOT, and the corpus says
+so 1:1.**
+
+The import rung landed: `Walk::home_of` had only `declared_here` then the
+table, with no import rung at all, so every type a file imported went to the
+barrier. A relative specifier states the home as completely as the table does,
+resolved with `resolve::rooted_against` against the importing file's own
+directory. Worth **+109 resolved references with ZERO new dangling**, and it
+took `AmbiguousCandidates` down 70 — a file's own word beats an ambiguous
+global row.
+
+**THE GRADE IS WHERE IT STOPS, and the two were measured apart rather than
+shipped together:**
+
+| | resolved | new dangling |
+|---|---|---|
+| import rung, `Candidate` | +111 | **0** |
+| import rung, `Named` | +489 | **+378** |
+
+Exactly 378 either way. **Every extra reference the strong grade resolves
+names an identity no declaration mints** — for TypeScript the strong grade
+buys no real edges at all, only ghosts, and a node nothing declares answers
+"who calls this" for ever (§9, and the no-fabrication rule). Rust's S7 bought
++713 real references for its dangling; TypeScript's buys none. So the grade
+stays weak until stage 12, and one line moves it.
+
+**Three causes, all genuinely cross-file**, which is why no one-file rung
+reaches them:
+
+| cause | count | why one file cannot see it |
+|---|---|---|
+| a TYPE ALIAS | 78 | `dojo/lib/server/admin-data.ts` says `export type DojoClient = ReturnType<typeof dojoDb>`, so `db.from(..)` names a member of the ALIAS while `from` is declared on what it aliases. The rust twin of this is `AppState` at 423 |
+| a member INHERITED from a supertype | ~100 | `class ScanProjectState extends ReactiveStageContext<ScanProject>` — `items` and `add` are the BASE's, declared in another module. Following the `Extends` edge is cross-file |
+| the re-export barrel | 523 | `export { expect } from '@playwright/test'` — already ratcheted and already deferred by §7 |
+
+**And the table cannot go even with the grade settled**, for a reason that is
+not about grading at all: **about half of this repo's TypeScript imports are
+`$lib`-aliased** (1,008 relative against 891 `$lib` plus 46 `$app`), and
+`import_origin` files an alias as EXTERNAL because *"`$lib` and its neighbours
+are aliases a bundler config states, and this walk is never handed that
+config"*. On top of that, 275 resolved TypeScript members name a type the file
+never mentions — an imported factory's RETURN type, which §7 already rules
+becomes unlinked-with-evidence. Rust's equivalent gap is **13**.
+
+**THE DECISION STAGE 12 (or a §11 step) OWES**, with a recommendation:
+resolving `$lib` needs the alias map, and the principled route is for the SCAN
+to read it once (`svelte.config.js` / `tsconfig` paths) and hand it to the
+adapter as a fact on `Source`, the way the adapter is already TOLD its package
+and module and never climbs a directory. That keeps R7 intact — the walk is
+told, it does not look. The alternatives are hardcoding the SvelteKit
+convention (`$lib` = `<package>/src/lib`), which is a guess about a config we
+can read, or leaving the table until stage 12's cross-file lookup subsumes it.
+
 ## Indexer — a target no first-party declaration mints must resolve or be marked EXTERNAL (stage 11 S7, measured 2026-09-21)
 
 **Decided 2026-09-21, and it is an obligation on stage 12, not a defect in

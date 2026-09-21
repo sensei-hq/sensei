@@ -51,7 +51,7 @@ use crate::indexer::facts::{
     Visibility,
 };
 use crate::indexer::fqn::{self, Form, FqnError, Reach, SEPARATOR};
-use crate::indexer::resolve::{Grammar, Root};
+use crate::indexer::resolve::{Grammar, Root, rooted_against};
 
 /// TypeScript: the dialect that STATES types, and the canonical adapter for
 /// [`Language::TypeScript`] — the identity rules the other two are checked
@@ -363,6 +363,7 @@ fn read_file(source: &Source<'_>, types: &TypeHomes, from: Fqn) -> Result<Found,
         types,
         declared_here: types_declared_in(&parsed.program.body).into_iter().collect(),
         namespaces: BTreeSet::new(),
+        import_homes: import_homes_in(&parsed.program.body, source.module),
         reassigned: assigned_in(&parsed.program.body).into_iter().collect(),
         found: Found::empty(),
     };
@@ -423,6 +424,12 @@ pub(super) fn read_component<'a>(
         .iter()
         .flat_map(|(_, _, parsed)| types_declared_in(&parsed.program.body))
         .collect();
+    // And an import in the MODULE block states a home for the instance block
+    // too, for the same reason: one component, one set of names in scope.
+    let import_homes = parsed_blocks
+        .iter()
+        .flat_map(|(_, _, parsed)| import_homes_in(&parsed.program.body, source.module))
+        .collect();
 
     let mut walk = Walk {
         package: source.package,
@@ -433,6 +440,7 @@ pub(super) fn read_component<'a>(
         types,
         declared_here,
         namespaces: BTreeSet::new(),
+        import_homes,
         reassigned,
         found: Found::empty(),
     };
@@ -1239,6 +1247,12 @@ struct Walk<'a> {
     /// a type, and conflating them mints members on a thing that has none
     /// (04b §3).
     namespaces: BTreeSet<String>,
+    /// Type name -> the module a RELATIVE import of it states it lives in.
+    ///
+    /// Filled by [`import_homes_in`], read by [`Walk::home_of`]. Owned because
+    /// a module read off the importing file's DIRECTORY is a new string that
+    /// appears verbatim in neither the specifier nor the file's own module.
+    import_homes: BTreeMap<String, String>,
     /// Every name the file ASSIGNS to anywhere, at any depth.
     ///
     /// What lets a closure be typed at all. A nested function can run at any
@@ -1279,6 +1293,20 @@ impl Walk<'_> {
         if self.declared_here.contains(ty) {
             return Home::Stated { module: self.module };
         }
+        // THE SECOND RUNG THIS FILE ANSWERS ITSELF (§11, S7). A relative import
+        // states where the type lives as completely as the table does, so what
+        // it yields is `Stated` and may become an edge unaided.
+        if let Some(module) = self.import_homes.get(ty) {
+            return Home::Stated { module };
+        }
+        // AND THE TABLE STILL STANDS HERE FOR TYPESCRIPT, deliberately. Unlike
+        // rust (S5), this adapter cannot yet lose it: about half of this repo's
+        // TypeScript imports are `$lib`-aliased, which needs a bundler config
+        // the walk is never handed, and 275 resolved members name a type the
+        // file does not mention at all — an imported factory's RETURN type,
+        // which is cross-file knowledge by construction. Recorded in
+        // `docs/backlog.md`; deleting it here would drop TypeScript's resolved
+        // share below the floor `acceptance::report` ratchets.
         self.types.lookup(self.package, ty)
     }
 
@@ -2576,6 +2604,36 @@ impl Walk<'_> {
         // two identities for one field.
         let saw = || vec![Observation::Receiver(self.text_of(object.span()).to_string())];
         match self.home_of(&ty) {
+            // **THE GRADE STAYS WEAK FOR TYPESCRIPT, AND THAT IS MEASURED
+            // RATHER THAN CONSERVATIVE** (S7, §11).
+            //
+            // §11 says each adapter is "the same three changes — drop the table
+            // parameter, read the type's home from the file, tag `Named` vs
+            // `Candidate`". The first two are right here and the THIRD IS NOT,
+            // and the corpus is unambiguous about why. Grading a file-stated
+            // home `Named`, so it may become an edge unaided:
+            //
+            //     import rung, Candidate     +111 resolved,   0 new dangling
+            //     import rung, Named         +489 resolved, +378 new dangling
+            //
+            // Exactly 378 either way: every extra reference the strong grade
+            // resolves names an identity NO declaration mints. For TypeScript
+            // the strong grade buys nothing real — it buys ghosts, and a node
+            // nothing declares answers "who calls this" for ever (§9, and the
+            // no-fabrication rule).
+            //
+            // The three causes are all genuinely cross-file, so no one-file
+            // rung can fix them: a TYPE ALIAS (`export type DojoClient =
+            // ReturnType<typeof dojoDb>` — 78 references to members of what it
+            // aliases), a member INHERITED from a supertype in another module
+            // (`class ScanProjectState extends ReactiveStageContext` — `items`
+            // and `add` are the base's), and the re-export barrel §7 already
+            // defers. Rust's equivalent gap was 13; TypeScript's is 275, which
+            // is the whole reason the two adapters diverge here.
+            //
+            // So the home's PROVENANCE is read and recorded, and acting on it
+            // waits for stage 12's cross-file lookup. One line changes the day
+            // it lands.
             Home::Stated { module } | Home::Tabled { module } => Miss::unplaced(
                 node_kind,
                 member,
@@ -3082,6 +3140,72 @@ fn types_declared_in(body: &[Statement<'_>]) -> Vec<String> {
     found.names
 }
 
+/// Where each type a RELATIVE import brings in by name lives, read from the
+/// file's own import clauses (§11, S7).
+///
+/// The TypeScript half of what `Walk::imported_from` is for rust: the file
+/// states a home, so the identity minted from it is
+/// [`Observation::Named`](crate::indexer::facts::Observation::Named) and may
+/// become an edge with nothing else agreeing.
+///
+/// **THE LAST SEGMENT IS THE MODULE, AND THE CLAUSE NAMES THE MEMBER.** A
+/// specifier spells only the module (`'../widget'`); which name is imported is
+/// in the clause. So the pair has to agree before a home may be filed: an
+/// `import { Widget as W }` states a home for `Widget`, and filing it under `W`
+/// would mint a member of a type called `W` that no file declares — a dangling
+/// identity where R4 asks for none (same rule the rust walk applies to
+/// `use ..::Evidence as Ev`).
+///
+/// Only a RELATIVE specifier answers. `import_origin` already decides that from
+/// the specifier alone, and it is the one reading that needs nothing outside
+/// this file (R6). **`$lib` and its neighbours are aliases a bundler config
+/// states, and this walk is never handed that config** — so they answer
+/// nothing here rather than a guessed module. MEASURED over this repository:
+/// 1,008 relative specifiers against 937 aliased, so this rung reaches about
+/// half of TypeScript's imports and the alias half is why TypeScript's table
+/// cannot simply be deleted the way rust's was.
+///
+/// A PRE-PASS over the whole body, like [`types_declared_in`] beside it, rather
+/// than filled as the walk goes: a `use` site may sit above the import that
+/// binds it, and a map built in source order would answer differently depending
+/// on where in the file the question was asked (R6).
+fn import_homes_in(body: &[Statement<'_>], module: &str) -> BTreeMap<String, String> {
+    let base: Vec<String> =
+        module.split('/').filter(|s| !s.is_empty()).map(str::to_string).collect();
+    let mut homes = BTreeMap::new();
+    for statement in body {
+        let Statement::ImportDeclaration(import) = statement else { continue };
+        let specifier = import.source.value.as_str();
+        if !matches!(import_origin(specifier), ImportOrigin::Local) {
+            continue;
+        }
+        let Some(specifiers) = &import.specifiers else { continue };
+        // The specifier is a FILE path, so its last segment carries an
+        // extension the declaration side already dropped — `module_segment` is
+        // the SAME function `module_path` uses, so the two sides cannot
+        // disagree about what `./widget.js` reduces to.
+        let segments: Vec<String> = specifier
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .map(|s| module_segment(s).to_string())
+            .collect();
+        let Some(home) = rooted_against(&segments, base.clone(), &GRAMMAR) else { continue };
+        if home.is_empty() {
+            continue;
+        }
+        let home = home.join("/");
+        for specifier in specifiers {
+            if let ImportDeclarationSpecifier::ImportSpecifier(s) = specifier {
+                let local = s.local.name.as_str();
+                if local == s.imported.name() {
+                    homes.insert(local.to_string(), home.clone());
+                }
+            }
+        }
+    }
+    homes
+}
+
 /// Names a run of statements ASSIGNS anywhere inside it, however deep.
 ///
 /// What a loop body has to clear before it is read: on the second pass the body
@@ -3191,6 +3315,7 @@ impl LineIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::indexer::facts::Evidence;
 
     fn facts(text: &str) -> FileFacts {
         read(
@@ -4387,14 +4512,19 @@ mod tests {
                     Resolution::Unresolved { reason: Reason::ReceiverTypeUnknown, .. } => {
                         unknown += 1
                     }
-                    // A member the walk NAMED carries the candidate it minted,
+                    // A member the walk NAMED carries the identity it minted,
                     // which it can only mint once it has a receiver type.
+                    //
+                    // BOTH GRADES, through `Evidence::identities` — the reader
+                    // built for this, whose own docs say every MEASUREMENT asks
+                    // "which identity did the use site mint" rather than "may it
+                    // become an edge". Matching `Candidate` alone read ZERO of
+                    // 27,650 the moment the TypeScript import rung graded a
+                    // stated home `Named`: the question here is whether the
+                    // receiver was TYPED, which does not depend on the grade.
                     Resolution::Unresolved { evidence, .. }
                         if evidence.reach == Reach::Field
-                            && evidence
-                                .saw
-                                .iter()
-                                .any(|o| matches!(o, Observation::Candidate(_))) =>
+                            && evidence.identities().next().is_some() =>
                     {
                         typed += 1
                     }
@@ -4458,6 +4588,137 @@ mod tests {
             vec!["ExternalBoundary".to_string()],
             "the receiver IS typed and the type is outside, so this is the boundary and not a \
              first-party member nobody declared"
+        );
+    }
+
+    /// **A RELATIVE IMPORT IS THIS FILE NAMING A HOME, AND IT IS THE FILE'S OWN
+    /// WORD** (S7, §11).
+    ///
+    /// `import { Widget } from '../widget'` inside `lib/nested/store` states
+    /// `lib/widget`, as completely as a table could, and relative to the module
+    /// the walk was TOLD. Until now TypeScript's `home_of` had exactly two
+    /// rungs — `declared_here`, then the table — with NO import rung, so every
+    /// one of these went to the barrier.
+    ///
+    /// MEASURED over this repository: of 3,263 resolved TypeScript member
+    /// references, **1,422 have a type the file imports by name** and 169 more
+    /// that the file states did not resolve at all. That is the largest thing
+    /// the table was doing for TypeScript that the file could answer itself.
+    ///
+    /// **THE TABLE IS DELIBERATELY EMPTY HERE**, so the only thing that can
+    /// answer is the file's own text. With `TypeHomes::unknown()` this test
+    /// fails on the old two-rung `home_of` and can only pass through the new
+    /// one.
+    ///
+    /// **AND THE GRADE STAYS WEAK, WHICH IS WHERE TYPESCRIPT DIVERGES FROM
+    /// RUST.** §11 calls for tagging a file-stated home `Named` so it may
+    /// become an edge unaided. MEASURED over this repository, that trade is
+    /// 1:1 against ghosts — `+111 resolved / 0 dangling` at this grade against
+    /// `+489 resolved / +378 dangling` at the strong one, so all 378 extra
+    /// references name an identity no declaration mints. The reasons are in
+    /// `Walk::home_of`'s member arm and in `docs/backlog.md`. The assertion is
+    /// here so the day stage 12 makes them resolvable, this test is what says
+    /// the grade may move.
+    ///
+    /// The path arithmetic is `resolve::rooted_against`, the same function the
+    /// ladder and the rust walk read a rooted path with — TypeScript differs
+    /// only in its `Grammar`, which sets `relative_to_directory` and declares
+    /// `.` and `..` as roots. So `../widget` from `lib/nested/store` comes off
+    /// the DIRECTORY (`lib/nested`), not the module.
+    ///
+    /// MUTATION: drop the import rung from `Walk::home_of` — the member falls
+    /// through to the empty table and the assertion names the reason it got
+    /// instead of the identity.
+    #[test]
+    fn a_relative_import_names_the_module_its_type_lives_in() {
+        let facts = read_in(
+            "lib/nested/store",
+            "src/lib/nested/store.ts",
+            "import { Widget } from '../widget';\n\
+             export function go(w: Widget): number { return w.wide(); }\n",
+            &TypeHomes::unknown(),
+        );
+
+        let named: Vec<String> = facts
+            .references
+            .iter()
+            .filter_map(|r| match &r.target {
+                Resolution::Unresolved { evidence, .. } => Some(evidence),
+                Resolution::Resolved { .. } => None,
+            })
+            .flat_map(Evidence::identities)
+            .map(Fqn::to_string)
+            .filter(|f| f.contains("wide"))
+            .collect();
+        assert_eq!(
+            named,
+            vec!["typescript·pkg·lib/widget·Widget·wide·item".to_string()],
+            "`../widget` from `lib/nested/store` is `lib/widget` — read off the directory, \
+             which is what `relative_to_directory` says, and stated by the file itself"
+        );
+
+        // AND IT IS STILL THE WEAK GRADE — a name match that needs a
+        // declaration to agree (R4). See this test's own note for the
+        // measurement that decided it.
+        let graded: Vec<&str> = facts
+            .references
+            .iter()
+            .filter_map(|r| match &r.target {
+                Resolution::Unresolved { evidence, .. } => Some(evidence),
+                Resolution::Resolved { .. } => None,
+            })
+            .flat_map(|e| e.saw.iter())
+            .filter_map(|o| match o {
+                Observation::Named(_) => Some("Named"),
+                Observation::Candidate(_) => Some("Candidate"),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !graded.contains(&"Named"),
+            "TypeScript's file-stated home is graded weak on purpose: at the strong grade all \
+             378 extra references it resolves name an identity nothing declares. Moving the \
+             grade needs stage 12's cross-file lookup first: {graded:?}"
+        );
+    }
+
+    /// **AN ALIASED IMPORT STATES A HOME FOR THE NAME THE TARGET DECLARES, NOT
+    /// FOR THE LOCAL ONE.**
+    ///
+    /// `import { Widget as W } from './widget'` says `Widget` lives in
+    /// `lib/widget`. Filing that home under `W` would mint a member of a type
+    /// called `W` in `lib/widget`, which no file declares — a dangling identity
+    /// where R4 asks for none at all. The same rule the rust walk applies to
+    /// `use ..::Evidence as Ev`.
+    ///
+    /// Asserted rather than assumed, because TypeScript records the pair
+    /// (`Binding::MemberOf { local, member }`) and reading the wrong half is a
+    /// one-character mistake.
+    #[test]
+    fn an_aliased_import_states_no_home_for_the_local_name() {
+        let facts = read_in(
+            "lib/store",
+            "src/lib/store.ts",
+            "import { Widget as W } from './widget';\n\
+             export function go(w: W): number { return w.wide(); }\n",
+            &TypeHomes::unknown(),
+        );
+
+        let minted: Vec<String> = facts
+            .references
+            .iter()
+            .filter_map(|r| match &r.target {
+                Resolution::Unresolved { evidence, .. } => Some(evidence),
+                Resolution::Resolved { .. } => None,
+            })
+            .flat_map(Evidence::identities)
+            .map(Fqn::to_string)
+            .filter(|f| f.contains("wide"))
+            .collect();
+        assert!(
+            minted.is_empty(),
+            "an alias binds a LOCAL name the target module does not declare, so no identity \
+             may be minted under it: {minted:?}"
         );
     }
 
