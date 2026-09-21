@@ -17,59 +17,81 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 
 
-## Indexer — WHERE THE 1,377 MISSING REFERENCES ARE (stage 11 §10, open 2026-09-21)
+## Indexer — RESOLVED: the 1,377 missing references were `self`/`super` import roots (stage 11 §10, closed 2026-09-21)
 
-**§10's done-gate is NOT met and this is the whole of what blocks it.**
-Resolved-reference count is 94,927 against a required ≥96,304. Short by 1,377.
+**§10's done-gate is MET at `a57dd050`: 97,261 resolved against ≥96,304.** Kept
+because three of this entry's own conclusions were wrong in instructive ways.
 
-**Root cause, not a symptom.** `9c7622cf` deleted the repo-wide type table from
-the rust walk (spec S5) and cost 3,389 references in one commit. `ddda0619`
-added the glob-root rung (`use super::*` is the file writing down a module) and
-returned 1,050. The remaining 2,339 have NOT been located, and every hypothesis
-below is a hypothesis until somebody measures it.
+**The cause was none of the three ranked hypotheses.** `Walk::imported_from`
+accepted `crate::` and answered `None` for every `self`/`super` root, on the
+recorded ground that such a path "is relative to a module this function is not
+told". **That reason was false**, and the disproof was eighty lines below it in
+the same `impl`: `module_a_root_names` resolves exactly those roots against
+`self.module` for the glob rung. The same function also matched a root as a
+WHOLE PATH, so `use super::facts::*` fell to a branch that only strips
+`crate::` and named nothing. Both rungs now share one resolver.
 
-**THE MEASUREMENT THAT HAS BEEN TAKEN**, over every RESOLVED member reference
-at HEAD, by what its own file states:
+    resolved    94,927 -> 97,261   unresolved  98,793 -> 96,719
+    total      193,720 -> 193,980  (+260 — the new tests are themselves corpus)
 
-| bucket | count | share |
-|---|---|---|
-| `local` — the file declares the type | 6,691 | 48.2% |
-| `imported` — an import binds that name | 5,485 | 39.5% |
-| `glob` — reachable through a wildcard | 1,176 | 8.5% |
-| `spelled` — inline qualified path | 232 | 1.7% |
-| `gap` — the file states nothing (40 distinct sites) | 288 | 2.1% |
-| total | 13,872 | |
+Two barriers improved unasked: split-impl anchoring 655/5,474 → **30/5,519**
+(the rust relation half of the A8 entry below), and dangling first-party
+references 1,260/358 → **1,151/235** identities.
 
-    cargo test -p senseid --bin senseid -- --ignored --nocapture index::barrier_necessity
+**What the hypotheses cost, so the pattern is recognisable.** All three were
+recorded as unverified, which is why discarding them was cheap. Hypothesis 2
+(a 3+ segment qualified path) is real — `considered_path` still returns
+`Vec::new()` for one — but it is **75 references over 32 paths**, and most name
+a SIBLING CRATE (`sensei_bootstrap::SenseiConfig::from_env`,
+`sensei_logger::Logger::noop`, `dojo_protocol::ArtifactScope::default`), so it
+is the cross-package gap and not this one. Hypotheses 1 and 3 contributed
+nothing.
 
-The file states 97.9% of what resolves, which is stage 11's premise confirmed
-AFTER the table went rather than before. **It does not locate the 1,377** — it
-classifies what DID resolve, not what did not. Saying otherwise would be the
-error this entry exists to prevent.
+**The methodological lesson, which is the reason this entry survives.** The
+resolved-side decomposition said "the file states 97.9% of what resolves" and
+that was read as coverage. It is a decomposition of the SUCCESSES and cannot
+locate a miss. Pointing the same classifier at `Resolution::Unresolved` found
+the answer immediately: of 1,678 unresolved references naming a first-party
+type, **897 had a type the file IMPORTS BY NAME**, every one reported
+`NoImportInScope` — the reason meaning "no import binds this name", raised over
+a file whose text imports it. Worst site `TaskContext` in
+`tasks/handlers/process.rs` at 98. Both halves now live in
+`index::barrier_necessity`; run them together.
 
-**THE MEASUREMENT THAT HAS NOT BEEN TAKEN, and is the next task.** Decompose
-the UNRESOLVED member references the same way. `index::barrier_necessity`
-already holds the classifier (`declares` / `binds` / `has_glob` / text search);
-point it at `Resolution::Unresolved` instead of `Resolved` and print the same
-table. One test, no design.
+    cargo test -p senseid --bin senseid -- --ignored --nocapture barrier_necessity
 
-**Hypotheses, ranked, each with the check that settles it** — none verified:
+**Not measured, and left as a question rather than an answer.** The gain
+(+2,334) far exceeds the 999 the decomposition predicted. The reason histogram
+is conserved exactly (`ReceiverTypeUnknown` −1,356, `NoImportInScope` −741,
+`ExternalBoundary` +9, `Plumbing` +14 = −2,074), so nothing is unaccounted —
+but a receiver the file never types carries NO type in its evidence and cannot
+be classified at all, so the decomposition under-counts by construction. The
+likely mechanism is a cascade through `Observation::BoundToTheResultOf` once a
+constructor resolves: the ladder can follow what a call returns only if that
+call became a node. **Unverified.** The check: count unresolved
+`ReceiverTypeUnknown` misses carrying `BoundToTheResultOf` whose callee is now
+resolved.
 
-1. **Two package-rooted globs.** `Walk::glob_rooted_here` answers `None` when a
-   file has two, because two candidate homes is a coin toss (R6). Check: count
-   files with >1 `crate`/`self`/`super`-rooted glob.
-2. **A qualified path longer than `<Ty>::<member>`.** `considered_path` returns
-   `Vec::new()` for a 3+ segment path, so `crate::db::pg_store::PgStore::connect`
-   mints no candidate. Check: count unresolved references whose evidence name
-   contains two or more `::`.
-3. **`Home::Ambiguous` is now unreachable in rust** — its only producer was the
-   table. Anything that used to land there now lands in `Unstated`. Check: it
-   should be 0 in the rust histogram; `AmbiguousCandidates` sat at 8,865 and has
-   not moved, so this is probably NOT it, which is worth knowing.
+**Residue after the fix**, and it is mostly not rust: 951 classified (from
+1,678), of which 306 have a type the file states. `glob` is now the largest
+bucket at 590 — the wildcard export list §7 defers to stage 12. The worst
+remaining STATED sites are TypeScript (`ScanProjectState` 49,
+`ScanActivityState` 29, `InsightsBoardState` 25, all in `.svelte.ts`), and the
+largest rust one is `PulledRule` in `federation/mod.rs` at 17, which is the
+sibling-crate gap above.
 
-**Spec contradiction to resolve while doing this.** §7 defers the wildcard
-export list to stage 12; §10 demands ≥96,304 AT stage 11. Both cannot hold. One
-of them must be amended and the amendment recorded, not worked around.
+**The §7-vs-§10 contradiction dissolved rather than needing an amendment.** §7
+defers the wildcard export list to stage 12 and §10 demanded ≥96,304 AT stage
+11; the gate was met WITHOUT that list, so both clauses hold as written.
+
+**Deliberately left alone**, so it is not mistaken for an oversight: a by-name
+import resolving to the PACKAGE ROOT still answers `None`, exactly as it did
+when only `crate::` was accepted. Whether a type declared at the root is a home
+a member identity may carry is a separate question from which ROOTS are
+readable, and answering both at once would leave neither measured. An ALIAS
+(`use ..::Evidence as Ev`) also still answers nothing — filing it under `Ev`
+would mint a member of a type no file declares, which R4 ranks below minting
+nothing.
 
 ## Indexer — a `cfg`-gated MEMBER cannot carry its condition (stage 11, open 2026-09-21)
 
@@ -138,8 +160,9 @@ stage 11.** S7 (`docs/spec/indexer/11-file-index.md` §3) lets an identity a
 file's OWN TEXT established become an edge with no repo-wide set agreeing —
 which is what removes the type barrier, and is worth +713 resolved references
 over this repository. The cost is that references the old existence gate
-refused as MISSING are now present and DANGLING: 1,260 over 358 identities,
-up from ~320. Ratcheted in
+refused as MISSING are now present and DANGLING: 1,260 over 358 identities, up
+from ~320 — since brought down to **1,151 over 235** by `a57dd050`, which gave
+the split-`impl` cause below its real home. Ratcheted in
 `resolve::tests::the_references_that_name_no_declaration_are_a_measured_and_split_set`,
 which carries the full reasoning.
 
@@ -151,7 +174,7 @@ member:
 |---|---|---|
 | a type ALIAS | 423 on one identity | `api/state.rs` says `pub type AppState = Arc<SharedState>`, so `state.pg` names `api::state·AppState·pg` while the field is declared on `SharedState`. Following the alias is cross-file knowledge |
 | an impl a `derive` GENERATED | `MemOutbox::default`, `NewRun::default`, clap's `Cli::parse_from` | spec §5 — the impl exists in no source file, so no walk can declare it |
-| the split-`impl` mis-anchoring | ratcheted separately at 655/5,474 | the DECLARATION is the mis-filed side: `use super::*` states no home, so `impl PgStore` in `db/pg_store/folders.rs` anchors one module too deep |
+| the split-`impl` mis-anchoring | **655/5,474 → 30/5,519, fixed by `a57dd050`** | the DECLARATION was the mis-filed side. Not because `use super::*` states no home — it does — but because these files use `use super::{PgStore}`, a by-name import whose root `imported_from` refused to read, so `impl PgStore` in `db/pg_store/folders.rs` anchored one module too deep |
 
 **What stage 12 owes.** A target no first-party declaration mints must be
 resolved to its real home or marked EXTERNAL. It must NOT be left as a
@@ -175,13 +198,19 @@ typescript 700; the numbers below are what is inside those.
 
 Two causes, unrelated to each other, both pre-existing and both out of that slice.
 
-1. **rust, 652 — an `Owns` relation's PARENT is minted at the impl's module.**
-   `impl PgStore` in `db/pg_store/graph.rs` emits its member-ownership relations
-   with parent `…db::pg_store::graph·PgStore·item`, while `pub struct PgStore` is
-   declared one module out in `db/pg_store/mod.rs`. The MEMBER's own identity is
-   right — it goes through `TypeHomes` — so this is the relation side alone
-   having missed the same barrier the reference side was taught in `1220cd97`.
-   Worst offenders are 95 (`graph`), 79 (`folders`), 49 (`sessions`).
+1. **rust, 652 → 30 — FIXED 2026-09-21 by `a57dd050`.** An `Owns` relation's
+   PARENT was minted at the impl's module: `impl PgStore` in
+   `db/pg_store/graph.rs` emitted member-ownership relations with parent
+   `…db::pg_store::graph·PgStore·item`, while `pub struct PgStore` is declared
+   one module out in `db/pg_store/mod.rs`. Worst offenders were 95 (`graph`),
+   79 (`folders`), 49 (`sessions`).
+
+   The cause was not the relation side missing a barrier the reference side had
+   learned — it was that these files state `PgStore`'s home with
+   `use super::{FqnDef, PgStore}`, a `super`-ROOTED BY-NAME IMPORT, which
+   `Walk::imported_from` refused to read. Once it reads them the impl anchors
+   at the type's real module. Now **30 of 5,519 ownership edges (0%)**, printed
+   by `every_ownership_edge_points_at_a_type_declared_somewhere_in_its_own_package`.
 
 2. **typescript, 561 — a re-export barrel is not followed.**
    `export { expect } from '@playwright/test'` in `e2e/fixtures.ts` means an
