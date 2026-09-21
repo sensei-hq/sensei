@@ -2602,7 +2602,12 @@ impl Walk<'_> {
             // under the reading file's module minted a first-party member of a
             // type this scan does not declare, which is the fabrication the Rust
             // walk stopped doing at 6,109 sites (R4). MEASURED here at 938.
-            Home::NotOurs => {
+            // `Unstated` has NO producer in this adapter: `Walk::home_of` here
+            // returns the table's own answer rather than re-grading it, so the
+            // rung that mints one in the Rust walk does not exist yet. Grouped
+            // with the boundary to keep today's behaviour exactly — when this
+            // adapter loses its table, this arm is where the same split lands.
+            Home::NotOurs | Home::Unstated => {
                 Miss::because(Reason::ExternalBoundary, node_kind, member, reach, saw())
             }
         }

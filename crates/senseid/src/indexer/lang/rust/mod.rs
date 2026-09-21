@@ -2036,6 +2036,67 @@ pub fn free(w: &Widget) -> u32 { w.width }
 
     // ── anchoring a member to its type's module ──────────────────────────
 
+    /// **A TYPE THIS FILE NEVER NAMES IS NOT THE EXTERNAL BOUNDARY** (R5, §2).
+    ///
+    /// Externality comes from the IMPORT and from nothing else. `Home::NotOurs`
+    /// used to be the repo-wide table saying "no first-party declaration answers
+    /// to this name", and the walk read that absence as a VERDICT — so every
+    /// receiver whose type the scan had simply not placed was filed as
+    /// `Reason::ExternalBoundary`, which `Reason::casts_doubt` EXCLUDES. The
+    /// doubt column then FALLS as the walk learns less, which is exactly
+    /// backwards: a type nobody has placed is an open question, not a closed
+    /// one. It matters now because the table is being deleted, and with it the
+    /// only producer of `NotOurs` — without this split every unplaced receiver
+    /// would land outside the doubt column on the day the table goes.
+    ///
+    /// A PAIR, because either half alone is satisfied by collapsing the two
+    /// cases onto one answer. The first half says "the file says nothing" must
+    /// be a miss that casts doubt, and must carry the TYPE as material for a
+    /// later pass. The second says a type the file DID place — by importing it
+    /// from a library — must still read as the boundary it is.
+    ///
+    /// MUTATION: restore `other => other` in `home_of`'s table arm, so the
+    /// table's empty answer is `NotOurs` again, and the first half goes red
+    /// with `("ExternalBoundary", false)`.
+    #[test]
+    fn a_type_this_file_never_names_is_not_the_boundary_but_an_imported_library_type_is() {
+        // The reason on the miss named `wide`, and whether its evidence names
+        // the TYPE the miss is about. Read off the WALK, with no ladder: this
+        // is a claim about what one file on its own says (R7).
+        let miss = |text: &str| -> (String, bool) {
+            let facts = facts("m", text);
+            let (reason, evidence) = facts
+                .references
+                .iter()
+                .find_map(|r| match &r.target {
+                    Resolution::Unresolved { reason, evidence } if evidence.name == "wide" => {
+                        Some((reason, evidence))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("no miss named `wide` in {:?}", facts.references));
+            let named_the_type = evidence.saw.iter().any(|o| {
+                matches!(o, crate::indexer::facts::Observation::UnplacedType(t) if t == "Widget")
+            });
+            (format!("{reason:?}"), named_the_type)
+        };
+
+        assert_eq!(
+            miss("pub fn go(w: Widget) -> u32 { w.wide() }\n"),
+            ("NoImportInScope".to_string(), true),
+            "nothing in this file says where `Widget` lives — no declaration, no import — so \
+             the type is UNPLACED, not placed outside, and the evidence carries it so a later \
+             pass has the one fact this miss is about"
+        );
+
+        assert_eq!(
+            miss("use serde_json::Widget;\npub fn go(w: Widget) -> u32 { w.wide() }\n"),
+            ("ExternalBoundary".to_string(), false),
+            "the file DID say where `Widget` lives — a package we never open — and that is the \
+             boundary, which is a verdict and not doubt about anything of ours"
+        );
+    }
+
     /// The fix, and the defect it replaces, in one test.
     ///
     /// `impl PgStore` sits in `db::pg_store::personas`; `PgStore` is declared in
