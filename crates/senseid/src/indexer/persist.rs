@@ -2407,7 +2407,22 @@ pub fn widest(a: u32) -> u32 {
             // A type declared inside a METHOD body, which the container names
             // as a member of the enclosing type. The function-body rule reaches
             // free functions; a method body is the remaining shape.
-            "rust·senseid·db::pg_store::metrics·PgStore·Row·item",
+            //
+            // FOUR declarations now, not two, and the identity moved from
+            // `db::pg_store::metrics·PgStore·Row` to `db::pg_store·PgStore·Row`.
+            // Both are the glob rung (S6) doing its job: `metrics.rs`,
+            // `reasons.rs` and `sessions.rs` each write `use super::*` then
+            // `impl PgStore`, so their members now correctly name the module
+            // `PgStore` actually lives in — which is the split-impl repair. Four
+            // local `type Row = (..)` aliases, each inside a different method
+            // body, then land on one identity.
+            //
+            // The AMPLIFICATION is the glob rung's; the DEFECT is not. A
+            // `type` inside a method body is not a member of the enclosing type
+            // at all, and naming it as one was wrong before it collided. The
+            // fix is the function-body rule reaching method bodies, which is
+            // what this entry has always been waiting for.
+            "rust·senseid·db::pg_store·PgStore·Row·item",
             // `const _` binds NO name, twice. Two anonymous declarations
             // genuinely have one identity — the open question is whether an
             // anonymous declaration is a symbol at all.
