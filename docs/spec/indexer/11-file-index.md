@@ -115,7 +115,7 @@ persistence layer has one input shape and no special case.
 - **S8. A METHOD IS KEYED ON ITS TYPE AND ITS NAME. THE TRAIT IS AN EDGE.**
 
       rust·demo·shape·Box2·draw·item          the method
-      TraitImpl: rust·demo·draw·Draw → rust·demo·shape·Box2
+      TraitImpl: rust·demo·shape·Box2 → rust·demo·draw·Draw
 
   Today the declaration mints `Box2·Draw·draw` and the use site mints
   `Box2·draw`: two strings for one method, which is the entire reason
@@ -132,9 +132,17 @@ persistence layer has one input shape and no special case.
   looked up.
 
   So `Box as Draw` and `Box as Paint` are both represented: two `TraitImpl`
-  edges into `Box2`, emitted by the file that writes them. What they do not do
-  is split the method key, because a caller cannot spell the difference and
+  edges OUT OF `Box2`, emitted by the file that writes them. What they do not
+  do is split the method key, because a caller cannot spell the difference and
   `rustc` will not let one exist (`E0034`).
+
+  **THE EDGE RUNS TYPE → TRAIT, and earlier drafts of this section drew it
+  backwards.** The implementing TYPE is the `from` and the trait is the `to`:
+  `Walk::trait_impl` emits `child` = the type, `parent` = the trait, and the
+  shipped `sensei.edges` DDL defines the shared `implements` kind as "class
+  implements interface" — the class being the `from`. The direction is not
+  cosmetic: a traversal asking "what does `Box2` implement" follows `from`, and
+  a spec drawn the other way would have the reader build the reverse index.
 
   `SuppliedMembers`, the collapsed spelling, and the barrier that builds it are
   all deleted by this.
@@ -166,8 +174,9 @@ persistence layer has one input shape and no special case.
     from      fqn of the symbol the use site sits in
     to        fqn, or null when unlinked
     status    "linked" | "unlinked"
-    via       Rung, when linked — DeclaredHere ThroughAnImport DeclaredByItsType
-              ThroughAGlob RootedInThisPackage FullyQualifiedExternal InThePrelude
+    via       Rung, when linked — DeclaredHere ThroughAnImport NamedByThisFile
+              DeclaredByItsType ThroughAGlob RootedInThisPackage
+              FullyQualifiedExternal InThePrelude
     reason    Reason, when unlinked
     name      what the source wrote
     reach     Item | Field | Macro | Mod
@@ -288,9 +297,9 @@ impl Draw for Report {
     { "kind": "Owns", "from": "rust·demo·report·Report·item",
       "to": "rust·demo·report·Report·draw·item",
       "status": "linked", "via": "DeclaredHere", "at": [19,0] },
-    { "kind": "TraitImpl", "from": "rust·demo·draw·Draw·item",
-      "to": "rust·demo·report·Report·item",
-      "status": "linked", "via": "DeclaredHere", "at": [18,0] },
+    { "kind": "TraitImpl", "from": "rust·demo·report·Report·item",
+      "to": "rust·demo·draw·Draw·item",
+      "status": "linked", "via": "ThroughAnImport", "at": [18,0] },
 
     { "kind": "TypeUse", "from": "rust·demo·report·Report·seen·field",
       "to": "lib·std·vec::Vec",
@@ -342,7 +351,7 @@ compile error, so the message says what is wrong.
 | # | test | mutation that must break it |
 |---|---|---|
 | 1 | `a_trait_method_mints_one_key_from_both_sides` — `impl Draw for Box2 { fn draw }` and a caller's `b.draw()` produce the same string | restore the trait segment |
-| 2 | `the_trait_survives_as_an_edge` — `TraitImpl: Draw → Box2` is emitted by Box2's own file | drop the relation |
+| 2 | `two_traits_on_one_type_are_one_method_node_and_two_edges` — `TraitImpl: Box2 → Draw` is emitted by Box2's own file, TYPE to TRAIT | drop the relation |
 | 2b | `supplied_members_has_no_caller` — `rg --no-ignore -g '!target'`, count confirmed non-truncated | leave one call site |
 | 3 | `one_file_reaches_a_member_of_a_type_it_imported` — single file, no table | tag it `Candidate` instead of `Named` |
 | 4 | `a_name_match_alone_still_cannot_become_an_edge` | make `Candidate` unconditional |
@@ -406,17 +415,48 @@ imports resolving to the importing file.
 
 ## 10. Definition of done
 
+**MET as of `a57dd050` (2026-09-21).** Each item below carries the test or the
+measurement that settles it, because "done" asserted without one is the failure
+mode this section exists to prevent.
+
 - A trait method mints ONE key from both sides, and the trait is present as a
-  `TraitImpl` edge from the implementing file
+  `TraitImpl` edge from the implementing file —
+  `a_trait_method_mints_one_key_from_both_sides`, with the edge's own type
+  pinned by `the_trait_impl_edge_names_the_type_at_its_own_home`
 - `SuppliedMembers` has no caller, verified with `rg --no-ignore -g '!target'`
-  and a confirmed non-truncated count
-- `LanguageAdapter::read` takes no cross-file table
-- `index_file` is one parse, and the driver names no language
-- All three modes return the same shape
-- Indexing A then B equals B then A, over the corpus
-- The corpus conservation property holds
+  and a confirmed non-truncated count — **0 matches over 70,150 files searched**
+- **THE RUST WALK** takes no cross-file table —
+  `the_rust_walk_takes_no_cross_file_table`, a source guard with its own
+  anti-vacuity assertion.
+
+  Scoped to the rust walk, and NOT to the trait, which still takes the
+  parameter. §11 makes stage 11 rust-alone while the other four adapters still
+  read their table — TypeScript has no other source for a type's home — so a
+  trait-level ban here would contradict §11 and cannot be a stage-11 gate. The
+  trait parameter goes when the LAST adapter loses its need for it; that is an
+  order of work, not a flag, and §9's warning is enforced per-adapter as each
+  one lands.
+- `index_file` is one parse, and the driver names no language —
+  `nothing_outside_this_module_dispatches_on_a_language_by_hand`, kept
+  non-vacuous over the driver by `the_source_guards_read_this_driver` (S1's
+  claim that the guard already covered `index.rs` was FALSE; six guards passed
+  over it until `cb2a06f4`)
+- All three modes return the same shape — `delete_mode_yields_no_nodes_and_no_edges`
+- Indexing A then B equals B then A, over the corpus —
+  `indexing_the_corpus_in_either_order_produces_the_same_facts`
+- The corpus conservation property holds —
+  `the_symbol_count_equals_an_independent_count_of_declaration_nodes` and
+  `the_reference_count_equals_an_independent_count_of_use_sites`
 - Resolved-reference count is **≥** the two-pass design's 96,304 over this
-  repo — measured, with the before/after recorded
+  repo — measured, with the before/after recorded: **97,261**, a margin of 957.
+  Recorded per increment in `docs/CHECKPOINT.md`; the post-mortem of the 1,377
+  that blocked it is in `docs/backlog.md`.
+
+  **This settles the §7-vs-§10 tension rather than requiring an amendment.** §7
+  defers the wildcard export list to stage 12 while this clause demands the
+  count AT stage 11; the count was reached WITHOUT that list, so both hold as
+  written. `through_a_glob` remains the largest unresolved bucket (590), which
+  is exactly the share §7 hands to stage 12.
 - Stage 12 (persistence) is not started until this passes
 
 ## 11. Then the other languages
