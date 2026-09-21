@@ -48,7 +48,7 @@
 
 use std::collections::BTreeSet;
 
-use super::facts::FileFacts;
+use super::facts::{FileFacts, Language};
 use super::lang::{self, Source, TypeHomes};
 use super::resolve::{self, World, member_names_of, members_declared_by, returns_declared_by};
 
@@ -77,9 +77,15 @@ pub struct Placed<'a> {
 /// of it a library (R5).
 ///
 /// A file whose extension no adapter claims, or that the grammar rejects, is
-/// absent from the result rather than represented by an empty one. The caller
-/// can see which by comparing lengths; inventing facts for it would put a file
-/// with no declarations and no uses into the graph as though that were measured.
+/// absent from the result rather than represented by an empty one. An empty
+/// [`FileFacts`] reaching the writer is a file reporting zero declarations and
+/// zero uses, which is indistinguishable from one genuinely empty — and a
+/// [`FileFacts`] has nowhere to put the difference.
+///
+/// [`index_file`] is the shape that does: it answers with a REASON, so empty
+/// and absent stop being the same word. This function keeps the drop because
+/// its return type is still a bare `Vec<FileFacts>`; stage 12 is where the
+/// callers move across.
 pub fn index_repo<'a>(files: &[Placed<'a>], first_party: &BTreeSet<String>) -> Vec<FileFacts> {
     // PASS ONE, with no type table: every file read for the DECLARATIONS it
     // makes. Nothing here is anchored and nothing is kept but the symbols.
@@ -158,8 +164,7 @@ fn read_all(files: &[Placed<'_>], types: &TypeHomes) -> Vec<FileFacts> {
 /// this module's word for "a file the scan found produced nothing to index",
 /// and [`load_repo`] fills the other three variants.
 fn read_one(placed: &Placed<'_>, types: &TypeHomes) -> Result<FileFacts, Skipped> {
-    let ext = placed.path.rsplit_once('.').map(|(_, e)| format!(".{e}"));
-    let adapter = ext.as_deref().and_then(lang::adapter_for_ext).ok_or(Skipped::Unclaimed)?;
+    let adapter = adapter_for_path(placed.path).ok_or(Skipped::Unclaimed)?;
     let source = Source {
         package: placed.package,
         module: placed.module,
@@ -167,6 +172,20 @@ fn read_one(placed: &Placed<'_>, types: &TypeHomes) -> Result<FileFacts, Skipped
         text: placed.text,
     };
     adapter.read(&source, types).map_err(Skipped::Rejected)
+}
+
+/// WHO READS THIS PATH, decided from its extension and from nothing else.
+///
+/// One place, shared by [`read_one`] and [`index_file`], because the answer
+/// decides two different things — whether there is anything to read, and which
+/// LANGUAGE the result is stamped with — and two copies is how those two come
+/// to disagree about a file.
+///
+/// Text work: it opens nothing. That is what lets a [`Mode::Delete`] still be
+/// stamped with a language without reading the file being deleted.
+fn adapter_for_path(path: &str) -> Option<&'static dyn lang::LanguageAdapter> {
+    let (_, ext) = path.rsplit_once('.')?;
+    lang::adapter_for_ext(&format!(".{ext}"))
 }
 
 /// One file, read off disk and placed: everything [`index_repo`] needs, owned.
@@ -282,11 +301,406 @@ pub fn load_repo(
     (loaded, first_party, skipped)
 }
 
+// ── stage 11: ONE FILE IN, NODES AND EDGES OUT ───────────────────────────────
+
+/// What [`index_file`] is being asked to do about one file.
+///
+/// ONE code path for an initial scan and an incremental one; only this differs.
+/// An initial scan is every file at [`Mode::New`], in whatever order the walk
+/// yields them.
+///
+/// **THE FOURTH VOCABULARY, AND WHAT IT MAPS ONTO.** Three others already
+/// describe change in this indexer, and leaving them unrelated is how two of
+/// them come to disagree about what a removal is:
+///
+/// | [`super::structure::ChangeKind`] | [`super::incremental::Retrigger`] | this | [`super::reconcile::Stated`] |
+/// |---|---|---|---|
+/// | `Added` | `Parse` | [`Mode::New`] | `Parsed` |
+/// | `ContentChanged` | `Parse` | [`Mode::Update`] | `Parsed` |
+/// | `TouchedOnly`, `Unchanged` | — (`needs_parse()` is false) | — not called | — |
+/// | `StructurePlan::removed`, a PATH | — | [`Mode::Delete`] | `Gone(Located)` |
+///
+/// The bottom row is the one worth reading twice. `ChangeKind` deliberately has
+/// NO `Removed` variant — it classifies an observed `(old, new)` pair, and a
+/// removed file has no `new` to classify, so the variant had no constructor and
+/// was deleted. `Mode` may have `Delete` because it is not a classification: it
+/// is an INSTRUCTION, and `StructurePlan::removed` is the list of paths a caller
+/// issues it for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// Not seen before. Read it; stage 12 inserts.
+    New,
+    /// Seen, and its content changed. Read it; stage 12 deletes this file's rows
+    /// whose fqn is absent from the result, then inserts.
+    Update,
+    /// Gone. NOTHING is read, and the result is empty — see [`index_file`].
+    Delete,
+}
+
+/// One file, and the two things it cannot know about itself, plus what to do.
+///
+/// The sibling of [`Placed`], one field wider. Carries TEXT rather than a path
+/// to open, for the reason [`Source`] does: it keeps every decision here
+/// testable on string literals, and `lang::tests::no_adapter_reads_the_filesystem`
+/// is what keeps it that way.
+///
+/// `language` is NOT here. The driver resolves it from the extension and reports
+/// what it used — a caller that could name a language would be a caller that
+/// could name the wrong one (S1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileInput<'a> {
+    /// The repository this file belongs to, as the graph records it.
+    pub repo: &'a str,
+    /// Path as the graph records it.
+    pub path: &'a str,
+    pub mode: Mode,
+    pub package: &'a str,
+    /// Package-relative module path, from [`super::placement::placement_of`].
+    pub module: &'a str,
+    pub text: &'a str,
+}
+
+/// What one file's read produced — or what it produced instead.
+///
+/// SCAFFOLD, and the next edit is what finishes it: the empty variant carries no
+/// reason yet, which is precisely the property I8 falsifies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Indexed {
+    /// One parse (R1), and everything that parse saw.
+    Read(FileFacts),
+    /// No nodes and no edges, and WHY. Never an absence, and never an error.
+    Empty(Empty),
+}
+
+/// Why one call to [`index_file`] has no nodes and no edges (S2, §7).
+///
+/// **A REASON, AND NOT A SECOND VOCABULARY.** [`Skipped`] already says why a
+/// file the scan found produced nothing to index, and [`load_repo`] already
+/// emits all three of its variants, so it is carried through verbatim rather
+/// than restated. A caller counting empties counts ONE set of codes.
+///
+/// [`index_file`] can itself only ever mint [`Skipped::Unclaimed`] — placement
+/// and byte-reading are the IO half's, and that is exactly the point: the
+/// vocabulary is shared BECAUSE the two halves produce different parts of it.
+///
+/// The two reasons below it are genuinely not skips, and collapsing them into
+/// one "nothing here" would be a live defect rather than a tidiness question:
+/// [`super::reconcile`] applies a removal as `reconcile(F, ∅)`, which DEMOTES
+/// every node the file claimed, and a caller that could not tell
+/// [`Empty::Deleted`] from [`Empty::Unread`] would apply that to a file whose
+/// parse merely failed. `reconcile`'s own docs say so: on `Err` the caller does
+/// not call it at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Empty {
+    /// [`Mode::Delete`]: the text was NOT read. Persistence's job for this file
+    /// is to remove rows, and a node set read on the way to removing them is
+    /// work whose only possible use is to disagree with them.
+    Deleted,
+    /// The scan's own reason, unchanged — including
+    /// [`Skipped::Rejected`], which CARRIES the `ReadError` rather than
+    /// swallowing it (§7): the caller COUNTS a grammar rejection, and it is the
+    /// one empty a caller must not hand to reconcile.
+    ///
+    /// ONE variant, not two. A second variant holding a `ReadError` would be a
+    /// second way to say one thing, and whichever of the two a reader checks
+    /// would decide whether they see rejections at all — the defect
+    /// `structure::ChangeKind` records having removed.
+    Skipped(Skipped),
+}
+
+impl Empty {
+    /// The stable label this reason is written and read under — one labeling,
+    /// for the reason [`super::facts::Rung::as_label`] gives.
+    pub fn as_label(&self) -> &'static str {
+        match self {
+            Self::Deleted => "deleted",
+            Self::Skipped(Skipped::Unclaimed) => "unclaimed",
+            Self::Skipped(Skipped::Unplaced) => "unplaced",
+            Self::Skipped(Skipped::Unreadable) => "unreadable",
+            Self::Skipped(Skipped::Rejected(_)) => "rejected",
+        }
+    }
+}
+
+/// One file, indexed: what the driver was told, what it resolved, and what the
+/// file states.
+///
+/// The same shape for all three modes, so persistence has one input and no
+/// special case.
+///
+/// It carries [`FileFacts`] rather than the flat `nodes[]`/`edges[]` of
+/// `docs/spec/indexer/11-file-index.md` §4 ON PURPOSE. One spec `Edge` is three
+/// current types — [`super::facts::Relation`], [`super::facts::Reference`] and
+/// [`super::facts::Import`] — and `persist::edge_rows_of` is already the
+/// flattening between them, guarded by
+/// `every_conversion_between_a_fact_and_a_row_names_every_field`. Reshaping here
+/// would rewrite that flattening before anything in this stage has pinned the
+/// new shape. Stage 12 owns persistence, so stage 12 owns the shape persistence
+/// wants.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileIndex {
+    pub mode: Mode,
+    pub repo: String,
+    pub file: String,
+    /// What the driver RESOLVED from the extension, never what a caller named.
+    /// `None` where no adapter claims it.
+    pub language: Option<Language>,
+    pub package: String,
+    pub module: String,
+    pub indexed: Indexed,
+}
+
+impl FileIndex {
+    /// What the file states, when it was read at all.
+    pub fn facts(&self) -> Option<&FileFacts> {
+        match &self.indexed {
+            Indexed::Read(facts) => Some(facts),
+            Indexed::Empty(_) => None,
+        }
+    }
+
+    /// Why this file has no nodes and no edges, or `None` where it has some.
+    ///
+    /// The whole reason, [`ReadError`] payload included, because a caller that
+    /// COUNTS a rejected grammar (§7) needs to say which rejection.
+    pub fn empty(&self) -> Option<&Empty> {
+        match &self.indexed {
+            Indexed::Read(_) => None,
+            Indexed::Empty(why) => Some(why),
+        }
+    }
+
+    /// The stable label of [`FileIndex::empty`].
+    ///
+    /// A LABEL, the way [`super::facts::Rung::as_label`] is one: it is what a
+    /// report prints, and it is what an assertion can read before a variant
+    /// exists.
+    pub fn why_empty(&self) -> Option<&'static str> {
+        self.empty().map(Empty::as_label)
+    }
+}
+
+/// **INDEX ONE FILE, WITH NO KNOWLEDGE OF ANY OTHER FILE.** PURE.
+///
+/// The driver, and it adds no facts of its own (S3): everything in the result
+/// comes from the adapter, from the file's own path, or from the `package` and
+/// `module` it was handed.
+///
+/// It NEVER matches on a language (S1). It resolves an adapter from the
+/// EXTENSION, calls it, and stamps the result with what it used — a caller that
+/// could name a language would be a caller that could name the wrong one.
+///
+/// # All three modes return the same shape
+///
+/// An extension no adapter claims, a grammar rejection and a deletion are three
+/// EMPTY results with three reasons — never an error, and never absence. Most
+/// of a repository is not source (942 of 2,309 files here), so a driver that
+/// errored on each of them would make the common case a failure path, and one
+/// that returned nothing at all could not say which of the three it meant.
+///
+/// # `TypeHomes::unknown()`, and why that is the whole point
+///
+/// One file has no repo-wide table and must not be able to reach for one, so
+/// `unknown()` is the only table it can honestly be handed. That the walk still
+/// TAKES the parameter is what S5 removes next; passing `unknown()` here is the
+/// demonstration that it answers nothing.
+pub fn index_file(input: FileInput<'_>) -> FileIndex {
+    let FileInput { repo, path, mode, package, module, text } = input;
+    let stamp = |language: Option<Language>, indexed: Indexed| FileIndex {
+        mode,
+        repo: repo.to_string(),
+        file: path.to_string(),
+        language,
+        package: package.to_string(),
+        module: module.to_string(),
+        indexed,
+    };
+
+    // WHO READS THIS FILE is the first question, and it is asked BEFORE the
+    // mode. A deleted `README.md` never had a node to remove, so `Unclaimed` is
+    // the truer answer than `Deleted` — and asking it first keeps "who reads
+    // this" the driver's first question in every mode.
+    let Some(adapter) = adapter_for_path(path) else {
+        return stamp(None, Indexed::Empty(Empty::Skipped(Skipped::Unclaimed)));
+    };
+    let language = Some(adapter.language());
+
+    if matches!(mode, Mode::Delete) {
+        // THE TEXT IS NOT READ. Stage 12 deletes every row whose file is this
+        // file, and a node set read on the way there has no use but to disagree
+        // with them. The LANGUAGE is still stamped, off the extension, because
+        // it cost nothing to know and a caller reconciling a removed file has
+        // no facts to take one off.
+        return stamp(language, Indexed::Empty(Empty::Deleted));
+    }
+
+    let source = Source { package, module, path, text };
+    // NOT `.ok()`. §7 says a grammar rejection is a `ReadError` the caller
+    // COUNTS, and it is also the one empty result a caller must NOT hand to
+    // reconcile — `reconcile(F, nothing)` demotes every node the file claimed,
+    // and applying that to a failed parse is the defect R10.3 exists for.
+    match adapter.read(&source, &TypeHomes::unknown()) {
+        Ok(facts) => stamp(language, Indexed::Read(facts)),
+        Err(rejected) => {
+            stamp(language, Indexed::Empty(Empty::Skipped(Skipped::Rejected(rejected))))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::indexer::facts::{RefKind, Resolution};
+
+    /// **AN EXTENSION NO ADAPTER CLAIMS YIELDS EMPTY WITH A STATED REASON**
+    /// (stage 11, S2 — §6 step 7).
+    ///
+    /// This REPLACES
+    /// `a_file_no_adapter_claims_produces_no_facts_rather_than_empty_ones`,
+    /// and it keeps that test's claim as its second half rather than dropping
+    /// it. The old claim was "absent, not empty", and the reason it had to be
+    /// absent is that an empty `FileFacts` reaching the writer reports zero
+    /// declarations and zero uses — indistinguishable from a file that
+    /// genuinely has none. A REASON is what makes them distinguishable, so
+    /// `index_file` may now answer empty where `index_repo` still has to drop
+    /// the file: 942 of this repo's 2,309 files are not source, and a driver
+    /// that errored on each of them would make "most of a repo" a failure
+    /// path.
+    ///
+    /// The reason is `Skipped::Unclaimed` — the vocabulary `load_repo` already
+    /// emits — and NOT a second enum saying the same thing.
+    ///
+    /// Asserted on the LABEL rather than the variant, the idiom
+    /// `one_file_reaches_a_member_of_a_type_it_imported` already uses: the
+    /// assertion is readable before the variant exists, so the RED is a failure
+    /// with a message rather than a compile error.
+    ///
+    /// The mutation that must break it: return `Empty::Deleted` from the
+    /// unclaimed arm.
+    #[test]
+    fn an_unclaimed_extension_yields_empty_with_a_reason() {
+        let out = index_file(FileInput {
+            repo: "/w/demo",
+            path: "README.cobol",
+            mode: Mode::New,
+            package: "p",
+            module: "",
+            text: "IDENTIFICATION DIVISION.\n",
+        });
+
+        assert!(
+            out.facts().is_none(),
+            "no adapter claims `.cobol`, so there is nothing read to report"
+        );
+        assert_eq!(
+            out.why_empty(),
+            Some("unclaimed"),
+            "empty is not absence: the driver says WHY, in the vocabulary `load_repo` \
+             already emits, so a repository that produced an empty graph can say which \
+             reason it produced it for"
+        );
+        assert_eq!(
+            out.language, None,
+            "`language` is what the driver RESOLVED, and it resolved nothing — a stamped \
+             language here would be the driver naming one (S1)"
+        );
+        assert_eq!(out.file, "README.cobol", "the file is stamped whatever the outcome");
+        assert_eq!(out.repo, "/w/demo");
+
+        // THE HALF THE DELETED TEST PROTECTED, kept. `index_repo` still yields
+        // `FileFacts` and a `FileFacts` cannot carry a reason, so an unclaimed
+        // file must still be ABSENT from its result — an empty one reaching the
+        // writer is a file reporting zero declarations and zero uses.
+        let unclaimed =
+            Placed { path: "README.cobol", package: "p", module: "", text: "IDENTIFICATION" };
+        let rust = Placed {
+            path: "src/a.rs",
+            package: "p",
+            module: "a",
+            text: "pub fn f() -> u32 { 1 }\n",
+        };
+        let indexed = index_repo(&[unclaimed, rust], &packages(&["p"]));
+        assert_eq!(indexed.len(), 1, "only the file an adapter claims");
+        assert_eq!(indexed[0].path, "src/a.rs");
+    }
+
+    /// **DELETE MODE YIELDS NO NODES AND NO EDGES** (stage 11, §2.1 — §6
+    /// step 8).
+    ///
+    /// `Delete` returns an EMPTY result rather than skipping the call, so
+    /// persistence has one input shape and no special case: every mode answers
+    /// with the same struct, and what differs is what is in it.
+    ///
+    /// The text is DELIBERATELY NOT EMPTY, and that is the whole test. A
+    /// fixture with nothing in it would pass with the mode ignored entirely —
+    /// so the same input is indexed twice, once at `New` to prove there is
+    /// something to lose, and once at `Delete` to prove it was not read. An
+    /// empty answer over text that declares four things is evidence the parser
+    /// never ran.
+    ///
+    /// `language` is still stamped, because the EXTENSION answers it and
+    /// reading an extension opens nothing. Stage 12 needs it: a removed file
+    /// arrives at reconcile as `Stated::Gone(Located { language, .. })`, and
+    /// `Located` has no facts to take a language off.
+    ///
+    /// The mutation that must break it: `matches!(mode, Mode::Delete)` →
+    /// `matches!(mode, Mode::New)`, which reads the file anyway.
+    #[test]
+    fn delete_mode_yields_no_nodes_and_no_edges() {
+        let text = "pub struct Gone { pub count: u32 }\n\
+                    impl Gone { pub fn total(&self) -> u32 { self.count } }\n";
+        let at = |mode| {
+            index_file(FileInput {
+                repo: "/w/demo",
+                path: "src/gone.rs",
+                mode,
+                package: "demo",
+                module: "gone",
+                text,
+            })
+        };
+        // Counted off the facts, so the assertion is on what stage 12 would
+        // WRITE rather than on which variant happens to be in the field.
+        let counted = |indexed: &FileIndex| {
+            indexed.facts().map_or((0usize, 0usize), |facts| {
+                (facts.symbols.len(), facts.references.len() + facts.relations.len())
+            })
+        };
+
+        // ANTI-VACUITY. Without this, `(0, 0)` below would also hold for a
+        // fixture that declares nothing, and the test would prove only that
+        // empty text stays empty.
+        let (nodes, edges) = counted(&at(Mode::New));
+        assert!(
+            nodes > 0 && edges > 0,
+            "the fixture must have something to lose, or the delete assertion is vacuous: \
+             {nodes} node(s), {edges} edge(s) at `New`"
+        );
+
+        let deleted = at(Mode::Delete);
+        assert_eq!(
+            counted(&deleted),
+            (0, 0),
+            "`Delete` does not read the text — persistence's job for this file is to remove \
+             rows, and a node set read on the way to deleting them is work whose only \
+             possible use is to disagree with them"
+        );
+        assert_eq!(
+            deleted.why_empty(),
+            Some("deleted"),
+            "empty is STATED here too, so a counter can tell a deletion from a file no \
+             adapter claimed and from one the grammar rejected"
+        );
+        assert_eq!(
+            deleted.language,
+            Some(Language::Rust),
+            "the EXTENSION answers this and opens nothing; stage 12 needs it, because a \
+             removed file reaches reconcile as `Stated::Gone(Located)` and `Located` has \
+             no facts to take a language off"
+        );
+        assert_eq!(deleted.mode, Mode::Delete, "the mode is carried through, not consumed");
+    }
 
     /// **THE SOURCE GUARDS READ THIS DRIVER** (stage 11, S1).
     ///
@@ -627,24 +1041,6 @@ mod tests {
             targets(&backward),
             "the resolved set must not depend on which file was handed over first"
         );
-    }
-
-    /// A file no adapter claims is ABSENT, not an empty entry. An empty
-    /// `FileFacts` reaching the writer is a file that reports zero declarations
-    /// and zero uses, which is indistinguishable from one genuinely empty.
-    #[test]
-    fn a_file_no_adapter_claims_produces_no_facts_rather_than_empty_ones() {
-        let unreadable =
-            Placed { path: "README.cobol", package: "p", module: "", text: "IDENTIFICATION" };
-        let rust = Placed {
-            path: "src/a.rs",
-            package: "p",
-            module: "a",
-            text: "pub fn f() -> u32 { 1 }\n",
-        };
-        let indexed = index_repo(&[unreadable, rust], &packages(&["p"]));
-        assert_eq!(indexed.len(), 1, "only the file an adapter claims");
-        assert_eq!(indexed[0].path, "src/a.rs");
     }
 
     /// Several languages in one repository are indexed together and keep their
