@@ -14,10 +14,15 @@
 //! sibling and never climbs a directory. But two facts genuinely span files and
 //! cannot be read out of any one of them:
 //!
-//! - **Where a type lives.** `store.upsert()` mints
-//!   `<module of PgStore>·PgStore·upsert·item`, and the module is the one the
-//!   TYPE is declared in — not the one the call is written in. Rust puts `impl`
-//!   blocks anywhere; this repo has 24 for `PgStore` alone.
+//! - **Where a type lives.** `store.upsert()` mints a MEMBER identity whose
+//!   module segment is the one the TYPE is declared in — not the one the call
+//!   is written in. Rust puts `impl` blocks anywhere; this repo has 24 for
+//!   `PgStore` alone. Spelled in prose rather than as an example fqn on
+//!   purpose: this file is read by
+//!   `fqn::tests::no_fqn_is_built_by_string_formatting_outside_this_file`,
+//!   which forbids the separator character anywhere outside `fqn.rs` —
+//!   including a doc comment, because a hand-written fqn is exactly how the
+//!   definition and reference sides come to disagree.
 //! - **What the scan declares at all.** A member nothing first-party declares is
 //!   the language's or a library's, which is a BOUNDARY and not a miss.
 //!
@@ -127,22 +132,41 @@ pub fn index_repo<'a>(files: &[Placed<'a>], first_party: &BTreeSet<String>) -> V
 /// One pass: every file read once, through the adapter its extension dispatches
 /// to. Order-independent by construction — no file is handed anything derived
 /// from another file in the same pass.
+///
+/// A file [`read_one`] refuses is ABSENT from the result, never present with
+/// empty vectors: an empty `FileFacts` is byte-identical to a file that
+/// genuinely declares nothing, and reconcile prunes that file's whole graph on
+/// the shape (R4). What is dropped HERE is a named [`Skipped`] and not a
+/// `Result` from a read — the refusal has already been given a reason by the
+/// time it reaches this line. The caller reads the count as the length
+/// difference, which is the contract [`index_repo`]'s own doc states.
 fn read_all(files: &[Placed<'_>], types: &TypeHomes) -> Vec<FileFacts> {
-    files.iter().filter_map(|placed| read_one(placed, types)).collect()
+    files.iter().filter_map(|placed| read_one(placed, types).ok()).collect()
 }
 
-/// One file. `None` when no adapter claims the extension or the grammar
-/// rejects the text — a fact the caller acts on, never a blank stand-in.
-fn read_one(placed: &Placed<'_>, types: &TypeHomes) -> Option<FileFacts> {
-    let ext = placed.path.rsplit_once('.').map(|(_, e)| format!(".{e}"))?;
-    let adapter = lang::adapter_for_ext(&ext)?;
+/// One file. `Err` when no adapter claims the extension or the grammar rejects
+/// the text — a REASON the caller acts on, never a blank stand-in.
+///
+/// A `Result` and not an `Option` because the adapter's own `read` returns one.
+/// Collapsing that `Err` to a `None` at the call site is the swallow
+/// `reconcile::tests::nothing_but_a_language_read_can_produce_file_facts`
+/// forbids: an `Err` from `read` means the file keeps the graph it had, and a
+/// `None` cannot say that. [`Skipped::Rejected`] carries the `ReadError`
+/// verbatim, so nothing about the refusal is invented and nothing is lost.
+///
+/// [`Skipped`] rather than a second enum saying the same thing — it is already
+/// this module's word for "a file the scan found produced nothing to index",
+/// and [`load_repo`] fills the other three variants.
+fn read_one(placed: &Placed<'_>, types: &TypeHomes) -> Result<FileFacts, Skipped> {
+    let ext = placed.path.rsplit_once('.').map(|(_, e)| format!(".{e}"));
+    let adapter = ext.as_deref().and_then(lang::adapter_for_ext).ok_or(Skipped::Unclaimed)?;
     let source = Source {
         package: placed.package,
         module: placed.module,
         path: placed.path,
         text: placed.text,
     };
-    adapter.read(&source, types).ok()
+    adapter.read(&source, types).map_err(Skipped::Rejected)
 }
 
 /// One file, read off disk and placed: everything [`index_repo`] needs, owned.
@@ -168,7 +192,12 @@ impl Loaded {
 /// Counted rather than discarded: a repository where every file is `Unclaimed`
 /// has produced an empty graph for a reason, and a summary that reported only
 /// "0 files indexed" could not say which reason.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+///
+/// NOT `Copy`, and not ordered, because [`Skipped::Rejected`] carries the
+/// adapter's own [`lang::ReadError`]. Dropping that payload to keep the derives
+/// would throw away the only description of WHY the grammar refused the file,
+/// which is the part a reader of the skip list needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Skipped {
     /// No adapter claims the extension. The common case by count — a repo is
     /// mostly not source.
@@ -179,6 +208,11 @@ pub enum Skipped {
     Unplaced,
     /// The bytes would not read as text.
     Unreadable,
+    /// An adapter claims it and the grammar refused the text. The `Err` is
+    /// carried rather than dropped at the read: a file that failed to parse
+    /// keeps the graph it had, and a caller that could not tell it from a file
+    /// with no declarations would prune that graph (R4).
+    Rejected(lang::ReadError),
 }
 
 /// The files of one repository, loaded and placed, plus what was skipped and
@@ -253,6 +287,50 @@ mod tests {
     use super::*;
 
     use crate::indexer::facts::{RefKind, Resolution};
+
+    /// **THE SOURCE GUARDS READ THIS DRIVER** (stage 11, S1).
+    ///
+    /// Spec §3 S1 says the driver never matches on a language and names
+    /// `lang::tests::nothing_outside_this_module_dispatches_on_a_language_by_hand`
+    /// as the guard that covers it. That guard iterates
+    /// `indexer::guard_sources()`, whose `OWNED` list named six files and
+    /// `lang/` and NOT `index.rs` — so it read every file except the one the
+    /// requirement is about, and was green about a module it never opened.
+    ///
+    /// Six more guards read the same list: the fqn-separator guard, the
+    /// `Option`-for-a-resolution guard, the defaulted-value guard, the
+    /// collapsed-spelling guard, the failed-read guard and the
+    /// filesystem guard. Membership is the WHOLE property — once `index.rs`
+    /// is in the list every one of them reads it, with no per-guard opt-in
+    /// and no way to add a rule that quietly skips the driver.
+    ///
+    /// The body check is anti-vacuity. A rename, a move, or a guard scoped to
+    /// a file that no longer holds the driver would satisfy membership while
+    /// guarding nothing, which is the shape `outside_tests` was written for
+    /// after a doc comment cut two thirds of `lang/rust.rs` out of every
+    /// guard.
+    #[test]
+    fn the_source_guards_read_this_driver() {
+        let sources = crate::indexer::guard_sources();
+        let guarded = sources
+            .iter()
+            .find(|(path, _)| path == "index.rs")
+            .map(|(_, body)| crate::indexer::outside_tests(body).to_string());
+        let Some(guarded) = guarded else {
+            panic!(
+                "`guard_sources()` does not read `index.rs`, so every guard that iterates it \
+                 passes over the driver S1 is about. It read: {:?}",
+                sources.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>()
+            )
+        };
+        for needed in ["fn index_repo", "fn read_all", "fn read_one", "fn load_repo"] {
+            assert!(
+                guarded.contains(needed),
+                "the guarded half of `index.rs` does not contain `{needed}`, so the guards are \
+                 reading something other than this driver's production code"
+            );
+        }
+    }
 
     /// **THE WHOLE STAGE, OVER A REAL TREE ON DISK.**
     ///
