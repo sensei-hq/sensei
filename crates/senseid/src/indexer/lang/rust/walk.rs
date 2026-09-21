@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::Node;
 
 use super::super::common::{Miss, considered, named};
-use super::super::{Home, Source, TypeHomes};
+use super::super::{Home, Source};
 use super::MODULE;
 use super::types::{element_type, extracted_type, simple_type_name};
 use super::types::{type_path, type_segment};
@@ -43,12 +43,7 @@ pub(super) struct Found {
 }
 
 /// Walk one parsed tree, with the file's identity already minted.
-pub(super) fn walk<'a>(
-    source: &Source<'a>,
-    types: &'a TypeHomes,
-    root: Node<'_>,
-    from: Fqn,
-) -> Found {
+pub(super) fn walk<'a>(source: &Source<'a>, root: Node<'_>, from: Fqn) -> Found {
     let scope = Scope {
         holder: from.clone(),
         module: source.module.to_string(),
@@ -66,7 +61,6 @@ pub(super) fn walk<'a>(
     let mut walk = Walk {
         src: source.text,
         package: source.package,
-        types,
         declared_fields: BTreeMap::new(),
         inherent_members: BTreeMap::new(),
         declared_here: BTreeMap::new(),
@@ -262,10 +256,6 @@ enum Container {
 struct Walk<'a> {
     src: &'a str,
     package: &'a str,
-    /// Where each type is declared. See [`TypeHomes`] — the walk is TOLD this,
-    /// never looks it up, and an absent entry leaves the block's own module in
-    /// place rather than producing a guess.
-    types: &'a TypeHomes,
     /// Type name -> its fields and their declared types.
     ///
     /// On the WALK and not on a scope, because an `impl` block needs the fields
@@ -299,11 +289,10 @@ struct Walk<'a> {
     /// apart, and so never merging.
     /// A test calling its own file's subject IS this shape, so it was systematic.
     ///
-    /// The nearest home there is, and the one `TypeHomes` cannot supply: it is
-    /// built from a completed pass over the whole scan, so a single-file read
-    /// is handed an empty one. Consulting the file first is also simply
-    /// correct — a type declared here lives here, whatever a later barrier
-    /// says.
+    /// The nearest home there is, and now the FIRST of only two: a type
+    /// declared here lives here, whatever any later pass might say. The
+    /// repo-wide table that used to sit beneath it is gone from this walk (S5),
+    /// so this map and the file's own imports are the whole of what it knows.
     declared_here: BTreeMap<String, String>,
     symbols: Vec<Symbol>,
     references: Vec<Reference>,
@@ -350,22 +339,18 @@ impl<'a> Walk<'a> {
         if self.imported_from_a_library(ty) {
             return Home::NotOurs;
         }
-        // The table's answer is a different claim and is graded as one: this
-        // file says nothing about where the type lives, so what it mints is a
-        // `Candidate` and still needs a declaration to agree.
+        // AND THAT IS EVERY QUESTION THIS FILE CAN ANSWER. A repo-wide table
+        // stood here and it is GONE (S5) — with it present, a walk can reach
+        // for knowledge of another file and the barrier grows back through the
+        // one door §9 names.
         //
-        // A table with NO ROW is not a verdict. It answered `NotOurs`, and the
-        // walk read that as "outside" — filing a type the scan had merely not
-        // placed under `Reason::ExternalBoundary`, which `Reason::casts_doubt`
-        // EXCLUDES, so the doubt column fell as the table shrank. `Unstated`
-        // says what is true: this file says nothing, and neither does the
-        // table. An AMBIGUOUS row lands there too — "two of ours declare it" is
-        // still not this file naming a home, and the table that produced it is
-        // going away with the barrier.
-        match self.types.lookup(self.package, ty) {
-            Home::Stated { module } | Home::Tabled { module } => Home::Tabled { module },
-            Home::Ambiguous | Home::NotOurs | Home::Unstated => Home::Unstated,
-        }
+        // `Unstated` and not `NotOurs`, which is the whole of I6a and easy to
+        // undo by accident here: the file saying nothing is an OPEN QUESTION,
+        // and answering it `NotOurs` files every unplaced type under
+        // `Reason::ExternalBoundary`, which `Reason::casts_doubt` EXCLUDES.
+        // The doubt column would then fall on the day the walk learned less,
+        // which is exactly backwards.
+        Home::Unstated
     }
 
     /// The module an import of `ty` names, when this file imports it from a
