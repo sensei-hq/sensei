@@ -1909,26 +1909,38 @@ pub fn free(w: &Widget) -> u32 { w.width }
                 // Keyed on the ENCLOSING node and the name: that pair is what
                 // decides whether two arms are arms of one callable, and it is
                 // read off the tree rather than from the walk.
-                // A MEMBER OF A TYPE IS NOT SPLIT, and the walk says so in as
-                // many words: an arm of `Widget::pg` would need a segment the
-                // grammar has no shape for, so `Walk::split_into_variant` leaves it
-                // whole rather than keying it on a string no reader could
-                // decompose (R4). `logger/src/writer.rs` is the corpus case —
-                // seven gated enum variants, fields and methods, none of them
-                // free items. This side excludes them on the same grammatical
-                // ground rather than by consulting the walk.
-                // `declaration_list` is BOTH a `mod` body and an `impl` body, so
-                // the kind alone cannot say it — the PARENT does. A fn in a mod
-                // is a free item and is split; a fn in an impl is a member and
-                // is not.
-                let free = match node.kind() {
-                    "field_declaration_list"
-                    | "enum_variant_list"
-                    | "ordered_field_declaration_list" => false,
-                    "declaration_list" => node.parent().is_some_and(|p| p.kind() == "mod_item"),
+                //
+                // A MEMBER OF A TYPE IS SPLIT TOO, since `Form::MemberVariant`
+                // gave its arm a shape. `logger/src/writer.rs` is the corpus
+                // case — two gated enum variants, a gated field and four gated
+                // methods — and this side reached 20 against the walk's 27 while
+                // it still excluded them, which is how the population was
+                // confirmed to be exactly those seven.
+                //
+                // TWO SHAPES ARE STILL NOT SPLIT, and both are read off the tree
+                // here on the same grammatical ground the walk uses rather than
+                // by consulting it:
+                //
+                // - a member of an `impl Trait for Type`, whose arm would need
+                //   module·Ty·Tr·member PLUS the condition — a fifth tail
+                //   segment and a form of its own. ZERO in this corpus.
+                // - a member of an `impl` on an unnameable type, which mints no
+                //   member identity for an arm to be an arm OF (R4).
+                //
+                // `declaration_list` is a `mod` body, an `impl` body AND a
+                // trait body, so the kind alone cannot say which — the PARENT
+                // does.
+                let splittable = match node.kind() {
+                    "declaration_list" => match node.parent() {
+                        Some(p) if p.kind() == "impl_item" => {
+                            p.child_by_field_name("trait").is_none()
+                        }
+                        _ => true,
+                    },
                     _ => true,
                 };
-                if let Some(declaration) = gated.filter(|n| free && !inside_an_unnameable_impl(**n))
+                if let Some(declaration) =
+                    gated.filter(|n| splittable && !inside_an_unnameable_impl(**n))
                     && let Some(named) = declaration.child_by_field_name("name")
                 {
                     callables.insert((node.id(), text[named.byte_range()].to_string()));
@@ -2467,6 +2479,133 @@ pub fn free(w: &Widget) -> u32 { w.width }
                 "rust·p·h·status·cfg:not(feature=emb)·item -> rust·p·h·status·item".to_string(),
             ],
             "each arm points at the callable it implements"
+        );
+    }
+
+    /// **A `cfg`-GATED MEMBER IS A VARIANT TOO, AND IT CARRIES ITS CONDITION.**
+    ///
+    /// The free-item case above splits `#[cfg(..)] fn f` into a callable and one
+    /// arm per condition. A gated MEMBER was left whole, on the recorded ground
+    /// that "the grammar has no shape for it". **That reason was false** — a
+    /// form had to be ADDED, which is what `Form::MemberVariant` is. Counting
+    /// tail segments says so plainly:
+    ///
+    /// | | form | tail |
+    /// |---|---|---|
+    /// | free item | `Item { module, name }` | 2 — a slot spare |
+    /// | its arm | `Member { module, ty: name, member: cfg }` | 3 |
+    /// | member | `Member { module, ty, member }` | 3 — full |
+    /// | its arm | `MemberVariant { module, ty, member, condition }` | 4 |
+    ///
+    /// All three member shapes are covered here because they are three
+    /// different parents in the tree and `count_gated` reads the PARENT to
+    /// decide: an `enum_variant_list`, a `field_declaration_list`, and a
+    /// `declaration_list` whose parent is an `impl_item` rather than a
+    /// `mod_item`. A fix that split methods and left gated fields whole would
+    /// pass a one-shape fixture.
+    ///
+    /// MEASURED, and this is the whole corpus population:
+    /// `crates/logger/src/writer.rs` has seven — two gated enum variants, one
+    /// gated field, and four gated methods. Every one is SINGLE-ARM (there is
+    /// no `#[cfg(not(feature = "pg"))] fn pg`), so what this fixes is a MISSING
+    /// FACT and never a wrong edge: the graph said `LogWriter::pg` exists full
+    /// stop, when it exists only under the `pg` feature, and "what does an
+    /// api-only build contain" was unanswerable. A7 rust standing at ZERO is
+    /// what proves no two arms were ever merged.
+    ///
+    /// The new form has the same tail length as `Form::TraitMember`
+    /// (`module·Ty·Trait·member`) and `fqn::parse` deliberately cannot recover a
+    /// form — so the DISCRIMINATOR is asserted below rather than assumed. A
+    /// condition segment is lowercase and contains `:`; a trait segment is
+    /// leading-case.
+    ///
+    /// MUTATION: restore `_ => return symbol` in `Walk::split_into_variant` —
+    /// the arms vanish and the first assertion names the three bare members it
+    /// got instead.
+    #[test]
+    fn a_cfg_gated_member_keeps_its_condition_in_its_identity() {
+        let facts = facts(
+            "w",
+            "pub enum LogWriter {\n\
+             \x20   #[cfg(feature = \"pg\")]\n\
+             \x20   Pg(u32),\n\
+             }\n\
+             pub struct BufferedState {\n\
+             \x20   #[cfg(feature = \"pg\")]\n\
+             \x20   pub pool: u32,\n\
+             }\n\
+             impl LogWriter {\n\
+             \x20   #[cfg(feature = \"pg\")]\n\
+             \x20   pub fn pg() -> u32 { connect() }\n\
+             }\n",
+        );
+
+        let mut gated: Vec<&str> =
+            fqns(&facts).into_iter().filter(|f| f.contains("cfg:")).collect();
+        gated.sort_unstable();
+        assert_eq!(
+            gated,
+            vec![
+                "rust·p·w·BufferedState·cfg:feature=pg·pool·field",
+                "rust·p·w·LogWriter·cfg:feature=pg·Pg·item",
+                "rust·p·w·LogWriter·cfg:feature=pg·pg·item",
+            ],
+            "an enum variant, a field and a method, each an ARM carrying the condition its \
+             source wrote — and each keeping the member's own reach. The condition sits in the \
+             QUALIFIER slot, before the member: after it, `LogWriter` and `Pg` would be two \
+             leading-case segments in a row and every reader of that pattern would strip the \
+             variant"
+        );
+
+        // THE CALLABLE SURVIVES, once, because it is the only thing a caller
+        // can spell. `x.pg()` from another file mints `LogWriter·pg`, never an
+        // arm, so the merge contract is untouched.
+        for callable in [
+            "rust·p·w·LogWriter·pg·item",
+            "rust·p·w·LogWriter·Pg·item",
+            "rust·p·w·BufferedState·pool·field",
+        ] {
+            assert!(
+                fqns(&facts).contains(&callable),
+                "the member a caller can name must still exist: {callable} missing from {:?}",
+                fqns(&facts)
+            );
+        }
+
+        // THE PROPERTY THAT MATTERS, and the reason an arm is a NODE rather
+        // than a property: `connect()` is called only under the `pg` feature,
+        // so its edge hangs off the ARM. Off the callable it would claim an
+        // api-only build makes the call.
+        let calls: Vec<String> = facts
+            .references
+            .iter()
+            .filter(|r| r.kind == RefKind::Calls)
+            .map(|r| r.from.as_str().to_string())
+            .collect();
+        assert_eq!(
+            calls,
+            vec!["rust·p·w·LogWriter·cfg:feature=pg·pg·item".to_string()],
+            "the call belongs to the arm that makes it, not to the member every build has"
+        );
+
+        // AND IT IS NOT A `TraitMember`. Same tail length, and `fqn::parse`
+        // cannot recover a form — so the two decomposers that read this shape
+        // must refuse it on the segment's own spelling. Both are asserted,
+        // because a form that silently read as a trait member would flatten
+        // the arm onto the callable in `resolve`'s residual and hide itself.
+        let arm = "rust·p·w·LogWriter·cfg:feature=pg·pg·item";
+        let parsed = crate::indexer::fqn::parse(arm).expect("the arm is an fqn");
+        assert_eq!(
+            parsed.tail,
+            vec!["w", "LogWriter", "cfg:feature=pg", "pg"],
+            "four tail segments: module, type, CONDITION, member — the condition in the \
+             qualifier slot, which is what keeps an arm of a leading-case member such as \
+             `LogWriter::Pg` out of the TraitMember shape"
+        );
+        assert!(
+            !(GRAMMAR.names_a_type)("cfg:feature=pg"),
+            "a condition is lowercase and carries `:`, which is what keeps it out of every \
+             decomposer that looks for two consecutive type-naming segments"
         );
     }
 
