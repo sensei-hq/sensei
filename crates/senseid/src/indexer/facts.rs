@@ -767,6 +767,26 @@ pub enum RelationKind {
     TraitImpl,
     Mixin,
     Decorates,
+    /// One `cfg`-gated ARM of a declaration, pointing at the callable it
+    /// implements.
+    ///
+    /// `#[cfg(feature = "x")] fn f` and `#[cfg(not(feature = "x"))] fn f` are
+    /// two BODIES of one function. Both are in the codebase — which is what
+    /// this indexer describes — and exactly one is in any given binary.
+    ///
+    /// NOT [`RelationKind::Owns`], and the distance matters for the same
+    /// reason it does for [`RelationKind::Contains`]: `Owns` is what
+    /// `resolve::members_declared_by` reads to decide that `x.foo()` can land
+    /// on `Foo::foo`. A variant is not a member of anything and must never be
+    /// reachable as one — a call would resolve onto an arm, which is a
+    /// spelling no use site can mint.
+    ///
+    /// NOT [`RelationKind::Implements`] either, though the shape rhymes. An
+    /// interface has N implementations at RUNTIME and dispatch chooses; a
+    /// `cfg` leaves exactly one in the binary and the others are never
+    /// compiled. The edge says "in some builds", which is a weaker claim than
+    /// any inheritance edge makes.
+    Variant,
     /// Member ownership: a type owns its fields and methods.
     ///
     /// This is what an inherent `impl Foo { }` produces. It is NOT inheritance —
@@ -1018,6 +1038,7 @@ mod tests {
             RelationKind::Implements,
             RelationKind::TraitImpl,
             RelationKind::Mixin,
+            RelationKind::Variant,
             RelationKind::Decorates,
             RelationKind::Owns,
             RelationKind::Contains,
@@ -1199,10 +1220,11 @@ mod tests {
                 | RelationKind::Mixin
                 | RelationKind::Decorates
                 | RelationKind::Owns
+                | RelationKind::Variant
                 | RelationKind::Contains => {}
             }
         }
-        assert_eq!(all_relation_kinds().len(), 7);
+        assert_eq!(all_relation_kinds().len(), 8);
 
         for b in all_bindings() {
             match b {
