@@ -2200,6 +2200,130 @@ pub fn free(w: &Widget) -> u32 { w.width }
         );
     }
 
+    /// **A `super`-ROOTED IMPORT IS THIS FILE NAMING A HOME, AND IT IS THE
+    /// FILE'S OWN WORD** (S7).
+    ///
+    /// `use super::super::executor::TaskContext` inside
+    /// `tasks::handlers::process` states `tasks::executor` — as completely as
+    /// `use crate::tasks::executor::TaskContext` does, and relative to the
+    /// module the walk was TOLD rather than one it derived. Two roots climb
+    /// two segments; the segments after the roots are module segments but for
+    /// the last, which is the type.
+    ///
+    /// `Walk::imported_from` accepted `crate::` alone and answered `None` for
+    /// every `self`/`super` root, on the recorded ground that such a path "is
+    /// relative to a module this function is not told". **THAT REASON WAS
+    /// FALSE**, and the proof was eighty lines below it in the same `impl`:
+    /// `Walk::module_a_root_names` resolves exactly these roots against
+    /// `self.module` for the GLOB rung. The walk is told its module. The
+    /// by-name rung simply never asked.
+    ///
+    /// MEASURED over this repository, and this is why it is worth a rung: of
+    /// the 1,678 unresolved references that name a first-party type, 897 have
+    /// a type the file IMPORTS BY NAME, every one of them reported
+    /// `NoImportInScope` — the reason that means "no import binds this name"
+    /// raised over a file whose text imports it. Worst single site is
+    /// `TaskContext` in `tasks/handlers/process.rs` at 98.
+    ///
+    /// `Named`, not `Candidate`: a by-name import is a statement BY the file,
+    /// which is the strong grade, and the glob beside it is the weak one. The
+    /// grading is asserted because a fix that placed the module correctly at
+    /// the wrong grade would leave the reference needing a table to agree,
+    /// which is the barrier growing back.
+    ///
+    /// MUTATION: restore `strip_prefix("crate::")` as the only accepted root
+    /// in `Walk::imported_from` — the member is named off the USING file's own
+    /// module (`tasks::handlers::process`) and the first assertion prints it.
+    #[test]
+    fn a_super_rooted_import_names_the_module_its_type_lives_in() {
+        // `process.rs` declares nothing, has no glob, and its ONLY statement
+        // about `TaskContext` is the two-`super` import root.
+        let facts = facts(
+            "tasks::handlers::process",
+            "use super::super::executor::TaskContext;\n\
+             pub fn run(ctx: &TaskContext) -> u32 { ctx.spawn() }\n",
+        );
+
+        let named: Vec<String> = facts
+            .references
+            .iter()
+            .filter(|r| r.kind == RefKind::Calls)
+            .filter_map(|r| match &r.target {
+                Resolution::Unresolved { evidence, .. } => Some(evidence),
+                Resolution::Resolved { .. } => None,
+            })
+            .flat_map(Evidence::identities)
+            .map(Fqn::to_string)
+            .collect();
+        assert_eq!(
+            named,
+            vec!["rust·p·tasks::executor·TaskContext·spawn·item".to_string()],
+            "`super::super::executor` from `tasks::handlers::process` is `tasks::executor`, \
+             which the file wrote down itself"
+        );
+
+        // AND IT IS THE STRONG GRADE — the file STATED this, so the identity
+        // may become an edge with no other file agreeing.
+        let graded: Vec<&str> = facts
+            .references
+            .iter()
+            .filter_map(|r| match &r.target {
+                Resolution::Unresolved { evidence, .. } => Some(evidence),
+                Resolution::Resolved { .. } => None,
+            })
+            .flat_map(|e| e.saw.iter())
+            .filter_map(|o| match o {
+                Observation::Named(_) => Some("Named"),
+                Observation::Candidate(_) => Some("Candidate"),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            graded.contains(&"Named"),
+            "an import by name is a statement BY the file and carries the strong grade: \
+             {graded:?}"
+        );
+    }
+
+    /// **A `self`/`super`-ROOTED GLOB WITH SEGMENTS AFTER THE ROOT NAMES THAT
+    /// DEEPER MODULE.**
+    ///
+    /// `use super::facts::*` from `indexer::resolve` names `indexer::facts`,
+    /// not `indexer`. `Walk::module_a_root_names` matched the root as a WHOLE
+    /// PATH — `"super" => ..` — so a root followed by anything fell to the
+    /// `rest` arm, which only strips `crate::`, and answered `None`.
+    ///
+    /// Beside the by-name case rather than folded into it: they are two rungs
+    /// at two grades reading one path shape, and a fix to the shared root
+    /// resolution that served only the caller it was written for would leave
+    /// this one silently answering `None`.
+    #[test]
+    fn a_glob_rooted_below_this_module_names_the_deeper_module() {
+        let facts = facts(
+            "indexer::resolve",
+            "use super::facts::*;\n\
+             pub fn read(e: &Evidence) -> u32 { e.weigh() }\n",
+        );
+
+        let considered: Vec<String> = facts
+            .references
+            .iter()
+            .filter(|r| r.kind == RefKind::Calls)
+            .filter_map(|r| match &r.target {
+                Resolution::Unresolved { evidence, .. } => Some(evidence),
+                Resolution::Resolved { .. } => None,
+            })
+            .flat_map(Evidence::identities)
+            .map(Fqn::to_string)
+            .collect();
+        assert_eq!(
+            considered,
+            vec!["rust·p·indexer::facts·Evidence·weigh·item".to_string()],
+            "`super::facts` from `indexer::resolve` is `indexer::facts`, the module the glob \
+             names — not `indexer`, and not nothing"
+        );
+    }
+
     /// **A DECLARATION INSIDE A FUNCTION BODY IS A LOCAL ITEM, NEVER A MEMBER
     /// OF THE TYPE WHOSE `impl` BLOCK THE FUNCTION SITS IN.**
     ///
