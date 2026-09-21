@@ -1298,9 +1298,121 @@ mod corpus {
 #[cfg(test)]
 mod barrier_necessity {
     use super::*;
-    use crate::indexer::facts::{Binding, Resolution, SymbolKind};
+    use crate::indexer::facts::{
+        Binding, Evidence, FileFacts, Observation, Resolution, SymbolKind,
+    };
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
+
+    /// Load, place and walk THIS repository, once.
+    ///
+    /// Shared by both decompositions rather than copied into each, because they
+    /// ask one question of the two sides of a single split: a walk that placed
+    /// the reference and a walk that did not must be the SAME walk, or the two
+    /// tables are not comparable and the subtraction between them means nothing.
+    fn walk_this_repository() -> (Vec<Loaded>, Vec<FileFacts>) {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("the workspace root")
+            .to_path_buf();
+
+        let mut files = Vec::new();
+        let mut manifests = Vec::new();
+        for entry in ignore::WalkBuilder::new(&root).build().filter_map(Result::ok) {
+            let path = entry.into_path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+            if crate::adapters::manifest::manifest_adapter_for_filename(name).is_some() {
+                manifests.push(path);
+            } else if path.is_file() {
+                files.push(path);
+            }
+        }
+        let (loaded, first_party, _) = load_repo(&root, &files, &manifests);
+        let indexed = {
+            let placed: Vec<Placed<'_>> = loaded.iter().map(Loaded::placed).collect();
+            index_repo(&placed, &first_party)
+        };
+        (loaded, indexed)
+    }
+
+    /// Every type name the corpus declares anywhere, so a member fqn can be
+    /// decomposed without guessing which segment is the type.
+    fn type_names(indexed: &[FileFacts]) -> BTreeSet<&str> {
+        let mut names = BTreeSet::new();
+        for facts in indexed {
+            for symbol in &facts.symbols {
+                if matches!(
+                    symbol.kind,
+                    SymbolKind::Struct
+                        | SymbolKind::Enum
+                        | SymbolKind::Trait
+                        | SymbolKind::Class
+                        | SymbolKind::Interface
+                ) {
+                    names.insert(symbol.name.as_str());
+                }
+            }
+        }
+        names
+    }
+
+    /// What ONE FILE states about names, on its own — the whole of what stage
+    /// 11 permits a walk to read (S5).
+    struct FileStates<'a> {
+        declares: BTreeSet<&'a str>,
+        binds: BTreeSet<&'a str>,
+        has_glob: bool,
+        text: &'a str,
+    }
+
+    impl<'a> FileStates<'a> {
+        fn of(facts: &'a FileFacts, text: &'a str) -> Self {
+            let declares: BTreeSet<&str> = facts.symbols.iter().map(|s| s.name.as_str()).collect();
+            let mut binds: BTreeSet<&str> = BTreeSet::new();
+            let mut has_glob = false;
+            for import in &facts.imports {
+                match &import.binds {
+                    Binding::Name(n) => {
+                        binds.insert(n.as_str());
+                        // A path names every segment it passes through, so the
+                        // LAST is the name it brings in even when the binding
+                        // records the head.
+                        if let Some(last) = import.path.rsplit(['.', ':', '/']).next() {
+                            binds.insert(last);
+                        }
+                    }
+                    Binding::MemberOf { local, member } => {
+                        binds.insert(local.as_str());
+                        binds.insert(member.as_str());
+                    }
+                    Binding::Glob => has_glob = true,
+                }
+            }
+            Self { declares, binds, has_glob, text }
+        }
+
+        /// Where this file could have learned `ty`'s home on its own.
+        ///
+        /// The ORDER is the grading: a declaration and a by-name import are the
+        /// file's own word (`Home::Stated`), a wildcard only says the name
+        /// COULD arrive that way, and `spelled` is the weakest — the name
+        /// appears in the text somewhere, which an inline qualified path
+        /// satisfies and so does a comment.
+        fn bucket_for(&self, ty: &str) -> &'static str {
+            if self.declares.contains(ty) {
+                "local"
+            } else if self.binds.contains(ty) {
+                "imported"
+            } else if self.has_glob {
+                "glob"
+            } else if self.text.contains(ty) {
+                "spelled"
+            } else {
+                "gap: never named in the file"
+            }
+        }
+    }
 
     /// **IS THE BARRIER SUPPLYING ANYTHING THE FILE DOES NOT ALREADY STATE?**
     ///
@@ -1328,44 +1440,8 @@ mod barrier_necessity {
     #[test]
     #[ignore = "walks this repository"]
     fn every_resolved_member_is_traced_to_what_its_own_file_states() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(std::path::Path::parent)
-            .expect("the workspace root")
-            .to_path_buf();
-
-        let mut files = Vec::new();
-        let mut manifests = Vec::new();
-        for entry in ignore::WalkBuilder::new(&root).build().filter_map(Result::ok) {
-            let path = entry.into_path();
-            let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
-            if crate::adapters::manifest::manifest_adapter_for_filename(name).is_some() {
-                manifests.push(path);
-            } else if path.is_file() {
-                files.push(path);
-            }
-        }
-        let (loaded, first_party, _) = load_repo(&root, &files, &manifests);
-        let placed: Vec<Placed<'_>> = loaded.iter().map(Loaded::placed).collect();
-        let indexed = index_repo(&placed, &first_party);
-
-        // Every type name the corpus declares anywhere, so a member fqn can be
-        // decomposed without guessing which segment is the type.
-        let mut type_names: BTreeSet<&str> = BTreeSet::new();
-        for facts in &indexed {
-            for symbol in &facts.symbols {
-                if matches!(
-                    symbol.kind,
-                    SymbolKind::Struct
-                        | SymbolKind::Enum
-                        | SymbolKind::Trait
-                        | SymbolKind::Class
-                        | SymbolKind::Interface
-                ) {
-                    type_names.insert(symbol.name.as_str());
-                }
-            }
-        }
+        let (loaded, indexed) = walk_this_repository();
+        let type_names = type_names(&indexed);
 
         // The file's TEXT, because a file can name a type without importing it:
         // `crate::db::pg_store::PgStore::connect(..)` states the module inline
@@ -1375,28 +1451,8 @@ mod barrier_necessity {
         let mut tally: BTreeMap<&str, usize> = BTreeMap::new();
         let mut gaps: BTreeMap<String, usize> = BTreeMap::new();
         for facts in &indexed {
-            // What this file states about names, on its own.
-            let declares: BTreeSet<&str> = facts.symbols.iter().map(|s| s.name.as_str()).collect();
-            let mut binds: BTreeSet<&str> = BTreeSet::new();
-            let mut has_glob = false;
-            for import in &facts.imports {
-                match &import.binds {
-                    Binding::Name(n) => {
-                        binds.insert(n.as_str());
-                        // A path names every segment it passes through, so the
-                        // LAST is the name it brings in even when the binding
-                        // records the head.
-                        if let Some(last) = import.path.rsplit(['.', ':', '/']).next() {
-                            binds.insert(last);
-                        }
-                    }
-                    Binding::MemberOf { local, member } => {
-                        binds.insert(local.as_str());
-                        binds.insert(member.as_str());
-                    }
-                    Binding::Glob => has_glob = true,
-                }
-            }
+            let states =
+                FileStates::of(facts, text_of.get(facts.path.as_str()).copied().unwrap_or(""));
 
             for reference in &facts.references {
                 let Resolution::Resolved { fqn, .. } = &reference.target else { continue };
@@ -1413,20 +1469,10 @@ mod barrier_necessity {
                 if !type_names.contains(ty) {
                     continue;
                 }
-                let bucket = if declares.contains(ty) {
-                    "local"
-                } else if binds.contains(ty) {
-                    "imported"
-                } else if has_glob {
-                    "glob"
-                } else if text_of.get(facts.path.as_str()).is_some_and(|t| t.contains(ty)) {
-                    // Written somewhere in the file — an inline qualified path,
-                    // a turbofish, an annotation. The file states it.
-                    "spelled"
-                } else {
+                let bucket = states.bucket_for(ty);
+                if bucket.starts_with("gap") {
                     *gaps.entry(format!("{ty} in {}", facts.path)).or_default() += 1;
-                    "gap: never named in the file"
-                };
+                }
                 *tally.entry(bucket).or_default() += 1;
             }
         }
@@ -1444,5 +1490,181 @@ mod barrier_necessity {
             println!("    {count:>5}  {what}");
         }
         assert!(total > 0, "no member references classified, so this proved nothing");
+    }
+
+    /// The type an UNRESOLVED reference concerns, when one can be named at all,
+    /// and WHICH of the three sources named it.
+    ///
+    /// The resolved side reads the type out of the fqn the ladder produced. A
+    /// miss has no fqn, so the literal instruction "point the classifier at
+    /// `Unresolved`" does not typecheck, and the adaptation is this function:
+    /// three sources, strongest first, none of them an inference.
+    ///
+    /// 1. `minted` — the walk named an identity (`Candidate` or `Named`) and
+    ///    the LADDER declined it. Closest to resolvable of the three.
+    /// 2. `unplaced-type` — `Observation::UnplacedType`: the walk read a type
+    ///    and had no home for it. This is what `Home::Unstated` leaves behind.
+    /// 3. `declined-path` — the walk minted NOTHING and the use site is a
+    ///    qualified path. `Walk::considered_path` returns an empty candidate
+    ///    list for any path of three segments or more, so the module the source
+    ///    spelled out in full is the one thing the walk refuses to read.
+    ///
+    /// Returns the type OWNED, because source 1's segment borrows the encoded
+    /// fqn, which is a temporary of this call.
+    fn type_at_issue(
+        evidence: &Evidence,
+        types: &BTreeSet<&str>,
+    ) -> Option<(String, &'static str)> {
+        for fqn in evidence.identities() {
+            let encoded = fqn.to_string();
+            let Ok(parsed) = crate::indexer::fqn::parse(&encoded) else { continue };
+            if parsed.tail.len() < 2 {
+                continue;
+            }
+            let ty = parsed.tail[parsed.tail.len() - 2];
+            if types.contains(ty) {
+                return Some((ty.to_string(), "minted"));
+            }
+        }
+        for observation in &evidence.saw {
+            if let Observation::UnplacedType(ty) = observation
+                && types.contains(ty.as_str())
+            {
+                return Some((ty.clone(), "unplaced-type"));
+            }
+        }
+        // A qualified path at the use site. The segment before the last is the
+        // type, exactly as on the resolved side.
+        let segments: Vec<&str> = evidence
+            .name
+            .split("::")
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.starts_with('<'))
+            .collect();
+        if segments.len() >= 2 {
+            let ty = segments[segments.len() - 2];
+            if types.contains(ty) {
+                return Some((ty.to_string(), "declined-path"));
+            }
+        }
+        None
+    }
+
+    /// **WHERE THE MISSING REFERENCES ARE — the other half of the split.**
+    ///
+    /// Its sibling above classifies what DID resolve and reports that the file
+    /// states 97.9% of it. That number is the stage-11 premise confirmed, and
+    /// it CANNOT locate a missing reference: it is a decomposition of the
+    /// successes. Reading it as coverage was the specific error this test
+    /// exists to close.
+    ///
+    /// So: the same classifier, over the MISSES. The bucket that matters is not
+    /// `gap` this time but its opposite — a reference whose type the file
+    /// DECLARES or IMPORTS BY NAME is one the file states the home of, and the
+    /// walk still did not place it. Those are recoverable without a table, so
+    /// each one is a rung that is missing rather than a cost of deleting the
+    /// barrier. `gap` here is the honest residue: only a repo-wide table could
+    /// ever have placed it.
+    ///
+    ///     cargo test -p senseid --bin senseid -- --ignored --nocapture barrier_necessity
+    #[test]
+    #[ignore = "walks this repository"]
+    fn every_unresolved_member_is_traced_to_what_its_own_file_states() {
+        let (loaded, indexed) = walk_this_repository();
+        let type_names = type_names(&indexed);
+        let text_of: BTreeMap<&str, &str> =
+            loaded.iter().map(|l| (l.path.as_str(), l.text.as_str())).collect();
+
+        // bucket -> source -> count, because "the file declares this type" and
+        // "the walk minted an identity for it" are independent facts and the
+        // pair is what names the defect. A single axis would average them.
+        let mut tally: BTreeMap<(&str, &str), usize> = BTreeMap::new();
+        let mut by_reason: BTreeMap<(&str, String), usize> = BTreeMap::new();
+        let mut stated_sites: BTreeMap<String, usize> = BTreeMap::new();
+        let mut unnameable = 0usize;
+        // Hypothesis 2, counted directly rather than inferred from the buckets.
+        let mut long_paths: BTreeMap<String, usize> = BTreeMap::new();
+
+        for facts in &indexed {
+            let states =
+                FileStates::of(facts, text_of.get(facts.path.as_str()).copied().unwrap_or(""));
+
+            for reference in &facts.references {
+                let Resolution::Unresolved { reason, evidence } = &reference.target else {
+                    continue;
+                };
+                // PLUMBING AND THE EXTERNAL BOUNDARY ARE VERDICTS, NOT MISSES.
+                // `Reason::casts_doubt` already draws this line and is read
+                // here rather than restated: `.collect()` is not a reference
+                // anybody lost, and mixing the two makes the residue look
+                // enormous and unactionable.
+                if !reason.casts_doubt() {
+                    continue;
+                }
+                if evidence.name.matches("::").count() >= 2 {
+                    *long_paths.entry(evidence.name.clone()).or_default() += 1;
+                }
+                let Some((ty, source)) = type_at_issue(evidence, &type_names) else {
+                    unnameable += 1;
+                    continue;
+                };
+                let bucket = states.bucket_for(&ty);
+                *tally.entry((bucket, source)).or_default() += 1;
+                *by_reason.entry((bucket, format!("{reason:?}"))).or_default() += 1;
+                // The file's own word on where the type lives — `Home::Stated`
+                // in the walk's own grading. These are the recoverable ones.
+                if bucket == "local" || bucket == "imported" {
+                    *stated_sites.entry(format!("{ty} in {}", facts.path)).or_default() += 1;
+                }
+            }
+        }
+
+        let total: usize = tally.values().sum();
+        println!("\n── UNRESOLVED references that name a first-party type ──");
+        println!("  (`Plumbing` and `ExternalBoundary` excluded: they are verdicts)");
+        let mut per_bucket: BTreeMap<&str, usize> = BTreeMap::new();
+        for ((bucket, source), count) in &tally {
+            *per_bucket.entry(bucket).or_default() += count;
+            println!("  {count:>7}  {bucket:<28} via {source}");
+        }
+        println!("  ── by bucket ──");
+        for (bucket, count) in &per_bucket {
+            println!("  {count:>7}  {bucket}  ({:.1}%)", *count as f64 * 100.0 / total as f64);
+        }
+        println!("  {total:>7}  total classified");
+        println!("  {unnameable:>7}  name no first-party type at all (receiver, bare name)");
+
+        let recoverable: usize = per_bucket.get("local").copied().unwrap_or_default()
+            + per_bucket.get("imported").copied().unwrap_or_default();
+        println!(
+            "\n  ** {recoverable} unresolved references whose type THIS FILE STATES **\n  \
+             (declared here or imported by name — placeable with no table at all)"
+        );
+
+        println!("\n── reason, within each bucket ──");
+        let mut reasons: Vec<((&str, String), usize)> = by_reason.into_iter().collect();
+        reasons.sort_by_key(|entry| std::cmp::Reverse(entry.1));
+        for ((bucket, reason), count) in reasons.iter().take(20) {
+            println!("  {count:>7}  {bucket:<28} {reason}");
+        }
+
+        println!("\n── worst STATED sites (a rung is missing, not a table) ──");
+        let mut worst: Vec<(&String, &usize)> = stated_sites.iter().collect();
+        worst.sort_by(|a, b| b.1.cmp(a.1));
+        println!("  distinct sites: {}", stated_sites.len());
+        for (what, count) in worst.iter().take(40) {
+            println!("    {count:>5}  {what}");
+        }
+
+        println!("\n── hypothesis 2: qualified paths of 3+ segments the walk declines ──");
+        let mut long: Vec<(&String, &usize)> = long_paths.iter().collect();
+        long.sort_by(|a, b| b.1.cmp(a.1));
+        let long_total: usize = long_paths.values().sum();
+        println!("  {long_total:>7}  total, over {} distinct paths", long_paths.len());
+        for (what, count) in long.iter().take(25) {
+            println!("    {count:>5}  {what}");
+        }
+
+        assert!(total > 0, "no unresolved member references classified, so this proved nothing");
     }
 }

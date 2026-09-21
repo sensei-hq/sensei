@@ -64,6 +64,8 @@ pub(super) fn walk<'a>(source: &Source<'a>, root: Node<'_>, from: Fqn) -> Found 
         package: source.package,
         module: source.module,
         declared_fields: BTreeMap::new(),
+        import_homes: BTreeMap::new(),
+        glob_homes: Vec::new(),
         inherent_members: BTreeMap::new(),
         declared_here: BTreeMap::new(),
         symbols: Vec::new(),
@@ -283,6 +285,18 @@ struct Walk<'a> {
     /// of a struct declared elsewhere in the file — possibly after it. A scope
     /// only flows downward and could not reach them.
     declared_fields: BTreeMap<String, BTreeMap<String, String>>,
+    /// Type name -> the module a by-name import of it states it lives in.
+    ///
+    /// Filled by [`Walk::bind`], read by [`Walk::imported_from`]. Owned because
+    /// a `super`-climbed module is a string neither the import path nor the
+    /// file's own module contains.
+    import_homes: BTreeMap<String, String>,
+    /// The module each package-rooted GLOB names, in source order.
+    ///
+    /// A list and not one answer, because "exactly one glob, or nothing" is
+    /// [`Walk::glob_rooted_here`]'s rule to apply and collapsing it here would
+    /// hide two globs that agree behind the same shape as two that do not.
+    glob_homes: Vec<String>,
     /// Member names each type declares in an INHERENT `impl` block of THIS
     /// FILE.
     ///
@@ -384,24 +398,45 @@ impl<'a> Walk<'a> {
     /// The module an import of `ty` names, when this file imports it from a
     /// package-rooted path.
     ///
-    /// `use crate::a::b::Widget` names module `a::b`. Only a `crate`-rooted
-    /// path answers: a bare `use serde::Serialize` names a library we do not
-    /// open (R5), and a `self`/`super` path is relative to a module this
-    /// function is not told, so reading either as ours would mint a
-    /// first-party identity for something that is not — which R4 ranks below
-    /// answering nothing.
+    /// `use crate::a::b::Widget` names module `a::b`, and so does
+    /// `use super::b::Widget` read from `a::c` — the roots are the same fact
+    /// spelled relatively, and [`Walk::module_a_root_names`] resolves both
+    /// against the module the walk was TOLD.
+    ///
+    /// A bare `use serde::Serialize` names a library we do not open (R5) and
+    /// answers nothing.
+    ///
+    /// Reads the map [`Walk::bind`] filled rather than the import list,
+    /// because a climbed module is a NEW string: `super::super::executor` from
+    /// `tasks::handlers::process` is `tasks::executor`, which appears verbatim
+    /// in neither the path nor the file's own module, so there is nothing for
+    /// [`Home::Stated`] to borrow unless it was stored.
     fn imported_from(&self, ty: &str) -> Option<&str> {
-        self.imports.iter().find_map(|import| {
-            match &import.binds {
-                Binding::Name(bound) if bound == ty => {
-                    let path = import.path.strip_prefix("crate::")?;
-                    // Everything before the type's own segment is its module.
-                    let (module, last) = path.rsplit_once("::")?;
-                    (last == ty && !module.is_empty()).then_some(module)
-                }
-                _ => None,
-            }
-        })
+        self.import_homes.get(ty).map(String::as_str)
+    }
+
+    /// The module a by-name import states its bound type lives in, or `None`
+    /// when the file's text does not state one.
+    ///
+    /// **THE LAST SEGMENT MUST BE THE BOUND NAME.** `use super::facts::Evidence
+    /// as Ev` states a home for `Evidence`, and filing it under `Ev` would mint
+    /// a member of a type called `Ev` in `indexer::facts` — which no file
+    /// declares, and which R4 ranks below minting nothing. An alias keeps its
+    /// home unresolved, as it did before.
+    fn module_a_by_name_import_states(&self, path: &str, bound: &str) -> Option<String> {
+        let segments: Vec<&str> =
+            path.split("::").map(str::trim).filter(|s| !s.is_empty()).collect();
+        let (last, module) = segments.split_last()?;
+        if *last != bound {
+            return None;
+        }
+        let module = self.module_a_root_names(module)?;
+        // The package root is left unresolved here, exactly as it was when only
+        // `crate::` was accepted. Whether a type declared at the root is a home
+        // a member identity may carry is a separate question from which ROOTS
+        // are readable, and answering both in one change would leave neither
+        // measured.
+        (!module.is_empty()).then_some(module)
     }
 
     /// Whether THIS FILE imports `ty` from a package it does not open.
@@ -453,39 +488,75 @@ impl<'a> Walk<'a> {
     /// module it comes from.
     fn glob_rooted_here(&self) -> Option<&str> {
         let mut found: Option<&str> = None;
-        for import in self.imports.iter().filter(|i| matches!(i.binds, Binding::Glob)) {
-            let Some(module) = self.module_a_root_names(&import.path) else { continue };
+        for module in &self.glob_homes {
             match found {
                 // Two globs, two possible homes, and nothing in the file to
                 // choose between them.
-                Some(first) if first != module => return None,
+                Some(first) if first != module.as_str() => return None,
                 Some(_) => {}
-                None => found = Some(module),
+                None => found = Some(module.as_str()),
             }
         }
         found
     }
 
-    /// The module a `self`/`super`/`crate`-rooted path names, relative to the
+    /// The module a GLOB names, when its path is rooted in this package.
+    ///
+    /// `use super::facts::*` names `indexer::facts` and not `indexer`: the
+    /// segments AFTER the roots are module segments and belong on the answer.
+    /// Matching the root as a whole path — which is what this did — sent every
+    /// rooted glob with a tail to a branch that only stripped `crate::`.
+    fn module_a_glob_names(&self, path: &str) -> Option<String> {
+        let path = path.strip_suffix("::*")?;
+        let segments: Vec<&str> =
+            path.split("::").map(str::trim).filter(|s| !s.is_empty()).collect();
+        self.module_a_root_names(&segments)
+    }
+
+    /// The module a `crate`/`self`/`super`-rooted path names, relative to the
     /// module this walk is reading.
     ///
-    /// `super` climbs one segment off the FILE's module, which the walk was
-    /// told and never derived — so this reads a path the source wrote and
-    /// resolves it against a fact the walk was handed, and infers nothing.
-    fn module_a_root_names<'p>(&'p self, path: &'p str) -> Option<&'p str> {
-        let path = path.strip_suffix("::*")?;
-        match path {
-            "crate" => Some(""),
-            "self" => Some(self.module),
-            "super" => match self.module.rsplit_once("::") {
-                Some((up, _)) => Some(up),
-                // One segment in from the package root: `super` IS the root.
-                None if !self.module.is_empty() => Some(""),
-                None => None,
-            },
-            // A deeper path (`crate::a::b::*`) names its own module outright.
-            rest => rest.strip_prefix("crate::"),
+    /// Each `super` climbs one segment off the FILE's module, which the walk
+    /// was told and never derived — so this reads a path the source wrote and
+    /// resolves it against a fact the walk was handed, and infers nothing (R7).
+    /// Segments after the roots are appended: `super::super::executor` from
+    /// `tasks::handlers::process` is `tasks::executor`.
+    ///
+    /// `None` for a path with no root — a bare `use serde::Serialize` names a
+    /// package we do not open (R5) — and `None` for one that climbs PAST the
+    /// package root, which is not a module of ours to name either.
+    ///
+    /// One resolver for both rungs, at two grades: a by-name import is the
+    /// file's own word and a glob only says a name COULD arrive that way. The
+    /// grading belongs to the callers; the arithmetic on the path is one thing
+    /// and is written once.
+    fn module_a_root_names(&self, segments: &[&str]) -> Option<String> {
+        let own = || self.module.split("::").filter(|s| !s.is_empty()).collect::<Vec<&str>>();
+        let (mut module, mut rest) = match segments.split_first() {
+            Some((&"crate", tail)) => (Vec::new(), tail),
+            Some((&"self", tail)) => (own(), tail),
+            Some((&"super", _)) => {
+                let mut climbed = own();
+                let mut rest = segments;
+                while let Some((&"super", tail)) = rest.split_first() {
+                    // Climbing past the package root leaves the package, and
+                    // nothing outside it is ours to name (R5).
+                    climbed.pop()?;
+                    rest = tail;
+                }
+                (climbed, rest)
+            }
+            _ => return None,
+        };
+        // A root may be followed by more roots only in the `super` chain above;
+        // anywhere else they are ordinary segments and this is a no-op.
+        while let Some((&"self", tail)) = rest.split_first() {
+            // `use self::a::*` and `use a::{self}` both reach here; `self` in
+            // the middle of a path names the module already reached.
+            rest = tail;
         }
+        module.extend(rest);
+        Some(module.join("::"))
     }
 
     /// Split a `cfg`-gated declaration into the CALLABLE a use site mints and
@@ -2010,7 +2081,30 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// Record one import, AND the module its path names, when it names one.
+    ///
+    /// The home is resolved here — once per import — rather than in
+    /// [`Walk::home_of`], which is asked once per use site. That is the cheaper
+    /// order of the two, and the reason it is stored at all is that a climbed
+    /// module is a new string with nothing to borrow from (see
+    /// [`Walk::imported_from`]).
+    ///
+    /// Every import in the file funnels through here, so neither map can fall
+    /// behind the list beside it.
     fn bind(&mut self, path: String, binds: Binding, at: Node<'_>) {
+        match &binds {
+            Binding::Name(bound) => {
+                if let Some(module) = self.module_a_by_name_import_states(&path, bound) {
+                    self.import_homes.insert(bound.clone(), module);
+                }
+            }
+            Binding::Glob => {
+                if let Some(module) = self.module_a_glob_names(&path) {
+                    self.glob_homes.push(module);
+                }
+            }
+            Binding::MemberOf { .. } => {}
+        }
         self.imports.push(Import { origin: import_origin(&path), path, binds, at: span(at) });
     }
 
