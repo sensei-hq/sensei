@@ -545,8 +545,27 @@ pub enum Observation {
     /// beside [`Observation::Receiver`] rather than replacing it, because the
     /// receiver text is what the source WROTE and the histogram counts it.
     BoundToTheResultOf(String),
-    /// An identity the walk considered and could not prove.
+    /// An identity the walk considered and could not prove. A NAME MATCH: it
+    /// still needs a declaration to agree before it can become an edge.
     Candidate(Fqn),
+    /// An identity THIS FILE'S OWN TEXT establishes (stage 11, S7).
+    ///
+    /// The other grade of the same thing, and the distance between them is the
+    /// whole of what removed the type barrier. A file that declares `Widget`,
+    /// or imports it by a package-rooted path, has STATED where `Widget` lives
+    /// — so `w.wide()` names the member under that module, on the file's own authority
+    /// and may become an edge with nothing else agreeing. MEASURED over this
+    /// repository, of every member reference the barrier once resolved: 41.0%
+    /// were types the file declares, 38.0% types it imports by name, 17.6%
+    /// reachable through a wildcard import, 1.6% spelled inline — 98.1% stated
+    /// by the file itself.
+    ///
+    /// **NOT A LICENCE** (§9). It says the file's text establishes the
+    /// IDENTITY, not that the target exists — existence is persistence's
+    /// question, answered by stub-and-heal. A receiver whose type the source
+    /// never states is still `ReceiverTypeUnknown`, and a bare name that merely
+    /// matches something is still a [`Observation::Candidate`].
+    Named(Fqn),
 }
 
 /// What the walk had in hand at the moment it could not resolve (spec §3.2).
@@ -573,6 +592,39 @@ pub struct Evidence {
     pub saw: Vec<Observation>,
 }
 
+impl Evidence {
+    /// Every IDENTITY this use site minted, at EITHER grade, in the order the
+    /// walk saw them.
+    ///
+    /// One reader for both grades, because "which identity did the use site
+    /// mint" is a different question from "may it become an edge". Every
+    /// MEASUREMENT asks the first: the lost-edge decomposition in `barrier.rs`
+    /// needs to know a use site named a node whatever the ladder then did about
+    /// it, and a harness comparing the two sides of the merge contract is
+    /// comparing strings.
+    ///
+    /// An ITERATOR rather than a per-observation optional identity, and that is
+    /// the rule rather than a preference: an observation carrying source text
+    /// instead of a key contributes nothing here, so there is no `None` for a
+    /// caller to mistake for an answer (R2, and the guard
+    /// `no_option_stands_in_for_a_resolution`).
+    ///
+    /// The LADDER deliberately does not use this. `Ladder::named_by_this_file`
+    /// and `Ladder::first_candidate` walk `saw` separately, because there the
+    /// grade is the whole point and a reader that collapsed the two would let
+    /// the weaker rung's table answer for the stronger grade — which is the
+    /// barrier, reintroduced.
+    pub fn identities(&self) -> impl Iterator<Item = &Fqn> {
+        self.saw.iter().filter_map(|observation| match observation {
+            Observation::Candidate(fqn) | Observation::Named(fqn) => Some(fqn),
+            Observation::Receiver(_)
+            | Observation::ImportInScope(_)
+            | Observation::UnplacedType(_)
+            | Observation::BoundToTheResultOf(_) => None,
+        })
+    }
+}
+
 /// Which rung of the ladder placed an edge.
 ///
 /// The rungs are not interchangeable, and a consumer handed a bare "resolved"
@@ -595,6 +647,24 @@ pub enum Rung {
     DeclaredHere,
     /// An import in scope binds the head of the path.
     ThroughAnImport,
+    /// **THIS FILE'S OWN TEXT names the target** (stage 11, S7).
+    ///
+    /// The file declares the type, or imports it by a package-rooted path, so
+    /// it has STATED where that type lives — and a member identity minted from
+    /// a stated home is a fact about this file rather than a guess about the
+    /// scan. The walk records it as [`Observation::Named`], and this rung
+    /// places it with nothing else agreeing: the file is the proof.
+    ///
+    /// **This is the rung that removes the type barrier.** The one below needs
+    /// a repo-wide set of every member identity the scan declared, built after
+    /// a completed pass; this one needs the file it is already reading.
+    ///
+    /// ABOVE [`Rung::DeclaredByItsType`] because it is the stronger claim —
+    /// that rung's evidence is a declaration seen in ANOTHER file. BELOW
+    /// [`Rung::ThroughAnImport`] because an import binding the head of a path
+    /// also states which SIDE of the scanned source the target is on, and this
+    /// rung does not.
+    NamedByThisFile,
     /// A TYPE in this scan declares the target as its member, in another file.
     ///
     /// The same proof [`Rung::DeclaredHere`] offers, one file further out: the
@@ -628,6 +698,7 @@ impl Rung {
         match self {
             Self::DeclaredHere => "declared_here",
             Self::ThroughAnImport => "through_an_import",
+            Self::NamedByThisFile => "named_by_this_file",
             Self::DeclaredByItsType => "declared_by_its_type",
             Self::ThroughAGlob => "through_a_glob",
             Self::RootedInThisPackage => "rooted_in_this_package",
@@ -641,6 +712,7 @@ impl Rung {
         Some(match label {
             "declared_here" => Self::DeclaredHere,
             "through_an_import" => Self::ThroughAnImport,
+            "named_by_this_file" => Self::NamedByThisFile,
             "declared_by_its_type" => Self::DeclaredByItsType,
             "through_a_glob" => Self::ThroughAGlob,
             "rooted_in_this_package" => Self::RootedInThisPackage,
@@ -654,6 +726,7 @@ impl Rung {
     pub const ALL: &'static [Rung] = &[
         Rung::DeclaredHere,
         Rung::ThroughAnImport,
+        Rung::NamedByThisFile,
         Rung::DeclaredByItsType,
         Rung::ThroughAGlob,
         Rung::RootedInThisPackage,
@@ -919,6 +992,7 @@ mod tests {
             Observation::UnplacedType("PgStore".to_string()),
             Observation::BoundToTheResultOf("pg_store".to_string()),
             Observation::Candidate(an_fqn("candidate")),
+            Observation::Named(an_fqn("named")),
         ]
     }
 
@@ -1108,10 +1182,11 @@ mod tests {
                 | Observation::ImportInScope(_)
                 | Observation::UnplacedType(_)
                 | Observation::BoundToTheResultOf(_)
-                | Observation::Candidate(_) => {}
+                | Observation::Candidate(_)
+                | Observation::Named(_) => {}
             }
         }
-        assert_eq!(all_observations().len(), 5);
+        assert_eq!(all_observations().len(), 6);
     }
 
     #[test]

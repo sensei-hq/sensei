@@ -169,6 +169,9 @@ pub enum ObservationRow {
     /// See [`Observation::BoundToTheResultOf`].
     BoundToTheResultOf(String),
     Candidate(String),
+    /// See [`Observation::Named`] — an identity the file's own text
+    /// established, as against one the walk merely considered.
+    Named(String),
 }
 
 /// One use site, as the database holds it.
@@ -220,6 +223,7 @@ fn observation_row_of(observation: &Observation) -> ObservationRow {
         Observation::UnplacedType(text) => ObservationRow::UnplacedType(text.clone()),
         Observation::BoundToTheResultOf(text) => ObservationRow::BoundToTheResultOf(text.clone()),
         Observation::Candidate(fqn) => ObservationRow::Candidate(fqn.as_str().to_string()),
+        Observation::Named(fqn) => ObservationRow::Named(fqn.as_str().to_string()),
     }
 }
 
@@ -755,6 +759,7 @@ fn observation_prop(observation: &ObservationRow) -> serde_json::Value {
         ObservationRow::UnplacedType(text) => ("unplaced_type", text),
         ObservationRow::BoundToTheResultOf(text) => ("bound_to_the_result_of", text),
         ObservationRow::Candidate(text) => ("candidate", text),
+        ObservationRow::Named(text) => ("named", text),
     };
     serde_json::json!({ "saw": saw, "text": text })
 }
@@ -767,6 +772,7 @@ fn observation_from_prop(value: &serde_json::Value) -> Option<ObservationRow> {
         "unplaced_type" => ObservationRow::UnplacedType(text),
         "bound_to_the_result_of" => ObservationRow::BoundToTheResultOf(text),
         "candidate" => ObservationRow::Candidate(text),
+        "named" => ObservationRow::Named(text),
         _ => return None,
     })
 }

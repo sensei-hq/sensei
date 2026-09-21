@@ -252,7 +252,7 @@ pub fn load_repo(
 mod tests {
     use super::*;
 
-    use crate::indexer::facts::{Observation, RefKind, Resolution};
+    use crate::indexer::facts::{RefKind, Resolution};
 
     /// **THE WHOLE STAGE, OVER A REAL TREE ON DISK.**
     ///
@@ -385,19 +385,37 @@ mod tests {
         println!("╚═════════════════════════════════════════════════════════════");
     }
 
-    /// **ONE FILE, ON ITS OWN, MINTS THE STUB FOR AN IMPORTED TYPE'S MEMBER.**
+    /// **ONE FILE, ON ITS OWN, REACHES A MEMBER OF A TYPE IT IMPORTED**
+    /// (stage 11, S7 — §6 step 3).
     ///
-    /// This is the property that removes the barrier. `use crate::a::Widget`
-    /// states where `Widget` lives, so a call on a `Widget` can be named
-    /// `a·Widget·wide` from this file alone — and when `a.rs` is indexed it
-    /// declares that same identity and the stub is promoted.
+    /// This is the property that removes the barrier, and this test used to
+    /// assert only HALF of it. `use crate::a::Widget` states where `Widget`
+    /// lives, so a call on a `Widget` can be named `a·Widget·wide` from this
+    /// file alone. The walk already minted that string; the LADDER refused it,
+    /// because `declared_by_its_type` required a repo-wide set built at a
+    /// barrier to confirm the declaration exists.
     ///
-    /// The file already proves it has the information: the TYPE reference on
+    /// Existence is not this stage's question. Under stub-and-heal it belongs
+    /// to persistence, which mints a node on first mention and promotes it when
+    /// its own file arrives (`resolved = nodes.resolved OR EXCLUDED.resolved`).
+    /// What this stage owes is an IDENTITY both sides can mint, and the file's
+    /// own import is proof enough of that.
+    ///
+    /// So the evidence is graded. `Named` says THIS FILE'S TEXT establishes the
+    /// identity, and becomes an edge unconditionally. `Candidate` is a name
+    /// match and still cannot, which is what
+    /// `a_bare_name_matching_another_files_declaration_is_not_proof_of_anything`
+    /// protects. Relaxing the gate blanket-style was measured at +12,360 and
+    /// broke 13 tests; the grading is what makes the relaxation safe.
+    ///
+    /// The file already proved it had the information: the TYPE reference on
     /// the parameter resolves `ThroughAnImport` on the line above. Only the
-    /// CALL failed, because `home_of` consulted the file's declarations and
-    /// then a global table, never the imports it had just used.
+    /// CALL failed.
+    ///
+    /// The mutation that must break it: `name_member`'s `Home::Stated` arm
+    /// calling `considered(..)` instead of `named(..)`.
     #[test]
-    fn one_file_names_the_member_of_a_type_it_imported() {
+    fn one_file_reaches_a_member_of_a_type_it_imported() {
         let b = Placed {
             path: "src/b.rs",
             package: "demo",
@@ -412,27 +430,23 @@ mod tests {
             .iter()
             .find(|r| r.kind == RefKind::Calls)
             .expect("the body calls something");
-        // NAMED, not yet proven. The walk now mints the identity from the
-        // import alone — which is the half that removes the barrier. Promoting
-        // that name to an EDGE is the ladder's second gate
-        // (`declared_by_its_type`), which today requires the scan to have
-        // already seen the declaration; under the stub-and-heal model that
-        // existence question belongs to the persistence layer. Relaxing it
-        // blanket-style was MEASURED at +12,360 resolved references over this
-        // repository and broke 13 tests, `a_bare_name_matching_another_files_
-        // declaration_is_not_proof_of_anything` among them — so the relaxation
-        // has to distinguish "named from this file's own text" from "guessed",
-        // and that is the next increment, not this one.
-        let Resolution::Unresolved { evidence, .. } = &call.target else {
-            panic!("expected a named-but-unproven target, got {:?}", call.target)
+        let Resolution::Resolved { fqn, via } = &call.target else {
+            panic!("the call did not reach the member its own import names: {:?}", call.target)
         };
-        assert!(
-            evidence.saw.iter().any(|o| matches!(
-                o,
-                Observation::Candidate(f) if f.to_string() == "rust·demo·a·Widget·wide·item"
-            )),
-            "the member was not named from the import alone: {:?}",
-            evidence.saw
+        assert_eq!(
+            fqn.to_string(),
+            "rust·demo·a·Widget·wide·item",
+            "the member is filed under the module the IMPORT says its type lives in"
+        );
+        // The LABEL rather than the variant, so this assertion is readable
+        // before the variant exists and the RED is a failure rather than a
+        // compile error.
+        assert_eq!(
+            via.as_label(),
+            "named_by_this_file",
+            "the proof is this file's own text, which is a different and stronger claim than \
+             `declared_by_its_type` — that rung says the declaration was seen in ANOTHER file, \
+             and it is the one this stage stops needing"
         );
     }
 
