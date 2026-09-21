@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use tree_sitter::Node;
 
-use super::super::common::{Miss, considered};
+use super::super::common::{Miss, considered, named};
 use super::super::{Home, Source, TypeHomes};
 use super::MODULE;
 use super::types::{element_type, extracted_type, simple_type_name};
@@ -309,13 +309,22 @@ impl<'a> Walk<'a> {
     /// mentions, which is the 1.9% that arrives through an imported function's
     /// return type.
     fn home_of(&self, ty: &str) -> Home<'_> {
+        // THE TWO RUNGS THIS FILE ANSWERS ITSELF. Both are `Stated`, so an
+        // identity minted from either is `Named` and may become an edge on the
+        // file's own authority (S7).
         if let Some(module) = self.declared_here.get(ty) {
-            return Home::Ours { module: module.as_str() };
+            return Home::Stated { module: module.as_str() };
         }
         if let Some(module) = self.imported_from(ty) {
-            return Home::Ours { module };
+            return Home::Stated { module };
         }
-        self.types.lookup(self.package, ty)
+        // The table's answer is a different claim and is graded as one: this
+        // file says nothing about where the type lives, so what it mints is a
+        // `Candidate` and still needs a declaration to agree.
+        match self.types.lookup(self.package, ty) {
+            Home::Stated { module } | Home::Tabled { module } => Home::Tabled { module },
+            other => other,
+        }
     }
 
     /// The module an import of `ty` names, when this file imports it from a
@@ -1129,13 +1138,15 @@ impl<'a> Walk<'a> {
         // where the type lives — or has been told two places — the block's own
         // module stands, which is the previous behaviour and is right whenever
         // the type is declared here.
-        let home = match self.home_of(&ty) {
-            Home::Ours { module } => module.to_string(),
-            // This block DECLARES these members, so they are ours wherever the
-            // type came from — `impl MyTrait for PathBuf` puts our methods in
-            // our module. Unlike the use sites below, nothing is being placed
-            // here; the block's own module is the answer, not a stand-in.
-            Home::Ambiguous | Home::NotOurs => scope.module.clone(),
+        // The GRADE does not matter here and `Home::module` says so. This block
+        // DECLARES these members, so they are ours wherever the type came from
+        // — `impl MyTrait for PathBuf` puts our methods in our module. Unlike
+        // the use sites below, nothing is being PLACED here, so there is no
+        // claim to grade; the block's own module is the answer when the scan
+        // has said nothing or two things, not a stand-in for one.
+        let home = match self.home_of(&ty).module() {
+            Some(module) => module.to_string(),
+            None => scope.module.clone(),
         };
 
         let mut inner = scope.clone();
@@ -1328,17 +1339,28 @@ impl<'a> Walk<'a> {
         // USE SITE's module here is what made a call resolve only when the
         // caller happened to share a module with the impl block — the two sides
         // agreeing is the merge contract (§2), not an optimisation.
+        // **WHERE THE GRADE IS DECIDED** (S7). The identity is the same string
+        // either way; what differs is whether THIS FILE established it. A file
+        // that declares `Widget`, or imports it by a package-rooted path, has
+        // said where `Widget` lives — so `w.wide()` may become an edge on the
+        // file's own authority. A home the barrier TABLE supplied is a guess
+        // about the scan, and still needs a declaration to agree.
         match self.home_of(ty) {
-            Home::Ours { module } => {
-                let considered = considered(fqn::refer(&Form::Member {
+            Home::Stated { module } | Home::Tabled { module } => {
+                let stated = matches!(self.home_of(ty), Home::Stated { .. });
+                let minted = fqn::refer(&Form::Member {
                     lang: Language::Rust,
                     package: self.package,
                     module,
                     ty,
                     member,
                     reach,
-                }));
-                unplaced(node, member, reach, considered)
+                });
+                let saw = match stated {
+                    true => named(minted),
+                    false => considered(minted),
+                };
+                unplaced(node, member, reach, saw)
             }
             // Two first-party types answer to this name, so there is no one
             // home and picking would be a coin toss recorded as a fact.
@@ -1500,17 +1522,20 @@ impl<'a> Walk<'a> {
                 // 1,138 sites. An
                 // empty candidate list leaves the bare path for the ladder,
                 // which resolves it through the import that brought `Vec` in.
-                Ok(ty) => match self.home_of(&ty) {
-                    Home::Ours { module } => considered(fqn::refer(&Form::Member {
-                        lang,
-                        package,
-                        module,
-                        ty: &ty,
-                        member,
-                        reach,
-                    })),
-                    Home::Ambiguous | Home::NotOurs => Vec::new(),
-                },
+                // Graded the same way and for the same reason as `name_member`:
+                // `Config::load()` where this file imports `Config` by a
+                // package-rooted path is the file naming the member, not the
+                // walk guessing at it.
+                Ok(ty) => {
+                    let minted = |module| {
+                        fqn::refer(&Form::Member { lang, package, module, ty: &ty, member, reach })
+                    };
+                    match self.home_of(&ty) {
+                        Home::Stated { module } => named(minted(module)),
+                        Home::Tabled { module } => considered(minted(module)),
+                        Home::Ambiguous | Home::NotOurs => Vec::new(),
+                    }
+                }
                 Err(_) => Vec::new(),
             },
             // A longer path is not a thing this walk can read on its own, and a

@@ -1277,7 +1277,7 @@ impl Walk<'_> {
     /// [`Home`] for why "two of ours share the name" is not a miss.
     fn home_of(&self, ty: &str) -> Home<'_> {
         if self.declared_here.contains(ty) {
-            return Home::Ours { module: self.module };
+            return Home::Stated { module: self.module };
         }
         self.types.lookup(self.package, ty)
     }
@@ -2576,7 +2576,7 @@ impl Walk<'_> {
         // two identities for one field.
         let saw = || vec![Observation::Receiver(self.text_of(object.span()).to_string())];
         match self.home_of(&ty) {
-            Home::Ours { module } => Miss::unplaced(
+            Home::Stated { module } | Home::Tabled { module } => Miss::unplaced(
                 node_kind,
                 member,
                 reach,
@@ -3225,7 +3225,9 @@ mod tests {
                 Resolution::Resolved { fqn, .. } => ("?".to_string(), fqn.to_string()),
                 Resolution::Unresolved { reason, evidence } => {
                     let candidate = evidence.saw.iter().find_map(|o| match o {
-                        Observation::Candidate(fqn) => Some(fqn.to_string()),
+                        Observation::Candidate(fqn) | Observation::Named(fqn) => {
+                            Some(fqn.to_string())
+                        }
                         _ => None,
                     });
                     (evidence.name.clone(), candidate.unwrap_or_else(|| format!("{reason:?}")))
