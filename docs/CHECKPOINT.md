@@ -43,8 +43,24 @@ the adapter as a fact on `Source`, the way an adapter is already TOLD its
 package and module and never climbs a directory (keeps R7 intact). Alternatives
 and their costs are in the backlog entry.
 
-Until that is decided, the forward work with no open question is **python** and
-**java** — each a measurement first (their `gap` row), then the same rung.
+**CORRECTION — python and java are NOT the easy forward work.** I wrote that
+before checking: **this repository contains ZERO `.py` and ZERO `.java` files**,
+so neither appears in the per-language decomposition and neither can have §10's
+gate ("resolved-reference count over this repo") evaluated at all. The java
+module says so in as many words and calls it "the right constraint rather than a
+limitation".
+
+Both are measurable only against an EXTERNAL corpus via `SENSEI_CORPUS`, which
+already exists as a mechanism:
+
+    SENSEI_CORPUS=~/Work/Dayamed cargo test -p senseid --bin senseid -- \
+      --ignored --nocapture indexer::lang::java::corpus
+
+That corpus is present on this machine — 8,007 `.java` files against 56 `.py`
+— so **java is measurable and python effectively is not**. So the §11 order
+("typescript/javascript/svelte, python, java") is by corpus size in the abstract
+and NOT by what can be verified here; java should come before python on
+evidence, and python needs a corpus chosen before its rung is worth writing.
 
 ## Open questions
 
