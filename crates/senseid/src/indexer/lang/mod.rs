@@ -429,6 +429,65 @@ pub fn adapter_for(language: Language) -> &'static dyn LanguageAdapter {
 mod tests {
     use super::*;
 
+    /// **THE RUST WALK TAKES NO CROSS-FILE TABLE** (stage 11, S5).
+    ///
+    /// The sibling of [`no_adapter_reads_the_filesystem`] below, and it exists
+    /// for the same reason: the rule is a property of the SOURCE rather than of
+    /// any value the walk computes. A type's module is read from THIS FILE —
+    /// its own declarations, then its imports (`rust::walk::Walk::home_of`) —
+    /// and the one thing that undoes that is somebody handing the walk a
+    /// repo-wide table again. Spec §9: "Do not let `read` keep a cross-file
+    /// parameter 'for now'. It is the one door the barrier can come back
+    /// through."
+    ///
+    /// **SCOPED TO ONE FILE, AND THAT SCOPE IS THE STATE OF THE MIGRATION.**
+    /// [`LanguageAdapter::read`] still TAKES the table and the other four
+    /// adapters still read theirs — TypeScript has no other source for a type's
+    /// home, and taking it away now would drop its share below the floor
+    /// `acceptance::report` records. Rust is the first adapter through (§11), so
+    /// its walk is the first file this may be asserted of. Widen the path as
+    /// each next adapter lands; the trait parameter goes when the LAST one does.
+    ///
+    /// The needle is ASSEMBLED so the guard cannot match its own source — the
+    /// idiom `the_collapsed_spelling_machinery_has_no_caller` already uses for
+    /// the same reason.
+    #[test]
+    fn the_rust_walk_takes_no_cross_file_table() {
+        const WALK: &str = "lang/rust/walk.rs";
+        let needle = format!("Type{}", "Homes");
+
+        let mut read = 0;
+        let mut found: Vec<String> = Vec::new();
+        for (path, body) in crate::indexer::guard_sources() {
+            if path != WALK {
+                continue;
+            }
+            read += 1;
+            for (n, line) in crate::indexer::outside_tests(&body).lines().enumerate() {
+                // Comments stripped the way the filesystem guard strips them:
+                // prose ABOUT the table the walk no longer takes is not a reach
+                // for one, and a `///` line is a comment by this rule too.
+                let code = line.split_once("//").map_or(line, |(before, _)| before);
+                if code.contains(needle.as_str()) {
+                    found.push(format!("{WALK}:{} {}", n + 1, line.trim()));
+                }
+            }
+        }
+        // ANTI-VACUITY, and not theoretical: this guard names ONE file, so a
+        // rename or a move makes it read nothing and pass for ever after.
+        assert_eq!(
+            read, 1,
+            "the guard read {read} copies of {WALK}, so an empty result means nothing"
+        );
+        assert!(
+            found.is_empty(),
+            "the rust walk still reaches for the repo-wide type table (S5). A type's module \
+             comes from THIS FILE — its declarations, then its imports — and a walk that can \
+             be handed one is a walk the barrier grows back through:\n  {}",
+            found.join("\n  ")
+        );
+    }
+
     /// The totality [`adapter_for`] relies on, proven rather than asserted by
     /// its `expect`. A `Language` variant with no adapter is a symbol the graph
     /// could store and never name.
