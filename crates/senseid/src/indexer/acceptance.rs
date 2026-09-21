@@ -1125,8 +1125,15 @@ fn no_two_declarations_mint_one_identity() {
     // cross-app false merges — two apps' `src/app.d.ts` were one identity —
     // and the file-module emission added none that survive it.
     //
-    const KNOWN: usize = 514;
-    const KNOWN_RUST: usize = 3;
+    // **RUST IS AT ZERO**, and it got there by repairing four defects rather
+    // than tolerating them: a local named under its enclosing function, that
+    // rule reaching a METHOD body, a `cfg`-gated declaration becoming a
+    // callable plus one arm per condition, and an anonymous `const _` ceasing
+    // to be a symbol it never was. Every rust collision this ratchet ever
+    // counted is gone. The 511 that remain are typescript's.
+    //
+    const KNOWN: usize = 511;
+    const KNOWN_RUST: usize = 0;
     const KNOWN_TYPESCRIPT: usize = 511;
     assert!(
         collisions.len() <= KNOWN,
@@ -1135,8 +1142,13 @@ fn no_two_declarations_mint_one_identity() {
         collisions.len()
     );
     assert!(
-        per_language.get("rust").copied().unwrap_or(0) <= KNOWN_RUST,
-        "rust collisions rose to {:?} (ratchet {KNOWN_RUST})",
+        // EQUALITY, NOT A CEILING. At zero a ratchet stops being a ratchet and
+        // becomes an invariant: there is no headroom left to drift into, and
+        // `<= 0` on a `usize` says the same thing while reading as though there
+        // were. Any rust collision at all now fails this.
+        per_language.get("rust").copied().unwrap_or(0) == KNOWN_RUST,
+        "rust collisions rose to {:?}, and rust is at ZERO — every one this ratchet ever \
+         counted was repaired, so a new one is a regression and not a tolerated shape",
         per_language.get("rust")
     );
     assert!(

@@ -1710,13 +1710,20 @@ pub fn free(w: &Widget) -> u32 { w.width }
     }
 
     /// Declarations, counted by kind, with no knowledge of `Walk`.
-    fn count_declarations(root: tree_sitter::Node<'_>) -> usize {
+    fn count_declarations(root: tree_sitter::Node<'_>, text_of: &str) -> usize {
         let mut count = 0;
         let mut stack = vec![root];
         while let Some(node) = stack.pop() {
             if !inside_an_attribute(node) && !inside_an_unnameable_impl(node) {
+                // AN ANONYMOUS DECLARATION IS NOT ONE. `const _: () = ..`
+                // binds no name, so there is nothing for a use site to reach
+                // and the walk mints no symbol. Stated here from the GRAMMAR —
+                // the name field is literally `_` — so this side stays
+                // independent of the walk's rule.
                 if DECLARATION_KINDS.contains(&node.kind())
-                    && node.child_by_field_name("name").is_some()
+                    && node
+                        .child_by_field_name("name")
+                        .is_some_and(|n| &text_of[n.byte_range()] != "_")
                     // A `mod` declares a module only when the module's BODY is
                     // here. `mod x;` names a module living in another file, and
                     // that file declares it — stated in tree-sitter terms, from
@@ -1947,8 +1954,9 @@ pub fn free(w: &Widget) -> u32 { w.width }
             // No tolerance. A tolerance is where a double-count hides, which is
             // what this property exists to prevent.
             let root = parse(&text);
-            let expected =
-                count_declarations(root.root_node()) + 1 + count_gated(root.root_node(), &text);
+            let expected = count_declarations(root.root_node(), &text)
+                + 1
+                + count_gated(root.root_node(), &text);
             if facts.symbols.len() != expected {
                 disagreements.push(format!(
                     "{path}: walk produced {}, independent count says {}",
@@ -2335,6 +2343,73 @@ pub fn free(w: &Widget) -> u32 { w.width }
                 "rust·p·h·status·cfg:not(feature=emb)·item -> rust·p·h·status·item".to_string(),
             ],
             "each arm points at the callable it implements"
+        );
+    }
+
+    /// **AN ANONYMOUS DECLARATION IS NOT A SYMBOL, AND ITS REFERENCES BELONG TO
+    /// WHAT HOLDS IT.**
+    ///
+    /// `const _: () = assert!(..)` is Rust's compile-time assertion. The `_`
+    /// binds NO NAME — that is the entire reason to write it — so nothing can
+    /// call, import or navigate to it, and `_` is not a path segment any use
+    /// site can spell.
+    ///
+    /// The walk read `_` as a name and minted a node for it. Two assertions in
+    /// one file then minted ONE identity, which is how this reached the A7
+    /// collision list. But the collision was the symptom: a node no reference
+    /// can reach is not a symbol at all, and deduplicating two of them would
+    /// have kept one phantom instead of two.
+    ///
+    /// MEASURED: `tasks/handlers/embed.rs` declares two, guarding the embedding
+    /// batch budget against the encoder's micro-batch size.
+    ///
+    /// **THE REFERENCES SURVIVE AND BELONG TO THE FILE**, which is the half a
+    /// careless fix drops — deleting the node must not delete the walk of what
+    /// it contains.
+    ///
+    /// What survives here is the `assert!` INVOCATION, not the consts inside
+    /// it: the walk emits no reference from within a macro body at all (see
+    /// `Reason::MacroExpansion`), so `A` and `B` are not named from here by
+    /// anything. That is pre-existing and unrelated; what this pins is that the
+    /// edges hang off `…·mod` rather than off a node nothing can reach.
+    ///
+    /// MUTATION: remove the `_` guard from `Walk::plain` — the node returns and
+    /// the first assertion names it.
+    #[test]
+    fn an_anonymous_const_is_not_a_symbol_and_its_references_belong_to_the_file() {
+        let facts = facts(
+            "m",
+            "pub const A: usize = 1;\n\
+             pub const B: usize = 2;\n\
+             const _: () = assert!(A < B);\n\
+             const _: () = assert!(B > A);\n",
+        );
+
+        assert!(
+            !fqns(&facts).iter().any(|f| f.contains("·_·")),
+            "`_` binds no name, so there is nothing for a use site to reach and nothing to \
+             declare: {:?}",
+            fqns(&facts)
+        );
+
+        // The assertions still name `A` and `B`, and those edges hang off the
+        // file — a nameless statement at file scope is held by the file.
+        let from_the_file: Vec<&str> = facts
+            .references
+            .iter()
+            .filter(|r| r.from.as_str() == "rust·p·m·mod")
+            .map(|r| r.from.as_str())
+            .collect();
+        assert_eq!(
+            from_the_file.len(),
+            2,
+            "one per assertion, hung off the FILE — a nameless statement at file scope is held \
+             by the file, and the walk of what it contains outlives the node: {:?}",
+            facts
+                .references
+                .iter()
+                .map(|r| format!("{} {:?}", r.from.as_str(), r.kind))
+                .collect::<Vec<_>>()
         );
     }
 
