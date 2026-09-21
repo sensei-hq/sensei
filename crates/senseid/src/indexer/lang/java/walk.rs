@@ -741,7 +741,7 @@ impl<'a> Walk<'a> {
         // 22,316 field declarations and ZERO field edges, with 9,932 edges
         // naming a member whose declaration was sitting there under the other
         // reach.
-        if matches!(self.types.lookup(self.package, &ty), Home::Ours { .. })
+        if matches!(self.types.lookup(self.package, &ty), Home::Tabled { .. })
             && let Ok(fqn) = fqn::refer(&Form::Member {
                 lang: Language::Java,
                 package: self.package,

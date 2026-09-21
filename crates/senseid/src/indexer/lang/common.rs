@@ -199,8 +199,26 @@ pub fn names_a_type_by_leading_case(segment: &str) -> bool {
 /// An identity the walk CONSIDERED, as evidence — never as a resolution. One
 /// that could not even be minted leaves no observation behind rather than a
 /// placeholder one.
+///
+/// The weaker of the two grades. Use [`named`] when THIS FILE'S TEXT
+/// established the identity; this one is for a name match, which still needs a
+/// declaration to agree before it can become an edge (R4).
 pub(super) fn considered(minted: Result<Fqn, FqnError>) -> Vec<Observation> {
     minted.map(Observation::Candidate).into_iter().collect()
+}
+
+/// An identity THIS FILE'S OWN TEXT established (stage 11, S7).
+///
+/// Beside [`considered`] and identical but for the grade, which is the point:
+/// the two are one line apart so a walk choosing between them is choosing
+/// visibly, and a reviewer reading either site can see the other.
+///
+/// The caller must have learned the home from [`Home::Stated`](super::Home) —
+/// the file declaring the type, or importing it by a package-rooted path.
+/// Anything the walk GUESSED is [`considered`], and §9 is explicit that this is
+/// not a licence: it establishes an identity, never an existence.
+pub(super) fn named(minted: Result<Fqn, FqnError>) -> Vec<Observation> {
+    minted.map(Observation::Named).into_iter().collect()
 }
 
 /// Evidence must always name something. In a tree full of ERROR nodes a node's

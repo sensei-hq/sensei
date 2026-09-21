@@ -425,7 +425,11 @@ impl<'a> NamedBy<'a> {
     fn saw(&mut self, language: Language, evidence: &'a Evidence) {
         let mut minted = false;
         for observation in &evidence.saw {
-            if let Observation::Candidate(fqn) = observation {
+            // EITHER GRADE. The question here is whether the use site named
+            // this node, not whether the ladder was allowed to act on it — a
+            // `Named` that reached the ladder and was still filtered out (as
+            // plumbing, say) is evidence of exactly the same strength.
+            if let Observation::Candidate(fqn) | Observation::Named(fqn) = observation {
                 self.exact.insert(fqn.as_str());
                 minted = true;
             }
