@@ -2002,28 +2002,24 @@ mod tests {
         );
     }
 
-    /// **AN INHERENT DECLARATION AND THE ONE A TRAIT IMPL SUPPLIES ARE ONE
-    /// NODE** — and this test no longer tests a PRECEDENCE, because there is no
-    /// longer anything to order.
+    /// **AN INHERENT DECLARATION AND THE ONE A TRAIT IMPL SUPPLIES STAY TWO
+    /// NODES, AND THE CALL REACHES THE INHERENT ONE** — the boundary S8 must
+    /// not cross.
     ///
-    /// It used to: the inherent `Svc::status` minted `Svc·status` and the trait
-    /// impl's minted `Svc·Ready·status`, so the ladder had to try the exact
-    /// identity before the collapsed lookup or the edge that resolved correctly
-    /// became ambiguous. Under stage 11's S8 both mint `Svc·status`, the
-    /// collapsed lookup is gone, and the rung order it needed is gone with it.
-    ///
-    /// What is left is the CONSEQUENCE, which is worth pinning on its own: the
-    /// two declarations are one identity, and the file therefore declares that
-    /// identity twice. Left as a bare "the call resolves" this would pass
-    /// whatever happened, so the collision is asserted directly.
+    /// S8 takes the trait out of a method's key because no caller can spell
+    /// which trait supplies a name. That stops being true the moment the type
+    /// declares the name INHERENTLY: Rust resolves `s.status()` to the inherent
+    /// method deterministically, and `<Svc as Ready>::status` is how the other
+    /// is reached. So the two are distinguishable, and the key keeps them apart.
     ///
     /// MEASURED, and the only pair of its kind in this repository:
-    /// `ModelProvisioning` declares an inherent `status_all` and also an
-    /// `impl ReadinessProbe for ModelProvisioning` whose `status_all` delegates
-    /// to it. It is the single entry S8 added to the A7 ratchet — see
-    /// `persist::tests::the_identities_this_repos_rust_cannot_keep_apart_are_a_known_and_bounded_set`.
+    /// `ModelProvisioning` declares an inherent `status_all` and an
+    /// `impl ReadinessProbe for ModelProvisioning` whose `status_all` calls it
+    /// through `ModelProvisioning::status_all(self)` — written, and commented,
+    /// precisely to avoid recursing. Flattened, that call became an edge from
+    /// the method to ITSELF.
     #[test]
-    fn an_inherent_member_and_the_one_a_trait_impl_supplies_are_one_node() {
+    fn an_inherent_member_and_the_one_a_trait_impl_supplies_stay_two_nodes() {
         let scanned = scan(&[
             (
                 "probe",
@@ -2041,27 +2037,25 @@ mod tests {
             ),
         ]);
 
+        // A caller writing `s.status()` gets the INHERENT one, as Rust does.
         let caller = file_of(&scanned, "src/start.rs");
         assert_placed(caller, "rust·p·probe·Svc·status·item");
 
-        // THE COST, stated rather than implied. Two declarations, one identity:
-        // every query about either answers for both, and which of the two a
-        // reader lands on is whichever the writer wrote last. The trade is spec
-        // §7's — a caller writing `s.status()` cannot spell the difference, so
-        // the segment that told them apart was never one both sides could mint.
+        // And the two declarations are two identities, so neither overwrites
+        // the other and `Svc::status(self)` inside the trait body is not a
+        // self-loop.
         let declaring = file_of(&scanned, "src/probe.rs");
-        let statuses: Vec<&str> = declaring
+        let mut statuses: Vec<&str> = declaring
             .symbols
             .iter()
             .map(|s| s.fqn.as_str())
-            .filter(|f| *f == "rust·p·probe·Svc·status·item")
+            .filter(|f| f.contains("Svc") && f.ends_with("status·item"))
             .collect();
+        statuses.sort_unstable();
         assert_eq!(
-            statuses.len(),
-            2,
-            "the inherent method and the trait impl's both mint ONE identity; the collision is \
-             counted by A7 rather than hidden by a refused edge. All of it: {:?}",
-            declaring.symbols.iter().map(|s| s.fqn.as_str()).collect::<Vec<_>>()
+            statuses,
+            vec!["rust·p·probe·Svc·Ready·status·item", "rust·p·probe·Svc·status·item"],
+            "the inherent method owns the plain key and the trait's copy keeps the trait"
         );
     }
 
@@ -4073,17 +4067,37 @@ mod tests {
             "the detector must still recognise the shape it is looking for, or the zero below \
              says only that it stopped looking"
         );
-        assert!(
-            supplied_by_a_trait.is_empty(),
-            "no rust declaration carries a trait segment any more (S8), so nothing in this \
-             corpus is in the two-consecutive-type-segments shape: {:?}",
-            supplied_by_a_trait.iter().take(8).collect::<Vec<_>>()
+        // **EXACTLY THE SHADOWED ONES, AND NOTHING ELSE.** S8 takes the trait
+        // out of a method's key; the one case it must not is a name the type
+        // ALSO declares inherently, where Rust keeps the two apart and so must
+        // the graph. So this set is not empty — it is precisely the pairs where
+        // an inherent declaration owns the flat key.
+        //
+        // MEASURED: one, `ModelProvisioning`'s `status_all`. The `impl
+        // ReadinessProbe` copy calls the inherent one through
+        // `ModelProvisioning::status_all(self)`, written and commented to avoid
+        // recursing; flattened, that call became a self-loop.
+        let shadowed: Vec<(&String, &BTreeSet<&str>)> = supplied_by_a_trait.iter().collect();
+        for (flat, qualified) in &shadowed {
+            assert!(
+                declared.contains(flat.as_str()),
+                "a declaration keeps its trait segment ONLY where an inherent declaration owns \
+                 the flat key — {flat} is qualified by {qualified:?} and nothing mints the flat \
+                 spelling, so the trait segment is a key no caller can reach"
+            );
+        }
+        assert_eq!(
+            shadowed.len(),
+            1,
+            "the shadowed set moved: {:?}",
+            shadowed.iter().take(8).collect::<Vec<_>>()
         );
         assert_eq!(
             (trait_shaped, through_a_trait.len()),
             (0, 0),
             "was 22 references over 3 identities; the trait left the key and the two halves \
-             met: {:?}",
+             met. The one declaration that KEEPS its trait segment contributes nothing here, \
+             because the flat spelling a caller mints is the inherent declaration's own: {:?}",
             through_a_trait
         );
 

@@ -1386,6 +1386,85 @@ pub fn free(w: &Widget) -> u32 { w.width }
         );
     }
 
+    /// **AN INHERENT METHOD OWNS THE PLAIN KEY; A TRAIT'S COPY OF THAT NAME
+    /// KEEPS THE TRAIT** — the one case S8 must NOT flatten.
+    ///
+    /// S8's argument is that a merge key must be what both sides can produce,
+    /// and a caller cannot spell which trait supplies a name. That is true when
+    /// the trait is the ONLY supplier. It is false the moment the type also
+    /// declares the name inherently, because Rust then has a deterministic
+    /// rule — the inherent method wins — and a caller that wants the other one
+    /// spells it out.
+    ///
+    /// MEASURED, from this repository's own source
+    /// (`api/model_provisioning.rs`), which does exactly that and says why:
+    ///
+    /// ```ignore
+    /// async fn status_all(&self) -> Vec<(String, ProvisionPhase)> {
+    ///     // Fully-qualified to call the inherent (disk-aware catalog) method,
+    ///     // not recurse into this trait method.
+    ///     ModelProvisioning::status_all(self).await
+    /// }
+    /// ```
+    ///
+    /// Flattened, both declarations mint one key and that call — written to
+    /// AVOID recursion — becomes an edge from the method to itself. A self-loop
+    /// is a WRONG edge, which R4 ranks below the missing one S8 was removing,
+    /// so the flattening has to stop exactly here and nowhere wider.
+    ///
+    /// The rule is decided from THIS FILE, which is what keeps it inside the
+    /// stage's budget: the walk pre-scans its own inherent `impl` blocks. A
+    /// type whose inherent and trait impls live in different files is not
+    /// covered and collides instead — which A7 counts, rather than silently
+    /// merging.
+    ///
+    /// The mutation that must break it: drop the inherent-member check in
+    /// `Walk::declare` so the trait arm always mints the plain key.
+    #[test]
+    fn an_inherent_method_keeps_its_key_and_the_traits_copy_keeps_the_trait() {
+        let facts = facts(
+            "m",
+            "pub struct P;\n\
+             impl P { pub fn status_all(&self) -> u32 { 1 } }\n\
+             impl Ready for P {\n\
+             \x20   fn status_all(&self) -> u32 { P::status_all(self) }\n\
+             }\n",
+        );
+
+        let mut minted: Vec<&str> =
+            fqns(&facts).into_iter().filter(|f| f.contains("status_all")).collect();
+        minted.sort_unstable();
+        assert_eq!(
+            minted,
+            vec!["rust·p·m·P·Ready·status_all·item", "rust·p·m·P·status_all·item"],
+            "two declarations Rust keeps apart must stay two identities: the inherent one owns \
+             the key `P::status_all` and `p.status_all()` both mint"
+        );
+
+        // AND THE CONSEQUENCE, which is the reason the rule exists: the
+        // deliberately non-recursive call reaches the INHERENT method, not the
+        // trait body it is written inside.
+        let call = facts
+            .references
+            .iter()
+            .find(|r| r.kind == RefKind::Calls)
+            .expect("the trait body calls the inherent method");
+        let target = match &call.target {
+            Resolution::Resolved { fqn, .. } => fqn.to_string(),
+            Resolution::Unresolved { evidence, .. } => evidence
+                .identities()
+                .next()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| evidence.name.clone()),
+        };
+        assert_eq!(target, "rust·p·m·P·status_all·item", "the call names the inherent method");
+        assert_ne!(
+            call.from.as_str(),
+            target,
+            "and it is NOT a self-loop — the call was written precisely to avoid recursing"
+        );
+    }
+
     /// The collision the fqn grammar's trailing REACH exists to prevent,
     /// checked end to end through the walk rather than through the builder.
     /// `nodes_unique_identity` is `(folder, path, kind, name, parent, line)`, so
