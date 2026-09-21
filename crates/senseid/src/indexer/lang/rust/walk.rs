@@ -343,12 +343,28 @@ impl<'a> Walk<'a> {
         if let Some(module) = self.imported_from(ty) {
             return Home::Stated { module };
         }
+        // EXTERNALITY COMES FROM THE IMPORT, AND FROM NOTHING ELSE (R5, §2).
+        // `use serde_json::Value` is this file saying where `Value` lives:
+        // outside. That is a verdict the file itself writes down, so it is read
+        // BEFORE the table — and it is now the only way to reach `NotOurs`.
+        if self.imported_from_a_library(ty) {
+            return Home::NotOurs;
+        }
         // The table's answer is a different claim and is graded as one: this
         // file says nothing about where the type lives, so what it mints is a
         // `Candidate` and still needs a declaration to agree.
+        //
+        // A table with NO ROW is not a verdict. It answered `NotOurs`, and the
+        // walk read that as "outside" — filing a type the scan had merely not
+        // placed under `Reason::ExternalBoundary`, which `Reason::casts_doubt`
+        // EXCLUDES, so the doubt column fell as the table shrank. `Unstated`
+        // says what is true: this file says nothing, and neither does the
+        // table. An AMBIGUOUS row lands there too — "two of ours declare it" is
+        // still not this file naming a home, and the table that produced it is
+        // going away with the barrier.
         match self.types.lookup(self.package, ty) {
             Home::Stated { module } | Home::Tabled { module } => Home::Tabled { module },
-            other => other,
+            Home::Ambiguous | Home::NotOurs | Home::Unstated => Home::Unstated,
         }
     }
 
@@ -372,6 +388,27 @@ impl<'a> Walk<'a> {
                 }
                 _ => None,
             }
+        })
+    }
+
+    /// Whether THIS FILE imports `ty` from a package it does not open.
+    ///
+    /// The ONE way a walk may say "outside" (R5, spec §2). `use serde::Value`
+    /// binds `Value` to a package this scan is not reading, and [`import_origin`]
+    /// has already decided that from the specifier alone — no table, no scan
+    /// order, nothing outside this file, so the answer is the same whichever
+    /// file is walked first (R6).
+    ///
+    /// A sibling crate of one workspace is rooted at its own name and so lands
+    /// here as external too; [`import_origin`] records that consequence rather
+    /// than hiding it, and the first-party package set belongs to the ladder.
+    /// The cost is a member of a sibling crate's type reported at the boundary —
+    /// which is the answer the table already gave, because it is keyed on the
+    /// READING file's package and could never see a sibling's declaration.
+    fn imported_from_a_library(&self, ty: &str) -> bool {
+        self.imports.iter().any(|import| {
+            matches!(&import.binds, Binding::Name(bound) if bound == ty)
+                && matches!(import.origin, ImportOrigin::External { .. })
         })
     }
 
@@ -1490,6 +1527,29 @@ impl<'a> Walk<'a> {
                 reach,
                 saw: vec![Observation::Receiver(receiver.to_string())],
             },
+            // THIS FILE SAYS NOTHING about where the type lives, and neither
+            // does anything that has run. NOT the boundary: no import placed the
+            // type outside, and a table with no row for a name has made no
+            // finding about it. Calling it `ExternalBoundary` closes an open
+            // question, and `Reason::casts_doubt` reads that closure as
+            // certainty — so the doubt column FALLS as the walk learns less.
+            //
+            // The TYPE rides along as `Observation::UnplacedType`, which is the
+            // one fact this miss is about. It is MATERIAL, not an answer:
+            // `Ladder::place` climbs only for `Reason::Unplaced`, so nothing
+            // re-reads this as a path to resolve. That is the guard the Java
+            // walk's note asks for — handing the ladder a path with no import to
+            // bind it took dangling identities from 312 to 683.
+            Home::Unstated => Miss {
+                reason: Reason::NoImportInScope,
+                name: member.to_string(),
+                node_kind: node.kind().to_string(),
+                reach,
+                saw: vec![
+                    Observation::Receiver(receiver.to_string()),
+                    Observation::UnplacedType(ty.to_string()),
+                ],
+            },
         }
     }
 
@@ -1628,7 +1688,7 @@ impl<'a> Walk<'a> {
                     match self.home_of(&ty) {
                         Home::Stated { module } => named(minted(module)),
                         Home::Tabled { module } => considered(minted(module)),
-                        Home::Ambiguous | Home::NotOurs => Vec::new(),
+                        Home::Ambiguous | Home::NotOurs | Home::Unstated => Vec::new(),
                     }
                 }
                 Err(_) => Vec::new(),
