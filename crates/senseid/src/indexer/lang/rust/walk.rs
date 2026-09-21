@@ -61,6 +61,7 @@ pub(super) fn walk<'a>(source: &Source<'a>, root: Node<'_>, from: Fqn) -> Found 
     let mut walk = Walk {
         src: source.text,
         package: source.package,
+        module: source.module,
         declared_fields: BTreeMap::new(),
         inherent_members: BTreeMap::new(),
         declared_here: BTreeMap::new(),
@@ -256,6 +257,13 @@ enum Container {
 struct Walk<'a> {
     src: &'a str,
     package: &'a str,
+    /// The FILE's module, as the walk was told it — never derived.
+    ///
+    /// Distinct from [`Scope::module`], which an inline `mod x` extends as the
+    /// walk descends. A `use super::*` at the top of a file is relative to the
+    /// FILE, so resolving its root against a scope that had descended into a
+    /// nested module would climb from the wrong place.
+    module: &'a str,
     /// Type name -> its fields and their declared types.
     ///
     /// On the WALK and not on a scope, because an `impl` block needs the fields
@@ -332,6 +340,13 @@ impl<'a> Walk<'a> {
         if let Some(module) = self.imported_from(ty) {
             return Home::Stated { module };
         }
+        // A GLOB ROOTED IN THIS PACKAGE. Weaker than the two above and graded
+        // as such: `use super::*` says where the name COULD come from, not
+        // that it does, so what it yields is a `Candidate` and still needs a
+        // declaration to agree (R4, §9).
+        if let Some(module) = self.glob_rooted_here() {
+            return Home::Tabled { module };
+        }
         // EXTERNALITY COMES FROM THE IMPORT, AND FROM NOTHING ELSE (R5, §2).
         // `use serde_json::Value` is this file saying where `Value` lives:
         // outside. That is a verdict the file itself writes down, so it is read
@@ -395,6 +410,69 @@ impl<'a> Walk<'a> {
             matches!(&import.binds, Binding::Name(bound) if bound == ty)
                 && matches!(import.origin, ImportOrigin::External { .. })
         })
+    }
+
+    /// The module a package-rooted GLOB brings names in from, when this file
+    /// has exactly one.
+    ///
+    /// `use super::*` inside `db::pg_store::graph` is this file writing down
+    /// `db::pg_store`. Resolving that root needs no export list, no table and
+    /// no other file — only the module the walk is already standing in, which
+    /// is what makes it a one-file answer rather than the barrier returning by
+    /// another name.
+    ///
+    /// MEASURED: the spec's §1 puts this shape at 17.6% of every member
+    /// reference the barrier resolved, and it is the single largest thing the
+    /// table was doing that the file could have answered itself.
+    ///
+    /// **EXACTLY ONE GLOB, OR NOTHING.** Two globs are two candidate homes and
+    /// picking between them is a coin toss recorded as a fact — the rule
+    /// `TypeHomes` followed for an ambiguous name, kept here now that the walk
+    /// owns the question (R4, R6).
+    ///
+    /// Only `self`, `super` and `crate` roots answer. A bare `use serde::*`
+    /// names a package we do not open (R5), and it is the same reasoning
+    /// [`Walk::imported_from`] applies to a bare `use serde::Serialize`.
+    ///
+    /// The NAME is not consulted, deliberately: whether the glob actually binds
+    /// it is the export-list question §7 defers to stage 12. What this answers
+    /// is narrower and checkable — IF the name comes from a glob, this is the
+    /// module it comes from.
+    fn glob_rooted_here(&self) -> Option<&str> {
+        let mut found: Option<&str> = None;
+        for import in self.imports.iter().filter(|i| matches!(i.binds, Binding::Glob)) {
+            let Some(module) = self.module_a_root_names(&import.path) else { continue };
+            match found {
+                // Two globs, two possible homes, and nothing in the file to
+                // choose between them.
+                Some(first) if first != module => return None,
+                Some(_) => {}
+                None => found = Some(module),
+            }
+        }
+        found
+    }
+
+    /// The module a `self`/`super`/`crate`-rooted path names, relative to the
+    /// module this walk is reading.
+    ///
+    /// `super` climbs one segment off the FILE's module, which the walk was
+    /// told and never derived — so this reads a path the source wrote and
+    /// resolves it against a fact the walk was handed, and infers nothing.
+    fn module_a_root_names<'p>(&'p self, path: &'p str) -> Option<&'p str> {
+        let path = path.strip_suffix("::*")?;
+        match path {
+            "crate" => Some(""),
+            "self" => Some(self.module),
+            "super" => match self.module.rsplit_once("::") {
+                Some((up, _)) => Some(up),
+                // One segment in from the package root: `super` IS the root.
+                None if !self.module.is_empty() => Some(""),
+                None => None,
+            },
+            // A deeper path (`crate::a::b::*`) names its own module outright.
+            rest => rest.strip_prefix("crate::"),
+        }
     }
 
     fn text(&self, node: Node<'_>) -> &'a str {
