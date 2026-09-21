@@ -93,10 +93,12 @@ readable, and answering both at once would leave neither measured. An ALIAS
 would mint a member of a type no file declares, which R4 ranks below minting
 nothing.
 
-## Indexer — a `cfg`-gated MEMBER cannot carry its condition (stage 11, open 2026-09-21)
+## Indexer — RESOLVED: a `cfg`-gated MEMBER now carries its condition (stage 11, closed 2026-09-21)
 
 **`81f1552d` split `cfg`-gated FREE items into a callable plus one arm per
-condition. Gated MEMBERS are not split, and this is the design to finish it.**
+condition. Gated MEMBERS now split too — `Form::MemberVariant`. Kept because
+the design recorded here was right about the form and WRONG about its
+encoding.**
 
 Worked example, `crates/logger/src/writer.rs`, all seven:
 
@@ -125,33 +127,55 @@ the truth is that a new form has to be ADDED. Count the tail segments —
 | member | `Member { module, ty, member }` | 3 — full |
 | its arm needs | module + ty + member + cfg | 4 |
 
-**The proposal, which is sound.** Add `Form::MemberVariant { lang, package,
-module, ty, member, condition, reach }`. The apparent clash is with
-`Form::TraitMember` (`module·Ty·Trait·member`), also 4 tail segments, and
-`fqn::parse` deliberately cannot recover a form. But the discriminator is real
-and already enforced: a condition segment is `cfg:feature=pg` — lowercase,
-contains `:` — and `names_a_type` is leading-case, so every decomposer that
-matters already refuses it:
+**SHIPPED. And this entry's own discriminator analysis was WRONG**, which is
+why it is kept rather than deleted.
 
-- `Ladder::module_of_the_member_of` requires the type IMMEDIATELY left of the
-  member; the position check fails and it answers `None`.
-- `as_a_use_site_would_mint_it` requires two consecutive TYPE-NAMING segments.
+The proposal was to add `Form::MemberVariant { lang, package, module, ty,
+member, condition, reach }` encoded in that order, on the reasoning that the
+clash with `Form::TraitMember` (`module·Ty·Trait·member`, also 4 tail segments)
+is already refused by every decomposer, because "a condition segment is
+`cfg:feature=pg` — lowercase, contains `:` — and `names_a_type` is
+leading-case".
 
-**What it costs today, measured rather than assumed.** A MISSING FACT, not a
-wrong edge. All seven are single-arm — there is no `#[cfg(not(feature = "pg"))]
-fn pg` — so nothing merges and no callees conflate. A7 rust is at ZERO, and a
-two-arm member pair would necessarily collide, so the corpus confirms it. The
-graph says `LogWriter::pg` exists full stop, when it exists only under the `pg`
-feature; "what does an api-only build contain" is unanswerable.
+**That holds for a gated METHOD and fails for a gated ENUM VARIANT.** With the
+condition LAST, `LogWriter::Api` encodes `LogWriter·Api·cfg:feature=api` — two
+LEADING-CASE segments in a row, which is exactly the trait-member shape.
+`as_a_use_site_would_mint_it` stripped `Api` and reported the arm as a
+trait-qualified declaration nothing mints, failing
+`the_references_that_name_no_declaration_are_a_measured_and_split_set`.
 
-That is strictly weaker than the free-item case `81f1552d` fixed, where two arms
-DID conflate their callees and produced a wrong edge. It is why this is next
-rather than urgent — not why it is impossible.
+I had verified the claim against `pg` — the lowercase method — and generalised
+from it. `fqn::every_shape` used `member: "thing"`, also lowercase, so the
+grammar-level property passed vacuously too. **The corpus caught what two
+fixtures could not**, for the third time this slice.
 
-**Blast radius when built**: `fqn.rs` (the form, `encode`, the doc table,
-`every_shape`, the round-trip property), `Walk::split_into_variant` (its
-`_ => return symbol` arm is exactly this case), and `count_gated` (which
-currently excludes members on the same ground and must stop).
+**The fix was the ENCODING, not the readers.** The condition moved into the
+QUALIFIER slot, immediately after the type:
+
+    <lang>·<package>·<module>·<Type>·<cfg>·<member>·<reach>
+
+That is the slot the trait occupies, doing the same job — saying WHICH of
+several same-named members this is. A condition carries `:` and is never
+type-naming, so the two forms now differ in exactly the position every reader
+tests, and no reader needed a special case. Pinned by a new property,
+`only_a_trait_member_carries_two_type_naming_segments_before_its_name`, which
+reads the QUALIFIER POSITION off the encoded string — a check against the
+form's fields would pass under either ordering — and `every_shape` now carries
+a leading-case member so the property can fail.
+
+**What it cost before the fix, measured rather than assumed.** A MISSING FACT,
+not a wrong edge. All seven are single-arm — there is no
+`#[cfg(not(feature = "pg"))] fn pg` — so nothing merged and no callees
+conflated; A7 rust at ZERO is what proves it. The graph said `LogWriter::pg`
+exists full stop when it exists only under the `pg` feature.
+
+**The population, confirmed three independent ways** — the seven in
+`crates/logger/src/writer.rs` are 2 enum variants, 1 field and 4 methods. The
+file carries ELEVEN `#[cfg(feature …)]` attributes; the other four gate a
+struct-literal field initialiser, two match arms and an `if let`, none of which
+declares anything. `count_gated`, which reads node kinds straight off the tree
+and never asks the walk, stood at 20 against the walk's 27 until it learned the
+new rule — a delta of exactly 7.
 
 ## Indexer — a target no first-party declaration mints must resolve or be marked EXTERNAL (stage 11 S7, measured 2026-09-21)
 

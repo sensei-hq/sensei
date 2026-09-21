@@ -15,8 +15,18 @@
 //! |---|---|
 //! | [`Form::Item`] | `<lang>·<package>·<module>·<name>·<reach>` |
 //! | [`Form::Member`] | `<lang>·<package>·<module>·<Type>·<member>·<reach>` |
+//! | [`Form::MemberVariant`] | `<lang>·<package>·<module>·<Type>·<cfg>·<member>·<reach>` |
 //! | [`Form::TraitMember`] | `<lang>·<package>·<module>·<Type>·<Trait>·<member>·<reach>` |
 //! | [`Form::Lib`] | `lib·<package>·<member>` |
+//!
+//! The last two are the same LENGTH and are told apart by the QUALIFIER's
+//! spelling, never by counting: a `<cfg>` segment is `cfg:feature=pg`, which
+//! carries `:` and is never type-naming, while `<Trait>` is leading-case.
+//! [`parse`] deliberately recovers no form, so every reader of this shape keys
+//! on that one position — see
+//! `only_a_trait_member_carries_two_type_naming_segments_before_its_name`,
+//! which exists because putting `<cfg>` LAST made an arm of a leading-case
+//! member such as `LogWriter::Pg` indistinguishable from a trait member.
 //!
 //! The trailing [`Reach`] is what keeps two declarations Rust allows to share a
 //! name from merging onto one node — see [`Reach`] for why the spec §2 sketch,
@@ -62,6 +72,13 @@ pub enum Segment {
     Trait,
     /// An item's name, a type's member, a library's member.
     Member,
+    /// The `cfg` condition a [`Form::MemberVariant`] arm is gated by.
+    ///
+    /// Its own segment so an empty one is a named error: an arm minted with no
+    /// condition would encode to exactly the member it is an arm OF, and the
+    /// two would merge — which is the collision splitting them exists to
+    /// prevent.
+    Condition,
 }
 
 /// HOW a use site gets to a name — the last segment of every local form
@@ -188,6 +205,49 @@ pub enum Form<'a> {
         member: &'a str,
         reach: Reach,
     },
+    /// One `cfg`-gated ARM of a member.
+    ///
+    /// `#[cfg(feature = "pg")] pub fn pg` on `LogWriter` is a BODY of
+    /// `LogWriter::pg`, present only under that feature. The member itself is
+    /// what a caller can spell, so it stays a [`Form::Member`]; this names the
+    /// arm, and the arm is what the body's own edges hang off. A condition
+    /// recorded as a property would have nothing to hang them on.
+    ///
+    /// **THE FREE-ITEM ARM NEEDS NO FORM AND THIS ONE DOES**, which is the
+    /// whole reason it exists. An arm of a free `fn f` fits
+    /// `Member { ty: "f", member: <condition> }` — the item form leaves a slot
+    /// spare. A member has all three of its slots full, so its arm needs a
+    /// fourth segment, and the earlier note claiming "the grammar has no shape
+    /// for it" mistook a form that had to be ADDED for one that could not exist.
+    ///
+    /// **Same tail length as [`Form::TraitMember`]** — `module`, `Ty`,
+    /// `Trait`, `member` against `module`, `Ty`, `condition`, `member` — and
+    /// [`parse`] deliberately recovers no form, so nothing may depend on
+    /// telling them apart by segment COUNT. They are told apart by the
+    /// QUALIFIER's spelling: a condition is `cfg:feature=pg`, which carries
+    /// `:` and is never type-naming, while a trait segment is leading-case.
+    ///
+    /// That is why the condition sits in the qualifier slot rather than last.
+    /// Encoded `module`, `Ty`, `member`, `condition`, a gated ENUM VARIANT gave
+    /// `Ty`, `Api`, `cfg:..` — two leading-case segments in a row, which IS the
+    /// trait-member shape, and `resolve`'s `as_a_use_site_would_mint_it`
+    /// stripped the variant and reported the arm as a trait-qualified
+    /// declaration nothing mints. A gated METHOD (`pg`, lowercase) did not show
+    /// it, which is why the corpus found this and a fixture did not.
+    /// Pinned by
+    /// `only_a_trait_member_carries_two_type_naming_segments_before_its_name`.
+    MemberVariant {
+        lang: Language,
+        package: &'a str,
+        module: &'a str,
+        ty: &'a str,
+        member: &'a str,
+        /// The condition the SOURCE wrote, normalised — `cfg:feature=pg`. Not a
+        /// boolean and not a build: two arms of one member differ by exactly
+        /// this, so it is the segment that keeps them apart.
+        condition: &'a str,
+        reach: Reach,
+    },
     /// A member supplied by a trait impl. The trait qualifier is what keeps
     /// `Display::fmt` and `Debug::fmt` on one type from becoming one symbol.
     TraitMember {
@@ -240,6 +300,26 @@ fn encode(form: &Form<'_>) -> Result<Fqn, FqnError> {
             check(Segment::Type, ty, Required::Yes)?;
             check(Segment::Member, member, Required::Yes)?;
             vec![lang.as_str(), package, module, ty, member, reach.as_str()]
+        }
+        Form::MemberVariant { lang, package, module, ty, member, condition, reach } => {
+            check(Segment::Package, package, Required::Yes)?;
+            check(Segment::Module, module, Required::No)?;
+            check(Segment::Type, ty, Required::Yes)?;
+            check(Segment::Condition, condition, Required::Yes)?;
+            check(Segment::Member, member, Required::Yes)?;
+            // THE CONDITION SITS IN THE QUALIFIER SLOT, immediately after the
+            // type and immediately before the member — the same slot the trait
+            // occupies in `Form::TraitMember`, doing the same job: saying WHICH
+            // of several same-named members this is.
+            //
+            // Not cosmetic, and not the first ordering tried. With the condition
+            // LAST, a gated enum variant encoded `Ty·Api·cfg:feature=api` — two
+            // leading-case segments in a row, which is the TraitMember shape,
+            // and every decomposer keyed on that pattern flattened the arm. A
+            // condition carries `:` and can never be type-naming, so in this
+            // slot the two forms differ in exactly the position readers test.
+            // Pinned by `only_a_trait_member_carries_two_type_naming_segments_before_its_name`.
+            vec![lang.as_str(), package, module, ty, condition, member, reach.as_str()]
         }
         Form::TraitMember { lang, package, module, ty, tr, member, reach } => {
             check(Segment::Package, package, Required::Yes)?;
@@ -925,6 +1005,34 @@ mod tests {
                         reach: Reach::Item,
                     },
                 ));
+                // The CONDITION is spelled the way the walk normalises one,
+                // `:` and `=` included, because those characters are exactly
+                // what makes an arm unable to collide with a real member — and
+                // a placeholder like "cond" would prove the encoder handles a
+                // segment nothing ever passes it.
+                //
+                // **BOTH A LOWERCASE AND A LEADING-CASE MEMBER, and the second
+                // is the one that matters.** A gated METHOD is `pg`; a gated
+                // ENUM VARIANT is `Api`. With only the lowercase spelling here,
+                // `no_two_shapes_mint_one_string` and every reader keyed on
+                // "two consecutive type-naming segments" passed vacuously — and
+                // the corpus caught what this property should have: an arm of
+                // `LogWriter::Api` read as a trait-qualified member. A member's
+                // case is not something the grammar may assume.
+                for member in ["thing", "Variant"] {
+                    out.push((
+                        tag(&format!("MemberVariant/member={member}")),
+                        Form::MemberVariant {
+                            lang: *lang,
+                            package: "p",
+                            module: Box::leak(module.to_string().into_boxed_str()),
+                            ty: "Ty",
+                            member,
+                            condition: "cfg:feature=pg",
+                            reach: Reach::Item,
+                        },
+                    ));
+                }
                 out.push((
                     tag("TraitMember"),
                     Form::TraitMember {
@@ -974,6 +1082,11 @@ mod tests {
                         .into_iter()
                         .collect()
                 }
+                Form::MemberVariant { lang, package, module, ty, member, condition, reach } => {
+                    [lang.as_str(), package, module, ty, condition, member, reach.as_str()]
+                        .into_iter()
+                        .collect()
+                }
                 Form::TraitMember { lang, package, module, ty, tr, member, reach } => {
                     [lang.as_str(), package, module, ty, tr, member, reach.as_str()]
                         .into_iter()
@@ -1002,6 +1115,7 @@ mod tests {
                 Form::Lib { package, .. } => package,
                 Form::Item { package, .. }
                 | Form::Member { package, .. }
+                | Form::MemberVariant { package, .. }
                 | Form::TraitMember { package, .. } => package,
             };
             assert_eq!(parsed.package, want_package, "{label}: the package did not survive");
@@ -1012,6 +1126,7 @@ mod tests {
                     let want = match form {
                         Form::Item { lang, .. }
                         | Form::Member { lang, .. }
+                        | Form::MemberVariant { lang, .. }
                         | Form::TraitMember { lang, .. } => lang,
                         Form::Lib { .. } => unreachable!("Lib matched above"),
                     };
@@ -1079,5 +1194,74 @@ mod tests {
                  item-versus-member class"
             );
         }
+    }
+
+    /// **ONLY A TRAIT-IMPL MEMBER MAY CARRY TWO CONSECUTIVE TYPE-NAMING
+    /// SEGMENTS BEFORE ITS NAME.**
+    ///
+    /// Not a style rule — it is the invariant every reader of this shape keys
+    /// on, in as many words. `resolve`'s `as_a_use_site_would_mint_it` says "a
+    /// trait-impl member is the only form with two consecutive type-naming
+    /// segments before its name, because a module segment is one segment
+    /// however many `::` it contains and Rust lints modules into snake_case",
+    /// and `Ladder::module_of_the_member_of` requires the type IMMEDIATELY left
+    /// of the member. Both answer `None` for anything else. A form that broke
+    /// this would be silently flattened by the first and misfiled by the second.
+    ///
+    /// **THE COLLISION THIS EXISTS FOR ACTUALLY HAPPENED**, and a corpus
+    /// barrier caught it rather than any property here. `Form::MemberVariant`
+    /// was first encoded `module·ty·member·condition`, which is unambiguous for
+    /// a gated METHOD (`LogWriter`, `pg`, `cfg:feature=pg`) and ambiguous for a
+    /// gated ENUM VARIANT: `LogWriter`, `Api`, `cfg:feature=api` puts two
+    /// leading-case segments in a row and is shape-identical to
+    /// `Ty·Tr·member`. `as_a_use_site_would_mint_it` duly stripped `Api` and
+    /// reported the arm as a trait-qualified declaration nothing mints.
+    ///
+    /// The fix was the ENCODING, not the readers: the condition moved into the
+    /// QUALIFIER slot, immediately after the type, which is the slot the trait
+    /// occupies and is semantically the same job — saying WHICH of several
+    /// same-named members this is. A condition carries `:` and can never be
+    /// type-naming, so the pattern of the two forms differs in that one
+    /// position and every existing reader separates them with no new special
+    /// case.
+    /// Read POSITIONALLY off the encoded string, because the defect was an
+    /// ORDERING and a check against the form's fields would pass under either
+    /// one — a condition is never type-naming wherever it sits. What the
+    /// readers actually look at is the segment immediately left of the name, so
+    /// that is what this looks at.
+    ///
+    /// Scoped to `MemberVariant` rather than applied to every form, because a
+    /// whole-string version also flags the item-in-a-type-named-module class
+    /// that `no_two_shapes_mint_one_string` already documents and ratchets:
+    /// `Member { module: "Ty", ty: "Ty" }` puts two leading-case segments in a
+    /// row through no fault of this invariant. Conflating them would make this
+    /// a second, louder copy of that known class and bury the one thing it is
+    /// for.
+    #[test]
+    fn only_a_trait_member_carries_two_type_naming_segments_before_its_name() {
+        // The rust grammar's own test, because it is the reader that applies it.
+        let names_a_type = crate::indexer::lang::rust::GRAMMAR.names_a_type;
+        let mut checked = 0;
+        for (label, form) in every_shape() {
+            if !matches!(form, Form::MemberVariant { .. }) {
+                continue;
+            }
+            let Ok(fqn) = define(&form) else { panic!("{label}: a well-formed arm must encode") };
+            let segments: Vec<&str> = fqn.as_str().split(SEP).collect();
+            // lang · package · [module] · ty · qualifier · name · reach
+            let qualifier = segments.len().checked_sub(3).expect("an arm has seven segments");
+            checked += 1;
+            assert!(
+                !names_a_type(segments[qualifier]),
+                "{label}: {fqn} puts the TYPE-NAMING segment {:?} immediately left of its \
+                 name, which is the TraitMember shape — so every decomposer keyed on two \
+                 consecutive type-naming segments reads this arm as a trait-qualified member \
+                 and strips it",
+                segments[qualifier]
+            );
+        }
+        // ANTI-VACUITY: this iterates a shape list, so a renamed variant or a
+        // dropped entry would make it read nothing and pass for ever after.
+        assert!(checked > 0, "no MemberVariant shape was checked, so this proved nothing");
     }
 }

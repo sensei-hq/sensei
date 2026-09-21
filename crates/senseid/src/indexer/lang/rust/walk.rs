@@ -572,38 +572,83 @@ impl<'a> Walk<'a> {
     /// every call, which R4 ranks below making none. So an arm must be a NODE:
     /// a condition recorded as a property has nothing to hang edges off.
     ///
-    /// The ARM's identity is a `Form::Member` of the callable, keyed on the
-    /// condition the SOURCE WROTE. That needs no new form and cannot collide
-    /// with a real member, because `:`, `=` and `(` are not identifier
-    /// characters. A caller mints only the callable, so the merge contract is
-    /// untouched — nothing can name an arm from another file, which is correct:
-    /// nothing can call one.
+    /// A FREE item's arm is a `Form::Member` of the callable, keyed on the
+    /// condition the SOURCE WROTE — the item form leaves a slot spare, so that
+    /// needs no new form. A MEMBER's three slots are full, so its arm is a
+    /// [`Form::MemberVariant`], which is the form that had to be ADDED. Neither
+    /// can collide with a real declaration, because `:`, `=` and `(` are not
+    /// identifier characters.
+    ///
+    /// A caller mints only the callable, so the merge contract is untouched —
+    /// nothing can name an arm from another file, which is correct: nothing can
+    /// call one.
     ///
     /// The callable is emitted ONCE however many arms there are, which is what
     /// takes a two-armed declaration off the A7 collision list: it was one
     /// identity minted twice, and the node a reader landed on carried whichever
     /// arm's span the writer reached last.
-    fn split_into_variant(&mut self, node: Node<'_>, symbol: Symbol) -> Symbol {
+    ///
+    /// **WHICH SHAPE THIS IS COMES FROM [`Scope::container`], NOT FROM THE
+    /// FQN'S SPELLING.** The container is documented as "the only thing that
+    /// decides which fqn form a declaration takes", and it is the same fact
+    /// `Walk::declare` used to mint the identity being split — so the two
+    /// cannot disagree. Reading it back off the string would mean telling
+    /// a module segment from a type segment by leading case, which is a lint
+    /// and not a rule: `fqn::every_shape` keeps a module literally named `Ty`
+    /// for exactly that reason.
+    fn split_into_variant(&mut self, node: Node<'_>, symbol: Symbol, scope: &Scope) -> Symbol {
         let Some(condition) = self.condition_of(node) else { return symbol };
         let Ok(parsed) = fqn::parse(symbol.fqn.as_str()) else { return symbol };
         let Origin::Local { lang, reach } = parsed.origin else { return symbol };
         let Some((_, head)) = parsed.tail.split_last() else { return symbol };
-        let module = match head {
-            [] => "",
-            [module] => module,
-            // A member of a type, gated. The arm would need a third segment the
-            // grammar has no shape for, so it is left whole rather than keyed
-            // on a string no reader could decompose (R4).
-            _ => return symbol,
+        fn one_module<'s>(segments: &[&'s str]) -> Option<&'s str> {
+            match segments {
+                [] => Some(""),
+                [module] => Some(module),
+                // The grammar mints one module segment or none; a third shape
+                // is an identity this cannot read, and guessing would misfile
+                // the arm.
+                _ => None,
+            }
+        }
+        let minted = match &scope.container {
+            // A MEMBER of a type. Its own module and type are the segments left
+            // of its name, and the arm carries all four.
+            Container::Type { .. } => {
+                let Some((ty, rest)) = head.split_last() else { return symbol };
+                let Some(module) = one_module(rest) else { return symbol };
+                fqn::define(&Form::MemberVariant {
+                    lang,
+                    package: parsed.package,
+                    module,
+                    ty,
+                    member: &symbol.name,
+                    condition: &condition,
+                    reach,
+                })
+            }
+            // A FREE item, which has a slot spare.
+            Container::File => {
+                let Some(module) = one_module(head) else { return symbol };
+                fqn::define(&Form::Member {
+                    lang,
+                    package: parsed.package,
+                    module,
+                    ty: &symbol.name,
+                    member: &condition,
+                    reach,
+                })
+            }
+            // A gated member of a TRAIT impl would need the module, the type,
+            // the trait, the member AND the condition — a fifth tail segment
+            // and a form of its own.
+            // Left whole DELIBERATELY and measured at ZERO over this repository:
+            // the whole gated-member population is `crates/logger/src/writer.rs`
+            // and every one is an inherent member. An `Unnameable` impl mints no
+            // member identity at all (R4), so it has no arm to name either.
+            Container::TraitImpl { .. } | Container::Unnameable { .. } => return symbol,
         };
-        let Ok(arm) = fqn::define(&Form::Member {
-            lang,
-            package: parsed.package,
-            module,
-            ty: &symbol.name,
-            member: &condition,
-            reach,
-        }) else {
+        let Ok(arm) = minted else {
             return symbol;
         };
 
@@ -1049,7 +1094,7 @@ impl<'a> Walk<'a> {
     /// body is owned by that type, whichever arm read it. Doing it per-arm would
     /// be six chances to forget one.
     fn push(&mut self, node: Node<'_>, symbol: Result<Symbol, FqnError>, scope: &Scope) -> Scope {
-        match symbol.map(|s| self.split_into_variant(node, s)) {
+        match symbol.map(|s| self.split_into_variant(node, s, scope)) {
             Ok(symbol) => {
                 // A member is OWNED by its type. Everything else written
                 // directly in a module is CONTAINED by that module. Exactly one
