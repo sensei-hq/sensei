@@ -697,6 +697,149 @@ async fn write_structure(
 }
 
 #[cfg(test)]
+/// **ONE FILE IN, ROWS OUT — the IO half of stages 4-6.**
+///
+/// The join `pipeline.rs` deliberately stopped short of: its header says stage
+/// 3 "writes NO nodes and NO edges, and enqueues no parse task", because R14
+/// puts the structure barrier first and the per-file work second. This is that
+/// second half, and it is the whole of what a parse task does.
+///
+/// Pure decisions stay where they were — [`index_file`] reads the file and
+/// [`persist::write`] writes the facts. Nothing is decided here; this executes.
+///
+/// **AN EMPTY READ IS A RESULT, NOT A FAILURE** (S2, §7). A file no adapter
+/// claims, or one that parsed to nothing, returns `Ok(None)`: there are no rows
+/// to write and no error to report. The caller records the reason from the
+/// returned [`FileIndex`] rather than inferring it from an absence — which is
+/// why the reason rides along instead of being flattened to `None`.
+///
+/// **THE FIRST PASS RESOLVES NOTHING, BY DESIGN.** `index_file` is handed
+/// `TypeHomes::unknown()` because one file may not reach for a repo-wide table
+/// (S5), so its references arrive `Unresolved` and `persist` keys them by the
+/// name it could not place (`TargetKey::Named`, against the nullable
+/// `target_id`/`target_name`). No heal PASS is needed: the fqn is the join key,
+/// so the file that DECLARES a target fills its node in on its own upsert and
+/// every edge already naming it is linked by that write.
+///
+/// Takes [`FileInput`] rather than its six fields loose: the type already
+/// exists for exactly this bundle, and a second parameter list naming the same
+/// things is how the two drift.
+pub async fn index_and_persist(
+    pg: &PgStore,
+    folder_id: &uuid::Uuid,
+    input: crate::indexer::index::FileInput<'_>,
+) -> Result<Option<crate::indexer::persist::Written>, String> {
+    let index = crate::indexer::index::index_file(input);
+    match index.indexed {
+        crate::indexer::index::Indexed::Read(facts) => {
+            crate::indexer::persist::write(pg, folder_id, &facts).await.map(Some)
+        }
+        // No nodes and no edges, and the reason is already in `index`. Writing
+        // nothing is the correct outcome, so it is `Ok` — and it is `None`
+        // rather than an empty `Written`, which a caller could not tell from a
+        // file that genuinely wrote zero rows.
+        crate::indexer::index::Indexed::Empty(_) => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod parse_task {
+    use super::*;
+
+    /// **THE ONE MISSING JOIN: `index_file` -> `persist::write`.**
+    ///
+    /// Every piece of v2's per-file path is built and test-covered, and none of
+    /// it is reachable from production: `index_file` (stage 11's I8, "one file
+    /// in, nodes and edges out") and `persist::write` (stage 6) have no caller
+    /// between them. `pipeline.rs` stops at the structure barrier by its own
+    /// header — "writes NO nodes and NO edges, and enqueues no parse task" —
+    /// and `TaskKind::ProcessFile` still runs v1. So this is the seam, and it
+    /// is the whole of what a v2 rust cycle needs.
+    ///
+    /// **THE FIRST PASS RESOLVES NOTHING, AND THAT IS THE DESIGN RATHER THAN A
+    /// GAP.** `index_file` is handed `TypeHomes::unknown()` because one file may
+    /// not reach for a repo-wide table (S5). Its references therefore arrive as
+    /// `Resolution::Unresolved`, and `persist` already has the shape for that:
+    /// `TargetKey::Named` keys an edge by "the name it could not place" against
+    /// the nullable `target_id`/`target_name` columns. Healing needs no pass —
+    /// the fqn IS the join key, so when the file that DECLARES the target is
+    /// indexed, its upsert fills the node in and every edge already pointing at
+    /// that name is linked.
+    ///
+    /// So what this asserts is deliberately NOT "the edge resolved". It is that
+    /// the facts reached the database at all, which is the property the seam
+    /// owns. Resolution is the next file's business.
+    ///
+    /// MUTATION: drop the `persist::write` call from `index_and_persist` — the
+    /// read-back is empty and the first assertion names what it got.
+    #[tokio::test]
+    async fn a_parsed_file_reaches_the_database() {
+        let Ok(pg) = PgStore::connect_test().await else {
+            println!("no database — skipping");
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+
+        let rid = pg
+            .add_watch_root(&root.to_string_lossy(), "v2_parse_seam", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let repo = root.to_string_lossy().to_string();
+        pg.upsert_repo_kind(&rid, "git", "seam", &repo).await.unwrap();
+        let (folder_id,): (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.folders WHERE abs_path = $1")
+                .bind(&repo)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+
+        // Stage 3's barrier: the `files` row exists before the parse, which is
+        // what lets node persistence fail closed on a missing one (R13).
+        pg.upsert_file_row(
+            &folder_id,
+            "src/lib.rs",
+            crate::db::pg_store::folders::BARRIER_MTIME,
+            crate::db::pg_store::folders::BARRIER_HASH,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let written = index_and_persist(
+            &pg,
+            &folder_id,
+            crate::indexer::index::FileInput {
+                repo: &repo,
+                path: "src/lib.rs",
+                mode: crate::indexer::index::Mode::New,
+                package: "p",
+                module: "lib",
+                text: "pub struct Widget;\npub fn make() -> Widget { Widget }\n",
+            },
+        )
+        .await
+        .expect("the seam writes");
+
+        let stored = crate::indexer::persist::read_back(&pg, &folder_id).await.expect("read back");
+        assert!(
+            stored.symbols.iter().any(|s| s.name == "Widget"),
+            "the declarations the walk read must reach the database: wrote {written:?}, read \
+             back {:?}",
+            stored.symbols.iter().map(|s| s.name.as_str()).collect::<Vec<_>>()
+        );
+        assert!(
+            stored.symbols.iter().any(|s| s.name == "make"),
+            "every declaration, not just the first: {:?}",
+            stored.symbols.iter().map(|s| s.name.as_str()).collect::<Vec<_>>()
+        );
+
+        pg.remove_watch_root(&rid).await.ok();
+    }
+}
+
+#[cfg(test)]
 mod corpus {
     use super::*;
     use crate::tasks::progress::TaskEvent;
