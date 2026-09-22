@@ -35,23 +35,39 @@ parse task"); `incremental.rs` already classifies a change as OLD+NEW.
 **B. Route RUST to v2 and leave every other language on v1.** Per-language
 dispatch in the ProcessFile handler.
 
-**C. Migrate one language at a time, and DROP ITS v1 ADAPTER AS IT GOES.** Four
+**C. Migrate one language at a time, and DROP ITS v1 PARSER AS IT GOES.** Four
 already have v2 adapters and need only proving — typescript/javascript, svelte,
-python, java. Five need porting first: **SQL, Swift, Kotlin, Vue, C**.
+python, java. Five need porting: **SQL, Swift, Kotlin, Vue, C**.
 
-**THE REGISTRY IS THE SWITCH — no flag.** The ProcessFile handler asks v2's
-`adapter_for_ext` first and falls back to v1. So migrating a language is: land
-its v2 adapter, prove it, then DELETE `languages/<that language>.rs`. The two
-never coexist for one language, so there is no drift and no "which one is
-live"; the v1 fallback shrinks to nothing on its own, and `languages/` goes
-when the last adapter leaves.
+**NO v1 FALLBACK. NOT ANYWHERE.** Decided 2026-09-22 and it overrides an
+earlier note of mine that proposed one. The new flow asks v2's
+`adapter_for_ext` and, for a language v2 does not claim, **the file is simply
+not indexed** — an honest, visible gap. Two reasons, and the first is
+decisive:
 
-**D. When the last language has migrated**: re-index, run acceptance, remove
-the now-empty `languages/` module and break its two couplings
-(`is_test_path` ×2, `fqn::is_external` ×1).
+- **The two mint DIFFERENT identities.** v1 has `languages/fqn.rs`, v2 has
+  `indexer/fqn.rs` with its own grammar. A fallback would put two identity
+  schemes in ONE graph, so an edge minted by one could never meet a node
+  minted by the other — the "two half-symbols" failure v2's fqn module exists
+  to prevent, reintroduced at the seam.
+- **The models do not compose.** v2 is single-file-independent with no
+  cross-file table (the whole of stage 11); v1 is multi-pass with shared
+  state. A row's meaning would depend on which engine produced it and nothing
+  downstream could tell.
 
-No language is ever dropped from the graph: v1 serves it until v2 demonstrably
-does, and only then is v1's copy deleted.
+So coverage during the transition is a SCHEDULING question — which language
+migrates next — never a dispatch question.
+
+**D. When the last language has migrated**: re-index, run acceptance, delete
+the v1 PARSERS and break the two couplings (`is_test_path` ×2,
+`fqn::is_external` ×1).
+
+**Note the split:** v1's `languages/` is not only parsers. `language_for_path`,
+`is_test_path` and `import_target` serve non-indexing callers
+(`classifiers.rs`, `graph_facts.rs`, `api/handlers/codebase.rs`,
+`db/pg_store/graph.rs`, `tasks/processors/code.rs`). Language DETECTION is a
+different concern from parsing; only the parsers are being retired here, and
+what remains needs its own home rather than being deleted with them.
 
 **The stage-10 differential harness is WAIVED** by the user — "I don't need to
 compare v1 vs v2". It was the spec's cutover gate; the cost and what stands in
