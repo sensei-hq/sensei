@@ -206,9 +206,34 @@ capability rather than tidiness:
 | v1 (live, 11) | python, rust, typescript, javascript, java, **sql, swift, kotlin**, svelte, **vue**, **c** |
 | v2 (5) | rust, javascript (ts+js), python, java, svelte |
 
-**DECIDED: port all five to v2 FIRST, then delete v1 in one move** — rather
-than keeping v1 as a per-language fallback. So SQL, Swift, Kotlin, Vue and C
-each need a v2 adapter before any line of `languages/` goes.
+**DECIDED 2026-09-22, and the order was revised twice — read the last one.**
+Final: wire the FLOW first with rust only, then migrate a language at a time,
+dropping each v1 parser as its language lands. SQL, Swift, Kotlin, Vue and C
+need v2 adapters; the other four (typescript/javascript, svelte, python, java)
+already have them and need only proving.
+
+**AND THERE IS NO v1 FALLBACK — NOT ANYWHERE.** An earlier note of mine
+proposed "ask v2, fall back to v1", calling the registry the switch. That was
+wrong, and the first reason is decisive: **the two mint DIFFERENT
+identities** (`languages/fqn.rs` against `indexer/fqn.rs`, each with its own
+grammar), so a fallback would put two identity schemes in ONE graph and an edge
+minted by one could never meet a node minted by the other — the "two
+half-symbols" failure v2's fqn module exists to prevent, reintroduced at the
+seam. Second, the models do not compose: v2 is single-file-independent with no
+cross-file table (the whole of stage 11) while v1 is multi-pass with shared
+state, so a row's meaning would depend on which engine produced it and nothing
+downstream could tell.
+
+For a language v2 does not claim, the file is **not indexed** — an honest,
+visible gap. Coverage during the transition is a SCHEDULING question, never a
+dispatch question.
+
+**Only the PARSERS are being retired.** `languages/` also holds
+`language_for_path`, `is_test_path` and `import_target`, which serve
+non-indexing callers (`classifiers.rs`, `graph_facts.rs`,
+`api/handlers/codebase.rs`, `db/pg_store/graph.rs`,
+`tasks/processors/code.rs`). Detection is not parsing; what remains needs a
+home rather than deletion.
 
 **The v2 → v1 coupling is trivial**, which is the one piece of good news: two
 helpers, `languages::is_test_path` (twice, in `indexer/barrier.rs`) and
