@@ -177,6 +177,48 @@ declares anything. `count_gated`, which reads node kinds straight off the tree
 and never asks the walk, stood at 20 against the walk's 27 until it learned the
 new rule — a delta of exactly 7.
 
+## Indexer — WHY RUST CANNOT FLIP TO v2 YET: the 19 that fail (measured 2026-09-22)
+
+**The dispatch switch was BUILT, RUN, and REVERTED — and the revert is the
+finding.** Routing `.rs` through `index_file` → `persist::write` (no v1
+fallback) compiles, is clippy-clean, and its own test passes. It also turns
+**19 tests red**, and they are not wrong: they are the written spec of what
+production does for rust today, so flipping now would silently drop documented
+behaviour.
+
+`read_back` is what proves the route, incidentally — it is v2's own reader and
+it REJECTED v1's output with `definition_nodes: src/lib.rs carries no fqn`,
+because v1 writes fqn-less `kind='file'` nodes. So the two writers are
+distinguishable at the read, which is a useful discriminator for any later
+verification.
+
+**THE WORK-LIST, which is exactly these 19** (all in
+`tasks::handlers::process::tests`). Each names a behaviour v1 produces and v2
+has no producer for:
+
+| group | tests | what v2 must produce |
+|---|---|---|
+| cross-file resolution | `rust_call_before_def_creates_stub_then_enriched`, `a_trait_impl_persists_as_an_implements_edge_before_its_trait_exists`, `a_chained_member_call_resolves_through_the_receivers_return_type`, `calls_edge_sourced_from_caller_function_node` | an edge written name-keyed must become `target_id`-linked when the declaring file lands. v1 does it with `PgStore::resolve_edge`; **v2's `persist::write` has no equivalent** |
+| node attributes | `process_file_flags_test_file_nodes_is_test`, `process_file_persists_is_exported_from_visibility` | `nodes.is_test`, `nodes.is_exported` |
+| node kinds | `rust_impl_type_container_nesting`, `external_calls_link_to_lib_nodes` | container nesting, and `lib·` nodes for external targets |
+| docs | `doc_references_resolve_to_files_and_unambiguous_symbols` | doc→symbol references |
+| reindex | `process_file_reindex_keeps_surviving_node_and_prunes_removed`, `process_file_reindex_reconciles_a_removed_out_edge` | reconcile on re-parse |
+| emit coverage | `every_call_emit_arm_fires`, `every_inheritance_emit_arm_fires`, `process_file_rust_emits_fqn_nodes_and_resolved_edges` | the full emit surface |
+| end to end | `graph_scan_end_to_end`, `processing_order_invariant`, `process_file_fatal_db_write_marks_folder_failed_and_skips_scan_state`, `process_file_fatal_on_one_file_does_not_block_a_sibling`, `rust_use_imports_resolve_to_the_target_module_or_item` | the whole handler contract |
+
+**THE FIRST GROUP IS THE ONE THAT CHANGES THE DESIGN.** "Healing is just the
+upsert" holds only if writing a node LINKS the edges already naming it. It does
+not today: v2 writes `target_name` and nothing ever fills `target_id`, so the
+edge stays unlinked for ever and the graph never converges. v1 has the
+primitive (`resolve_edge`, which also merges a now-redundant duplicate); v2
+needs the same thing inside `persist::write`, keyed on the fqn. That is the
+next increment and it is a precondition for the flip, not an optimisation.
+
+**What DID land and is green:** `pipeline::index_and_persist` (the seam) and
+`pipeline::placement_on_disk` (the handler resolves placement from disk so the
+adapter is still only ever TOLD — `no_adapter_reads_the_filesystem` stays
+true).
+
 ## Indexer — RETIRE v1 AND MAKE v2 FINAL (decided with the user 2026-09-22)
 
 **Agreed: v1 (`crate::languages`, 15,837 lines, 11 adapters) is retired and v2
