@@ -742,6 +742,52 @@ pub async fn index_and_persist(
     }
 }
 
+/// The package and module a file sits in, resolved FROM DISK.
+///
+/// The IO counterpart of [`super::placement`], which is pure and takes the
+/// manifest list as an argument. This is the half that goes and finds it: climb
+/// from the file to the repo root looking for a registered manifest filename,
+/// read it, and let the pure functions decide.
+///
+/// **THE HANDLER CLIMBS; THE ADAPTER NEVER DOES.** A language adapter is TOLD
+/// its package and module (`no_adapter_reads_the_filesystem` enforces it), so
+/// somebody has to resolve them first and that somebody is the task layer. Kept
+/// here rather than in `placement.rs` so the pure module stays testable without
+/// a filesystem.
+///
+/// `None` when no manifest at or above the file names a package — the same
+/// verdict `load_repo` reaches as `Skipped::Unplaced`. An unplaced file is NOT
+/// indexed: without a package there is no identity to mint, and inventing one
+/// would put every file of a manifest-less tree under a fabricated package.
+pub fn placement_on_disk(
+    file: &std::path::Path,
+    repo_root: &std::path::Path,
+    language: crate::indexer::facts::Language,
+) -> Option<crate::indexer::placement::Placement> {
+    let names = crate::adapters::manifest::all_manifest_filenames();
+    let mut dir = file.parent()?;
+    loop {
+        // Deterministic: the pure `owning_manifest` breaks a several-manifests
+        // -in-one-directory tie by NAME rather than by walk order (R6), so the
+        // candidates for this directory are sorted the same way before asking.
+        let mut here: Vec<std::path::PathBuf> =
+            names.iter().map(|n| dir.join(n)).filter(|p| p.is_file()).collect();
+        here.sort();
+        for manifest in &here {
+            let Ok(text) = std::fs::read_to_string(manifest) else { continue };
+            if let Some(package) = crate::indexer::placement::package_named_by(manifest, &text) {
+                return Some(crate::indexer::placement::placement_of(
+                    file, &package, dir, language,
+                ));
+            }
+        }
+        if dir == repo_root {
+            return None;
+        }
+        dir = dir.parent()?;
+    }
+}
+
 #[cfg(test)]
 mod parse_task {
     use super::*;
