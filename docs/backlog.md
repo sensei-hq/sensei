@@ -177,47 +177,66 @@ declares anything. `count_gated`, which reads node kinds straight off the tree
 and never asks the walk, stood at 20 against the walk's 27 until it learned the
 new rule — a delta of exactly 7.
 
-## Indexer — WHY RUST CANNOT FLIP TO v2 YET: the 19 that fail (measured 2026-09-22)
+## Indexer — RUST ON v2: the ladder hole is CLOSED, and the four features still missing (measured 2026-09-22)
 
-**The dispatch switch was BUILT, RUN, and REVERTED — and the revert is the
-finding.** Routing `.rs` through `index_file` → `persist::write` (no v1
-fallback) compiles, is clippy-clean, and its own test passes. It also turns
-**19 tests red**, and they are not wrong: they are the written spec of what
-production does for rust today, so flipping now would silently drop documented
-behaviour.
+**THE HOLE WAS IN `index_file`, NOT IN THE WRITER — FIXED.** The writer was
+never the problem and my earlier claim that it needed a `resolve_edge`
+equivalent was wrong. `persist::write` already does node-then-edge with id
+reuse: `upsert_symbol` returns each id into `known: HashMap<fqn, uuid>`, and an
+edge target with an fqn goes through
+`TargetRef::Internal { on_miss: OnMiss::CreateStub }`, which mints the node for
+a not-yet-declared target and puts THAT id on the edge. When the declaring file
+is later indexed, `upsert_symbol` fills the same fqn's node in. Nothing is
+relinked because the id was never wrong. No `target_id` fix-up exists or is
+needed.
 
-`read_back` is what proves the route, incidentally — it is v2's own reader and
-it REJECTED v1's output with `definition_nodes: src/lib.rs carries no fqn`,
-because v1 writes fqn-less `kind='file'` nodes. So the two writers are
-distinguishable at the read, which is a useful discriminator for any later
-verification.
+What was missing is one line earlier: **`index_file` never ran the ladder.** It
+returned `adapter.read(...)` verbatim, so every reference stayed
+`Reason::Unplaced` — the reason documented as "must be EMPTY once resolution is
+done" — carrying the minted identity only as EVIDENCE, never as a `Resolved`
+fqn. So persistence got `TargetKey::Named`, turned it into
+`TargetRef::Unresolvable`, and wrote a name with no target. `index_file` now
+calls `resolve(facts, grammar, world)` and its test asserts `Unplaced == 0`.
 
-**THE WORK-LIST, which is exactly these 19** (all in
-`tasks::handlers::process::tests`). Each names a behaviour v1 produces and v2
-has no producer for:
+**AN EMPTY WORLD IS SAFE BY CONSTRUCTION**, which is what makes per-file
+indexing honest rather than a compromise. Four of `World`'s five fields are
+repo-wide artifacts, and each documents: *"Empty means 'not supplied', and then
+nothing is reclassified — the previous behaviour, and never a guess."* The rung
+that would call a member external guards on `!first_party_members.is_empty()`.
+So a file indexed alone resolves what its own text establishes (S7) and leaves
+the rest unresolved — never mis-filed as external. `pipeline::TellFile` is that
+world; the scan supplies `first_party` and nothing else.
 
-| group | tests | what v2 must produce |
+### The dispatch was wired, measured, and reverted again — 14 failures, and they are NOT test noise
+
+Routing rust to v2 leaves **14** of `tasks::handlers::process::tests` red (down
+from 19 before the ladder ran). Four are FEATURES v2 must gain; the rest follow
+from them. This is the work-list to finish rust:
+
+| # | v2 must produce | evidence |
 |---|---|---|
-| cross-file resolution | `rust_call_before_def_creates_stub_then_enriched`, `a_trait_impl_persists_as_an_implements_edge_before_its_trait_exists`, `a_chained_member_call_resolves_through_the_receivers_return_type`, `calls_edge_sourced_from_caller_function_node` | an edge written name-keyed must become `target_id`-linked when the declaring file lands. v1 does it with `PgStore::resolve_edge`; **v2's `persist::write` has no equivalent** |
-| node attributes | `process_file_flags_test_file_nodes_is_test`, `process_file_persists_is_exported_from_visibility` | `nodes.is_test`, `nodes.is_exported` |
-| node kinds | `rust_impl_type_container_nesting`, `external_calls_link_to_lib_nodes` | container nesting, and `lib·` nodes for external targets |
-| docs | `doc_references_resolve_to_files_and_unambiguous_symbols` | doc→symbol references |
-| reindex | `process_file_reindex_keeps_surviving_node_and_prunes_removed`, `process_file_reindex_reconciles_a_removed_out_edge` | reconcile on re-parse |
-| emit coverage | `every_call_emit_arm_fires`, `every_inheritance_emit_arm_fires`, `process_file_rust_emits_fqn_nodes_and_resolved_edges` | the full emit surface |
-| end to end | `graph_scan_end_to_end`, `processing_order_invariant`, `process_file_fatal_db_write_marks_folder_failed_and_skips_scan_state`, `process_file_fatal_on_one_file_does_not_block_a_sibling`, `rust_use_imports_resolve_to_the_target_module_or_item` | the whole handler contract |
+| 1 | **`kind='file'` nodes** | `graph_scan_end_to_end` — "file node(s)". Five views and handlers read them (`file_tags`, `doc_coverage`, `file_node_id_by_path`, `call_flow`, `community.rs`'s singleton folding) |
+| 2 | **`nodes.is_test`** | `process_file_flags_test_file_nodes_is_test`. `languages::is_test_path` is the single source of truth and v2 never calls it |
+| 3 | **reconcile on re-parse** | `process_file_reindex_keeps_surviving_node_and_prunes_removed`, `..._reconciles_a_removed_out_edge` — "the removed symbol is pruned", "replace, not append". `indexer::reconcile` exists and the handler never calls it |
+| 4 | **the caller/module node a call is sourced from** | `calls_edge_sourced_from_caller_function_node`, and three `RowNotFound`s where a test looks a node up by name |
 
-**THE FIRST GROUP IS THE ONE THAT CHANGES THE DESIGN.** "Healing is just the
-upsert" holds only if writing a node LINKS the edges already naming it. It does
-not today: v2 writes `target_name` and nothing ever fills `target_id`, so the
-edge stays unlinked for ever and the graph never converges. v1 has the
-primitive (`resolve_edge`, which also merges a now-redundant duplicate); v2
-needs the same thing inside `persist::write`, keyed on the fqn. That is the
-next increment and it is a precondition for the flip, not an optimisation.
+Plus one shape difference to settle rather than patch: `rust_impl_type_container_nesting` got
+`rust·fqncrate·compute·item` where the test wanted a module segment — v2's
+placement gave `module: ""` for a file the fixture puts at the repo root.
 
-**What DID land and is green:** `pipeline::index_and_persist` (the seam) and
-`pipeline::placement_on_disk` (the handler resolves placement from disk so the
-adapter is still only ever TOLD — `no_adapter_reads_the_filesystem` stays
-true).
+**And a fixture fact worth knowing before touching them: v2 REQUIRES A
+MANIFEST.** `placement_on_disk` answers `None` when nothing at or above a file
+names a package, and an unplaced file is not indexed. The v1 fixtures write
+bare `.rs` files with no `Cargo.toml`, so under v2 they silently produce
+nothing. Adding one to `seed_indexing_repo` fixes that and shifts every
+exact-count scan-state assertion by one — so those assertions should name the
+FILE they mean rather than count rows, which is the better test anyway.
+
+**What is landed and green:** `index_file` runs the ladder ·
+`pipeline::index_and_persist` · `pipeline::placement_on_disk` ·
+`pipeline::TellFile` · the stage-3 barrier. The dispatch itself is the only
+thing held back, and it is one `if` block whose content is already written and
+recorded in git history (`git log -S "THE CUTOVER, ONE LANGUAGE AT A TIME"`).
 
 ## Indexer — RETIRE v1 AND MAKE v2 FINAL (decided with the user 2026-09-22)
 
