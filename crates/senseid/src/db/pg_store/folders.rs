@@ -1,5 +1,29 @@
 use super::*;
 
+/// The `mtime` a BARRIER-seeded `files` row carries.
+///
+/// Zero, and deliberately not a real timestamp. Stage 3's barrier (R14) writes
+/// a row to say "this file exists and is queued", not to claim it has been
+/// read — and the two must be distinguishable, because the parse handler
+/// advances a file's fingerprint as its record of "this file was processed".
+///
+/// **LOAD-BEARING, not tidy.** `process_git_folder`'s `prior_state` carries
+/// only `(mtime, hash)` and `plan_reindex` never reads `parsed_at`, so a
+/// barrier row bearing the file's TRUE mtime would be classified UNCHANGED on
+/// the very next pass and the file would never be indexed at all. Zero cannot
+/// be a real mtime, so the file stays a candidate until a parse advances it.
+///
+/// Lived in the `#[cfg(test)]` `graph_seed` module while the barrier existed
+/// only in fixtures; it is production's now, and `graph_seed` re-exports THIS
+/// one so there is a single definition.
+pub(crate) const BARRIER_MTIME: i64 = 0;
+
+/// The `content_hash` a BARRIER-seeded row carries: empty, because nothing has
+/// been read. The column is `not null`, and an empty string can never equal a
+/// real sha256 — so the content gate keeps the file a candidate rather than
+/// matching a fabricated fingerprint (R4).
+pub(crate) const BARRIER_HASH: &str = "";
+
 /// A resolved repo anchor for an absolute path (spec 2026-08-18): the durable repo a
 /// session/transcript attaches to — the nearest repo-kind ancestor (git/subtree/
 /// standalone-project-root), alias-aware, deepest+live wins.
