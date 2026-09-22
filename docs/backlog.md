@@ -220,9 +220,40 @@ imports.
 
 1. **Wire v2's persistence** ← NEXT, chosen 2026-09-22.
 2. Port the five missing adapters: SQL, Swift, Kotlin, Vue, C.
-3. Build the differential harness (stage 10 S1/S2).
+3. ~~Build the differential harness (stage 10 S1/S2).~~ **WAIVED by the user
+   2026-09-22: "I don't need to compare v1 vs v2."**
 4. Cut over, re-index, run acceptance.
 5. Delete `languages/` and break the two helper couplings.
+
+**THE WAIVER IS A DELIBERATE DEVIATION FROM STAGE 10 AND IS RECORDED AS ONE.**
+`10-cutover.md` makes the differential harness the gate: S1 classifies every
+difference IMPROVEMENT / REGRESSION / EXPLAINED with a regression BLOCKING
+cutover, and S2 requires v2's resolved set to be a superset of v1's "or each
+exception justified in writing". Neither will be produced.
+
+**What that costs, stated plainly:** we will cut over without evidence that v2
+is not a regression against v1 on any specific edge. If v2 silently loses a
+class of edge v1 found, nothing in the plan will catch it — that was the
+harness's entire job.
+
+**What stands in for it** — v2's own barriers, which measure v2 against ITSELF
+and against the corpus rather than against v1, and which are already green:
+
+- the resolved-reference gate (§10): 97,460 over this repo against ≥96,304
+- A7 identity collisions: rust **0**, asserted as equality not a ceiling
+- A8 `every_first_party_edge_names_a_declaration_this_scan_holds`
+- the dangling-reference ceiling: 1,153/235, headroom 147
+- corpus conservation: symbol and reference counts against an INDEPENDENT
+  tree-walk count, per file
+- order-independence: indexing A then B equals B then A
+
+These catch "v2 is internally inconsistent" and "v2 lost ground against its own
+previous run". They do NOT catch "v1 knew something v2 does not". Accepting
+that is the user's call, taken knowingly.
+
+**Consequence for step 4:** acceptance after re-index becomes the only
+empirical check on the cutover, so it is no longer optional and should be run
+against real data before `languages/` is deleted.
 
 ### What "wire v2's persistence" actually is — the pieces all exist
 
