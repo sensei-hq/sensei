@@ -252,6 +252,7 @@ pub(crate) fn rooted_against(
 }
 
 /// What the ladder is told about the scan it is part of.
+#[derive(Debug, Clone, Copy)]
 pub struct World<'a> {
     /// Every package this scan owns the source of, from the manifests — NOT from
     /// what has been read so far. An import naming one of these crosses no

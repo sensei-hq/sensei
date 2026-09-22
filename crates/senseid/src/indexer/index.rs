@@ -347,7 +347,7 @@ pub enum Mode {
 /// `language` is NOT here. The driver resolves it from the extension and reports
 /// what it used — a caller that could name a language would be a caller that
 /// could name the wrong one (S1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub struct FileInput<'a> {
     /// The repository this file belongs to, as the graph records it.
     pub repo: &'a str,
@@ -358,6 +358,25 @@ pub struct FileInput<'a> {
     /// Package-relative module path, from [`super::placement::placement_of`].
     pub module: &'a str,
     pub text: &'a str,
+    /// **WHAT THE SCAN KNOWS, HANDED IN.** The ladder cannot run without it and
+    /// one file cannot derive it: four of [`World`]'s five fields are repo-wide
+    /// artifacts of a completed pass.
+    ///
+    /// TOLD, exactly as `package` and `module` are told, and for the same
+    /// reason — the file scan never climbs and never reaches. The repo scan
+    /// computes this once and hands it down.
+    ///
+    /// **WITHOUT THE LADDER THE REFERENCES ARE NOT MERELY UNRESOLVED, THEY ARE
+    /// `Reason::Unplaced`** — the one reason documented as "must be EMPTY once
+    /// resolution is done", which `index::corpus` asserts on. An `Unplaced`
+    /// reference carries the identities the walk MINTED as evidence and no
+    /// `Resolved` fqn, so persistence has nothing to point an edge at:
+    /// `TargetKey::Named` becomes `TargetRef::Unresolvable`, and the edge is
+    /// written with a name and no target. That is the whole reason a file
+    /// indexed alone produced an unlinked graph — not a missing relink in the
+    /// writer, which already stubs a `Proven` target and reuses its id
+    /// (`OnMiss::CreateStub`).
+    pub world: &'a World<'a>,
 }
 
 /// What one file's read produced — or what it produced instead.
@@ -505,7 +524,7 @@ impl FileIndex {
 /// TAKES the parameter is what S5 removes next; passing `unknown()` here is the
 /// demonstration that it answers nothing.
 pub fn index_file(input: FileInput<'_>) -> FileIndex {
-    let FileInput { repo, path, mode, package, module, text } = input;
+    let FileInput { repo, path, mode, package, module, text, world } = input;
     let stamp = |language: Option<Language>, indexed: Indexed| FileIndex {
         mode,
         repo: repo.to_string(),
@@ -540,7 +559,19 @@ pub fn index_file(input: FileInput<'_>) -> FileIndex {
     // reconcile — `reconcile(F, nothing)` demotes every node the file claimed,
     // and applying that to a failed parse is the defect R10.3 exists for.
     match adapter.read(&source, &TypeHomes::unknown()) {
-        Ok(facts) => stamp(language, Indexed::Read(facts)),
+        // **THE LADDER RUNS HERE, AND IT DID NOT BEFORE.** The walk emits every
+        // reference `Unplaced` with the identities it minted as evidence;
+        // placing them is what turns an `Observation::Named(fqn)` into a
+        // `Resolution::Resolved { fqn }` that persistence can point an edge at
+        // (S7, R7).
+        //
+        // `TypeHomes::unknown()` above STAYS: the WALK may not reach for a
+        // repo-wide table (S5). The LADDER may, because that is its job and the
+        // world is handed to it rather than fetched.
+        Ok(facts) => {
+            let placed = super::resolve::resolve(facts, adapter.grammar(), world);
+            stamp(language, Indexed::Read(placed))
+        }
         Err(rejected) => {
             stamp(language, Indexed::Empty(Empty::Skipped(Skipped::Rejected(rejected))))
         }
@@ -552,6 +583,36 @@ mod tests {
     use super::*;
 
     use crate::indexer::facts::{RefKind, Resolution};
+
+    /// The sets a single-file index is TOLD, owned so a `World` can borrow them.
+    ///
+    /// Only `first_party` carries anything: the other four fields are repo-wide
+    /// artifacts of a completed pass, and a single-file test has none. Empty is
+    /// the honest value, NOT a stand-in — and what it costs is visible rather
+    /// than hidden, which is the point of making the world an argument.
+    #[derive(Default)]
+    struct Told {
+        first_party: BTreeSet<String>,
+        members: BTreeSet<String>,
+        declared: BTreeSet<crate::indexer::facts::Fqn>,
+        returns: std::collections::BTreeMap<crate::indexer::facts::Fqn, String>,
+        scanned: BTreeSet<crate::indexer::facts::Fqn>,
+    }
+
+    impl Told {
+        fn of(package: &str) -> Self {
+            Self { first_party: [package.to_string()].into_iter().collect(), ..Default::default() }
+        }
+        fn world(&self) -> World<'_> {
+            World {
+                first_party: &self.first_party,
+                first_party_members: &self.members,
+                declared_members: &self.declared,
+                returns: &self.returns,
+                scanned: &self.scanned,
+            }
+        }
+    }
 
     /// **AN EXTENSION NO ADAPTER CLAIMS YIELDS EMPTY WITH A STATED REASON**
     /// (stage 11, S2 — §6 step 7).
@@ -580,6 +641,7 @@ mod tests {
     /// unclaimed arm.
     #[test]
     fn an_unclaimed_extension_yields_empty_with_a_reason() {
+        let told = Told::of("p");
         let out = index_file(FileInput {
             repo: "/w/demo",
             path: "README.cobol",
@@ -587,6 +649,7 @@ mod tests {
             package: "p",
             module: "",
             text: "IDENTIFICATION DIVISION.\n",
+            world: &told.world(),
         });
 
         assert!(
@@ -650,6 +713,8 @@ mod tests {
     fn delete_mode_yields_no_nodes_and_no_edges() {
         let text = "pub struct Gone { pub count: u32 }\n\
                     impl Gone { pub fn total(&self) -> u32 { self.count } }\n";
+        let told = Told::of("demo");
+        let world = told.world();
         let at = |mode| {
             index_file(FileInput {
                 repo: "/w/demo",
@@ -658,6 +723,7 @@ mod tests {
                 package: "demo",
                 module: "gone",
                 text,
+                world: &world,
             })
         };
         // Counted off the facts, so the assertion is on what stage 12 would
