@@ -742,6 +742,56 @@ pub async fn index_and_persist(
     }
 }
 
+/// The sets a PER-FILE scan is told, owned so a [`World`] can borrow them.
+///
+/// **AN EMPTY WORLD IS SAFE BY CONSTRUCTION, AND THAT IS THE DESIGN RATHER THAN
+/// A COMPROMISE.** Four of [`World`]'s five fields are repo-wide artifacts of a
+/// completed pass, and each documents the same contract: *"Empty means 'not
+/// supplied', and then nothing is reclassified — the previous behaviour, and
+/// never a guess."* The rung that would call a member external guards on
+/// `!first_party_members.is_empty()`, so an unsupplied set reclassifies
+/// nothing. A file indexed alone therefore resolves what its OWN TEXT
+/// establishes (S7) and leaves the rest unresolved — never mis-filed as
+/// external.
+///
+/// That is heal-later in one sentence: the unresolved edge carries the name,
+/// and when the file that DECLARES the target is indexed, `persist`'s
+/// `OnMiss::CreateStub` has already minted that fqn's node and the declaring
+/// write fills it in. Nothing needs relinking because the id was never wrong.
+///
+/// `first_party` IS supplied: the package set is a fact the scan holds and the
+/// file is told, exactly like its package and module.
+pub struct TellFile {
+    first_party: std::collections::BTreeSet<String>,
+    members: std::collections::BTreeSet<String>,
+    declared: std::collections::BTreeSet<crate::indexer::facts::Fqn>,
+    returns: std::collections::BTreeMap<crate::indexer::facts::Fqn, String>,
+    scanned: std::collections::BTreeSet<crate::indexer::facts::Fqn>,
+}
+
+impl TellFile {
+    /// What the scan knows, for a file in `package`.
+    pub fn about(package: &str) -> Self {
+        Self {
+            first_party: [package.to_string()].into_iter().collect(),
+            members: std::collections::BTreeSet::new(),
+            declared: std::collections::BTreeSet::new(),
+            returns: std::collections::BTreeMap::new(),
+            scanned: std::collections::BTreeSet::new(),
+        }
+    }
+
+    pub fn world(&self) -> crate::indexer::resolve::World<'_> {
+        crate::indexer::resolve::World {
+            first_party: &self.first_party,
+            first_party_members: &self.members,
+            declared_members: &self.declared,
+            returns: &self.returns,
+            scanned: &self.scanned,
+        }
+    }
+}
+
 /// The package and module a file sits in, resolved FROM DISK.
 ///
 /// The IO counterpart of [`super::placement`], which is pure and takes the
@@ -853,6 +903,9 @@ mod parse_task {
         .await
         .unwrap();
 
+        let told = TellFile::about("p");
+        let world = told.world();
+
         let written = index_and_persist(
             &pg,
             &folder_id,
@@ -863,6 +916,7 @@ mod parse_task {
                 package: "p",
                 module: "lib",
                 text: "pub struct Widget;\npub fn make() -> Widget { Widget }\n",
+                world: &world,
             },
         )
         .await
@@ -879,6 +933,49 @@ mod parse_task {
             stored.symbols.iter().any(|s| s.name == "make"),
             "every declaration, not just the first: {:?}",
             stored.symbols.iter().map(|s| s.name.as_str()).collect::<Vec<_>>()
+        );
+
+        // **AND THE LADDER RAN.** This is the property the seam was missing:
+        // before `index_file` placed its references, every one came back
+        // `Reason::Unplaced` with no fqn, so persistence had nothing to point
+        // an edge at and wrote `target_name` with a null target. Now a
+        // reference the file's own text establishes is `Resolved`, which is
+        // what lets `TargetRef::Internal { on_miss: CreateStub }` mint the
+        // target node and reuse its id — no separate relink, and no
+        // `target_id` fix-up pass.
+        //
+        // Asserted on `target_fqn` rather than on a count, because a count
+        // passes on an edge that resolved to the wrong thing.
+        let resolved: Vec<&str> = stored
+            .references
+            .iter()
+            .filter_map(|r| match &r.target {
+                crate::indexer::persist::TargetRow::Resolved { fqn, .. } => Some(fqn.as_str()),
+                crate::indexer::persist::TargetRow::Unresolved { .. } => None,
+            })
+            .collect();
+        let unplaced = stored
+            .references
+            .iter()
+            .filter(|r| {
+                matches!(
+                    &r.target,
+                    crate::indexer::persist::TargetRow::Unresolved {
+                        reason: crate::indexer::facts::Reason::Unplaced,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(
+            unplaced, 0,
+            "`Reason::Unplaced` means the ladder never ran — it must be EMPTY once it has. \
+             Resolved targets were {resolved:?}"
+        );
+        assert!(
+            resolved.iter().any(|f| f.contains("Widget")),
+            "`make() -> Widget` must reach a RESOLVED target the writer can stub and reuse \
+             the id of: resolved {resolved:?}"
         );
 
         pg.remove_watch_root(&rid).await.ok();
