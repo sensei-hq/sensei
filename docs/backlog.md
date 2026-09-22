@@ -177,6 +177,78 @@ declares anything. `count_gated`, which reads node kinds straight off the tree
 and never asks the walk, stood at 20 against the walk's 27 until it learned the
 new rule — a delta of exactly 7.
 
+## Indexer — RETIRE v1 AND MAKE v2 FINAL (decided with the user 2026-09-22)
+
+**Agreed: v1 (`crate::languages`, 15,837 lines, 11 adapters) is retired and v2
+(`crate::indexer`, 40,688 lines) becomes the only indexer.** It is already the
+plan — `docs/spec/indexer/10-cutover.md` is "cutover: the differential harness,
+Rust only, legacy retired". What follows is what an inventory found BEFORE
+anything was deleted, because "retire v1" taken literally today is destructive
+in three separate ways.
+
+**1. v1 IS the production indexer and v2's core has NO production caller.**
+Outside `indexer/`, nothing references `index`, `pipeline`, `resolve` or
+`scan_repo`; production indexing runs `crate::languages` from
+`tasks/handlers/process.rs`. The cutover spec says it outright: *"The existing
+indexer keeps running until the switch, so the graph never goes stale."*
+
+**2. The gate the spec demands does not exist.** S1/S2 want a differential
+harness — both indexers over one corpus, every difference classified
+IMPROVEMENT / REGRESSION / EXPLAINED, v2's resolved set a SUPERSET of v1's or
+each exception justified in writing, a regression BLOCKING cutover. `grep`ping
+for `differential` / `DiffReport` returns nothing.
+
+**3. v1 serves five languages v2 does not** — and this is the one that loses
+capability rather than tidiness:
+
+| | adapters |
+|---|---|
+| v1 (live, 11) | python, rust, typescript, javascript, java, **sql, swift, kotlin**, svelte, **vue**, **c** |
+| v2 (5) | rust, javascript (ts+js), python, java, svelte |
+
+**DECIDED: port all five to v2 FIRST, then delete v1 in one move** — rather
+than keeping v1 as a per-language fallback. So SQL, Swift, Kotlin, Vue and C
+each need a v2 adapter before any line of `languages/` goes.
+
+**The v2 → v1 coupling is trivial**, which is the one piece of good news: two
+helpers, `languages::is_test_path` (twice, in `indexer/barrier.rs`) and
+`languages::fqn::is_external` (once, in `indexer/community.rs`). An earlier
+count of eleven files was wrong — the rest were doc-comment mentions, not
+imports.
+
+### Sequence, decided
+
+1. **Wire v2's persistence** ← NEXT, chosen 2026-09-22.
+2. Port the five missing adapters: SQL, Swift, Kotlin, Vue, C.
+3. Build the differential harness (stage 10 S1/S2).
+4. Cut over, re-index, run acceptance.
+5. Delete `languages/` and break the two helper couplings.
+
+### What "wire v2's persistence" actually is — the pieces all exist
+
+"Stage 12" in stage 11's prose is a FORWARD REFERENCE to an unwritten spec, not
+a numbered stage that exists. Persistence is **stage 6** (`06-persist.md`), and
+`persist::write` / `persist::read_back` are built and test-covered. Nothing
+production calls them.
+
+What is missing is the IO half joining stage 3 to stages 4-6. `pipeline.rs`
+says so in its own header: *"It writes repositories, folders and files. It
+writes NO nodes and NO edges, and enqueues no parse task: stage 3's barrier
+ends here (R14)."*
+
+R14 gives the shape, and it is deliberate — structure first, work second, so no
+parse task creates shared state and the complete file set is known at that
+instant (which IS `folders.props.expected_files`, with no second count):
+
+    glob folders + files -> create folder/file rows   <-- structure barrier
+                         -> enqueue ONE parse task per file
+    each parse task: index_file -> persist::write -> reconcile
+
+**`index_file` — stage 11's I8, "one file in, nodes and edges out" — is exactly
+that parse-task unit.** So the wiring is: `scan_and_write_structure` enqueues a
+task per file, and a handler runs `index_file` then `persist::write` then
+`reconcile`, mirroring what `tasks/handlers/process.rs` already does for v1.
+
 ## Indexer — TypeScript's table cannot be deleted the way rust's was (stage 11 §11, measured 2026-09-21)
 
 **§11 says each adapter is "the same three changes — drop the table parameter,
