@@ -28,6 +28,13 @@ pub struct NodeColumns {
     pub line_start: Option<i32>,
     pub line_end: Option<i32>,
     pub is_exported: bool,
+    /// Whether this symbol's FILE is a test file, by the path convention
+    /// `languages::is_test_path` owns.
+    ///
+    /// A per-symbol column because that is where the UI filters: the file is
+    /// not a node (files live in `sensei.files`; a node REFERENCES one), so the
+    /// flag rides on the symbols the file declares.
+    pub is_test: bool,
     pub docstring: Option<String>,
     pub props: serde_json::Value,
 }
@@ -111,6 +118,7 @@ type NodeProjection = (
     Option<i32>,
     Option<i32>,
     bool,
+    bool,
     Option<String>,
     serde_json::Value,
 );
@@ -163,6 +171,7 @@ impl PgStore {
             line_start,
             line_end,
             is_exported,
+            is_test,
             docstring,
             props,
         } = columns;
@@ -222,6 +231,7 @@ impl PgStore {
         sqlx_core::query::query(
             "UPDATE sensei.nodes
                 SET docstring = $2,
+                    is_test = $5,
                     props = jsonb_set(
                         props || $3,
                         '{claims}',
@@ -234,6 +244,7 @@ impl PgStore {
         .bind(docstring.as_deref())
         .bind(props)
         .bind(file_path)
+        .bind(is_test)
         .execute(&self.pool)
         .await
         .map_err(|e| format!("upsert_symbol detail ({fqn}): {e}"))?;
@@ -274,6 +285,7 @@ impl PgStore {
             line_start,
             line_end,
             is_exported,
+            is_test,
             docstring,
             props,
         } = columns;
@@ -306,6 +318,7 @@ impl PgStore {
                 AND line_start IS NOT DISTINCT FROM $7
                 AND line_end IS NOT DISTINCT FROM $8
                 AND is_exported = $9
+                AND is_test = $14
                 AND docstring IS NOT DISTINCT FROM $10
                 AND ($11::uuid IS NULL OR parent_id IS NOT DISTINCT FROM $11)
                 AND props -> 'claims' ? $12
@@ -326,6 +339,7 @@ impl PgStore {
         .bind(parent_id)
         .bind(file_path)
         .bind(props)
+        .bind(is_test)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| format!("symbol_unchanged ({fqn}): {e}"))?;
@@ -494,7 +508,7 @@ impl PgStore {
     ) -> Result<Vec<NodeColumns>, String> {
         let rows: Vec<NodeProjection> = sqlx_core::query_as::query_as(
             "SELECT n.fqn, n.kind::text, n.name, fi.file_path, n.language,
-                    n.line_start, n.line_end, n.is_exported, n.docstring, n.props
+                    n.line_start, n.line_end, n.is_exported, n.is_test, n.docstring, n.props
                FROM sensei.nodes n
                JOIN sensei.files fi ON fi.id = n.file_id
               WHERE n.folder_id = $1
@@ -516,6 +530,7 @@ impl PgStore {
                     line_start,
                     line_end,
                     is_exported,
+                    is_test,
                     docstring,
                     props,
                 )| {
@@ -533,6 +548,7 @@ impl PgStore {
                         line_start,
                         line_end,
                         is_exported,
+                        is_test,
                         docstring,
                         props,
                     })

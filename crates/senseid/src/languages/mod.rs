@@ -166,6 +166,17 @@ fn title_case_static(slug: &str) -> &str {
 pub fn all_adapters() -> Vec<Box<dyn LanguageAdapter>> {
     vec![
         Box::new(python::PythonAdapter),
+        // **RUST IS v2's, AND THIS REGISTRATION IS NOW DETECTION ONLY.**
+        // `process_file` routes every `.rs` file to `indexer::lang::rust`
+        // before v1's parse path is reached, so nothing here parses rust any
+        // more. The entry stays because this registry answers TWO questions —
+        // "who parses this?" and "what language is this?" — and the second is
+        // read by `classifiers::is_source_file`, `language_for_ext` and
+        // `scan_logic::is_project_source_ext`. Removing it made `.rs` stop
+        // being recognised as source at all (23 tests).
+        //
+        // Splitting detection from parsing is what lets this adapter's parse
+        // half actually be deleted; until then it is unreachable, not absent.
         Box::new(rust_lang::RustAdapter),
         Box::new(typescript::TypeScriptAdapter),
         Box::new(typescript::JavaScriptAdapter),

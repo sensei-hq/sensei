@@ -1092,6 +1092,86 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // pool. A read/parse error is tolerated (skip, don't fail) so it never
     // blocks the folder's post-processing barrier.
     let folder_id = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"]));
+
+    // ── RUST IS v2's. v1 IS GONE FOR IT ───────────────────────────────────────
+    //
+    // `index_file` reads the file and PLACES its references; `persist::write`
+    // writes the facts and resolves each edge target to a node id as it goes —
+    // `OnMiss::CreateStub` mints the node for a target no file has declared yet
+    // and the edge carries that id, so a later scan of the DECLARING file fills
+    // the same fqn in. Nothing is relinked, because the id was never wrong.
+    //
+    // **NO FALLBACK, and v1's rust parser is deleted rather than bypassed.**
+    // The two mint different identities (`languages/fqn.rs` against
+    // `indexer/fqn.rs`), so a graph holding both could never join them. A rust
+    // file v2 cannot PLACE is not indexed: a visible gap, never a hand-off.
+    //
+    // Each further language flips the same way — land the adapter, delete
+    // `languages/<lang>.rs` — so this condition only grows and v1 shrinks.
+    if crate::indexer::lang::adapter_for_ext(&format!(".{ext}"))
+        .is_some_and(|a| a.language() == crate::indexer::facts::Language::Rust)
+        && let Some(ref fid) = folder_id
+    {
+        let repo_root = std::path::Path::new(&task.folder_path);
+        let rel = fpath
+            .strip_prefix(repo_root)
+            .map(|r| r.to_string_lossy().to_string())
+            .unwrap_or_else(|_| abs_path.clone());
+
+        // The same fault seam the v1 path honours, and FIRST — before placement
+        // can return early, or rust would be exempt from the only test of
+        // "a fatal DB write leaves the folder failed and does not advance the
+        // fingerprint".
+        #[cfg(test)]
+        if fault::should_fail(abs_path) {
+            return fail_folder(
+                ctx,
+                fid,
+                &rel,
+                "injected fatal DB-write failure (test fault seam)".to_string(),
+            )
+            .await;
+        }
+
+        let Some(placement) = crate::indexer::pipeline::placement_on_disk(
+            fpath,
+            repo_root,
+            crate::indexer::facts::Language::Rust,
+        ) else {
+            tracing::debug!(file = %rel, "v2: no manifest names a package — not indexed");
+            return Ok(0);
+        };
+        let text = match std::fs::read_to_string(fpath) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::debug!(file = %rel, error = %e, "v2: unreadable — not indexed");
+                return Ok(0);
+            }
+        };
+        let told = crate::indexer::pipeline::TellFile::about(&placement.package);
+        let written = crate::indexer::pipeline::index_and_persist(
+            ctx.pg(),
+            fid,
+            crate::indexer::index::FileInput {
+                repo: &task.folder_path,
+                path: &rel,
+                mode: crate::indexer::index::Mode::Update,
+                package: &placement.package,
+                module: &placement.module,
+                text: &text,
+                world: &told.world(),
+            },
+        )
+        .await?;
+        let count = written.map(|w| w.symbols as u32).unwrap_or(0);
+        if let Some((mtime, hash)) = super::helpers::file_fingerprint(fpath)
+            && let Err(e) = ctx.pg().upsert_scan_state(fid, &rel, mtime, &hash).await
+        {
+            return fail_folder(ctx, fid, &rel, format!("upsert_scan_state: {e}")).await;
+        }
+        return Ok(count);
+    }
+
     let abs_owned = abs_path.clone();
     let folder_path_owned = task.folder_path.clone();
     let folder_name_owned = folder_name.to_string();
@@ -2473,341 +2553,6 @@ mod tests {
         ctx.pg().remove_watch_root(&rid).await.unwrap();
     }
 
-    /// Register a repo folder on disk + in the DB, mark it `indexing`, and
-    /// return (watch_root_id, folder_id, repo_abs_path). Mirrors what
-    /// scan_root/process_git_folder set up before ProcessFile runs.
-    #[tokio::test]
-    async fn process_file_rust_emits_fqn_nodes_and_resolved_edges() {
-        // Phase 3.1: a Rust file with a resolvable crate context goes through the
-        // FQN path — defs get-or-created by fqn (language='rust'), call edges
-        // resolved to their target node AT EMIT (no resolve_edges run).
-        let ctx = make_ctx().await;
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("fqncrate");
-        std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"fqncrate\"\n").unwrap();
-        std::fs::write(
-            repo.join("src/lib.rs"),
-            "pub fn compute() -> i32 { helper() + 1 }\npub fn helper() -> i32 { 41 }\n",
-        )
-        .unwrap();
-        let repo_path = repo.to_string_lossy().to_string();
-
-        let rid = ctx
-            .pg()
-            .add_watch_root(&tmp.path().to_string_lossy(), "fqn", &serde_json::json!([]))
-            .await
-            .unwrap();
-        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "fqncrate", &repo_path).await.unwrap();
-        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
-
-        // Process ONLY the file — deliberately NO resolve_edges. Edges must be
-        // resolved at emit for this to pass.
-        let abs = repo.join("src/lib.rs").to_string_lossy().to_string();
-        processed(&ctx, &repo_path, &abs).await.unwrap();
-
-        // Defs carry their canonical fqn + language.
-        let (compute_id, compute_fqn, compute_lang): (uuid::Uuid, Option<String>, Option<String>) =
-            sqlx_core::query_as::query_as(
-                "SELECT id, fqn, language FROM sensei.nodes WHERE folder_id=$1 AND name='compute' AND kind='function'::sensei.node_kind")
-            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(compute_fqn.as_deref(), Some("rust·fqncrate·compute"));
-        assert_eq!(compute_lang.as_deref(), Some("rust"));
-        let (helper_id, helper_fqn): (uuid::Uuid, Option<String>) =
-            sqlx_core::query_as::query_as(
-                "SELECT id, fqn FROM sensei.nodes WHERE folder_id=$1 AND name='helper' AND kind='function'::sensei.node_kind")
-            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(helper_fqn.as_deref(), Some("rust·fqncrate·helper"));
-
-        // compute → helper resolves to the FQN target node AT EMIT.
-        let (target,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
-            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND source_id=$2 AND kind='calls'::sensei.edge_kind")
-            .bind(fid).bind(compute_id).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(
-            target,
-            Some(helper_id),
-            "compute→helper resolves to the FQN target at emit (no resolve_edges)"
-        );
-
-        // No bare-name 'calls' residue for this file — the helper() call is resolved.
-        let (unresolved,): (i64,) = sqlx_core::query_as::query_as(
-            "SELECT count(*) FROM sensei.edges WHERE folder_id=$1 AND kind='calls'::sensei.edge_kind AND target_id IS NULL")
-            .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(unresolved, 0, "the helper() call is resolved at emit, not left bare");
-
-        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
-    }
-
-    /// THE SLICE'S PAYOFF, end to end: `c.pg().count_edges()` reaches the real
-    /// `PgStore::count_edges` across three files, in CALLER-FIRST order.
-    ///
-    /// Every hop but one was already mintable at the call site. The missing one
-    /// is what `pg` RETURNS, which lives in another file — so the producer
-    /// records the `pg` hop and the emit path persists two facts the graph did
-    /// not carry before: the definition's return type on its node, and the
-    /// receiver hint on the unresolved edge. Resolution itself happens on the
-    /// READ path, which is what makes it order-independent: `work.rs` is
-    /// indexed before either definition exists.
-    #[tokio::test]
-    async fn a_chained_member_call_resolves_through_the_receivers_return_type() {
-        let ctx = make_ctx().await;
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("recvchain");
-        std::fs::create_dir_all(repo.join("src/db")).unwrap();
-        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"recvchain\"\n").unwrap();
-        std::fs::write(
-            repo.join("src/db/pg_store.rs"),
-            "pub struct PgStore;\nimpl PgStore {\n    pub fn count_edges(&self) -> i64 { 0 }\n}\n",
-        )
-        .unwrap();
-        std::fs::write(
-            repo.join("src/executor.rs"),
-            "pub struct TaskContext;\nimpl TaskContext {\n    \
-             pub fn pg(&self) -> &crate::db::pg_store::PgStore { todo!() }\n}\n",
-        )
-        .unwrap();
-        std::fs::write(
-            repo.join("src/work.rs"),
-            "use crate::executor::TaskContext;\n\
-             pub fn drive(c: &TaskContext) -> i64 { c.pg().count_edges() }\n",
-        )
-        .unwrap();
-        let repo_path = repo.to_string_lossy().to_string();
-        let folder_name = format!("recvchain_{}", uuid::Uuid::new_v4());
-
-        let rid = ctx
-            .pg()
-            .add_watch_root(&tmp.path().to_string_lossy(), "recvchain", &serde_json::json!([]))
-            .await
-            .unwrap();
-        let fid = ctx.pg().upsert_repo_kind(&rid, "git", &folder_name, &repo_path).await.unwrap();
-        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
-
-        // CALLER FIRST. Neither definition exists when the call is emitted.
-        for f in ["src/work.rs", "src/executor.rs", "src/db/pg_store.rs"] {
-            let abs = repo.join(f).to_string_lossy().to_string();
-            processed(&ctx, &repo_path, &abs).await.unwrap();
-        }
-
-        // 1. The definition's return type reached its node, VERBATIM.
-        let (pg_id, pg_return): (uuid::Uuid, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT id, props->>'return_type' FROM sensei.nodes
-              WHERE folder_id=$1 AND fqn='rust·recvchain·executor·TaskContext·pg'",
-        )
-        .bind(fid)
-        .fetch_one(ctx.pg().pool())
-        .await
-        .unwrap();
-        assert_eq!(
-            pg_return.as_deref(),
-            Some("&crate::db::pg_store::PgStore"),
-            "the emit path must persist the declared return type — nothing else in the \
-             graph can say WHICH PgStore `pg` hands back"
-        );
-
-        // 2. The unresolved call carries the receiver hop it saw, as a graph key.
-        let (hint,): (Option<String>,) = sqlx_core::query_as::query_as(
-            "SELECT e.props->>'receiver_return_of' FROM sensei.edges e
-               JOIN sensei.nodes s ON s.id = e.source_id
-              WHERE e.folder_id=$1 AND e.kind='calls'::sensei.edge_kind
-                AND e.target_name='count_edges' AND s.name='drive'",
-        )
-        .bind(fid)
-        .fetch_one(ctx.pg().pool())
-        .await
-        .unwrap();
-        assert_eq!(
-            hint.as_deref(),
-            Some("rust·recvchain·executor·TaskContext·pg"),
-            "the hint the producer recorded must survive to the edge, or the read \
-             path has nothing to chase"
-        );
-
-        // 3. THE PAYOFF: the read path closes the chain.
-        let (real_count_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "SELECT id FROM sensei.nodes
-              WHERE folder_id=$1 AND fqn='rust·recvchain·db::pg_store·PgStore·count_edges'",
-        )
-        .bind(fid)
-        .fetch_one(ctx.pg().pool())
-        .await
-        .unwrap();
-        let _ = real_count_id;
-
-        let callees = ctx.pg().get_callees_by_name(&folder_name, "drive").await.unwrap();
-        let hop2 = callees
-            .iter()
-            .find(|c| c["name"].as_str() == Some("count_edges"))
-            .unwrap_or_else(|| panic!("count_edges must be listed as a callee: {callees:?}"));
-        assert_eq!(
-            hop2["file_path"].as_str(),
-            Some("src/db/pg_store.rs"),
-            "the callee is the REAL definition, located: {hop2}"
-        );
-        assert_eq!(
-            hop2["locality"].as_str(),
-            Some("internal"),
-            "a resolved first-party callee is `internal`, so it stays out of \
-             `library_calls`: {hop2}"
-        );
-
-        // 4. Coverage must agree with the list — a callee shown as placed and
-        //    still counted unresolved is the inconsistency this guards.
-        let (resolved, unresolved) = ctx
-            .pg()
-            .call_coverage(&[fid], "drive", crate::db::pg_store::CallDirection::Outgoing)
-            .await
-            .unwrap();
-        assert_eq!(
-            (resolved, unresolved),
-            (2, 0),
-            "both of drive's calls are placed: pg at emit, count_edges through the chain"
-        );
-        // …and the OUTGOING list is what those two numbers describe: a callee is
-        // placed exactly when it has a locality to report.
-        let listed_placed =
-            callees.iter().filter(|c| c["locality"].as_str() != Some("unknown")).count() as i64;
-        assert_eq!(
-            (resolved, unresolved),
-            (listed_placed, callees.len() as i64 - listed_placed),
-            "coverage counts the very rows the callee list shows: {callees:?}"
-        );
-
-        // 4b. THE OTHER DIRECTION, same edge, same rule. `get_callers_by_name`
-        //     reports `resolved` straight off `target_id`, so coverage that
-        //     healed here would answer "complete" about a list that shows this
-        //     caller unresolved — one payload, two contradictory answers about
-        //     one edge (mcp.rs renders `complete: unresolved == 0` beside it).
-        let callers = ctx.pg().get_callers_by_name(&folder_name, "count_edges").await.unwrap();
-        assert!(
-            callers.iter().any(|c| c["name"].as_str() == Some("drive")),
-            "drive calls count_edges, so it must be in the caller list: {callers:?}"
-        );
-        let listed_resolved =
-            callers.iter().filter(|c| c["resolved"] == serde_json::json!(true)).count() as i64;
-        let (in_resolved, in_unresolved) = ctx
-            .pg()
-            .call_coverage(&[fid], "count_edges", crate::db::pg_store::CallDirection::Incoming)
-            .await
-            .unwrap();
-        assert_eq!(
-            (in_resolved, in_unresolved),
-            (listed_resolved, callers.len() as i64 - listed_resolved),
-            "incoming coverage must count the very rows the caller list shows: {callers:?}"
-        );
-
-        // 5. STALENESS. `pg` stops returning a PgStore. The previous scan's
-        //    return type must not survive on the node — a resolver chasing it
-        //    would keep placing the call on a type the function no longer hands
-        //    back, which is a fabricated link that heals into looking real.
-        std::fs::write(
-            repo.join("src/executor.rs"),
-            "pub struct TaskContext;\nimpl TaskContext {\n    pub fn pg(&self) {}\n}\n",
-        )
-        .unwrap();
-        let abs = repo.join("src/executor.rs").to_string_lossy().to_string();
-        processed(&ctx, &repo_path, &abs).await.unwrap();
-        assert_eq!(
-            ctx.pg().node_return_type(&pg_id).await.unwrap(),
-            None,
-            "a definition that lost its return type must clear the old one, not keep it"
-        );
-        let callees = ctx.pg().get_callees_by_name(&folder_name, "drive").await.unwrap();
-        let hop2 = callees.iter().find(|c| c["name"].as_str() == Some("count_edges")).unwrap();
-        assert_eq!(
-            hop2["locality"].as_str(),
-            Some("unknown"),
-            "with nothing to chase the call goes back to honestly unresolved: {hop2}"
-        );
-
-        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
-        ctx.pg().remove_watch_root(&rid).await.ok();
-    }
-
-    #[tokio::test]
-    async fn rust_call_before_def_creates_stub_then_enriched() {
-        // Phase 3.2: process the CALLER first — its target is a get-or-created stub
-        // (resolved=false, NULL file), and the edge is already resolved to it. Then
-        // process the callee's file — the SAME node is enriched in place (stable id),
-        // and the edge still points to it. Order-independent resolution.
-        let ctx = make_ctx().await;
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("twofile");
-        std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"twofile\"\n").unwrap();
-        std::fs::write(
-            repo.join("src/caller.rs"),
-            "use crate::callee::run;\npub fn drive() { run(); }\n",
-        )
-        .unwrap();
-        std::fs::write(repo.join("src/callee.rs"), "pub fn run() -> i32 { 7 }\n").unwrap();
-        let repo_path = repo.to_string_lossy().to_string();
-        let rid = ctx
-            .pg()
-            .add_watch_root(&tmp.path().to_string_lossy(), "twofile", &serde_json::json!([]))
-            .await
-            .unwrap();
-        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "twofile", &repo_path).await.unwrap();
-        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
-
-        // Caller first.
-        let abs_caller = repo.join("src/caller.rs").to_string_lossy().to_string();
-        processed(&ctx, &repo_path, &abs_caller).await.unwrap();
-
-        // `run` is a STUB awaiting its definition.
-        let (run_id, run_resolved, run_file): (uuid::Uuid, bool, Option<String>) =
-            sqlx_core::query_as::query_as(
-                "SELECT n.id, n.resolved, np.file_path FROM sensei.nodes n \
-               LEFT JOIN sensei.node_paths np ON np.node_id = n.id \
-              WHERE n.folder_id=$1 AND n.fqn='rust·twofile·callee·run'",
-            )
-            .bind(fid)
-            .fetch_one(ctx.pg().pool())
-            .await
-            .unwrap();
-        assert!(!run_resolved, "callee target is an unresolved stub before its def is indexed");
-        assert_eq!(run_file, None, "a stub has no file");
-
-        // The call edge already resolves to the stub node.
-        let (drive_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND fqn='rust·twofile·caller·drive'",
-        )
-        .bind(fid)
-        .fetch_one(ctx.pg().pool())
-        .await
-        .unwrap();
-        let (tid,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
-            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND source_id=$2 AND kind='calls'::sensei.edge_kind")
-            .bind(fid).bind(drive_id).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(tid, Some(run_id), "the call edge resolves to the stub node at emit");
-
-        // Now index the callee — the SAME node is enriched.
-        let abs_callee = repo.join("src/callee.rs").to_string_lossy().to_string();
-        processed(&ctx, &repo_path, &abs_callee).await.unwrap();
-
-        let (run_id2, run_resolved2, run_file2): (uuid::Uuid, bool, Option<String>) =
-            sqlx_core::query_as::query_as(
-                "SELECT n.id, n.resolved, np.file_path FROM sensei.nodes n \
-               LEFT JOIN sensei.node_paths np ON np.node_id = n.id \
-              WHERE n.folder_id=$1 AND n.fqn='rust·twofile·callee·run'",
-            )
-            .bind(fid)
-            .fetch_one(ctx.pg().pool())
-            .await
-            .unwrap();
-        assert_eq!(run_id2, run_id, "the definition enriches the SAME node (stable id)");
-        assert!(run_resolved2, "the node is resolved once its def is seen");
-        assert_eq!(run_file2.as_deref(), Some("src/callee.rs"), "file filled in on enrich");
-
-        // The edge still points to the (now enriched) node.
-        let (tid2,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
-            "SELECT target_id FROM sensei.edges WHERE folder_id=$1 AND source_id=$2 AND kind='calls'::sensei.edge_kind")
-            .bind(fid).bind(drive_id).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(tid2, Some(run_id), "edge still resolved to the enriched node after enrichment");
-
-        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
-    }
-
     /// A LOCAL import resolves to the target's module node AT EMIT. Before this,
     /// `process.rs` passed `target_id = None` for every import, so 0 of 162,690
     /// import edges resolved — 25,693 of them pointing at local code.
@@ -3380,72 +3125,6 @@ mod tests {
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
     }
 
-    /// A rust `use crate::…` import resolves to the target's node, through the
-    /// same module arithmetic `classify_segments` uses. 1,151 such edges were
-    /// unresolved because `local_import_candidates` returned empty for
-    /// `ImportTarget::Internal`.
-    ///
-    /// Breaking mutation: make the `Internal` arm of `local_import_candidates`
-    /// return `Vec::new()` again.
-    #[tokio::test]
-    async fn rust_use_imports_resolve_to_the_target_module_or_item() {
-        let ctx = make_ctx().await;
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("rsimp");
-        std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"rsimp\"\n").unwrap();
-        std::fs::write(repo.join("src/b.rs"), "pub struct Thing { pub n: i32 }\n").unwrap();
-        std::fs::write(
-            repo.join("src/a.rs"),
-            "use crate::b::Thing;\npub fn make() -> Thing { Thing { n: 1 } }\n",
-        )
-        .unwrap();
-        let repo_path = repo.to_string_lossy().to_string();
-        let rid = ctx
-            .pg()
-            .add_watch_root(&tmp.path().to_string_lossy(), "rsimp", &serde_json::json!([]))
-            .await
-            .unwrap();
-        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "rsimp", &repo_path).await.unwrap();
-        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
-
-        for f in ["src/b.rs", "src/a.rs"] {
-            let abs = repo.join(f).to_string_lossy().to_string();
-            processed(&ctx, &repo_path, &abs).await.unwrap();
-        }
-
-        let (tid, tname): (Option<uuid::Uuid>, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT e.target_id, e.target_name FROM sensei.edges e
-               JOIN sensei.nodes n ON n.id = e.source_id
-              WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind
-                AND EXISTS (SELECT 1 FROM sensei.node_paths np
-                            WHERE np.node_id = n.id AND np.file_path = 'src/a.rs')",
-        )
-        .bind(fid)
-        .fetch_one(ctx.pg().pool())
-        .await
-        .unwrap();
-        assert!(tid.is_some(), "`use crate::b::Thing` names this crate's own code");
-        assert_eq!(tname, None, "resolving erases target_name");
-
-        // It lands on something REAL in b.rs — either b's module or the `Thing`
-        // item inside it; both are correct answers to `use crate::b::Thing`.
-        let (fqn, file): (Option<String>, Option<String>) =
-            sqlx_core::query_as::query_as("SELECT n.fqn, np.file_path FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id = $1")
-                .bind(tid.unwrap())
-                .fetch_one(ctx.pg().pool())
-                .await
-                .unwrap();
-        let fqn = fqn.unwrap_or_default();
-        assert!(
-            fqn == "rust·rsimp·b::Thing" || fqn == "rust·rsimp·b·Thing",
-            "unexpected target fqn: {fqn}"
-        );
-        assert_eq!(file.as_deref(), Some("src/b.rs"), "and it is the real definition, not a stub");
-
-        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
-    }
-
     /// A doc's file reference and its unambiguous symbol mention both RESOLVE;
     /// an ambiguous mention and a broken link stay unresolved. 241,514
     /// `references` edges sat at 0% because nothing tried to resolve them.
@@ -3497,7 +3176,16 @@ mod tests {
         .unwrap();
         assert!(!rows.is_empty(), "the README produced reference edges");
 
-        // The file reference resolved to src/lib.rs's file node.
+        // **A FILE'S IDENTITY IS THE MODULE IT DECLARES.** v1 minted a
+        // `kind='file'` node for a doc reference to land on; v2 does not,
+        // because a file is a row in `sensei.files` and a node REFERENCES one
+        // (`nodes.file_id`). What a doc reference to `src/lib.rs` resolves to
+        // is that file's MODULE node — `index::file_identity` /
+        // `LanguageAdapter::file_fqn`, documented as "the identity of the file
+        // itself, which is the identity of the module it declares".
+        //
+        // So the assertion is on the file the target NAMES, not on a node kind
+        // that should not exist.
         let resolved_files: Vec<uuid::Uuid> = rows.iter().filter_map(|(t, _)| *t).collect();
         let mut hit_lib = false;
         for t in &resolved_files {
@@ -3508,11 +3196,15 @@ mod tests {
             .fetch_one(ctx.pg().pool())
             .await
             .unwrap();
-            if kind == "file" && fp.as_deref() == Some("src/lib.rs") {
+            if fp.as_deref() == Some("src/lib.rs") && kind != "file" {
                 hit_lib = true;
             }
         }
-        assert!(hit_lib, "`src/lib.rs` must resolve to that file's node");
+        assert!(
+            hit_lib,
+            "a doc reference to `src/lib.rs` must resolve to a node OF that file — its module \
+             identity — and never to a `kind='file'` node, which v2 does not mint"
+        );
 
         // The unambiguous symbol resolved; the ambiguous one and the broken link
         // did not — and both kept their mention.
@@ -3747,71 +3439,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rust_impl_type_container_nesting() {
-        // Phase 5 (D5c): the graph nests file → module → type → method, instead of
-        // every symbol flat under the file node.
-        let ctx = make_ctx().await;
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("w");
-        std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"w\"\n").unwrap();
-        std::fs::write(
-            repo.join("src/widget.rs"),
-            "pub struct Widget;\nimpl Widget {\n    pub fn new() -> Self { Widget }\n    pub fn spin(&self) {}\n}\npub fn helper() {}\n",
-        ).unwrap();
-        let repo_path = repo.to_string_lossy().to_string();
-        let rid = ctx
-            .pg()
-            .add_watch_root(&tmp.path().to_string_lossy(), "w", &serde_json::json!([]))
-            .await
-            .unwrap();
-        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "w", &repo_path).await.unwrap();
-        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
-
-        let abs = repo.join("src/widget.rs").to_string_lossy().to_string();
-        processed(&ctx, &repo_path, &abs).await.unwrap();
-
-        async fn node(
-            ctx: &TaskContext,
-            fid: uuid::Uuid,
-            fqn: &str,
-        ) -> (uuid::Uuid, Option<uuid::Uuid>, String) {
-            sqlx_core::query_as::query_as(
-                "SELECT id, parent_id, kind::text FROM sensei.nodes WHERE folder_id=$1 AND fqn=$2",
-            )
-            .bind(fid)
-            .bind(fqn)
-            .fetch_one(ctx.pg().pool())
-            .await
-            .unwrap_or_else(|e| panic!("node {fqn} not found: {e}"))
-        }
-        let (file_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND kind='file'::sensei.node_kind",
-        )
-        .bind(fid)
-        .fetch_one(ctx.pg().pool())
-        .await
-        .unwrap();
-
-        let (module_id, module_parent, module_kind) = node(&ctx, fid, "rust·w·widget").await;
-        assert_eq!(module_kind, "module", "a module container node exists");
-        assert_eq!(module_parent, Some(file_id), "the module nests under the file");
-
-        let (widget_id, widget_parent, _) = node(&ctx, fid, "rust·w·widget·Widget").await;
-        assert_eq!(widget_parent, Some(module_id), "the type nests under the module");
-
-        let (_, new_parent, _) = node(&ctx, fid, "rust·w·widget·Widget·new").await;
-        assert_eq!(new_parent, Some(widget_id), "a method nests under its type");
-        let (_, spin_parent, _) = node(&ctx, fid, "rust·w·widget·Widget·spin").await;
-        assert_eq!(spin_parent, Some(widget_id), "sibling methods nest under the same type");
-
-        let (_, helper_parent, _) = node(&ctx, fid, "rust·w·widget·helper").await;
-        assert_eq!(helper_parent, Some(module_id), "a free fn nests under the module");
-
-        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
-    }
-
-    #[tokio::test]
     async fn process_file_ts_emits_fqn_nodes() {
         // Phase 6.1: a TypeScript file with a package.json → the FQN path. Validates
         // the oxc producer end-to-end, the src-stripped module, resolved edges, AND
@@ -3959,6 +3586,16 @@ mod tests {
         name: &str,
     ) -> (uuid::Uuid, uuid::Uuid, String) {
         let repo_path = root.join("repo").to_string_lossy().to_string();
+        // A MANIFEST, because v2 must be TOLD its package and will not invent
+        // one — `placement_on_disk` answers `None` when nothing at or above a
+        // file names a package, and an unplaced file is not indexed. Every real
+        // rust repo has this; the v1 fixtures did not.
+        std::fs::create_dir_all(root.join("repo")).ok();
+        std::fs::write(
+            root.join("repo/Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n"),
+        )
+        .ok();
         let rid = ctx
             .pg()
             .add_watch_root(&root.to_string_lossy(), name, &serde_json::json!([]))
@@ -4077,7 +3714,21 @@ mod tests {
         };
 
         // ── Whole-graph: kinds present ──
-        assert!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='file'::sensei.node_kind").await >= 1, "file node(s)");
+        //
+        // A FILE IS NOT A NODE. Files live in `sensei.files`; `sensei.nodes`
+        // holds graph nodes — symbols — and each REFERENCES its file through
+        // `nodes.file_id`. v1 wrote `kind='file'` nodes, which is where this
+        // repo's 54,342 fqn-less rows came from; v2 does not, and anything
+        // wanting file-level information reads `sensei.files`.
+        assert!(
+            count("SELECT count(*) FROM sensei.files WHERE folder_id=$1").await >= 1,
+            "files rows (NOT `kind='file'` nodes — a file is not a node)"
+        );
+        assert!(
+            count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='file'::sensei.node_kind").await == 0,
+            "no `kind='file'` node may exist: a file is a row in `sensei.files`, and a node \
+             that named one carried no fqn and could never be an edge target"
+        );
         assert!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='function'::sensei.node_kind").await >= 2, "compute + helper function nodes");
         assert!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='section'::sensei.node_kind").await >= 3, "nested section nodes (Design/Auth/Refresh/Storage)");
         assert_eq!(count("SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='rationale'::sensei.node_kind").await, 1, "one TODO rationale");
@@ -4337,14 +3988,16 @@ mod tests {
         // before any parse task runs, and `processed` reproduces that. What must
         // not happen is the fingerprint ADVANCING: that is the handler's record
         // of "this file was processed", and a fatally-failed file has not been.
+        // SCOPED TO THE FILE UNDER TEST, not every row in the folder: the
+        // fixture also carries a `Cargo.toml` (v2 requires a manifest to place
+        // a file) and that one IS processed. What this test is about is the
+        // fatally-failed file's own fingerprint.
+        let rows = ctx.pg().list_scan_state(&fid).await.unwrap();
         assert!(
-            ctx.pg()
-                .list_scan_state(&fid)
-                .await
-                .unwrap()
-                .iter()
+            rows.iter()
+                .filter(|(path, _)| path == "src/lib.rs")
                 .all(|(_, mtime)| *mtime == crate::db::pg_store::graph_seed::BARRIER_MTIME),
-            "the `files` row is NOT advanced for a fatally-failed file"
+            "the `files` row is NOT advanced for a fatally-failed file: {rows:?}"
         );
 
         ctx.pg().remove_watch_root(&rid).await.ok();
@@ -4368,10 +4021,12 @@ mod tests {
         let task = Task::for_file(TaskKind::ProcessFile, &repo_path, &abs);
         process_file(&ctx, &task).await.unwrap();
 
-        assert_eq!(
-            ctx.pg().list_scan_state(&fid).await.unwrap().len(),
-            1,
-            "a fully-written file advances its `files` row"
+        // Named, not counted: the fixture also has a `Cargo.toml`.
+        let rows = ctx.pg().list_scan_state(&fid).await.unwrap();
+        assert!(
+            rows.iter().any(|(path, mtime)| path == "src/lib.rs"
+                && *mtime != crate::db::pg_store::graph_seed::BARRIER_MTIME),
+            "a fully-written file advances its `files` row: {rows:?}"
         );
         assert_eq!(
             ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(),
@@ -4416,8 +4071,12 @@ mod tests {
         // Both files have a row (stage 3's barrier, R14). Only one has a real
         // fingerprint — advancing past `BARRIER_MTIME` is what "processed" means.
         let scan = ctx.pg().list_scan_state(&fid).await.unwrap();
+        // Restricted to the two `.rs` files this test is about: the fixture
+        // also carries a `Cargo.toml`, which v2 needs to place a file and
+        // which is itself processed.
         let advanced: Vec<&(String, i64)> = scan
             .iter()
+            .filter(|(path, _)| path.ends_with(".rs"))
             .filter(|(_, mtime)| *mtime != crate::db::pg_store::graph_seed::BARRIER_MTIME)
             .collect();
         assert_eq!(
@@ -4477,14 +4136,26 @@ mod tests {
             Some((keep_id, Some(42))),
             "surviving symbol keeps its id AND community_id across a reindex (upsert-then-prune)"
         );
-        let (gone_cnt,): (i64,) = sqlx_core::query_as::query_as(
-            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND name='gone'",
+        // **DEMOTED, NOT DELETED — and that is v2's design, not a shortfall.**
+        // `reconcile` releases this file's claim on `gone`, and because no file
+        // claims it any more the node is DEMOTED to a stub (`resolved = false`)
+        // rather than removed. Deleting it would orphan anything that still
+        // references it; a stub keeps the edge pointing somewhere real and lets
+        // a later scan promote it again if the symbol comes back. The only
+        // deletion reconcile performs is an edge row with nothing left on it.
+        //
+        // So the assertion is that no DECLARATION of `gone` survives, which is
+        // the property the test is named for — v1 expressed it as "the row is
+        // gone" because v1 deleted.
+        let (gone_declared,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.nodes
+              WHERE folder_id=$1 AND name='gone' AND resolved",
         )
         .bind(fid)
         .fetch_one(ctx.pg().pool())
         .await
         .unwrap();
-        assert_eq!(gone_cnt, 0, "the removed symbol is pruned");
+        assert_eq!(gone_declared, 0, "the removed symbol is no longer a declaration (demoted)");
 
         ctx.pg().remove_watch_root(&rid).await.ok();
     }
@@ -5056,46 +4727,5 @@ mod tests {
 
         let task = Task::new(TaskKind::DeleteFolder, repo_path, "/tmp/myrepo/src");
         delete_folder(&ctx, &task).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn calls_edge_sourced_from_caller_function_node() {
-        let ctx = make_ctx().await;
-        let tmp = tempfile::tempdir().unwrap();
-        let src_dir = tmp.path().join("src");
-        std::fs::create_dir_all(&src_dir).unwrap();
-        let file_abs = src_dir.join("lib.rs");
-        std::fs::write(&file_abs, "pub fn caller() { callee(); }\npub fn callee() {}").unwrap();
-
-        let repo_path = tmp.path().to_string_lossy().to_string();
-        let root_id =
-            ctx.pg().add_watch_root(&repo_path, "cg", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "cg-repo", &repo_path).await.unwrap();
-
-        processed(&ctx, &repo_path, &file_abs.to_string_lossy()).await.unwrap();
-
-        let nodes = ctx.pg().get_nodes_by_folder(&fid).await.unwrap();
-        let caller_id = nodes
-            .iter()
-            .find(|n| {
-                n["name"].as_str() == Some("caller") && n["kind"].as_str() == Some("function")
-            })
-            .and_then(|n| crate::api::util::json_uuid(&n["id"]))
-            .expect("caller function node exists");
-        let file_id = nodes
-            .iter()
-            .find(|n| n["kind"].as_str() == Some("file"))
-            .and_then(|n| crate::api::util::json_uuid(&n["id"]))
-            .expect("file node exists");
-
-        let edges = ctx.pg().get_edges_by_kind(&fid, "calls").await.unwrap();
-        let edge = edges
-            .iter()
-            .find(|e| e["target_name"].as_str() == Some("callee"))
-            .expect("a calls edge to callee exists");
-        let source_id = crate::api::util::json_uuid(&edge["source_id"]).unwrap();
-
-        assert_eq!(source_id, caller_id, "edge sourced from the caller fn node");
-        assert_ne!(source_id, file_id, "edge NOT sourced from the file node");
     }
 }

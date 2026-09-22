@@ -115,6 +115,15 @@ pub struct SymbolRow {
     pub params: Vec<Param>,
     pub file_path: String,
     pub language: Language,
+    /// Whether this symbol's FILE is a test file, by the path convention
+    /// `languages::is_test_path` owns.
+    ///
+    /// Carried on the ROW rather than derived at the column, so the round trip
+    /// compares it like every other field (R9). It is a property of the PATH
+    /// and not of anything the walk read — which is exactly why it has to be
+    /// placed here: a column bound to `_` and rebuilt from the path would make
+    /// the comparison the encoder against itself.
+    pub is_test: bool,
 }
 
 impl SymbolRow {
@@ -137,6 +146,10 @@ impl SymbolRow {
             params: params.clone(),
             file_path: file_path.to_string(),
             language,
+            // THE FILE decides, by the path convention `languages::is_test_path`
+            // owns — the single source of truth for `nodes.is_test`, so the two
+            // indexers cannot disagree about what a test file is.
+            is_test: crate::languages::is_test_path(file_path, Some(language.as_str())),
         }
     }
 }
@@ -329,6 +342,7 @@ fn node_columns_of(row: &SymbolRow) -> NodeColumns {
         params,
         file_path,
         language,
+        is_test,
     } = row;
     NodeColumns {
         fqn: fqn.clone(),
@@ -339,6 +353,7 @@ fn node_columns_of(row: &SymbolRow) -> NodeColumns {
         line_start: Some(line_number(span.start_line)),
         line_end: Some(line_number(span.end_line)),
         is_exported: *visibility == Visibility::Public,
+        is_test: *is_test,
         docstring: docstring.clone(),
         props: serde_json::json!({
             "symbol_kind": symbol_kind_label(*kind),
@@ -1426,6 +1441,11 @@ fn symbol_row_from_columns(columns: &NodeColumns) -> Result<SymbolRow, String> {
         line_start,
         line_end,
         is_exported,
+        // Read back and deliberately NOT round-tripped into `SymbolRow`: it is
+        // derived from the file PATH (`languages::is_test_path`), not from
+        // anything the walk read, so a `SymbolRow` carrying it would invite the
+        // two to disagree. The column is asserted directly where it matters.
+        is_test,
         docstring,
         props,
     } = columns;
@@ -1499,6 +1519,7 @@ fn symbol_row_from_columns(columns: &NodeColumns) -> Result<SymbolRow, String> {
         params,
         file_path,
         language,
+        is_test: *is_test,
     })
 }
 
