@@ -225,14 +225,63 @@ config"*. On top of that, 275 resolved TypeScript members name a type the file
 never mentions — an imported factory's RETURN type, which §7 already rules
 becomes unlinked-with-evidence. Rust's equivalent gap is **13**.
 
-**THE DECISION STAGE 12 (or a §11 step) OWES**, with a recommendation:
-resolving `$lib` needs the alias map, and the principled route is for the SCAN
-to read it once (`svelte.config.js` / `tsconfig` paths) and hand it to the
-adapter as a fact on `Source`, the way the adapter is already TOLD its package
-and module and never climbs a directory. That keeps R7 intact — the walk is
-told, it does not look. The alternatives are hardcoding the SvelteKit
-convention (`$lib` = `<package>/src/lib`), which is a guess about a config we
-can read, or leaving the table until stage 12's cross-file lookup subsumes it.
+**DECIDED with the user 2026-09-22 — THE MANIFEST SCAN DETECTS THE ALIASES AND
+PASSES THEM TO THE FILE SCAN.** The pipeline is already this shape: repo scan →
+manifest scan → file scan, and `load_repo` already reads each manifest ONCE
+("one read per manifest, not one per file") to derive the package name. The
+alias map rides the same seam and arrives as a fact on `Source`, beside
+`package` and `module`:
+
+    Source { package, module, path, aliases: { "$lib" -> "lib" }, text }
+
+That keeps R7 intact — the walk is TOLD, it never looks or climbs. `home_of`
+then gains one rung before the table: `$lib/widget` resolves to `lib/widget`,
+while `$app/...` stays a framework package and answers `NotOurs`.
+
+**AND MY FRAMING OF THE COST WAS WRONG, which `languages/import_target.rs`
+already measured.** I wrote that resolving `$lib` "needs the bundler config".
+For the DEFAULT mapping it does not: module paths are already `src/`-relative,
+so `$lib/x` → `lib/x` is a prefix strip. That module's own measurement —
+`aliases_map_to_local_modules_but_framework_modules_do_not` — puts `@/` and
+`~/` at **6,413 of 7,032 edges recovered by prefix strip alone** and the `$lib`
+rewrite at **1,836 edges**. A config read is needed only for a NON-conventional
+remap.
+
+Two separable pieces, then:
+
+1. the conventional prefix strip, no config, already measured in v1;
+2. the custom alias map from the manifest, for projects that remap.
+
+**A wrong module here is worse than none, and that decides the grade.** v1 gets
+away with the prefix strip because `local_import_candidates` returns a LIST of
+candidates; a `Home::Stated` is a single answer, so a remapped `$lib` would
+mint a wrong identity (R4). So piece 1 is safe only at `Candidate` grade —
+which is where TypeScript already sits — and piece 2 is what a `Stated` home
+requires.
+
+**AND `import_target.rs` IS NOT REACHED FROM `indexer/` AT ALL** (checked: zero
+references from the v2 tree; its callers are `languages/`, `api/handlers/
+codebase.rs`, `db/pg_store/graph.rs`, `tasks/handlers/`). So v2's
+`javascript.rs::import_origin` is a second import classifier, and v1's is the
+one with the measurements. Reconciling them is the DRY question to settle
+before writing a third — the same mistake `9ad53f43` had just cleaned up for
+rooted paths.
+
+Rejected, and why, so neither is re-proposed: hardcoding `$lib =
+<package>/src/lib` at `Stated` grade mis-resolves silently for any project that
+remaps it; leaving the table to stage 12 keeps TypeScript's barrier standing
+longer than it needs to, since an alias is a per-package FACT and not a
+cross-file lookup.
+
+**Still gated on stage 12 even after the aliases land**, and this is the part
+the alias work does NOT fix: the 275 factory-return-type members and the type
+alias / inherited-member causes above are cross-file by construction, so the
+`Named` grade stays weak until stage 12's lookup exists. Aliases buy the
+remaining ~891 specifiers a Stated home; they buy no grade change.
+
+**Sequencing decided with it:** Java is next (measurable against the external
+`SENSEI_CORPUS` corpus), then this, then python — see the §11 note in
+`docs/CHECKPOINT.md` for why the spec's stated order is wrong on evidence.
 
 ## Indexer — a target no first-party declaration mints must resolve or be marked EXTERNAL (stage 11 S7, measured 2026-09-21)
 
