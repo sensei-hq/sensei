@@ -9,19 +9,59 @@ Inventory, couplings and rejected alternatives: `docs/backlog.md`.
 the environmental `dbd-rs` one. Corpus 97,460 / 96,760 / 194,220. Ratchets: A7
 rust **0**, dangling **1,153/235** (headroom 147), split-impl **30/5,530**.
 
-## The sequence — nothing may be deleted before step 4
+## The work order — FLOW FIRST, RUST ONLY, then a language at a time
 
-1. **Wire v2's persistence** ← NEXT. Pieces all exist (`index_file`,
-   `persist::write`, `reconcile`); missing is the IO half joining stage 3 to
-   4-6. R14: structure barrier, then ONE parse task per file, each running
-   `index_file` → `persist::write` → `reconcile`. `index_file` (stage 11 I8) IS
-   that unit. Mirror `tasks/handlers/process.rs`, which does this for v1.
-2. Port the five adapters v1 has and v2 lacks: **SQL, Swift, Kotlin, Vue, C**
-   (decided: all five before deleting v1, not a per-language fallback).
-3. Stage 10's differential harness — does not exist. S1/S2: v2's resolved set
-   must be a SUPERSET of v1's, regressions blocking.
-4. Cut over, re-index, run acceptance. 5. Delete `languages/` and break its
-   two couplings (`is_test_path` ×2, `fqn::is_external` ×1).
+Revised 2026-09-22 on the user's call, and it is the better order: wiring the
+flow first proves the whole path end-to-end on ONE language at the lowest risk,
+and every adapter after that lands behind a working pipeline and can be
+verified against real data the moment it exists. It is also what
+`10-cutover.md` already prescribes — "switch **RUST ONLY**, re-index, run
+acceptance".
+
+**A. Connect the flow, both R14 modes, and wrap the adapter call in the
+file-parser task.**
+
+    FULL         scan root -> repos -> manifest -> files   <-- structure barrier
+                                                -> enqueue ONE parse task per file
+    INCREMENTAL  on change -> files -> reparse the changed set
+
+`TaskKind::ProcessFile` runs v2: `index_file` → `persist::write` →
+`reconcile`. The task kind already exists and is v1's per-file unit;
+`index_file` (stage 11's I8, "one file in, nodes and edges out") is R14's
+parse-task unit. Stages 1-3 exist as `pipeline::scan_and_write_structure` and
+stop AT the barrier by design ("writes NO nodes and NO edges, and enqueues no
+parse task"); `incremental.rs` already classifies a change as OLD+NEW.
+
+**B. Route RUST to v2 and leave every other language on v1.** Per-language
+dispatch in the ProcessFile handler.
+
+**C. Migrate one language at a time, and DROP ITS v1 ADAPTER AS IT GOES.** Four
+already have v2 adapters and need only proving — typescript/javascript, svelte,
+python, java. Five need porting first: **SQL, Swift, Kotlin, Vue, C**.
+
+**THE REGISTRY IS THE SWITCH — no flag.** The ProcessFile handler asks v2's
+`adapter_for_ext` first and falls back to v1. So migrating a language is: land
+its v2 adapter, prove it, then DELETE `languages/<that language>.rs`. The two
+never coexist for one language, so there is no drift and no "which one is
+live"; the v1 fallback shrinks to nothing on its own, and `languages/` goes
+when the last adapter leaves.
+
+**D. When the last language has migrated**: re-index, run acceptance, remove
+the now-empty `languages/` module and break its two couplings
+(`is_test_path` ×2, `fqn::is_external` ×1).
+
+No language is ever dropped from the graph: v1 serves it until v2 demonstrably
+does, and only then is v1's copy deleted.
+
+**The stage-10 differential harness is WAIVED** by the user — "I don't need to
+compare v1 vs v2". It was the spec's cutover gate; the cost and what stands in
+for it are in `docs/backlog.md`. Consequence: acceptance after re-index is now
+the only empirical check, so it is not optional.
+
+**The stage-10 differential harness is WAIVED** by the user — "I don't need to
+compare v1 vs v2". It was the spec's cutover gate; the cost and what stands in
+for it are recorded in `docs/backlog.md`. Consequence: acceptance after
+re-index is now the only empirical check, so it is not optional.
 
 **v1 is still production** — nothing outside `indexer/` calls v2's core.
 "Stage 12" in stage 11's prose is a forward reference to an unwritten spec;
