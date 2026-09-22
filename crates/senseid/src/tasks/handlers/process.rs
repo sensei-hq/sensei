@@ -422,6 +422,56 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         }
     }
 
+    // **STAGE 3'S BARRIER (R14). THIS IS THE STEP THAT WAS MISSING.**
+    //
+    // Every `files` row for this folder must exist BEFORE any parse task for it
+    // runs, because node persistence FAILS CLOSED on a missing row by design
+    // (R13): `upsert_node` looks the file up and refuses rather than minting an
+    // id, so that an untracked file is a loud bug instead of a plausible
+    // orphan. Three comments in this tree asserted production satisfied that
+    // "by construction" — `graph_seed`'s module doc, `seed_indexing_repo`, and
+    // `process_file_fatal_db_write_...`. It did not. The barrier they named is
+    // `indexer::pipeline::scan_and_write_structure`, which has no production
+    // caller; this function enqueued a ProcessFile per changed file and wrote
+    // no row for any of them.
+    //
+    // MEASURED before this loop existed: 17,531,590 failed `process_file`
+    // executions against 155,165 completions, since 2026-07-01, every one
+    // `no files row for <path> — the walk never recorded it`. The first node
+    // write failed, `fail_folder` ran, the fingerprint was never advanced, and
+    // `plan_reindex` re-enqueued the file next pass — a self-sustaining loop
+    // that left 12,608 of 13,035 folders holding zero `files` rows.
+    //
+    // At `BARRIER_MTIME`, never the real one: `prior_state` carries only
+    // `(mtime, hash)` and `plan_reindex` never reads `parsed_at`, so a row
+    // bearing the true fingerprint would read as UNCHANGED next pass and the
+    // file would never be indexed. `process_file` advances it on success.
+    //
+    // A file whose row cannot be written is DROPPED FROM `changed` rather than
+    // enqueued, the same rule the skip block above follows: enqueueing a task
+    // whose first write is guaranteed to fail is how the loop above began.
+    if let Some(ref fid) = folder_uuid {
+        let queued: Vec<String> = plan.changed.iter().cloned().collect();
+        for rel in queued {
+            if let Err(e) = ctx
+                .pg()
+                .upsert_file_row(
+                    fid,
+                    &rel,
+                    crate::db::pg_store::folders::BARRIER_MTIME,
+                    crate::db::pg_store::folders::BARRIER_HASH,
+                    None,
+                )
+                .await
+            {
+                tracing::warn!(folder_id = %fid, file = %rel, error = %e,
+                    "stage 3 barrier: could not write the `files` row — the file is NOT \
+                     enqueued and stays queued for the next pass");
+                plan.changed.remove(&rel);
+            }
+        }
+    }
+
     // Enqueue ProcessFolder + ProcessFile only for changed files, grouped by dir
     // so each gets its module/package context. Unchanged dirs enqueue nothing.
     let mut all_file_task_ids: Vec<u64> = Vec::new();
@@ -3813,6 +3863,94 @@ mod tests {
         assert_eq!(target, Some(helper_id), "compute→helper resolves to the FQN target at emit");
 
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
+    }
+
+    /// **STAGE 3'S BARRIER MUST EXIST IN PRODUCTION, NOT ONLY IN THE FIXTURES**
+    /// (R14, R13).
+    ///
+    /// THREE PLACES IN THIS TREE ASSERTED THAT IT DID, AND ALL THREE WERE
+    /// WRONG: `graph_seed`'s module doc ("Production satisfies that by
+    /// construction. Stage 3 is a BARRIER (R14): every `files` row for a folder
+    /// exists before any parse task for that folder runs"),
+    /// `seed_indexing_repo` below ("Production creates every `files` row before
+    /// any parse task exists"), and
+    /// `process_file_fatal_db_write_marks_folder_failed_and_skips_scan_state`
+    /// ("stage 3's barrier (R14) creates one for every file before any parse
+    /// task runs"). The barrier they name is
+    /// `indexer::pipeline::scan_and_write_structure`, which has NO production
+    /// caller. Production runs `process_git_folder`, which enqueued a
+    /// `ProcessFile` per changed file and wrote no `files` row for any of them.
+    ///
+    /// MEASURED on the live database before this test existed:
+    /// **17,531,590 failed `process_file` executions against 155,165
+    /// completions** — 113:1, running since 2026-07-01 — every one of them
+    /// `no files row for <path> — the walk never recorded it`. `upsert_node`
+    /// fails closed on a missing row by design (R13), so the FIRST node write
+    /// failed, `fail_folder` ran, the fingerprint was never advanced, and
+    /// `plan_reindex` re-enqueued the file on the next pass. A self-sustaining
+    /// loop, and the reason 12,608 of 13,035 folders hold zero `files` rows.
+    ///
+    /// **EVERY EXISTING TEST PASSED STRAIGHT OVER IT**, because the fixtures
+    /// supply the precondition themselves: `seed_indexing_repo` calls
+    /// `barrier()`, `processed()` calls `seed_only_file`, and the `SeedGraph`
+    /// trait seeds before each write. That is a harness modelling a step
+    /// production never performed. This test deliberately does NONE of them —
+    /// it registers the repo and runs the PRODUCTION enqueue path — which is
+    /// the only arrangement in which the barrier's absence is observable.
+    ///
+    /// The row is written at `BARRIER_MTIME` (0) and NOT at the real mtime, and
+    /// that is load-bearing rather than tidy: `prior_state` carries only
+    /// `(mtime, hash)` and `plan_reindex` never reads `parsed_at`, so a barrier
+    /// row bearing the true fingerprint would be classified UNCHANGED on the
+    /// next pass and the file would never be indexed at all. Zero cannot be a
+    /// real mtime, so the file stays a candidate until a parse actually
+    /// advances it.
+    ///
+    /// MUTATION: delete the barrier write from `process_git_folder` — this test
+    /// goes red with the exact production error, and the 113:1 loop returns.
+    #[tokio::test]
+    async fn process_git_folder_writes_every_files_row_before_enqueuing_a_parse_task() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("repo/src")).unwrap();
+        std::fs::write(root.join("repo/src/lib.rs"), "pub fn a() {}\n").unwrap();
+
+        let ctx = make_ctx().await;
+        // Registered WITHOUT `seed_indexing_repo`, so no fixture barrier runs.
+        let repo_path = root.join("repo").to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&root.to_string_lossy(), "r14_barrier", &serde_json::json!([]))
+            .await
+            .unwrap();
+        ctx.pg().upsert_repo_kind(&rid, "git", "repo", &repo_path).await.unwrap();
+        let (fid,): (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.folders WHERE abs_path = $1")
+                .bind(&repo_path)
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
+
+        process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, &repo_path))
+            .await
+            .unwrap();
+
+        let rows = ctx.pg().list_scan_state(&fid).await.unwrap();
+        assert!(
+            rows.iter().any(|(path, _)| path == "src/lib.rs"),
+            "a `files` row must exist for every enqueued file BEFORE its parse task runs, \
+             because `upsert_node` fails closed without one (R13). Rows found: {rows:?}"
+        );
+        assert!(
+            rows.iter()
+                .filter(|(path, _)| path == "src/lib.rs")
+                .all(|(_, mtime)| *mtime == crate::db::pg_store::graph_seed::BARRIER_MTIME),
+            "the barrier row carries BARRIER_MTIME, not the real one — `plan_reindex` reads \
+             only (mtime, hash) and would otherwise call the file unchanged and never index \
+             it: {rows:?}"
+        );
+
+        ctx.pg().remove_watch_root(&rid).await.ok();
     }
 
     async fn seed_indexing_repo(
