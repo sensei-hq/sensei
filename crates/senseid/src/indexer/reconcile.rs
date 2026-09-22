@@ -190,7 +190,7 @@ pub async fn reconcile(
     store: &PgStore,
     folder_id: &uuid::Uuid,
     stated: &Stated,
-    again: &dyn Fn() -> Result<Stated, String>,
+    again: &(dyn Fn() -> Result<Stated, String> + Send + Sync),
 ) -> Result<Reconciled, String> {
     let here = stated.located();
     let now = stated.claims();
@@ -336,7 +336,7 @@ fn brake(
     its_own_module: &str,
     before: &BTreeSet<String>,
     now: &BTreeSet<String>,
-    again: &dyn Fn() -> Result<Stated, String>,
+    again: &(dyn Fn() -> Result<Stated, String> + Send + Sync),
 ) -> Result<Brake, Held> {
     // A file that is GONE was observed to be absent. Nothing was inferred from a
     // parse, so there is nothing to confirm.
@@ -405,7 +405,7 @@ mod tests {
         store: &PgStore,
         folder: &uuid::Uuid,
         stated: &Stated,
-        again: &dyn Fn() -> Result<Stated, String>,
+        again: &(dyn Fn() -> Result<Stated, String> + Send + Sync),
     ) -> Result<Reconciled, String> {
         if let Stated::Parsed(facts) = stated {
             store.seed_only_file(folder, &facts.path).await?;
