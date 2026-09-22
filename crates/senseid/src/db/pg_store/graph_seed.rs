@@ -29,16 +29,7 @@
 
 use super::PgStore;
 
-/// The `mtime` a barrier-seeded `files` row carries.
-///
-/// Zero, and deliberately not a real timestamp. A fixture seeds the row to
-/// satisfy the foreign key, not to claim it has read the file — and the two must
-/// be distinguishable, because the v1 handler advances a file's fingerprint as
-/// its record of "this file was processed". A seeded row carrying a plausible
-/// mtime would read as already-processed, which is the fabricated value R4
-/// forbids. Zero cannot be a real mtime, so a test can ask "did anything
-/// actually advance past the barrier?" and get a true answer.
-pub(crate) const BARRIER_MTIME: i64 = 0;
+pub(crate) use super::folders::BARRIER_MTIME;
 
 /// Seed the `files` row a node needs, the way stage 3's barrier would have.
 ///
