@@ -696,7 +696,6 @@ async fn write_structure(
     Ok(ids)
 }
 
-#[cfg(test)]
 /// **ONE FILE IN, ROWS OUT — the IO half of stages 4-6.**
 ///
 /// The join `pipeline.rs` deliberately stopped short of: its header says stage
@@ -732,7 +731,28 @@ pub async fn index_and_persist(
     let index = crate::indexer::index::index_file(input);
     match index.indexed {
         crate::indexer::index::Indexed::Read(facts) => {
-            crate::indexer::persist::write(pg, folder_id, &facts).await.map(Some)
+            // **RECONCILE, NOT A BARE WRITE.** `persist::write` only ADDS, so a
+            // call deleted from a source file would keep its edge for ever.
+            // `reconcile` is the re-index primitive — "write what it says now,
+            // remove what it stopped saying, and touch nothing that belongs to
+            // another file" (R10.6) — and it calls `persist::write` itself, so
+            // this is the same write plus the release of the claims this file
+            // no longer makes.
+            //
+            // `again` is the second read the brake needs, and the ONE exception
+            // R1 records to "no stage re-reads source bytes": reconcile has no
+            // IO of its own, so re-reading is the caller's business. Here it is
+            // the text we were handed — this function is given the bytes, so a
+            // re-read is the same bytes and the brake compares like with like.
+            let for_again = facts.clone();
+            let stated = crate::indexer::reconcile::Stated::Parsed(facts);
+            let again = move || Ok(crate::indexer::reconcile::Stated::Parsed(for_again.clone()));
+            let reconciled =
+                crate::indexer::reconcile::reconcile(pg, folder_id, &stated, &again).await?;
+            Ok(match reconciled.wrote {
+                crate::indexer::reconcile::Wrote::Facts(w) => Some(w),
+                crate::indexer::reconcile::Wrote::Nothing => None,
+            })
         }
         // No nodes and no edges, and the reason is already in `index`. Writing
         // nothing is the correct outcome, so it is `Ok` — and it is `None`
