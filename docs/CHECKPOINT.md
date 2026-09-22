@@ -1,87 +1,60 @@
 # Checkpoint
 
-**Slice** — indexer-v2. **Stage 11 is COMPLETE** (§10 met, 97,460 resolved
-against ≥96,304). Now in **§11 — the other adapters**, TypeScript first.
+**Slice** — indexer-v2. Stage 11 COMPLETE (§10 met, 97,460 resolved vs
+≥96,304). **GOAL, decided 2026-09-22: retire v1 and make v2 the only indexer.**
+Inventory, couplings and rejected alternatives: `docs/backlog.md`.
 
-**HEAD** `112cd44a`. Gate: fmt clean, clippy `--all-targets -D warnings` 0,
-senseid **3291/0**, indexer **456/0**, every ignored indexer barrier green but
-the known environmental `dbd-rs` one.
-Corpus: 97,460 resolved / 96,760 unresolved / 194,220 total.
-Ratchets: A7 rust **0**, dangling **1,153/235** (ceiling 1,300, headroom 147),
-split-impl **30/5,530**, A8 typescript back to **16** distinct targets.
+**HEAD** `112cd44a` + docs. Gate: fmt clean, clippy `--all-targets -D warnings`
+0, senseid **3291/0**, indexer **456/0**, all ignored indexer barriers green but
+the environmental `dbd-rs` one. Corpus 97,460 / 96,760 / 194,220. Ratchets: A7
+rust **0**, dangling **1,153/235** (headroom 147), split-impl **30/5,530**.
 
-## Done since stage 11 closed
+## The sequence — nothing may be deleted before step 4
 
-`b17731fc` the barrier decomposition splits by LANGUAGE — the instrument §11 is
-sequenced on · `9ad53f43` one place reads a rooted path against a module
-(`resolve::rooted_against`; I had duplicated the ladder's arithmetic in the rust
-walk and was about to write a third copy) · `112cd44a` TypeScript's relative
-import names a home (+109 resolved, zero new ghosts).
+1. **Wire v2's persistence** ← NEXT. Pieces all exist (`index_file`,
+   `persist::write`, `reconcile`); missing is the IO half joining stage 3 to
+   4-6. R14: structure barrier, then ONE parse task per file, each running
+   `index_file` → `persist::write` → `reconcile`. `index_file` (stage 11 I8) IS
+   that unit. Mirror `tasks/handlers/process.rs`, which does this for v1.
+2. Port the five adapters v1 has and v2 lacks: **SQL, Swift, Kotlin, Vue, C**
+   (decided: all five before deleting v1, not a per-language fallback).
+3. Stage 10's differential harness — does not exist. S1/S2: v2's resolved set
+   must be a SUPERSET of v1's, regressions blocking.
+4. Cut over, re-index, run acceptance. 5. Delete `languages/` and break its
+   two couplings (`is_test_path` ×2, `fqn::is_external` ×1).
 
-## §11 state, per adapter
+**v1 is still production** — nothing outside `indexer/` calls v2's core.
+"Stage 12" in stage 11's prose is a forward reference to an unwritten spec;
+persistence is stage 6 and is built.
 
-| adapter | table dropped? | import rung | grade |
+## §11 adapter state (paused at step 1's request)
+
+| adapter | table dropped | import rung | grade |
 |---|---|---|---|
 | rust | YES (S5) | yes | `Named` |
-| typescript / javascript / svelte | **no** | **yes, relative only** | `Candidate` |
-| python | no | no | — |
-| java | no | no | — |
+| typescript/javascript/svelte | no | relative only | `Candidate` |
+| python, java | no | no | — |
 
-**TypeScript is NOT "the same three changes" and the corpus says so 1:1.** The
-third change — grading a file-stated home `Named` — buys +378 resolved and
-+378 dangling, i.e. every extra reference it resolves names an identity nothing
-declares. Full measurement, the three cross-file causes, and the `$lib` problem
-are in `docs/backlog.md`.
-
-## Next — and it needs a decision, with a recommendation
-
-Dropping TypeScript's table needs the `$lib` alias map: **1,008 relative
-specifiers against 891 `$lib` + 46 `$app`**, and `import_origin` files an alias
-as EXTERNAL because the walk is never handed the bundler config. Recommended:
-the SCAN reads `svelte.config.js` / `tsconfig` paths once and hands the map to
-the adapter as a fact on `Source`, the way an adapter is already TOLD its
-package and module and never climbs a directory (keeps R7 intact). Alternatives
-and their costs are in the backlog entry.
-
-**CORRECTION — python and java are NOT the easy forward work.** I wrote that
-before checking: **this repository contains ZERO `.py` and ZERO `.java` files**,
-so neither appears in the per-language decomposition and neither can have §10's
-gate ("resolved-reference count over this repo") evaluated at all. The java
-module says so in as many words and calls it "the right constraint rather than a
-limitation".
-
-Both are measurable only against an EXTERNAL corpus via `SENSEI_CORPUS`, which
-already exists as a mechanism:
-
-    SENSEI_CORPUS=~/Work/Dayamed cargo test -p senseid --bin senseid -- \
-      --ignored --nocapture indexer::lang::java::corpus
-
-That corpus is present on this machine — 8,007 `.java` files against 56 `.py`
-— so **java is measurable and python effectively is not**. So the §11 order
-("typescript/javascript/svelte, python, java") is by corpus size in the abstract
-and NOT by what can be verified here; java should come before python on
-evidence, and python needs a corpus chosen before its rung is worth writing.
+TypeScript's `Named` grade is 1:1 against ghosts (+378 resolved, +378
+dangling), so it stays weak until the cross-file lookup exists. `$lib` is
+DECIDED: the manifest scan detects aliases and passes them to the file scan;
+the conventional `$lib`→`lib` needs no config read (v1 measured it).
 
 ## Open questions
 
-- The `$lib` alias map above — the one blocking decision.
-- Why `a57dd050`'s +2,334 exceeded the 999 predicted. Likely a
-  `BoundToTheResultOf` cascade; UNVERIFIED, check recorded in the backlog.
-- A gated member of an `impl Trait for Type` needs a fifth tail segment. ZERO
-  in this corpus, excluded on grammatical ground by the walk and `count_gated`.
-
-Stage 12 still owes the S7 obligation: a target no first-party declaration
-mints must resolve or be marked EXTERNAL, never left a ghost.
+- Why `a57dd050`'s +2,334 exceeded the 999 predicted (likely a
+  `BoundToTheResultOf` cascade). UNVERIFIED; check in the backlog.
+- `import_target.rs` is v1-only and holds the alias measurements; v2 has a
+  second import classifier. Reconcile before writing a third.
 
 ## Next commands
 
     cargo test -p senseid --bin senseid -- indexer::
     cargo test -p senseid --bin senseid -- --ignored --nocapture index::corpus
-    cargo test -p senseid --bin senseid -- --ignored --nocapture barrier_necessity
 
 ## Known-broken
 
-None in the indexer. 4 ignored tests fail environmentally (`dbd-rs` sibling repo
-not checked out, gateway config, 2 installer hooks). `prune_empty_projects_*` is
-NON-DETERMINISTIC in a full run — green in isolation and on re-run, the fourth
-instance of the shared-test-DB sweep hazard in `docs/backlog.md`.
+None in the indexer. 4 ignored tests fail environmentally (`dbd-rs` not checked
+out, gateway config, 2 installer hooks). `prune_empty_projects_*` is
+NON-DETERMINISTIC in a full run — green in isolation; the shared-test-DB sweep
+hazard in `docs/backlog.md`.
