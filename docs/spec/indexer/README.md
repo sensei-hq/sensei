@@ -1,5 +1,5 @@
 ---
-name: Indexer Overview
+name: Indexer
 description: The one canonical indexing cycle — root scan to persisted edges — with the code that implements each stage
 date: 2026-09-23
 status: current
@@ -95,7 +95,7 @@ in this chain walks a tree twice or decides a rule a registry already owns.
 ```
 
 **Triggers, scope and the scenarios for every entry point** are in
-`13-triggers.md`, with executable scenarios in `14-scenarios.md`. The short
+`15-triggers.md`, with executable scenarios in `16-scenarios.md`. The short
 version: **eleven** production conditions start a cycle — ten raise
 `Scope::Full` and one (a watcher batch) raises `Scope::Events` — and two more
 (an exclusion added, a root removed) raise no task at all, because a deletion
@@ -186,7 +186,7 @@ One section per stage in the graph above.
 - **Writes a `files` row for every file examined**, indexed or not — the stage 3
   barrier for source, and the stuck-skip record for everything else.
 - **Separates observed deletions from inferred ones**
-  (`docs/spec/indexer/13-triggers.md` §2 S4).
+  (`docs/spec/indexer/15-triggers.md` §2 S4).
 
 ### MANIFEST PASS — `process_manifest`
 
@@ -274,15 +274,48 @@ legacy SCAN and PROCESS orchestration is GONE — `process_git_folder`,
 `LOCKFILE_NAMES` were all deleted. What remains under `crate::languages` is
 parsers, one per language, retiring as each is flipped.
 
-## Specs
+## The rest of this folder
 
-Every file in this folder carries a `status:` in its frontmatter, so
-supersession is visible without reading it:
+Start here, then follow the leg you need. Every file carries a `status:` in its
+frontmatter so supersession is visible without reading it.
 
-| status | files |
+**Reference — read these before any number or letter makes sense**
+
+| | |
 |---|---|
-| **current** | `00-overview` (this file), `02-scan-repo`, `02b-library-discovery`, `04-walk-rust`, `04b-walk-js`, `05-resolve`, `06-persist`, `07-reconcile`, `08-progress`, `11-file-index`, `13-triggers`, `14-scenarios` |
-| **superseded** | `01-scan-root`, `03-structure-write`, `09-incremental`, `10-cutover` — each carries a note saying what replaced it and which of its statements are now inverted |
-| **history** | `00-files-entity` — the completed `scan_state` -> `files` migration |
+| [`17-vocabulary.md`](17-vocabulary.md) | what a NODE, an EDGE and a `via` are; what every measured number counts, in what unit, over what population; ceiling vs ratchet |
+| [`18-acceptance.md`](18-acceptance.md) | what `A1`–`A9` mean, which test enforces each, what bound it holds |
 
-Whole-system rules (R1, R13, R14, S5, S7) are in `docs/design/indexer.md`.
+**The flow, leg by leg**
+
+| | |
+|---|---|
+| [`02-scan-root.md`](02-scan-root.md) | which repositories exist *(superseded — see this file and `15-triggers.md`)* |
+| [`03-scan-repo.md`](03-scan-repo.md) | everything structural inside one repository |
+| [`04-library-discovery.md`](04-library-discovery.md) | third-party libraries |
+| [`05-structure-write.md`](05-structure-write.md) | folder and file rows *(superseded in part)* |
+| [`06-walk-rust.md`](06-walk-rust.md) | the rust walk |
+| [`07-walk-js.md`](07-walk-js.md) | the javascript/typescript walk |
+| [`08-resolve.md`](08-resolve.md) | the ladder that places a reference |
+| [`09-persist.md`](09-persist.md) | nodes first, then edges |
+| [`10-reconcile.md`](10-reconcile.md) | what a re-scan removes |
+| [`14-file-index.md`](14-file-index.md) | one file in, nodes and edges out |
+
+**Entry points and behaviour**
+
+| | |
+|---|---|
+| [`15-triggers.md`](15-triggers.md) | every production condition that starts a cycle, and the scope it starts with |
+| [`16-scenarios.md`](16-scenarios.md) | Gherkin for every flow, each naming the test that pins it |
+| [`11-progress.md`](11-progress.md) | what a scan reports while it runs |
+| [`12-incremental.md`](12-incremental.md) | *(superseded — its S2 is inverted; discovery reads the FILESYSTEM)* |
+
+**History**
+
+| | |
+|---|---|
+| [`01-files-entity.md`](01-files-entity.md) | the completed `scan_state` → `files` migration |
+| [`13-cutover.md`](13-cutover.md) | *(superseded for the scan/process half, which is done)* |
+
+Whole-system rules (R1, R13, R14, S5, S7) and the acceptance criteria
+themselves are in [`docs/design/indexer.md`](../../design/indexer.md).

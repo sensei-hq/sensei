@@ -7,8 +7,8 @@ status: current
 
 # Stage 14 — scenarios
 
-Executable descriptions of every flow. `13-triggers.md` lists what starts them;
-`00-overview.md` describes the pipeline they run through.
+Executable descriptions of every flow. `15-triggers.md` lists what starts them;
+`README.md` describes the pipeline they run through.
 
 Each scenario names the test that pins it where one exists, and says **NO TEST**
 where none does — an unpinned scenario is a wish, and marking it is what stops

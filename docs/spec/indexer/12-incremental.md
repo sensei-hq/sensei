@@ -1,7 +1,7 @@
 ---
 status: superseded
 ---
-> **SUPERSEDED by `13-triggers.md` + `14-scenarios.md`. Its S2 ("`known_roots` is read from the DATABASE, never from a scan") is INVERTED: discovery reads the FILESYSTEM. Its S3 escalation is also inverted — a path under no watch root is dropped.**
+> **SUPERSEDED by `15-triggers.md` + `16-scenarios.md`. Its S2 ("`known_roots` is read from the DATABASE, never from a scan") is INVERTED: discovery reads the FILESYSTEM. Its S3 escalation is also inverted — a path under no watch root is dropped.**
 
 # Stage 9 — incremental: changed files back to repos
 

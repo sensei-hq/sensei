@@ -1,7 +1,7 @@
 ---
 status: superseded
 ---
-> **SUPERSEDED by `00-overview.md` + `13-triggers.md`. It specifies `find_git_roots` / `RootExclusions`, both DELETED; root discovery is now `indexer::repo::discover`.**
+> **SUPERSEDED by `README.md` + `15-triggers.md`. It specifies `find_git_roots` / `RootExclusions`, both DELETED; root discovery is now `indexer::repo::discover`.**
 
 # Stage 1 — scan root: which repositories exist
 
@@ -45,7 +45,7 @@ that discovery can be tested with no database at all.
   exists to avoid.
 - **S3.** Do not descend into a repo root once found. Whatever is inside it is
   stage 2's, including any nested repo — which stage 2 discovers and enqueues
-  itself (see 02-scan-repo S2).
+  itself (see 03-scan-repo S2).
 - **S4** (R14). `save_repo(root) -> RepositoryId` upserts `sensei.repositories`
   keyed on `repo_key` (the NORMALIZED remote), and the repo-root FOLDER row
   carrying `repository_id`. These are two tables and both are required:
