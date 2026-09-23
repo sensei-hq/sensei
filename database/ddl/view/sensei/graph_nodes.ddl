@@ -66,6 +66,29 @@ set search_path to sensei, extensions;
 -- folders are modules, so almost every path would have been silently truncated.
 -- The repo-root folder is the exception: its `path` is ABSOLUTE, and its files
 -- are already repo-relative, so it passes through.
+--
+-- ## Repository
+--
+-- `repository_id`/`repository` come from a DIRECT join on `folders.repository_id`
+-- — no second resolver. `sensei.repo_anchor_for(path)` exists and is the
+-- canonical resolver for an arbitrary PATH, but a node already carries a
+-- `folder_id`, so walking a path back to an anchor here would be a second way to
+-- answer a question the column already answers, and the two could disagree.
+--
+-- A node whose folder carries no `repository_id` reads NULL. That is honest-empty,
+-- not a gap being masked: it means the folder genuinely has no repository, and the
+-- NULL bucket is the query that finds folders needing attribution. Measured
+-- 2026-09-23: 444,658 of 467,707 nodes (95.1%) resolve to a repository. The
+-- 1.4% figure that folder-grain counting produces is the WRONG DENOMINATOR —
+-- 12,371 of the 13,035 folders are plain `folder` kind holding no nodes at all,
+-- while 183 of 193 `git` folders (which is where nodes live) are attributed.
+--
+-- Dropped before create: `repository_id`/`repository` sit BESIDE `project`, not
+-- appended at the end, and `create or replace view` can only add columns to the
+-- tail. Grouping the identity columns together is worth a drop — nothing depends
+-- on this view (checked 2026-09-23 via pg_depend), so there is no cascade.
+drop view if exists graph_nodes;
+
 create or replace view graph_nodes as
 select n.id
      , n.folder_id
@@ -73,6 +96,8 @@ select n.id
      , f.branch       as branch
      , f.project_id
      , p.name         as project
+     , f.repository_id
+     , r.name         as repository
      , n.kind::text   as kind
      , n.name
      , n.fqn
@@ -102,6 +127,8 @@ select n.id
     on f.id          = n.folder_id
   left join projects p
     on p.id          = f.project_id
+  left join repositories r
+    on r.id          = f.repository_id
   left join nodes    par
     on par.id        = n.parent_id;
 
@@ -134,6 +161,7 @@ Common queries:
   SELECT n.parent_name, n.kind, count(*) FROM sensei.graph_nodes n
    WHERE n.project = ''sensei'' AND n.locality = ''internal'' GROUP BY 1, 2';
 
+comment on column graph_nodes.repository is 'The repository this node belongs to, via folders.repository_id — a direct column read, never a second path-walking resolver that could disagree with it. NULL means the folder carries no repository (honest-empty, and the query that finds what needs attributing), never a failed lookup. 95.1% of nodes resolve; count at NODE grain, not folder grain — plain folders hold no nodes and drag a folder-grain percentage to a meaningless 1.4%.';
 comment on column graph_nodes.branch is 'The checked-out branch of this node''s folder. A real partition key, not a label: the design is one folder per checkout (develop vs main = two folders, one repository), already live for fitness/strategos/website — so filtering by branch separates genuine graphs without branch appearing in node identity.';
 comment on column graph_nodes.locality is 'internal (has a file_id) | external (a `lib·` fqn — the writer said so) | unknown (unresolved reference stub). Never inferred from an edge''s resolution state, and never collapsed to a boolean: that bins every stub as external.';
 comment on column graph_nodes.parent_name is 'Containing node''s name — NULL at top level, not a placeholder. Lets a caller group by container without a self-join.';
