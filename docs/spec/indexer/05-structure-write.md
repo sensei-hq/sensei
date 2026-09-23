@@ -1,7 +1,7 @@
 ---
 status: superseded
 ---
-> **SUPERSEDED in part by `00-overview.md`. `clear_scan_state_for_root` and the `standalone` folder kind are retired; the structure write now lives in `handlers::repo_scan::process_git_folder`.**
+> **SUPERSEDED in part by `README.md`. `clear_scan_state_for_root` and the `standalone` folder kind are retired; the structure write now lives in `handlers::repo_scan::process_git_folder`.**
 
 # Stage 3 — structure write: the barrier
 
