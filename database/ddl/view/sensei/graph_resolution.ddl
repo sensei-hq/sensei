@@ -24,11 +24,17 @@ set search_path to sensei, extensions;
 --
 -- reason_codes is joined LEFT for the reason graph_boundary's is: a rung with
 -- no seeded prose must surface raw, never drop the edge that carries it.
+-- Dropped before create: `repository_id`/`repository` sit beside `project` rather
+-- than appended, and `create or replace view` can only add columns to the tail.
+drop view if exists graph_resolution;
+
 create or replace view graph_resolution as
 select cg.folder_id
      , cg.folder
      , cg.project_id
      , cg.project
+     , rf.repository_id
+     , r.name             as repository
      , cg.edge_id
      , cg.edge_kind
      , cg.source_id
@@ -45,6 +51,10 @@ select cg.folder_id
      , rc.summary         as rung_summary
      , rc.detail          as rung_detail
   from call_graph cg
+  left join folders rf
+    on rf.id     = cg.folder_id
+  left join repositories r
+    on r.id      = rf.repository_id
   left join reason_codes rc
     on rc.domain = 'code_graph_rung'
    and rc.code   = cg.resolved_via
