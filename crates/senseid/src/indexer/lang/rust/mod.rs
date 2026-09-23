@@ -1219,6 +1219,67 @@ pub fn free(w: &Widget) -> u32 { w.width }
         facts.symbols.iter().map(|s| s.fqn.as_str()).collect()
     }
 
+    /// A DERIVED MEMBER IS A DECLARATION.
+    ///
+    /// `#[derive(Default)]` really does define `fn default()`, and
+    /// `T::default()` is a PATH call on a named type — so the ladder places it
+    /// on `p·m·T·default·item` and, until this, reached nothing. Measured over
+    /// this repo: 161 dangling first-party edges across 49 types, 13% of rust's
+    /// whole dangling residue, and the reason the A8 ratchet tipped.
+    ///
+    /// The asymmetry with `clone` is why the existing `PLUMBING` filter cannot
+    /// close it: `x.clone()` is a METHOD call whose receiver type is unknown,
+    /// so it fails placement and is filtered. A path call succeeds, and a
+    /// successful placement onto nothing is the defect.
+    #[test]
+    fn a_derived_member_is_declared_so_a_path_call_to_it_lands() {
+        let facts = facts("m", "#[derive(Debug, Default, Clone)]\npub struct Config { a: u8 }\n");
+        let got = fqns(&facts);
+        assert!(
+            got.contains(&"rust·p·m·Config·default·item"),
+            "#[derive(Default)] declares `default`, got {got:?}"
+        );
+        // DEBUG AND CLONE ARE DELIBERATELY NOT MINTED. An fqn names a member
+        // by its own name, not by the trait it came from, so `Debug::fmt`
+        // would collide with a hand-written `Display::fmt` — 8 such collisions
+        // in this repo. `Default` cannot collide: rustc forbids deriving AND
+        // implementing it. See `Walk::derived_members`.
+        assert!(!got.contains(&"rust·p·m·Config·fmt·item"), "got {got:?}");
+        assert!(!got.contains(&"rust·p·m·Config·clone·item"), "got {got:?}");
+    }
+
+    /// A derive the walk does not know mints NOTHING, rather than a guess.
+    #[test]
+    fn an_unknown_derive_declares_no_member() {
+        let facts = facts("m", "#[derive(Serialize, Deserialize)]\npub struct T { a: u8 }\n");
+        let got = fqns(&facts);
+        // The type and its field, and nothing else. `Serialize`/`Deserialize`
+        // generate trait impls, not associated functions a path call can name.
+        assert_eq!(
+            got,
+            vec!["rust·p·m·mod", "rust·p·m·T·item", "rust·p·m·T·a·field"],
+            "an unrecognised derive must not invent members"
+        );
+    }
+
+    /// An attribute that is NOT a derive contributes nothing.
+    #[test]
+    fn a_non_derive_attribute_declares_no_member() {
+        let facts = facts("m", "#[allow(dead_code)]\npub struct T { a: u8 }\n");
+        let got = fqns(&facts);
+        assert!(!got.iter().any(|f| f.ends_with("·default·item")), "got {got:?}");
+    }
+
+    /// The derive list does not LEAK to the next item.
+    #[test]
+    fn a_derive_applies_only_to_the_item_it_precedes() {
+        let facts =
+            facts("m", "#[derive(Default)]\npub struct A { x: u8 }\npub struct B { y: u8 }\n");
+        let got = fqns(&facts);
+        assert!(got.contains(&"rust·p·m·A·default·item"), "got {got:?}");
+        assert!(!got.contains(&"rust·p·m·B·default·item"), "B has no derive, got {got:?}");
+    }
+
     /// The whole expected symbol set, written out. A count alone would pass
     /// while naming the wrong things.
     #[test]
@@ -1861,6 +1922,69 @@ pub fn free(w: &Widget) -> u32 { w.width }
     /// the counter's whole value is that it is derived from the GRAMMAR and not
     /// from the walk, and teaching it about a symbol the grammar does not
     /// contain would make the two sides agree by construction.
+    /// Every DERIVED member, counted off the TREE — the third term of the
+    /// conservation identity.
+    ///
+    /// INDEPENDENT BY CONSTRUCTION, the same way `count_gated` is: it reads the
+    /// attribute's raw text and its sibling item, and never asks the walk what
+    /// it minted. The only thing shared with the walk is which member each std
+    /// derive generates, and that is a fact about RUST rather than about this
+    /// reader — the same standard `count_gated` applies when it knows that a
+    /// `cfg` arm yields one callable per distinct name.
+    ///
+    /// A derive on anything other than a type with a name contributes nothing,
+    /// and neither does a trait the table does not know.
+    fn count_derived_members(root: tree_sitter::Node<'_>, text: &str) -> usize {
+        let mut total = 0usize;
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            let mut cursor = node.walk();
+            let children: Vec<tree_sitter::Node<'_>> = node.named_children(&mut cursor).collect();
+            for (at, child) in children.iter().enumerate() {
+                stack.push(*child);
+                if child.kind() != "attribute_item" {
+                    continue;
+                }
+                let raw = &text[child.byte_range()];
+                let Some(inner) = raw.strip_prefix("#[derive(").and_then(|r| r.strip_suffix(")]"))
+                else {
+                    continue;
+                };
+                // Only a NAMED type takes derived members — the walk mints them
+                // in `type_with_fields`, which needs a name.
+                //
+                // SKIP FURTHER ATTRIBUTES AND COMMENTS. `#[derive(..)]` is
+                // routinely followed by `#[serde(..)]` before the item, and a
+                // trailing `// why` on an attribute line is a named node too.
+                // Requiring the type to be the immediate next sibling missed
+                // every one of those — 25 corpus files for the first shape and
+                // one for the second.
+                let follows_a_named_type = children[at + 1..]
+                    .iter()
+                    .find(|n| {
+                        !matches!(n.kind(), "attribute_item" | "line_comment" | "block_comment")
+                    })
+                    .is_some_and(|n| {
+                        matches!(
+                            n.kind(),
+                            "struct_item" | "union_item" | "enum_item" | "trait_item"
+                        ) && n.child_by_field_name("name").is_some()
+                    });
+                if !follows_a_named_type {
+                    continue;
+                }
+                let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+                for t in inner.split(',') {
+                    for (member, _) in super::walk::derived_members_of(t.trim()) {
+                        seen.insert(member);
+                    }
+                }
+                total += seen.len();
+            }
+        }
+        total
+    }
+
     /// Every `cfg`-gated declaration, counted off the TREE — the second term of
     /// the conservation identity.
     ///
@@ -1956,19 +2080,25 @@ pub fn free(w: &Widget) -> u32 { w.width }
         for (path, text) in repo_rust_sources() {
             let facts = read(&Source { package: "p", module: "m", path: &path, text: &text })
                 .unwrap_or_else(|e| panic!("{path}: {e:?}"));
-            // A CONSERVATION IDENTITY, not an equality, and the extra term is
+            // A CONSERVATION IDENTITY, not an equality, and the extra terms are
             // the point. A `cfg`-gated declaration yields TWO nodes: the
             // callable a use site mints, and the arm that implements it. The
             // flat scan counts the declaration once, so the two sides differ by
             // exactly the number of gated declarations — counted here the same
             // independent way, off the tree rather than off the walk.
             //
+            // The third term is the same shape: a `#[derive(Default)]` DEFINES
+            // `fn default`, which no declaration node in the tree contains. It
+            // is counted off the tree too, by reading the attribute's own text
+            // — never by asking the walk what it minted.
+            //
             // No tolerance. A tolerance is where a double-count hides, which is
             // what this property exists to prevent.
             let root = parse(&text);
             let expected = count_declarations(root.root_node(), &text)
                 + 1
-                + count_gated(root.root_node(), &text);
+                + count_gated(root.root_node(), &text)
+                + count_derived_members(root.root_node(), &text);
             if facts.symbols.len() != expected {
                 disagreements.push(format!(
                     "{path}: walk produced {}, independent count says {}",

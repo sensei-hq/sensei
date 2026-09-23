@@ -61,6 +61,7 @@ pub(super) fn walk<'a>(source: &Source<'a>, root: Node<'_>, from: Fqn) -> Found 
         fields: BTreeMap::new(),
     };
     let mut walk = Walk {
+        pending_derives: Vec::new(),
         src: source.text,
         package: source.package,
         module: source.module,
@@ -333,6 +334,10 @@ struct Walk<'a> {
     symbols: Vec<Symbol>,
     references: Vec<Reference>,
     relations: Vec<Relation>,
+    /// Traits named by the `#[derive(..)]` immediately preceding the item now
+    /// being walked. Cleared by whatever consumes it, so a derive can never
+    /// reach the item after its own.
+    pending_derives: Vec<String>,
     imports: Vec<Import>,
 }
 
@@ -1044,7 +1049,15 @@ impl<'a> Walk<'a> {
             // macro body: nothing inside is an expression this walk can read, so
             // claiming facts from it would be invention. The independent
             // counters skip it on the same grounds.
-            "attribute_item" | "inner_attribute_item" => {}
+            //
+            // ONE EXCEPTION, and it is not invention: `#[derive(..)]` is a
+            // DECLARATION. The compiler really does define `fn default` for a
+            // type deriving `Default`, and `T::default()` is a path call the
+            // ladder places on that type's `default` member — which, until the
+            // derive was read, named nothing. 161 dangling first-party edges
+            // across 49 types, measured over this repository.
+            "attribute_item" => self.collect_derives(node),
+            "inner_attribute_item" => {}
             "use_declaration" => self.import(node),
             "extern_crate_declaration" => self.extern_crate(node),
 
@@ -1399,6 +1412,88 @@ impl<'a> Walk<'a> {
             .collect()
     }
 
+    /// The members a derive DEFINES, by trait name.
+    ///
+    /// Only traits whose member is reachable as a PATH call (`T::member()`) are
+    /// listed, because that is the form the ladder places and therefore the
+    /// form that can dangle. A method call (`x.clone()`) carries no type the
+    /// walk can name, so it fails placement and the `PLUMBING` filter already
+    /// accounts for it — minting a declaration would not change its outcome.
+    ///
+    /// Not a guess: each entry is the member that trait's `derive` macro
+    /// generates, and a derive this table does not know mints NOTHING.
+    ///
+    /// DEFAULT ONLY, and the restriction is load-bearing. An fqn names a
+    /// member by its own name and not by the trait it implements, so
+    /// `#[derive(Debug)]` minting a member called `fmt` COLLIDES with a
+    /// hand-written `impl Display for T { fn fmt }` — two declarations, one
+    /// identity, and which survives depends on scan order (A6/A7). Measured:
+    /// 8 collisions across this repo the moment `Debug` was added here.
+    ///
+    /// `Default` cannot collide, because rustc rejects a type that both derives
+    /// it and implements it by hand. It is also the only one that was COSTING
+    /// anything: the others are reached as method calls (`x.clone()`), which
+    /// carry no nameable receiver type, so they never place and the `PLUMBING`
+    /// filter already accounts for them. A declaration for those would change
+    /// no edge — it would only add a node nobody points at.
+    pub(super) fn derived_members(trait_name: &str) -> &'static [(&'static str, SymbolKind)] {
+        match trait_name {
+            "Default" => &[("default", SymbolKind::Function)],
+            _ => &[],
+        }
+    }
+
+    /// Record the traits named by a `#[derive(..)]`, for the item that follows.
+    ///
+    /// Reads only the shape the grammar guarantees — `attribute` -> `identifier`
+    /// "derive" -> `token_tree` -> one `identifier` per trait — and ignores any
+    /// other attribute entirely. A path-qualified derive (`#[derive(serde::Serialize)]`)
+    /// yields a `scoped_identifier` this deliberately does not read: the table
+    /// above knows std traits, and pretending to recognise a third-party one
+    /// would mint a member nothing defines.
+    fn collect_derives(&mut self, node: Node<'_>) {
+        let Some(attribute) = node.named_child(0) else { return };
+        if attribute.kind() != "attribute" {
+            return;
+        }
+        if attribute.named_child(0).map(|n| self.text(n)) != Some("derive") {
+            return;
+        }
+        let Some(list) = attribute.named_children(&mut attribute.walk()).nth(1) else { return };
+        if list.kind() != "token_tree" {
+            return;
+        }
+        let mut cursor = list.walk();
+        for child in list.named_children(&mut cursor) {
+            if child.kind() == "identifier" {
+                self.pending_derives.push(self.text(child).to_string());
+            }
+        }
+    }
+
+    /// Declare the members this type's derives define.
+    ///
+    /// Emitted with the TYPE's span, because a derived member has no source of
+    /// its own — the honest answer to "where is this written?" is the
+    /// `#[derive]` on the type, and a fabricated span elsewhere would be worse
+    /// than a shared one.
+    fn declare_derived_members(&mut self, node: Node<'_>, inner: &Scope) {
+        let derives = std::mem::take(&mut self.pending_derives);
+        let mut seen: std::collections::BTreeSet<&'static str> = std::collections::BTreeSet::new();
+        for trait_name in &derives {
+            for (member, kind) in Self::derived_members(trait_name) {
+                // Two derives can name one member only by accident; taking it
+                // once keeps the declaration set a SET.
+                if !seen.insert(member) {
+                    continue;
+                }
+                let symbol =
+                    self.symbol(node, inner, member, *kind, Reach::Item, DeclaredType::Unstated);
+                self.push(node, symbol, inner);
+            }
+        }
+    }
+
     fn type_with_fields(&mut self, node: Node<'_>, scope: &Scope, kind: SymbolKind) {
         let Some(name) = self.field_text(node, "name") else {
             self.children(node, scope);
@@ -1413,6 +1508,7 @@ impl<'a> Walk<'a> {
         if let Owner::Type(child) = &inner.owner {
             self.supertraits(node, scope, child.clone());
         }
+        self.declare_derived_members(node, &inner);
         self.children(node, &inner);
     }
 
@@ -2304,4 +2400,10 @@ fn span(node: Node<'_>) -> crate::indexer::facts::Span {
         end_line: end.row as u32 + 1,
         end_col: end.column as u32,
     }
+}
+
+/// The members a std derive defines, as a free function so the independent
+/// declaration counter can share the SPEC without reaching into the walk.
+pub(super) fn derived_members_of(trait_name: &str) -> &'static [(&'static str, SymbolKind)] {
+    Walk::derived_members(trait_name)
 }
