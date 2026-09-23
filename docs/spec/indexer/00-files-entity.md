@@ -1,3 +1,8 @@
+---
+status: history
+---
+> **HISTORY — records the completed `scan_state` -> `files` migration. The rename is done; this is the record, not a plan.**
+
 # Stage 0 — the files entity, and ALL the DDL
 
 Whole-system spec: `docs/design/indexer.md` §7h (the DDL ruling), R13 (the

@@ -1,3 +1,8 @@
+---
+status: superseded
+---
+> **SUPERSEDED for the scan/process half, which is done. Its deletion-trigger list still names `process.rs::process_git_folder`'s `plan.removed` loop; that handler moved to `repo_scan.rs` and the loop is gone, replaced by observed (`scope.deleted()`) and inferred (`prune_vanished`) paths.**
+
 # Stage 10 — cutover: the differential harness, Rust only, legacy retired
 
 Whole-system spec: `docs/design/indexer.md` §7 (build order), §6 (A1–A9),

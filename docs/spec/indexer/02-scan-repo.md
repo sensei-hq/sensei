@@ -1,3 +1,6 @@
+---
+status: current
+---
 # Stage 2 — scan repo: submodules, subtrees, manifests, files
 
 Whole-system spec: `docs/design/indexer.md` §7g (R15), R14, R10.7c, R10.7h.

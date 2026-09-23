@@ -1,3 +1,6 @@
+---
+status: current
+---
 # Stage 7 — reconcile: dirty is not deleted, deleted is not demoted
 
 Whole-system spec: `docs/design/indexer.md` §7b in full — **R10.1, R10.3,

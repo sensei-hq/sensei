@@ -1,3 +1,6 @@
+---
+status: current
+---
 # Stage 6 — persistence: lossless at the boundary
 
 Whole-system spec: `docs/design/indexer.md` R3, R4, R9, R13, D1, D9.
