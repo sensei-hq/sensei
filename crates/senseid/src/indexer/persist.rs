@@ -2401,6 +2401,62 @@ pub fn widest(a: u32) -> u32 {
     /// reduce to the empty module path. Every entry is one of those three. They
     /// belong to the walk's identity rule, and this is the ratchet that keeps
     /// them from spreading while they wait.
+    /// The TypeScript half of A7's ratchet, at ZERO.
+    ///
+    /// It did not exist, and that absence is the whole reason this was allowed
+    /// to grow: the ratchet beside it is rust-scoped, while the acceptance
+    /// harness MEASURES every language and gates none. TypeScript's collisions
+    /// were therefore printed on every run and read by nothing. Measured
+    /// 2026-09-23 at **511**, driven to 0, and TypeScript cannot enter
+    /// `lang::PRODUCTION_LANGUAGES` without a gate that keeps it there.
+    ///
+    /// Through `read_the_corpus` rather than a per-file read, because a member's
+    /// identity depends on the TYPE BARRIER (R6): the corpus is walked once to
+    /// collect type declarations and again with that table, so which file came
+    /// first cannot change an answer. A single-pass read would measure a
+    /// different, easier question.
+    ///
+    /// The assertion is the SET, like its rust sibling, so a new collision
+    /// arrives spelled out with its sites rather than as a number going up.
+    ///
+    /// MUTATION: revert any one of the four naming rules — call-argument
+    /// callbacks, method bodies, object-key functions, or `module_of` reading
+    /// `module_here` — and this names the identities that collapse.
+    #[test]
+    fn no_two_declarations_in_this_repos_typescript_mint_one_identity() {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let mut sites: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for read in crate::indexer::acceptance::read_the_corpus() {
+            if read.facts.language != Language::TypeScript {
+                continue;
+            }
+            for symbol in &read.facts.symbols {
+                sites.entry(symbol.fqn.as_str().to_string()).or_default().insert(format!(
+                    "{:?} {} at {}:{}",
+                    symbol.kind, symbol.name, read.path, symbol.span.start_line
+                ));
+            }
+        }
+
+        let colliding: Vec<String> = sites
+            .iter()
+            .filter(|(_, at)| at.len() > 1)
+            .map(|(fqn, at)| {
+                format!("{fqn}\n      {}", at.iter().cloned().collect::<Vec<_>>().join("\n      "))
+            })
+            .collect();
+
+        assert!(
+            colliding.is_empty(),
+            "{} TypeScript identities are minted by more than one declaration.\n\
+             Zero is not a budget: one of the two silently overwrites the other, and \
+             which one wins is scan-order dependent (A6).\n{}",
+            colliding.len(),
+            colliding.join("\n  ")
+        );
+    }
+
     #[test]
     fn no_two_declarations_in_this_repos_rust_mint_one_identity() {
         use std::collections::{BTreeMap, BTreeSet};
