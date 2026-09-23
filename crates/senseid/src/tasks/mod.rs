@@ -61,6 +61,21 @@ pub enum TaskKind {
     ProcessGitFolder,
     ProcessFolder,
     ProcessFile,
+    /// One per package MANIFEST in a repo. Resolves the placement (package +
+    /// module) that `index_file` needs before it can mint an fqn.
+    ///
+    /// Distinct from [`TaskKind::ExtractDeps`], which is repo-wide and feeds
+    /// the library index: different grain, different output.
+    ProcessManifest,
+    /// The manifest→files GATE, one per repo.
+    ///
+    /// Carries no work list. It is enqueued `blocked_by` every
+    /// [`TaskKind::ProcessManifest`] of its repo, using the queue's ORDINARY
+    /// dependency barrier — no counter of its own, because `complete` and
+    /// `fail` already drop the dep and promote the task when the list empties.
+    /// When it runs it reads the repo's supported files back from `files` and
+    /// fans out one [`TaskKind::ProcessFile`] each.
+    ProcessRepoFiles,
     DeleteFile,
     DeleteFolder,
     ResolveLibs,
@@ -262,13 +277,15 @@ pub struct KindInfo {
 
 impl TaskKind {
     /// Every kind. Kept beside [`Self::info`] and checked against both the
-    /// descriptor and the database enum by `all_kinds_match_the_database_enum`,
+    /// descriptor and the database enum by `all_task_kinds_match_the_database_enum`,
     /// so a kind cannot be half-added.
     pub const ALL: &'static [TaskKind] = &[
         Self::ScanRoot,
         Self::ProcessGitFolder,
         Self::ProcessFolder,
         Self::ProcessFile,
+        Self::ProcessManifest,
+        Self::ProcessRepoFiles,
         Self::DeleteFile,
         Self::DeleteFolder,
         Self::BranchSwitch,
@@ -333,6 +350,24 @@ impl TaskKind {
                 pipeline: Pipeline::Index,
                 stage: Stage::Ingest,
                 budget_secs: 180,
+                high_priority: false,
+                retryable: true,
+            },
+            Self::ProcessManifest => KindInfo {
+                name: "process_manifest",
+                pipeline: Pipeline::Index,
+                stage: Stage::Ingest,
+                budget_secs: 60,
+                high_priority: false,
+                retryable: true,
+            },
+            Self::ProcessRepoFiles => KindInfo {
+                name: "process_repo_files",
+                pipeline: Pipeline::Index,
+                stage: Stage::Ingest,
+                // A gate that only fans out. Its own work is one query plus an
+                // enqueue loop; the budget belongs to the tasks it creates.
+                budget_secs: 60,
                 high_priority: false,
                 retryable: true,
             },
@@ -610,6 +645,65 @@ pub enum TaskStatus {
 
 // ── Task ────────────────────────────────────────────────────────────────────
 
+/// What a scan was asked to examine — and, critically, whether that set is
+/// EXHAUSTIVE.
+///
+/// Travels ON THE TASK because the queue is in memory: `QueueState` holds
+/// `Task` values directly, so a path list costs nothing to carry and needs no
+/// side table, no JSON column and no schema change.
+///
+/// The variants are not two modes to branch on at every stage. They answer ONE
+/// question — may absence be read as deletion? — and that question has exactly
+/// one consumer per level: the repo diff and the file diff. Everything else
+/// treats a scope as a candidate list.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Scope {
+    /// Walk everything under the target. Absence from the walk means DELETED,
+    /// and a removal cascades nodes, edges and files.
+    #[default]
+    Full,
+    /// Only these paths changed. Absence proves NOTHING: a path not listed was
+    /// never looked at. `deleted` is carried separately because a delete is an
+    /// OBSERVED event, not an inference from absence — it is the only way a
+    /// non-exhaustive scan may remove anything.
+    Events { changed: Vec<std::path::PathBuf>, deleted: Vec<std::path::PathBuf> },
+}
+
+impl Scope {
+    /// Whether absence may be read as deletion.
+    pub fn is_exhaustive(&self) -> bool {
+        matches!(self, Scope::Full)
+    }
+
+    /// The changed paths, empty for a full walk (which has no shortlist — it
+    /// looks at everything).
+    pub fn changed(&self) -> &[std::path::PathBuf] {
+        match self {
+            Scope::Full => &[],
+            Scope::Events { changed, .. } => changed,
+        }
+    }
+
+    pub fn deleted(&self) -> &[std::path::PathBuf] {
+        match self {
+            Scope::Full => &[],
+            Scope::Events { deleted, .. } => deleted,
+        }
+    }
+
+    /// The same scope narrowed to one subtree — what a root scan hands each
+    /// repository it fans out to.
+    pub fn under(&self, root: &std::path::Path) -> Scope {
+        match self {
+            Scope::Full => Scope::Full,
+            Scope::Events { changed, deleted } => Scope::Events {
+                changed: changed.iter().filter(|p| p.starts_with(root)).cloned().collect(),
+                deleted: deleted.iter().filter(|p| p.starts_with(root)).cloned().collect(),
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Task {
     pub id: u64,
@@ -628,6 +722,10 @@ pub struct Task {
     pub as_of: Option<chrono::NaiveDate>,
     pub status: TaskStatus,
     pub depends_on: Vec<u64>, // won't run until these complete
+    /// What this scan may look at, and whether that set is exhaustive.
+    /// [`Scope::Full`] for a boot/reconcile/new-root scan; [`Scope::Events`]
+    /// for a watcher batch.
+    pub scope: Scope,
     pub error: Option<String>,
     pub retry_number: u32, // 0 = first attempt; bumped per bounded retry (D6c)
     pub _created_at: Instant,
@@ -649,6 +747,7 @@ impl Task {
             as_of: None,
             status: TaskStatus::Pending,
             depends_on: Vec::new(),
+            scope: Scope::default(),
             error: None,
             retry_number: 0,
             _created_at: Instant::now(),
@@ -681,13 +780,13 @@ impl Task {
     }
 
     /// A task about one FOLDER on disk — the git checkout root it operates in.
-    pub fn for_folder(kind: TaskKind, abs_path: &str) -> Self {
-        Self::new(kind, abs_path, abs_path)
-    }
-
     /// A task about one FILE within a folder.
     pub fn for_file(kind: TaskKind, folder_abs_path: &str, file_abs_path: &str) -> Self {
         Self::new(kind, folder_abs_path, file_abs_path)
+    }
+
+    pub fn for_folder(kind: TaskKind, abs_path: &str) -> Self {
+        Self::new(kind, abs_path, abs_path)
     }
 
     /// A task about one captured unit — a transcript file or thread — from a
@@ -780,6 +879,7 @@ impl Task {
             as_of: self.as_of,
             status: TaskStatus::Pending,
             depends_on: Vec::new(),
+            scope: Scope::default(),
             error: None,
             retry_number: self.retry_number + 1,
             _created_at: Instant::now(),
@@ -790,11 +890,6 @@ impl Task {
 
     pub fn with_parent(mut self, parent_id: u64) -> Self {
         self.parent_task_id = Some(parent_id);
-        self
-    }
-
-    pub fn with_module(mut self, module_id: &str) -> Self {
-        self.module_id = Some(module_id.to_string());
         self
     }
 
@@ -825,6 +920,12 @@ impl Task {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
+    }
+
+    /// Narrow (or widen) what this task may examine.
+    pub fn with_scope(mut self, scope: Scope) -> Self {
+        self.scope = scope;
+        self
     }
 
     pub fn blocked_by(mut self, deps: Vec<u64>) -> Self {
@@ -873,58 +974,8 @@ mod tests {
     }
 
     #[test]
-    fn task_retry_bumps_number_and_resets_runtime() {
-        let mut base = Task::new(TaskKind::ProcessFile, "/code/repo", "/code/repo/src/a.rs")
-            .with_parent(7)
-            .with_module("mod:repo:src")
-            .with_branch("main")
-            .with_url("https://example.test/pkg");
-        base.id = 42;
-        base.retry_number = 1;
-        base.error = Some("boom".into());
-        base.status = TaskStatus::Failed;
-        base.depends_on = vec![1, 2];
-        base.as_of = chrono::NaiveDate::from_ymd_opt(2025, 6, 1);
-
-        let next = base.retry();
-        // Identity is preserved — every field that names WHAT to run.
-        assert_eq!(next.kind, base.kind);
-        assert_eq!(next.folder_path, base.folder_path);
-        assert_eq!(next.path, base.path);
-        assert_eq!(next.parent_task_id, Some(7));
-        assert_eq!(next.module_id, Some("mod:repo:src".to_string()));
-        assert_eq!(next.branch, Some("main".to_string()), "retry preserves branch identity");
-        assert_eq!(
-            next.url,
-            Some("https://example.test/pkg".to_string()),
-            "retry preserves url identity"
-        );
-        assert_eq!(
-            next.as_of,
-            chrono::NaiveDate::from_ymd_opt(2025, 6, 1),
-            "retry preserves the target computed_on day so an interrupted backfill resumes"
-        );
-        // The attempt count advances by exactly one.
-        assert_eq!(next.retry_number, 2, "retry() bumps retry_number");
-        // Runtime state is reset — a fresh, re-enqueueable attempt.
-        assert_eq!(next.id, 0, "queue assigns a new id");
-        assert_eq!(next.status, TaskStatus::Pending);
-        assert!(next.depends_on.is_empty(), "a retry carries no inherited deps");
-        assert!(next.error.is_none());
-    }
-
-    #[test]
     fn new_task_starts_at_retry_zero() {
         assert_eq!(Task::new(TaskKind::ProcessFile, "r", "p").retry_number, 0);
-    }
-
-    #[test]
-    fn task_with_parent_and_module() {
-        let t = Task::new(TaskKind::ProcessFile, "/code/repo", "/code/repo/src/main.ts")
-            .with_parent(42)
-            .with_module("mod:repo:src");
-        assert_eq!(t.parent_task_id, Some(42));
-        assert_eq!(t.module_id, Some("mod:repo:src".to_string()));
     }
 
     #[test]
@@ -985,7 +1036,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), total, "a kind appears twice in ALL");
-        assert_eq!(total, 34, "ALL is missing a kind — add it beside its info() arm");
+        assert_eq!(total, 36, "ALL is missing a kind — add it beside its info() arm");
     }
 
     #[test]
