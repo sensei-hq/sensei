@@ -6,22 +6,26 @@
 
 - **Observability views** (`c00f7406`) — `graph_nodes`/`graph_resolution` carry `repository`; `activity.task_health` + `task_failures` are the restart list; `sensei.error_signature` groups failures by cause. Failure lake reclaimed: 17,577,049 rows, 14 GB → 656 MB.
 - **Stale reachability comments** (`900ec06c`, `daf428fb`) — `reconcile.rs` "no caller on purpose" and `indexer/mod.rs` "deliberately without a caller" both outlived the rust cutover. Dropping reconcile's blanket `allow(dead_code)` exposed exactly one real gap: `Stated::Gone` (the deletion path) is never constructed.
-- **TypeScript A7: 511 → 10** (`daf428fb`) — one rule, four shapes. A function body names what it declares:
+- **TypeScript A7 is at ZERO** (`daf428fb`, `0efc151f`):
 
-  | fix | after |
+  | step | after |
   |---|---:|
   | baseline | 511 |
   | call-argument callbacks | 38 |
-  | class method bodies (`container_at`, ported from rust) | 14 |
-  | functions under an object key | **10** |
+  | class method bodies (`container_at`, from rust) | 14 |
+  | functions under an object key | 10 |
+  | **a local value is not a node** | 1 |
+  | `module_of` reads `module_here` (types scoped like items) | **0** |
+
+  Dropping local values removed 5,074 declarations and the ts barrier numbers were **unchanged to the digit** (2,186 / 1,454 / 935 / 767 / 422) — the proof none of it was reader-facing. A3 moved exactly 222 resolved→unresolved, conserved.
+- **`no_two_declarations_in_this_repos_typescript_mint_one_identity`** added — it never existed, which is why 511 could accumulate. Mutation-verified red.
 
 ## Remaining
 
-1. **Decide the A7 endgame for TS.** The 10 are one shape: two `const` in different *block* scopes of one function, plus one type declared twice. Either add block-level naming to reach 0, or ratchet TS at 10 with the shape documented. **The ratchet test is rust-scoped** (`no_two_declarations_in_this_repos_rust_mint_one_identity`) — a TS-scoped one must be added or the flip has no gate.
-2. **Flip** — add `Language::TypeScript` to `PRODUCTION_LANGUAGES` (`lang/mod.rs:426`) + delete `languages/typescript.rs`, `languages/javascript.rs`.
-3. **Deploy, clear, re-index, acceptance.**
-4. **Wire `Stated::Gone`.**
-5. Port SQL, Swift, Kotlin, Vue, C; then delete `languages/`.
+1. **Flip** — add `Language::TypeScript` to `PRODUCTION_LANGUAGES` (`lang/mod.rs:426`) + delete `languages/typescript.rs`, `languages/javascript.rs`.
+2. **Deploy, clear, re-index, acceptance.**
+3. **Wire `Stated::Gone`.**
+4. Port SQL, Swift, Kotlin, Vue, C; then delete `languages/`.
 
 ## Next command
 
@@ -32,7 +36,6 @@ cargo test -p senseid --bin senseid indexer::acceptance -- --ignored --nocapture
 
 ## Open questions
 
-- Block-level naming for TS locals: reaches A7 zero, at the cost of fqn churn on edits within a function. Rust reads zero on the same rule only because its corpus doesn't hit it.
 - Flipping `TypeScript` flips `.ts/.tsx/.cts/.mts/.js/.jsx/.mjs/.cjs` **and** `.svelte` together — one `Language`, one fqn scheme. The spec's "js, ts, svelte one at a time" is not expressible. `.vue` has no v2 adapter, so it stays on v1.
 
 ## Known-broken / not deployed
