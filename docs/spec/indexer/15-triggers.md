@@ -7,8 +7,8 @@ status: current
 
 # Stage 13 — triggers
 
-What STARTS the pipeline. `00-overview.md` describes the pipeline itself;
-`14-scenarios.md` gives the executable scenarios.
+What STARTS the pipeline. `README.md` describes the pipeline itself;
+`16-scenarios.md` gives the executable scenarios.
 
 ---
 
@@ -54,7 +54,7 @@ name what changed, so none may treat absence as deletion.
 
 The watcher batch is the single case where something watched the change happen,
 and even it is not exhaustive — it saw the paths it was told about and nothing
-else. See `14-scenarios.md` §Safety.
+else. See `16-scenarios.md` §Safety.
 
 ## §3 Known gaps
 

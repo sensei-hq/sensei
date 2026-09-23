@@ -605,7 +605,7 @@ fn every_first_party_edge_names_a_declaration_this_scan_holds() {
         }
     }
 
-    println!("\n## A8: first-party edges, and whether the target is declared\n");
+    println!("\n## A4: first-party edges, and whether the target is declared\n");
     println!(
         "  {:<12} {:<10} {:<26} {:>8} {:>10}",
         "language", "fact", "rung", "landed", "DANGLING"

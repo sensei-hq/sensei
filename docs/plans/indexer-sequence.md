@@ -22,18 +22,18 @@ Keep it only as the historical record of how the Rust steps were first drafted.
 
 | # | spec | builds | depends on |
 |---|---|---|---|
-| 0 | `spec/indexer/00-files-entity.md` | **ALL DDL**: `scan_state`->`files` + `id` + `nodes.file_id`, parse-detail column, node_kind/edge_kind widening, occurrences gin index, `project_commands`->`folder_commands`, ORPHANED sweep | — (dbd `reconcile`; pre-release, no `migrations/`) |
-| 1 | `spec/indexer/01-scan-root.md` | find repo roots, apply root exclusions | 0 |
-| 2 | `spec/indexer/02-scan-repo.md` | submodules, subtrees, file/folder discovery, gitignore, **manifests + LOCKFILES, commands** | 1 |
-| 2b | `spec/indexer/02b-library-discovery.md` | packages -> libraries, skills, agents, docs corpus | 2 |
-| 3 | `spec/indexer/03-structure-write.md` | folder + file rows, the barrier, `expected_files` | 2 |
-| 4 | `spec/indexer/04-walk-rust.md` | one parse -> `FileFacts` (symbols, refs, relations) | 3 |
-| 5 | `spec/indexer/05-resolve.md` | the shared ladder, reason codes, reach identity | 4 |
-| 6 | `spec/indexer/06-persist.md` | `FileFacts` -> rows, lossless at the boundary | 5 |
-| 7 | `spec/indexer/07-reconcile.md` | claim diff, dirty vs delete, cascade ordering | 6 |
-| 8 | `spec/indexer/08-progress.md` | extend `TaskEvent` SSE for the new stages | 3 (usable from there) |
-| 9 | `spec/indexer/09-incremental.md` | changed files -> repos, the inverse traversal | 7 |
-| 10 | `spec/indexer/10-cutover.md` | differential harness, **WIPE + rebuild the code graph (D13)**, switch rust only, retire the legacy indexer | 9 |
+| 0 | `spec/indexer/01-files-entity.md` | **ALL DDL**: `scan_state`->`files` + `id` + `nodes.file_id`, parse-detail column, node_kind/edge_kind widening, occurrences gin index, `project_commands`->`folder_commands`, ORPHANED sweep | — (dbd `reconcile`; pre-release, no `migrations/`) |
+| 1 | `spec/indexer/02-scan-root.md` | find repo roots, apply root exclusions | 0 |
+| 2 | `spec/indexer/03-scan-repo.md` | submodules, subtrees, file/folder discovery, gitignore, **manifests + LOCKFILES, commands** | 1 |
+| 2b | `spec/indexer/04-library-discovery.md` | packages -> libraries, skills, agents, docs corpus | 2 |
+| 3 | `spec/indexer/05-structure-write.md` | folder + file rows, the barrier, `expected_files` | 2 |
+| 4 | `spec/indexer/06-walk-rust.md` | one parse -> `FileFacts` (symbols, refs, relations) | 3 |
+| 5 | `spec/indexer/08-resolve.md` | the shared ladder, reason codes, reach identity | 4 |
+| 6 | `spec/indexer/09-persist.md` | `FileFacts` -> rows, lossless at the boundary | 5 |
+| 7 | `spec/indexer/10-reconcile.md` | claim diff, dirty vs delete, cascade ordering | 6 |
+| 8 | `spec/indexer/11-progress.md` | extend `TaskEvent` SSE for the new stages | 3 (usable from there) |
+| 9 | `spec/indexer/12-incremental.md` | changed files -> repos, the inverse traversal | 7 |
+| 10 | `spec/indexer/13-cutover.md` | differential harness, **WIPE + rebuild the code graph (D13)**, switch rust only, retire the legacy indexer | 9 |
 
 Steps 1-3 can be verified without any parsing at all. Step 4 needs no database.
 Only 6 onward touch persistence. That is deliberate — it front-loads everything
@@ -205,8 +205,8 @@ extended in stage 8.
 
 ## Fixtures
 
-`09-incremental` and `07-reconcile` need the mutation fixture (a temp git repo
-the test builds and mutates). It is specified once, in `07-reconcile`, and
+`12-incremental` and `10-reconcile` need the mutation fixture (a temp git repo
+the test builds and mutates). It is specified once, in `10-reconcile`, and
 referenced by `09`. Not duplicated.
 
 ## Repositories, projects and commands — the naming, settled
@@ -229,7 +229,7 @@ no folders at all. They were minted per-folder from directories the old scanner
 classified as "non-git repos" — `find-me-board` (1,230 folders),
 `pljava-1_6_7`, and `ms-dotnettools.csdevkit`, a VS Code extension cache under
 a transcripts directory. Under stage 1 those folders stop being roots, so these
-projects must be resolved rather than silently left behind. See 01-scan-root S6.
+projects must be resolved rather than silently left behind. See 02-scan-root S6.
 
 So `scan_root` produces BOTH — a repo-root folder row and a `repositories`
 row. Two clones of one remote are two folders and one repository. This was
@@ -270,6 +270,6 @@ unbuildable today because exactly 2 of 1,121 library rows carry any URL.
 
 | defect | fixed by |
 |---|---|
-| `demote_v2_symbol` — keeps a node and nulls `file_path`, so `target_id` stays non-null and every consumer reads it as resolved (67,839 such edges measured) | `07-reconcile.md` S3–S6 |
-| `v2_edges_contributed_by`'s narrowing `AND (s.fqn = ANY($3) OR s.resolved = false)` — an edge whose source this file deleted, resolving elsewhere, is never revisited | `07-reconcile.md` S7 |
-| 11 self-verifying column mappings, 6 in `v2_symbol_unchanged` — the round trip reads back props the same writer wrote | `06-persist.md`, last verification row |
+| `demote_v2_symbol` — keeps a node and nulls `file_path`, so `target_id` stays non-null and every consumer reads it as resolved (67,839 such edges measured) | `10-reconcile.md` S3–S6 |
+| `v2_edges_contributed_by`'s narrowing `AND (s.fqn = ANY($3) OR s.resolved = false)` — an edge whose source this file deleted, resolving elsewhere, is never revisited | `10-reconcile.md` S7 |
+| 11 self-verifying column mappings, 6 in `v2_symbol_unchanged` — the round trip reads back props the same writer wrote | `09-persist.md`, last verification row |

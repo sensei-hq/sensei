@@ -4,7 +4,7 @@ status: current
 # Stage 4b — the JS/TS walk: receiver typing is flow-sensitive
 
 Whole-system spec: `docs/design/indexer.md` D4 (one language at a time).
-Depends on stage 3. The Rust walk (`04-walk-rust.md`) is the shape to follow;
+Depends on stage 3. The Rust walk (`06-walk-rust.md`) is the shape to follow;
 this records only what DIFFERS, and the difference is not small.
 
 > **Build order note (D4).** D4 governs CUTOVER, not construction: js/ts/svelte
