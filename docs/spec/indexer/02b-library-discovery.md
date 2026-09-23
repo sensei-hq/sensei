@@ -1,3 +1,6 @@
+---
+status: current
+---
 # Stage 2b — library discovery: packages to libraries, skills, agents, docs
 
 Whole-system spec: `docs/design/indexer.md` R10.7f, R10.7g, R10.7h, R11.1,

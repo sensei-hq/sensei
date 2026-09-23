@@ -1,3 +1,6 @@
+---
+status: current
+---
 # Stage 11 — one file in, nodes and edges out
 
 Whole-system spec: `docs/design/indexer.md` §2 (identity), §3 (fact types),

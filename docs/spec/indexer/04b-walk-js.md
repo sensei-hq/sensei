@@ -1,3 +1,6 @@
+---
+status: current
+---
 # Stage 4b — the JS/TS walk: receiver typing is flow-sensitive
 
 Whole-system spec: `docs/design/indexer.md` D4 (one language at a time).
