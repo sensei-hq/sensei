@@ -1,3 +1,6 @@
+---
+status: current
+---
 # Stage 4 — the Rust walk: one parse, all the facts
 
 Whole-system spec: `docs/design/indexer.md` §2 and §2.1 (identity and

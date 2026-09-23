@@ -1,3 +1,6 @@
+---
+status: current
+---
 # Stage 5 — the resolution ladder
 
 Whole-system spec: `docs/design/indexer.md` §2 (identity), §2.1 (reach),

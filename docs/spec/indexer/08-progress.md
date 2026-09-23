@@ -1,3 +1,6 @@
+---
+status: current
+---
 # Stage 8 — runtime progress: extend what exists, invent nothing
 
 Whole-system spec: `docs/design/indexer.md` R14 (the barrier gives the

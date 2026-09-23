@@ -1,3 +1,8 @@
+---
+status: superseded
+---
+> **SUPERSEDED by `00-overview.md` + `13-triggers.md`. It specifies `find_git_roots` / `RootExclusions`, both DELETED; root discovery is now `indexer::repo::discover`.**
+
 # Stage 1 — scan root: which repositories exist
 
 Whole-system spec: `docs/design/indexer.md` §7g (R15), R14 (structure before

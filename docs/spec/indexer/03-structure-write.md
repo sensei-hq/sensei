@@ -1,3 +1,8 @@
+---
+status: superseded
+---
+> **SUPERSEDED in part by `00-overview.md`. `clear_scan_state_for_root` and the `standalone` folder kind are retired; the structure write now lives in `handlers::repo_scan::process_git_folder`.**
+
 # Stage 3 — structure write: the barrier
 
 Whole-system spec: `docs/design/indexer.md` R14, R13 (the walk creates file
