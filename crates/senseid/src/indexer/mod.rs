@@ -7,10 +7,19 @@ pub mod llms_indexer;
 pub mod placement;
 
 // ── the indexer (docs/design/indexer.md, docs/plans/indexer-sequence.md) ─────
-// Deliberately without a caller. The LEGACY code-graph indexer under
-// `crate::languages` keeps producing the graph until the rust cutover at stage
-// 10; wiring these in before then would put two producers with different rules
-// on the same tables.
+// WIRED, for the languages in `lang::PRODUCTION_LANGUAGES` and no others.
+// `tasks::handlers::process_file` dispatches on that one list: a language on it
+// goes through `pipeline::index_and_persist`, and everything else still falls to
+// the legacy indexer under `crate::languages`. Rust is cut over; the rest are
+// not.
+//
+// This note used to read "deliberately without a caller … until the rust
+// cutover at stage 10". That cutover has happened, so the note outlived the
+// state it described. The invariant it was protecting is still real and is now
+// enforced by the dispatch rather than by absence: two producers mint different
+// fqns (`languages/fqn.rs` against `indexer/fqn.rs`), so exactly one of them
+// owns any given language, and flipping one is a single commit with deleting
+// `languages/<that language>.rs`.
 /// The acceptance harness — §6's A1–A9 and R8, measured over the real corpus.
 ///
 /// `#[cfg(test)]` because it IS a test-runner tool. What it is NOT is a

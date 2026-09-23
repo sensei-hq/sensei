@@ -55,6 +55,40 @@ a row, and the fix is the identity rule — not the bound. Adding derived member
 for `Debug` tripped it at 8 and the restriction, not the ceiling, was the
 answer.
 
+#### TypeScript's descent: 511 → 10
+
+The ratchet test is `no_two_declarations_in_this_repos_**rust**_mint_one_identity`
+— rust-scoped. The acceptance harness MEASURES every language, so TypeScript's
+collisions were printed on every run and gated nothing. Measured 2026-09-23 at
+**511**, and TypeScript cannot be flipped into `PRODUCTION_LANGUAGES` while a
+declaration can silently overwrite another.
+
+One rule, four shapes. A function body names what it declares — and the walk
+only knew the shapes carrying an `id`:
+
+| fix | shape that was unnamed | after |
+|---|---:|---:|
+| — | (baseline) | 511 |
+| callback | a function passed as a call ARGUMENT — `test('…', () => {…})` | 38 |
+| method body | a class method's body, via `container_at` | 14 |
+| object property | a function under a key — `{ get: () => {…} }` | **10** |
+
+The callback fix is the big one because `test(…)` sits at a file's TOP LEVEL, so
+the naming chain was EMPTY and every callback in a spec shared one scope. In Rust
+the same gap is nearly invisible: a closure sits inside a named `fn` whose segment
+is already on the chain.
+
+`container_at` is ported from the rust walk verbatim in intent — the `fn_scope`
+DEPTH at which the container was established, which is what tells "the class this
+body sits in" from "a class declared BY this body". A bare `!fn_scope.is_empty()`
+would file a class declared inside a function as a local and lose its fields.
+
+**The residue is one shape: block scoping.** All 10 are two `const` in different
+BLOCK scopes of one function — `if`/`else` arms, two `for` loops — plus one type
+declared twice in a file. They are genuinely distinct declarations in JavaScript,
+and naming them apart needs a block-level segment. Rust has the same property and
+reads zero only because its corpus does not hit it.
+
 ### A4 — the dangling-edge ceiling, with slack
 
 "Dangling" means the resolver placed a reference onto an fqn, and then no
