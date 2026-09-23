@@ -70,7 +70,7 @@ land together; splitting them migrates the same table twice.
   requirement said to add them, and the whole-system spec's "0 field and
   enum-variant nodes in any language" was read as an enum gap. It is not — the
   enum has supported them all along and **the WALK never emitted them**. That
-  is a stage 4 problem (04-walk-rust S5) and no DDL fixes it.
+  is a stage 4 problem (06-walk-rust S5) and no DDL fixes it.
 
   What is genuinely absent, for the Rust walk:
 
