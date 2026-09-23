@@ -3,7 +3,7 @@
 
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
-use super::scan_logic::{self, FolderKind};
+use super::scan_logic::{self};
 use crate::api::events::*;
 use std::path::Path;
 use std::time::Instant;
@@ -60,95 +60,92 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         .await
         .map_err(|e| format!("read exclusions for {watch_root_path}: {e}"))?;
 
-    // 1. Find all git folders
-    let git_folders: Vec<_> = scan_logic::find_git_folders(root, scan_logic::MAX_SCAN_DEPTH)
-        .into_iter()
-        .filter(|p| !scan_logic::is_excluded(p, &exclusions))
-        .collect();
+    // 1. DISCOVER — one walk, from disk, exclusions applied as it descends.
+    //    A repository is a directory holding a `.git`, which is a DIRECTORY for
+    //    a clone and a FILE for a submodule or linked worktree. There is no
+    //    second kind: the `standalone` quasi-repo (a manifest-bearing directory
+    //    with no `.git`) was retired, because "looks like a project" is a guess
+    //    and a `.git` is a fact.
+    // OFF THE ASYNC WORKER — see `repo_scan::process_git_folder`. A hung mount
+    // inside a synchronous walk holds a tokio worker that no timeout can reach.
+    let walk_root = root.to_path_buf();
+    let walk_exclusions = exclusions.clone();
+    let discovered = tokio::task::spawn_blocking(move || {
+        crate::indexer::repo::discover(&walk_root, &walk_exclusions)
+    })
+    .await
+    .map_err(|e| format!("root discovery walk panicked: {e}"))?
+    .map_err(|e| format!("discover {}: {e}", task.path))?;
 
-    // Emit discover activity per git folder
-    for gf in &git_folders {
+    // An unreadable subtree is coverage this scan did NOT have. It is reported
+    // rather than swallowed because "holds no repositories" and "could not be
+    // opened" are opposite facts that look identical in the result — and on
+    // macOS the second is routine (a TCC-protected directory returns
+    // `Operation not permitted` and reads as EMPTY).
+    for u in &discovered.unreadable {
+        tracing::warn!(path = ?u.path, reason = %u.reason, "scan_root: directory unreadable");
+    }
+
+    // 1b. NARROW — an event batch only concerns the repositories that OWN a
+    //     changed path. The walk above still runs (it is `.git`-only and
+    //     pruned, and it is how a repository created since the last scan is
+    //     found at all); what narrows is the fan-out, which is the expensive
+    //     half. A full scan keeps everything.
+    let repos = match &task.scope {
+        crate::tasks::Scope::Full => discovered.repos.clone(),
+        crate::tasks::Scope::Events { .. } => {
+            crate::indexer::repo::narrow(discovered.repos.clone(), task.scope.changed())
+        }
+    };
+
+    for r in &repos {
         emit(StateEvent::activity(ActivityEvent::new(
             ActivityLevel::Discover,
-            &format!("{} · git folder", gf.display()),
+            &format!("{} · git folder", r.display()),
             start.elapsed().as_secs_f64(),
         )));
     }
 
-    // 2. Classify into project roots: git repos + quasi-repos (non-git project
-    //    roots that contain indexable code). Subfolders are never promoted.
-    let all_dirs: Vec<_> = scan_logic::all_directories(root, scan_logic::MAX_SCAN_DEPTH)
-        .into_iter()
-        .filter(|p| !scan_logic::is_excluded(p, &exclusions))
-        .collect();
-    let classified =
-        scan_logic::classify_folders(root, &git_folders, &all_dirs, scan_logic::has_indexable_code);
-
-    // Emit discover activity for quasi-repos (git folders were emitted above).
-    for f in &classified {
-        if f.kind == FolderKind::Standalone {
-            emit(StateEvent::activity(ActivityEvent::new(
-                ActivityLevel::Discover,
-                &format!("{} · standalone folder", f.path.display()),
-                start.elapsed().as_secs_f64(),
-            )));
-        }
-    }
-
-    // 3. (watch root already resolved above as `root_id` — top-level only.)
-
-    // 4. Register each project root with its kind and enqueue processing.
-    //    ProcessGitFolder indexes any directory (a `.git` is not required), so a
-    //    quasi-repo is indexed exactly like a real repo.
-    for f in &classified {
-        let kind = match f.kind {
-            FolderKind::Git => "git",
-            FolderKind::Standalone => "standalone",
-        };
-        let path_str = f.path.to_string_lossy();
-        match ctx.pg().upsert_repo_kind(&root_id, kind, &f.name, &path_str).await {
+    // 2. Register each repository and enqueue its scan.
+    for path in &repos {
+        let path_str = path.to_string_lossy();
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        match ctx.pg().upsert_repo_kind(&root_id, "git", &name, &path_str).await {
             Ok(fid) => {
-                // A quasi-repo with no manifest (loose source / docs) is a likely-but-
-                // unconfirmed project — flag it `needs-review` so it surfaces for the
-                // user to keep / organise / discard. Manifest-backed roots and real git
-                // repos are confident; clear any stale flag on them.
-                let needs_review = f.kind == FolderKind::Standalone
-                    && matches!(
-                        scan_logic::classify_quasi_repo(&f.path),
-                        Some(scan_logic::QuasiKind::LooseCode)
-                    );
-                if needs_review {
-                    if let Err(e) = ctx.pg().tag_folder(&fid, "needs-review").await {
-                        tracing::warn!(error = %e, folder_id = %fid, "scan_root: tag_folder needs-review failed");
-                    }
-                } else if let Err(e) = ctx.pg().untag_folder(&fid, "needs-review").await {
-                    tracing::warn!(error = %e, folder_id = %fid, "scan_root: untag_folder needs-review failed");
-                }
-                // Capture the git root's remotes so a future rename can be auto-detected
-                // by shared remote (reconcile_roots → find_live_root_by_remote). Only
-                // write when we actually read some, so a transient git failure never
-                // clobbers a previously-captured set with an empty one.
-                if f.kind == FolderKind::Git {
-                    let remotes = read_git_remotes(&path_str);
-                    if !remotes.is_empty()
-                        && let Err(e) = ctx
-                            .pg()
-                            .update_folder_remotes(&fid, &serde_json::Value::Array(remotes))
-                            .await
-                    {
-                        tracing::warn!(error = %e, folder_id = %fid, "scan_root: update_folder_remotes failed");
-                    }
+                // Capture the remotes so a future rename can be auto-detected by
+                // shared remote (reconcile_roots → find_live_root_by_remote).
+                // Written only when some were READ, so a transient `git` failure
+                // never clobbers a captured set with an empty one.
+                let owned = path_str.to_string();
+                let remotes = tokio::task::spawn_blocking(move || read_git_remotes(&owned))
+                    .await
+                    .unwrap_or_default();
+                if !remotes.is_empty()
+                    && let Err(e) = ctx
+                        .pg()
+                        .update_folder_remotes(&fid, &serde_json::Value::Array(remotes))
+                        .await
+                {
+                    tracing::warn!(error = %e, folder_id = %fid, "scan_root: update_folder_remotes failed");
                 }
             }
             Err(e) => {
                 tracing::warn!(error = %e, path = %path_str, "scan_root: upsert_repo_kind failed")
             }
         }
-        let process_task =
-            Task::for_folder(TaskKind::ProcessGitFolder, &path_str).with_parent(task.id);
         // Single-writer (D6e/W5): skip if this folder is already being scanned,
-        // so a concurrent ScanRoot can't fan out a second ProcessGitFolder for it.
-        let _ = ctx.queue.enqueue_unique(process_task).await;
+        // so a concurrent ScanRoot can't fan out a second scan for it.
+        let _ = ctx
+            .queue
+            .enqueue_unique(
+                Task::for_folder(TaskKind::ProcessGitFolder, &path_str)
+                    .with_parent(task.id)
+                    // Each repository gets the slice of the batch that lies
+                    // under it — and, with it, whether its own file walk may
+                    // read absence as deletion.
+                    .with_scope(task.scope.under(path)),
+            )
+            .await;
     }
 
     // 4.5 Reconcile: self-heal the index the scan can't fix additively.
@@ -161,10 +158,36 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         tracing::warn!(error = %e, "scan_root: heal_nested_standalone_roots failed");
         0
     });
+    // Removals are only derivable from an EXHAUSTIVE walk. A scan that hit an
+    // unreadable directory did not see everything, so it must not conclude that
+    // the repositories it missed were deleted — a removal cascades nodes, edges
+    // and files.
     let live: std::collections::HashSet<std::path::PathBuf> =
-        classified.iter().map(|f| f.path.clone()).collect();
-    let ReconcileRootsOutcome { removed, marked, remapped, archived } =
-        reconcile_roots(ctx.pg(), &root_id, &live).await;
+        discovered.repos.iter().cloned().collect();
+    // REMOVALS ARE ONLY DERIVABLE FROM AN EXHAUSTIVE, COMPLETE WALK.
+    //
+    // Two ways this scan may have seen less than everything, and both are fatal
+    // to the inference:
+    //   * an EVENT scope looked at a shortlist, so every repository not on it
+    //     is unvisited rather than gone;
+    //   * an unreadable directory (a macOS TCC-protected folder returns
+    //     `Operation not permitted` and reads as EMPTY) hides whatever is under
+    //     it.
+    // Either way `live` is a subset of what exists, and `reconcile_roots` would
+    // read the difference as deleted — cascading nodes, edges and files for
+    // repositories that are simply still there.
+    let exhaustive = task.scope.is_exhaustive() && discovered.is_complete();
+    let ReconcileRootsOutcome { removed, marked, remapped, archived } = if exhaustive {
+        reconcile_roots(ctx.pg(), &root_id, &live).await
+    } else {
+        tracing::info!(
+            scope_exhaustive = task.scope.is_exhaustive(),
+            walk_complete = discovered.is_complete(),
+            unreadable = discovered.unreadable.len(),
+            "scan_root: skipping root reconcile — this scan did not see everything"
+        );
+        ReconcileRootsOutcome::default()
+    };
     // Populate the canonical `sensei.repositories` registry + `folders.repository_id`
     // from the git roots' captured remotes (the repo-grain metric grain, D10). Runs
     // after the upsert loop stamped remote_urls. Best-effort — a failure is logged,
@@ -335,22 +358,16 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     }
 
     // 6. Summary activity
-    let git_count = classified.iter().filter(|f| f.kind == FolderKind::Git).count();
-    let quasi_count = classified.iter().filter(|f| f.kind == FolderKind::Standalone).count();
+    let found = discovered.repos.len();
 
     emit(StateEvent::activity(ActivityEvent::new(
         ActivityLevel::Info,
-        &format!("{} git · {} standalone project roots discovered", git_count, quasi_count),
+        &format!("{found} git repositories discovered"),
         start.elapsed().as_secs_f64(),
     )));
 
-    tracing::info!(
-        "scan_root: {} git, {} standalone project roots in {}",
-        git_count,
-        quasi_count,
-        task.path
-    );
-    Ok((git_count + quasi_count) as u32)
+    tracing::info!("scan_root: {found} git repositories in {}", task.path);
+    Ok(found as u32)
 }
 
 /// Prune project roots the scan no longer discovers, healing the index after a
@@ -704,9 +721,15 @@ fn parse_git_remote_config(stdout: &str) -> Vec<serde_json::Value> {
 /// failure or a repo with no remote: an honest "no remote", never a fabricated
 /// one — a remote-less repo simply can't be rename-detected by remote.
 pub(crate) fn read_git_remotes(repo_path: &str) -> Vec<serde_json::Value> {
+    // STDIN NULLED. `git` prompts on stdin for credentials in some configs;
+    // inheriting the daemon's would block this call for ever. There is no
+    // deadline here because `output()` cannot take one — the caller runs this
+    // inside `spawn_blocking`, so a hang costs a blocking thread rather than an
+    // async worker, and the scan's own budget can still fire.
     let Ok(output) = std::process::Command::new("git")
         .args(["config", "--get-regexp", r"^remote\..*\.url$"])
         .current_dir(repo_path)
+        .stdin(std::process::Stdio::null())
         .output()
     else {
         return Vec::new();
@@ -1395,16 +1418,15 @@ mod tests {
             "live git repo should remain"
         );
 
-        // revived (lost .git, still has code) → relabelled standalone, not stale/removed
-        let revived_row = ctx
-            .pg()
-            .get_repo_by_path(&revived.to_string_lossy())
-            .await
-            .unwrap()
-            .expect("revived quasi-repo should remain");
-        assert_eq!(
-            revived_row["kind"], "standalone",
-            "former git root with code should relabel standalone"
+        // A folder that LOST its `.git` is no longer a repository. It used to
+        // be relabelled `standalone` — a quasi-repo — on the grounds that it
+        // still held code; that kind is retired, because "looks like a project"
+        // is a guess and a `.git` is a fact. It is now simply not rediscovered,
+        // and `reconcile_roots` decides its fate from its content and history.
+        let revived_row = ctx.pg().get_repo_by_path(&revived.to_string_lossy()).await.unwrap();
+        assert!(
+            revived_row.is_none_or(|r| r["kind"] != "standalone"),
+            "a folder with no .git is not registered as a repository kind"
         );
     }
 
@@ -1431,68 +1453,6 @@ mod tests {
         ctx.pg().upsert_folder(&root_id, "subtree", "b", "b", &p2, None, None, None).await.unwrap();
         ctx.pg().upsert_repo_kind(&root_id, "git", "b", &p2).await.unwrap();
         assert_eq!(ctx.pg().get_repo_by_path(&p2).await.unwrap().unwrap()["kind"], "subtree");
-    }
-
-    #[tokio::test]
-    async fn scan_flags_loose_quasi_repos_and_skips_data_only() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        // manifest-backed quasi-repo → confident, no flag
-        std::fs::create_dir_all(root.join("manifest-proj")).unwrap();
-        std::fs::write(root.join("manifest-proj/Cargo.toml"), "[package]\nname=\"m\"").unwrap();
-        // loose source, no manifest → flagged needs-review
-        std::fs::create_dir_all(root.join("loose-code")).unwrap();
-        std::fs::write(root.join("loose-code/run.py"), "print('hi')\n").unwrap();
-        // data only → not a project root at all
-        std::fs::create_dir_all(root.join("data-only")).unwrap();
-        std::fs::write(root.join("data-only/rows.csv"), "a,b\n1,2\n").unwrap();
-
-        let ctx = make_ctx().await;
-        let task = Task::new(TaskKind::ScanRoot, "", &root.to_string_lossy());
-        scan_root(&ctx, &task).await.unwrap();
-
-        let tags_of = |row: &serde_json::Value| -> Vec<String> {
-            row["tags"]
-                .as_array()
-                .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
-                .unwrap_or_default()
-        };
-
-        // manifest → standalone, NOT flagged
-        let manifest = ctx
-            .pg()
-            .get_repo_by_path(&root.join("manifest-proj").to_string_lossy())
-            .await
-            .unwrap()
-            .expect("manifest quasi-repo should be registered");
-        assert_eq!(manifest["kind"], "standalone");
-        assert!(
-            !tags_of(&manifest).contains(&"needs-review".to_string()),
-            "manifest-backed quasi-repo should not be flagged"
-        );
-
-        // loose code → standalone, flagged needs-review
-        let loose = ctx
-            .pg()
-            .get_repo_by_path(&root.join("loose-code").to_string_lossy())
-            .await
-            .unwrap()
-            .expect("loose quasi-repo should be registered");
-        assert_eq!(loose["kind"], "standalone");
-        assert!(
-            tags_of(&loose).contains(&"needs-review".to_string()),
-            "loose-code quasi-repo should be flagged needs-review"
-        );
-
-        // data only → not promoted
-        assert!(
-            ctx.pg()
-                .get_repo_by_path(&root.join("data-only").to_string_lossy())
-                .await
-                .unwrap()
-                .is_none(),
-            "data-only folder should not be promoted to a project root"
-        );
     }
 
     #[tokio::test]
@@ -1830,15 +1790,18 @@ mod tests {
             );
         }
 
-        // Discover events: 2 git + 1 quasi-repo = 3 (code-less `notes` is skipped)
+        // Discover events: one per GIT repository. A directory with code but no
+        // `.git` is not a repository and emits nothing.
         let discovers: Vec<_> = events.iter().filter(|e| e.data["level"] == "discover").collect();
-        assert_eq!(discovers.len(), 3, "expected 3 discover events, got {}", discovers.len());
+        assert_eq!(discovers.len(), 2, "expected 2 discover events, got {}", discovers.len());
 
         // Info summary
         let infos: Vec<_> = events.iter().filter(|e| e.data["level"] == "info").collect();
         assert_eq!(infos.len(), 1);
         let msg = infos[0].data["message"].as_str().unwrap();
-        assert!(msg.contains("2 git"), "summary: {}", msg);
-        assert!(msg.contains("1 standalone"), "summary: {}", msg);
+        assert!(msg.contains("2 git repositories"), "summary: {}", msg);
+        // No standalone count: the kind is retired, so the summary reports one
+        // number and not two.
+        assert!(!msg.contains("standalone"), "summary: {}", msg);
     }
 }

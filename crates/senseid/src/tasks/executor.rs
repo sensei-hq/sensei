@@ -116,6 +116,8 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::ProcessGitFolder => handlers::process_git_folder(ctx, task).await,
             TaskKind::ProcessFolder => handlers::process_folder(ctx, task).await,
             TaskKind::ProcessFile => handlers::process_file(ctx, task).await,
+            TaskKind::ProcessManifest => handlers::process_manifest(ctx, task).await,
+            TaskKind::ProcessRepoFiles => handlers::process_repo_files(ctx, task).await,
             TaskKind::DeleteFile => handlers::delete_file(ctx, task).await,
             TaskKind::DeleteFolder => handlers::delete_folder(ctx, task).await,
             TaskKind::ResolveLibs => handlers::resolve_libs(ctx, task).await,

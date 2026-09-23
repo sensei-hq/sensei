@@ -17,6 +17,8 @@ set search_path to sensei, extensions;
 -- RETIRED VALUES are kept deliberately. They are the real domain of the column
 -- for historical rows, and the alternative — remapping them to a current kind —
 -- would fabricate history that never happened:
+--   * build_connections  retired outright: its `covers` set is now the
+--                        sensei.doc_coverage view, so the pass has no successor.
 --   * resolve_edges      retired in 243e4fc5; FQN edges now resolve at emit, so
 --                        the pass has no successor at all.
 --   * plan_metric_days   retired in 8ec9384a with the day-planner.
@@ -41,11 +43,18 @@ create type task_execution_kind as enum (
 , 'process_git_folder'
 , 'process_folder'
 , 'process_file'
+  -- One per package manifest in a repo. Resolves the PLACEMENT (package +
+  -- module) that `index_file` needs before it can mint an fqn. Distinct from
+  -- `extract_deps`, which is repo-wide and feeds the library index.
+, 'process_manifest'
+  -- The manifest→files gate. Blocked on every `process_manifest` of its repo
+  -- via the queue's ordinary dependency barrier; when they drain it fans out
+  -- one `process_file` per supported file.
+, 'process_repo_files'
 , 'delete_file'
 , 'delete_folder'
 , 'branch_switch'
 , 'extract_deps'
-, 'build_connections'
 , 'embed_nodes'
 , 'detect_communities'
   -- ── library pipeline ──
@@ -77,6 +86,7 @@ create type task_execution_kind as enum (
 , 'advance_run'
 , 'publish_run'
   -- ── RETIRED (see header) ──
+, 'build_connections'
 , 'resolve_edges'
 , 'plan_metric_days'
 , 'compute_metrics'
