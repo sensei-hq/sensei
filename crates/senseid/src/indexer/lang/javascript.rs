@@ -1324,7 +1324,21 @@ impl Walk<'_> {
     /// `namespace` cannot extend it for some declarations and not others.
     fn module_of(&self, scope: &Scope) -> String {
         match &scope.container {
-            Container::File => self.module.to_string(),
+            // `module_here`, not the bare file module: a type declared INSIDE a
+            // function body is named under that body, exactly as an item is.
+            //
+            // `declare` has routed items through `module_here` since the
+            // function-body rule landed, and this — the module a type's
+            // CONTAINER is built from — was the one path still reading the file
+            // module directly. The two shapes disagreed about the same scope, so
+            // a type got a scoped identity while its MEMBERS did not.
+            //
+            // MEASURED as the last A7 collision: two identical `interface
+            // TaskStatus` in two `test(...)` callbacks of one spec agreed on one
+            // identity for their `queue` field — and the tell was that it
+            // carried no `/fn/` segment, so the type had been named at file
+            // scope while an item beside it was named under the callback.
+            Container::File => scope.module_here(self.module),
             Container::Type { module, .. } => module.clone(),
         }
     }
@@ -2207,8 +2221,33 @@ impl Walk<'_> {
                 Some(ty) => DeclaredType::Stated(ty),
                 None => DeclaredType::Unstated,
             };
-            let symbol = self.symbol(declarator.span, scope, &id.name, kind, Reach::Item, declared);
-            let inner = self.push(symbol, scope);
+            // A local VALUE is not a node. The graph answers "what does this
+            // function call", and a `const` in a body is neither something a
+            // reader navigates to nor something a call can target —
+            // `barrier.rs::a_node` already excludes its kind from every coverage
+            // measurement, so it was a row nothing read.
+            //
+            // It was not free. JavaScript lets sibling BLOCKS redeclare a name,
+            // so two `const result` in an `if`/`else` are two declarations that
+            // only a block-level segment could tell apart — and such a segment
+            // rewrites identities whenever a line moves inside a body. Locals
+            // were the entire A7 residue: 9 of the last 10 collisions.
+            //
+            // A FUNCTION keeps its node wherever it is written, because a call
+            // has to have something to point at (`export const load = () => {}`).
+            // A GLOBAL const keeps its node: it is importable, so another file
+            // can name it.
+            //
+            // What is NOT dropped is the type BINDING below — `flow.bind` is
+            // keyed by name and is what types `api.getLogs()`. Only the node goes.
+            let local_value = !is_function && scope.fn_scope.len() > scope.container_at;
+            let inner = if local_value {
+                scope.clone()
+            } else {
+                let symbol =
+                    self.symbol(declarator.span, scope, &id.name, kind, Reach::Item, declared);
+                self.push(symbol, scope)
+            };
 
             // The two STATED routes a binding can carry, annotation first: it is
             // what the author wrote about the binding, while the initialiser is
@@ -3558,14 +3597,20 @@ mod tests {
     /// arm, so skipping the outer walk for one loses the whole body rather than
     /// de-duplicating it.
     ///
+    /// The declaration half probes a local FUNCTION (`g`), not a local value:
+    /// a local value is no longer a node at all, so counting one would assert
+    /// 0 == 0 and pass however many times the body was walked. A local function
+    /// is still declared, so it still counts the walks.
+    ///
     /// MUTATION: drop the `BindingIdentifier` half of `re_walked_below` — the
     /// two destructuring fixtures fall to zero references.
     #[test]
     fn a_function_initialiser_is_walked_exactly_once_whatever_the_binding_pattern() {
         for binding in ["const a =", "const { a } =", "const [a] ="] {
-            for body in
-                ["() => { const t = new T(); t.m(); }", "function () { const t = new T(); t.m(); }"]
-            {
+            for body in [
+                "() => { const t = new T(); t.m(); const g = () => {}; g(); }",
+                "function () { const t = new T(); t.m(); const g = () => {}; g(); }",
+            ] {
                 let facts = js_facts(&format!("class T {{ m() {{}} }}\n{binding} {body};\n"));
                 let calls: Vec<String> = member_targets(&facts)
                     .into_iter()
@@ -3581,13 +3626,13 @@ mod tests {
                 let declared: Vec<&str> = facts
                     .symbols
                     .iter()
-                    .filter(|s| s.name == "t")
+                    .filter(|s| s.name == "g")
                     .map(|s| s.fqn.as_str())
                     .collect();
                 assert_eq!(
                     declared.len(),
                     1,
-                    "`{binding} {body}` declared `t` {} times: {declared:?}",
+                    "`{binding} {body}` declared `g` {} times: {declared:?}",
                     declared.len()
                 );
             }
@@ -3605,8 +3650,8 @@ mod tests {
     #[test]
     fn a_declaration_inside_a_function_body_is_named_under_that_function() {
         let facts = js_facts(
-            "export function a() { const deadline = 1; return deadline; }\n\
-             export function b() { const deadline = 2; return deadline; }\n\
+            "export function a() { const deadline = () => 1; return deadline; }\n\
+             export function b() { const deadline = () => 2; return deadline; }\n\
              export const deadline = 3;\n",
         );
         let minted: Vec<&str> =
@@ -3650,8 +3695,8 @@ mod tests {
     #[test]
     fn a_declaration_inside_a_callback_is_named_under_that_callback() {
         let facts = js_facts(
-            "test('renders the card', async () => { const card = 1; return card; });\n\
-             test('hides the card', async () => { const card = 2; return card; });\n\
+            "test('renders the card', async () => { const card = () => 1; return card; });\n\
+             test('hides the card', async () => { const card = () => 2; return card; });\n\
              export const card = 3;\n",
         );
         let minted: Vec<&str> =
@@ -3685,8 +3730,8 @@ mod tests {
     fn a_declaration_inside_a_method_body_is_named_under_that_method() {
         let facts = js_facts(
             "export class AppState {\n\
-             \x20 load() { const res = 1; return res; }\n\
-             \x20 save() { const res = 2; return res; }\n\
+             \x20 load() { const res = () => 1; return res; }\n\
+             \x20 save() { const res = () => 2; return res; }\n\
              }\n",
         );
         let minted: Vec<&str> =
@@ -3718,8 +3763,8 @@ mod tests {
         let facts = js_facts(
             "export function api() {\n\
              \x20 return {\n\
-             \x20   get: () => { const p = 1; return p; },\n\
-             \x20   post: () => { const p = 2; return p; },\n\
+             \x20   get: () => { const p = () => 1; return p; },\n\
+             \x20   post: () => { const p = () => 2; return p; },\n\
              \x20 };\n\
              }\n",
         );
@@ -3732,6 +3777,81 @@ mod tests {
             minted.iter().any(|f| f.contains("fn/api/get")),
             "named under the enclosing function AND its property: {minted:?}"
         );
+    }
+
+    /// A local VALUE inside a function body is not a node. A local FUNCTION is.
+    ///
+    /// The graph answers "what does this function call". A `const card =
+    /// page.locator(…)` inside a body is not something a reader navigates to and
+    /// not something a call can target — `barrier.rs::a_node` already excludes
+    /// its kind from every coverage measurement, so it was a row nothing read.
+    ///
+    /// It was not free. Locals were the ENTIRE A7 residue: 9 of the last 10
+    /// colliding identities were `const`s in sibling block scopes of one
+    /// function, and the only way to tell those apart is a block-level segment
+    /// that rewrites identities whenever a line moves inside a body.
+    ///
+    /// The TYPE BINDING is untouched, and that is the part which does work:
+    /// `flow.bind` is keyed by name and is what types `api.getLogs()`. Only the
+    /// NODE goes.
+    ///
+    /// A function keeps its node wherever it is written. `export const load = ()
+    /// => {}` is how SvelteKit states every route entry point, and a call has to
+    /// have something to point at.
+    ///
+    /// MUTATION: declare local values again — the two `const` collide on one
+    /// identity, which is exactly what A7 was reporting.
+    #[test]
+    fn a_local_value_is_not_a_node_but_a_local_function_is() {
+        let facts = js_facts(
+            "export const TIMEOUT = 30;\n\
+             export function run() {\n\
+             \x20 const card = TIMEOUT;\n\
+             \x20 const helper = () => card;\n\
+             \x20 return helper();\n\
+             }\n",
+        );
+        let named = |n: &str| facts.symbols.iter().filter(|s| s.name == n).count();
+
+        assert_eq!(named("card"), 0, "a local value is not a node");
+        assert_eq!(named("helper"), 1, "a local function is — a call needs a target");
+        assert_eq!(named("TIMEOUT"), 1, "a module-level const is exported and stays");
+        assert_eq!(named("run"), 1, "and the function itself, obviously");
+    }
+
+    /// A TYPE declared inside a function body is named under it too.
+    ///
+    /// `declare` routes an item through `module_here`, so it picks up the
+    /// enclosing-function chain. A type did not: its container was built from
+    /// `module_of`, which read the file's module and never consulted
+    /// `fn_scope`. Two shapes of one rule disagreeing about the same scope.
+    ///
+    /// MEASURED as the LAST A7 collision after local values stopped being nodes:
+    /// `app/e2e/tests/daemon-verification.spec.ts` declares an identical
+    /// `interface TaskStatus` inside two different `test(...)` callbacks (lines
+    /// 70 and 237), and its field `queue` minted
+    /// `…·daemon-verification.spec·TaskStatus·queue·field` once — note the
+    /// absent `/fn/`, which is the tell.
+    ///
+    /// MUTATION: make `module_of` return the bare file module again — the two
+    /// interfaces, and their fields, collapse onto one identity.
+    #[test]
+    fn a_type_declared_inside_a_function_body_is_named_under_that_function() {
+        let facts = facts(
+            "test('first', async () => { interface Row { id: number } const a: Row = { id: 1 }; });\n\
+             test('second', async () => { interface Row { id: number } const b: Row = { id: 2 }; });\n",
+        );
+        let rows: Vec<&str> =
+            facts.symbols.iter().filter(|s| s.name == "Row").map(|s| s.fqn.as_str()).collect();
+        assert_eq!(rows.len(), 2, "two declarations: {rows:?}");
+        let distinct: std::collections::BTreeSet<&&str> = rows.iter().collect();
+        assert_eq!(distinct.len(), 2, "two declarations, two identities: {rows:?}");
+
+        // And the FIELD follows its type, which is the identity that actually
+        // collided on the corpus.
+        let ids: std::collections::BTreeSet<&str> =
+            facts.symbols.iter().filter(|s| s.name == "id").map(|s| s.fqn.as_str()).collect();
+        assert_eq!(ids.len(), 2, "each type's field is its own: {ids:?}");
     }
 
     /// A Svelte 5 RUNE is in scope with nothing written, and names `svelte`.
