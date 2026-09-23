@@ -367,7 +367,7 @@ fn read_file(source: &Source<'_>, types: &TypeHomes, from: Fqn) -> Result<Found,
         reassigned: assigned_in(&parsed.program.body).into_iter().collect(),
         found: Found::empty(),
     };
-    let scope = Scope { from, container: Container::File, fn_scope: Vec::new() };
+    let scope = Scope { from, container: Container::File, fn_scope: Vec::new(), container_at: 0 };
     let mut flow = Flow::empty();
     // No hoisting pass, and that is not an omission: a `new Widget()` types its
     // binding from the NAME it writes, so nothing here has to have seen
@@ -444,7 +444,7 @@ pub(super) fn read_component<'a>(
         reassigned,
         found: Found::empty(),
     };
-    let scope = Scope { from, container: Container::File, fn_scope: Vec::new() };
+    let scope = Scope { from, container: Container::File, fn_scope: Vec::new(), container_at: 0 };
     let mut flow = Flow::empty();
 
     for (block, text, parsed) in &parsed_blocks {
@@ -1181,6 +1181,16 @@ struct Scope {
     /// `const` in a function body minted at module scope and two of them in one
     /// file became one node.
     fn_scope: Vec<String>,
+    /// The [`Scope::fn_scope`] depth at which [`Scope::container`] was
+    /// established. Ported from the Rust walk, where it is the rule that tells
+    /// "the type whose body this sits in" from "a type declared BY this body".
+    ///
+    /// Both leave `container` naming a type and the two mean opposite things:
+    /// `class A { load() { const res = 1; } }` declares a LOCAL of `load`, while
+    /// `function parse() { class Ev { name = ""; } }` declares a class whose
+    /// field really is its member. A DEPTH rather than a flag, because bodies
+    /// nest.
+    container_at: usize,
 }
 
 impl Scope {
@@ -1324,6 +1334,32 @@ impl Walk<'_> {
     /// different forms.
     fn declare(&self, scope: &Scope, member: &str, reach: Reach) -> Result<Fqn, FqnError> {
         let lang = Language::TypeScript;
+        // **A BODY DOES NOT DECLARE MEMBERS OF THE TYPE IT SITS IN.** A `const`
+        // written inside `AppState.load` is a LOCAL of that body: `AppState`
+        // declares no such thing, and no use site can reach one through it.
+        //
+        // `module_here` has named a local under its enclosing function since the
+        // function-body rule landed. What was missing is that the CONTAINER arms
+        // below never asked — inside a method the container is still the type,
+        // so the member arm won and the local was filed as a member of the class.
+        //
+        // THE DEPTH IS THE WHOLE RULE, and a bare `!fn_scope.is_empty()` would be
+        // wrong: a class declared INSIDE a body has fields that genuinely are its
+        // members. The container has to have been established OUTSIDE this body
+        // to be the wrong answer.
+        //
+        // The container is NOT cleared to do this, deliberately: `this` inside a
+        // method is typed by reading it, so a body that forgot which type it was
+        // in would lose every receiver it can name.
+        if scope.fn_scope.len() > scope.container_at {
+            return fqn::define(&Form::Item {
+                lang,
+                package: self.package,
+                module: &scope.module_here(self.module),
+                name: member,
+                reach,
+            });
+        }
         match &scope.container {
             Container::File => fqn::define(&Form::Item {
                 lang,
@@ -1367,6 +1403,7 @@ impl Walk<'_> {
                 let inner = Scope {
                     from: symbol.fqn.clone(),
                     container: scope.container.clone(),
+                    container_at: scope.container_at,
                     fn_scope: scope.fn_scope.clone(),
                 };
                 self.found.symbols.push(symbol);
@@ -1678,6 +1715,37 @@ impl Walk<'_> {
     /// signature leaves unannotated, which for a callback is nearly all of
     /// them: `rows.map((r) => …)` writes no type for `r` anywhere, and the only
     /// statement of what it is sits on `rows`.
+    /// The scope a function passed to `call` as an argument declares in.
+    ///
+    /// Two segments, because one is not enough to tell siblings apart: the
+    /// CALLEE says what kind of block this is (`test`, `describe`, `beforeEach`)
+    /// and the call's first string literal says WHICH one. `test('renders the
+    /// card', …)` and `test('hides the card', …)` differ only in the title, and
+    /// four `const card` across four such blocks is the real shape measured on
+    /// the corpus.
+    ///
+    /// The title is what the SOURCE says, which is the same rule the rest of
+    /// this fqn scheme follows, and it is what a developer calls that block. A
+    /// line number would move under every edit above it; an ordinal would
+    /// renumber every later sibling when one is inserted. Both would churn
+    /// identities on edits that changed nothing about the declaration.
+    ///
+    /// With no string literal there is nothing the source says, so the callback
+    /// falls back to its own start offset — unique within the file, and stable
+    /// under a re-index in any FILE order (A6 is about the order files are
+    /// walked in, not their contents). It churns when text above it moves,
+    /// which is the honest cost of a block that never said what it was.
+    fn callback_scope(&self, call: &CallExpression<'_>, scope: &Scope) -> Scope {
+        let mut inner = scope.clone();
+        inner.fn_scope.push(self.text_of(call.callee.span()).trim().to_string());
+        let titled = call.arguments.iter().find_map(|a| match a.as_expression() {
+            Some(Expression::StringLiteral(s)) => Some(s.value.to_string()),
+            _ => None,
+        });
+        inner.fn_scope.push(titled.unwrap_or_else(|| format!("@{}", call.span.start)));
+        inner
+    }
+
     fn arrow_body(
         &mut self,
         a: &ArrowFunctionExpression<'_>,
@@ -1877,6 +1945,7 @@ impl Walk<'_> {
 
         let inner = Scope {
             from: outer.from.clone(),
+            container_at: outer.fn_scope.len(),
             fn_scope: outer.fn_scope.clone(),
             container: Container::Type { module: self.module_of(scope), name: id.name.to_string() },
         };
@@ -1908,7 +1977,13 @@ impl Walk<'_> {
                         s.params = self.params(&m.value.params);
                         s
                     });
-                let inner = self.push(symbol, scope);
+                let mut inner = self.push(symbol, scope);
+                // The body is INSIDE this method, and everything it declares is
+                // named so — the same rule a free function follows. Without it,
+                // every `const res` in every method of one class minted one
+                // identity under the CLASS, because the container was pushed and
+                // the naming chain was not.
+                inner.fn_scope.push(name.to_string());
                 self.function_body(&m.value, &inner, flow);
             }
             ClassElement::PropertyDefinition(p) => {
@@ -1979,6 +2054,7 @@ impl Walk<'_> {
         }
         let inner = Scope {
             from: outer.from.clone(),
+            container_at: outer.fn_scope.len(),
             fn_scope: outer.fn_scope.clone(),
             container: Container::Type {
                 module: self.module_of(scope),
@@ -2013,6 +2089,7 @@ impl Walk<'_> {
         let outer = self.push(symbol, scope);
         let inner = Scope {
             from: outer.from.clone(),
+            container_at: outer.fn_scope.len(),
             fn_scope: outer.fn_scope.clone(),
             container: Container::Type {
                 module: self.module_of(scope),
@@ -2059,6 +2136,7 @@ impl Walk<'_> {
         let inner = Scope {
             from: outer.from.clone(),
             container: Container::File,
+            container_at: outer.fn_scope.len(),
             fn_scope: outer.fn_scope.clone(),
         };
         for statement in &block.body {
@@ -2205,10 +2283,23 @@ impl Walk<'_> {
                 // corpus's row types happens. Read before the arguments are
                 // walked, because it is what one of them is walked WITH.
                 let handed = self.elements_handed_by(&c.callee, flow);
+                // A function passed as an ARGUMENT is a body, and what it
+                // declares is named under it — the same rule a named function
+                // and a function assigned to a name already follow. A callback
+                // carries no `id`, so nothing was pushed and its locals minted
+                // at MODULE scope; `test(...)` sits at a file's top level, so
+                // the chain was EMPTY and every callback in the file shared one.
+                let callback = self.callback_scope(c, scope);
                 for argument in &c.arguments {
                     match (&handed, argument.as_expression()) {
                         (Some((at, element)), Some(Expression::ArrowFunctionExpression(a))) => {
-                            self.arrow_body(a, scope, flow, Some(Handed { at, element }));
+                            self.arrow_body(a, &callback, flow, Some(Handed { at, element }));
+                        }
+                        (_, Some(Expression::ArrowFunctionExpression(a))) => {
+                            self.arrow_body(a, &callback, flow, None);
+                        }
+                        (_, Some(Expression::FunctionExpression(f))) => {
+                            self.function_body(f, &callback, flow);
                         }
                         _ => self.argument(argument, scope, flow),
                     }
@@ -2345,7 +2436,20 @@ impl Walk<'_> {
                             {
                                 self.expression(key, scope, flow);
                             }
-                            self.expression(&p.value, scope, flow)
+                            // A function under a property is a BODY named by its
+                            // key — the third shape of the function-body rule,
+                            // after an `id` and a call. An object of methods is
+                            // how every API client here is written, and without
+                            // this their locals all landed in the enclosing
+                            // function's scope.
+                            match (property_name(&p.key), &p.value) {
+                                (Some(key), value) if is_a_function(value) => {
+                                    let mut inner = scope.clone();
+                                    inner.fn_scope.push(key);
+                                    self.expression(value, &inner, flow);
+                                }
+                                _ => self.expression(&p.value, scope, flow),
+                            }
                         }
                         // `{ ...authHeaders(token) }` — a SPREAD is the same
                         // expression it would be without the dots, and skipping
@@ -3517,6 +3621,116 @@ mod tests {
         assert!(
             minted.contains(&"typescript·pkg·lib/fixture·deadline·item"),
             "and the module-level one is untouched: {minted:?}"
+        );
+    }
+
+    /// A function passed as a call ARGUMENT is a body too, and what it declares
+    /// is named under it.
+    ///
+    /// `a_declaration_inside_a_function_body_is_named_under_that_function`
+    /// covers the two shapes that carry an `id`: a `function` declaration, and a
+    /// function assigned to a name. A callback has neither — it is an argument —
+    /// so nothing was pushed and every local it declared minted at MODULE scope.
+    ///
+    /// In Rust that gap is nearly invisible, because a closure sits inside a
+    /// named `fn` whose segment is already on the chain. `test(...)` sits at the
+    /// top level of a file, so the chain is EMPTY and every callback in the file
+    /// shares one scope. Measured over the corpus on 2026-09-23: **511 colliding
+    /// identities, every one TypeScript**, e.g. four `const card` in four
+    /// `test(...)` blocks of `assistants-configure.spec.ts` (lines 113, 128, 139
+    /// and 157) minting `…·assistants-configure.spec·card·item` once.
+    ///
+    /// The segment is the callee plus the call's first string literal — what the
+    /// source SAYS this block is, which is also what a developer calls it. Not a
+    /// line number, which moves under every edit above it, and not an ordinal,
+    /// which renumbers every later sibling when one is inserted.
+    ///
+    /// MUTATION: drop the `fn_scope.push` for a callback argument — the three
+    /// collapse to one.
+    #[test]
+    fn a_declaration_inside_a_callback_is_named_under_that_callback() {
+        let facts = js_facts(
+            "test('renders the card', async () => { const card = 1; return card; });\n\
+             test('hides the card', async () => { const card = 2; return card; });\n\
+             export const card = 3;\n",
+        );
+        let minted: Vec<&str> =
+            facts.symbols.iter().filter(|s| s.name == "card").map(|s| s.fqn.as_str()).collect();
+        assert_eq!(minted.len(), 3, "three declarations: {minted:?}");
+        let distinct: std::collections::BTreeSet<&&str> = minted.iter().collect();
+        assert_eq!(distinct.len(), 3, "three declarations, three identities: {minted:?}");
+        assert!(
+            minted.iter().any(|f| f.contains("fn/test/renders the card")),
+            "the callback's local is named under what the call says it is: {minted:?}"
+        );
+        assert!(
+            minted.contains(&"typescript·pkg·lib/fixture·card·item"),
+            "and the module-level one is untouched: {minted:?}"
+        );
+    }
+
+    /// A METHOD body is a function body, and its locals are named under it.
+    ///
+    /// The rung after the callback fix, and the same one Rust's own descent
+    /// records — "3 before that rule reached a METHOD body". A method pushes its
+    /// symbol as the CONTAINER but never onto `fn_scope`, so every `const res`
+    /// in every method of one class minted a single identity under the class.
+    ///
+    /// MEASURED after the callback fix took 511 collisions to 38: the residue is
+    /// this shape, e.g. `AppState·result·item` and `AppState·api·item` in
+    /// `app/src/lib/appstate.svelte.ts`.
+    ///
+    /// MUTATION: drop the method's `fn_scope.push` — the two collapse to one.
+    #[test]
+    fn a_declaration_inside_a_method_body_is_named_under_that_method() {
+        let facts = js_facts(
+            "export class AppState {\n\
+             \x20 load() { const res = 1; return res; }\n\
+             \x20 save() { const res = 2; return res; }\n\
+             }\n",
+        );
+        let minted: Vec<&str> =
+            facts.symbols.iter().filter(|s| s.name == "res").map(|s| s.fqn.as_str()).collect();
+        assert_eq!(minted.len(), 2, "two declarations: {minted:?}");
+        let distinct: std::collections::BTreeSet<&&str> = minted.iter().collect();
+        assert_eq!(distinct.len(), 2, "two declarations, two identities: {minted:?}");
+        assert!(
+            minted.iter().any(|f| f.contains("fn/load")),
+            "the local is named under its method: {minted:?}"
+        );
+    }
+
+    /// A function assigned to an OBJECT PROPERTY is a body named by its key.
+    ///
+    /// The third shape of one rule. A `function` declaration and a function
+    /// assigned to a variable carry an `id`; a callback is named by its call;
+    /// this one is named by the property it sits under. Without it, an object of
+    /// methods — the shape every API client in this corpus uses — put all their
+    /// locals in the ENCLOSING function's scope.
+    ///
+    /// MEASURED at 14 remaining collisions: `app/src/lib/api.ts` declares `const
+    /// p` in `getSessionsDigest`, `getLogs` and two more, all minting
+    /// `…·lib/api/fn/senseiApi·p·item` once.
+    ///
+    /// MUTATION: drop the property's `fn_scope.push` — the two collapse.
+    #[test]
+    fn a_function_assigned_to_an_object_property_is_named_by_that_property() {
+        let facts = js_facts(
+            "export function api() {\n\
+             \x20 return {\n\
+             \x20   get: () => { const p = 1; return p; },\n\
+             \x20   post: () => { const p = 2; return p; },\n\
+             \x20 };\n\
+             }\n",
+        );
+        let minted: Vec<&str> =
+            facts.symbols.iter().filter(|s| s.name == "p").map(|s| s.fqn.as_str()).collect();
+        assert_eq!(minted.len(), 2, "two declarations: {minted:?}");
+        let distinct: std::collections::BTreeSet<&&str> = minted.iter().collect();
+        assert_eq!(distinct.len(), 2, "two declarations, two identities: {minted:?}");
+        assert!(
+            minted.iter().any(|f| f.contains("fn/api/get")),
+            "named under the enclosing function AND its property: {minted:?}"
         );
     }
 
