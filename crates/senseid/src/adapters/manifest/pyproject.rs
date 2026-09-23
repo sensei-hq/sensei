@@ -94,7 +94,9 @@ impl ManifestAdapter for PyprojectManifestAdapter {
         let mut emit = |section: Option<&toml::Value>, runner: &str| {
             let Some(scripts) = section.and_then(|v| v.as_table()) else { return };
             for name in scripts.keys() {
-                if name.is_empty() {
+                // A name we cannot safely spell in a command line is not a
+                // command — see `is_safe_command_name`.
+                if !super::is_safe_command_name(name) {
                     continue;
                 }
                 out.push(super::DiscoveredCommand {

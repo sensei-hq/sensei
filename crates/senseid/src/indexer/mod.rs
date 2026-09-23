@@ -33,9 +33,10 @@ pub mod lang;
 pub mod persist;
 pub mod pipeline;
 pub mod reconcile;
+pub mod repo;
 pub mod resolve;
 pub mod scan_repo;
-pub mod scan_root;
+pub mod search;
 pub mod structure;
 
 /// Every guarded source file, as `(path relative to `src/indexer/`, body)`.

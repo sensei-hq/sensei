@@ -327,27 +327,6 @@ mod tests {
 
 // ── S4/S5/S6b: ONE walk that yields files, manifests and lockfiles ───────
 
-/// Lockfile names, per ecosystem. Stage 2 S6b.
-///
-/// These live here rather than on `ManifestAdapter` for now because the trait
-/// has no lockfile method yet; when it gains `lockfile_filenames()` this
-/// constant is DELETED and the set becomes registry-derived, exactly as the
-/// manifest set already is. Kept in one place so that swap is one edit.
-pub const LOCKFILE_NAMES: &[&str] = &[
-    "Cargo.lock",
-    "package-lock.json",
-    "pnpm-lock.yaml",
-    "yarn.lock",
-    "bun.lock",
-    "bun.lockb",
-    "poetry.lock",
-    "uv.lock",
-    "Gemfile.lock",
-    "composer.lock",
-    "go.sum",
-    "Package.resolved",
-];
-
 /// Everything one repo walk found. Paths are ABSOLUTE.
 #[derive(Debug, Clone, Default)]
 pub struct RepoScan {
@@ -406,7 +385,7 @@ pub fn scan_repo_files(repo_root: &Path) -> RepoScan {
         // Tested as the entry passes — no second traversal.
         if let Some(a) = crate::adapters::manifest::manifest_adapter_for_filename(name) {
             scan.manifests.push((path.to_path_buf(), a.ecosystem()));
-        } else if LOCKFILE_NAMES.contains(&name) {
+        } else if crate::adapters::manifest::all_lockfile_filenames().contains(&name) {
             scan.lockfiles.push(path.to_path_buf());
         }
         scan.files.push(path.to_path_buf());

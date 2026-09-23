@@ -407,6 +407,36 @@ pub fn adapter_for_ext(ext: &str) -> Option<&'static dyn LanguageAdapter> {
     all_adapters().iter().copied().find(|a| a.extensions().contains(&ext))
 }
 
+/// The languages THIS indexer owns in production — the cutover frontier.
+///
+/// THE ONE PLACE. Having an adapter and being the producer for a language are
+/// different facts: every adapter in [`all_adapters`] can read its language,
+/// but until v1's parser for that language is deleted, v1 is still writing the
+/// graph and both would be producing. So the frontier is a separate list, and
+/// it lives HERE rather than as a `== Language::Rust` in whichever handler
+/// happens to dispatch — a second copy of it is a language that flips in one
+/// code path and not another, which puts two producers with different fqn
+/// schemes on one set of tables.
+///
+/// ADDING A LANGUAGE HERE IS THE CUTOVER FOR IT, and it is a single commit with
+/// deleting `languages/<that language>.rs`. There is deliberately no fallback:
+/// `languages/fqn.rs` and `indexer/fqn.rs` mint different identities, so a
+/// graph holding both could never join them. A file this indexer cannot PLACE
+/// is not indexed — a visible gap, never a hand-off.
+pub const PRODUCTION_LANGUAGES: &[Language] = &[Language::Rust];
+
+/// Whether this indexer is the production producer for `language`.
+pub fn indexes_in_production(language: Language) -> bool {
+    PRODUCTION_LANGUAGES.contains(&language)
+}
+
+/// The adapter for this extension, but only when this indexer OWNS the
+/// language. `None` covers both "nothing claims it" and "v1 still owns it",
+/// which is what a dispatching caller needs to know and all it needs to know.
+pub fn production_adapter_for_ext(ext: &str) -> Option<&'static dyn LanguageAdapter> {
+    adapter_for_ext(ext).filter(|a| indexes_in_production(a.language()))
+}
+
 /// The canonical adapter for a language — the one whose IDENTITY rules
 /// (`file_fqn`, `module_path`, `type_segment`, `grammar`) are that language's.
 ///

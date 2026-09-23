@@ -1526,6 +1526,53 @@ impl PgStore {
         Ok(())
     }
 
+    /// Every folder at or under `repo_abs`, as `abs_path -> id`.
+    ///
+    /// What the manifest pass needs to turn a `link:`/`workspace:` sibling
+    /// dependency into a real folder→folder edge: the target is a PATH, and the
+    /// edge needs the id of the row at that path.
+    pub async fn folder_ids_under(
+        &self,
+        repo_abs: &str,
+    ) -> Result<std::collections::BTreeMap<std::path::PathBuf, uuid::Uuid>, String> {
+        let rows: Vec<(String, uuid::Uuid)> = sqlx_core::query_as::query_as(
+            "SELECT abs_path, id FROM sensei.folders
+              WHERE abs_path = $1 OR abs_path LIKE $1 || '/%'",
+        )
+        .bind(repo_abs)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(p, id)| (std::path::PathBuf::from(p), id)).collect())
+    }
+
+    /// The files that still need a parse: examined, not deliberately skipped,
+    /// and with no parse outcome recorded yet — the `files` lifecycle's
+    /// DISCOVERED state (`parsed_at NULL, skip_reason NULL`).
+    ///
+    /// This is what `ProcessRepoFiles` fans out over once the manifest gate
+    /// opens. Reading it back from the table rather than carrying a work list
+    /// on the task is what makes the gate IDEMPOTENT: a re-run enqueues only
+    /// what is still unparsed, because `parsed_at` advanced for everything the
+    /// previous run got through.
+    ///
+    /// `skip_reason IS NOT NULL` is excluded deliberately, not forgotten — an
+    /// unsupported or unparseable file HAS a row so the skip sticks, and
+    /// re-enqueueing it every pass is the infinite re-index loop that
+    /// fingerprinting the skip exists to prevent.
+    pub async fn list_unparsed_files(&self, folder_id: &uuid::Uuid) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT file_path FROM sensei.files
+              WHERE folder_id = $1 AND skip_reason IS NULL AND parsed_at IS NULL
+              ORDER BY file_path",
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(p,)| p).collect())
+    }
+
     /// All scan-state fingerprints for a folder as `(file_path, mtime,
     /// content_hash)`. Loaded once per scan so the indexer can run the two-tier
     /// change-detection (cheap mtime gate → content-hash gate) entirely in

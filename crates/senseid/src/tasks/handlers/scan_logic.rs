@@ -18,23 +18,6 @@ const IGNORED_DIRS: &[&str] =
 /// against a pathological tree.
 pub const MAX_SCAN_DEPTH: u32 = 8;
 
-/// A discovered folder with its classification.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DiscoveredFolder {
-    pub name: String,
-    pub path: PathBuf,
-    pub kind: FolderKind,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum FolderKind {
-    /// A real git repository (has a `.git`) — a project root.
-    Git,
-    /// A non-git directory that looks like a project the developer started but
-    /// never `git init`'d ("quasi-repo") — also treated as a project root.
-    Standalone,
-}
-
 /// True if `path` is a git **checkout** — it holds a `.git` that is either a
 /// directory (a normal clone) OR a file (a linked worktree / submodule
 /// "gitlink", whose `.git` is a text file pointing at the real git dir).
@@ -44,15 +27,6 @@ pub enum FolderKind {
 pub fn is_checkout(path: &Path) -> bool {
     let g = path.join(".git");
     g.is_dir() || g.is_file()
-}
-
-/// Find all .git directories under root up to max_depth.
-/// Returns parent directories of .git (the actual git folders).
-pub fn find_git_folders(root: &Path, max_depth: u32) -> Vec<PathBuf> {
-    let mut result = Vec::new();
-    walk_for_git(root, 0, max_depth, &mut result);
-    result.sort();
-    result
 }
 
 /// True if `path` is at or under any exclusion. THE one owner of that rule —
@@ -76,9 +50,9 @@ pub fn find_git_folders(root: &Path, max_depth: u32) -> Vec<PathBuf> {
 /// and `graph.rs:513`. It cost 289,258 vendored OpenSSL `#define` nodes, 40% of
 /// the graph, indexed from a path that HAD been excluded.
 pub fn is_excluded(path: &Path, exclusions: &[String]) -> bool {
-    let p = path.to_string_lossy();
+    let p = fold_case(&path.to_string_lossy());
     exclusions.iter().any(|ex| {
-        let ex = ex.trim_start_matches('/').trim_end_matches('/');
+        let ex = fold_case(ex.trim_start_matches('/').trim_end_matches('/'));
         if ex.is_empty() {
             return false;
         }
@@ -93,63 +67,24 @@ pub fn is_excluded(path: &Path, exclusions: &[String]) -> bool {
     })
 }
 
-fn walk_for_git(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) {
-    if depth > max_depth {
-        return;
+/// Normalise a path for comparison on a filesystem where case does not
+/// distinguish two paths.
+///
+/// AN EXCLUSION IS A PRIVACY BOUNDARY, so this compares the way the FILESYSTEM
+/// does. macOS APFS and Windows NTFS are case-insensitive by default —
+/// `~/dev/Archive` and `~/dev/archive` are one directory — so a byte-exact
+/// comparison fails OPEN there: the user stores `archive`, the walker reports
+/// `Archive`, nothing matches, and the subtree they asked us never to read is
+/// read into the database anyway.
+///
+/// Left exact on Linux, where the two really are different directories and
+/// folding would exclude a subtree the user never named.
+fn fold_case(s: &str) -> String {
+    if cfg!(any(target_os = "macos", target_os = "windows")) {
+        s.to_lowercase()
+    } else {
+        s.to_string()
     }
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        // Skip symlinks: a symlinked repo (e.g. `sensei-hq/gateway` →
-        // `strategos/gateway`) is already reached via its real path, so following
-        // the link would classify the same repo twice → two projects.
-        if entry.file_type().map(|t| t.is_symlink()).unwrap_or(false) {
-            continue;
-        }
-        if !path.is_dir() {
-            continue;
-        }
-
-        // Detect-before-prune (D15d): record a checkout even when its own
-        // directory name is dotfile-prefixed or an IGNORED_DIRS build-output
-        // name (a repo literally named `build`). `is_checkout` also matches a
-        // `.git`-FILE worktree/submodule, not just a `.git` directory. Then
-        // descend INTO it so a nested checkout (submodule / vendored clone)
-        // surfaces as its own root — the walk no longer halts at the first
-        // `.git` (the core D15 fix). Descent stays affordable: `.git` internals
-        // are dotfile-skipped and IGNORED_DIRS/symlinks are pruned below.
-        if is_checkout(&path) {
-            out.push(path.clone());
-            walk_for_git(&path, depth + 1, max_depth, out);
-            continue;
-        }
-
-        // A non-checkout dir: prune generated / hidden dirs, else keep descending.
-        if name.starts_with('.') || IGNORED_DIRS.contains(&name.as_str()) {
-            continue;
-        }
-        walk_for_git(&path, depth + 1, max_depth, out);
-    }
-}
-
-/// Compute the set of ancestor directories from git folders up to root.
-pub fn ancestor_set(root: &Path, git_folders: &[PathBuf]) -> std::collections::HashSet<PathBuf> {
-    let mut ancestors = std::collections::HashSet::new();
-    for gf in git_folders {
-        let mut current = gf.parent();
-        while let Some(p) = current {
-            if p == root {
-                break;
-            }
-            ancestors.insert(p.to_path_buf());
-            current = p.parent();
-        }
-    }
-    ancestors
 }
 
 /// True when `dir` lives INSIDE a git repository — i.e. any ancestor strictly
@@ -169,105 +104,6 @@ pub fn is_inside_git_repo(dir: &Path) -> bool {
         cur = p.parent();
     }
     false
-}
-
-/// Collect all non-ignored subdirectories under root (one level deep per directory, recursive).
-pub fn all_directories(root: &Path, max_depth: u32) -> Vec<PathBuf> {
-    let mut result = Vec::new();
-    walk_dirs(root, 0, max_depth, &mut result);
-    result.sort();
-    result
-}
-
-fn walk_dirs(dir: &Path, depth: u32, max_depth: u32, out: &mut Vec<PathBuf>) {
-    if depth > max_depth {
-        return;
-    }
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if !path.is_dir() || name.starts_with('.') {
-            continue;
-        }
-        if IGNORED_DIRS.contains(&name.as_str()) {
-            continue;
-        }
-
-        out.push(path.clone());
-        // Don't recurse into a checkout — its contents are that repo's content,
-        // never quasi-repo candidates (`.git`-FILE worktrees included).
-        if !is_checkout(&path) {
-            walk_dirs(&path, depth + 1, max_depth, out);
-        }
-    }
-}
-
-/// Classify directories into **project roots** only: real git repos (`Git`) and
-/// "quasi-repos" — non-git directories that look like a project the developer
-/// started but never `git init`'d (`Standalone`).
-///
-/// A non-git directory is a quasi-repo when it sits at a project-root position
-/// (not inside any git repo or another quasi-repo, and not a grouping container
-/// of git repos) AND `has_code` reports indexable source for it. Candidates are
-/// considered shallowest-first so a nested directory is recognised as content of
-/// the project root above it rather than promoted to its own project.
-///
-/// Everything else — grouping containers, code-less loose folders, and any
-/// subfolder inside a project root — is intentionally NOT returned. The scan
-/// tracks project roots; it never promotes subfolders to repos (those become
-/// `kind=folder` rows under their parent, handled separately).
-pub fn classify_folders(
-    root: &Path,
-    git_folders: &[PathBuf],
-    all_dirs: &[PathBuf],
-    has_code: impl Fn(&Path) -> bool,
-) -> Vec<DiscoveredFolder> {
-    let git_set: std::collections::HashSet<&PathBuf> = git_folders.iter().collect();
-    let ancestors = ancestor_set(root, git_folders);
-
-    let mut result: Vec<DiscoveredFolder> = git_folders
-        .iter()
-        .map(|gf| DiscoveredFolder {
-            name: gf.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string(),
-            path: gf.clone(),
-            kind: FolderKind::Git,
-        })
-        .collect();
-
-    // Project roots grow as quasi-repos are discovered; seed with git repos so a
-    // non-git dir inside a repo is never re-promoted.
-    let mut project_roots: Vec<PathBuf> = git_folders.to_vec();
-
-    // Candidate non-git directories, shallowest first.
-    let mut candidates: Vec<&PathBuf> = all_dirs
-        .iter()
-        .filter(|d| !git_set.contains(*d)) // not a git repo itself
-        .filter(|d| !ancestors.contains(*d)) // not a git-repo grouping container
-        .filter(|d| !is_inside_git_repo(d)) // not inside ANY git repo (fs-checked, incl. a repo at/above the scan root)
-        .collect();
-    candidates.sort_by_key(|d| d.components().count());
-
-    for dir in candidates {
-        // Inside a project root already chosen (git or quasi)? → it's content, skip.
-        if project_roots.iter().any(|pr| pr != dir && dir.starts_with(pr)) {
-            continue;
-        }
-        if has_code(dir) {
-            project_roots.push((*dir).clone());
-            result.push(DiscoveredFolder {
-                name: dir.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string(),
-                path: (*dir).clone(),
-                kind: FolderKind::Standalone,
-            });
-        }
-        // else: code-less loose directory → not a project root, not registered.
-    }
-
-    result
 }
 
 /// Build the complete subfolder tree under a project root from the set of
@@ -305,19 +141,6 @@ pub fn subfolder_tree(repo_path: &Path, file_dirs: &[PathBuf]) -> Vec<(PathBuf, 
         .collect()
 }
 
-/// How confident we are that a non-git directory is a real project root.
-/// Returned by [`classify_quasi_repo`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuasiKind {
-    /// Has a recognised manifest (`Cargo.toml`, `package.json`, `go.mod`, …) —
-    /// strongly likely a real project the developer simply never `git init`'d.
-    Manifest,
-    /// No manifest, but holds recognised source / Markdown files — likely a
-    /// project but unconfirmed (a scattered old code store, a docs folder).
-    /// Indexed, but flagged for the user to keep / organise / discard.
-    LooseCode,
-}
-
 /// True if a file extension marks first-party *source* the scanner treats as a
 /// project signal: a language the parser supports, a common source language we
 /// recognise without a parser adapter, or Markdown docs. Data, config, and
@@ -329,39 +152,6 @@ pub enum QuasiKind {
 /// edit, not two.
 pub fn is_project_source_ext(ext: &str) -> bool {
     crate::classifiers::file_classifier().is_source_file(ext)
-}
-
-/// Classify a non-git directory as a quasi-repo (a project the developer never
-/// `git init`'d) and how confident we are. `None` means "not a project root" —
-/// only data / config / binaries / nothing recognised — so it is not promoted.
-///
-/// Tier 1 [`QuasiKind::Manifest`]: a recognised manifest → confident project.
-/// Tier 2 [`QuasiKind::LooseCode`]: ≥1 recognised source / `.md` file but no
-/// manifest → indexed, then flagged for review.
-pub fn classify_quasi_repo(dir: &Path) -> Option<QuasiKind> {
-    if !detect_stack(dir).is_empty() {
-        return Some(QuasiKind::Manifest);
-    }
-    let entries = std::fs::read_dir(dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if let Some(ext) = path.extension().and_then(|e| e.to_str())
-            && is_project_source_ext(ext)
-        {
-            return Some(QuasiKind::LooseCode);
-        }
-    }
-    None
-}
-
-/// True if a directory is a project root worth indexing — a quasi-repo of either
-/// tier (manifest-backed or loose source). Used by [`classify_folders`] to gate
-/// promotion; the tier itself ([`classify_quasi_repo`]) drives the review flag.
-pub fn has_indexable_code(dir: &Path) -> bool {
-    classify_quasi_repo(dir).is_some()
 }
 
 /// Detect if a git folder is a monorepo (has workspace config).
@@ -388,95 +178,6 @@ pub fn is_monorepo(path: &Path) -> bool {
         return true;
     }
     false
-}
-
-/// The incremental re-index decision for a folder. Pure output of
-/// [`plan_reindex`]: the two-tier gate that keeps a no-op / touch-only re-scan
-/// near-free.
-#[derive(Debug, Default, PartialEq)]
-pub struct ReindexPlan {
-    /// Files to (re)index: new, or whose mtime AND content changed.
-    pub changed: std::collections::HashSet<String>,
-    /// Files whose mtime drifted but whose bytes are identical (touch, checkout,
-    /// branch-switch-to-same-content). Their nodes/embeddings are still valid,
-    /// so we DON'T reindex — we only refresh the stored mtime so the cheap gate
-    /// hits next pass. `(rel_path, new_mtime, content_hash)`.
-    pub touched: Vec<(String, i64, String)>,
-    /// Files indexed before but no longer present on disk — drop their nodes.
-    pub removed: Vec<String>,
-    /// Count of files the cheap mtime gate skipped (never read, never hashed).
-    /// Surfaced for logging so a no-op scan can be shown to be stats-only.
-    pub unchanged: usize,
-    /// How many indexable files this folder has on disk right now — the
-    /// DENOMINATOR for folder completeness. `changed + touched + unchanged`
-    /// partitions it exactly.
-    ///
-    /// Folder status is otherwise decided by the task queue reaching
-    /// `DetectCommunities`, which is not dependable: the daily analyzer
-    /// enqueues that task UNBLOCKED (`analyzer_scheduler.rs:252`), so it can
-    /// run against a partially-indexed folder. Completeness derived from
-    /// persisted per-file facts is trustworthy instead — but only with a
-    /// denominator. Counting just the rows that EXIST cannot work: a walk that
-    /// dies at file 40 of 100 leaves 40 rows all marked decided and 60 with no
-    /// row at all, so "no undecided rows" is vacuously true.
-    ///
-    /// A file deleted on disk is absent from this count (it is in `removed`),
-    /// so a folder is never left waiting on a file that is gone.
-    pub expected: usize,
-}
-
-/// Diff the working tree against the last index with a two-tier gate so a
-/// no-op or touch-only re-scan is near-free (this is what makes a *frequent*
-/// safety-net reconcile affordable):
-///
-///   1. **mtime gate (cheap, stat-only):** a file whose on-disk mtime equals
-///      its stored mtime is UNCHANGED — never read, never hashed, never
-///      reindexed. This is the common case on a no-op scan.
-///   2. **content-hash gate:** a file whose mtime differs (or that has no prior)
-///      is a *candidate*. A file with a prior fingerprint is hashed (via the
-///      injected `hash_file`) and compared to its stored hash — identical ⇒
-///      `touched` (refresh mtime only), different ⇒ `changed` (reindex). A
-///      brand-new file goes straight to `changed` (nothing to compare, so it is
-///      never hashed here).
-///
-/// `current` is the set of indexable files as `(rel_path, mtime_ms)` on disk
-/// now; `prior` maps each previously-indexed `rel_path` to its
-/// `(mtime, content_hash)`. `hash_file(rel_path) -> Option<hex>` performs the
-/// only I/O — injecting it keeps this function pure and lets tests spy the
-/// hash-call count. A candidate whose hash can't be computed (unreadable) is
-/// treated as `changed` so it is never silently dropped.
-pub fn plan_reindex<F>(
-    current: &[(String, i64)],
-    prior: &std::collections::HashMap<String, (i64, String)>,
-    mut hash_file: F,
-) -> ReindexPlan
-where
-    F: FnMut(&str) -> Option<String>,
-{
-    let current_set: std::collections::HashSet<&String> = current.iter().map(|(p, _)| p).collect();
-    // `expected` is the denominator, taken from the caller's already-filtered
-    // disk listing rather than recomputed — one owner for "which files count".
-    let mut plan = ReindexPlan { expected: current.len(), ..Default::default() };
-    for (path, mtime) in current {
-        match prior.get(path) {
-            // Cheap mtime gate: unchanged → skip without any read/hash.
-            Some((prev_mtime, _)) if prev_mtime == mtime => plan.unchanged += 1,
-            // mtime drifted with a prior on record: hash to tell a real edit
-            // from a mere touch.
-            Some((_, prev_hash)) => match hash_file(path) {
-                Some(h) if &h == prev_hash => plan.touched.push((path.clone(), *mtime, h)),
-                _ => {
-                    plan.changed.insert(path.clone());
-                }
-            },
-            // Brand-new file: reindex (no prior to compare against, so no hash).
-            None => {
-                plan.changed.insert(path.clone());
-            }
-        }
-    }
-    plan.removed = prior.keys().filter(|path| !current_set.contains(*path)).cloned().collect();
-    plan
 }
 
 /// Detect technology stack from config files in a git folder.
@@ -719,30 +420,6 @@ pub fn symlink_repository_links(folders: &[FolderPathIdentity]) -> Vec<(uuid::Uu
 /// question, drifting silently.
 pub fn file_passes_scan_filters(rel: &str, ext: &str, exclude: &globset::GlobSet) -> bool {
     !ext.is_empty() && !super::helpers::is_binary_ext(ext) && !exclude.is_match(rel)
-}
-
-/// Count indexable files in a git folder (respecting ignore patterns).
-/// Returns (file_paths, total_count).
-pub fn count_indexable_files(path: &Path) -> (Vec<PathBuf>, u32) {
-    let exclude = super::helpers::build_globset();
-    let mut files = Vec::new();
-
-    let walker = super::helpers::build_walker(path).build();
-
-    for entry in walker.flatten() {
-        if !entry.path().is_file() {
-            continue;
-        }
-        let rel = entry.path().strip_prefix(path).unwrap_or(entry.path());
-        let ext = entry.path().extension().and_then(|e| e.to_str()).unwrap_or("");
-        if !file_passes_scan_filters(&rel.to_string_lossy(), ext, exclude) {
-            continue;
-        }
-        files.push(entry.path().to_path_buf());
-    }
-
-    let count = files.len() as u32;
-    (files, count)
 }
 
 /// True if a directory tree holds at least one indexable (non-binary) source
@@ -1028,45 +705,6 @@ mod tests {
         assert!(!idx("Makefile"), "no extension");
     }
 
-    /// The count path and the index path must answer identically, because they
-    /// now share one predicate. They did not: the walk applied the exclude glob
-    /// only to decide whether a file's PARENT DIRECTORY was discoverable, so an
-    /// excluded file sitting beside an included one was indexed anyway.
-    #[test]
-    fn the_count_path_and_the_file_predicate_agree_on_one_tree() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        std::fs::create_dir_all(root.join("src")).unwrap();
-        for (name, _) in [
-            ("src/widget.ts", ()),
-            ("src/widget.spec.ts", ()),
-            ("src/app.min.js", ()),
-            ("src/app.js.map", ()),
-        ] {
-            std::fs::write(root.join(name), "export const a = 1;\n").unwrap();
-        }
-
-        let (counted, _) = count_indexable_files(root);
-        let counted: std::collections::BTreeSet<String> = counted
-            .iter()
-            .map(|p| p.strip_prefix(root).unwrap().to_string_lossy().to_string())
-            .collect();
-
-        let gs = super::super::helpers::build_globset();
-        let predicted: std::collections::BTreeSet<String> =
-            ["src/widget.ts", "src/widget.spec.ts", "src/app.min.js", "src/app.js.map"]
-                .iter()
-                .filter(|rel| {
-                    let ext = Path::new(rel).extension().and_then(|e| e.to_str()).unwrap_or("");
-                    file_passes_scan_filters(rel, ext, gs)
-                })
-                .map(|s| s.to_string())
-                .collect();
-
-        assert_eq!(counted, predicted, "the two paths must select the same files");
-        assert!(counted.contains("src/widget.spec.ts"), "the spec is kept");
-        assert!(!counted.contains("src/app.min.js"), "the bundle is dropped");
-    }
     use super::*;
 
     // ── role inference ───────────────────────────────────────────────────
@@ -1257,38 +895,6 @@ mod tests {
         tmp
     }
 
-    #[test]
-    fn find_git_folders_discovers_all() {
-        let fixture = create_fixture();
-        let gits = find_git_folders(fixture.path(), 3);
-        let names: Vec<&str> =
-            gits.iter().map(|p| p.file_name().unwrap().to_str().unwrap()).collect();
-        assert_eq!(names.len(), 4);
-        assert!(names.contains(&"fldr_1"));
-        assert!(names.contains(&"fldr_2"));
-        assert!(names.contains(&"fldr_3"));
-        assert!(names.contains(&"standalone"));
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn find_git_folders_dedupes_symlinked_repo() {
-        // A repo reachable via two paths (a real dir + a symlink to it) must be
-        // ONE folder, not two — else it double-counts as two projects (the
-        // sensei-hq/gateway → strategos/gateway case).
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        std::fs::create_dir_all(root.join("strategos/gateway/.git")).unwrap();
-        std::os::unix::fs::symlink(root.join("strategos/gateway"), root.join("sensei-hq_gateway"))
-            .unwrap();
-        let gits = find_git_folders(root, 3);
-        assert_eq!(gits.len(), 1, "symlinked repo counted once, got {gits:?}");
-        assert!(
-            gits[0].ends_with("strategos/gateway"),
-            "canonicalized to the real path, got {gits:?}"
-        );
-    }
-
     // ── D15: checkout detection + nested/deep discovery ──────────────────
     #[test]
     fn is_checkout_true_for_git_dir_and_git_file() {
@@ -1306,99 +912,6 @@ mod tests {
         let plain = tmp.path().join("plain");
         std::fs::create_dir_all(&plain).unwrap();
         assert!(!is_checkout(&plain), "a dir with no .git is not a checkout");
-    }
-
-    #[test]
-    fn walk_for_git_descends_into_nested_checkout() {
-        // A repo with a nested checkout (vendored dep / submodule) must yield
-        // BOTH the outer repo AND the nested one — the recursion no longer halts
-        // at the first `.git` (the core D15 fix). Previously only `repo` was
-        // discovered and `repo/vendor/lib` was masked as its content.
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        std::fs::create_dir_all(root.join("repo/.git")).unwrap();
-        std::fs::create_dir_all(root.join("repo/vendor/lib/.git")).unwrap();
-        let gits = find_git_folders(root, MAX_SCAN_DEPTH);
-        assert!(gits.iter().any(|p| p.ends_with("repo")), "outer repo discovered: {gits:?}");
-        assert!(
-            gits.iter().any(|p| p.ends_with("repo/vendor/lib")),
-            "nested checkout discovered: {gits:?}"
-        );
-    }
-
-    #[test]
-    fn find_git_folders_discovers_git_file_worktree_and_submodule() {
-        // A checkout whose `.git` is a FILE (a linked worktree or a submodule
-        // gitlink) must be discovered as a root — previously only `.git`
-        // DIRECTORIES were, so every worktree/submodule was invisible.
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        let wt = root.join("worktree");
-        std::fs::create_dir_all(&wt).unwrap();
-        std::fs::write(wt.join(".git"), "gitdir: /main/.git/worktrees/wt\n").unwrap();
-        let gits = find_git_folders(root, MAX_SCAN_DEPTH);
-        assert!(
-            gits.iter().any(|p| p.ends_with("worktree")),
-            "gitlink checkout discovered: {gits:?}"
-        );
-    }
-
-    #[test]
-    fn find_git_folders_finds_checkout_below_depth_3() {
-        // A checkout deeper than the old hardcoded depth-3 bound must be found
-        // now that MAX_SCAN_DEPTH lifts it.
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        std::fs::create_dir_all(root.join("l1/l2/l3/l4/repo/.git")).unwrap();
-        // The old bound (3) could not reach a depth-5 checkout — documents the limit.
-        assert!(
-            !find_git_folders(root, 3).iter().any(|p| p.ends_with("repo")),
-            "depth-3 bound cannot reach a depth-5 checkout"
-        );
-        // The lifted bound reaches it.
-        assert!(
-            find_git_folders(root, MAX_SCAN_DEPTH).iter().any(|p| p.ends_with("repo")),
-            "MAX_SCAN_DEPTH reaches the deep checkout"
-        );
-    }
-
-    #[test]
-    fn detect_before_prune_git_inside_ignored_name() {
-        // A checkout whose OWN directory name collides with an ignored
-        // build-output name (a repo literally named `build`) or is dotfile-
-        // prefixed must still be detected — `is_checkout` runs BEFORE the
-        // IGNORED_DIRS / dotfile skip (detect-before-prune, D15d).
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        std::fs::create_dir_all(root.join("build/.git")).unwrap(); // ignored NAME, real repo
-        std::fs::create_dir_all(root.join(".hidden_repo/.git")).unwrap(); // dotfile-prefixed repo
-        let gits = find_git_folders(root, MAX_SCAN_DEPTH);
-        assert!(
-            gits.iter().any(|p| p.ends_with("build")),
-            "checkout named `build` detected: {gits:?}"
-        );
-        assert!(
-            gits.iter().any(|p| p.ends_with(".hidden_repo")),
-            "dotfile-prefixed checkout detected: {gits:?}"
-        );
-    }
-
-    #[test]
-    fn all_directories_does_not_descend_into_git_file_checkout() {
-        // `walk_dirs` must treat a `.git`-FILE checkout as a git boundary just
-        // like a `.git`-DIR one — otherwise a worktree's internal dirs leak into
-        // the quasi-repo candidate set.
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        let wt = root.join("worktree");
-        std::fs::create_dir_all(wt.join("src")).unwrap();
-        std::fs::write(wt.join(".git"), "gitdir: /main/.git/worktrees/wt\n").unwrap();
-        let dirs = all_directories(root, MAX_SCAN_DEPTH);
-        assert!(dirs.iter().any(|d| d.ends_with("worktree")), "the checkout dir itself is listed");
-        assert!(
-            !dirs.iter().any(|d| d.ends_with("worktree/src")),
-            "must NOT descend into a .git-FILE checkout (its src is repo content, not a candidate root)"
-        );
     }
 
     #[test]
@@ -1453,6 +966,36 @@ mod tests {
         assert!(!is_excluded(Path::new("/Users/dev/Work/pre-sales/find-me-board/src/a.ts"), &ex));
     }
 
+    /// AN EXCLUSION IS A PRIVACY BOUNDARY, and on a case-insensitive
+    /// filesystem a case mismatch must not silently defeat it.
+    ///
+    /// macOS APFS and Windows NTFS are case-insensitive by default, so
+    /// `~/dev/Archive` and `~/dev/archive` are the SAME directory. A byte-exact
+    /// comparison between the stored exclusion and the path the walker reports
+    /// therefore fails open: the user believes the subtree is excluded, and its
+    /// file contents are read into the database anyway.
+    #[test]
+    fn an_exclusion_matches_regardless_of_case_on_a_case_insensitive_filesystem() {
+        if !cfg!(any(target_os = "macos", target_os = "windows")) {
+            return; // case-sensitive filesystem: the two really are different dirs
+        }
+        let excl = vec!["archive".to_string()];
+        assert!(
+            is_excluded(Path::new("/Users/dev/Archive/secret.rs"), &excl),
+            "a stored `archive` must exclude on-disk `Archive` — they are one directory here"
+        );
+        let excl = vec!["/Users/dev/Archive".to_string()];
+        assert!(
+            is_excluded(Path::new("/Users/dev/archive/secret.rs"), &excl),
+            "and the absolute form too"
+        );
+        // Still boundary-anchored: folding case must not make it a substring match.
+        assert!(
+            !is_excluded(Path::new("/Users/dev/Archiver/x.rs"), &["archive".to_string()]),
+            "`archive` must not exclude `Archiver`"
+        );
+    }
+
     #[test]
     fn is_excluded_matches_prefix_and_self_but_not_siblings() {
         let ex = vec!["/Users/dev/Developer/Code".to_string(), "/tmp/junk/".to_string()];
@@ -1469,39 +1012,6 @@ mod tests {
     }
 
     #[test]
-    fn ancestor_set_computes_intermediates() {
-        let fixture = create_fixture();
-        let gits = find_git_folders(fixture.path(), 3);
-        let anc = ancestor_set(fixture.path(), &gits);
-        // proj_a is an ancestor of fldr_1, fldr_2, fldr_3
-        assert!(anc.contains(&fixture.path().join("proj_a")));
-        // root is NOT included (we stop at root)
-        assert!(!anc.contains(&fixture.path().to_path_buf()));
-    }
-
-    #[test]
-    fn classify_returns_only_git_when_non_git_dirs_have_no_code() {
-        // meeting_notes and random_docs in the fixture have no files → not
-        // quasi-repos. classify should return just the 4 git repos.
-        let fixture = create_fixture();
-        let gits = find_git_folders(fixture.path(), 3);
-        let dirs = all_directories(fixture.path(), 3);
-        let classified = classify_folders(fixture.path(), &gits, &dirs, has_indexable_code);
-
-        let git_names: Vec<&str> = classified
-            .iter()
-            .filter(|f| f.kind == FolderKind::Git)
-            .map(|f| f.name.as_str())
-            .collect();
-        assert_eq!(git_names.len(), 4);
-        assert!(git_names.contains(&"fldr_1"));
-        assert!(git_names.contains(&"standalone"));
-
-        // No quasi-repos: the only non-git dirs hold no indexable code.
-        assert!(!classified.iter().any(|f| f.kind == FolderKind::Standalone));
-    }
-
-    #[test]
     fn is_project_source_ext_covers_code_and_md_not_data() {
         // parser languages + common unparsed source + markdown count
         for e in ["py", "rs", "ts", "cpp", "h", "go", "rb", "sh", "pl", "php", "lua", "md", "mdx"] {
@@ -1512,94 +1022,6 @@ mod tests {
         for e in ["csv", "txt", "json", "yaml", "toml", "png", "lock", "log", "pdf"] {
             assert!(!is_project_source_ext(e), "{e} should NOT count as project source");
         }
-    }
-
-    #[test]
-    fn classify_quasi_repo_tiers_manifest_loose_and_none() {
-        let tmp = tempfile::tempdir().unwrap();
-
-        // Tier 1 — manifest → confident project
-        let manifest = tmp.path().join("manifest");
-        std::fs::create_dir_all(&manifest).unwrap();
-        std::fs::write(manifest.join("Cargo.toml"), "[package]\nname=\"m\"").unwrap();
-        assert_eq!(classify_quasi_repo(&manifest), Some(QuasiKind::Manifest));
-
-        // Tier 2 — loose code (no manifest) → flagged
-        let cpp = tmp.path().join("cpp");
-        std::fs::create_dir_all(&cpp).unwrap();
-        std::fs::write(cpp.join("main.cpp"), "int main(){}").unwrap();
-        std::fs::write(cpp.join("util.h"), "#pragma once").unwrap();
-        assert_eq!(classify_quasi_repo(&cpp), Some(QuasiKind::LooseCode));
-
-        // Tier 2 — markdown docs folder → flagged (treated as a docs project)
-        let docs = tmp.path().join("docs");
-        std::fs::create_dir_all(&docs).unwrap();
-        std::fs::write(docs.join("guide.md"), "# Guide").unwrap();
-        assert_eq!(classify_quasi_repo(&docs), Some(QuasiKind::LooseCode));
-
-        // Tier 3 — data only (csv/txt) → NOT a project
-        let data = tmp.path().join("data");
-        std::fs::create_dir_all(&data).unwrap();
-        std::fs::write(data.join("rows.csv"), "a,b\n1,2\n").unwrap();
-        std::fs::write(data.join("notes.txt"), "scratch").unwrap();
-        assert_eq!(classify_quasi_repo(&data), None);
-
-        // Tier 3 — empty → NOT a project
-        let empty = tmp.path().join("empty");
-        std::fs::create_dir_all(&empty).unwrap();
-        assert_eq!(classify_quasi_repo(&empty), None);
-    }
-
-    #[test]
-    fn classify_detects_quasi_repo_with_code() {
-        // A non-git directory at project-root position WITH a manifest is a
-        // quasi-repo; a code-less sibling next to it is not.
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        // a real git repo so quasi-repo siblings are at project-root position
-        std::fs::create_dir_all(root.join("real-repo/.git")).unwrap();
-        std::fs::write(root.join("real-repo/Cargo.toml"), "[package]\nname=\"r\"").unwrap();
-        // forgot-to-git-init project (manifest) → quasi-repo
-        std::fs::create_dir_all(root.join("forgotten")).unwrap();
-        std::fs::write(root.join("forgotten/package.json"), r#"{"name":"f"}"#).unwrap();
-        // a top-level non-git dir with a loose source file → quasi-repo
-        std::fs::create_dir_all(root.join("scripts")).unwrap();
-        std::fs::write(root.join("scripts/run.py"), "print('hi')\n").unwrap();
-        // junk: only data/binary + nothing → not a quasi-repo
-        std::fs::create_dir_all(root.join("Archive")).unwrap();
-        std::fs::write(root.join("Archive/photo.png"), [0u8; 8]).unwrap();
-
-        let gits = find_git_folders(root, 3);
-        let dirs = all_directories(root, 3);
-        let classified = classify_folders(root, &gits, &dirs, has_indexable_code);
-
-        let quasi: Vec<&str> = classified
-            .iter()
-            .filter(|f| f.kind == FolderKind::Standalone)
-            .map(|f| f.name.as_str())
-            .collect();
-        assert!(quasi.contains(&"forgotten"), "manifest folder is a quasi-repo");
-        assert!(quasi.contains(&"scripts"), "loose-source folder is a quasi-repo");
-        assert!(!quasi.contains(&"Archive"), "binary-only folder is not a quasi-repo");
-    }
-
-    #[test]
-    fn classify_does_not_promote_subfolders_of_a_quasi_repo() {
-        // A quasi-repo's own subdirectories must not each become a project root.
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        std::fs::create_dir_all(root.join("proj/src")).unwrap();
-        std::fs::write(root.join("proj/Cargo.toml"), "[package]\nname=\"p\"").unwrap();
-        std::fs::write(root.join("proj/src/main.rs"), "fn main() {}").unwrap();
-
-        let gits = find_git_folders(root, 3);
-        let dirs = all_directories(root, 3);
-        let classified = classify_folders(root, &gits, &dirs, has_indexable_code);
-
-        // Exactly one project root: `proj`. `proj/src` is content, not a repo.
-        assert_eq!(classified.len(), 1);
-        assert_eq!(classified[0].name, "proj");
-        assert_eq!(classified[0].kind, FolderKind::Standalone);
     }
 
     #[test]
@@ -1616,100 +1038,6 @@ mod tests {
         let outside = tmp.path().join("loose");
         std::fs::create_dir_all(&outside).unwrap();
         assert!(!is_inside_git_repo(&outside));
-    }
-
-    #[test]
-    fn classify_does_not_promote_manifest_subdir_inside_a_git_repo() {
-        // Bug 3: when the scan is rooted AT a git repo (its own `.git` sits at the
-        // scan root, so `find_git_folders` — which starts at children — never
-        // discovers it), a manifest-bearing sub-crate must NOT be promoted to its
-        // own standalone project. It belongs to the enclosing repo's project.
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("repo");
-        std::fs::create_dir_all(repo.join(".git")).unwrap();
-        std::fs::create_dir_all(repo.join("crates/mycrate/src")).unwrap();
-        std::fs::write(repo.join("crates/mycrate/Cargo.toml"), "[package]\nname=\"mycrate\"")
-            .unwrap();
-        std::fs::write(repo.join("crates/mycrate/src/lib.rs"), "pub fn a() {}").unwrap();
-
-        // Scan rooted at the repo itself → its own `.git` is not among git_folders.
-        let gits = find_git_folders(&repo, 3);
-        assert!(
-            gits.is_empty(),
-            "repo's own .git at the scan root is not discovered as a child git folder"
-        );
-        let dirs = all_directories(&repo, 3);
-        let classified = classify_folders(&repo, &gits, &dirs, has_indexable_code);
-
-        // The manifest-bearing sub-crate must NOT become a standalone project root.
-        assert!(
-            !classified.iter().any(|f| f.kind == FolderKind::Standalone),
-            "a Cargo.toml sub-dir inside a git repo must not be promoted to standalone, got {classified:?}",
-        );
-    }
-
-    #[test]
-    fn classify_does_not_promote_member_when_git_repo_is_a_child_of_scan_root() {
-        // #101 regression (the LIVE shape): scan rooted ABOVE the repo (e.g.
-        // ~/Developer), the git repo is a child (~/Developer/repo/.git), and a
-        // workspace member (crates/mycrate) sits inside it. `find_git_folders`
-        // DOES discover the child repo, so the member must be excluded as content
-        // of that repo — never promoted to its own Standalone root (which is what
-        // produced the 2026-07-13 double-owner residue). Genuine sibling repos and
-        // standalone projects OUTSIDE the git repo are still discovered.
-        let tmp = tempfile::tempdir().unwrap();
-        let scan_root = tmp.path();
-        let repo = scan_root.join("repo");
-        std::fs::create_dir_all(repo.join(".git")).unwrap();
-        std::fs::create_dir_all(repo.join("crates/mycrate/src")).unwrap();
-        std::fs::write(repo.join("crates/mycrate/Cargo.toml"), "[package]\nname=\"mycrate\"")
-            .unwrap();
-        std::fs::write(repo.join("crates/mycrate/src/lib.rs"), "pub fn a() {}").unwrap();
-        // A real standalone project OUTSIDE the repo — must still be discovered.
-        // Manifest sits directly in `loose/` (has_indexable_code checks direct files).
-        std::fs::create_dir_all(scan_root.join("loose")).unwrap();
-        std::fs::write(scan_root.join("loose/go.mod"), "module loose").unwrap();
-
-        let gits = find_git_folders(scan_root, 3);
-        assert!(gits.iter().any(|g| g == &repo), "the child git repo is discovered");
-        let dirs = all_directories(scan_root, 3);
-        let classified = classify_folders(scan_root, &gits, &dirs, has_indexable_code);
-
-        // The member inside the git repo is NOT a project root of any kind.
-        assert!(
-            !classified.iter().any(|f| f.path == repo.join("crates/mycrate")),
-            "a workspace member inside a git repo must not be classified as a root; got {classified:?}",
-        );
-        // The enclosing repo IS a Git root; the outside loose project IS Standalone.
-        assert!(classified.iter().any(|f| f.path == repo && f.kind == FolderKind::Git));
-        assert!(
-            classified
-                .iter()
-                .any(|f| f.path == scan_root.join("loose") && f.kind == FolderKind::Standalone)
-        );
-    }
-
-    #[test]
-    fn has_indexable_code_distinguishes_projects_from_junk() {
-        let tmp = tempfile::tempdir().unwrap();
-        let manifest = tmp.path().join("m");
-        std::fs::create_dir_all(&manifest).unwrap();
-        std::fs::write(manifest.join("go.mod"), "module m").unwrap();
-        assert!(has_indexable_code(&manifest), "manifest => code");
-
-        let source = tmp.path().join("s");
-        std::fs::create_dir_all(&source).unwrap();
-        std::fs::write(source.join("util.ts"), "export const x = 1;").unwrap();
-        assert!(has_indexable_code(&source), "loose source => code");
-
-        let assets = tmp.path().join("a");
-        std::fs::create_dir_all(&assets).unwrap();
-        std::fs::write(assets.join("logo.png"), [0u8; 8]).unwrap();
-        assert!(!has_indexable_code(&assets), "binary-only => no code");
-
-        let empty = tmp.path().join("e");
-        std::fs::create_dir_all(&empty).unwrap();
-        assert!(!has_indexable_code(&empty), "empty dir => no code");
     }
 
     #[test]
@@ -1745,22 +1073,6 @@ mod tests {
     }
 
     #[test]
-    fn walk_skips_generated_dirs() {
-        // __pycache__ and __MACOSX must not be walked or classified.
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        std::fs::create_dir_all(root.join("repo/.git")).unwrap();
-        std::fs::write(root.join("repo/Cargo.toml"), "[package]\nname=\"r\"").unwrap();
-        std::fs::create_dir_all(root.join("__pycache__")).unwrap();
-        std::fs::write(root.join("__pycache__/x.pyc"), [0u8; 4]).unwrap();
-        std::fs::create_dir_all(root.join("__MACOSX")).unwrap();
-
-        let dirs = all_directories(root, 3);
-        assert!(!dirs.iter().any(|d| d.ends_with("__pycache__")));
-        assert!(!dirs.iter().any(|d| d.ends_with("__MACOSX")));
-    }
-
-    #[test]
     fn monorepo_detected() {
         let tmp = tempfile::tempdir().unwrap();
         let mono = tmp.path().join("mono");
@@ -1776,25 +1088,6 @@ mod tests {
         std::fs::create_dir_all(regular.join(".git")).unwrap();
         std::fs::write(regular.join("Cargo.toml"), "[package]\nname = \"regular\"").unwrap();
         assert!(!is_monorepo(&regular));
-    }
-
-    #[test]
-    fn classify_excludes_git_subfolders() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        // git folder with src subdirectory
-        std::fs::create_dir_all(root.join("myrepo/.git")).unwrap();
-        std::fs::create_dir_all(root.join("myrepo/src")).unwrap();
-        std::fs::create_dir_all(root.join("myrepo/tests")).unwrap();
-
-        let gits = find_git_folders(root, 3);
-        let dirs = all_directories(root, 3);
-        let classified = classify_folders(root, &gits, &dirs, has_indexable_code);
-
-        // Only myrepo should appear, not myrepo/src or myrepo/tests
-        assert_eq!(classified.len(), 1);
-        assert_eq!(classified[0].name, "myrepo");
-        assert_eq!(classified[0].kind, FolderKind::Git);
     }
 
     // ── Stack detection ──────────────────────────────────────────
@@ -1817,200 +1110,6 @@ mod tests {
     /// Helper: build a prior map of `rel -> (mtime, hash)`.
     fn prior_of(entries: &[(&str, i64, &str)]) -> std::collections::HashMap<String, (i64, String)> {
         entries.iter().map(|(p, m, h)| (p.to_string(), (*m, h.to_string()))).collect()
-    }
-
-    /// The cheap mtime gate must skip an unchanged file WITHOUT ever hashing it
-    /// (proven by the spy counter staying 0) — this is what keeps a no-op scan
-    /// stats-only.
-    #[test]
-    fn plan_reindex_mtime_gate_skips_unchanged_without_hashing() {
-        let prior = prior_of(&[("a.rs", 100, "hash_a")]);
-        let current = vec![("a.rs".to_string(), 100i64)];
-        let mut hash_calls = 0usize;
-        let plan = plan_reindex(&current, &prior, |_p| {
-            hash_calls += 1;
-            Some("x".into())
-        });
-        assert_eq!(hash_calls, 0, "an unchanged-mtime file must never be hashed");
-        assert_eq!(plan.unchanged, 1);
-        assert!(plan.changed.is_empty());
-        assert!(plan.touched.is_empty());
-        assert!(plan.removed.is_empty());
-    }
-
-    /// mtime drifted but content is byte-identical (a `touch`): the file is
-    /// hashed exactly once, lands in `touched` (so its mtime is refreshed), and
-    /// is NOT reindexed — no duplicate work.
-    #[test]
-    fn plan_reindex_touched_rehashes_but_does_not_reindex() {
-        let prior = prior_of(&[("a.rs", 100, "same_hash")]);
-        let current = vec![("a.rs".to_string(), 999i64)]; // mtime changed
-        let mut hash_calls = 0usize;
-        let plan = plan_reindex(&current, &prior, |_p| {
-            hash_calls += 1;
-            Some("same_hash".into())
-        });
-        assert_eq!(hash_calls, 1, "a touched candidate is hashed once to confirm identity");
-        assert!(plan.changed.is_empty(), "identical content must NOT reindex");
-        assert_eq!(
-            plan.touched,
-            vec![("a.rs".to_string(), 999i64, "same_hash".to_string())],
-            "touched file carries its NEW mtime so the gate hits next pass"
-        );
-    }
-
-    /// mtime drifted AND content changed: hashed once, lands in `changed`.
-    #[test]
-    fn plan_reindex_reindexes_genuine_change() {
-        let prior = prior_of(&[("a.rs", 100, "old_hash")]);
-        let current = vec![("a.rs".to_string(), 200i64)];
-        let mut hash_calls = 0usize;
-        let plan = plan_reindex(&current, &prior, |_p| {
-            hash_calls += 1;
-            Some("new_hash".into())
-        });
-        assert_eq!(hash_calls, 1);
-        assert!(plan.changed.contains("a.rs"), "changed content → reindex");
-        assert!(plan.touched.is_empty());
-    }
-
-    /// A brand-new file (no prior fingerprint) is reindexed WITHOUT hashing —
-    /// there is nothing to compare it against.
-    #[test]
-    fn plan_reindex_new_file_reindexed_without_hashing() {
-        let prior = prior_of(&[]);
-        let current = vec![("new.rs".to_string(), 400i64)];
-        let mut hash_calls = 0usize;
-        let plan = plan_reindex(&current, &prior, |_p| {
-            hash_calls += 1;
-            Some("x".into())
-        });
-        assert_eq!(hash_calls, 0, "a new file needs no hash comparison");
-        assert!(plan.changed.contains("new.rs"));
-    }
-
-    /// A file that vanished on disk is `removed`; an unreadable candidate
-    /// (hash_file → None) falls through to `changed` rather than being dropped.
-    #[test]
-    fn plan_reindex_removed_and_unreadable_candidate() {
-        let prior = prior_of(&[("gone.rs", 300, "h"), ("bad.rs", 100, "h")]);
-        let current = vec![("bad.rs".to_string(), 200i64)]; // mtime drifted, unreadable
-        let plan = plan_reindex(&current, &prior, |_p| None);
-        assert_eq!(plan.removed, vec!["gone.rs".to_string()], "vanished file → removed");
-        assert!(
-            plan.changed.contains("bad.rs"),
-            "unreadable candidate must not be silently dropped"
-        );
-    }
-
-    /// Full mixed working tree exercised end-to-end through one call.
-    #[test]
-    fn plan_reindex_classifies_new_changed_touched_unchanged_removed() {
-        let prior = prior_of(&[
-            ("src/a.rs", 100, "ha"),    // unchanged
-            ("src/b.rs", 200, "hb"),    // will reindex
-            ("src/t.rs", 300, "ht"),    // will be touched (same content)
-            ("src/gone.rs", 400, "hg"), // removed
-        ]);
-        let current = vec![
-            ("src/a.rs".to_string(), 100),   // mtime unchanged
-            ("src/b.rs".to_string(), 250),   // mtime + content changed
-            ("src/t.rs".to_string(), 350),   // mtime changed, content same
-            ("src/new.rs".to_string(), 500), // new
-        ];
-        let plan = plan_reindex(&current, &prior, |p| match p {
-            "src/b.rs" => Some("hb_new".into()),
-            "src/t.rs" => Some("ht".into()), // identical → touched
-            other => panic!("unexpected hash of {other} (a.rs/new.rs must not be hashed)"),
-        });
-        assert_eq!(plan.unchanged, 1);
-        assert!(plan.changed.contains("src/b.rs"));
-        assert!(plan.changed.contains("src/new.rs"));
-        assert!(!plan.changed.contains("src/a.rs"));
-        assert_eq!(plan.touched.len(), 1);
-        assert_eq!(plan.touched[0].0, "src/t.rs");
-        assert_eq!(plan.removed, vec!["src/gone.rs".to_string()]);
-    }
-
-    /// `expected` is the DENOMINATOR for folder completeness: how many files
-    /// this folder must have decided before it can be called indexed.
-    ///
-    /// Folder status is currently set by the task queue reaching
-    /// `DetectCommunities`, which is not a dependable signal — the daily
-    /// analyzer enqueues that task UNBLOCKED (`analyzer_scheduler.rs:252`), so
-    /// it can run against a partially-indexed folder. Deriving completeness
-    /// from persisted per-file facts instead needs a count to compare against,
-    /// and counting only the rows that EXIST cannot work: a walk that dies at
-    /// file 40 of 100 leaves 40 rows all marked decided and 60 with no row to
-    /// be undecided, so "no undecided rows" is vacuously true.
-    ///
-    /// `current` is already the right number — the post-filter set of indexable
-    /// files on disk right now — so this exposes it rather than recomputing it.
-    /// That also means a DELETED file cannot inflate the denominator: it is
-    /// absent from `current` (it appears in `removed`), so the folder can still
-    /// reach completion instead of waiting forever on a file that is gone.
-    #[test]
-    fn plan_reindex_reports_expected_as_the_full_post_filter_file_count() {
-        let prior = prior_of(&[
-            ("src/a.rs", 100, "ha"),
-            ("src/b.rs", 200, "hb"),
-            ("src/t.rs", 300, "ht"),
-            ("src/gone.rs", 400, "hg"), // deleted on disk
-        ]);
-        let current = vec![
-            ("src/a.rs".to_string(), 100),   // unchanged
-            ("src/b.rs".to_string(), 250),   // changed
-            ("src/t.rs".to_string(), 350),   // touched
-            ("src/new.rs".to_string(), 500), // new
-        ];
-        let plan = plan_reindex(&current, &prior, |p| match p {
-            "src/b.rs" => Some("hb_new".into()),
-            "src/t.rs" => Some("ht".into()),
-            other => panic!("unexpected hash of {other}"),
-        });
-
-        assert_eq!(
-            plan.expected, 4,
-            "every file on disk counts once, whatever bucket it landed in"
-        );
-        assert_eq!(
-            plan.expected,
-            plan.changed.len() + plan.touched.len() + plan.unchanged,
-            "the buckets partition `expected` exactly — a file counted twice or dropped \
-             would make a folder complete early or never"
-        );
-        assert!(
-            !plan.removed.is_empty() && plan.expected == current.len(),
-            "a deleted file is NOT in the denominator — it must not block completion"
-        );
-    }
-
-    /// An empty folder is complete the moment it is walked, not never.
-    #[test]
-    fn plan_reindex_expected_is_zero_for_a_folder_with_no_indexable_files() {
-        let plan = plan_reindex(&[], &prior_of(&[]), |_| panic!("nothing to hash"));
-        assert_eq!(plan.expected, 0);
-    }
-
-    #[test]
-    fn detect_stack_dotnet() {
-        // Globbed project file
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("WebApi.csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\" />")
-            .unwrap();
-        assert_eq!(detect_stack(tmp.path()), vec!["dotnet"]);
-        // Solution file
-        let tmp2 = tempfile::tempdir().unwrap();
-        std::fs::write(tmp2.path().join("App.sln"), "Microsoft Visual Studio Solution File")
-            .unwrap();
-        assert_eq!(detect_stack(tmp2.path()), vec!["dotnet"]);
-        // global.json SDK pin
-        let tmp3 = tempfile::tempdir().unwrap();
-        std::fs::write(tmp3.path().join("global.json"), "{\"sdk\":{\"version\":\"8.0.0\"}}")
-            .unwrap();
-        assert_eq!(detect_stack(tmp3.path()), vec!["dotnet"]);
-        // A .NET project root is a confident (manifest) quasi-repo, not loose code
-        assert_eq!(classify_quasi_repo(tmp.path()), Some(QuasiKind::Manifest));
     }
 
     #[test]
@@ -2113,20 +1212,6 @@ mod tests {
     }
 
     // ── File counting ────────────────────────────────────────────
-
-    #[test]
-    fn count_indexable_files_in_fixture() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
-        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
-        std::fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
-        std::fs::write(tmp.path().join("src/main.rs"), "fn main() {}").unwrap();
-        std::fs::write(tmp.path().join("src/lib.rs"), "pub fn x() {}").unwrap();
-
-        let (files, count) = count_indexable_files(tmp.path());
-        assert!(count >= 2, "expected at least 2 files (main.rs, lib.rs), got {}", count);
-        assert!(files.iter().any(|f| f.to_string_lossy().contains("main.rs")));
-    }
 
     // ── Reconcile: stale-root classification ─────────────────────
 
@@ -2251,17 +1336,5 @@ mod tests {
         std::fs::create_dir_all(nested.join("src/api")).unwrap();
         std::fs::write(nested.join("src/api/handler.rs"), "fn h() {}").unwrap();
         assert!(dir_has_indexable_content(&nested), "source in a subdir => content");
-    }
-
-    #[test]
-    fn count_excludes_binary_files() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
-        std::fs::write(tmp.path().join("code.rs"), "fn x() {}").unwrap();
-        std::fs::write(tmp.path().join("image.png"), [0u8; 10]).unwrap();
-        std::fs::write(tmp.path().join("font.woff2"), [0u8; 10]).unwrap();
-
-        let (_, count) = count_indexable_files(tmp.path());
-        assert_eq!(count, 1, "only .rs should be counted, not .png or .woff2");
     }
 }
