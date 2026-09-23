@@ -26,8 +26,19 @@
 //!    is what makes being wrong survivable, and [`Brake`] covers the one diff
 //!    shape that is almost always damage.
 //
-// This module has no caller on purpose — see the note in `mod.rs`.
-#![allow(dead_code)]
+// WIRED. `pipeline::index_and_persist` calls [`reconcile`], and
+// `tasks::handlers::process_file` calls that for every language in
+// `lang::PRODUCTION_LANGUAGES` — so a re-index of a production-language file
+// removes what the file stopped claiming. This note previously read "this
+// module has no caller on purpose", which was true only until
+// `index_and_persist` existed; a stale claim about reachability is the most
+// expensive kind to leave lying around, because it reads as a design decision.
+//
+// The module-wide `allow(dead_code)` is GONE with it. Dropping it left exactly
+// one warning — `Stated::Gone` is never constructed — so the blanket allow was
+// hiding a single real gap behind a whole module's worth of suppression. That
+// one variant now carries its own allow, naming what is unwired, and anything
+// NEW that falls dead here is a warning again.
 
 use std::collections::BTreeSet;
 
@@ -69,6 +80,16 @@ pub enum Stated {
     /// The file is not there. `reconcile(F, claims = ∅)`, down the same path as
     /// a file emptied to a comment, so deletion cannot acquire a second removal
     /// semantics that behaves differently (R10.5).
+    ///
+    /// NOT WIRED: nothing in production constructs this. `index_and_persist`
+    /// only ever builds `Parsed`, because it is reached from `process_file`,
+    /// which runs on a file that EXISTS. Deletion is detected upstream — the
+    /// scan's `Scope::Events { deleted, .. }` — and no caller yet turns a
+    /// deleted path into a `Gone` and reconciles it, so a deleted file's
+    /// declarations stay in the graph until the folder is rebuilt. The variant
+    /// and its whole code path are built and test-covered; only the call is
+    /// missing.
+    #[allow(dead_code)]
     Gone(Located),
 }
 
