@@ -18,6 +18,16 @@ any figure in a commit message, a report or a review makes sense.
 down: a function, a struct, a field. A FILE is not a node — files live in
 `sensei.files` and a node REFERENCES its file through `nodes.file_id`.
 
+**A LOCAL VALUE is not a node.** A `const`/`let`/`var` declared inside a function
+body is not something a reader navigates to and not something a call can target,
+so it is not declared. Three things are NOT covered by that: a local FUNCTION
+(`const helper = () => {}`) keeps its node, because a call needs a target; a
+module-level `const` keeps its node, because it is importable; and the TYPE
+BINDING is untouched — it is keyed by name in the walk's flow state and is what
+types `api.getLogs()`, so dropping the node costs no resolution that depended on
+a type. A reference that names a local becomes an honest unresolved with a reason
+(§4), which is 222 of TypeScript's references over this corpus.
+
 **An EDGE is a claim that one declaration reaches another.** One row in
 `sensei.edges`. It has a source node, a target, a kind, and a `via` recording
 WHY the indexer believes the two are connected.

@@ -27,7 +27,7 @@ target is declared somewhere" tells them what broke.
 | **A4** | after a completed scan, every edge whose target is not a declaration falls into one of three NAMED populations, each counted | `acceptance::every_first_party_edge_names_a_declaration_this_scan_holds` | **ceiling**: rust 1,200 / ts 700 dangling EDGES |
 | **A5** | fields, properties and enum variants exist for every type that declares them | `acceptance::every_type_owned_declaration_says_which_type_owns_it` | exact |
 | **A6** | re-indexing in a different file order produces an identical graph | order-independence tests over the corpus | exact |
-| **A7** | **no two declarations mint one identity** | `persist::no_two_declarations_in_this_repos_rust_mint_one_identity` and `the_identities_this_repos_rust_cannot_keep_apart_are_a_known_and_bounded_set` | **RATCHET at ZERO** |
+| **A7** | **no two declarations mint one identity** | `persist::no_two_declarations_in_this_repos_rust_mint_one_identity`, `…_typescript_mint_one_identity`, and `the_identities_this_repos_rust_cannot_keep_apart_are_a_known_and_bounded_set` | **RATCHET at ZERO**, rust and typescript |
 | **A8** | re-indexing a file removes what it stopped claiming and nothing else | `persist` re-index tests (R10.6's four clauses) | exact |
 | **A9** | an unparseable file is ACTIONABLE and REACHABLE — the parser's verbatim message with line and column | `files.skip_detail`, `acceptance` | exact |
 
@@ -55,7 +55,7 @@ a row, and the fix is the identity rule — not the bound. Adding derived member
 for `Debug` tripped it at 8 and the restriction, not the ceiling, was the
 answer.
 
-#### TypeScript's descent: 511 → 10
+#### TypeScript's descent: 511 → 0
 
 The ratchet test is `no_two_declarations_in_this_repos_**rust**_mint_one_identity`
 — rust-scoped. The acceptance harness MEASURES every language, so TypeScript's
@@ -67,11 +67,13 @@ One rule, four shapes. A function body names what it declares — and the walk
 only knew the shapes carrying an `id`:
 
 | fix | shape that was unnamed | after |
-|---|---:|---:|
+|---|---|---:|
 | — | (baseline) | 511 |
 | callback | a function passed as a call ARGUMENT — `test('…', () => {…})` | 38 |
 | method body | a class method's body, via `container_at` | 14 |
-| object property | a function under a key — `{ get: () => {…} }` | **10** |
+| object property | a function under a key — `{ get: () => {…} }` | 10 |
+| **local values are not nodes** | a `const`/`let` in a body was a row nothing read | 1 |
+| type scoping | `module_of` now reads `module_here`, so a type in a body is scoped like an item | **0** |
 
 The callback fix is the big one because `test(…)` sits at a file's TOP LEVEL, so
 the naming chain was EMPTY and every callback in a spec shared one scope. In Rust
@@ -83,11 +85,36 @@ DEPTH at which the container was established, which is what tells "the class thi
 body sits in" from "a class declared BY this body". A bare `!fn_scope.is_empty()`
 would file a class declared inside a function as a local and lose its fields.
 
-**The residue is one shape: block scoping.** All 10 are two `const` in different
-BLOCK scopes of one function — `if`/`else` arms, two `for` loops — plus one type
-declared twice in a file. They are genuinely distinct declarations in JavaScript,
-and naming them apart needs a block-level segment. Rust has the same property and
-reads zero only because its corpus does not hit it.
+**The last 10 were not a naming problem, they were a scope problem.** JavaScript
+lets sibling BLOCKS redeclare a name, so two `const result` in an `if`/`else` are
+two declarations that only a block-level segment could tell apart — and such a
+segment rewrites identities whenever a line moves inside a body.
+
+The answer was to stop declaring them. **A local value is not a node**: the graph
+answers "what does this function call", and `barrier.rs::a_node` — "something a
+reader navigates to" — already excluded its kind from every coverage measurement.
+It was a row nothing read. A local FUNCTION keeps its node (a call needs a target),
+and a module-level `const` keeps its node (it is importable). The TYPE BINDING is
+untouched: `flow.bind` is keyed by name and is what types `api.getLogs()`.
+
+Measured cost, the whole of it:
+
+| | before | after |
+|---|---:|---:|
+| declarations | 28,328 | 23,254 |
+| ts references resolved | 26,347 | 26,125 |
+| ts references unresolved | 33,048 | 33,270 |
+| **ts barrier nodes** | **2,186** | **2,186** |
+
+222 references moved from resolved to unresolved — exactly, so nothing was dropped
+— and every one of them named a local. The barrier numbers are UNCHANGED to the
+digit (2,186 / 1,454 / 935 / 767 / 422), which is the evidence that what was
+removed was never reader-facing.
+
+`no_two_declarations_in_this_repos_typescript_mint_one_identity` now holds the
+bound. It did not exist before, which is why 511 could accumulate: the ratchet
+beside it is rust-scoped, and the acceptance harness measures every language while
+gating none.
 
 ### A4 — the dangling-edge ceiling, with slack
 
