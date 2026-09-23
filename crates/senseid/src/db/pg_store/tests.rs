@@ -102,6 +102,80 @@ async fn config_get_all() {
     s.delete_config(&k2).await.unwrap();
 }
 
+// ── activity.task_failures — the restart list ─────────────────────
+
+/// The restart list must carry what is STILL broken, not what has ever broken.
+///
+/// A job that failed and later succeeded is fixed; listing it would put finished
+/// work back on the queue. So the view keeps a job only when its most recent
+/// execution is the failure — and it reports `attempts` (failures accumulated)
+/// beside `max_retry` (the runner's counter), because the gap between them is
+/// the poison-pill signal: a job re-discovered and re-failed each pass climbs
+/// `attempts` while `max_retry` stays flat. That shape produced 17,577,049 rows
+/// over 43,312 paths before the stage-3 barrier reached production.
+#[tokio::test]
+async fn task_failures_lists_only_jobs_whose_latest_run_failed_and_counts_their_attempts() {
+    let s = pg_store().await;
+    let fp = format!("/_test/failures/{}", uuid::Uuid::new_v4());
+    let kind = crate::tasks::TaskKind::ProcessFile.to_string();
+
+    // "stuck" — failed twice and never recovered. Belongs on the restart list,
+    // with both failures counted.
+    for attempt in 0..2 {
+        let id =
+            s.start_task_execution(1, None, &kind, &fp, "src/stuck.rs", attempt).await.unwrap();
+        s.fail_task_execution(&id, 5, "boom: no files row for src/stuck.rs, metric churn")
+            .await
+            .unwrap();
+    }
+
+    // "recovered" — failed once, then succeeded. Must NOT appear.
+    let failed = s.start_task_execution(2, None, &kind, &fp, "recovered.rs", 0).await.unwrap();
+    s.fail_task_execution(&failed, 5, "boom: transient").await.unwrap();
+    let ok = s.start_task_execution(2, None, &kind, &fp, "recovered.rs", 1).await.unwrap();
+    s.complete_task_execution(&ok, 1, 5).await.unwrap();
+
+    let rows: Vec<(String, i64, i32)> = sqlx_core::query_as::query_as(
+        "SELECT path, attempts, max_retry FROM activity.task_failures \
+          WHERE folder_path = $1 ORDER BY path",
+    )
+    .bind(&fp)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+
+    assert_eq!(
+        rows.iter().map(|(p, _, _)| p.as_str()).collect::<Vec<_>>(),
+        vec!["src/stuck.rs"],
+        "only the job whose latest run failed — a recovered job is finished work, not a restart"
+    );
+    assert_eq!(rows[0].1, 2, "both failures counted, so a poison pill is visible as one number");
+    assert_eq!(rows[0].2, 1, "beside the runner's own retry counter");
+
+    // The signature collapses the path out, so many files failing one way group
+    // as one cause rather than one cause per file.
+    let (sig,): (String,) = sqlx_core::query_as::query_as(
+        "SELECT error_signature FROM activity.task_failures WHERE folder_path = $1 LIMIT 1",
+    )
+    .bind(&fp)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert!(!sig.contains("src/stuck.rs"), "path collapsed out of the signature, got {sig:?}");
+    // And the NON-path subject survives, deliberately. `path` is overloaded the
+    // way `folder_path` is — 32 of the live failing jobs carry a metric name
+    // (`churn`, `duplication`, `quality`) rather than a file. Those are the
+    // subject, like an fqn or a language, and collapsing them would merge
+    // genuinely different failures into one unreadable group.
+    assert!(sig.contains("metric churn"), "a non-path subject is kept, got {sig:?}");
+
+    sqlx_core::query::query("DELETE FROM activity.task_executions WHERE folder_path = $1")
+        .bind(&fp)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
 // ── Task executions — boot reconcile (D6b) ────────────────────────
 
 #[tokio::test]
@@ -13480,6 +13554,86 @@ async fn folder_branch_is_a_typed_column_and_a_graph_nodes_dimension() {
             .unwrap();
     assert_eq!(after.as_deref(), Some("main"), "a switch updates it in place");
     s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// "How many nodes belong to which repository" has to be answerable from the
+/// view alone, and an unattributed folder has to be DISTINGUISHABLE from an
+/// attributed one rather than silently rolled into some default.
+///
+/// Both clauses matter. Without the first, grouping by repository is a join the
+/// caller has to re-derive every time. Without the second, a NULL would be
+/// indistinguishable from a fabricated fallback — and `folders.repository_id` is
+/// genuinely sparse (183 of 193 git folders on 2026-09-23), so the unattributed
+/// bucket is a real population and is exactly the query that finds what still
+/// needs attributing.
+#[tokio::test]
+async fn graph_nodes_names_the_repository_and_leaves_an_unattributed_folder_null() {
+    let s = pg_store().await;
+    let attributed = create_test_folder(&s, &format!("repoA_{}", uuid::Uuid::new_v4())).await;
+    let orphan = create_test_folder(&s, &format!("repoB_{}", uuid::Uuid::new_v4())).await;
+
+    let repo_key = format!("example.test/{}", uuid::Uuid::new_v4());
+    let (repo_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'attributed-repo') \
+         RETURNING id",
+    )
+    .bind(&repo_key)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    sqlx_core::query::query("UPDATE sensei.folders SET repository_id = $1 WHERE id = $2")
+        .bind(repo_id)
+        .bind(attributed)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    for fid in [attributed, orphan] {
+        s.seed_node(&fid, "function", "compute", "src/lib.rs", None, None, Some(1), Some(9))
+            .await
+            .unwrap();
+    }
+
+    let (named, named_id): (Option<String>, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
+        "SELECT repository, repository_id FROM sensei.graph_nodes WHERE folder_id = $1 LIMIT 1",
+    )
+    .bind(attributed)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        named.as_deref(),
+        Some("attributed-repo"),
+        "a node's repository is readable from the view without a second join"
+    );
+    assert_eq!(named_id, Some(repo_id), "and carries the id, so it groups without a name match");
+
+    let (unattributed, unattributed_id): (Option<String>, Option<uuid::Uuid>) =
+        sqlx_core::query_as::query_as(
+            "SELECT repository, repository_id FROM sensei.graph_nodes WHERE folder_id = $1 LIMIT 1",
+        )
+        .bind(orphan)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        (unattributed, unattributed_id),
+        (None, None),
+        "a folder with no repository reads NULL — never a fabricated stand-in"
+    );
+
+    s.delete_nodes_by_folder(&attributed).await.unwrap();
+    s.delete_nodes_by_folder(&orphan).await.unwrap();
+    sqlx_core::query::query("UPDATE sensei.folders SET repository_id = NULL WHERE id = $1")
+        .bind(attributed)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = $1")
+        .bind(repo_id)
+        .execute(s.pool())
+        .await
+        .unwrap();
 }
 
 /// Collecting stubs must not leave community rows describing zero nodes.
