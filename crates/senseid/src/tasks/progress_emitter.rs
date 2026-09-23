@@ -119,6 +119,51 @@ fn indexed_message(folder_name: &str, files_completed: u32) -> String {
     format!("{folder_name} · indexed {files_completed} files")
 }
 
+/// The repo-scan stage messages, in the SAME `subject · predicate` shape as
+/// [`indexing_message`] and the `queue` message in `handlers/process.rs`.
+///
+/// Here rather than in `indexer::repo` so that every activity string this
+/// daemon puts on the wire is built in one module. A second builder elsewhere
+/// is how one screen ends up saying "indexed 5 files" and another "5 files
+/// indexed".
+///
+/// No caller yet — these land with the repo-scan stages they name, ahead of the
+/// handler that emits them, so the wire strings are pinned by test first. The
+/// allow goes when that handler calls them.
+#[allow(dead_code)]
+pub(crate) fn repo_scanning_message(repo: &str) -> String {
+    format!("{repo} · scanning")
+}
+
+/// Emitted once the walk has classified everything, BEFORE anything is written.
+/// `supported` is the count that gets a parse task; `files` is every file
+/// examined, which is deliberately the larger number — an unsupported file
+/// still gets a row (see `indexer::repo::EntryClass::Unsupported`).
+#[allow(dead_code)]
+pub(crate) fn repo_identified_message(
+    repo: &str,
+    folders: usize,
+    files: usize,
+    supported: usize,
+) -> String {
+    format!("{repo} · {folders} folders · {files} files · {supported} supported")
+}
+
+#[allow(dead_code)]
+pub(crate) fn repo_folders_saved_message(repo: &str, folders: usize) -> String {
+    format!("{repo} · {folders} folders saved")
+}
+
+#[allow(dead_code)]
+pub(crate) fn repo_files_saved_message(repo: &str, files: usize) -> String {
+    format!("{repo} · {files} files saved")
+}
+
+#[allow(dead_code)]
+pub(crate) fn repo_manifests_processed_message(repo: &str, manifests: usize) -> String {
+    format!("{repo} · {manifests} manifests processed")
+}
+
 /// Elapsed (seconds) since the current scan's first folder was queued. The UI's
 /// `totalElapsed` takes the max elapsed across activity events; emitting Process
 /// events with this scan-relative clock keeps the displayed timer advancing
@@ -453,6 +498,32 @@ mod tests {
         let json = serde_json::to_value(&evt).unwrap();
         assert_eq!(json["level"], "process");
         assert_eq!(json["message"], "app · indexing 5 files");
+    }
+
+    /// Pin the repo-scan stage strings. They go on the SSE wire, so a reworded
+    /// message is a UI change; asserting the literal is what makes that
+    /// deliberate rather than incidental.
+    #[test]
+    fn repo_scan_stage_messages_match_the_activity_format() {
+        assert_eq!(repo_scanning_message("sensei"), "sensei · scanning");
+        assert_eq!(
+            repo_identified_message("sensei", 12, 340, 128),
+            "sensei · 12 folders · 340 files · 128 supported"
+        );
+        assert_eq!(repo_folders_saved_message("sensei", 12), "sensei · 12 folders saved");
+        assert_eq!(repo_files_saved_message("sensei", 340), "sensei · 340 files saved");
+        assert_eq!(repo_manifests_processed_message("sensei", 4), "sensei · 4 manifests processed");
+    }
+
+    #[test]
+    fn the_identified_message_reports_supported_as_a_subset_of_files() {
+        // `files` counts every file EXAMINED and `supported` only those a
+        // language adapter claims, so supported can never be the larger of the
+        // two. Reading the message the other way round would overstate the
+        // work queued.
+        let msg = repo_identified_message("app", 3, 10, 4);
+        assert!(msg.contains("10 files"));
+        assert!(msg.contains("4 supported"));
     }
 
     #[test]

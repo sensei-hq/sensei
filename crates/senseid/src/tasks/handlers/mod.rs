@@ -22,6 +22,7 @@ mod prompt_classify;
 mod publish_run;
 mod publish_segments;
 mod rank;
+mod repo_scan;
 pub(crate) mod scan;
 pub(crate) mod scan_logic;
 pub(crate) mod session_process;
@@ -39,11 +40,11 @@ pub use doc_drift::scan_doc_drift;
 pub use embed::embed_nodes;
 pub use libraries::{extract_deps, import_lib, index_library, index_library_page, resolve_libs};
 pub use process::{
-    delete_file, delete_folder, process_file, process_folder, process_git_folder,
-    reconcile_repo_metadata,
+    delete_file, delete_folder, process_file, process_folder, reconcile_repo_metadata,
 };
 pub use publish_run::publish_run;
 pub use publish_segments::publish_relay_segments;
+pub use repo_scan::{process_git_folder, process_manifest, process_repo_files};
 pub use scan::{branch_switch, scan_root};
 pub use tool_insights::aggregate_tool_insights;
 pub use verdicts::measure_verdicts;

@@ -4,7 +4,7 @@
 //! `03-structure-write.md`.
 //!
 //! This is the IO half. The decisions all live in the pure functions those
-//! stages already provide — [`super::scan_root::find_git_roots`],
+//! stages already provide — [`super::repo::discover`],
 //! [`super::scan_repo::scan_repo_files`], [`super::structure::plan_structure`]
 //! — and this module only executes a plan it does not think about. That split
 //! is why the interesting behaviour is testable without a database.
@@ -21,8 +21,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::repo;
 use super::scan_repo::{self, RepoScan};
-use super::scan_root::{self, RepoRoot, RootExclusions};
 use super::structure::{self, ChangeKind, FileFacts};
 use crate::db::pg_store::PgStore;
 use crate::tasks::progress::StageEvents;
@@ -69,7 +69,6 @@ pub struct RepoResult {
 pub struct ScanSummary {
     pub repos: Vec<RepoResult>,
     pub roots_found: usize,
-    pub excluded_dirs: usize,
     pub unreadable: Vec<String>,
 }
 
@@ -159,22 +158,34 @@ pub async fn scan_and_write_structure(
 
     // ── Stage 1 ──────────────────────────────────────────────────────────
     let stage = events.begin("scan_root", &scan_path);
-    let roots = scan_root::find_git_roots(scan_dir, &RootExclusions::defaults());
-    summary.roots_found = roots.roots.len();
-    summary.excluded_dirs = roots.excluded;
-    summary.unreadable = roots.unreadable.iter().map(|u| u.path.display().to_string()).collect();
+    let discovered = match repo::discover(scan_dir, &[]) {
+        Ok(d) => d,
+        Err(e) => {
+            // A search that could not even be built found nothing and must not
+            // report an empty tree, which reads as "there are no repositories".
+            stage.failed(&e);
+            summary.unreadable.push(format!("{scan_path}: {e}"));
+            return summary;
+        }
+    };
+    summary.roots_found = discovered.repos.len();
+    summary.unreadable =
+        discovered.unreadable.iter().map(|u| format!("{:?}: {}", u.path, u.reason)).collect();
     // S5: an unreadable directory is coverage this scan did NOT have, and
     // reporting only the roots found would read as having seen everything.
-    if roots.unreadable.is_empty() {
-        stage.completed(roots.roots.len() as u64);
+    if discovered.is_complete() {
+        stage.completed(discovered.repos.len() as u64);
     } else {
         stage.completed_capped(
-            roots.roots.len() as u64,
-            &format!("{} directories were unreadable and not descended", roots.unreadable.len()),
+            discovered.repos.len() as u64,
+            &format!(
+                "{} directories were unreadable and not descended",
+                discovered.unreadable.len()
+            ),
         );
     }
 
-    for root in &roots.roots {
+    for root in &discovered.repos {
         summary.repos.push(write_one_repo(pg, root, root_id, events).await);
     }
     summary
@@ -182,14 +193,13 @@ pub async fn scan_and_write_structure(
 
 async fn write_one_repo(
     pg: &PgStore,
-    root: &RepoRoot,
+    root: &std::path::Path,
     root_id: &uuid::Uuid,
     events: StageEvents<'_>,
 ) -> RepoResult {
-    let abs = root.abs_path.to_string_lossy().to_string();
+    let abs = root.to_string_lossy().to_string();
     let mut out = RepoResult { abs_path: abs.clone(), ..Default::default() };
-    let name =
-        root.abs_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
 
     // ── Stage 1 S4/S5: repository identity, then the root folder ────────
     match pg.upsert_repository(&name, origin_remote(&abs).as_deref()).await {
@@ -233,10 +243,10 @@ async fn write_one_repo(
 
     // ── Stage 2 ──────────────────────────────────────────────────────────
     let stage = events.begin("scan_repo", &abs);
-    if let Ok(text) = std::fs::read_to_string(root.abs_path.join(".gitmodules")) {
+    if let Ok(text) = std::fs::read_to_string(root.join(".gitmodules")) {
         out.submodules = scan_repo::find_submodules(&text).len();
     }
-    let scan: RepoScan = scan_repo::scan_repo_files(&root.abs_path);
+    let scan: RepoScan = scan_repo::scan_repo_files(root);
     out.manifests = scan.manifests.len();
     out.lockfiles = scan.lockfiles.len();
     // The count is FILES, the thing this stage is here to find. Manifests and
@@ -250,38 +260,31 @@ async fn write_one_repo(
     // stop the scan: the other roots are independent and their structure is
     // still correct. `out.errors` non-empty is how a caller tells the
     // difference between "this repo has no files" and "this repo failed".
-    let folder_ids = match write_structure(
-        pg,
-        root_id,
-        &root.abs_path,
-        &folder_id,
-        project_id.as_ref(),
-        &scan,
-        &mut out,
-    )
-    .await
-    {
-        Ok(ids) => {
-            // The BARRIER's own number, the same one `folder_completeness`
-            // divides by — not a recount (08 S2).
-            stage.completed(out.files as u64);
-            ids
-        }
-        Err(e) => {
-            // S4: a stage that fails says so. Silence here is what leaves a UI
-            // showing a scan that stopped running minutes ago.
-            stage.failed(&e);
-            out.errors.push(e);
-            BTreeMap::new()
-        }
-    };
+    let folder_ids =
+        match write_structure(pg, root_id, root, &folder_id, project_id.as_ref(), &scan, &mut out)
+            .await
+        {
+            Ok(ids) => {
+                // The BARRIER's own number, the same one `folder_completeness`
+                // divides by — not a recount (08 S2).
+                stage.completed(out.files as u64);
+                ids
+            }
+            Err(e) => {
+                // S4: a stage that fails says so. Silence here is what leaves a UI
+                // showing a scan that stopped running minutes ago.
+                stage.failed(&e);
+                out.errors.push(e);
+                BTreeMap::new()
+            }
+        };
 
     // ── Stage 2 S8/S11: the dependency edges ─────────────────────────────
-    write_dependencies(pg, &root.abs_path, &scan, &folder_ids, &mut out).await;
+    write_dependencies(pg, root, &scan, &folder_ids, &mut out).await;
 
     // ── Stage 2b: this repo may BE a library ─────────────────────────────
     let stage = events.begin("library_discovery", &abs);
-    ingest_library(pg, &root.abs_path, &scan, &mut out).await;
+    ingest_library(pg, root, &scan, &mut out).await;
     match out.library_docs_error.as_deref() {
         // A docs walk that failed is not an ingestion of zero pages. Saying so
         // is the difference between "this library ships no docs" and "we could
@@ -313,6 +316,184 @@ const LOCAL_PROTOCOLS: &[&str] = &["link:", "workspace:", "file:", "path:", "por
 /// machine's repos, 128 of 219 direct deps get a different, correct version
 /// from the lockfile. The manifest selects WHICH packages; the lockfile
 /// supplies WHICH version, looked up by name so the transitive tree stays out.
+/// ONE manifest's worth of facts. The single per-manifest pass.
+///
+/// Both callers go through here: the repo-wide structure write
+/// ([`write_dependencies`]) and the per-manifest task
+/// (`crate::tasks::handlers::process_manifest`). A second implementation that
+/// read only the package name is exactly the underpowered duplicate the
+/// adapter pattern exists to prevent — the adapter already knows the
+/// ecosystem, the dependencies, its own lockfile formats and how to pin, and a
+/// caller that takes only `.name` throws all of it away and re-opens the file
+/// somewhere else to get the rest.
+pub(crate) struct ManifestJob<'a> {
+    pub repo_root: &'a std::path::Path,
+    /// ABSOLUTE path to the manifest.
+    pub manifest: &'a std::path::Path,
+    pub ecosystem: &'a str,
+    /// The folder row that HOLDS the manifest — facts belong to it (D11).
+    pub folder_id: uuid::Uuid,
+    /// Repo folders by absolute path, for resolving a `link:`/`workspace:`
+    /// sibling to a real folder id.
+    pub folder_ids: &'a BTreeMap<std::path::PathBuf, uuid::Uuid>,
+    /// Lockfile candidates in this repo; `nearest_lockfile` picks from them.
+    pub lockfiles: &'a [std::path::PathBuf],
+}
+
+/// What one manifest yielded.
+#[derive(Debug, Default)]
+pub(crate) struct ManifestOutcome {
+    /// The package this manifest NAMES. `None` is a real state — a manifest
+    /// may declare only a workspace — and never a fabricated name.
+    pub package: Option<String>,
+    pub local_deps: u32,
+    pub external_deps: u32,
+    pub deps_pinned_by_lockfile: u32,
+    /// Rows written to `sensei.folder_commands` for this manifest.
+    pub commands: u32,
+    pub errors: Vec<String>,
+}
+
+pub(crate) async fn apply_manifest(pg: &PgStore, job: ManifestJob<'_>) -> ManifestOutcome {
+    let mut out = ManifestOutcome::default();
+    let Some(dir) = job.manifest.parent() else { return out };
+
+    // The adapter is resolved from the ECOSYSTEM the classifier already
+    // determined, so the two cannot disagree about which adapter owns a file.
+    let Some(adapter) = crate::adapters::manifest::registered_adapters()
+        .iter()
+        .find(|a| a.ecosystem() == job.ecosystem)
+    else {
+        out.errors.push(format!("no adapter for ecosystem {}", job.ecosystem));
+        return out;
+    };
+    let Ok(content) = std::fs::read_to_string(job.manifest) else {
+        out.errors.push(format!("read manifest {}: unreadable", job.manifest.display()));
+        return out;
+    };
+
+    // The package this manifest names — the PLACEMENT half, which is why every
+    // manifest must be read before any file is parsed.
+    out.package = crate::indexer::placement::package_named_by(job.manifest, &content);
+
+    // The named commands this ecosystem exposes for THIS manifest — the
+    // project window's action buttons and the `get_commands` MCP tool read
+    // them out of `sensei.folder_commands`.
+    //
+    // Per MANIFEST, which is the fix: `extract_deps` asks only for manifests at
+    // the REPO ROOT (`repo.join(filename)`), so every member package of a
+    // monorepo had its scripts silently undiscovered. Running per manifest
+    // reaches them without a second walk.
+    //
+    // Non-fatal: a command scan that fails must not cost the manifest its
+    // dependencies. Idempotent — `replace_folder_commands` is delete+insert
+    // scoped to (folder, ecosystem).
+    let commands = adapter.parse_commands(&content);
+    if !commands.is_empty() {
+        let rows: Vec<(String, String, Option<&str>)> = commands
+            .iter()
+            .map(|c| (c.raw_name.clone(), c.command_line.clone(), c.category))
+            .collect();
+        match pg
+            .replace_folder_commands(&job.folder_id, job.ecosystem, job.manifest.to_str(), &rows)
+            .await
+        {
+            Ok(n) => out.commands = n as u32,
+            Err(e) => out.errors.push(format!("replace_folder_commands: {e}")),
+        }
+    }
+
+    // The nearest lockfile AT OR ABOVE this manifest, stopping at the repo
+    // root (02 S6c). Not the repo root's: `tools/session-report` has its
+    // own Cargo.lock and they genuinely disagree.
+    let pins = scan_repo::nearest_lockfile(
+        dir,
+        job.repo_root,
+        adapter.lockfile_filenames(),
+        job.lockfiles,
+    )
+    .and_then(|lock| {
+        let name = lock.file_name()?.to_str()?.to_string();
+        let content = std::fs::read_to_string(&lock).ok()?;
+        Some(scan_repo::pins_by_name(job.ecosystem, &name, &content))
+    })
+    .unwrap_or_default();
+
+    for dep in adapter.parse_dependencies(&content) {
+        // A `link:`/`workspace:`/`file:`/`path=` dep is a FIRST-PARTY
+        // sibling, not a library. It becomes a folder -> folder edge and
+        // must never reach `libraries`, or a monorepo's own packages get
+        // registered as external dependencies of themselves.
+        if let Some(target) = &dep.local_source {
+            let protocol = crate::tasks::handlers::libraries::local_source_protocol(
+                &dep.source,
+                &dep.raw_version,
+            );
+            let Some(abs) = crate::tasks::handlers::libraries::resolve_local_target(
+                &dir.to_string_lossy(),
+                protocol,
+                target,
+            ) else {
+                continue;
+            };
+            let Some(to_id) = job.folder_ids.get(&abs).copied() else {
+                continue; // target is outside this repo, or has no row yet
+            };
+            if to_id == job.folder_id {
+                continue; // the table's CHECK forbids a self-edge
+            }
+            if let Err(e) = pg
+                .upsert_folder_dependency(
+                    &job.folder_id,
+                    &to_id,
+                    protocol,
+                    &dep.source,
+                    Some(target),
+                )
+                .await
+            {
+                out.errors.push(format!("upsert_folder_dependency({}): {e}", dep.lib_name));
+            } else {
+                out.local_deps += 1;
+            }
+            continue;
+        }
+
+        // `link:kavach` is a PROTOCOL, not a release. `local_source` is
+        // unset when the payload is a bare name rather than a path, so the
+        // dep reached here looking external and its "version" was stored
+        // verbatim — producing a `library_versions` row keyed
+        // `link:kavach` that no pin can ever match. A protocol-shaped
+        // version means the dep is first-party; it is not a library.
+        if LOCAL_PROTOCOLS.iter().any(|p| dep.version.starts_with(p)) {
+            continue;
+        }
+        let version = scan_repo::resolve_pin(&pins, &dep.lib_name, &dep.version);
+        let lib_id = match pg
+            .upsert_library(&dep.lib_name, job.ecosystem, Some(&version), None, None, None)
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                out.errors.push(format!("upsert_library({}): {e}", dep.lib_name));
+                continue;
+            }
+        };
+        if let Err(e) =
+            pg.upsert_referenced_library(&job.folder_id, &lib_id, Some(&version), None).await
+        {
+            out.errors.push(format!("upsert_referenced_library({}): {e}", dep.lib_name));
+            continue;
+        }
+        out.external_deps += 1;
+        if version != dep.version {
+            out.deps_pinned_by_lockfile += 1;
+        }
+    }
+    out
+}
+
+/// Every manifest in the repo, through [`apply_manifest`].
 async fn write_dependencies(
     pg: &PgStore,
     repo_root: &std::path::Path,
@@ -326,104 +507,22 @@ async fn write_dependencies(
         // in a directory with no folder row is a `plan_folders` disagreement,
         // not something to attach to the repo root as a guess.
         let Some(folder_id) = folder_ids.get(dir).copied() else { continue };
-        let Some(adapter) = crate::adapters::manifest::registered_adapters()
-            .iter()
-            .find(|a| a.ecosystem() == *ecosystem)
-        else {
-            continue;
-        };
-        let Ok(content) = std::fs::read_to_string(manifest) else {
-            out.errors.push(format!("read manifest {}: unreadable", manifest.display()));
-            continue;
-        };
-
-        // The nearest lockfile AT OR ABOVE this manifest, stopping at the repo
-        // root (02 S6c). Not the repo root's: `tools/session-report` has its
-        // own Cargo.lock and they genuinely disagree.
-        let pins = scan_repo::nearest_lockfile(
-            dir,
-            repo_root,
-            adapter.lockfile_filenames(),
-            &scan.lockfiles,
+        let o = apply_manifest(
+            pg,
+            ManifestJob {
+                repo_root,
+                manifest,
+                ecosystem,
+                folder_id,
+                folder_ids,
+                lockfiles: &scan.lockfiles,
+            },
         )
-        .and_then(|lock| {
-            let name = lock.file_name()?.to_str()?.to_string();
-            let content = std::fs::read_to_string(&lock).ok()?;
-            Some(scan_repo::pins_by_name(ecosystem, &name, &content))
-        })
-        .unwrap_or_default();
-
-        for dep in adapter.parse_dependencies(&content) {
-            // A `link:`/`workspace:`/`file:`/`path=` dep is a FIRST-PARTY
-            // sibling, not a library. It becomes a folder -> folder edge and
-            // must never reach `libraries`, or a monorepo's own packages get
-            // registered as external dependencies of themselves.
-            if let Some(target) = &dep.local_source {
-                let protocol = crate::tasks::handlers::libraries::local_source_protocol(
-                    &dep.source,
-                    &dep.raw_version,
-                );
-                let Some(abs) = crate::tasks::handlers::libraries::resolve_local_target(
-                    &dir.to_string_lossy(),
-                    protocol,
-                    target,
-                ) else {
-                    continue;
-                };
-                let Some(to_id) = folder_ids.get(&abs).copied() else {
-                    continue; // target is outside this repo, or has no row yet
-                };
-                if to_id == folder_id {
-                    continue; // the table's CHECK forbids a self-edge
-                }
-                if let Err(e) = pg
-                    .upsert_folder_dependency(
-                        &folder_id,
-                        &to_id,
-                        protocol,
-                        &dep.source,
-                        Some(target),
-                    )
-                    .await
-                {
-                    out.errors.push(format!("upsert_folder_dependency({}): {e}", dep.lib_name));
-                } else {
-                    out.local_deps += 1;
-                }
-                continue;
-            }
-
-            // `link:kavach` is a PROTOCOL, not a release. `local_source` is
-            // unset when the payload is a bare name rather than a path, so the
-            // dep reached here looking external and its "version" was stored
-            // verbatim — producing a `library_versions` row keyed
-            // `link:kavach` that no pin can ever match. A protocol-shaped
-            // version means the dep is first-party; it is not a library.
-            if LOCAL_PROTOCOLS.iter().any(|p| dep.version.starts_with(p)) {
-                continue;
-            }
-            let version = scan_repo::resolve_pin(&pins, &dep.lib_name, &dep.version);
-            let lib_id = match pg
-                .upsert_library(&dep.lib_name, ecosystem, Some(&version), None, None, None)
-                .await
-            {
-                Ok(id) => id,
-                Err(e) => {
-                    out.errors.push(format!("upsert_library({}): {e}", dep.lib_name));
-                    continue;
-                }
-            };
-            if let Err(e) =
-                pg.upsert_referenced_library(&folder_id, &lib_id, Some(&version), None).await
-            {
-                out.errors.push(format!("upsert_referenced_library({}): {e}", dep.lib_name));
-                continue;
-            }
-            out.external_deps += 1;
-            if version != dep.version {
-                out.deps_pinned_by_lockfile += 1;
-            }
-        }
+        .await;
+        out.local_deps += o.local_deps;
+        out.external_deps += o.external_deps;
+        out.deps_pinned_by_lockfile += o.deps_pinned_by_lockfile;
+        out.errors.extend(o.errors);
     }
 }
 
@@ -1415,7 +1514,6 @@ mod corpus {
 
         println!("\n── stages 1-3 over {} ──", root.display());
         println!("roots found     {}", summary.roots_found);
-        println!("dirs excluded   {}", summary.excluded_dirs);
         println!("folders written {}", summary.total_folders());
         println!("files written   {}", summary.total_files());
         println!("manifests       {}", summary.total_manifests());

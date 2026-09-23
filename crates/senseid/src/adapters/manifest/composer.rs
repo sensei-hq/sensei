@@ -81,6 +81,11 @@ impl ManifestAdapter for ComposerManifestAdapter {
                 if name.is_empty() {
                     return None;
                 }
+                // A name we cannot safely spell in a command line is not a
+                // command — see `is_safe_command_name`.
+                if !super::is_safe_command_name(name) {
+                    return None;
+                }
                 Some(super::DiscoveredCommand {
                     raw_name: name.clone(),
                     command_line: format!("composer {name}"),
