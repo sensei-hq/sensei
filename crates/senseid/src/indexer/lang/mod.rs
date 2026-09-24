@@ -425,7 +425,8 @@ pub fn adapter_for_ext(ext: &str) -> Option<&'static dyn LanguageAdapter> {
 /// `languages/fqn.rs` and `indexer/fqn.rs` mint different identities, so a
 /// graph holding both could never join them. A file this indexer cannot PLACE
 /// is not indexed — a visible gap, never a hand-off.
-pub const PRODUCTION_LANGUAGES: &[Language] = &[Language::Rust, Language::TypeScript];
+pub const PRODUCTION_LANGUAGES: &[Language] =
+    &[Language::Rust, Language::TypeScript, Language::Java, Language::Python];
 
 /// Whether this indexer is the production producer for `language`.
 pub fn indexes_in_production(language: Language) -> bool {

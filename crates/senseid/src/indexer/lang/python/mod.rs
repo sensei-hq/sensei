@@ -368,6 +368,247 @@ mod tests {
     use crate::indexer::facts::{RefKind, Resolution};
     use crate::indexer::index::{Placed, index_repo};
 
+    /// A LOCAL inside a method is not an attribute of the class.
+    ///
+    /// A function body carried the SAME container as the class it sits in, so
+    /// `api_key = ApiKey(...)` written inside a method was filed as a FIELD of
+    /// the class — and three such locals in three methods minted one identity.
+    ///
+    /// The rule is the one already settled for TypeScript: a local value is not
+    /// a node. It is not something a reader navigates to and not something a
+    /// call can target. The TYPE BINDING stays, which is the part that works —
+    /// `locals` is what types a receiver.
+    ///
+    /// MEASURED over ai-hedge-fund's 103 files: 69 of 72 collisions were this.
+    ///
+    /// MUTATION: declare a class attribute regardless of depth — the two locals
+    /// collapse onto one identity and the class grows two fields it never had.
+    #[test]
+    fn a_local_inside_a_method_is_not_an_attribute_of_the_class() {
+        let facts = one("class Repo:\n\
+             \x20   table = 'repos'\n\
+             \x20   def find(self):\n\
+             \x20       row = 1\n\
+             \x20       return row\n\
+             \x20   def save(self):\n\
+             \x20       row = 2\n\
+             \x20       return row\n");
+        let rows: Vec<&str> =
+            facts.symbols.iter().filter(|s| s.name == "row").map(|s| s.fqn.as_str()).collect();
+        assert!(rows.is_empty(), "a local in a method is not a node: {rows:?}");
+        let table: Vec<&str> =
+            facts.symbols.iter().filter(|s| s.name == "table").map(|s| s.fqn.as_str()).collect();
+        assert_eq!(table.len(), 1, "a CLASS-BODY assignment is still an attribute: {table:?}");
+    }
+
+    /// A NESTED class is named under the class that encloses it.
+    ///
+    /// `Container::Class` carried a LEAF name, so walking into a nested class
+    /// replaced the enclosing one. Pydantic writes `class Config:` inside every
+    /// schema, so one module's schemas all minted `<module>.Config.<member>` —
+    /// the same defect Java's nested `@interface Container` had, for the same
+    /// reason.
+    ///
+    /// MUTATION: push `name` alone — the two `from_attributes` collapse.
+    #[test]
+    fn a_nested_class_is_named_under_the_class_that_encloses_it() {
+        let facts = one("class A:\n\
+             \x20   class Config:\n\
+             \x20       from_attributes = True\n\
+             class B:\n\
+             \x20   class Config:\n\
+             \x20       from_attributes = True\n");
+        let found: Vec<&str> = facts
+            .symbols
+            .iter()
+            .filter(|s| s.name == "from_attributes")
+            .map(|s| s.fqn.as_str())
+            .collect();
+        assert_eq!(found.len(), 2, "two declarations: {found:?}");
+        let distinct: std::collections::BTreeSet<&&str> = found.iter().collect();
+        assert_eq!(distinct.len(), 2, "two declarations, two identities: {found:?}");
+        assert!(
+            found.iter().any(|f| f.contains("A.Config")),
+            "a nested class carries its enclosing class: {found:?}"
+        );
+    }
+
+    /// One file, read the way the corpus reads it.
+    fn one(text: &str) -> crate::indexer::facts::FileFacts {
+        let placed = Placed { path: "pkg/m.py", package: "p", module: "pkg.m", text };
+        index_repo(&[placed], &["p".to_string()].into_iter().collect())
+            .into_iter()
+            .next()
+            .expect("the fixture reads")
+    }
+
+    /// **A7 for Python: no two declarations mint one identity.**
+    ///
+    /// The gate this language did not have — the same absence that let
+    /// TypeScript reach 511 collisions unnoticed and that Java's sibling
+    /// measurement was built to close. This repository contains no Python at
+    /// all, so acceptance cannot measure it and the answer would be an empty
+    /// denominator; the corpus is somebody else's checkout, named by
+    /// `SENSEI_CORPUS`, and the test is `#[ignore]`d for that reason.
+    ///
+    /// Through `index_repo` rather than a per-file read, because a member's
+    /// identity depends on the TYPE BARRIER: the repo is walked once to collect
+    /// type declarations and again with that table.
+    ///
+    /// PARTITIONED BY REPOSITORY. An identity is scoped to a FOLDER because the
+    /// scan indexes per repo, so pooling several asks a question production
+    /// never asks — on Java's corpus that read 16,561 collisions where the real
+    /// figure was 409, purely because one repo vendored a copy of another.
+    ///
+    ///     SENSEI_CORPUS=/path/to/python cargo test -p senseid --bin senseid \
+    ///       python::tests::no_two_declarations_in_this_corpus_mint_one_identity \
+    ///       -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn no_two_declarations_in_this_corpus_mint_one_identity() {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let Ok(root) = std::env::var("SENSEI_CORPUS") else {
+            println!("SENSEI_CORPUS unset — nothing to read. See this test's docs.");
+            return;
+        };
+
+        // Group every `.py` by the repository that owns it: the nearest ancestor
+        // holding a `.git`, or the corpus root when there is none.
+        let mut by_repo: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for entry in walkdir::WalkDir::new(&root).into_iter().filter_map(Result::ok) {
+            let path = entry.path();
+            if path.extension().is_none_or(|e| e != "py") {
+                continue;
+            }
+            let text = path.to_string_lossy().to_string();
+            if text.contains("/node_modules/")
+                || text.contains("/.venv/")
+                || text.contains("/venv/")
+            {
+                continue;
+            }
+            let mut dir = path.parent();
+            let mut repo = root.clone();
+            while let Some(d) = dir {
+                if d.join(".git").exists() {
+                    repo = d.to_string_lossy().to_string();
+                    break;
+                }
+                dir = d.parent();
+            }
+            by_repo.entry(repo).or_default().push(text);
+        }
+        if by_repo.is_empty() {
+            println!("no Python under SENSEI_CORPUS — nothing to measure.");
+            return;
+        }
+
+        let mut declarations = 0usize;
+        let mut identities = 0usize;
+        let mut colliding: Vec<(String, BTreeSet<String>)> = Vec::new();
+        let mut files = 0usize;
+        for (repo, paths) in &by_repo {
+            let package = repo.rsplit('/').next().unwrap_or("pkg").to_string();
+            let owned: Vec<(String, String, String)> = paths
+                .iter()
+                .filter_map(|abs| {
+                    let text = std::fs::read_to_string(abs).ok()?;
+                    let rel = abs.strip_prefix(repo).unwrap_or(abs).trim_start_matches('/');
+                    Some((rel.to_string(), module_path(rel, ""), text))
+                })
+                .collect();
+            let placed: Vec<Placed<'_>> = owned
+                .iter()
+                .map(|(path, module, text)| Placed { path, package: &package, module, text })
+                .collect();
+            files += placed.len();
+            let indexed =
+                index_repo(&placed, &[package.clone()].into_iter().collect::<BTreeSet<String>>());
+
+            let mut sites: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+            for facts in &indexed {
+                for symbol in &facts.symbols {
+                    declarations += 1;
+                    sites.entry(symbol.fqn.as_str().to_string()).or_default().insert(format!(
+                        "{:?} {} at {}:{}",
+                        symbol.kind, symbol.name, facts.path, symbol.span.start_line
+                    ));
+                }
+            }
+            identities += sites.len();
+            colliding.extend(sites.into_iter().filter(|(_, at)| at.len() > 1));
+        }
+
+        println!("\n── A7: one declaration, one identity (python) ──");
+        println!("repositories {}", by_repo.len());
+        println!("files        {files}");
+        println!("declarations {declarations}");
+        println!("identities   {identities}");
+        println!("COLLIDING    {}", colliding.len());
+
+        // DECOMPOSE. Reading a shape off the first few samples has been wrong
+        // three times on this work; the classifier is what says which defect
+        // this is, and how much of it there is.
+        let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
+        let mut one_file = 0usize;
+        let mut across = 0usize;
+        for (_, at) in &colliding {
+            if let Some(kind) = at.iter().next().and_then(|s| s.split_whitespace().next()) {
+                *by_kind.entry(kind.to_string()).or_default() += 1;
+            }
+            let files: BTreeSet<&str> = at
+                .iter()
+                .filter_map(|s| s.rsplit_once(" at "))
+                .filter_map(|(_, f)| f.rsplit_once(':'))
+                .map(|(p, _)| p)
+                .collect();
+            if files.len() <= 1 {
+                one_file += 1;
+            } else {
+                across += 1;
+            }
+        }
+        println!("  by kind      {by_kind:?}");
+        println!("  one file     {one_file}");
+        println!("  across files {across}");
+        for (fqn, at) in colliding.iter().take(20) {
+            println!("  {fqn}");
+            for site in at.iter().take(4) {
+                println!("      {site}");
+            }
+        }
+
+        // SHADOWING is not a collision. Python lets one module bind a name
+        // twice — `class Message:` at line 5 and again at line 27 — and the
+        // language itself collapses them: the later definition IS the module's
+        // `Message`, and one identity is the correct answer. Measured on
+        // llm-gateway, which does exactly that.
+        //
+        // What must be zero is everything else: two declarations the language
+        // keeps apart, sharing one identity, one of them silently overwritten.
+        let (shadowed, real): (Vec<_>, Vec<_>) = colliding.iter().partition(|(_, at)| {
+            let files: BTreeSet<&str> = at
+                .iter()
+                .filter_map(|s| s.rsplit_once(" at "))
+                .filter_map(|(_, f)| f.rsplit_once(':'))
+                .map(|(p, _)| p)
+                .collect();
+            files.len() == 1
+        });
+        println!(
+            "  shadowed     {} (one file rebinds a name — Python collapses them)",
+            shadowed.len()
+        );
+        assert!(
+            real.is_empty(),
+            "{} Python identities are claimed by declarations in DIFFERENT files. One silently \
+             overwrites the other and which one wins is scan-order dependent (A6): {:?}",
+            real.len(),
+            real.iter().map(|(f, _)| f).take(10).collect::<Vec<_>>()
+        );
+    }
+
     /// **EVERY RELATIVE DEPTH PYTHON CAN WRITE, RESOLVED.**
     ///
     /// The dot is python's separator AND its relative prefix, so the dots are
