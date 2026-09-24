@@ -378,6 +378,7 @@ mod tests {
         let mut partial_types = 0usize;
         let mut examples: Vec<String> = Vec::new();
         let mut one_file_examples: Vec<String> = Vec::new();
+        let mut one_file_by_path: BTreeMap<String, usize> = BTreeMap::new();
         for (fqn, at) in &colliding {
             if let Some(kind) = at.iter().next().and_then(|s| s.split_whitespace().next()) {
                 *by_kind.entry(kind.to_string()).or_default() += 1;
@@ -390,6 +391,9 @@ mod tests {
                 .collect();
             if paths.len() <= 1 {
                 one_file += 1;
+                if let Some(p) = paths.iter().next() {
+                    *one_file_by_path.entry((*p).to_string()).or_default() += 1;
+                }
                 if one_file_examples.len() < 6 {
                     one_file_examples.push(format!(
                         "{fqn}\n        {}",
@@ -436,6 +440,14 @@ mod tests {
         }
         println!("  by kind         {by_kind:?}");
         println!("  one file        {one_file}");
+        // WHICH FILES, not which six examples. A capped sample is how "it is all
+        // one shape" gets believed without being true.
+        let mut worst_files: Vec<(&String, &usize)> = one_file_by_path.iter().collect();
+        worst_files.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+        println!("    across {} files, worst:", one_file_by_path.len());
+        for (path, n) in worst_files.iter().take(6) {
+            println!("      {n:>4}  {path}");
+        }
         for e in &one_file_examples {
             println!("    {e}");
         }
@@ -451,7 +463,7 @@ mod tests {
         // silently absorbs a new defect until the slack runs out, which this
         // repository has already paid for once (A4's rust ceiling).
         //
-        // 414 of 129,498 declarations — 0.32% — over Ethico's 8,647 files, and
+        // 392 of 137,859 declarations — 0.28% — over Ethico's 8,647 files, and
         // every bucket is accounted for:
         //
         //   230  same filename   copies of ONE file; one identity is correct
@@ -461,24 +473,28 @@ mod tests {
         //                        files declaring the same 10 members, one left
         //                        behind when the filename typo was fixed. A real
         //                        finding about the codebase, not about this walk.
-        //    74  one file        CONDITIONAL COMPILATION, and it is the residue.
+        //    52  one file        A PARSE-RECOVERY ARTIFACT, and it is bounded to
+        //                        one vendored tree.
         //
-        // THE RESIDUE IS `#if`/`#else`, and it is rust's `cfg` problem wearing
-        // C#'s syntax: `GetHyperLink(Action, XmlWriter)` under `#if SILVERLIGHT`
-        // beside `GetHyperLink(Action, XmlTextWriter)` under `#else` are two
-        // BODIES of one method, both in the codebase and one in any build. The
-        // answer is the one `rust::walk::split_into_variant` already gives —
-        // a callable plus one arm per condition — and it is NOT applied here
-        // yet. Two things make it more than a copy: the arm's discriminator is
-        // the preprocessor condition rather than a `cfg` attribute, and the
-        // conditional block appears to break containment, since these land at
-        // FILE scope with no type segment rather than as members of their class.
-        // Both want reading before the fix, not after.
+        // THE RESIDUE IS NOT THE CONDITIONAL-COMPILATION SHAPE ANY MORE — that
+        // was 74 and is handled, by the callable-plus-arm split this walk shares
+        // with rust's `cfg` arms. What is left is 52 collisions across 16 files,
+        // every one of them under `sanctioncheck.net/Trunk517680509/`: a vendored
+        // Syncfusion tree that interleaves 38 `#if` blocks with `#region`
+        // directives inside a class body. tree-sitter recovers from that by
+        // closing the class early, so the methods land as SIBLINGS of their type
+        // rather than members of it — their identities carry no type segment at
+        // all, which is the tell.
+        //
+        // That is a property of the grammar's error recovery on one third-party
+        // codebase, not of this walk, and repairing it would mean second-guessing
+        // the parse. It is named here rather than absorbed so a rise is readable.
         assert!(
-            colliding.len() <= 414,
-            "{} colliding identities, was 414 over this corpus. Read the decomposition above \
+            colliding.len() <= 392,
+            "{} colliding identities, was 392 over this corpus. Read the decomposition above \
              before moving this number: `same filename`, `partial types` and the one duplicate \
-             class are CORRECT, and a rise in `one file` is a defect in the walk.",
+             class are CORRECT, and a rise in `one file` OUTSIDE the vendored Syncfusion tree \
+             is a defect in the walk.",
             colliding.len()
         );
     }

@@ -86,6 +86,7 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
         overloaded: BTreeSet::new(),
         fn_depth: 0,
         container_at: 0,
+        condition: None,
     };
     walk.children(&scope, root);
 
@@ -151,13 +152,24 @@ fn span(node: Node<'_>) -> Span {
 fn overloaded_in(src: &str, type_node: Node<'_>) -> BTreeSet<String> {
     let Some(body) = type_node.child_by_field_name("body") else { return BTreeSet::new() };
     let mut seen: BTreeMap<String, usize> = BTreeMap::new();
-    let mut cursor = body.walk();
-    for child in body.children(&mut cursor) {
-        if !matches!(child.kind(), "method_declaration" | "constructor_declaration") {
-            continue;
-        }
-        if let Some(name) = child.child_by_field_name("name") {
-            *seen.entry(src[name.byte_range()].to_string()).or_default() += 1;
+    // DESCENDS THROUGH A PREPROCESSOR BLOCK. Two conditional bodies of one
+    // method are siblings the source separated with `#if`, and scanning only
+    // direct children never saw them as a set — so no split fired and they
+    // collided. A NESTED TYPE is still its own overload set, so the descent
+    // stops at one.
+    let mut stack = vec![body];
+    while let Some(node) = stack.pop() {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "method_declaration" | "constructor_declaration" => {
+                    if let Some(name) = child.child_by_field_name("name") {
+                        *seen.entry(src[name.byte_range()].to_string()).or_default() += 1;
+                    }
+                }
+                k if k.starts_with("preproc_") => stack.push(child),
+                _ => {}
+            }
         }
     }
     seen.into_iter().filter(|(_, n)| *n > 1).map(|(name, _)| name).collect()
@@ -186,6 +198,12 @@ struct Scope {
     /// The [`Scope::fn_depth`] at which [`Scope::container`] was established.
     /// A body does not declare members of the type it sits in.
     container_at: usize,
+    /// The preprocessor condition enclosing this point, if any.
+    ///
+    /// `#if SILVERLIGHT` and `#else` around two bodies of one method are two
+    /// BODIES, both in the codebase and exactly one in any build — rust's `cfg`
+    /// problem in C#'s syntax, and it takes rust's answer.
+    condition: Option<String>,
 }
 
 struct Walk<'a> {
@@ -351,6 +369,23 @@ impl<'a> Walk<'a> {
             // statement — which is what walking children uniformly does — made
             // `Widget w = new Widget(); w.Wide();` two unrelated statements with
             // an untypable receiver in the second.
+            // A PREPROCESSOR BLOCK names the condition its declarations sit
+            // under, and the arm split reads it. `#else` is named by what it is
+            // the alternative TO, because the source writes no condition for it
+            // and two unnamed branches would be one name.
+            k if k.starts_with("preproc_") => {
+                let mut inner = scope.clone();
+                inner.condition = Some(match node.child_by_field_name("condition") {
+                    Some(c) => {
+                        format!("cfg:{}", self.text(c).split_whitespace().collect::<String>())
+                    }
+                    None => match scope.condition.as_deref() {
+                        Some(outer) => format!("else({outer})"),
+                        None => "cfg:else".to_string(),
+                    },
+                });
+                self.children(&inner, node);
+            }
             "block" => {
                 let mut running = scope.clone();
                 let mut cursor = node.walk();
@@ -491,6 +526,7 @@ impl<'a> Walk<'a> {
             overloaded: overloaded_in(self.src, node),
             fn_depth: scope.fn_depth,
             container_at: scope.fn_depth,
+            condition: scope.condition.clone(),
         };
 
         // A POSITIONAL RECORD DECLARES ITS MEMBERS IN ITS PARAMETER LIST, and
@@ -619,11 +655,18 @@ impl<'a> Walk<'a> {
     /// cannot compose `Msg(String)` without type inference, so that would trade
     /// a lost declaration for an unresolvable call.
     fn split_into_variant(&mut self, scope: &Scope, node: Node<'_>, symbol: Symbol) -> Symbol {
-        if !scope.overloaded.contains(&symbol.name) {
+        // EITHER reason splits. An overload is told apart by its signature; a
+        // conditional body by the condition it sits under — and a single method
+        // with ONE signature under `#if`/`#else` is two declarations that only
+        // the condition separates.
+        if !scope.overloaded.contains(&symbol.name) && scope.condition.is_none() {
             return symbol;
         }
         let Container::Type { name: ty } = &scope.container else { return symbol };
-        let signature = self.signature_of(node);
+        let signature = match &scope.condition {
+            Some(cond) => format!("{cond}{}", self.signature_of(node)),
+            None => self.signature_of(node),
+        };
         let Ok(arm) = fqn::define(&Form::MemberVariant {
             lang: Language::CSharp,
             package: self.package,
@@ -1370,6 +1413,44 @@ mod tests {
         for wanted in ["Guid", "string", "ILogger"] {
             assert!(uses.iter().any(|u| u.contains(wanted)), "{wanted} is a use site: {uses:?}");
         }
+    }
+
+    /// CONDITIONAL COMPILATION is one callable and one arm per condition —
+    /// rust's `cfg` problem in C#'s syntax.
+    ///
+    /// `#if SILVERLIGHT` / `#else` around two `GetHyperLink` bodies is two
+    /// BODIES of one method: both are in the codebase, which is what this
+    /// indexer describes, and exactly one is in any given build. Merged onto one
+    /// node the call graph claims every build makes every call, which R4 ranks
+    /// below making none.
+    ///
+    /// MEASURED on Ethico: 74 of 414 collisions, the whole of A7's residue.
+    ///
+    /// MUTATION: return early from the preproc arm — the two bodies collapse
+    /// onto one identity and their outbound edges merge.
+    #[test]
+    fn a_conditional_declaration_is_one_callable_and_an_arm_per_condition() {
+        let facts = twice(
+            "namespace P;\n\
+             public class W {\n\
+             #if SILVERLIGHT\n\
+             \x20 private void Draw(int a) {}\n\
+             #else\n\
+             \x20 private void Draw(long a) {}\n\
+             #endif\n\
+             }\n",
+        );
+        let made = named(&facts, "Draw");
+        let distinct: std::collections::BTreeSet<&String> = made.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            3,
+            "the callable plus one arm per condition, all distinct: {made:?}"
+        );
+        assert!(
+            made.iter().all(|f| f.contains("W")),
+            "and every one is a member of its class, not a free item: {made:?}"
+        );
     }
 
     /// A PARTIAL type is ONE type, and two files declaring it mint one identity
