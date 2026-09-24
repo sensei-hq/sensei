@@ -361,6 +361,53 @@ mod tests {
         );
     }
 
+    /// A NESTED type is named under the type that encloses it.
+    ///
+    /// `Container::Type` carried a single LEAF name, so walking into a nested
+    /// type replaced the enclosing one instead of extending it: two
+    /// `@interface Container` nested in two different types of one package both
+    /// minted `<package>·Container·<member>`, and one silently overwrote the
+    /// other.
+    ///
+    /// MEASURED over 5,088 hand-written files of the Dayamed corpus, partitioned
+    /// by repository: **12,622 of 13,054 colliding identities were this** —
+    /// e.g. `org.postgresql.pljava.annotation.Container.value` claimed by
+    /// `Aggregate.java`, `Cast.java` and `Operator.java`, which declare three
+    /// different nested annotations that happen to share a name.
+    ///
+    /// Java spells a nested type `Outer.Inner`, and that IS its name — the JLS
+    /// canonical name, what an import writes, what `Class.getCanonicalName()`
+    /// returns. So the container is a PATH, not a leaf.
+    ///
+    /// MUTATION: push `name` alone instead of joining it to the enclosing type —
+    /// the two `value` members collapse onto one identity.
+    #[test]
+    fn a_nested_type_is_named_under_the_type_that_encloses_it() {
+        let facts = twice(
+            "package p;\n\
+             public @interface Aggregate { @interface Container { Aggregate[] value(); } }\n\
+             public @interface Cast { @interface Container { Cast[] value(); } }\n",
+        );
+        let values: Vec<&str> =
+            facts.symbols.iter().filter(|s| s.name == "value").map(|s| s.fqn.as_str()).collect();
+        assert_eq!(values.len(), 2, "two declarations: {values:?}");
+        let distinct: std::collections::BTreeSet<&&str> = values.iter().collect();
+        assert_eq!(distinct.len(), 2, "two declarations, two identities: {values:?}");
+        assert!(
+            values.iter().any(|f| f.contains("Aggregate.Container")),
+            "a nested type carries its enclosing type, as `Outer.Inner`: {values:?}"
+        );
+
+        // And the nested TYPES themselves stay apart, not just their members.
+        let containers: std::collections::BTreeSet<&str> = facts
+            .symbols
+            .iter()
+            .filter(|s| s.name == "Container")
+            .map(|s| s.fqn.as_str())
+            .collect();
+        assert_eq!(containers.len(), 2, "each nested type is its own identity: {containers:?}");
+    }
+
     /// Read a fixture the way the corpus does: once to learn where the types
     /// live, then again with those homes, because `refer_to_member` places a
     /// member only when the scan DECLARES its type.
@@ -733,6 +780,196 @@ mod corpus {
     /// corpus and the ladder test used to run the whole placement four times
     /// over to print four sections of one report. `resolve` is pure, so four
     /// runs could only ever produce the same facts at four times the cost.
+    /// **A7 for Java: no two declarations mint one identity.**
+    ///
+    /// The gate this language did not have. Rust and TypeScript each hold a
+    /// ratchet at zero over a corpus that lives in this repository; Java's
+    /// corpus is somebody else's checkout, so the same measurement cannot run
+    /// unattended and is `#[ignore]`d — it is the check to RUN BEFORE flipping
+    /// Java into `PRODUCTION_LANGUAGES`, not one CI performs for you.
+    ///
+    /// It exists because the absence of exactly this measurement is what let
+    /// TypeScript accumulate 511 colliding identities unnoticed: the acceptance
+    /// harness measured every language and gated none, so the number was printed
+    /// on every run and read by nothing.
+    ///
+    /// Read through the TWO-PASS barrier, like [`placed_corpus`]: a member's
+    /// identity carries its type's module, so a single-pass read spells members
+    /// differently and would measure an easier question.
+    ///
+    ///     SENSEI_CORPUS=/path/to/java cargo test -p senseid --bin senseid \
+    ///       java::tests::no_two_declarations_in_this_corpus_mint_one_identity \
+    ///       -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn no_two_declarations_in_this_corpus_mint_one_identity() {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        use crate::indexer::facts::FileFacts;
+
+        let sources = sources();
+        let hand_written: Vec<&(String, String, bool)> =
+            sources.iter().filter(|(_, _, generated)| !generated).collect();
+        if hand_written.is_empty() {
+            println!("SENSEI_CORPUS unset or holds no hand-written Java — nothing to measure.");
+            return;
+        }
+
+        let read_all = |types: &TypeHomes| -> Vec<(String, FileFacts)> {
+            hand_written
+                .iter()
+                .filter_map(|(path, text, _)| {
+                    let source = Source { package: "unnamed", module: "", path, text };
+                    walk::read(&source, types).ok().map(|f| ((*path).clone(), f))
+                })
+                .collect()
+        };
+        let first = read_all(&TypeHomes::unknown());
+        let homes = TypeHomes::of(
+            first.iter().flat_map(|(_, f)| f.symbols.iter().map(|s| (f.package.as_str(), s))),
+        );
+        let anchored = read_all(&homes);
+
+        // PARTITIONED BY REPOSITORY, and that is not a convenience.
+        //
+        // An identity is scoped to a FOLDER in the graph — one repository, one
+        // namespace — because the scan indexes per repo. Pooling several repos
+        // into one measurement asks a question production never asks, and over
+        // this corpus it answers spectacularly wrongly: `Dayamed/cluster`
+        // vendors a copy of `Dayamed/external`, so the same file at the same
+        // line appears under two roots. In Java the package IS the namespace, so
+        // two copies of one file mint one identity CORRECTLY.
+        //
+        // Measured both ways: pooled reads 16,561 collisions of 22,134
+        // identities, which looks like the adapter losing two thirds of its
+        // declarations and is really two checkouts of the same source.
+        let repo_of = |path: &str| -> String {
+            let mut dir = std::path::Path::new(path).parent();
+            while let Some(d) = dir {
+                if d.join(".git").exists() {
+                    return d.to_string_lossy().to_string();
+                }
+                dir = d.parent();
+            }
+            // No `.git` above it — the corpus root is the only namespace there is.
+            std::env::var("SENSEI_CORPUS").unwrap_or_else(|_| "unknown".to_string())
+        };
+
+        let mut per_repo: BTreeMap<String, BTreeMap<String, BTreeSet<String>>> = BTreeMap::new();
+        let mut declarations = 0usize;
+        for (path, facts) in &anchored {
+            let repo = repo_of(path);
+            let sites = per_repo.entry(repo).or_default();
+            for symbol in &facts.symbols {
+                declarations += 1;
+                sites.entry(symbol.fqn.as_str().to_string()).or_default().insert(format!(
+                    "{:?} {} at {path}:{}",
+                    symbol.kind, symbol.name, symbol.span.start_line
+                ));
+            }
+        }
+        println!("repositories {}", per_repo.len());
+        let sites: BTreeMap<String, BTreeSet<String>> = per_repo
+            .iter()
+            .flat_map(|(repo, s)| s.iter().map(move |(fqn, at)| (format!("{repo}\u{1}{fqn}"), at)))
+            .map(|(k, at)| (k, at.clone()))
+            .collect();
+        let colliding: Vec<(&String, &BTreeSet<String>)> =
+            sites.iter().filter(|(_, at)| at.len() > 1).collect();
+
+        println!("\n── A7: one declaration, one identity (java) ──");
+        println!("files        {}", anchored.len());
+        println!("declarations {declarations}");
+        println!("identities   {}", sites.len());
+        println!("COLLIDING    {}", colliding.len());
+
+        // DECOMPOSE before concluding. Eight samples read as "overloads", and a
+        // count of eight is not a shape — this is the query that says whether it
+        // IS one defect or several wearing the same clothes.
+        let mut one_file_same_kind = 0usize;
+        let mut one_file_mixed_kind = 0usize;
+        let mut across_files = 0usize;
+        for (_, at) in &colliding {
+            let files: BTreeSet<&str> =
+                at.iter().filter_map(|s| s.rsplit_once(" at ")).map(|(_, f)| f).collect();
+            let kinds: BTreeSet<&str> =
+                at.iter().filter_map(|s| s.split_whitespace().next()).collect();
+            let one_file = files
+                .iter()
+                .filter_map(|f| f.rsplit_once(':'))
+                .map(|(p, _)| p)
+                .collect::<BTreeSet<&str>>()
+                .len()
+                <= 1;
+            match (one_file, kinds.len()) {
+                (true, 1) => one_file_same_kind += 1,
+                (true, _) => one_file_mixed_kind += 1,
+                _ => across_files += 1,
+            }
+        }
+        println!(
+            "  one file, one kind  {one_file_same_kind}  (an OVERLOAD set: same type, same name, different parameters)"
+        );
+        println!("  one file, mixed     {one_file_mixed_kind}");
+        println!("  across files        {across_files}");
+
+        // SPLIT the across-file population, because "across files" is not a
+        // cause. The decisive question is whether the files are COPIES of one
+        // another — a vendored tree inside one repo mints one identity
+        // CORRECTLY — or genuinely different sources, which is the adapter
+        // losing a declaration.
+        let mut same_basename = 0usize;
+        let mut different_basename = 0usize;
+        let mut examples: Vec<String> = Vec::new();
+        for (fqn, at) in &colliding {
+            let paths: BTreeSet<&str> = at
+                .iter()
+                .filter_map(|s| s.rsplit_once(" at "))
+                .filter_map(|(_, f)| f.rsplit_once(':'))
+                .map(|(p, _)| p)
+                .collect();
+            if paths.len() <= 1 {
+                continue;
+            }
+            let bases: BTreeSet<&str> =
+                paths.iter().map(|p| p.rsplit('/').next().unwrap_or(p)).collect();
+            if bases.len() == 1 {
+                same_basename += 1;
+            } else {
+                different_basename += 1;
+                if examples.len() < 6 {
+                    examples.push(format!(
+                        "{}\n        {}",
+                        fqn.split('\u{1}').next_back().unwrap_or(fqn),
+                        paths.iter().take(3).cloned().collect::<Vec<_>>().join("\n        ")
+                    ));
+                }
+            }
+        }
+        println!(
+            "    same filename     {same_basename}  (copies of one file — one identity is CORRECT)"
+        );
+        println!("    different files   {different_basename}  (genuinely distinct declarations)");
+        for e in &examples {
+            println!("      {e}");
+        }
+
+        for (fqn, at) in colliding.iter().take(25) {
+            println!("  {fqn}");
+            for site in at.iter().take(6) {
+                println!("      {site}");
+            }
+        }
+
+        assert!(
+            colliding.is_empty(),
+            "{} Java identities are minted by more than one declaration. Zero is not a budget: \
+             one of the two silently overwrites the other, and which one wins is scan-order \
+             dependent (A6).",
+            colliding.len()
+        );
+    }
+
     fn placed_corpus() -> Vec<Placed> {
         use std::collections::BTreeSet;
 
