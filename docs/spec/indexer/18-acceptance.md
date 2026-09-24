@@ -146,7 +146,19 @@ was learned by getting it wrong first:
 | python | — | — | 0 | — |
 | csharp | Ethico, 8,647 files | 137,859 | 392 | file copies, partial types, one duplicated class, and a vendored Syncfusion tree tree-sitter cannot recover from |
 | php | 3 repos, 2,263 files | 72,420 | 312 | two checked-in copies of one protoc-generated tree (204), and CakePHP 2.x global-namespace reuse (108) |
+| c | pljava, 129 files | 1,906 | 11 | `JNIEXPORT x JNICALL` read as a declaration of `x` — a macro a walk without a preprocessor cannot expand |
 | kotlin | 245 files | 3,038 | 39 | anonymous objects, Android product flavours |
+
+**C's `one file` bucket is ZERO too**, on both corpora of real C, and reaching
+it took five fixes that are each a fact about the language rather than a patch:
+
+| | | |
+|---:|---|---:|
+| 32 → 22 | tags are their own namespace (C 6.2.3), so `struct node` and a typedef `node` are two names | −14, all the `typedef struct X { .. } X;` idiom |
+| 22 → 18 | a conditionally redefined macro is a callable plus one arm per branch — the split rust uses for `cfg` | |
+| 18 → 12 | an anonymous aggregate is named by what BINDS it — the rule TypeScript needed for a callback | |
+| 12 → 11 | a definition beats a declaration, however the forward one is spelled | |
+| 11 → 11 | a tentative definition (C 6.9.2) is one object | |
 
 **PHP's `one file` bucket is ZERO** — the only one of the five where it is. That
 is the bucket the walk alone controls, and PHP gets it for free: the language

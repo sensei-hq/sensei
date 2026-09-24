@@ -193,26 +193,37 @@ mod tests {
         );
     }
 
+    /// **THIS REGISTRY NO LONGER ANSWERS FOR `.c`.**
+    ///
+    /// `c_file_with_adapter` stood here and called `process` on a `.c` file
+    /// directly. C cut over to `crate::indexer::lang::c`, `languages/c_lang.rs`
+    /// was deleted with it, and what is left is a `DetectionOnly` entry whose
+    /// `parse` is `unreachable!()` — so the test asserted against a panic.
+    ///
+    /// It is GONE rather than adapted, because the property it pinned ("the
+    /// adapter skips a file over 500K chars") belonged to a line-based scanner
+    /// that no longer exists. `process_file` routes a production language to v2
+    /// before this path is reached, and `no_adapter_claims_a_cpp_extension` in
+    /// `crate::languages` pins the routing that keeps it unreachable.
+    /// RUST IS THE ONE EXCEPTION, and it is a stated one rather than a gap:
+    /// `languages/mod.rs` still registers `rust_lang::RustAdapter` as a
+    /// parsing adapter because this registry also answers "what language is
+    /// this?", and removing the entry made `.rs` stop being recognised as
+    /// source at all. Its parse half has no caller; splitting detection from
+    /// parsing is what would let it go, and until then it is unreachable
+    /// rather than absent.
     #[test]
-    fn c_file_with_adapter() {
-        let root = workspace_root();
-        let abs = root.join("crates/senseid/grammars/kotlin/src/parser.c");
-        if !abs.exists() {
-            return;
+    fn a_cut_over_language_never_reaches_this_registrys_parser() {
+        for ext in
+            [".c", ".h", ".ts", ".tsx", ".js", ".svelte", ".vue", ".java", ".py", ".cs", ".php"]
+        {
+            let Some(adapter) = crate::languages::adapter_for_ext(ext) else {
+                panic!("{ext} must still RESOLVE here — this registry names the language")
+            };
+            assert!(
+                !adapter.parses(),
+                "{ext} is produced by crate::indexer::lang, so v1 must not parse it"
+            );
         }
-        let content = std::fs::read_to_string(&abs).unwrap();
-        let result = process(
-            &abs.to_string_lossy(),
-            "crates/senseid/grammars/kotlin/src/parser.c",
-            "c",
-            &content,
-            "sensei",
-        );
-        // Large generated file — C adapter skips files > 500K chars
-        assert!(result.is_some(), "C adapter should handle .c files");
-        let r = result.unwrap();
-        assert_eq!(r.language.as_deref(), Some("c"));
-        // parser.c is 678K lines — should be skipped by size threshold
-        assert!(r.symbols.is_empty(), "generated parser.c should have no symbols (too large)");
     }
 }

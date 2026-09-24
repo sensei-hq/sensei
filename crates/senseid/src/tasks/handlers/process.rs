@@ -1861,18 +1861,32 @@ mod tests {
     /// live graph showed exactly that shape before this landed: kotlin 0/1542
     /// nodes with an fqn, swift 0/8, c 1/322.
     ///
-    /// Breaking mutation: return `false` from any of the three adapters'
-    /// `supports_fqn`, or make `fqn_output` return `None` — that language's
-    /// assertion fails with its node names printed.
+    /// **THE THREE NO LONGER TAKE ONE PATH.** Kotlin and swift are still v1's;
+    /// C cut over to `crate::indexer::lang::c` and is routed to v2 before v1 is
+    /// reached. The assertion is the same either way — a node with an fqn
+    /// starting with its language — which is what makes it worth keeping as one
+    /// test rather than splitting it.
+    ///
+    /// Breaking mutation: return `false` from kotlin's or swift's
+    /// `supports_fqn`, or make `fqn_output` return `None`; for C, remove
+    /// `Language::C` from `PRODUCTION_LANGUAGES`. Each fails with that
+    /// language's node names printed.
     #[tokio::test]
     async fn kotlin_c_and_swift_symbols_reach_the_db_with_fqns() {
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("mixed");
         std::fs::create_dir_all(repo.join("src")).unwrap();
-        // A build file, so the C producer takes its build-root branch (the one
-        // this repo's own corpus exercises).
-        std::fs::write(repo.join("Makefile"), "all:\n").unwrap();
+        // A CMakeLists.txt with a `project()` call, because v2 places a file
+        // only under a manifest that STATES a package name. A `Makefile` stood
+        // here and named nothing — which v1 papered over by deriving a package
+        // from the directory, and which v2 refuses. `CMakeManifestAdapter` is
+        // what makes this the realistic shape rather than a contrived one.
+        std::fs::write(
+            repo.join("CMakeLists.txt"),
+            "cmake_minimum_required(VERSION 3.10)\nproject(mixed LANGUAGES C)\n",
+        )
+        .unwrap();
         std::fs::write(
             repo.join("src/Widget.kt"),
             "package com.acme.svc\n\nclass Widget {\n    fun render() {}\n}\n",

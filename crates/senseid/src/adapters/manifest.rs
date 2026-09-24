@@ -14,6 +14,7 @@ use crate::types::PackageInfo;
 use std::path::Path;
 
 mod cargo;
+mod cmake;
 mod composer;
 mod dotnet;
 mod go;
@@ -460,6 +461,7 @@ pub fn registered_adapters() -> &'static [&'static dyn ManifestAdapter] {
         &ruby::RubyManifestAdapter,
         &composer::ComposerManifestAdapter,
         &swiftpm::SwiftPmManifestAdapter,
+        &cmake::CMakeManifestAdapter,
     ]
 }
 

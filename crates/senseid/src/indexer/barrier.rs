@@ -98,12 +98,17 @@ fn inline_tests_begin(text: &str, language: Language) -> Option<u32> {
         // there is no in-file marker to look for. PHP is the same — PHPUnit
         // discovers `tests/` and `*Test.php`, both of which the path rule
         // already answers.
+        //
+        // C has NO STANDARD TEST FRAMEWORK at all, so there is no in-file
+        // marker and no filename convention to read either. `tests/` is the one
+        // signal a C project gives, and the path rule already has it.
         Language::TypeScript
         | Language::Java
         | Language::Python
         | Language::CSharp
         | Language::Kotlin
-        | Language::Php => {
+        | Language::Php
+        | Language::C => {
             return None;
         }
     };
