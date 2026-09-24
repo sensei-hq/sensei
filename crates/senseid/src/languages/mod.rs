@@ -157,6 +157,7 @@ fn title_case_static(slug: &str) -> &str {
         "java" => "Java",
         "swift" => "Swift",
         "kotlin" => "Kotlin",
+        "csharp" => "C#",
         "svelte" => "Svelte",
         "vue" => "Vue",
         "go" => "Go",
@@ -254,6 +255,12 @@ pub fn all_adapters() -> Vec<Box<dyn LanguageAdapter>> {
         // `resolve_supertype` / `resolve_type_call`, and Kotlin is still v1's.
         Box::new(DetectionOnly { language: "java", extensions: &[".java"] }),
         Box::new(DetectionOnly { language: "python", extensions: &[".py", ".pyi"] }),
+        // C# has NO parser here and never had one — this entry is the first
+        // thing in this registry to claim `.cs` at all. Before it, all 19,404
+        // `.cs` files in the watched roots carried no language and no nodes:
+        // `classifiers` counted them as source off a hardcoded extension list
+        // while nothing could say what language they were.
+        Box::new(DetectionOnly { language: "csharp", extensions: &[".cs"] }),
         Box::new(DetectionOnly { language: "vue", extensions: &[".vue"] }),
         // **RUST IS v2's, AND THIS REGISTRATION IS NOW DETECTION ONLY.**
         // `process_file` routes every `.rs` file to `indexer::lang::rust`
