@@ -97,13 +97,23 @@ pub enum Language {
     /// types nest, methods overload — which is why its walk is Java's shape
     /// rather than a new one.
     CSharp,
+    /// Kotlin. A JVM language with Java's namespace model and its own syntax —
+    /// top-level declarations, a declaring primary constructor, `object`.
+    Kotlin,
 }
 
 impl Language {
     /// Every language this build can read. Exhaustively matched below, so a new
     /// variant does not compile until it is listed here too.
     pub fn all() -> &'static [Language] {
-        &[Language::Rust, Language::TypeScript, Language::Java, Language::Python, Language::CSharp]
+        &[
+            Language::Rust,
+            Language::TypeScript,
+            Language::Java,
+            Language::Python,
+            Language::CSharp,
+            Language::Kotlin,
+        ]
     }
 
     /// The label this language occupies the leading fqn segment with. Paired
@@ -115,6 +125,7 @@ impl Language {
             Self::Java => "java",
             Self::Python => "python",
             Self::CSharp => "csharp",
+            Self::Kotlin => "kotlin",
         }
     }
 
@@ -128,6 +139,7 @@ impl Language {
             "java" => Some(Self::Java),
             "python" => Some(Self::Python),
             "csharp" => Some(Self::CSharp),
+            "kotlin" => Some(Self::Kotlin),
             _ => None,
         }
     }
@@ -1074,10 +1086,11 @@ mod tests {
                 | Language::TypeScript
                 | Language::Java
                 | Language::Python
-                | Language::CSharp => {}
+                | Language::CSharp
+                | Language::Kotlin => {}
             }
         }
-        assert_eq!(all_languages().len(), 5);
+        assert_eq!(all_languages().len(), 6);
 
         for k in all_symbol_kinds() {
             match k {

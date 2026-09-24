@@ -328,7 +328,11 @@ pub fn specifier_names_a_module(language: Language, binding: &Binding) -> bool {
             // `Name` binding's specifier has nothing in it but a namespace, and
             // the ambiguity the Rust arm refuses to guess at does not arise.
             Language::TypeScript | Language::Python | Language::CSharp => true,
-            Language::Rust | Language::Java => false,
+            // Kotlin joins RUST rather than the three above, and for the reason
+            // the Rust arm gives: `import a.b.C` imports a CLASS and
+            // `import a.b.*` a package, so a `Name` binding's last segment may
+            // be either and nothing in the importing file says which.
+            Language::Rust | Language::Java | Language::Kotlin => false,
         },
     }
 }
