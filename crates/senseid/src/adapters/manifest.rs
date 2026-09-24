@@ -16,6 +16,7 @@ use std::path::Path;
 mod cargo;
 mod cmake;
 mod composer;
+mod dbd;
 mod dotnet;
 mod go;
 mod gradle;
@@ -462,6 +463,7 @@ pub fn registered_adapters() -> &'static [&'static dyn ManifestAdapter] {
         &composer::ComposerManifestAdapter,
         &swiftpm::SwiftPmManifestAdapter,
         &cmake::CMakeManifestAdapter,
+        &dbd::DbdManifestAdapter,
     ]
 }
 

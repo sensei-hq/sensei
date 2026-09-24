@@ -110,6 +110,11 @@ impl Dialect {
     /// Every marker below exists in exactly ONE dialect. A marker two dialects
     /// share says nothing and is deliberately absent — `AUTO_INCREMENT` is
     /// here and `PRIMARY KEY` is not.
+    ///
+    /// And a marker must be a thing that dialect WRITES, not a character it
+    /// happens to use: a backtick was in this list until it was measured
+    /// turning a third of sensei's own Postgres DDL into MySQL, because a
+    /// commented schema is full of `-- \`like this\``.
     pub fn detect(text: &str) -> Self {
         let lower = text.to_ascii_lowercase();
         let count =
@@ -154,7 +159,11 @@ impl Dialect {
             "on conflict",
             "returning ",
         ]);
-        let mysql = count(&["auto_increment", "engine=innodb", "unsigned int", "`"]);
+        // NO BACKTICK. It is MySQL's identifier quote, but it is also what
+        // everybody writes around a word in a comment — see
+        // `a_backtick_in_a_comment_does_not_make_a_schema_mysql`. A marker has
+        // to be a thing only that dialect WRITES.
+        let mysql = count(&["auto_increment", "engine=innodb", "unsigned int"]);
         let sqlite = count(&["autoincrement", "pragma ", "without rowid"]);
 
         let scores = [
@@ -593,6 +602,36 @@ mod tests {
         assert_eq!(Dialect::detect("CREATE TABLE t (id int);"), Dialect::Unstated);
         assert_eq!(Dialect::detect(""), Dialect::Unstated);
         assert_eq!(Dialect::detect("-- just a comment\n"), Dialect::Unstated);
+    }
+
+    /// **A QUOTE CHARACTER IS NOT A DIALECT STATEMENT.**
+    ///
+    /// A backtick is MySQL's identifier quote, and it was in the marker list.
+    /// It is also what everybody writes around a word in a COMMENT, and a
+    /// well-commented schema is full of them: measured over sensei's own
+    /// Postgres DDL, 2,132 backticks across 178 files, every one in prose like
+    /// `-- \`named\` = public credit`. That made 204 of 610 dbd DDL files —
+    /// a third — detect as MySQL, and each would have been handed to the wrong
+    /// reader.
+    ///
+    /// The fourth instance of one shape on this work: `"CXX".contains("C")`,
+    /// `go` inside `logo`, `VIEW` inside `ViewedBy`, and now a quote character
+    /// inside a sentence. A marker has to be a thing only that dialect WRITES,
+    /// not a character it happens to use.
+    ///
+    /// MUTATION: put the backtick back — a third of every commented Postgres
+    /// schema reads as MySQL.
+    #[test]
+    fn a_backtick_in_a_comment_does_not_make_a_schema_mysql() {
+        let commented = "-- `named` = public credit; `anonymous` = rotated\n\
+                         CREATE TABLE attribution (mode text);";
+        assert_ne!(Dialect::detect(commented), Dialect::MySql);
+
+        // MySQL is still detected by what it actually WRITES.
+        assert_eq!(
+            Dialect::detect("CREATE TABLE t (id int AUTO_INCREMENT) ENGINE=InnoDB;"),
+            Dialect::MySql
+        );
     }
 
     /// `go` is a word in a hundred names. Only a LINE that is exactly `GO`

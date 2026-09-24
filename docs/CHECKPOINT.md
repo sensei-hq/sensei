@@ -85,6 +85,22 @@ null-byte test, because UTF-16LE ASCII is `X 00 X 00` and the null test was
 calling all 754 of them `binary_content`. Worth 377 more files, +329 stored
 procedures, +7,560 references — and it is why the T-SQL numbers above rose.
 
+**`DbdManifestAdapter` reads `design.yaml`** — `project.name` names the package,
+extensions are dependencies, and `source.dialect` STATES the dialect (5 of 9
+manifests do; the other 4 predate the key and get `None`, not an assumption).
+Before it, no manifest above a `.ddl` file named a package — the workspace
+`Cargo.toml` has no `[package]` — so every dbd DDL file was "not indexed".
+
+The dialect is **not yet threaded** to the SQL reader: `Placement`/`Source` carry
+package and module only, and the consumer (a Postgres reader over dbd's
+`parse_sql`, dbd#19) does not exist yet. Detection covers it meanwhile —
+605 PostgreSQL / 5 Unstated / **0 wrong** over 610 dbd DDL files.
+
+Fixed on the way: a backtick was a MySQL marker, and it is also what people
+write around words in comments. 2,132 of them across 178 files of sensei's own
+Postgres DDL made **204 files (a third) detect as MySQL**. Fourth instance of
+one shape — `"CXX".contains("C")`, `go` in `logo`, `VIEW` in `ViewedBy`.
+
 ## Remaining
 
 | language | files | grammar (ABI-checked, pinned) |

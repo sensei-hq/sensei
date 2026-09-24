@@ -288,6 +288,41 @@ actionable answer that tells the user to re-encode. Measured over the skipped
 `.sql` files: 754 UTF-16LE (all BOM-carrying), 6 iso-8859-1, 5 unknown-8bit,
 1 genuine pg_dump archive.
 
+**A dbd SCHEMA IS A PACKAGE.** `DbdManifestAdapter` reads `design.yaml`:
+`project.name` names the package, `project.note` describes it, and the Postgres
+`extensions` are its dependencies (declared under `target.<engine>` in newer
+manifests and at the top level in older ones — both read).
+
+That closed a real hole. v2 places a file only under a manifest that STATES a
+package name, and no manifest above a `.ddl` file did: the only candidates
+between `database/ddl/table/sensei/nodes.ddl` and the root are
+`database/design.yaml` — unread until now — and the workspace `Cargo.toml`,
+which has no `[package]` section. So every DDL file in every dbd project logged
+"no manifest names a package — not indexed".
+
+**It also STATES THE DIALECT**, which no other manifest here does:
+`source.dialect: postgresql`. SQL is the one language whose reader cannot be
+chosen from the extension, and a manifest saying so outranks
+`Dialect::detect` reading markers out of the text — the same order Java's
+`package` line outranks a directory. `DbdManifestAdapter::stated_dialect`
+answers `None` when nothing is stated rather than assuming Postgres: 4 of the 9
+`design.yaml` files in the watched roots predate the `source:` key, and filling
+one in would be a fact about dbd rather than about the project.
+
+**The dialect is NOT yet threaded to the reader.** `Placement` and `Source`
+carry package and module, not dialect, and the consumer — a Postgres reader
+over dbd's `parse_sql` — does not exist yet (dbd#19). Adding the field now
+would be four call sites of plumbing for nothing to read. Detection covers the
+gap meanwhile and is measurably accurate: over 610 dbd DDL files, 605 PostgreSQL
+and 5 Unstated, **0 wrong**.
+
+That last number was 204 wrong before a fix this work forced. A backtick was in
+the MySQL marker list — it is MySQL's identifier quote, but it is also what
+everybody writes around a word in a comment, and a commented schema is full of
+them: 2,132 backticks across 178 files of sensei's own Postgres DDL, every one
+in prose. A third of the corpus detected as MySQL. A marker has to be something
+a dialect WRITES, not a character it uses.
+
 **SQL IS BUILT, NOT FLIPPED**, and the reason is a split corpus. SQL is the
 first language here whose DIALECT has to be established before anything can be
 read, and the two halves need different readers:
