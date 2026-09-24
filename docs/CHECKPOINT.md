@@ -1,37 +1,44 @@
 # Checkpoint
 
-**Slice:** indexer v2 — TypeScript cut over; next is deploy + wipe + re-index (issue #130, phase `build`)
+**Slice:** indexer v2 — languages, before the wipe + re-index (issue #130, phase `build`)
 
 ## Done
 
-- **Observability views** (`c00f7406`) — `repository` on the graph views; `activity.task_health` + `task_failures` as the restart list. Failure lake reclaimed: 17,577,049 rows, 14 GB → 656 MB.
-- **TypeScript A7 ratchet at ZERO** (`daf428fb`, `0efc151f`) — 511 → 0. The last step was not naming things harder but declaring fewer: **a local value is not a node**. Barrier numbers unchanged to the digit, so nothing reader-facing was lost.
-- **TypeScript CUT OVER** (`2e18e352`) — `PRODUCTION_LANGUAGES = [Rust, TypeScript]`. `languages/typescript.rs`, `svelte.rs`, `vue.rs` deleted (2,426 lines; net **-2,416**). Vue was **migrated** to `indexer/lang/vue.rs`, not grandfathered.
+- **rust + TypeScript cut over**, both A7 ratchets at **zero** (`2e18e352`, `0efc151f`). v1's TS/Svelte/Vue parsers deleted (2,426 lines); Vue *migrated* to `indexer/lang/vue.rs`.
+- **Java's A7 gate built** (`74748f3b`) — it never existed, which is the same absence that hid 511 TypeScript collisions. `SENSEI_CORPUS`-driven over 5,088 real files.
+- **Java's blocker cleared** (`6acb528b`) — overload collisions **409 → 14** by treating an overload like rust's `cfg` variant: the callable a caller mints, emitted once, plus one `MemberVariant` arm per signature.
 
 ## Remaining
 
-1. **Deploy, wipe, re-index** ← NEXT
-2. **Wire `Stated::Gone`** — the deletion path has no production constructor.
-3. Port SQL, Swift, Kotlin, C; then delete `languages/` and break its two couplings.
+| language | files (watched roots) | v2 adapter | state |
+|---|---:|---|---|
+| **Java** | 12,630 | ✓ | **unblocked — ready to flip** |
+| SQL (+ddl) | 7,435 | ✗ | build |
+| Python | 562 | ✓ | needs an A7 measurement first |
+| Kotlin | 247 | ✗ | build |
+| C (+h) | 160 | ✗ | build |
+| Swift | 2 | ✗ | effectively unused |
+| **C#** | **19,404** | ✗ | **nothing handles it, either version** |
+| PHP | 2,251 | ✗ | nothing handles it |
+
+Then: deploy → `TRUNCATE sensei.nodes, sensei.edges CASCADE` → full re-index → acceptance against the live graph → wire `Stated::Gone`.
 
 ## Next command
 
 ```
-make install-service && \
-psql -h localhost -p 5432 -d sensei -c 'TRUNCATE sensei.nodes, sensei.edges CASCADE;'
+SENSEI_CORPUS=/Users/Jerry/Work/Dayamed cargo test -p senseid --bin senseid \
+  indexer::lang::java -- --ignored --nocapture
 ```
-Then a full re-index, then acceptance against the live graph.
-
-Do **not** pipe test/build commands through `tail` — a pipe reports the pipe's exit status.
+Never pipe a test or build through `tail` — a pipe reports the pipe's exit status.
 
 ## Open questions
 
-- Re-embedding is the real cost of the wipe (~326,716 nodes last measured). Record throughput before anything depends on it.
-- `.ts`, `.js` and `.svelte`/`.vue` share one `Language`, so they flipped together. The spec's "one at a time" is not expressible through a per-language frontier.
+- Flip Java now, or build the missing adapters first and do one flip?
+- C# is the largest single gap in the corpus and has never had an adapter in either version.
 
 ## Known-broken / not deployed
 
-- **The daemon predates all of it** — the v2 wiring, the `mark_file_parsed` fix (`parsed_at` is 0 on all 111,276 files), and this cutover.
-- **The wipe is required, not optional**: reconcile reads prior claims via `props->'claims'`, a v2-only marker that **0 of 467,707** nodes carry. v1's rows are invisible to it and would never be demoted.
-- `graph_resolution.resolved_via` stays NULL until the re-index — the only `rung` writer is v2's `persist.rs`.
-- Failure retention still has no cap on repeated identical failures, so the lake can refill.
+- **`languages/jvm.rs` is shared by `java.rs` and `kotlin.rs`** — flipping Java must keep `jvm.rs` for Kotlin. Same coupling shape as typescript/vue; `DetectionOnly` is how a flipped language keeps its extension→language mapping.
+- **This repo has no Java/Python/Swift/Kotlin**, so acceptance cannot measure them — "java members 0 | owns 0" was an empty denominator, not a pass. Use `SENSEI_CORPUS`.
+- Java's residual 14 collisions: declarations inside enum-constant or anonymous-class bodies, where `overloaded_in` scans only the type body's direct children.
+- The daemon predates the v2 wiring, the `mark_file_parsed` fix and both cutovers. The wipe is required — reconcile reads `props->'claims'`, which 0 of 467,707 nodes carry.
