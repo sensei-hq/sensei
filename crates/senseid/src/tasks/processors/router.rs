@@ -22,7 +22,14 @@ pub fn process_file(
 
     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
-    let raw = std::fs::read_to_string(file_path).map_err(|e| format!("Failed to read: {}", e))?;
+    // BYTES THEN DECODE, so this agrees with the scan gate. `read_to_string`
+    // refuses a UTF-16 file that `classify_unscannable` has already called
+    // text, which would skip it here with no reason recorded anywhere.
+    let bytes = std::fs::read(file_path).map_err(|e| format!("Failed to read: {}", e))?;
+    let raw = match crate::classifiers::decode_source(&bytes) {
+        crate::classifiers::Decoded::Text(text) => text,
+        other => return Err(format!("Not text ({other:?})")),
+    };
 
     // Normalize line endings to LF before any parsing. tree-sitter byte offsets
     // and the per-line / byte buffers used for text extraction must agree; a

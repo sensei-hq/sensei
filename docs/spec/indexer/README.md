@@ -272,6 +272,22 @@ cutover: `crate::languages` has never held a parser for either, so nothing was
 deleted when they flipped and there was no second producer to race. Every other
 row in the "yes" column traded one producer for another in a single commit.
 
+**UTF-16 SOURCE IS READ.** `classifiers::decode_source` is the one owner of
+"what are these bytes", and both the scan gate and the parse path call it. The
+BOM is read BEFORE the null-byte test, and that ordering IS the fix: UTF-16LE
+ASCII is `X 00 X 00`, so a gate that tests for nulls first calls every UTF-16
+file an opaque binary. All 754 UTF-16 `.sql` files in the watched roots carried
+`skip_reason = binary_content` and no parser ever saw one — SSMS exports
+UTF-16LE by default, so an entire codebase of change scripts was invisible.
+
+A substitution character is treated as a FAILED READ: `encoding_rs` reports
+`had_errors` when it replaced a byte with U+FFFD, and accepting that would hand
+a parser a name no use site can mint. Charset DETECTION is deliberately not
+done — a file with no BOM must be valid UTF-8, and `invalid_utf8` is already the
+actionable answer that tells the user to re-encode. Measured over the skipped
+`.sql` files: 754 UTF-16LE (all BOM-carrying), 6 iso-8859-1, 5 unknown-8bit,
+1 genuine pg_dump archive.
+
 **SQL IS BUILT, NOT FLIPPED**, and the reason is a split corpus. SQL is the
 first language here whose DIALECT has to be established before anything can be
 read, and the two halves need different readers:

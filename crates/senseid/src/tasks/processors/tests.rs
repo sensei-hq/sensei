@@ -141,7 +141,71 @@ fn sensei_mcp_cargo_toml() {
 
 // ═══ Non-code files (conditional — may not exist) ════════════════
 
+/// **A UTF-16 SOURCE FILE PRODUCES SYMBOLS**, end to end through the router.
+///
+/// SSMS exports UTF-16LE with a BOM, and `read_to_string` refuses it — so this
+/// router returned `Failed to read` for a file the scan gate had already
+/// classified as text. MEASURED before the fix: all 754 UTF-16 `.sql` files in
+/// the watched roots carried `skip_reason = binary_content`, and none of them
+/// reached a parser.
+///
+/// MUTATION: put `read_to_string` back — the read fails and the file yields
+/// nothing, while `classify_unscannable` still says it is indexable. The two
+/// disagreeing is the shape that made this invisible.
 #[test]
+fn a_utf16_file_is_read_rather_than_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("Issues.sql");
+    // `CREATE TABLE`, terminated, and unbracketed — because what is under test
+    // is the DECODE reaching a parser, not how much of T-SQL v1's line-based
+    // `sql.rs` understands. It reads no `CREATE PROCEDURE` and needs the `;`,
+    // which is two of the reasons `indexer::lang::sql::tsql` exists.
+    //
+    // The UTF-8 comparison below is what keeps this honest: if both sides
+    // returned nothing the assertion would hold vacuously, so the symbol is
+    // asserted by name as well.
+    let mut bytes = vec![0xFFu8, 0xFE];
+    for c in "CREATE TABLE Issues (Id int);\r\n".chars() {
+        bytes.extend_from_slice(&(c as u16).to_le_bytes());
+    }
+    std::fs::write(&file, &bytes).unwrap();
+
+    let r = process_file(&file.to_string_lossy(), &dir.path().to_string_lossy(), "sensei")
+        .expect("a UTF-16 file is text");
+    assert_eq!(r.language.as_deref(), Some("sql"));
+
+    // THE SAME CONTENT AS UTF-8, so a difference isolates the decode from what
+    // the parser does or does not understand.
+    let plain = dir.path().join("Issues8.sql");
+    std::fs::write(&plain, "CREATE TABLE Issues (Id int);\r\n").unwrap();
+    let p8 = process_file(&plain.to_string_lossy(), &dir.path().to_string_lossy(), "sensei")
+        .expect("utf-8 reads");
+    assert_eq!(
+        r.symbols.iter().map(|s| &s.name).collect::<Vec<_>>(),
+        p8.symbols.iter().map(|s| &s.name).collect::<Vec<_>>(),
+        "UTF-16 and UTF-8 of the same text must yield the same symbols"
+    );
+    assert!(
+        r.symbols.iter().any(|s| s.name.contains("Issues")),
+        "the table is found, so the decoded text reached the parser: {:?}",
+        r.symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+    );
+}
+
+/// A genuine binary is still refused, BOM check or not.
+#[test]
+fn a_pg_dump_archive_is_still_not_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("dump.sql");
+    // The real head of a `pg_dump -Fc` archive, which is what one of the
+    // skipped files in the corpus actually is.
+    std::fs::write(&file, b"PGDMP\x01\x10\x00\x04\x08\x01\x01\x00\x10").unwrap();
+    assert!(
+        process_file(&file.to_string_lossy(), &dir.path().to_string_lossy(), "sensei").is_err(),
+        "null bytes with no BOM are unexplained"
+    );
+}
+
 /// **A C++ FILE GETS A FILE NODE AND NO SYMBOLS.**
 ///
 /// `c_parser_large_file` stood here and routed a `.c` file through this
@@ -155,6 +219,7 @@ fn sensei_mcp_cargo_toml() {
 /// That is the skip that makes deleting v1's C parser safe, and it is worth a
 /// test because the alternative — a `DetectionOnly` entry for `.cpp` — is a
 /// PANIC rather than a skip.
+#[test]
 fn a_cpp_file_is_a_file_node_with_no_symbols() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("widget.cpp");

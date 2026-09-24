@@ -38,18 +38,18 @@ because nothing off the shelf can declare a stored procedure —
 `tree-sitter-sequel`'s `grammar.js` says `// TODO: procedure`, and `sqlparser`'s
 `MsSqlDialect` fails on the parenless `CREATE PROCEDURE @p int AS` form.
 
-Measured over Ethico (9 repos, 2,042 files, 391 UTF-16 and unreadable):
+Measured over Ethico (9 repos, 2,419 files, 14 unreadable):
 
 | | |
 |---|---:|
-| read as T-SQL | 1,778 |
-| declaring an object | 1,086 (2,370 objects) |
-| declaring nothing, correctly | 692 |
-| **missed** | **0** |
-| references | 36,177 (24,850 placed) |
-| colliding | 476 — **0 within a file** |
+| read as T-SQL | 2,154 |
+| declaring an object | 1,458 (2,742 objects — 1,285 procedures) |
+| declaring nothing, correctly | 695 |
+| **missed** | **1** — dynamic SQL, the definition is inside an `sp_executesql` string |
+| references | 43,737 (28,626 placed) |
+| colliding | 544 — **0 within a file** |
 
-The 476 are release folders (`4.2.1/` beside `4.3.0.2/`, one named
+The 544 are release folders (`4.2.1/` beside `4.3.0.2/`, one named
 `DO NOT USE_4.1/`) — one procedure, several versions.
 
 NOT FLIPPED: the Postgres half waits on
@@ -78,6 +78,12 @@ project states its name). **158 of 165 C files already placed** through an
 enclosing `pom.xml`/`Cargo.toml`/`composer.json`/`package.json`; the 7 that do
 not have no manifest above them at all, and no CMakeLists.txt either — so the
 adapter rescues nothing today and is there for the next C project.
+
+**UTF-16 is read now.** `classifiers::decode_source` owns the decode and both
+the scan gate and the parse path call it; the BOM is checked BEFORE the
+null-byte test, because UTF-16LE ASCII is `X 00 X 00` and the null test was
+calling all 754 of them `binary_content`. Worth 377 more files, +329 stored
+procedures, +7,560 references — and it is why the T-SQL numbers above rose.
 
 ## Remaining
 

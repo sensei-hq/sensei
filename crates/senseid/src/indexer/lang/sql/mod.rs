@@ -311,40 +311,49 @@ mod tests {
     /// The A7 ratchet for this corpus. A RATCHET, not a budget: it sits AT the
     /// measured value so a single new collision fails the gate.
     ///
-    /// MEASURED over Ethico — 9 repositories, 2,042 SQL files, of which 391 are
-    /// UTF-16 and unreadable (SSMS exports them that way; the pipeline already
-    /// records them as `binary_content`).
+    /// MEASURED over Ethico — 9 repositories, 2,419 SQL files, 14 of them
+    /// unreadable (latin-1 and unknown-8bit with no BOM to name them, which
+    /// `classifiers::decode_source` refuses rather than guessing at).
     ///
     /// ```text
-    /// by dialect    TSql 1778, Unstated 179, PostgreSql 73, MySql 12
-    /// read as T-SQL 1778
-    ///   declaring an object 1086 (61%)
-    ///     2,370 objects: 956 procedure, 607 table, 506 view,
-    ///                    208 function, 88 trigger, 5 type
-    ///   declaring nothing    692 CORRECTLY — a pure INSERT, UPDATE or
+    /// by dialect    TSql 2154, Unstated 180, PostgreSql 73, MySql 12
+    /// read as T-SQL 2154
+    ///   declaring an object 1458 (68%)
+    ///     2,742 objects: 1,285 procedure, 613 table, 506 view,
+    ///                    220 function, 113 trigger, 5 type
+    ///   declaring nothing    695 CORRECTLY — a pure INSERT, UPDATE or
     ///                        `ALTER TABLE ADD` script defines no object
-    ///                          0 MISSED
-    ///   references         36,177 (24,850 schema-qualified and placed)
-    /// COLLIDING            476
+    ///                          1 MISSED
+    ///   references         43,737 (28,626 schema-qualified and placed)
+    /// COLLIDING            544
     ///   within one file        0
-    ///   identical copies      22
-    ///   same object, different release folders  454
+    ///   identical copies      21
+    ///   same object, different release folders  523
     /// ```
     ///
-    /// **ZERO MISSES and ZERO intra-file collisions.** Those are the two
-    /// buckets the reader alone controls. Every file either declares what it
-    /// creates or correctly declares nothing.
+    /// **ZERO intra-file collisions**, which is the bucket the reader alone
+    /// controls.
     ///
-    /// THE 476 ARE THE CORPUS, not the reader. Ethico ships a folder per
+    /// THE ONE MISS IS DYNAMIC SQL, and the reader is right about it.
+    /// `LCAMActivityReport.sql` wraps its whole definition in
+    /// `EXEC dbo.sp_executesql @statement = N'…'`, so the `ALTER PROCEDURE`
+    /// is inside a STRING LITERAL. The lexer consumes literals, as it must —
+    /// reading their contents as code would also mint declarations out of
+    /// example SQL and commented-out blocks. 4 files in Ethico use the
+    /// wrapper and 1 declares through it, so it is named here rather than
+    /// special-cased.
+    ///
+    /// THE 544 ARE THE CORPUS, not the reader. Ethico ships a folder per
     /// release — `4.2.1/2. StoredProcedures/sp_NewMCRIssue.sql` beside
-    /// `4.3.0.2/2. StoredProcedures/sp_NewMCRIssue.sql`, and a directory
-    /// literally named `DO NOT USE_4.1/`. `dbo.sp_NewMCRIssue` IS one
-    /// procedure; the tree holds its definition at several versions, and one
-    /// identity for it is the right answer — that is what the database has.
+    /// `4.3.0.2/…`, and a directory literally named `DO NOT USE_4.1/`.
+    /// `dbo.sp_NewMCRIssue` IS one procedure; the tree holds its definition at
+    /// several versions, and one identity for it is the right answer.
     ///
-    /// A rise in `within one file` is a defect in this reader. A rise in the
-    /// other two is a release folder somebody added.
-    const A7_BOUND: usize = 476;
+    /// These numbers ROSE when `decode_source` landed: 377 more files became
+    /// readable (UTF-16LE from SSMS), worth +329 stored procedures and +7,560
+    /// references. A rise in `within one file` is a defect in this reader; a
+    /// rise in the other two is a release folder somebody added.
+    const A7_BOUND: usize = 544;
 
     /// **A7 + COVERAGE for T-SQL over a real corpus.**
     ///
@@ -374,10 +383,15 @@ mod tests {
             if path.extension().is_none_or(|e| e != "sql" && e != "ddl") {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(path) else {
-                // UTF-16. SSMS exports it by default and `read_to_string`
-                // refuses it — 10% of this corpus, recorded by the pipeline as
-                // `binary_content`. Counted here so the denominator is honest.
+            // THE PRODUCTION DECODER, not `read_to_string`. SSMS exports
+            // UTF-16LE and `read_to_string` refuses it, so a gate using one
+            // would measure a corpus the indexer no longer sees.
+            let Ok(bytes) = std::fs::read(path) else {
+                unreadable += 1;
+                continue;
+            };
+            let crate::classifiers::Decoded::Text(text) = crate::classifiers::decode_source(&bytes)
+            else {
                 unreadable += 1;
                 continue;
             };
