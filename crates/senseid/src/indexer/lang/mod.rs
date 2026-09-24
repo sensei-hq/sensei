@@ -43,6 +43,7 @@ pub mod javascript;
 pub mod python;
 pub mod rust;
 pub mod svelte;
+pub mod vue;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -396,6 +397,7 @@ pub fn all_adapters() -> &'static [&'static dyn LanguageAdapter] {
         &javascript::TypeScriptAdapter,
         &javascript::JavaScriptAdapter,
         &svelte::SvelteAdapter,
+        &vue::VueAdapter,
     ]
 }
 
@@ -423,7 +425,7 @@ pub fn adapter_for_ext(ext: &str) -> Option<&'static dyn LanguageAdapter> {
 /// `languages/fqn.rs` and `indexer/fqn.rs` mint different identities, so a
 /// graph holding both could never join them. A file this indexer cannot PLACE
 /// is not indexed — a visible gap, never a hand-off.
-pub const PRODUCTION_LANGUAGES: &[Language] = &[Language::Rust];
+pub const PRODUCTION_LANGUAGES: &[Language] = &[Language::Rust, Language::TypeScript];
 
 /// Whether this indexer is the production producer for `language`.
 pub fn indexes_in_production(language: Language) -> bool {
@@ -692,7 +694,57 @@ mod tests {
                  </script>\n\
                  <p>{w.wide()}</p>\n"
             }
+            // The same component, in Vue's dialect: a MUSTACHE rather than a
+            // single brace, which is the whole of what differs between the two.
+            "vue" => {
+                "<script>\n\
+                 class Widget { wide() { return 1; } }\n\
+                 const w = new Widget();\n\
+                 </script>\n\
+                 <template><p>{{ w.wide() }}</p></template>\n"
+            }
             other => panic!("no fixture for the adapter named {other}"),
+        }
+    }
+
+    /// A framework DELEGATES to a host, and says so.
+    ///
+    /// Svelte and Vue hand their `<script>` to the JavaScript/TypeScript walk,
+    /// which is why a `.svelte` or `.vue` file's symbols are filed under
+    /// `Language::TypeScript` rather than a language of their own. Declaring the
+    /// host makes that queryable instead of being a thing one has to know.
+    ///
+    /// This guarantee used to live in `crate::languages` (as
+    /// `framework_adapters_declare_their_host_language`). It moved here with the
+    /// adapters themselves when TypeScript cut over — the v1 entries are
+    /// detection-only now and host nothing.
+    ///
+    /// MUTATION: drop `host()` from either adapter — the file's symbols still
+    /// carry TypeScript fqns while the registry claims the language stands
+    /// alone, which is the contradiction this pins.
+    #[test]
+    fn a_framework_declares_the_host_it_delegates_to() {
+        for adapter in all_adapters() {
+            let host = adapter.host();
+            match adapter.name() {
+                "svelte" | "vue" => {
+                    assert_eq!(
+                        host,
+                        Some("typescript"),
+                        "{} delegates its script to TypeScript and must declare it",
+                        adapter.name()
+                    );
+                    assert_eq!(
+                        adapter.language(),
+                        Language::TypeScript,
+                        "{} files its symbols under its host's language",
+                        adapter.name()
+                    );
+                }
+                other => {
+                    assert_eq!(host, None, "{other} parses its own language and hosts nothing")
+                }
+            }
         }
     }
 
