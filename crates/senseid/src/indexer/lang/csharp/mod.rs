@@ -319,6 +319,16 @@ mod tests {
         let mut identities = 0usize;
         let mut colliding: Vec<(String, BTreeSet<String>)> = Vec::new();
         let mut unreadable = 0usize;
+        // Every file's text, by path, so the classifier below can ask the SOURCE
+        // whether a type was declared `partial`. That is the fact that separates
+        // the language's own answer from a defect, and nothing on `Symbol`
+        // records it — adding a field there would put one language's modifier on
+        // every language's declaration.
+        let text_of: BTreeMap<&str, &str> = by_repo
+            .values()
+            .flat_map(|files| files.iter().map(|(p, t)| (p.as_str(), t.as_str())))
+            .collect();
+
         for (repo, sources) in &by_repo {
             let package = repo.rsplit('/').next().unwrap_or("pkg").to_string();
             let read_all = |types: &TypeHomes| -> Vec<(String, FileFacts)> {
@@ -365,7 +375,9 @@ mod tests {
         let mut one_file = 0usize;
         let mut same_name_files = 0usize;
         let mut different_files = 0usize;
+        let mut partial_types = 0usize;
         let mut examples: Vec<String> = Vec::new();
+        let mut one_file_examples: Vec<String> = Vec::new();
         for (fqn, at) in &colliding {
             if let Some(kind) = at.iter().next().and_then(|s| s.split_whitespace().next()) {
                 *by_kind.entry(kind.to_string()).or_default() += 1;
@@ -378,12 +390,40 @@ mod tests {
                 .collect();
             if paths.len() <= 1 {
                 one_file += 1;
+                if one_file_examples.len() < 6 {
+                    one_file_examples.push(format!(
+                        "{fqn}\n        {}",
+                        at.iter().take(3).cloned().collect::<Vec<_>>().join("\n        ")
+                    ));
+                }
                 continue;
             }
             let bases: BTreeSet<&str> =
                 paths.iter().map(|p| p.rsplit('/').next().unwrap_or(p)).collect();
             if bases.len() == 1 {
                 same_name_files += 1;
+                continue;
+            }
+            // A PARTIAL type is one type by the language's own rule, so several
+            // files minting one identity is the CORRECT answer and not a defect.
+            //
+            // Asked of the SOURCE rather than of a modifier recorded on the
+            // symbol: every site must declare the name with `partial` in front
+            // of the keyword. A regex over the text is robust to attributes and
+            // to modifier order, both of which move a declaration's first line
+            // and would defeat reading one.
+            let name = fqn.rsplit('·').nth(1).unwrap_or("");
+            let every_site_is_partial = !name.is_empty()
+                && paths.iter().all(|p| {
+                    text_of.get(p).is_some_and(|text| {
+                        ["class", "struct", "interface", "record"].iter().any(|kw| {
+                            text.match_indices(&format!("partial {kw} "))
+                                .any(|(at, _)| text[at..].split_whitespace().nth(2) == Some(name))
+                        })
+                    })
+                });
+            if every_site_is_partial {
+                partial_types += 1;
             } else {
                 different_files += 1;
                 if examples.len() < 8 {
@@ -396,6 +436,10 @@ mod tests {
         }
         println!("  by kind         {by_kind:?}");
         println!("  one file        {one_file}");
+        for e in &one_file_examples {
+            println!("    {e}");
+        }
+        println!("  partial types   {partial_types} (ONE type by the language's rule — CORRECT)");
         println!(
             "  same filename   {same_name_files} (copies of one file — one identity is CORRECT)"
         );
@@ -405,30 +449,247 @@ mod tests {
         }
         // THE BOUND SITS AT THE MEASUREMENT, not above it. A ceiling with slack
         // silently absorbs a new defect until the slack runs out, which this
-        // repo has already paid for once (A4's rust ceiling).
+        // repository has already paid for once (A4's rust ceiling).
         //
-        // 452 of 129,498 declarations — 0.35% — decomposed on 2026-09-23 over
-        // Ethico's 8,647 files:
-        //   230 same filename   copies of one file, where one identity is CORRECT
-        //   110 different files almost entirely PARTIAL types, which are one type
-        //                       by the language's own rule — `.partial.cs`,
-        //                       `EmailTemplateDto.Forms.cs`, `_LocationDto.cs` —
-        //                       plus one genuine leftover duplicate whose
-        //                       filename is a misspelling of its sibling's
-        //   112 one file        the residue, unclassified
+        // 414 of 129,498 declarations — 0.32% — over Ethico's 8,647 files, and
+        // every bucket is accounted for:
         //
-        // SHARPENING THIS NEEDS `partial` ON THE SYMBOL. The gate cannot tell a
-        // partial type from a defect today because nothing records the modifier,
-        // so the cross-file bucket mixes the language's answer with a real fault.
-        // That is the next thing to do here, and it is why the bound is a total
-        // rather than a per-bucket zero.
+        //   230  same filename   copies of ONE file; one identity is correct
+        //    73  partial types   ONE type by the language's rule; correct
+        //    37  different files a single duplicate class — `Campaign_RiskAssesment.cs`
+        //                        and `Campaign_RiskAssessment.cs`, two 28-line
+        //                        files declaring the same 10 members, one left
+        //                        behind when the filename typo was fixed. A real
+        //                        finding about the codebase, not about this walk.
+        //    74  one file        CONDITIONAL COMPILATION, and it is the residue.
+        //
+        // THE RESIDUE IS `#if`/`#else`, and it is rust's `cfg` problem wearing
+        // C#'s syntax: `GetHyperLink(Action, XmlWriter)` under `#if SILVERLIGHT`
+        // beside `GetHyperLink(Action, XmlTextWriter)` under `#else` are two
+        // BODIES of one method, both in the codebase and one in any build. The
+        // answer is the one `rust::walk::split_into_variant` already gives —
+        // a callable plus one arm per condition — and it is NOT applied here
+        // yet. Two things make it more than a copy: the arm's discriminator is
+        // the preprocessor condition rather than a `cfg` attribute, and the
+        // conditional block appears to break containment, since these land at
+        // FILE scope with no type segment rather than as members of their class.
+        // Both want reading before the fix, not after.
         assert!(
-            colliding.len() <= 452,
-            "{} colliding identities, was 452 over this corpus. Read the decomposition above \
-             before moving this number: `same filename` and PARTIAL types are correct, and a \
-             rise in `one file` is a defect in the walk.",
+            colliding.len() <= 414,
+            "{} colliding identities, was 414 over this corpus. Read the decomposition above \
+             before moving this number: `same filename`, `partial types` and the one duplicate \
+             class are CORRECT, and a rise in `one file` is a defect in the walk.",
             colliding.len()
         );
+    }
+
+    /// Every `.cs` file under `SENSEI_CORPUS`, with its text.
+    fn sources() -> Vec<(String, String)> {
+        let Ok(root) = std::env::var("SENSEI_CORPUS") else { return Vec::new() };
+        let mut out = Vec::new();
+        for entry in walkdir::WalkDir::new(&root).into_iter().filter_map(Result::ok) {
+            let path = entry.path();
+            if path.extension().is_none_or(|e| e != "cs") {
+                continue;
+            }
+            let shown = path.to_string_lossy().to_string();
+            // Build output and generated designer files are a property of a
+            // toolchain rather than of this reader.
+            if ["/bin/", "/obj/", "/packages/", ".Designer.cs", ".g.cs", ".g.i.cs"]
+                .iter()
+                .any(|skip| shown.contains(skip))
+            {
+                continue;
+            }
+            if let Ok(text) = std::fs::read_to_string(path) {
+                out.push((shown, text));
+            }
+        }
+        out
+    }
+
+    /// Use sites, counted with NO knowledge of `Walk` and none of resolution.
+    ///
+    /// The whole value of A2 is that this counter and the walk share nothing: a
+    /// bug in the walk cannot hide in a number the walk produced. It re-parses
+    /// and counts the grammar shapes that ARE use sites, and the two totals are
+    /// compared.
+    fn count_use_sites(root: tree_sitter::Node<'_>) -> usize {
+        /// The declarations that carry a `type` field, each of which is a type
+        /// USE as well as a declaration.
+        const TYPED: &[&str] = &["variable_declaration", "property_declaration", "parameter"];
+        let mut out = 0usize;
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            match node.kind() {
+                "invocation_expression" => out += 1,
+                "object_creation_expression" => out += 1,
+                // A member access is a READ unless it is the callee of a call,
+                // which the invocation above already counted.
+                "member_access_expression" => {
+                    let invoked = node.parent().is_some_and(|p| {
+                        p.kind() == "invocation_expression"
+                            && p.child_by_field_name("function")
+                                .is_some_and(|f| f.id() == node.id())
+                    });
+                    if !invoked {
+                        out += 1;
+                    }
+                }
+                kind if TYPED.contains(&kind) => {
+                    if let Some(ty) = node.child_by_field_name("type") {
+                        out += type_names_under(ty);
+                    }
+                }
+                "method_declaration" => {
+                    if let Some(returns) = node.child_by_field_name("returns") {
+                        out += type_names_under(returns);
+                    }
+                }
+                _ => {}
+            }
+            let mut cursor = node.walk();
+            stack.extend(node.named_children(&mut cursor));
+        }
+        out
+    }
+
+    fn type_names_under(node: tree_sitter::Node<'_>) -> usize {
+        let mut count = 0;
+        let mut stack = vec![node];
+        while let Some(n) = stack.pop() {
+            match n.kind() {
+                "identifier" | "qualified_name" | "predefined_type" => count += 1,
+                _ => {
+                    let mut cursor = n.walk();
+                    stack.extend(n.named_children(&mut cursor));
+                }
+            }
+        }
+        count
+    }
+
+    /// **A2 and A3 for C#: nothing dropped, and every miss named.**
+    ///
+    /// A2 is a CONSERVATION check — the walk's reference count against a count
+    /// made independently off the tree, sharing no code with it. A number the
+    /// walk produced cannot audit the walk.
+    ///
+    /// A3 is the miss histogram: every unresolved reference carries a reason,
+    /// and the reasons account for all of them. An unresolved reference is not
+    /// an error; a reference that vanished is.
+    ///
+    ///     SENSEI_CORPUS=/path/to/csharp cargo test -p senseid --bin senseid \
+    ///       csharp::tests::nothing_is_dropped_and_every_miss_is_named \
+    ///       -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn nothing_is_dropped_and_every_miss_is_named() {
+        use std::collections::BTreeMap;
+
+        use crate::indexer::facts::{RefKind, Resolution};
+
+        let sources = sources();
+        if sources.is_empty() {
+            println!("SENSEI_CORPUS unset or holds no .cs — nothing to measure.");
+            return;
+        }
+
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_c_sharp::LANGUAGE.into()).expect("the C# grammar loads");
+
+        let mut files = 0usize;
+        let mut unreadable = 0usize;
+        let mut emitted_total = 0usize;
+        let mut counted_total = 0usize;
+        let mut disagreeing = 0usize;
+        let mut worst: Vec<(i64, String, usize, usize)> = Vec::new();
+        let mut reasons: BTreeMap<&'static str, usize> = BTreeMap::new();
+        let mut resolved = 0usize;
+        let mut unresolved = 0usize;
+        let mut symbols = 0usize;
+        let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
+
+        for (path, text) in &sources {
+            let source = Source { package: "unknown", module: "", path, text };
+            let Ok(facts) = walk::read(&source, &TypeHomes::unknown()) else {
+                unreadable += 1;
+                continue;
+            };
+            files += 1;
+            symbols += facts.symbols.len();
+            for s in &facts.symbols {
+                *by_kind.entry(format!("{:?}", s.kind)).or_default() += 1;
+            }
+            for r in &facts.references {
+                match &r.target {
+                    Resolution::Resolved { .. } => resolved += 1,
+                    Resolution::Unresolved { reason, .. } => {
+                        unresolved += 1;
+                        *reasons.entry(reason.as_label()).or_default() += 1;
+                    }
+                }
+            }
+            let emitted = facts
+                .references
+                .iter()
+                .filter(|r| {
+                    matches!(
+                        r.kind,
+                        RefKind::Calls | RefKind::Constructs | RefKind::Reads | RefKind::TypeUse
+                    )
+                })
+                .count();
+            let Some(tree) = parser.parse(text.as_str(), None) else { continue };
+            let expected = count_use_sites(tree.root_node());
+            emitted_total += emitted;
+            counted_total += expected;
+            if emitted != expected {
+                disagreeing += 1;
+                worst.push((
+                    (expected as i64 - emitted as i64).abs(),
+                    path.clone(),
+                    emitted,
+                    expected,
+                ));
+            }
+        }
+
+        worst.sort_by_key(|(delta, ..)| std::cmp::Reverse(*delta));
+        println!("\n── A2: nothing dropped (csharp) ──");
+        println!("files {files} ({unreadable} unreadable)");
+        println!("symbols {symbols}");
+        println!("  by kind {by_kind:?}");
+        println!("walk emitted {emitted_total} | counted independently {counted_total}");
+        println!("files disagreeing: {disagreeing} of {files}");
+        for (delta, path, emitted, expected) in worst.iter().take(8) {
+            println!("  {delta:>5}  {path} (walk {emitted}, counted {expected})");
+        }
+
+        println!("\n── A3: every miss named (csharp) ──");
+        println!("resolved {resolved} | unresolved {unresolved}");
+        let named: usize = reasons.values().sum();
+        for (reason, n) in &reasons {
+            println!("  {n:>7}  {reason}");
+        }
+
+        // A3 IS THE ASSERTION. Every unresolved reference carries a reason, so
+        // the histogram must account for all of them — a miss with no name is a
+        // reference nothing can explain and nobody can act on.
+        assert_eq!(
+            named,
+            unresolved,
+            "{} unresolved references carry no reason; the histogram accounts for {named}",
+            unresolved - named
+        );
+
+        // A2 is REPORTED rather than ratcheted here, and deliberately. The
+        // independent counter is an approximation of the grammar's use sites,
+        // not a second implementation of the walk — Java's equivalent disagrees
+        // on 5 of 5,088 files and that is read, not asserted. What matters is
+        // that the two are the same ORDER and that the disagreeing set is small
+        // enough to read, both of which the report above makes checkable.
+        assert!(files > 100, "corpus too small to be meaningful: {files} files");
     }
 
     fn seg(raw: &str) -> String {

@@ -484,7 +484,7 @@ impl<'a> Walk<'a> {
             Container::Type { name: outer } => format!("{outer}.{name}"),
             Container::File => name.to_string(),
         };
-        let inner = Scope {
+        let mut inner = Scope {
             from: fqn,
             container: Container::Type { name: nested },
             locals: self.members_of(node),
@@ -492,6 +492,80 @@ impl<'a> Walk<'a> {
             fn_depth: scope.fn_depth,
             container_at: scope.fn_depth,
         };
+
+        // A POSITIONAL RECORD DECLARES ITS MEMBERS IN ITS PARAMETER LIST, and
+        // the list is a CHILD rather than a field — reading only the body sees
+        // an empty type. `public record Row(Guid Id, string Name);` has no body
+        // at all, and modern C# writes every DTO this way.
+        //
+        // MEASURED: `QuizDtos.cs` emitted 0 references against 265 counted.
+        //
+        // A CLASS's parameter list is a different thing with the same spelling.
+        // C# 12 gives a class a primary constructor, and its parameters are
+        // constructor parameters — in scope for the body, and type uses, but the
+        // class declares no member for them. Only a record synthesises
+        // properties, so only a record declares here.
+        let declares_properties =
+            matches!(kind, SymbolKind::Struct) && node.kind().starts_with("record");
+        // A BODY MEMBER REPLACES THE SYNTHESISED ONE. C# lets a positional
+        // record redeclare a positional property to give it an initialiser —
+        // `record C(IList<T> Xs = null!) { public IList<T> Xs { get; init; } =
+        // Xs ?? []; }` — and that is ONE property, not two. Declaring it from
+        // both the parameter list and the body mints one identity twice, which
+        // is what A7 reports.
+        //
+        // A record with NO BODY declares nothing here, and that is an OBSERVED
+        // fact rather than a failed read. Collapsing the absent body to an empty
+        // set with a defaulting combinator would spell the two the same way,
+        // which is what R4 refuses — so the absence is written out.
+        let mut body_declares: BTreeSet<String> = BTreeSet::new();
+        if let Some(body) = node.child_by_field_name("body") {
+            let mut cursor = body.walk();
+            for c in body.children(&mut cursor) {
+                if matches!(c.kind(), "property_declaration" | "field_declaration")
+                    && let Some(name) = self.declared_name(c)
+                {
+                    body_declares.insert(name);
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        let lists: Vec<Node<'_>> =
+            node.children(&mut cursor).filter(|c| c.kind() == "parameter_list").collect();
+        for list in lists {
+            let mut params = list.walk();
+            let formals: Vec<Node<'_>> = list
+                .children(&mut params)
+                .filter(|p| p.is_named() && !matches!(p.kind(), "attribute_list" | "comment"))
+                .collect();
+            for p in formals {
+                // The TYPE is a use site either way.
+                self.type_use(&inner, p, "type");
+                let Some(pname) = self.field_text(p, "name") else { continue };
+                if let Some(ty) = self.field_text(p, "type") {
+                    inner.locals.insert(pname.to_string(), ty.to_string());
+                }
+                if !declares_properties || body_declares.contains(pname) {
+                    continue;
+                }
+                let Ok(member) = self.declare(&inner, pname, Reach::Field) else { continue };
+                self.symbols.push(Symbol {
+                    fqn: member.clone(),
+                    kind: SymbolKind::Property,
+                    name: pname.to_string(),
+                    span: span(p),
+                    visibility: Visibility::Public,
+                    docstring: None,
+                    declared_type: match self.field_text(p, "type") {
+                        Some(t) => DeclaredType::Stated(t.to_string()),
+                        None => DeclaredType::Unstated,
+                    },
+                    params: Vec::new(),
+                });
+                self.owned_by_the_enclosing_type(&inner, &member, span(p));
+            }
+        }
+
         if let Some(body) = node.child_by_field_name("body") {
             self.children(&inner, body);
         }
@@ -579,21 +653,66 @@ impl<'a> Walk<'a> {
     /// formatting. `()` for a no-argument overload, which is a real signature
     /// and not an absent one.
     fn signature_of(&self, node: Node<'_>) -> String {
-        let Some(list) = node.child_by_field_name("parameters") else { return "()".to_string() };
+        // THE TYPE PARAMETERS ARE PART OF THE SIGNATURE. `CreateQuery(Expression)`
+        // and `CreateQuery<T>(Expression)` take the same parameter types and are
+        // two different methods; a signature built from parameters alone spells
+        // them identically and the arms collapse — which defeats the split.
+        let generics: String = match node.child_by_field_name("type_parameters") {
+            Some(t) => self.text(t).split_whitespace().collect(),
+            None => String::new(),
+        };
+        let Some(list) = node.child_by_field_name("parameters") else {
+            return format!("{generics}()");
+        };
         let mut cursor = list.walk();
         let types: Vec<String> = list
             .children(&mut cursor)
-            .filter(|p| p.kind() == "parameter")
+            // ANY named parameter node, not the one kind. `params object[] args`
+            // does not arrive as a plain `parameter`, so filtering to that kind
+            // DROPPED it — and `Write(string)` and `Write(string, params
+            // object[])` then spelled one signature between them. A node kind
+            // list is a thing to keep in step with a grammar; "a named child
+            // that is not an attribute or a comment" is not.
+            .filter(|p| p.is_named() && !matches!(p.kind(), "attribute_list" | "comment"))
             .map(|p| match self.field_text(p, "type") {
                 Some(t) => t.split_whitespace().collect::<String>(),
-                None => "?".to_string(),
+                // A parameter whose type the grammar gives no field for still
+                // COUNTS — its presence is what distinguishes the overload, and
+                // dropping it is what this arm exists to stop.
+                None => self.text(p).split_whitespace().collect::<String>(),
             })
             .collect();
-        format!("({})", types.join(","))
+        format!("{generics}({})", types.join(","))
+    }
+
+    /// The name a member DECLARES, with its explicit interface when it has one.
+    ///
+    /// `object IEnumerator.Current` and `public T Current` are two different
+    /// members of one type that share a leaf name, and C# itself spells the
+    /// first `IEnumerator.Current`. Reading the `name` field alone puts them on
+    /// one identity and one silently overwrites the other.
+    fn declared_name(&self, node: Node<'_>) -> Option<String> {
+        let name = self.field_text(node, "name")?;
+        let mut cursor = node.walk();
+        let explicit = node
+            .children(&mut cursor)
+            .find(|c| c.kind() == "explicit_interface_specifier")
+            .map(|c| self.text(c).trim_end_matches('.').trim().to_string());
+        Some(match explicit {
+            // The interface's own last segment is enough: `IEnumerator.Current`
+            // is what the language calls it, and a fully qualified prefix would
+            // put a namespace inside a member name.
+            Some(iface) => {
+                let leaf = iface.rsplit('.').next().unwrap_or(&iface);
+                format!("{leaf}.{name}")
+            }
+            None => name.to_string(),
+        })
     }
 
     fn method(&mut self, scope: &Scope, node: Node<'_>) {
-        let Some(name) = self.field_text(node, "name") else { return };
+        let Some(name) = self.declared_name(node) else { return };
+        let name = name.as_str();
         let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
         let returns = match self.field_text(node, "returns") {
             Some(t) => DeclaredType::Stated(t.to_string()),
@@ -659,7 +778,8 @@ impl<'a> Walk<'a> {
     /// the fact vocabulary carries for exactly this shape and which A5 measures.
     /// Its accessors are walked, because `get => _count * 2;` holds use sites.
     fn property(&mut self, scope: &Scope, node: Node<'_>) {
-        let Some(name) = self.field_text(node, "name") else { return };
+        let Some(name) = self.declared_name(node) else { return };
+        let name = name.as_str();
         let Ok(fqn) = self.declare(scope, name, Reach::Field) else { return };
         let declared = match self.field_text(node, "type") {
             Some(t) => DeclaredType::Stated(t.to_string()),
@@ -1099,6 +1219,157 @@ mod tests {
         let alone = named(&facts, "Alone");
         assert_eq!(alone.len(), 1, "an unambiguous method stays one node: {alone:?}");
         assert!(!alone[0].contains('('), "and carries no signature: {alone:?}");
+    }
+
+    /// A GENERIC overload is a different overload, and the type parameters are
+    /// what tell it from its non-generic sibling.
+    ///
+    /// `CreateQuery(Expression)` and `CreateQuery<TElement>(Expression)` take
+    /// the same parameter TYPES, so a signature built from parameters alone
+    /// spells them identically and the two arms collapse onto one identity —
+    /// which defeats the split that exists to keep them apart.
+    ///
+    /// MEASURED on Ethico: this and the explicit-interface shape below are the
+    /// whole of the same-file residue, at 112 collisions.
+    ///
+    /// MUTATION: drop the type parameters from `signature_of` — the two arms
+    /// mint `(Expression)` twice.
+    #[test]
+    fn a_generic_overload_is_told_from_its_non_generic_sibling() {
+        let facts = twice(
+            "namespace P;\n\
+             public class Provider {\n\
+             \x20 public object CreateQuery(Expression e) { return e; }\n\
+             \x20 public object CreateQuery<T>(Expression e) { return e; }\n\
+             }\n",
+        );
+        let made = named(&facts, "CreateQuery");
+        let distinct: std::collections::BTreeSet<&String> = made.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            3,
+            "the callable plus one arm per signature, all distinct: {made:?}"
+        );
+        assert!(
+            made.iter().any(|f| f.contains("<T>")),
+            "the generic arm carries its type parameters: {made:?}"
+        );
+    }
+
+    /// An EXPLICIT INTERFACE implementation is its own member.
+    ///
+    /// `public T Current` and `object IEnumerator.Current` are two different
+    /// members that share a name, and C# itself spells the second
+    /// `IEnumerator.Current`. Naming it `Current` alone puts them on one
+    /// identity, and one silently overwrites the other.
+    ///
+    /// MUTATION: read only the `name` field — the two `Current` collapse.
+    #[test]
+    fn an_explicit_interface_member_carries_the_interface() {
+        let facts = twice(
+            "namespace P;\n\
+             public class Cursor {\n\
+             \x20 public int Current { get; set; }\n\
+             \x20 object IEnumerator.Current { get { return 1; } }\n\
+             }\n",
+        );
+        let found: Vec<String> = facts
+            .symbols
+            .iter()
+            .filter(|s| s.name.ends_with("Current"))
+            .map(|s| s.fqn.to_string())
+            .collect();
+        assert_eq!(found.len(), 2, "two declarations: {found:?}");
+        let distinct: std::collections::BTreeSet<&String> = found.iter().collect();
+        assert_eq!(distinct.len(), 2, "two declarations, two identities: {found:?}");
+        assert!(
+            found.iter().any(|f| f.contains("IEnumerator.Current")),
+            "the explicit one carries its interface, as C# spells it: {found:?}"
+        );
+    }
+
+    /// A `params` parameter is a parameter, and it is what tells
+    /// `Write(string)` from `Write(string, params object[])`.
+    ///
+    /// MEASURED on Ethico: the T4-generated `IssueDetailsTemplate.cs` declares
+    /// both, and dropping the second put them on one identity.
+    ///
+    /// MUTATION: filter the parameter list to a narrower node kind — the two
+    /// arms mint `(string)` twice.
+    #[test]
+    fn a_params_parameter_is_part_of_the_signature() {
+        let facts = twice(
+            "namespace P;\n\
+             public class W {\n\
+             \x20 public void Write(string text) {}\n\
+             \x20 public void Write(string format, params object[] args) {}\n\
+             }\n",
+        );
+        let made = named(&facts, "Write");
+        let distinct: std::collections::BTreeSet<&String> = made.iter().collect();
+        assert_eq!(distinct.len(), 3, "the callable plus one arm each: {made:?}");
+    }
+
+    /// A POSITIONAL RECORD declares its members in its parameter list.
+    ///
+    /// `public record QuizListItemDto(Guid Id, string Name)` has NO body — the
+    /// parameters are the type's public properties, and the record synthesises
+    /// them. A walk that reads only the body sees an empty type.
+    ///
+    /// MEASURED on Ethico: `QuizDtos.cs` emitted 0 references against 265
+    /// counted, and `ReportingDtos.cs` 1 against 764. Modern C# writes DTOs this
+    /// way, so the gap is concentrated in exactly the files a reader most wants.
+    ///
+    /// A CLASS's parameter list is NOT the same thing. C# 12 gives a class a
+    /// primary constructor whose parameters are constructor parameters, not
+    /// properties — they are in scope for the body and they are type uses, but
+    /// the class declares no member for them.
+    ///
+    /// MUTATION: read only the body — the record declares nothing and its
+    /// parameter types stop being use sites.
+    #[test]
+    fn a_positional_record_declares_its_parameters() {
+        let facts = twice(
+            "namespace P;\n\
+             public record Row(Guid Id, string Name);\n\
+             public class Svc(ILogger log) { public void Go() {} }\n",
+        );
+        let kind = |n: &str| facts.symbols.iter().find(|s| s.name == n).map(|s| s.kind);
+        assert_eq!(kind("Id"), Some(SymbolKind::Property), "a record parameter IS a property");
+        assert_eq!(kind("Name"), Some(SymbolKind::Property));
+        assert_eq!(kind("log"), None, "a class's primary-constructor parameter declares no member");
+
+        // A BODY MEMBER REPLACES THE SYNTHESISED ONE — C# lets a positional
+        // record redeclare a positional property to give it an initialiser, and
+        // that is ONE property. Declaring from both sides mints one identity
+        // twice, which A7 reports as a collision.
+        //
+        // MUTATION: drop the `body_declares` check — `Kept` is declared twice.
+        let both = twice(
+            "namespace P;\n\
+             public record Cfg(IList<int> Kept = null!) {\n\
+             \x20 public IList<int> Kept { get; init; } = Kept ?? [];\n\
+             }\n",
+        );
+        assert_eq!(
+            both.symbols.iter().filter(|s| s.name == "Kept").count(),
+            1,
+            "the body's member replaces the synthesised one"
+        );
+
+        // And the parameter TYPES are use sites either way.
+        let uses: Vec<String> = facts
+            .references
+            .iter()
+            .filter(|r| r.kind == RefKind::TypeUse)
+            .map(|r| match &r.target {
+                Resolution::Unresolved { evidence, .. } => evidence.name.clone(),
+                Resolution::Resolved { fqn, .. } => fqn.to_string(),
+            })
+            .collect();
+        for wanted in ["Guid", "string", "ILogger"] {
+            assert!(uses.iter().any(|u| u.contains(wanted)), "{wanted} is a use site: {uses:?}");
+        }
     }
 
     /// A PARTIAL type is ONE type, and two files declaring it mint one identity
