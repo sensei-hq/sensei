@@ -17,7 +17,7 @@
 //! `userDetailsService.loadNursePractitioner()` resolves where its JavaScript
 //! equivalent would be `ReceiverTypeUnknown`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tree_sitter::Node;
 
@@ -62,7 +62,13 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
     };
     walk.imports_of(root);
     let its_own = file.clone();
-    let scope = Scope { from: file, container: Container::File, locals: BTreeMap::new() };
+    let scope = Scope {
+        from: file,
+        container: Container::File,
+        locals: BTreeMap::new(),
+        // A file body declares no methods directly — Java has no free function.
+        overloaded: BTreeSet::new(),
+    };
     walk.children(&scope, root);
 
     // THE FILE DECLARES ITS OWN MODULE. The identity already existed and was
@@ -108,6 +114,33 @@ fn declared_package(src: &str, root: Node<'_>) -> Option<String> {
     None
 }
 
+/// The method names a type body declares MORE THAN ONCE.
+///
+/// Whether a method is an overload is a property of its siblings, and the walk
+/// meets them one at a time — so the body is scanned once, up front, and the
+/// answer carried on the scope. Only the body's OWN members count: a nested
+/// type's methods are its own overload set, and folding them in would split a
+/// method that nothing shares a name with.
+fn overloaded_in(src: &str, type_node: Node<'_>) -> BTreeSet<String> {
+    let Some(body) = type_node.child_by_field_name("body") else { return BTreeSet::new() };
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    let mut cursor = body.walk();
+    for child in body.children(&mut cursor) {
+        if !matches!(
+            child.kind(),
+            "method_declaration"
+                | "constructor_declaration"
+                | "annotation_type_element_declaration"
+        ) {
+            continue;
+        }
+        if let Some(name) = child.child_by_field_name("name") {
+            *seen.entry(src[name.byte_range()].to_string()).or_default() += 1;
+        }
+    }
+    seen.into_iter().filter(|(_, n)| *n > 1).map(|(name, _)| name).collect()
+}
+
 fn span(node: Node<'_>) -> Span {
     let start = node.start_position();
     let end = node.end_position();
@@ -136,6 +169,13 @@ struct Scope {
     /// parameters, locals. Never inferred — an entry here was read off a
     /// declaration.
     locals: BTreeMap<String, String>,
+    /// The method names THIS type declares more than once.
+    ///
+    /// Computed once per type body and carried, because whether a method is an
+    /// overload is a property of its SIBLINGS and the walk meets them one at a
+    /// time. A set of one is not an overload: splitting every method into a
+    /// callable plus a single arm would double the node count and say nothing.
+    overloaded: BTreeSet<String>,
 }
 
 struct Walk<'a> {
@@ -398,6 +438,7 @@ impl<'a> Walk<'a> {
         };
         let inner = Scope {
             from: fqn,
+            overloaded: overloaded_in(self.src, node),
             container: Container::Type { name: nested },
             // Every field of this class, shared by every method in it. This is
             // what makes a Java receiver typable where a JavaScript one is not.
@@ -471,6 +512,77 @@ impl<'a> Walk<'a> {
         out
     }
 
+    /// Split an OVERLOADED method into the callable a use site mints and the arm
+    /// that implements this signature.
+    ///
+    /// Mirrors `rust::walk::split_into_variant`, which does the same for a
+    /// `cfg`-gated declaration — two bodies of one name, told apart by the thing
+    /// the SOURCE wrote. There it is the `cfg` condition; here it is the
+    /// parameter list. The form is the same, and so is the reason: an arm must
+    /// be a NODE because a discriminator recorded as a property has nothing to
+    /// hang edges off.
+    ///
+    /// A method that nothing shares a name with is returned UNTOUCHED. A set of
+    /// one is not an overload, and splitting every method would double the node
+    /// count to say nothing.
+    ///
+    /// The callable is emitted ONCE however many arms there are — a second arm
+    /// finds it already there and adds only its own relation. That is what takes
+    /// an overload set off the A7 collision list.
+    fn split_into_variant(&mut self, scope: &Scope, node: Node<'_>, symbol: Symbol) -> Symbol {
+        if !scope.overloaded.contains(&symbol.name) {
+            return symbol;
+        }
+        let Container::Type { name: ty } = &scope.container else { return symbol };
+        // The TYPE segment is the nested path (`Outer.Inner`); the arm is minted
+        // against the same one the callable was, so the two cannot disagree.
+        let signature = self.signature_of(node);
+        let Ok(arm) = fqn::define(&Form::MemberVariant {
+            lang: Language::Java,
+            package: self.package,
+            module: "",
+            ty,
+            member: &symbol.name,
+            condition: &signature,
+            reach: Reach::Item,
+        }) else {
+            return symbol;
+        };
+
+        if !self.symbols.iter().any(|s| s.fqn == symbol.fqn) {
+            self.symbols.push(Symbol { fqn: symbol.fqn.clone(), ..symbol.clone() });
+        }
+        self.relations.push(Relation {
+            kind: RelationKind::Variant,
+            child: arm.clone(),
+            parent: Resolution::Resolved { fqn: symbol.fqn, via: Rung::DeclaredHere },
+            at: symbol.span,
+        });
+        Symbol { fqn: arm, ..symbol }
+    }
+
+    /// The parameter list, as ONE fqn segment: `(String,int)`.
+    ///
+    /// The types the source WROTE, in order, with whitespace removed because it
+    /// is formatting. Not erased to a JVM descriptor and not resolved to
+    /// canonical names: two overloads of one method are told apart by what is
+    /// written, and resolving would need the type table this walk is one pass
+    /// of. `()` for a no-argument overload, which is a real signature and not an
+    /// absent one.
+    fn signature_of(&self, node: Node<'_>) -> String {
+        let Some(list) = node.child_by_field_name("parameters") else { return "()".to_string() };
+        let mut cursor = list.walk();
+        let types: Vec<String> = list
+            .children(&mut cursor)
+            .filter(|p| matches!(p.kind(), "formal_parameter" | "spread_parameter"))
+            .map(|p| match self.field_text(p, "type") {
+                Some(t) => t.split_whitespace().collect::<String>(),
+                None => "?".to_string(),
+            })
+            .collect();
+        format!("({})", types.join(","))
+    }
+
     fn method(&mut self, scope: &Scope, node: Node<'_>) {
         let Some(name) = self.field_text(node, "name") else { return };
         let Ok(fqn) = self.declare(scope, name, Reach::Item) else { return };
@@ -508,7 +620,18 @@ impl<'a> Walk<'a> {
             }
         }
 
-        self.symbols.push(Symbol {
+        // AN OVERLOAD SET IS ONE CALLABLE AND ONE ARM PER SIGNATURE — the
+        // shape Rust's `cfg`-gated declarations already take, for the same
+        // reason. Two `msg` of one type are two BODIES with different callees;
+        // merged onto one node the call graph claims every overload makes every
+        // call, which R4 ranks below making none.
+        //
+        // The signature does NOT go in the method's own identity. `fqn.rs`
+        // guarantees a use site mints exactly one candidate, and `msg(x)` at a
+        // call site cannot compose `msg(String)` without type inference — so
+        // that would trade a lost declaration for an unresolvable call. The
+        // CALLABLE stays exactly what a caller mints; the arms hang off it.
+        let symbol = Symbol {
             fqn: fqn.clone(),
             kind: SymbolKind::Method,
             name: name.to_string(),
@@ -517,7 +640,10 @@ impl<'a> Walk<'a> {
             docstring: None,
             declared_type: returns,
             params,
-        });
+        };
+        let symbol = self.split_into_variant(scope, node, symbol);
+        let fqn = symbol.fqn.clone();
+        self.symbols.push(symbol);
         self.owned_by_the_enclosing_type(scope, &fqn, span(node));
         self.annotations(scope, node, &fqn);
         self.type_use(scope, node, "type");
