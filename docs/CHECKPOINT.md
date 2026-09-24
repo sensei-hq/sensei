@@ -1,46 +1,37 @@
 # Checkpoint
 
-**Slice:** indexer v2 — flipping TypeScript into `PRODUCTION_LANGUAGES` (issue #130, phase `build`)
+**Slice:** indexer v2 — TypeScript cut over; next is deploy + wipe + re-index (issue #130, phase `build`)
 
 ## Done
 
-- **Observability views** (`c00f7406`) — `graph_nodes`/`graph_resolution` carry `repository`; `activity.task_health` + `task_failures` are the restart list; `sensei.error_signature` groups failures by cause. Failure lake reclaimed: 17,577,049 rows, 14 GB → 656 MB.
-- **Stale reachability comments** (`900ec06c`, `daf428fb`) — `reconcile.rs` "no caller on purpose" and `indexer/mod.rs` "deliberately without a caller" both outlived the rust cutover. Dropping reconcile's blanket `allow(dead_code)` exposed exactly one real gap: `Stated::Gone` (the deletion path) is never constructed.
-- **TypeScript A7 is at ZERO** (`daf428fb`, `0efc151f`):
-
-  | step | after |
-  |---|---:|
-  | baseline | 511 |
-  | call-argument callbacks | 38 |
-  | class method bodies (`container_at`, from rust) | 14 |
-  | functions under an object key | 10 |
-  | **a local value is not a node** | 1 |
-  | `module_of` reads `module_here` (types scoped like items) | **0** |
-
-  Dropping local values removed 5,074 declarations and the ts barrier numbers were **unchanged to the digit** (2,186 / 1,454 / 935 / 767 / 422) — the proof none of it was reader-facing. A3 moved exactly 222 resolved→unresolved, conserved.
-- **`no_two_declarations_in_this_repos_typescript_mint_one_identity`** added — it never existed, which is why 511 could accumulate. Mutation-verified red.
+- **Observability views** (`c00f7406`) — `repository` on the graph views; `activity.task_health` + `task_failures` as the restart list. Failure lake reclaimed: 17,577,049 rows, 14 GB → 656 MB.
+- **TypeScript A7 ratchet at ZERO** (`daf428fb`, `0efc151f`) — 511 → 0. The last step was not naming things harder but declaring fewer: **a local value is not a node**. Barrier numbers unchanged to the digit, so nothing reader-facing was lost.
+- **TypeScript CUT OVER** (`2e18e352`) — `PRODUCTION_LANGUAGES = [Rust, TypeScript]`. `languages/typescript.rs`, `svelte.rs`, `vue.rs` deleted (2,426 lines; net **-2,416**). Vue was **migrated** to `indexer/lang/vue.rs`, not grandfathered.
 
 ## Remaining
 
-1. **Flip** — add `Language::TypeScript` to `PRODUCTION_LANGUAGES` (`lang/mod.rs:426`) + delete `languages/typescript.rs`, `languages/javascript.rs`.
-2. **Deploy, clear, re-index, acceptance.**
-3. **Wire `Stated::Gone`.**
-4. Port SQL, Swift, Kotlin, Vue, C; then delete `languages/`.
+1. **Deploy, wipe, re-index** ← NEXT
+2. **Wire `Stated::Gone`** — the deletion path has no production constructor.
+3. Port SQL, Swift, Kotlin, C; then delete `languages/` and break its two couplings.
 
 ## Next command
 
 ```
-cargo test -p senseid --bin senseid indexer::acceptance -- --ignored --nocapture
+make install-service && \
+psql -h localhost -p 5432 -d sensei -c 'TRUNCATE sensei.nodes, sensei.edges CASCADE;'
 ```
-(do **not** pipe it — a pipe reports the pipe's exit status, not the test's)
+Then a full re-index, then acceptance against the live graph.
+
+Do **not** pipe test/build commands through `tail` — a pipe reports the pipe's exit status.
 
 ## Open questions
 
-- Flipping `TypeScript` flips `.ts/.tsx/.cts/.mts/.js/.jsx/.mjs/.cjs` **and** `.svelte` together — one `Language`, one fqn scheme. The spec's "js, ts, svelte one at a time" is not expressible. `.vue` has no v2 adapter, so it stays on v1.
+- Re-embedding is the real cost of the wipe (~326,716 nodes last measured). Record throughput before anything depends on it.
+- `.ts`, `.js` and `.svelte`/`.vue` share one `Language`, so they flipped together. The spec's "one at a time" is not expressible through a per-language frontier.
 
 ## Known-broken / not deployed
 
-- Daemon binary predates the v2 wiring **and** the `mark_file_parsed` fix (`parsed_at` is 0 on all 111,276 files).
-- **Clearing before re-index is required, not optional**: reconcile reads prior claims via `props->'claims'`, a v2-only marker that **0 of 467,707** existing nodes carry — v1 rows are invisible to it and would never be demoted.
-- `graph_resolution.resolved_via` is NULL on all 965,518 edges: the only `rung` writer is v2's `persist.rs`, and every production edge came from v1.
-- The **differential harness is not being built** — superseded. `docs/design/indexer.md:757-759` opens §6 with "Thresholds, not comparisons"; `13-cutover.md` is `status: superseded`.
+- **The daemon predates all of it** — the v2 wiring, the `mark_file_parsed` fix (`parsed_at` is 0 on all 111,276 files), and this cutover.
+- **The wipe is required, not optional**: reconcile reads prior claims via `props->'claims'`, a v2-only marker that **0 of 467,707** nodes carry. v1's rows are invisible to it and would never be demoted.
+- `graph_resolution.resolved_via` stays NULL until the re-index — the only `rung` writer is v2's `persist.rs`.
+- Failure retention still has no cap on repeated identical failures, so the lake can refill.
