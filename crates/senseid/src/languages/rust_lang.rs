@@ -30,7 +30,7 @@ impl LanguageAdapter for RustAdapter {
         &[".rs"]
     }
 
-    fn language(&self) -> &str {
+    fn language(&self) -> &'static str {
         "rust"
     }
 

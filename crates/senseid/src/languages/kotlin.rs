@@ -37,7 +37,7 @@ impl LanguageAdapter for KotlinAdapter {
         &[".kt", ".kts"]
     }
 
-    fn language(&self) -> &str {
+    fn language(&self) -> &'static str {
         "kotlin"
     }
 

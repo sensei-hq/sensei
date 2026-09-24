@@ -42,6 +42,7 @@ pub mod csharp;
 pub mod java;
 pub mod javascript;
 pub mod kotlin;
+pub mod php;
 pub mod python;
 pub mod rust;
 pub mod svelte;
@@ -397,6 +398,7 @@ pub fn all_adapters() -> &'static [&'static dyn LanguageAdapter] {
         &java::JavaAdapter,
         &csharp::CSharpAdapter,
         &kotlin::KotlinAdapter,
+        &php::PhpAdapter,
         &python::PythonAdapter,
         &javascript::TypeScriptAdapter,
         &javascript::JavaScriptAdapter,
@@ -429,8 +431,19 @@ pub fn adapter_for_ext(ext: &str) -> Option<&'static dyn LanguageAdapter> {
 /// `languages/fqn.rs` and `indexer/fqn.rs` mint different identities, so a
 /// graph holding both could never join them. A file this indexer cannot PLACE
 /// is not indexed — a visible gap, never a hand-off.
-pub const PRODUCTION_LANGUAGES: &[Language] =
-    &[Language::Rust, Language::TypeScript, Language::Java, Language::Python, Language::CSharp];
+pub const PRODUCTION_LANGUAGES: &[Language] = &[
+    Language::Rust,
+    Language::TypeScript,
+    Language::Java,
+    Language::Python,
+    Language::CSharp,
+    // PHP is ADDITIVE, and it is the first language here that is. There is no
+    // `languages/php.rs` to delete because v1 never read PHP at all — 2,251
+    // files in the watched roots that nothing has ever placed. So this entry is
+    // not a cutover from one producer to another; it is the only producer
+    // there has ever been.
+    Language::Php,
+];
 
 /// Whether this indexer is the production producer for `language`.
 pub fn indexes_in_production(language: Language) -> bool {
@@ -703,6 +716,15 @@ mod tests {
                 "package p\n\
                  class Widget { fun wide(): Int { return 1 } }\n\
                  class Free { fun go(): Int { val w = Widget(); return w.wide() } }\n"
+            }
+            // PHP states its namespace, so the fixture does — a file with none
+            // is legal but tests the global-namespace path rather than the
+            // ordinary one.
+            "php" => {
+                "<?php\n\
+                 namespace P;\n\
+                 class Widget { public function wide(): int { return 1; } }\n\
+                 class Free { public function go(): int { $w = new Widget(); return $w->wide(); } }\n"
             }
             "csharp" => {
                 "namespace P;\n\
