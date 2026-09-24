@@ -50,7 +50,7 @@ fn process_fixture_subtree(
 #[test]
 fn rust_adapter_svelte_rs() {
     let root = workspace_root();
-    let abs = root.join("crates/senseid/src/languages/svelte.rs");
+    let abs = root.join("crates/senseid/src/indexer/lang/svelte.rs");
     assert!(abs.exists(), "Source file not found: {}", abs.display());
     let r = process_file(&abs.to_string_lossy(), &root.to_string_lossy(), "sensei").unwrap();
     assert_eq!(r.kind, "file");
@@ -61,34 +61,7 @@ fn rust_adapter_svelte_rs() {
     assert!(names.contains(&"SvelteAdapter"), "should find SvelteAdapter struct");
 }
 
-// ═══ Code fixtures ═══════════════════════════════════════════════
-
-#[test]
-fn svelte_component() {
-    let r = process_fixture("code/StepHeader.svelte");
-    assert_eq!(r.kind, "file");
-    assert_eq!(r.tags, "src");
-    assert_eq!(r.language.as_deref(), Some("svelte"));
-    let kinds: Vec<&str> = r.symbols.iter().map(|s| s.kind.as_str()).collect();
-    assert!(kinds.contains(&"component"), "should find component");
-}
-
-#[test]
-fn svelte_ts_appstate() {
-    let r = process_fixture("code/appstate.svelte.ts");
-    assert_eq!(r.kind, "file");
-    assert_eq!(r.tags, "src");
-    assert!(!r.symbols.is_empty(), "should extract symbols from .svelte.ts");
-}
-
-#[test]
-fn svelte_page_route() {
-    let r = process_fixture("code/+page.svelte");
-    assert_eq!(r.kind, "file");
-    assert_eq!(r.tags, "src");
-}
-
-// ═══ Doc fixtures ════════════════════════════════════════════════
+// ═══ Code fixtures ═══════════════════════════════════════════════// ═══ Doc fixtures ════════════════════════════════════════════════
 
 #[test]
 fn design_doc() {
@@ -213,3 +186,11 @@ fn src_file_default() {
     assert_eq!(classify_file_tag("src/main.rs", "rs"), "src");
     assert_eq!(classify_file_tag("lib/utils.ts", "ts"), "src");
 }
+
+// The Svelte processor tests STOOD HERE — `svelte_component`,
+// `svelte_page_route`, `svelte_ts_appstate`, `page_svelte_route`,
+// `svelte_component_step_header`. They exercised v1's Svelte parser, which was
+// deleted when TypeScript cut over; `.svelte` is read by
+// `crate::indexer::lang::svelte` now, whose own tests cover the script block,
+// the dialect, markup interpolations and block tags in more detail than these
+// did.
