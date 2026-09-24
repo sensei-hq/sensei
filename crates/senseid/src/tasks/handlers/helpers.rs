@@ -73,6 +73,20 @@ fn sniff_content(path: &std::path::Path) -> Option<ScanSkipReason> {
         Err(_) => return Some(ScanSkipReason::BinaryContent), // unreadable → skippable
     };
     let slice = &buf[..n];
+    // **A BOM IS A POSITIVE STATEMENT OF ENCODING, and it is read FIRST.**
+    //
+    // UTF-16LE ASCII is `X 00 X 00`, so the null test below fires on every
+    // UTF-16 file. Once a BOM is present the nulls are explained and the file
+    // is text — see `classifiers::decode_source`, which is the reader this
+    // gate has to agree with.
+    //
+    // The head is NOT decoded here, deliberately. This buffer is 8KB of a
+    // possibly larger file, so it may end mid-character or mid-surrogate, and a
+    // decode of it would report an error that says nothing about the file. The
+    // BOM alone answers the question this gate asks.
+    if encoding_rs::Encoding::for_bom(slice).is_some() {
+        return None;
+    }
     if slice.contains(&0) {
         return Some(ScanSkipReason::BinaryContent);
     }
@@ -182,6 +196,30 @@ mod tests {
         assert!(is_binary_ext("docx"));
         assert!(is_binary_ext("xlsx"));
         assert!(is_binary_ext("icns"));
+    }
+
+    /// **A UTF-16 SOURCE FILE IS NOT A BINARY**, and the scan gate is where it
+    /// was being called one.
+    ///
+    /// UTF-16LE ASCII is `X 00 X 00`, so the null-byte test fired on every one.
+    /// MEASURED before this landed: all 754 UTF-16 `.sql` files in the watched
+    /// roots carried `skip_reason = binary_content`, and SSMS exports UTF-16LE
+    /// by default — so an entire codebase of change scripts was invisible to
+    /// the indexer before any parser was involved.
+    ///
+    /// MUTATION: drop the BOM check from `sniff_content` — every UTF-16 file
+    /// goes back to being skipped as opaque.
+    #[test]
+    fn a_bom_carrying_utf16_file_is_text_rather_than_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let sql = dir.path().join("sp_X.sql");
+        let mut bytes = vec![0xFFu8, 0xFE];
+        for c in "CREATE PROCEDURE [dbo].[sp_X] AS SELECT 1".chars() {
+            bytes.extend_from_slice(&(c as u16).to_le_bytes());
+        }
+        std::fs::write(&sql, &bytes).unwrap();
+        assert!(!is_probably_binary(&sql), "a BOM explains the nulls");
+        assert_eq!(classify_unscannable(&sql, "sql"), None, "it is indexable");
     }
 
     #[test]

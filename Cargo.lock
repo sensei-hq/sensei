@@ -4837,6 +4837,7 @@ dependencies = [
  "clap",
  "dirs",
  "dojo-protocol",
+ "encoding_rs",
  "globset",
  "hex",
  "ignore",

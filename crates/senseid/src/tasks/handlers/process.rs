@@ -411,8 +411,19 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             tracing::debug!(file = %rel, "v2: no manifest names a package — not indexed");
             return Ok(0);
         };
-        let text = match std::fs::read_to_string(fpath) {
-            Ok(t) => t,
+        // BYTES THEN DECODE, not `read_to_string`. SSMS exports UTF-16LE with a
+        // BOM and `read_to_string` refuses it as invalid UTF-8 — and the scan
+        // gate has already agreed the file is text, so reading it with a
+        // narrower rule here would skip a file nothing said was skippable.
+        // `classifiers::decode_source` is the one owner both call.
+        let text = match std::fs::read(fpath) {
+            Ok(bytes) => match crate::classifiers::decode_source(&bytes) {
+                crate::classifiers::Decoded::Text(text) => text,
+                other => {
+                    tracing::debug!(file = %rel, ?other, "v2: not text — not indexed");
+                    return Ok(0);
+                }
+            },
             Err(e) => {
                 tracing::debug!(file = %rel, error = %e, "v2: unreadable — not indexed");
                 return Ok(0);
