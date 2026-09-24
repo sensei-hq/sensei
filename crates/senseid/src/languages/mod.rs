@@ -1,4 +1,3 @@
-pub mod c_lang;
 pub mod common;
 #[cfg(test)]
 mod corpus_tests;
@@ -160,8 +159,10 @@ fn title_case_static(slug: &str) -> &str {
         "csharp" => "C#",
         "svelte" => "Svelte",
         "vue" => "Vue",
-        // An ACRONYM, so the default Title-Case would give "Php".
+        // ACRONYMS and single letters, where the default Title-Case is wrong
+        // ("Php") or does nothing ("c").
         "php" => "PHP",
+        "c" => "C",
         "go" => "Go",
         "ruby" => "Ruby",
         "shell" => "Shell",
@@ -269,6 +270,18 @@ pub fn all_adapters() -> Vec<Box<dyn LanguageAdapter>> {
         // files in the watched roots carried no language while `classifiers`
         // counted them as source off a hardcoded extension list.
         Box::new(DetectionOnly { language: "php", extensions: &[".php"] }),
+        // `.c` AND `.h` ONLY — v1's `c_lang.rs` also claimed `.cpp`, `.hpp` and
+        // `.cc` and read them with a line-based scanner. C++ is not C:
+        // `tree-sitter-c` recovers a class or a template into `ERROR` nodes, so
+        // v2's adapter refuses them and this entry must not claim them either.
+        //
+        // A `DetectionOnly` entry for an extension NO v2 adapter claims is a
+        // PANIC, not a skip: `production_adapter_for_ext` answers `None`, the
+        // file falls through to v1, and `DetectionOnly::parse` is
+        // `unreachable!()`. With no entry at all, `code::process` returns `None`
+        // at its `adapter_for_ext(..)?` and the router files the file under
+        // "unknown file type" — which is where `.go` and `.rb` already sit.
+        Box::new(DetectionOnly { language: "c", extensions: &[".c", ".h"] }),
         // **RUST IS v2's, AND THIS REGISTRATION IS NOW DETECTION ONLY.**
         // `process_file` routes every `.rs` file to `indexer::lang::rust`
         // before v1's parse path is reached, so nothing here parses rust any
@@ -284,7 +297,6 @@ pub fn all_adapters() -> Vec<Box<dyn LanguageAdapter>> {
         Box::new(sql::SqlAdapter),
         Box::new(swift::SwiftAdapter),
         Box::new(kotlin::KotlinAdapter),
-        Box::new(c_lang::CAdapter),
     ]
 }
 
@@ -409,6 +421,10 @@ pub fn language_for_ext_slug(ext: &str) -> Option<&'static str> {
         return Some(adapter.language());
     }
     match ext {
+        // C++ — SOURCE, but parsed by nothing here. It is labelled so
+        // `nodes.language` is not null on a file the scanner counts as source;
+        // it used to be labelled `c`, which was wrong twice over.
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => Some("cpp"),
         "go" => Some("go"),
         "rb" => Some("ruby"),
         "sh" | "bash" => Some("shell"),
@@ -650,9 +666,41 @@ mod tests {
     fn adapter_for_known_extensions() {
         for ext in &[
             ".py", ".rs", ".java", ".sql", ".ddl", ".ts", ".tsx", ".cts", ".js", ".jsx", ".swift",
-            ".kt", ".kts", ".svelte", ".vue", ".c", ".h", ".cpp",
+            ".kt", ".kts", ".svelte", ".vue", ".c", ".h", ".php", ".cs",
         ] {
             assert!(adapter_for_ext(ext).is_some(), "Missing adapter for {}", ext);
+        }
+    }
+
+    /// **C++ IS NOT C, and no adapter claims it.**
+    ///
+    /// This registry used to answer `c` for `.cpp`, `.hpp` and `.cc`, and v1's
+    /// C adapter read them with a line-based scanner. `crate::indexer::lang::c`
+    /// is a `tree-sitter-c` walk, and that grammar parses C: handed a class or
+    /// a template it recovers into `ERROR` nodes, and facts read out of a
+    /// recovered parse are invented ones.
+    ///
+    /// THE ABSENCE HAS TO BE TOTAL, not just a v2 absence. A `DetectionOnly`
+    /// entry claiming `.cpp` would PANIC rather than skip:
+    /// `production_adapter_for_ext` answers `None`, the file falls through to
+    /// v1's path, and `DetectionOnly::parse` is `unreachable!()`. With no entry
+    /// at all, `code::process` returns `None` at its `adapter_for_ext(..)?` and
+    /// the router files the file under "unknown file type" — a file node and no
+    /// symbols, which is where `.go` and `.rb` already sit.
+    ///
+    /// 9 files in the watched roots, against 165 `.c`/`.h`.
+    ///
+    /// MUTATION: add `.cpp` to either registry's C entry. Adding it to v2 makes
+    /// tree-sitter-c invent structure from a recovered parse; adding it to v1's
+    /// `DetectionOnly` panics the indexer on every C++ file.
+    #[test]
+    fn no_adapter_claims_a_cpp_extension() {
+        for ext in [".cpp", ".hpp", ".cc", ".cxx", ".hh"] {
+            assert!(adapter_for_ext(ext).is_none(), "{ext} is C++, and nothing here parses C++");
+            assert!(
+                crate::indexer::lang::adapter_for_ext(ext).is_none(),
+                "{ext} is C++, and tree-sitter-c does not parse it"
+            );
         }
     }
 
@@ -768,7 +816,6 @@ mod tests {
     #[test]
     fn an_uppercase_extension_still_finds_its_adapter() {
         for (name, want) in [
-            ("ADVMATH.CPP", "c"),
             ("ADVMATH.H", "c"),
             ("Widget.KT", "kotlin"),
             ("Main.JAVA", "java"),
@@ -778,8 +825,8 @@ mod tests {
                 .unwrap_or_else(|| panic!("no adapter for {name} — uppercase extension skipped"));
             assert_eq!(a.language(), want, "{name} resolved to the wrong adapter");
         }
-        // Mixed case too, since real trees hold `Foo.Cpp`.
-        assert!(adapter_for_filename("Foo.Cpp").is_some(), "mixed-case extension");
+        // Mixed case too, since real trees hold `Foo.Kt`.
+        assert!(adapter_for_filename("Foo.Kt").is_some(), "mixed-case extension");
         // The lowercase path must keep working.
         assert_eq!(
             adapter_for_filename("main.rs").map(|a| a.language().to_string()).as_deref(),
@@ -1124,12 +1171,12 @@ mod tests {
 
     #[test]
     fn display_name_overrides_for_acronyms_and_single_letters() {
-        // SQL and C need explicit overrides — the default Title-Case would
-        // give "Sql" and "C" (the C case is fine but exercised for the assert).
+        // SQL, PHP and C need explicit overrides — the default Title-Case
+        // gives "Sql", "Php", and leaves a single letter alone.
         assert_eq!(adapter_for_ext(".sql").unwrap().display_name(), "SQL");
         assert_eq!(adapter_for_ext(".ddl").unwrap().display_name(), "SQL");
+        assert_eq!(adapter_for_ext(".php").unwrap().display_name(), "PHP");
         assert_eq!(adapter_for_ext(".c").unwrap().display_name(), "C");
-        assert_eq!(adapter_for_ext(".cpp").unwrap().display_name(), "C");
         assert_eq!(adapter_for_ext(".h").unwrap().display_name(), "C");
     }
 }

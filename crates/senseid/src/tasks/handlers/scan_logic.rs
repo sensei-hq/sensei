@@ -1014,7 +1014,13 @@ mod tests {
     #[test]
     fn is_project_source_ext_covers_code_and_md_not_data() {
         // parser languages + common unparsed source + markdown count
-        for e in ["py", "rs", "ts", "cpp", "h", "go", "rb", "sh", "pl", "php", "lua", "md", "mdx"] {
+        // `cpp`, `cc` and `hpp` are the C++ trio: SOURCE, but parsed by
+        // nothing here since v1's C adapter was deleted. A folder holding them
+        // is still a project.
+        for e in [
+            "py", "rs", "ts", "cpp", "cc", "hpp", "h", "go", "rb", "sh", "pl", "php", "lua", "md",
+            "mdx",
+        ] {
             assert!(is_project_source_ext(e), "{e} should count as project source");
             assert!(is_project_source_ext(&format!(".{e}")), "leading-dot {e} should count too");
         }

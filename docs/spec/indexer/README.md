@@ -261,13 +261,48 @@ because the two mint different identities.
 | java, python | yes | **yes** | **deleted** — detection entry only |
 | csharp | yes | **yes** | never existed; detection entry only |
 | php | yes | **yes** | never existed; detection entry only |
+| c | yes | **yes** (`.c`/`.h` only) | **deleted** — detection entry only |
 | kotlin | yes | not yet — two shapes open | live (`kotlin.rs` + `jvm.rs`) |
-| sql, c, swift | **no** | no | live |
+| sql, swift | **no** | no | live |
+| **c++** (`.cpp`/`.hpp`/`.cc`) | **no** | no | **no entry at all** |
 
 **Additive vs cutover.** C# and PHP are the two entries that were never a
 cutover: `crate::languages` has never held a parser for either, so nothing was
 deleted when they flipped and there was no second producer to race. Every other
 row in the "yes" column traded one producer for another in a single commit.
+
+**C NARROWED on the way through.** v1's `c_lang.rs` claimed `.cpp`, `.hpp` and
+`.cc` and read them with a line-based scanner; `tree-sitter-c` parses C, and
+handed a class or a template it recovers into `ERROR` nodes. So the v2 adapter
+claims `.c` and `.h`, and the C++ extensions are claimed by **nothing**.
+
+That absence has to be total, and the reason is a trap worth naming: a
+`DetectionOnly` entry for an extension no v2 adapter claims is a **panic**, not
+a skip. `production_adapter_for_ext` answers `None`, the file falls to v1's
+path, and `DetectionOnly::parse` is `unreachable!()`. With no entry at all,
+`code::process` returns `None` at its `adapter_for_ext(..)?` and the router
+files the file under "unknown file type" — a file node and no symbols, which is
+where `.go` and `.rb` already sit. `no_adapter_claims_a_cpp_extension` pins it.
+
+A `.h` can still hold C++, and half the C++ world uses one. `c::walk::is_cpp`
+refuses those at read time. Measured: over 3,776 vendored files it refused 1,817
+and took intra-file collisions from 606 to 42, with **0 unreadable** on both
+corpora of genuine C — which is the check that it does not false-positive.
+
+**C's placement.** v2 places a file only under a manifest that STATES a package
+name, and no C build file did: `Makefile`, `configure.ac` and `meson.build` name
+nothing, and `ManifestAdapter::parse_manifest` receives only the content, so an
+adapter for one could never answer. `CMakeManifestAdapter` reads `project(name)`,
+which is the one place a C project does declare itself.
+
+`placement_on_disk` never looked at a `Makefile` to begin with — no adapter
+claimed it, so the walk climbed straight past to the nearest manifest that names
+a package. Measured over the 165 `.c`/`.h` files in the watched roots, bounded by
+each repo root: **158 place** (97 `pom.xml`, 36 `Cargo.toml`, 23 `composer.json`,
+2 `package.json`) and **7 do not**, having no manifest of any kind above them.
+None of the 7 has a `CMakeLists.txt` either, so the CMake adapter rescues nothing
+in this corpus — it is there because CMake is how the next C project will say its
+name.
 
 PHP's flip also closed a detection gap that had nothing to do with parsing:
 `.php` was claimed by no adapter at all, so all 2,251 files in the watched roots

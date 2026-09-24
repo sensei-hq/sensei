@@ -104,6 +104,10 @@ pub enum Language {
     /// here that states `extends` and `implements` in separate clauses, and the
     /// one that forbids overloading outright.
     Php,
+    /// C. The one language here with no namespace at all — LINKAGE is its
+    /// scope, so `static` means the file and everything else means the whole
+    /// link unit.
+    C,
 }
 
 impl Language {
@@ -118,6 +122,7 @@ impl Language {
             Language::CSharp,
             Language::Kotlin,
             Language::Php,
+            Language::C,
         ]
     }
 
@@ -132,6 +137,7 @@ impl Language {
             Self::CSharp => "csharp",
             Self::Kotlin => "kotlin",
             Self::Php => "php",
+            Self::C => "c",
         }
     }
 
@@ -147,6 +153,7 @@ impl Language {
             "csharp" => Some(Self::CSharp),
             "kotlin" => Some(Self::Kotlin),
             "php" => Some(Self::Php),
+            "c" => Some(Self::C),
             _ => None,
         }
     }
@@ -1095,10 +1102,11 @@ mod tests {
                 | Language::Python
                 | Language::CSharp
                 | Language::Kotlin
-                | Language::Php => {}
+                | Language::Php
+                | Language::C => {}
             }
         }
-        assert_eq!(all_languages().len(), 7);
+        assert_eq!(all_languages().len(), 8);
 
         for k in all_symbol_kinds() {
             match k {

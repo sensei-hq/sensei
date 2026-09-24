@@ -383,10 +383,17 @@ const DEFAULT_BINARY_EXTS: &[&str] = &[
 ///
 /// Keeping this flat here means new-language coverage in the classifier is
 /// one edit, not a scattered scan of scan_logic.rs.
+/// Languages recognised as SOURCE without a parser adapter.
+///
+/// `cpp`, `hpp` and `cc` sit here beside the `cxx`/`hh`/`hxx` that always did:
+/// they used to be recognised only because v1's C adapter claimed them, and
+/// that adapter is gone — `tree-sitter-c` parses C, and C++ is a different
+/// language nothing here reads. They are still SOURCE, so a folder holding them
+/// is still a project; they simply get a file node and no symbols.
 const DEFAULT_SOURCE_EXTS: &[&str] = &[
     "go", "rb", "sh", "bash", "zsh", "fish", "pl", "pm", "php", "lua", "r", "jl", "scala", "ex",
-    "exs", "erl", "hs", "ml", "dart", "cs", "fs", "fsx", "clj", "cljs", "groovy", "m", "mm", "cxx",
-    "hh", "hxx", "swift", "scss", "css", "html",
+    "exs", "erl", "hs", "ml", "dart", "cs", "fs", "fsx", "clj", "cljs", "groovy", "m", "mm", "cpp",
+    "cc", "cxx", "hpp", "hh", "hxx", "swift", "scss", "css", "html",
 ];
 
 /// Built-in path patterns excluded from DIRECTORY discovery. Operators extend or
