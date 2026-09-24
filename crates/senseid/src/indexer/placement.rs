@@ -111,6 +111,45 @@ mod tests {
         PathBuf::from(s)
     }
 
+    /// **A dbd SCHEMA IS A PACKAGE, AND `design.yaml` IS WHAT NAMES IT.**
+    ///
+    /// v2 places a file only under a manifest that STATES a package name, and
+    /// before `DbdManifestAdapter` existed no manifest above a `.ddl` file did.
+    /// Measured in this repository: the only manifests between
+    /// `database/ddl/table/sensei/nodes.ddl` and the root are
+    /// `database/design.yaml` — unread — and the root `Cargo.toml`, which is
+    /// workspace-only and has no `[package]` section, so `package_named_by`
+    /// answers `None` for it. `placement_on_disk` therefore climbed to the
+    /// repo root and gave up: every DDL file in every dbd project logged
+    /// "no manifest names a package — not indexed".
+    ///
+    /// MUTATION: unregister `DbdManifestAdapter` — `design.yaml` stops being a
+    /// manifest filename, the walk climbs past it, and the whole schema is
+    /// unplaceable again.
+    #[test]
+    fn a_dbd_design_yaml_owns_the_ddl_beneath_it() {
+        let root = p("/r");
+        // Exactly this repository's shape: a workspace Cargo.toml at the root
+        // and a design.yaml under `database/`.
+        let manifests = vec![p("/r/Cargo.toml"), p("/r/database/design.yaml")];
+        assert_eq!(
+            owning_manifest(&p("/r/database/ddl/table/sensei/nodes.ddl"), &root, &manifests),
+            Some(p("/r/database/design.yaml")),
+            "the schema's own manifest owns its DDL"
+        );
+
+        // And it NAMES a package, which the workspace root does not.
+        assert_eq!(
+            package_named_by(&p("/r/database/design.yaml"), "project:\n  name: sensei\n"),
+            Some("sensei".to_string())
+        );
+        assert_eq!(
+            package_named_by(&p("/r/Cargo.toml"), "[workspace]\nmembers = [\"crates/*\"]\n"),
+            None,
+            "a workspace root states no package, which is why the climb used to fail"
+        );
+    }
+
     /// **THE NEAREST MANIFEST WINS, NOT THE REPO'S.**
     ///
     /// The shape that makes this non-obvious is in this very repository: a
