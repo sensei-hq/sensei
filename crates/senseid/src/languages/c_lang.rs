@@ -25,7 +25,7 @@ impl LanguageAdapter for CAdapter {
         &[".c", ".h", ".cpp", ".hpp", ".cc"]
     }
 
-    fn language(&self) -> &str {
+    fn language(&self) -> &'static str {
         "c"
     }
     fn display_name(&self) -> &str {

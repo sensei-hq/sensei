@@ -16,7 +16,7 @@ use crate::types::ParsedFile;
 /// Trait for language-specific adapters.
 pub trait LanguageAdapter: Send + Sync {
     #[allow(dead_code)]
-    fn language(&self) -> &str;
+    fn language(&self) -> &'static str;
     /// UI-facing label. Defaults to Title-Casing `language()`; override where
     /// the natural label diverges (acronyms like SQL, single letters like C).
     /// Currently exercised only from tests + planned Track 3 Libraries screen —
@@ -160,6 +160,8 @@ fn title_case_static(slug: &str) -> &str {
         "csharp" => "C#",
         "svelte" => "Svelte",
         "vue" => "Vue",
+        // An ACRONYM, so the default Title-Case would give "Php".
+        "php" => "PHP",
         "go" => "Go",
         "ruby" => "Ruby",
         "shell" => "Shell",
@@ -201,7 +203,7 @@ struct DetectionOnly {
 }
 
 impl LanguageAdapter for DetectionOnly {
-    fn language(&self) -> &str {
+    fn language(&self) -> &'static str {
         self.language
     }
 
@@ -262,6 +264,11 @@ pub fn all_adapters() -> Vec<Box<dyn LanguageAdapter>> {
         // while nothing could say what language they were.
         Box::new(DetectionOnly { language: "csharp", extensions: &[".cs"] }),
         Box::new(DetectionOnly { language: "vue", extensions: &[".vue"] }),
+        // PHP is the SAME case as C# above: no parser here, and never one.
+        // Before this entry nothing claimed `.php` at all, so all 2,251 `.php`
+        // files in the watched roots carried no language while `classifiers`
+        // counted them as source off a hardcoded extension list.
+        Box::new(DetectionOnly { language: "php", extensions: &[".php"] }),
         // **RUST IS v2's, AND THIS REGISTRATION IS NOW DETECTION ONLY.**
         // `process_file` routes every `.rs` file to `indexer::lang::rust`
         // before v1's parse path is reached, so nothing here parses rust any
@@ -385,23 +392,6 @@ pub fn adapter_for_filename(filename: &str) -> Option<Box<dyn LanguageAdapter>> 
 /// one of a closed set of slugs; this keeps callers off the short-lived boxed
 /// adapter borrow without a clone. A future adapter whose slug isn't listed maps
 /// to `"other"` (add a case when a new adapter lands).
-fn language_slug_static(slug: &str) -> &'static str {
-    match slug {
-        "rust" => "rust",
-        "typescript" => "typescript",
-        "javascript" => "javascript",
-        "python" => "python",
-        "java" => "java",
-        "kotlin" => "kotlin",
-        "swift" => "swift",
-        "svelte" => "svelte",
-        "vue" => "vue",
-        "sql" => "sql",
-        "c" => "c",
-        _ => "other",
-    }
-}
-
 /// Canonical language slug for a bare file extension (no leading dot), or `None`
 /// if unrecognized. Consults the `LanguageAdapter` registry first (so
 /// adapter-backed languages never duplicate their slug), then a small table for
@@ -410,8 +400,13 @@ fn language_slug_static(slug: &str) -> &'static str {
 /// path (`nodes.language`).
 pub fn language_for_ext_slug(ext: &str) -> Option<&'static str> {
     let dotted = format!(".{ext}");
+    // THE ADAPTER'S OWN ANSWER, not a second table keyed on it. There was one,
+    // and it had drifted: `.cs` and `.php` reached an adapter that named itself
+    // and then came back `other`, so `nodes.language` was wrong for every C#
+    // node in the graph. A list that has to agree with the registry is a list
+    // that eventually does not.
     if let Some(adapter) = adapter_for_ext(&dotted) {
-        return Some(language_slug_static(adapter.language()));
+        return Some(adapter.language());
     }
     match ext {
         "go" => Some("go"),
@@ -480,7 +475,7 @@ pub fn text_language_from_content(content: &str) -> &'static str {
 /// candidates during the per-language FQN rollout.
 pub fn language_for_path(file_path: &str) -> Option<&'static str> {
     if let Some(adapter) = adapter_for_filename(file_path) {
-        return Some(language_slug_static(adapter.language()));
+        return Some(adapter.language());
     }
     let ext = std::path::Path::new(file_path).extension().and_then(|e| e.to_str())?;
     language_for_ext_slug(&ext.to_ascii_lowercase())
@@ -543,15 +538,22 @@ pub fn is_test_path(rel_path: &str, language: Option<&str>) -> bool {
         return true;
     }
 
-    // Java/Kotlin class-name suffixes (JUnit `*Test`/`*Tests`, Failsafe `*IT`).
-    // Case-sensitive + gated by language so `Unit`/`Audit` (end in lowercase "it")
-    // and a production `TestData` in another language don't false-match.
-    if matches!(language, Some("java") | Some("kotlin"))
-        && (stem.ends_with("Test")
-            || stem.ends_with("Tests")
-            || stem.ends_with("IT")
-            || stem.ends_with("ITCase"))
+    // Class-name suffixes, case-sensitive and gated by language so `Unit` and
+    // `Audit` (both end in a lowercase "it") and a production `TestData` in
+    // another language don't false-match.
+    //
+    // JUnit's `*Test`/`*Tests` and PHPUnit's `*Test` are the SAME convention —
+    // the suite is discovered by the class name — so the three languages share
+    // the rule. Failsafe's `*IT`/`*ITCase` is JVM-only: PHP tooling has no
+    // spelling for it, and admitting it there would read a production
+    // `RateLimitIT` as a test.
+    let jvm = matches!(language, Some("java") | Some("kotlin"));
+    if (jvm || matches!(language, Some("php")))
+        && (stem.ends_with("Test") || stem.ends_with("Tests"))
     {
+        return true;
+    }
+    if jvm && (stem.ends_with("IT") || stem.ends_with("ITCase")) {
         return true;
     }
 
@@ -1017,6 +1019,22 @@ mod tests {
         assert!(is_test_path("src/main/java/com/FooTest.java", Some("java")));
         assert!(is_test_path("src/main/java/com/FooTests.java", Some("java")));
         assert!(is_test_path("src/main/java/com/FooIT.java", Some("java")));
+        // PHP's is the SAME class-name convention: PHPUnit discovers a suite by
+        // `*Test.php`, and a project that keeps its tests beside the code it
+        // exercises has no `tests/` segment for the directory rule to find.
+        //
+        // The indexer's coverage barrier routes PHP entirely through this
+        // function — `barrier::inline_tests_begin` returns `None` for it,
+        // because PHP has no in-file marker — so a gap here is not cosmetic:
+        // every declaration in such a file reads as PRODUCTION to both
+        // `nodes.is_test` and the barrier.
+        assert!(is_test_path("src/Domain/UserTest.php", Some("php")));
+        assert!(is_test_path("src/Domain/UserTests.php", Some("php")));
+        // NOT `*IT` — that is Failsafe's integration-test convention on the
+        // JVM, and PHP has nothing that spells it. Admitting it here would make
+        // a production `RateLimitIT` read as a test in a language whose
+        // tooling never uses the suffix.
+        assert!(!is_test_path("src/Domain/RateLimitIT.php", Some("php")));
     }
 
     #[test]
@@ -1067,6 +1085,41 @@ mod tests {
         assert_eq!(adapter_for_ext(".vue").unwrap().display_name(), "Vue");
         assert_eq!(adapter_for_ext(".swift").unwrap().display_name(), "Swift");
         assert_eq!(adapter_for_ext(".kt").unwrap().display_name(), "Kotlin");
+        // PHP is claimed here for DETECTION only — v2 owns its parse. Without
+        // the entry `.php` resolves to no adapter at all, which is how 2,251
+        // files came to carry no language: `classifiers` counts them as source
+        // off a hardcoded extension list while nothing can say what they are.
+        // The same gap C# had, and the same fix.
+        assert_eq!(adapter_for_ext(".php").unwrap().display_name(), "PHP");
+    }
+
+    /// Every extension a registered adapter claims reports THAT adapter's
+    /// language — not `other`.
+    ///
+    /// The property, not an instance. `language_for_ext_slug` used to consult a
+    /// second hand-written table beside the registry, and a language reached
+    /// this list only if someone remembered to add it there too. Two of them
+    /// had not been: `.cs` and `.php` both resolved to an adapter that named
+    /// itself and then came back `other`, which is what `nodes.language` was
+    /// being written from — so every C# node in the graph carried the wrong
+    /// language while `adapter_for_ext(".cs")` answered correctly.
+    ///
+    /// MUTATION: reintroduce the table and drop one entry — this fails for that
+    /// language, where a per-language assert only fails for the ones somebody
+    /// thought to write down.
+    #[test]
+    fn every_registered_extension_reports_its_own_adapters_language() {
+        for adapter in all_adapters() {
+            for ext in adapter.extensions() {
+                let bare = ext.trim_start_matches('.');
+                assert_eq!(
+                    language_for_ext_slug(bare),
+                    Some(adapter.language()),
+                    "{ext} is claimed by {} and must report it",
+                    adapter.language()
+                );
+            }
+        }
     }
 
     #[test]

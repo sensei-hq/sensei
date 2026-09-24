@@ -255,17 +255,36 @@ because the two mint different identities.
 
 | language | adapter | this indexer produces | legacy parser |
 |---|---|---|---|
-| rust | yes | **yes** | **unreachable** — still registered for DETECTION |
-| typescript / javascript | yes | not yet | live |
-| svelte | yes | not yet | live |
-| java, python | yes | not yet | live |
-| sql, swift, kotlin, vue, c | **no** | no | live |
+| rust | yes | **yes** | **detection only** — parse half unreachable |
+| typescript / javascript | yes | **yes** | **deleted** — detection entry only |
+| svelte, vue | yes | **yes** (as typescript) | **deleted** — detection entry only |
+| java, python | yes | **yes** | **deleted** — detection entry only |
+| csharp | yes | **yes** | never existed; detection entry only |
+| php | yes | **yes** | never existed; detection entry only |
+| kotlin | yes | not yet — two shapes open | live (`kotlin.rs` + `jvm.rs`) |
+| sql, c, swift | **no** | no | live |
+
+**Additive vs cutover.** C# and PHP are the two entries that were never a
+cutover: `crate::languages` has never held a parser for either, so nothing was
+deleted when they flipped and there was no second producer to race. Every other
+row in the "yes" column traded one producer for another in a single commit.
+
+PHP's flip also closed a detection gap that had nothing to do with parsing:
+`.php` was claimed by no adapter at all, so all 2,251 files in the watched roots
+carried no language. The same gap C# had before its entry landed.
 
 "Unreachable" is not "deleted", and the difference matters: `languages/mod.rs`
 still registers `rust_lang::RustAdapter` because the registry also answers
 "what language is this file?", and `languages/mod.rs:1007` asserts `.rs` still
 resolves to it. Its PARSE half has no caller; splitting detection from parsing
 is what would let the file go.
+
+`language_for_ext_slug` now answers from the adapter's own `language()` rather
+than from a second table keyed on it. That table had drifted: `.cs` (and `.php`
+once added) reached an adapter that named itself and came back `other`, which is
+the value `nodes.language` was written from — so every C# node in the graph
+carried the wrong language while `adapter_for_ext(".cs")` answered correctly.
+`every_registered_extension_reports_its_own_adapters_language` pins the property.
 
 Measured 2026-09-23 over the live graph: rust is 33,716 of 467,595 nodes. The
 legacy SCAN and PROCESS orchestration is GONE — `process_git_folder`,

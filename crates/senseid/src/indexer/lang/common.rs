@@ -332,7 +332,14 @@ pub fn specifier_names_a_module(language: Language, binding: &Binding) -> bool {
             // the Rust arm gives: `import a.b.C` imports a CLASS and
             // `import a.b.*` a package, so a `Name` binding's last segment may
             // be either and nothing in the importing file says which.
-            Language::Rust | Language::Java | Language::Kotlin => false,
+            //
+            // PHP joins them too. `use App\Models\User;` binds a CLASS and
+            // `use App\Models;` binds the namespace as a prefix — both are
+            // legal, both arrive here as `Name`, and the specifier is spelled
+            // identically either way. The `function` and `const` forms name
+            // neither a module nor a type, which is one more reason the last
+            // segment cannot be read as a module.
+            Language::Rust | Language::Java | Language::Kotlin | Language::Php => false,
         },
     }
 }
