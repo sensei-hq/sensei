@@ -93,13 +93,17 @@ pub enum Language {
     TypeScript,
     Java,
     Python,
+    /// C#. Semantically Java's nearest relative — a namespace is its package,
+    /// types nest, methods overload — which is why its walk is Java's shape
+    /// rather than a new one.
+    CSharp,
 }
 
 impl Language {
     /// Every language this build can read. Exhaustively matched below, so a new
     /// variant does not compile until it is listed here too.
     pub fn all() -> &'static [Language] {
-        &[Language::Rust, Language::TypeScript, Language::Java, Language::Python]
+        &[Language::Rust, Language::TypeScript, Language::Java, Language::Python, Language::CSharp]
     }
 
     /// The label this language occupies the leading fqn segment with. Paired
@@ -110,6 +114,7 @@ impl Language {
             Self::TypeScript => "typescript",
             Self::Java => "java",
             Self::Python => "python",
+            Self::CSharp => "csharp",
         }
     }
 
@@ -122,6 +127,7 @@ impl Language {
             "typescript" => Some(Self::TypeScript),
             "java" => Some(Self::Java),
             "python" => Some(Self::Python),
+            "csharp" => Some(Self::CSharp),
             _ => None,
         }
     }
@@ -1064,10 +1070,14 @@ mod tests {
     fn every_declaration_fact_variant_is_constructible() {
         for l in all_languages() {
             match l {
-                Language::Rust | Language::TypeScript | Language::Java | Language::Python => {}
+                Language::Rust
+                | Language::TypeScript
+                | Language::Java
+                | Language::Python
+                | Language::CSharp => {}
             }
         }
-        assert_eq!(all_languages().len(), 4);
+        assert_eq!(all_languages().len(), 5);
 
         for k in all_symbol_kinds() {
             match k {

@@ -93,7 +93,12 @@ fn test_boundary(path: &str, text: &str, language: Language) -> u32 {
 fn inline_tests_begin(text: &str, language: Language) -> Option<u32> {
     let marker = match language {
         Language::Rust => "#[cfg(test)]",
-        Language::TypeScript | Language::Java | Language::Python => return None,
+        // C# joins the path-answered three: xUnit and NUnit tests are separate
+        // files, conventionally `*Tests.cs` or under a `*.Tests` project, and
+        // there is no in-file marker to look for.
+        Language::TypeScript | Language::Java | Language::Python | Language::CSharp => {
+            return None;
+        }
     };
     text.lines().position(|l| l.trim_start().starts_with(marker)).map(|i| i as u32 + 1)
 }

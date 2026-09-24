@@ -319,7 +319,15 @@ pub fn specifier_names_a_module(language: Language, binding: &Binding) -> bool {
             // `MemberOf` with the module in the specifier. So the ambiguity the
             // Rust arm refuses to guess at does not exist in Python: a `Name`
             // binding's specifier has nothing in it but a module path.
-            Language::TypeScript | Language::Python => true,
+            //
+            // C# joins them for the same kind of reason: a plain
+            // `using System.Text;` REQUIRES a namespace — importing a type's
+            // members is spelled `using static System.Math;` and renaming one
+            // is `using Sb = System.Text.StringBuilder;`, and the walk emits
+            // those as their own shapes rather than as a bare `Name`. So a
+            // `Name` binding's specifier has nothing in it but a namespace, and
+            // the ambiguity the Rust arm refuses to guess at does not arise.
+            Language::TypeScript | Language::Python | Language::CSharp => true,
             Language::Rust | Language::Java => false,
         },
     }
