@@ -96,7 +96,11 @@ fn inline_tests_begin(text: &str, language: Language) -> Option<u32> {
         // C# joins the path-answered three: xUnit and NUnit tests are separate
         // files, conventionally `*Tests.cs` or under a `*.Tests` project, and
         // there is no in-file marker to look for.
-        Language::TypeScript | Language::Java | Language::Python | Language::CSharp => {
+        Language::TypeScript
+        | Language::Java
+        | Language::Python
+        | Language::CSharp
+        | Language::Kotlin => {
             return None;
         }
     };
