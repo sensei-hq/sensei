@@ -108,7 +108,10 @@ fn inline_tests_begin(text: &str, language: Language) -> Option<u32> {
         | Language::CSharp
         | Language::Kotlin
         | Language::Php
-        | Language::C => {
+        | Language::C
+        // SQL has no test framework and no in-file marker. A `tests/` path is
+        // the only signal, and the path rule already has it.
+        | Language::Sql => {
             return None;
         }
     };

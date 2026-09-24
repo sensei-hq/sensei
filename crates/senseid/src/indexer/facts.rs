@@ -108,6 +108,11 @@ pub enum Language {
     /// scope, so `static` means the file and everything else means the whole
     /// link unit.
     C,
+    /// SQL. The one language here whose DIALECT has to be established before
+    /// anything can be read, and the one whose files are mostly change
+    /// scripts rather than declarations — so `CREATE` declares and `ALTER`
+    /// refers.
+    Sql,
 }
 
 impl Language {
@@ -123,6 +128,7 @@ impl Language {
             Language::Kotlin,
             Language::Php,
             Language::C,
+            Language::Sql,
         ]
     }
 
@@ -138,6 +144,7 @@ impl Language {
             Self::Kotlin => "kotlin",
             Self::Php => "php",
             Self::C => "c",
+            Self::Sql => "sql",
         }
     }
 
@@ -154,6 +161,7 @@ impl Language {
             "kotlin" => Some(Self::Kotlin),
             "php" => Some(Self::Php),
             "c" => Some(Self::C),
+            "sql" => Some(Self::Sql),
             _ => None,
         }
     }
@@ -1103,10 +1111,11 @@ mod tests {
                 | Language::CSharp
                 | Language::Kotlin
                 | Language::Php
-                | Language::C => {}
+                | Language::C
+                | Language::Sql => {}
             }
         }
-        assert_eq!(all_languages().len(), 8);
+        assert_eq!(all_languages().len(), 9);
 
         for k in all_symbol_kinds() {
             match k {
