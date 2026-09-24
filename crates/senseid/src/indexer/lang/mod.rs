@@ -46,6 +46,7 @@ pub mod kotlin;
 pub mod php;
 pub mod python;
 pub mod rust;
+pub mod sql;
 pub mod svelte;
 pub mod vue;
 
@@ -401,6 +402,7 @@ pub fn all_adapters() -> &'static [&'static dyn LanguageAdapter] {
         &csharp::CSharpAdapter,
         &kotlin::KotlinAdapter,
         &php::PhpAdapter,
+        &sql::SqlAdapter,
         &python::PythonAdapter,
         &javascript::TypeScriptAdapter,
         &javascript::JavaScriptAdapter,
@@ -723,6 +725,15 @@ mod tests {
                 "package p\n\
                  class Widget { fun wide(): Int { return 1 } }\n\
                  class Free { fun go(): Int { val w = Widget(); return w.wide() } }\n"
+            }
+            // SQL states its DIALECT before anything else can be read, so the
+            // fixture states one — the reader refuses a file that does not.
+            "sql" => {
+                "SET ANSI_NULLS ON\n\
+                 GO\n\
+                 CREATE TABLE [dbo].[Widget] ([Width] int)\n\
+                 GO\n\
+                 CREATE PROCEDURE [dbo].[Wide] AS SELECT [Width] FROM [dbo].[Widget]\n"
             }
             // C states no namespace at all, so the fixture states none — and
             // the two functions differ in LINKAGE, which is the only thing

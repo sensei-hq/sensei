@@ -346,9 +346,17 @@ pub fn specifier_names_a_module(language: Language, binding: &Binding) -> bool {
             // unreachable for C, and `false` is what says so — a C specifier is
             // a FILE PATH, and no reference a C file makes is ever minted at
             // `Reach::Mod`.
-            Language::Rust | Language::Java | Language::Kotlin | Language::Php | Language::C => {
-                false
-            }
+            //
+            // SQL joins them VACUOUSLY: it has no import statement at all. An
+            // object is named in full or reached through the default schema,
+            // so the SQL walk emits no `Import` and this arm is unreachable
+            // for it. `false` is what says so.
+            Language::Rust
+            | Language::Java
+            | Language::Kotlin
+            | Language::Php
+            | Language::C
+            | Language::Sql => false,
         },
     }
 }

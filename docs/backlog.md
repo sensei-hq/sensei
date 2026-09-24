@@ -1633,3 +1633,40 @@ The options, for whenever that happens:
 The characterisation tests assert the WRONG behaviour deliberately, and every
 assertion must be INVERTED when the fix lands. A green suite there today is a
 recorded defect, not health.
+
+---
+
+## Soft vs hard edges — a distinction dbd has and this indexer does not
+
+**Raised by:** the SQL work (issue #130). **Status:** recorded, not implemented.
+
+`dbd-core`'s `Reference` carries a `ref_type`, and `entity.rs` uses it to grade
+what an UNRESOLVED reference means:
+
+> Function references are *soft*: a view body is full of built-in and aggregate
+> calls (`now()`, `sum()`, `coalesce()`) that look exactly like a call to a
+> project-managed function, and only the resolver knows which is which. Unlike
+> a table reference, one that does not resolve to a known entity is dropped
+> silently instead of warned about.
+
+**The lesson generalises past SQL.** This indexer treats every miss alike: a
+`Resolution::Unresolved` carries a `Reason`, but nothing says whether the miss
+was EXPECTED. A call to a language built-in and a call to a function that should
+have resolved and did not are the same row in the A4 ceiling, so the ceiling
+cannot distinguish "we do not model this" from "we lost an edge".
+
+The raw material is already present — `RefKind` says how it was reached and
+`Evidence.reach` says at what grain — so this is a grading question rather than
+a capture one. `Reason::Plumbing` is the nearest thing today and it is narrower:
+it names members that exist on every object, not built-ins generally.
+
+**What T-SQL showed.** The distinction does not always need a resolver. T-SQL
+REQUIRES a scalar user-defined function to be schema-qualified and never
+qualifies a built-in, so `lang::sql::tsql` reads soft-vs-hard straight off the
+grammar and emits an edge only for the qualified form. Postgres gives dbd no
+such signal, which is why dbd has to defer it.
+
+**If this is picked up**, the shape to consider is a `Reason` that means "the
+language provides this and we do not model it", kept out of the A4 denominator,
+rather than a per-language list of built-in names — the prelude table already
+plays that role and is enumerated per language.
