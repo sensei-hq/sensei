@@ -81,7 +81,13 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
     let blocks = script_blocks(source.text);
     // ONE walk over the blocks and the markup — see `read_component` for why
     // two would leave the markup typing nothing.
-    let mut found = javascript::read_component(source, types, &blocks, from.clone())?;
+    let mut found = javascript::read_component(
+        source,
+        types,
+        &blocks,
+        from.clone(),
+        javascript::Markup::Svelte,
+    )?;
     // A component is a module like any other file. See `common::file_module`.
     let its_own = from.clone();
     found.symbols.insert(

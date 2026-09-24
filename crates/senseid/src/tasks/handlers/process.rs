@@ -365,8 +365,25 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     // minting the wrong fqn for every symbol in the file.
     if let Some(language) =
         crate::indexer::lang::production_adapter_for_ext(&format!(".{ext}")).map(|a| a.language())
-        && let Some(ref fid) = folder_id
     {
+        // A production language NEVER falls through to v1, and the missing
+        // folder is not an exception to that.
+        //
+        // This used to be `&& let Some(ref fid) = folder_id`, which reads as a
+        // guard and behaves as a FALLBACK: a file whose folder row is absent
+        // skipped past and got parsed by the legacy producer, under a different
+        // fqn scheme, into the same tables. It was invisible while rust was the
+        // only production language because v1 still had a rust parser; it turned
+        // into a panic the moment the TypeScript adapters became detection-only,
+        // which is how it surfaced.
+        //
+        // With no folder there is nothing to persist against, so the honest
+        // answer is that the file is not indexed — and saying so is a debug line,
+        // not a second producer.
+        let Some(ref fid) = folder_id else {
+            tracing::debug!(file = %abs_path, "v2: no folder row for this file — not indexed");
+            return Ok(0);
+        };
         let repo_root = std::path::Path::new(&task.folder_path);
         let rel = fpath
             .strip_prefix(repo_root)
@@ -1623,85 +1640,6 @@ mod tests {
         ctx.pg().remove_watch_root(&rid).await.ok();
     }
 
-    /// An EXTERNAL import that misses becomes a lib node; a LOCAL one still
-    /// becomes a module stub.
-    ///
-    /// The distinction comes from `import_anchor`, the declared owner of
-    /// local-vs-external, NOT from re-classifying the string here. Both halves
-    /// matter:
-    ///
-    /// - External miss -> an external (`lib·`) node. 109,944 edges (99.2% of
-    ///   unresolved imports) that name nothing local. `java.util.List` is a
-    ///   complete fact about a dependency, and a lib node makes it answerable.
-    /// - Local miss -> `module` stub, UNCHANGED. A relative import whose file
-    ///   is not indexed yet must still stub, or resolution stops being
-    ///   order-independent.
-    ///
-    /// Guards a regression I introduced one commit earlier: adding the dotted
-    /// candidate made `candidates.first()` for `java.util.List` be
-    /// `java·java.util·List`, so the old code would have minted a MODULE stub
-    /// named `List` for a JDK class. Unshipped — it needed a reindex to
-    /// manifest — but it is exactly the silent kind.
-    ///
-    /// Breaking mutations: (1) mint a module stub for the external case — the
-    /// kind assertion fails; (2) mint a lib node for the relative case — the
-    /// local half fails.
-    #[tokio::test]
-    async fn an_external_import_mints_a_lib_node_and_a_local_one_still_stubs() {
-        let ctx = make_ctx().await;
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("mint");
-        std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(repo.join("package.json"), "{\"name\":\"mint\"}\n").unwrap();
-        // A relative import whose target is NOT written to disk, so it misses.
-        std::fs::write(
-            repo.join("src/a.ts"),
-            "import { x } from './missing';\nimport { readFile } from 'node:fs';\nexport function go() { return x(readFile); }\n",
-        )
-        .unwrap();
-
-        let repo_path = repo.to_string_lossy().to_string();
-        let rid = ctx
-            .pg()
-            .add_watch_root(&tmp.path().to_string_lossy(), "mint", &serde_json::json!([]))
-            .await
-            .unwrap();
-        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "mint", &repo_path).await.unwrap();
-        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
-        let abs = repo.join("src/a.ts").to_string_lossy().to_string();
-        processed(&ctx, &repo_path, &abs).await.unwrap();
-
-        let kinds: Vec<(Option<String>, Option<String>)> = sqlx_core::query_as::query_as(
-            "SELECT t.kind::text, t.fqn FROM sensei.edges e
-               JOIN sensei.nodes t ON t.id = e.target_id
-              WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind",
-        )
-        .bind(fid)
-        .fetch_all(ctx.pg().pool())
-        .await
-        .unwrap();
-
-        // The external one is a lib symbol under a lib package.
-        assert!(
-            kinds.iter().any(|(k, f)| k.as_deref() == Some("unknown")
-                && f.as_deref().is_some_and(|f| f.starts_with("lib·node:fs"))),
-            "`node:fs` must mint an external node whose kind the use site never stated: {kinds:?}"
-        );
-        // The relative one still stubs as a module — order-independence.
-        assert!(
-            kinds.iter().any(|(k, _)| k.as_deref() == Some("module")),
-            "a missing relative import must still stub a module: {kinds:?}"
-        );
-        // And nothing external became a module stub.
-        assert!(
-            !kinds.iter().any(|(k, f)| k.as_deref() == Some("module")
-                && f.as_deref().is_some_and(|f| f.contains("node:fs"))),
-            "an external specifier must not become a module stub: {kinds:?}"
-        );
-
-        ctx.pg().remove_watch_root(&rid).await.ok();
-    }
-
     /// Every CALL emit arm must fire, scoped to the `calls` kind.
     ///
     /// Calls had no arm coverage before this. Their ladder is the same shape as
@@ -1980,147 +1918,6 @@ mod tests {
         ctx.pg().remove_watch_root(&rid).await.ok();
     }
 
-    #[tokio::test]
-    async fn local_imports_resolve_to_the_target_module_at_emit() {
-        let ctx = make_ctx().await;
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("tsimp");
-        std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(repo.join("package.json"), "{\"name\":\"tsimp\"}\n").unwrap();
-        std::fs::write(repo.join("src/b.ts"), "export function x() { return 1; }\n").unwrap();
-        std::fs::write(
-            repo.join("src/a.ts"),
-            "import { x } from './b';\nexport function drive() { return x(); }\n",
-        )
-        .unwrap();
-        let repo_path = repo.to_string_lossy().to_string();
-        let rid = ctx
-            .pg()
-            .add_watch_root(&tmp.path().to_string_lossy(), "tsimp", &serde_json::json!([]))
-            .await
-            .unwrap();
-        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "tsimp", &repo_path).await.unwrap();
-        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
-
-        for f in ["src/b.ts", "src/a.ts"] {
-            let abs = repo.join(f).to_string_lossy().to_string();
-            processed(&ctx, &repo_path, &abs).await.unwrap();
-        }
-
-        let (tid, tname): (Option<uuid::Uuid>, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT e.target_id, e.target_name FROM sensei.edges e
-               JOIN sensei.nodes n ON n.id = e.source_id
-              WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind
-                AND EXISTS (SELECT 1 FROM sensei.node_paths np
-                            WHERE np.node_id = n.id AND np.file_path = 'src/a.ts')",
-        )
-        .bind(fid)
-        .fetch_one(ctx.pg().pool())
-        .await
-        .unwrap();
-        assert!(tid.is_some(), "the './b' import must resolve — it names a file in this repo");
-        assert_eq!(
-            tname, None,
-            "resolving ERASES target_name; the two are mutually exclusive across all edges"
-        );
-
-        let (kind, file): (String, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT n.kind::text, np.file_path FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id = $1",
-        )
-        .bind(tid.unwrap())
-        .fetch_one(ctx.pg().pool())
-        .await
-        .unwrap();
-        assert_eq!(kind, "module");
-        assert_eq!(file.as_deref(), Some("src/b.ts"), "resolved to the imported file's module");
-
-        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
-    }
-
-    /// LOOKUP-FIRST, pinned. The resolver probes EVERY candidate fqn before it
-    /// creates anything, because get-or-creating on candidate 1 would satisfy
-    /// candidate 1 forever and hide the real target sitting at candidate 2.
-    ///
-    /// The real module here is pre-seeded at the SRC-STRIPPED candidate (the
-    /// second one) with a real file, while the first candidate does not exist —
-    /// the live shape, since `ts_module_path` strips a leading `src/` so a `../`
-    /// that climbs out of `src` lands one segment high.
-    ///
-    /// Breaking mutation: in the emit branch, replace the probe loop with
-    /// `upsert_node_by_fqn(candidates[0], .., None)` — the edge then points at a
-    /// freshly minted stub whose `file_path` is NULL instead of the real module.
-    #[tokio::test]
-    async fn import_resolution_probes_every_candidate_before_creating_one() {
-        let ctx = make_ctx().await;
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("tsfan");
-        std::fs::create_dir_all(repo.join("src/routes")).unwrap();
-        std::fs::write(repo.join("package.json"), "{\"name\":\"tsfan\"}\n").unwrap();
-        std::fs::write(
-            repo.join("src/routes/page.ts"),
-            "import { h } from '../src/lib/x';\nexport function v() { return h(); }\n",
-        )
-        .unwrap();
-        let repo_path = repo.to_string_lossy().to_string();
-        let rid = ctx
-            .pg()
-            .add_watch_root(&tmp.path().to_string_lossy(), "tsfan", &serde_json::json!([]))
-            .await
-            .unwrap();
-        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "tsfan", &repo_path).await.unwrap();
-        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
-
-        // Pre-seed the REAL module at the src-stripped candidate — candidate 2.
-        // Candidate 1 (`typescript·tsfan·src/lib/x`) is deliberately absent.
-        let real = ctx
-            .pg()
-            .seed_node_by_fqn(
-                &fid,
-                "typescript·tsfan·lib/x",
-                "module",
-                "x",
-                Some("typescript"),
-                Some(crate::db::pg_store::FqnDef {
-                    file_path: "src/lib/x.ts",
-                    signature: None,
-                    line_start: None,
-                    line_end: None,
-                    is_exported: false,
-                    parent_id: None,
-                }),
-            )
-            .await
-            .unwrap();
-
-        let abs = repo.join("src/routes/page.ts").to_string_lossy().to_string();
-        processed(&ctx, &repo_path, &abs).await.unwrap();
-
-        let (tid,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
-            "SELECT e.target_id FROM sensei.edges e JOIN sensei.nodes n ON n.id = e.source_id
-              WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind
-                AND EXISTS (SELECT 1 FROM sensei.node_paths np
-                            WHERE np.node_id = n.id AND np.file_path = 'src/routes/page.ts')",
-        )
-        .bind(fid)
-        .fetch_one(ctx.pg().pool())
-        .await
-        .unwrap();
-        assert_eq!(
-            tid,
-            Some(real),
-            "must land on the REAL module found by probing a LATER candidate — not a phantom \
-             stub minted from the first one"
-        );
-        // And nothing was created at candidate 1.
-        assert_eq!(
-            ctx.pg().node_id_by_fqn(&fid, "typescript·tsfan·src/lib/x").await.unwrap(),
-            None,
-            "probing must not create the candidate it missed"
-        );
-
-        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
-    }
-
     /// A doc's file reference and its unambiguous symbol mention both RESOLVE;
     /// an ambiguous mention and a broken link stay unresolved. 241,514
     /// `references` edges sat at 0% because nothing tried to resolve them.
@@ -2227,77 +2024,6 @@ mod tests {
             ctx.pg().file_node_id_by_path(&fid, "src/missing.rs").await.unwrap(),
             None,
             "a doc naming a nonexistent file is never evidence the file exists"
-        );
-
-        ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
-    }
-
-    /// Order-independence, which is why this needs no barrier: importing a file
-    /// that is not indexed yet creates a STUB on the target's own fqn, and the
-    /// later definition ENRICHES that same row keeping its id. Mirrors
-    /// `rust_call_before_def_creates_stub_then_enriched` for imports.
-    #[tokio::test]
-    async fn an_import_before_its_target_creates_a_stub_then_enriches_it() {
-        let ctx = make_ctx().await;
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("tsord");
-        std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(repo.join("package.json"), "{\"name\":\"tsord\"}\n").unwrap();
-        std::fs::write(repo.join("src/b.ts"), "export function x() { return 1; }\n").unwrap();
-        std::fs::write(
-            repo.join("src/a.ts"),
-            "import { x } from './b';\nexport function drive() { return x(); }\n",
-        )
-        .unwrap();
-        let repo_path = repo.to_string_lossy().to_string();
-        let rid = ctx
-            .pg()
-            .add_watch_root(&tmp.path().to_string_lossy(), "tsord", &serde_json::json!([]))
-            .await
-            .unwrap();
-        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "tsord", &repo_path).await.unwrap();
-        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
-
-        // IMPORTER FIRST — its target does not exist yet.
-        let abs_a = repo.join("src/a.ts").to_string_lossy().to_string();
-        processed(&ctx, &repo_path, &abs_a).await.unwrap();
-
-        let (tid,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
-            "SELECT e.target_id FROM sensei.edges e JOIN sensei.nodes n ON n.id = e.source_id
-              WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind
-                AND EXISTS (SELECT 1 FROM sensei.node_paths np
-                            WHERE np.node_id = n.id AND np.file_path = 'src/a.ts')",
-        )
-        .bind(fid)
-        .fetch_one(ctx.pg().pool())
-        .await
-        .unwrap();
-        let stub_id = tid.expect("resolved to a stub even though the target is not indexed yet");
-        let (resolved, file): (bool, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT n.resolved, np.file_path FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id = $1",
-        )
-        .bind(stub_id)
-        .fetch_one(ctx.pg().pool())
-        .await
-        .unwrap();
-        assert!(!resolved, "it is a stub until its file is indexed");
-        assert_eq!(file, None, "a stub has no file");
-
-        let abs_b = repo.join("src/b.ts").to_string_lossy().to_string();
-        processed(&ctx, &repo_path, &abs_b).await.unwrap();
-
-        let (resolved2, file2): (bool, Option<String>) = sqlx_core::query_as::query_as(
-            "SELECT n.resolved, np.file_path FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id = $1",
-        )
-        .bind(stub_id)
-        .fetch_one(ctx.pg().pool())
-        .await
-        .unwrap();
-        assert!(resolved2, "the definition enriched the stub in place");
-        assert_eq!(
-            file2.as_deref(),
-            Some("src/b.ts"),
-            "same node id, now carrying the file — so no barrier or second pass is needed"
         );
 
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
@@ -2436,9 +2162,18 @@ mod tests {
 
     #[tokio::test]
     async fn process_file_ts_emits_fqn_nodes() {
-        // Phase 6.1: a TypeScript file with a package.json → the FQN path. Validates
-        // the oxc producer end-to-end, the src-stripped module, resolved edges, AND
-        // that the node language column is 'typescript' (not the old hardcoded rust).
+        // THE END-TO-END PROOF OF THE TYPESCRIPT CUTOVER. A `.ts` file with a
+        // package.json goes in and nodes come out — through
+        // `crate::indexer::lang`, because TypeScript is in PRODUCTION_LANGUAGES
+        // now, not through the legacy producer this test was written against.
+        //
+        // The expectations gained a REACH SEGMENT (`·item`) and nothing else,
+        // which is the visible difference between the two fqn grammars: v1 named
+        // `<lang>·<pkg>·<module>·<name>`, and v2 adds how the name is REACHED so
+        // a field and a same-named method stay two symbols (see
+        // `indexer::fqn::Reach`). That the rest matched on the first run — the
+        // src-stripped module, the resolved call edge, the language column — is
+        // the result worth keeping.
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("tsapp");
@@ -2464,8 +2199,8 @@ mod tests {
             .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
         assert_eq!(
             compute_fqn.as_deref(),
-            Some("typescript·tsapp·util·compute"),
-            "src/ stripped module + oxc def"
+            Some("typescript·tsapp·util·compute·item"),
+            "src/ stripped module + the v2 walk's definition, with its reach segment"
         );
         assert_eq!(
             compute_lang.as_deref(),
@@ -2474,7 +2209,7 @@ mod tests {
         );
 
         let (helper_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND fqn='typescript·tsapp·util·helper'",
+            "SELECT id FROM sensei.nodes WHERE folder_id=$1 AND fqn='typescript·tsapp·util·helper·item'",
         )
         .bind(fid)
         .fetch_one(ctx.pg().pool())
@@ -3529,4 +3264,24 @@ mod tests {
         let task = Task::new(TaskKind::DeleteFolder, repo_path, "/tmp/myrepo/src");
         delete_folder(&ctx, &task).await.unwrap();
     }
+
+    // FOUR TYPESCRIPT IMPORT TESTS STOOD HERE and went with the cutover:
+    // `local_imports_resolve_to_the_target_module_at_emit`,
+    // `an_import_before_its_target_creates_a_stub_then_enriches_it`,
+    // `import_resolution_probes_every_candidate_before_creating_one` and
+    // `an_external_import_mints_a_lib_node_and_a_local_one_still_stubs`.
+    //
+    // Each built a `.ts` package and asserted how V1'S import emission behaved —
+    // its stub minting, its candidate probing, its lib/local split. `.ts` routes
+    // to `crate::indexer::lang` now, so they were asserting one producer's
+    // behaviour against another's output.
+    //
+    // Each property is held in v2, and by a test that was checked to exist
+    // before these were removed:
+    //   - an import names its target  -> `indexer::acceptance::an_import_named_target_resolves` (A1, >=99.9%)
+    //   - a target seen later still merges -> `indexer::resolve::indexing_the_corpus_in_either_order_produces_the_same_facts` (A6)
+    //   - ours vs a library's         -> `indexer::acceptance::every_import_is_classified_as_ours_or_a_librarys` (R5)
+    //
+    // `process_file_ts_emits_fqn_nodes` stays, and is now the end-to-end proof
+    // that a `.ts` file goes in and v2 nodes come out.
 }
