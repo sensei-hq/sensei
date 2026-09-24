@@ -2,43 +2,48 @@
 
 **Slice:** indexer v2 — languages, before the wipe + re-index (issue #130, phase `build`)
 
-## Done
+## Cut over
 
-- **rust + TypeScript cut over**, both A7 ratchets at **zero** (`2e18e352`, `0efc151f`). v1's TS/Svelte/Vue parsers deleted (2,426 lines); Vue *migrated* to `indexer/lang/vue.rs`.
-- **Java's A7 gate built** (`74748f3b`) — it never existed, which is the same absence that hid 511 TypeScript collisions. `SENSEI_CORPUS`-driven over 5,088 real files.
-- **Java's blocker cleared** (`6acb528b`) — overload collisions **409 → 14** by treating an overload like rust's `cfg` variant: the callable a caller mints, emitted once, plus one `MemberVariant` arm per signature.
+`PRODUCTION_LANGUAGES = [Rust, TypeScript, Java, Python]` — ten-plus extensions, all produced by `crate::indexer::lang`.
+
+| language | A7 descent | gate |
+|---|---|---|
+| Rust | 19 → 0 (earlier) | `persist::…_rust_…` |
+| TypeScript (+js/svelte/vue) | **511 → 0** | `persist::…_typescript_…` |
+| Java | **409 → 14** (bounded, named) | `java::corpus::…` (`SENSEI_CORPUS`) |
+| Python | **72 → 0** | `python::tests::…` (`SENSEI_CORPUS`) |
+
+**~5,600 lines of v1 parser deleted** across the three cutovers. `languages/jvm.rs` stays — Kotlin shares it.
+
+## The two rules that recur
+
+Every language so far has needed both. **Check a new adapter against them before measuring:**
+
+1. **A container is a PATH, not a leaf.** `Outer.Inner`, not `Inner`. (TS `module_of`, Java nested types, Python nested classes.)
+2. **A body does not declare members of what encloses it.** A local is not a field; a declaration inside a function is named under that function. (`container_at` / `fn_depth` / `fn_scope`.)
 
 ## Remaining
 
-| language | files (watched roots) | v2 adapter | state |
-|---|---:|---|---|
-| **Java** | 12,630 | ✓ | **unblocked — ready to flip** |
-| SQL (+ddl) | 7,435 | ✗ | build |
-| Python | 562 | ✓ | needs an A7 measurement first |
-| Kotlin | 247 | ✗ | build |
-| C (+h) | 160 | ✗ | build |
-| Swift | 2 | ✗ | effectively unused |
-| **C#** | **19,404** | ✗ | **nothing handles it, either version** |
-| PHP | 2,251 | ✗ | nothing handles it |
-
-Then: deploy → `TRUNCATE sensei.nodes, sensei.edges CASCADE` → full re-index → acceptance against the live graph → wire `Stated::Gone`.
+1. **C#** — 19,404 files, the biggest gap, never had an adapter. `tree-sitter-c-sharp` dependency is in. Build on `lang/java/`.
+2. SQL 7,435 · Kotlin 247 (takes `jvm.rs`) · C 160 · Swift 2 · PHP 2,251.
+3. Deploy → `TRUNCATE sensei.nodes, sensei.edges CASCADE` → re-index → acceptance → wire `Stated::Gone`.
 
 ## Next command
 
 ```
 SENSEI_CORPUS=/Users/Jerry/Work/Dayamed cargo test -p senseid --bin senseid \
-  indexer::lang::java -- --ignored --nocapture
+  java::corpus -- --ignored --nocapture
 ```
 Never pipe a test or build through `tail` — a pipe reports the pipe's exit status.
 
 ## Open questions
 
-- Flip Java now, or build the missing adapters first and do one flip?
-- C# is the largest single gap in the corpus and has never had an adapter in either version.
+- C# **partial classes** — one type across several files is a real identity question with no Java analogue.
+- C# **properties** are first-class; they want `SymbolKind::Property`, not `Field`.
 
 ## Known-broken / not deployed
 
-- **`languages/jvm.rs` is shared by `java.rs` and `kotlin.rs`** — flipping Java must keep `jvm.rs` for Kotlin. Same coupling shape as typescript/vue; `DetectionOnly` is how a flipped language keeps its extension→language mapping.
-- **This repo has no Java/Python/Swift/Kotlin**, so acceptance cannot measure them — "java members 0 | owns 0" was an empty denominator, not a pass. Use `SENSEI_CORPUS`.
-- Java's residual 14 collisions: declarations inside enum-constant or anonymous-class bodies, where `overloaded_in` scans only the type body's direct children.
-- The daemon predates the v2 wiring, the `mark_file_parsed` fix and both cutovers. The wipe is required — reconcile reads `props->'claims'`, which 0 of 467,707 nodes carry.
+- This repo has no Java/Python/C#/Kotlin/Swift, so acceptance cannot measure them — use `SENSEI_CORPUS`. An empty denominator is not a pass.
+- Java's residual 14: declarations inside enum-constant or anonymous-class bodies.
+- Python's residual 3 on llm-gateway: module-level shadowing, which Python itself collapses.
+- The daemon predates every cutover. The wipe is required — reconcile reads `props->'claims'`, which 0 of 467,707 nodes carry.
