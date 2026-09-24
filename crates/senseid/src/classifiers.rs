@@ -205,6 +205,74 @@ impl ScanRules {
     }
 }
 
+/// What a source file's bytes are, once its encoding has been read.
+///
+/// ONE OWNER for the question, because the scan gate and the parse path must
+/// agree: a gate that calls a file binary and a reader that would have decoded
+/// it fine means the file is never indexed and nothing says why. They call
+/// this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Decoded {
+    /// Text, in whatever encoding the BOM named, transcoded to UTF-8.
+    Text(String),
+    /// Null bytes with no BOM to account for them — an opaque binary.
+    Binary,
+    /// Bytes that are text in some 8-bit encoding this does not read. The user
+    /// can re-encode the file, which is why it is the actionable reason.
+    NotUtf8,
+}
+
+/// Decode a source file's bytes.
+///
+/// # The BOM is read BEFORE the null-byte test, and that ordering is the fix
+///
+/// UTF-16LE ASCII is `X 00 X 00` — every other byte is a null. A gate that
+/// tests for a null byte first calls every UTF-16 file an opaque binary, which
+/// is what happened: all 754 UTF-16 `.sql` files in the watched roots carried
+/// `skip_reason = binary_content` and no parser ever saw one. SQL Server
+/// Management Studio exports UTF-16LE by default, so an entire codebase of
+/// change scripts was invisible.
+///
+/// A BOM is a POSITIVE statement of encoding. Once one is present the nulls are
+/// explained, and the file is text.
+///
+/// # A substitution character is a failed read, not a value
+///
+/// `encoding_rs` reports `had_errors` when it replaced a byte it could not
+/// decode with U+FFFD. Accepting that would hand a parser a name with a
+/// replacement character in it — a name no use site can mint, and one a caller
+/// cannot tell from a name the source really carried (R4). So it is refused.
+///
+/// # No BOM means UTF-8, and nothing else is guessed
+///
+/// A file with no BOM and no null bytes is required to be valid UTF-8. Charset
+/// DETECTION — guessing latin-1 from byte frequencies — is deliberately not
+/// done: it is a guess, it is wrong often enough to matter, and
+/// [`Decoded::NotUtf8`] is already the actionable answer that tells the user to
+/// re-encode. MEASURED over the skipped `.sql` files: 388 UTF-16LE (all
+/// BOM-carrying), 6 iso-8859-1, 5 unknown-8bit, 1 genuine binary — so the BOM
+/// path is 97% of them and detection would buy 11 files at the cost of a guess.
+pub fn decode_source(bytes: &[u8]) -> Decoded {
+    // `for_bom` answers with the encoding AND the BOM's length, so the marker
+    // itself is never handed to a parser as content.
+    if let Some((encoding, bom_len)) = encoding_rs::Encoding::for_bom(bytes) {
+        let (text, _, had_errors) = encoding.decode(&bytes[bom_len..]);
+        if had_errors {
+            return Decoded::NotUtf8;
+        }
+        return Decoded::Text(text.into_owned());
+    }
+    // NO BOM. A null byte here is unexplained, which is what an opaque binary
+    // looks like.
+    if bytes.contains(&0) {
+        return Decoded::Binary;
+    }
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Decoded::Text(text.to_string()),
+        Err(_) => Decoded::NotUtf8,
+    }
+}
+
 /// Why the indexer examined a file but deliberately did not index it. Mirrors
 /// the `sensei.scan_skip_reason` enum; persisted on the file's `sensei.files` row
 /// so the skip is recorded WITH its fingerprint. That pairing is what stops a
@@ -469,6 +537,76 @@ impl FileClassifier for DefaultClassifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A BOM EXPLAINS THE NULLS.**
+    ///
+    /// UTF-16LE ASCII is `X 00 X 00`, so a null-byte test that runs first calls
+    /// every UTF-16 file an opaque binary. MEASURED before this landed: all 754
+    /// UTF-16 `.sql` files in the watched roots carried
+    /// `skip_reason = binary_content` and no parser saw one. SSMS exports
+    /// UTF-16LE by default.
+    ///
+    /// MUTATION: move the null-byte test above the BOM check — every one of
+    /// them goes back to being a binary.
+    #[test]
+    fn a_utf16_bom_makes_the_nulls_text_rather_than_binary() {
+        // Exactly the head of a real SSMS export: BOM, CRLF, `--`.
+        let mut bytes = vec![0xFF, 0xFE];
+        for c in "\r\n-- hello".chars() {
+            bytes.extend_from_slice(&(c as u16).to_le_bytes());
+        }
+        assert_eq!(decode_source(&bytes), Decoded::Text("\r\n-- hello".to_string()));
+
+        // BIG-ENDIAN too, though this corpus holds none.
+        let mut be = vec![0xFE, 0xFF];
+        for c in "SELECT 1".chars() {
+            be.extend_from_slice(&(c as u16).to_be_bytes());
+        }
+        assert_eq!(decode_source(&be), Decoded::Text("SELECT 1".to_string()));
+
+        // THE BOM ITSELF IS NOT CONTENT. Handing it to a parser puts a
+        // zero-width no-break space at the head of the first statement, which
+        // is how `Create_fnIssues_Function.sql` failed to parse at line 1.
+        let text = match decode_source(&bytes) {
+            Decoded::Text(t) => t,
+            other => panic!("expected text, got {other:?}"),
+        };
+        assert!(!text.starts_with('\u{feff}'), "the BOM is a marker, not a character");
+    }
+
+    /// A null byte with NOTHING to explain it is still a binary.
+    ///
+    /// MUTATION: drop the null-byte test — a pg_dump archive (`PGDMP…`) is
+    /// handed to a parser as text.
+    #[test]
+    fn a_null_byte_with_no_bom_is_still_binary() {
+        assert_eq!(decode_source(b"PGDMP\x01\x10\x00\x04\x08"), Decoded::Binary);
+        assert_eq!(decode_source(&[0x00, 0x01, 0x02]), Decoded::Binary);
+    }
+
+    /// Plain UTF-8 is read as it always was, BOM or no BOM.
+    #[test]
+    fn utf8_is_unchanged_and_a_utf8_bom_is_stripped() {
+        assert_eq!(decode_source(b"SELECT 1"), Decoded::Text("SELECT 1".to_string()));
+        assert_eq!(decode_source(b""), Decoded::Text(String::new()));
+        // A UTF-8 BOM is a marker too, and Windows editors write them.
+        let mut with_bom = vec![0xEF, 0xBB, 0xBF];
+        with_bom.extend_from_slice(b"SELECT 1");
+        assert_eq!(decode_source(&with_bom), Decoded::Text("SELECT 1".to_string()));
+    }
+
+    /// **A SUBSTITUTION CHARACTER IS A FAILED READ, NOT A VALUE.**
+    ///
+    /// MUTATION: accept `had_errors` — a name carrying U+FFFD reaches the
+    /// parser, and no use site can mint it (R4).
+    #[test]
+    fn bytes_that_are_not_utf8_are_actionable_rather_than_substituted() {
+        // Latin-1 `é` (0xE9) is not valid UTF-8 and carries no BOM.
+        assert_eq!(decode_source(b"SELECT '\xe9'"), Decoded::NotUtf8);
+        // A UTF-16 BOM followed by an ODD number of trailing bytes cannot
+        // decode cleanly, and is refused rather than patched with U+FFFD.
+        assert_eq!(decode_source(&[0xFF, 0xFE, 0x41]), Decoded::NotUtf8);
+    }
 
     #[test]
     fn is_binary_recognises_binaries() {
