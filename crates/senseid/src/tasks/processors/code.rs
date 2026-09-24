@@ -121,10 +121,6 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap().to_path_buf()
     }
 
-    fn fixtures() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
-    }
-
     fn process_code_file(rel: &str) -> FileProcessResult {
         let root = workspace_root();
         let abs = root.join(rel);
@@ -134,18 +130,9 @@ mod tests {
         process(&abs.to_string_lossy(), rel, ext, &content, "sensei").expect("should process")
     }
 
-    fn process_fixture(rel: &str) -> FileProcessResult {
-        let root = fixtures();
-        let abs = root.join(rel);
-        let content = std::fs::read_to_string(&abs)
-            .unwrap_or_else(|_| panic!("Fixture not found: {}", abs.display()));
-        let ext = abs.extension().and_then(|e| e.to_str()).unwrap_or("");
-        process(&abs.to_string_lossy(), rel, ext, &content, "test").expect("should process")
-    }
-
     #[test]
     fn rust_svelte_adapter() {
-        let r = process_code_file("crates/senseid/src/languages/svelte.rs");
+        let r = process_code_file("crates/senseid/src/indexer/lang/svelte.rs");
         assert_eq!(r.language.as_deref(), Some("rust"));
         assert_eq!(r.tags, "src");
 
@@ -161,44 +148,10 @@ mod tests {
         // Should have imports (use statements)
         assert!(!r.unresolved_imports.is_empty(), "should have imports");
     }
-
-    #[test]
-    fn svelte_component_step_header() {
-        let r = process_fixture("code/StepHeader.svelte");
-        assert_eq!(r.language.as_deref(), Some("svelte"));
-
-        let components: Vec<_> = r.symbols.iter().filter(|s| s.kind == "component").collect();
-        assert_eq!(components.len(), 1, "should find exactly 1 component");
-        assert_eq!(components[0].name, "StepHeader");
-    }
-
-    #[test]
-    fn svelte_ts_appstate() {
-        let r = process_fixture("code/appstate.svelte.ts");
-        assert!(
-            r.language.as_deref() == Some("typescript")
-                || r.language.as_deref() == Some("javascript")
-        );
-
-        let fns: Vec<_> = r.symbols.iter().filter(|s| s.kind == "function").collect();
-        assert!(!fns.is_empty(), "should find functions");
-        let names: Vec<&str> = fns.iter().map(|f| f.name.as_str()).collect();
-        assert!(names.contains(&"resetState"), "should find resetState, got {:?}", names);
-    }
-
-    #[test]
-    fn page_svelte_route() {
-        let r = process_fixture("code/+page.svelte");
-        assert_eq!(r.language.as_deref(), Some("svelte"));
-
-        let components: Vec<_> = r.symbols.iter().filter(|s| s.kind == "component").collect();
-        assert_eq!(components.len(), 1);
-    }
-
     #[test]
     fn rust_file_with_tests_and_src() {
         // Rust files contain both src and test code in the same file
-        let r = process_code_file("crates/senseid/src/languages/svelte.rs");
+        let r = process_code_file("crates/senseid/src/indexer/lang/svelte.rs");
 
         // Should have both regular functions AND test functions
         let all_fns: Vec<&str> = r
@@ -215,7 +168,7 @@ mod tests {
 
     #[test]
     fn rust_methods_have_parent() {
-        let r = process_code_file("crates/senseid/src/languages/svelte.rs");
+        let r = process_code_file("crates/senseid/src/indexer/lang/svelte.rs");
 
         // Methods should have parent refs (from impl blocks)
         let methods_with_parent: Vec<_> =

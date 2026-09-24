@@ -79,7 +79,11 @@ fn read(path: &Path) -> Option<(Box<dyn super::LanguageAdapter>, String)> {
 fn no_import_name_contains_syntax() {
     let mut bad = Vec::new();
     let mut files = 0usize;
-    for path in corpus(&["rs", "ts", "js", "svelte", "py", "java"]) {
+    // ts/js/svelte are GONE from this list, not from the guarantee: their
+    // parsers moved to `crate::indexer::lang` with the TypeScript cutover, and
+    // this registry holds only a detection entry for them. The same property is
+    // held there by the walk's own import tests over the same corpus.
+    for path in corpus(&["rs", "py", "java"]) {
         let Some((adapter, content)) = read(&path) else { continue };
         files += 1;
         let pf = adapter.parse(&content, &path.to_string_lossy());
@@ -182,75 +186,15 @@ fn docs_corpus_maps_to_markdown_and_txt_abstains() {
     assert_eq!(language_for_ext_slug("txt"), None, "`.txt` is decided by content");
 }
 
-/// A runtime global must never be attributed to the module that called it.
-///
-/// The unresolved arm used to mint `<pkg>·<caller module>·String` per call site,
-/// so one built-in became hundreds of distinct fabricated nodes. Checked over
-/// this repo's own TypeScript and Svelte, which call these constantly.
-#[test]
-fn no_runtime_global_is_attributed_to_the_calling_module() {
-    const GLOBALS: &[&str] = &[
-        "String",
-        "Number",
-        "Boolean",
-        "Object",
-        "Array",
-        "JSON",
-        "Math",
-        "Promise",
-        "fetch",
-        "setTimeout",
-        "clearTimeout",
-        "parseInt",
-        "encodeURIComponent",
-        "console",
-    ];
-    let mut bad = Vec::new();
-    let mut files = 0usize;
-    let mut hits = 0usize;
-    for path in corpus(&["ts", "svelte"]) {
-        let Some((adapter, content)) = read(&path) else { continue };
-        let Some(out) = adapter.fqn_output(&path.to_string_lossy(), &rel_of(&path), &content)
-        else {
-            continue;
-        };
-        files += 1;
-        for r in &out.refs {
-            let Some(fqn) = r.target_fqn.as_deref() else { continue };
-            if !GLOBALS.contains(&r.target_name.as_str()) {
-                continue;
-            }
-            hits += 1;
-            // THE DEFECT'S EXACT SIGNATURE: the global stamped with the CALLING
-            // file's own module, which is literally what the old mint produced —
-            // `fqn::item(lang, ctx.package, ctx.module, name)`.
-            //
-            // Deliberately NOT the broader "anything that isn't `lib·`". A
-            // `target_name` is the METHOD name for a member call, so
-            // `test.setTimeout(180_000)` on a `test` imported from `../fixtures`
-            // resolves — correctly — to `…·e2e/fixtures·setTimeout`, which the
-            // broader form flagged. Eight such calls in this repo's e2e specs
-            // were invisible until top-level statements began to be scanned, and
-            // they are legitimate: a member of an imported object that happens to
-            // share a built-in's name. Telling the two apart needs the RECEIVER,
-            // which a resolved ref does not carry — so this asserts the case the
-            // doc comment above actually describes.
-            let lang = fqn.split('·').next().unwrap_or_default();
-            if fqn == super::fqn::item(lang, &out.package, &out.module, &r.target_name) {
-                bad.push(format!("{}: {fqn}", path.display()));
-            }
-        }
-    }
-    assert!(files > 100, "corpus too small: {files} files produced FQNs");
-    assert!(hits > 50, "expected real global usage, saw {hits} references");
-    assert!(
-        bad.is_empty(),
-        "{} runtime globals attributed to project code across {files} files \
-         ({hits} global references seen):\n{}",
-        bad.len(),
-        bad.iter().take(20).cloned().collect::<Vec<_>>().join("\n")
-    );
-}
+// `no_runtime_global_is_attributed_to_the_calling_module` STOOD HERE and is
+// gone with the TypeScript cutover, not weakened. It walked this repo's `.ts`
+// and `.svelte` through v1's producer, which no longer exists.
+//
+// The property it guarded — a runtime global is never minted under the module
+// that called it — is STRUCTURAL in `crate::indexer::lang::javascript`: a
+// prelude entry carries its own package, so `console` resolves to
+// `ecmascript·console` and there is no arm that could attribute it to a caller.
+// `a_svelte_rune_is_in_the_prelude_and_names_svelte` pins that table.
 
 /// A prelude item or type must never be attributed to project code. Checked over
 /// this repo's own Rust, which uses `Some`/`Ok`/`Err`/`String::new` constantly.

@@ -10,10 +10,7 @@ pub mod kotlin;
 pub mod python;
 pub mod rust_lang;
 pub mod sql;
-pub mod svelte;
 pub mod swift;
-pub mod typescript;
-pub mod vue;
 
 use crate::ir::IRParsedFile;
 use crate::types::ParsedFile;
@@ -80,6 +77,24 @@ pub trait LanguageAdapter: Send + Sync {
     /// CALLS `fqn_output`, and fails the build if any adapter's claim disagrees
     /// with what it actually does.
     fn supports_fqn(&self) -> bool;
+
+    /// Whether this adapter PARSES, or is registered only so its extensions map
+    /// to a language name.
+    ///
+    /// This registry answers two questions, and a cutover moves only one of
+    /// them: `crate::indexer::lang` produces the graph for a language in
+    /// `PRODUCTION_LANGUAGES`, while `classifiers::is_source_file`,
+    /// `language_for_ext` and `scan_logic::is_project_source_ext` still ask HERE
+    /// what language an extension is. An adapter that has been cut over keeps
+    /// the second job and loses the first.
+    ///
+    /// The invariants that are properties of a PARSER — "every adapter supports
+    /// fqn", "every claimed capability survives a probe" — are scoped to
+    /// adapters where this is true. Not an exemption granted to a language, but
+    /// a statement that there is no parser here for the invariant to be about.
+    fn parses(&self) -> bool {
+        true
+    }
 
     /// Whether this adapter can resolve a bare name using the LANGUAGE's own
     /// scope rules, rather than by matching the name against the folder.
@@ -163,9 +178,81 @@ fn title_case_static(slug: &str) -> &str {
 /// [`capability_matrix`] needs: before this there was no way to ask "what
 /// languages does this daemon support, and what can each of them do?" — the
 /// answer lived in a `match` arm.
+/// An adapter that answers "what language is this?" and nothing else.
+///
+/// This registry answers TWO questions — "who parses this?" and "what language
+/// is this?" — and a cutover only moves the first. `classifiers::is_source_file`,
+/// `language_for_ext` and `scan_logic::is_project_source_ext` all read the
+/// second, so deleting a cut-over adapter outright stops its files being
+/// recognised as source at all. That is measured, not hypothetical: it happened
+/// to `.rs` (23 tests) and again to `.ts` here.
+///
+/// So the TypeScript family keeps a registration and loses its PARSER, which is
+/// the split the note on `RustAdapter` asks for. `crate::indexer::lang` is the
+/// producer for every extension below.
+///
+/// Parsing is `unreachable!`, not an empty result. `process_file` routes a
+/// production language to v2 before v1's parse path is reached, so nothing can
+/// call these — and if that routing ever regresses, a panic naming the file is a
+/// bug report, while `ParsedFile::default()` would be a file that silently
+/// indexed to nothing.
+struct DetectionOnly {
+    language: &'static str,
+    extensions: &'static [&'static str],
+}
+
+impl LanguageAdapter for DetectionOnly {
+    fn language(&self) -> &str {
+        self.language
+    }
+
+    fn extensions(&self) -> &[&'static str] {
+        self.extensions
+    }
+
+    fn supports_fqn(&self) -> bool {
+        false
+    }
+
+    fn parses(&self) -> bool {
+        false
+    }
+
+    fn parse(&self, _source: &str, file_path: &str) -> ParsedFile {
+        unreachable!(
+            "{}: `{file_path}` reached v1's parser, but {} is produced by crate::indexer::lang \
+             — process_file must route a PRODUCTION_LANGUAGES file to v2 first",
+            self.language, self.language
+        )
+    }
+
+    fn parse_to_ir(&self, _source: &str, file_path: &str) -> IRParsedFile {
+        unreachable!(
+            "{}: `{file_path}` reached v1's IR parser, but {} is produced by \
+             crate::indexer::lang",
+            self.language, self.language
+        )
+    }
+}
+
 pub fn all_adapters() -> Vec<Box<dyn LanguageAdapter>> {
     vec![
         Box::new(python::PythonAdapter),
+        // **THE TYPESCRIPT FAMILY IS v2's, AND THESE ARE DETECTION ONLY.**
+        // Their parsers were DELETED — `languages/typescript.rs`,
+        // `languages/svelte.rs` and `languages/vue.rs` are gone — and what is
+        // left is the language name each extension maps to, which this registry
+        // is also the source of truth for.
+        Box::new(DetectionOnly {
+            language: "typescript",
+            extensions: &[".ts", ".tsx", ".cts", ".mts"],
+        }),
+        Box::new(DetectionOnly {
+            language: "javascript",
+            extensions: &[".js", ".jsx", ".mjs", ".cjs"],
+        }),
+        Box::new(DetectionOnly { language: "svelte", extensions: &[".svelte"] }),
+        Box::new(DetectionOnly { language: "vue", extensions: &[".vue"] }),
         // **RUST IS v2's, AND THIS REGISTRATION IS NOW DETECTION ONLY.**
         // `process_file` routes every `.rs` file to `indexer::lang::rust`
         // before v1's parse path is reached, so nothing here parses rust any
@@ -178,14 +265,10 @@ pub fn all_adapters() -> Vec<Box<dyn LanguageAdapter>> {
         // Splitting detection from parsing is what lets this adapter's parse
         // half actually be deleted; until then it is unreachable, not absent.
         Box::new(rust_lang::RustAdapter),
-        Box::new(typescript::TypeScriptAdapter),
-        Box::new(typescript::JavaScriptAdapter),
         Box::new(java::JavaAdapter),
         Box::new(sql::SqlAdapter),
         Box::new(swift::SwiftAdapter),
         Box::new(kotlin::KotlinAdapter),
-        Box::new(svelte::SvelteAdapter),
-        Box::new(vue::VueAdapter),
         Box::new(c_lang::CAdapter),
     ]
 }
@@ -202,6 +285,10 @@ pub fn adapter_for_ext(ext: &str) -> Option<Box<dyn LanguageAdapter>> {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CapabilityReport {
     pub language: String,
+    /// Whether this language still has a PARSER here. False means the language
+    /// cut over to `crate::indexer::lang` and this entry survives only so its
+    /// extensions map to a name — see [`LanguageAdapter::parses`].
+    pub parses: bool,
     pub extensions: Vec<String>,
     /// The language this one delegates parsing to (`svelte` → `typescript`).
     pub host: Option<String>,
@@ -231,6 +318,7 @@ pub fn capability_matrix() -> Vec<CapabilityReport> {
         .into_iter()
         .map(|a| CapabilityReport {
             language: a.language().to_string(),
+            parses: a.parses(),
             extensions: a.extensions().iter().map(|e| e.to_string()).collect(),
             host: a.host_language().map(str::to_string),
             fqn: a.supports_fqn(),
@@ -258,17 +346,17 @@ pub fn capability_matrix() -> Vec<CapabilityReport> {
 }
 
 /// Get the adapter for a filename, handling compound extensions.
-/// e.g. "foo.svelte.ts" → TypeScript, "bar.spec.svelte.js" → JavaScript
+///
+/// The `.svelte.ts` / `.svelte.js` special cases are GONE with the TypeScript
+/// cutover: this indexer no longer produces that language, so there is no
+/// adapter here to return for one.
+///
+/// They needed no replacement. They existed because THIS lookup takes a whole
+/// filename, where `.svelte.ts` is ambiguous; `crate::indexer::lang` dispatches
+/// on `Path::extension()`, which for `foo.svelte.ts` is `ts` — already the
+/// right answer, with no compound rule to keep in step.
 pub fn adapter_for_filename(filename: &str) -> Option<Box<dyn LanguageAdapter>> {
     let lower = filename.to_lowercase();
-
-    // Compound svelte extensions: .svelte.ts, .svelte.js
-    if lower.ends_with(".svelte.ts") || lower.ends_with(".svelte.tsx") {
-        return Some(Box::new(typescript::TypeScriptAdapter));
-    }
-    if lower.ends_with(".svelte.js") || lower.ends_with(".svelte.jsx") {
-        return Some(Box::new(typescript::JavaScriptAdapter));
-    }
 
     // Fall back to regular extension
     // Derive the extension from the LOWERCASED name. Adapters declare their
@@ -727,55 +815,14 @@ mod tests {
         }
     }
 
-    /// Framework adapters declare the host they delegate parsing to. This is not
-    /// cosmetic: a `.svelte` file's symbols carry `typescript·` fqns because the
-    /// TS adapter produced them, which import resolution has to fan out across.
-    #[test]
-    fn framework_adapters_declare_their_host_language() {
-        let m = capability_matrix();
-        let host_of = |lang: &str| {
-            m.iter()
-                .find(|r| r.language == lang)
-                .unwrap_or_else(|| panic!("{lang} missing"))
-                .host
-                .clone()
-        };
-        assert_eq!(host_of("svelte").as_deref(), Some("typescript"));
-        assert_eq!(host_of("vue").as_deref(), Some("typescript"));
-        assert_eq!(host_of("rust"), None, "rust hosts nothing and is hosted by nothing");
-        assert_eq!(host_of("typescript"), None, "typescript IS a host");
-    }
-
-    /// A FRAMEWORK inherits its host's scope capability.
-    ///
-    /// svelte and vue extract `<script>` and hand it to the TypeScript adapter
-    /// — that is what `host_language()` declares. So the scope rules that apply
-    /// to a `.svelte` file's script ARE TypeScript's, and a framework reporting
-    /// `scope: false` while delegating to a host that reports `true` would be
-    /// the composition claim and the capability claim contradicting each other.
-    ///
-    /// This is the same composition-over-inheritance point slice 1 established:
-    /// a framework is not a language with fewer features, it is a language
-    /// plus an extraction step.
-    ///
-    /// Breaking mutation: drop the host fallback from `resolves_in_scope` —
-    /// svelte and vue report false while typescript reports true.
-    #[test]
-    fn a_framework_inherits_its_hosts_scope_capability() {
-        let m = capability_matrix();
-        let of = |lang: &str| m.iter().find(|r| r.language == lang).map(|r| r.scope);
-
-        assert_eq!(of("typescript"), Some(true), "the host resolves in scope");
-        for fw in ["svelte", "vue"] {
-            let host = m.iter().find(|r| r.language == fw).and_then(|r| r.host.clone());
-            assert_eq!(host.as_deref(), Some("typescript"), "{fw} must declare its host");
-            assert_eq!(
-                of(fw),
-                Some(true),
-                "{fw} delegates to typescript, so it inherits scope resolution"
-            );
-        }
-    }
+    // `framework_adapters_declare_their_host_language` and
+    // `a_framework_inherits_its_hosts_scope_capability` STOOD HERE. Svelte and
+    // Vue were this registry's only two frameworks and both cut over with
+    // TypeScript, so there is no host left here to declare or inherit from.
+    //
+    // The guarantee MOVED rather than went away:
+    // `indexer::lang::tests::a_framework_declares_the_host_it_delegates_to`
+    // holds it where the adapters now live.
 
     /// Scope resolution is a CAPABILITY, declared per language and reported.
     ///
@@ -810,10 +857,11 @@ mod tests {
         let without: Vec<&str> =
             m.iter().filter(|r| !r.scope).map(|r| r.language.as_str()).collect();
 
-        // javascript included deliberately: it calls the IDENTICAL
-        // `typescript_fqn::produce_fqns`, so it has the same bindings. The two
-        // are separate adapters only because they claim different extensions.
-        for lang in ["rust", "java", "python", "typescript", "javascript"] {
+        // typescript and javascript are NOT here any more: they cut over to
+        // `crate::indexer::lang`, whose scope machinery is its own and is
+        // measured by `indexer::acceptance` over the real corpus rather than
+        // declared in this matrix. What is left is what this registry parses.
+        for lang in ["rust", "java", "python"] {
             assert!(
                 with_scope.contains(&lang),
                 "{lang} has a scope map and must declare it: with={with_scope:?}"
@@ -844,29 +892,29 @@ mod tests {
         let claims: Vec<&str> =
             m.iter().filter(|r| r.inheritance).map(|r| r.language.as_str()).collect();
 
-        for lang in ["java", "rust", "python", "kotlin", "typescript", "javascript"] {
+        // typescript, javascript, svelte and vue are NOT here any more: they cut
+        // over to `crate::indexer::lang`, and their adapters were deleted in the
+        // same change. The framework-inheritance clause went with them — svelte
+        // and vue were the only two frameworks this registry held, and with no
+        // host left to delegate to there is nothing for it to assert.
+        for lang in ["java", "rust", "python", "kotlin"] {
             assert!(
                 claims.contains(&lang),
                 "{lang} emits relations and must declare it: {claims:?}"
             );
         }
-        // A framework INHERITS its host's capability — svelte/vue delegate their
-        // `<script>` to the TypeScript producer, so whatever it emits they emit.
-        for framework in ["svelte", "vue"] {
-            assert!(
-                claims.contains(&framework),
-                "{framework} delegates to typescript and must inherit the claim: {claims:?}"
-            );
-        }
 
         // THE PROBE. Every claimant must actually produce a relation.
         //
-        // Split by how the adapter resolves its context. java/kotlin/python are
-        // SOURCE-ONLY — the package comes from the file's own header — so a
-        // synthetic path works. typescript/javascript walk up for a
-        // `package.json`, so `fqn_output` on a synthetic path returns None by
-        // design; those go through the producer with an explicit context, which
-        // is the same code `fqn_output` calls.
+        // java/kotlin/python are SOURCE-ONLY — the package comes from the file's
+        // own header — so a synthetic path works.
+        //
+        // There used to be a second half here for typescript/javascript, which
+        // walk up for a `package.json` and so return None on a synthetic path;
+        // it probed the producer directly with an explicit context. Both the
+        // producer and the adapters are gone with the cutover, and the same
+        // property is now held by `crate::indexer::acceptance` over the real
+        // corpus rather than over one fixture.
         let source_only: &[(&str, &str, &str)] = &[
             ("java", "T.java", "package p;\nclass C extends B {}\n"),
             ("kotlin", "T.kt", "package p\nclass C : B() {}\n"),
@@ -884,15 +932,6 @@ mod tests {
                 "{lang} claims inheritance but produced no relation for `{src}`"
             );
         }
-
-        let ts = crate::languages::typescript::typescript_fqn::produce_fqns(
-            "export class C extends B {}\n",
-            &fqn::FileFqnContext { package: "app".into(), module: "m".into() },
-        );
-        assert!(
-            !ts.relations.is_empty(),
-            "typescript/javascript claim inheritance but produced no relation"
-        );
     }
 
     /// FQN support is REQUIRED of every adapter, with NO exceptions.
@@ -912,8 +951,14 @@ mod tests {
     /// drop any `fqn_output` override — the language is named in the failure.
     #[test]
     fn every_adapter_supports_fqn_with_no_exceptions() {
-        let gaps: Vec<String> =
-            capability_matrix().into_iter().filter(|r| !r.fqn).map(|r| r.language).collect();
+        // Scoped to adapters that PARSE. A cut-over language keeps a
+        // detection-only registration with no producer behind it, so "it has no
+        // fqn producer" is a description of that entry rather than a gap in it.
+        let gaps: Vec<String> = capability_matrix()
+            .into_iter()
+            .filter(|r| r.parses && !r.fqn)
+            .map(|r| r.language)
+            .collect();
 
         assert!(
             gaps.is_empty(),

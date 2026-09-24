@@ -44,78 +44,6 @@ pub fn make_symbol(
     }
 }
 
-/// Extract `<script>` blocks from Svelte/Vue SFC files.
-/// Returns `(script_content, start_line_offset, is_typescript)` for each block.
-pub fn extract_script_blocks(source: &str) -> Vec<(String, u32, bool)> {
-    let mut blocks = Vec::new();
-    let lines: Vec<&str> = source.lines().collect();
-    let mut i = 0;
-    while i < lines.len() {
-        let line = lines[i].trim();
-        if line.starts_with("<script") {
-            let is_ts = line.contains("lang=\"ts\"") || line.contains("lang='ts'");
-            let start = i + 1;
-            let mut end = start;
-            while end < lines.len() && !lines[end].trim().starts_with("</script") {
-                end += 1;
-            }
-            let content: String = lines[start..end].join("\n");
-            if !content.trim().is_empty() {
-                blocks.push((content, start as u32, is_ts));
-            }
-            i = end + 1;
-        } else {
-            i += 1;
-        }
-    }
-    blocks
-}
-
-/// FQN output for a single-file component (Svelte/Vue): the `<script>` blocks are
-/// TypeScript, so run the TS producer on each block and offset every def/ref line by
-/// the block's position in the file. The component's module is its file path (a
-/// `.svelte`/`.vue` file is one module), so `.ts`↔SFC imports merge in the shared
-/// `typescript` namespace. Returns None with no resolvable package (no package.json).
-pub(crate) fn sfc_fqn_output(
-    abs_path: &str,
-    content: &str,
-) -> Option<crate::languages::fqn::FqnFileOutput> {
-    use crate::languages::typescript::typescript_fqn;
-    let ctx = typescript_fqn::ts_file_context(abs_path)?;
-    let mut out = crate::languages::fqn::FqnFileOutput {
-        package: ctx.package.clone(),
-        module: ctx.module.clone(),
-        ..Default::default()
-    };
-    // A component's `<script context="module">` and `<script>` share ONE module
-    // scope, but each block is parsed on its own below. Union their local
-    // definitions first, so a function declared in one and called in the other
-    // resolves instead of reporting unresolved.
-    let blocks = extract_script_blocks(content);
-    let mut locals: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for (script, _, _) in &blocks {
-        locals.extend(typescript_fqn::local_defs_of(script, &ctx));
-    }
-    for (script, offset, _is_ts) in blocks {
-        let sub = typescript_fqn::produce_fqns_with_locals(&script, &ctx, &locals);
-        out.defs.extend(sub.defs.into_iter().map(|mut d| {
-            d.line_start += offset;
-            d.line_end += offset;
-            d
-        }));
-        out.refs.extend(sub.refs.into_iter().map(|mut r| {
-            r.caller_line += offset;
-            r
-        }));
-        // Relations carry no line, so they need no offset — but they DO need
-        // forwarding. Omitting them silently dropped every `extends`/`implements`
-        // a single-file component declares, which is the whole inheritance
-        // capability for svelte and vue.
-        out.relations.extend(sub.relations);
-    }
-    Some(out)
-}
-
 // ── IR helpers ──────────────────────────────────────────────────────────────
 
 /// Build an IRFunction from common fields. Used by all adapters.
@@ -296,41 +224,5 @@ mod tests {
     fn line_at_trims_whitespace() {
         let lines = vec!["  indented  "];
         assert_eq!(line_at(&lines, 0), Some("indented".to_string()));
-    }
-
-    #[test]
-    fn extract_script_blocks_single() {
-        let source =
-            "<template><div>hi</div></template>\n<script lang=\"ts\">\nconst x = 1;\n</script>";
-        let blocks = extract_script_blocks(source);
-        assert_eq!(blocks.len(), 1);
-        assert!(blocks[0].0.contains("const x = 1"));
-        assert!(blocks[0].2); // is_ts
-    }
-
-    #[test]
-    fn extract_script_blocks_multiple() {
-        let source =
-            "<script>\nlet a = 1;\n</script>\n<script setup lang=\"ts\">\nlet b = 2;\n</script>";
-        let blocks = extract_script_blocks(source);
-        assert_eq!(blocks.len(), 2);
-        assert!(blocks[0].0.contains("let a"));
-        assert!(!blocks[0].2); // not ts
-        assert!(blocks[1].0.contains("let b"));
-        assert!(blocks[1].2); // is ts
-    }
-
-    #[test]
-    fn extract_script_blocks_empty_script() {
-        let source = "<script>\n\n</script>";
-        let blocks = extract_script_blocks(source);
-        assert_eq!(blocks.len(), 0); // empty content filtered out
-    }
-
-    #[test]
-    fn extract_script_blocks_no_scripts() {
-        let source = "<template><div>no scripts</div></template>";
-        let blocks = extract_script_blocks(source);
-        assert_eq!(blocks.len(), 0);
     }
 }

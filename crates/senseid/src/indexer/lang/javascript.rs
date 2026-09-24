@@ -387,11 +387,25 @@ fn read_file(source: &Source<'_>, types: &TypeHomes, from: Fqn) -> Result<Found,
 /// namespace import in the module block has to still be a namespace in the
 /// instance block. Two walks would each start from an empty [`Flow`] and the
 /// markup would type nothing.
+/// Which single-file-component dialect the MARKUP around the script is written
+/// in. The script block is the same JavaScript or TypeScript either way — only
+/// the way the markup spells "here is an expression" differs, so this selects
+/// the region finder and nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Markup {
+    /// `{expr}`, `{#if expr}`, `{#each xs as x}`.
+    Svelte,
+    /// `{{ expr }}`, and the directive attributes `:p="expr"`, `@e="expr"`,
+    /// `v-if="expr"` — where the QUOTED VALUE is the expression.
+    Vue,
+}
+
 pub(super) fn read_component<'a>(
     source: &Source<'a>,
     types: &TypeHomes,
     blocks: &[super::svelte::ScriptBlock],
     from: Fqn,
+    markup: Markup,
 ) -> Result<Found, ReadError> {
     let lines = LineIndex::of(source.text);
     let allocator = Allocator::default();
@@ -458,7 +472,7 @@ pub(super) fn read_component<'a>(
     }
 
     let typescript = blocks.iter().any(|b| b.typescript);
-    walk.markup(source.text, blocks, typescript, &scope, &mut flow)?;
+    walk.markup(source.text, blocks, typescript, markup, &scope, &mut flow)?;
     Ok(walk.found)
 }
 
@@ -469,6 +483,7 @@ impl<'a> Walk<'a> {
         text: &'a str,
         blocks: &[super::svelte::ScriptBlock],
         typescript: bool,
+        markup: Markup,
         scope: &Scope,
         flow: &mut Flow,
     ) -> Result<(), ReadError> {
@@ -477,9 +492,17 @@ impl<'a> Walk<'a> {
         let source_type = SourceType::from_path(syntax)
             .map_err(|e| ReadError::GrammarUnavailable(e.to_string()))?;
 
-        for region in interpolations(text, blocks) {
+        let regions = match markup {
+            Markup::Svelte => interpolations(text, blocks),
+            Markup::Vue => vue_interpolations(text, blocks),
+        };
+        for region in regions {
             let raw = &text[region.start as usize..region.end as usize];
-            let Some(expression) = markup_expression(raw) else {
+            let expression = match markup {
+                Markup::Svelte => markup_expression(raw),
+                Markup::Vue => vue_expression(raw),
+            };
+            let Some(expression) = expression else {
                 continue;
             };
             let offset = region.start + expression.offset;
@@ -489,7 +512,11 @@ impl<'a> Walk<'a> {
                 // A tag whose contents will not parse as an expression is NAMED
                 // rather than dropped: the histogram says what was not
                 // understood (R2, S8).
-                let miss = Miss::unhandled("SvelteTag", raw.trim(), Reach::Item);
+                let tag = match markup {
+                    Markup::Svelte => "SvelteTag",
+                    Markup::Vue => "VueTag",
+                };
+                let miss = Miss::unhandled(tag, raw.trim(), Reach::Item);
                 self.found.references.push(Reference {
                     from: scope.from.clone(),
                     kind: RefKind::Reads,
@@ -593,6 +620,93 @@ fn style_blocks(text: &str) -> Vec<(usize, usize)> {
         at = close + "</style".len();
     }
     out
+}
+
+/// Every Vue expression region OUTSIDE a script or style block.
+///
+/// Two shapes, and a Vue template states them differently from a Svelte one:
+///
+///   - `{{ expr }}` — the mustache interpolation. Found by scanning for the
+///     DOUBLE brace, so a single `{` in markup (a CSS-in-template brace, a
+///     literal) is not mistaken for the start of an expression the way Svelte's
+///     single-brace rule would read it.
+///   - `:prop="expr"`, `@event="expr"`, `v-if="expr"` — a directive, where the
+///     expression is the QUOTED ATTRIBUTE VALUE rather than the markup between
+///     tags. A component doing its work through `@click` would otherwise show
+///     up with no use sites at all, which is the same reason Svelte reads its
+///     markup (04b §4).
+///
+/// A plain attribute (`class="x"`) is NOT a region: its value is a string, not
+/// an expression, and reading it would put a miss in the histogram for every
+/// attribute in the file.
+fn vue_interpolations(text: &str, blocks: &[super::svelte::ScriptBlock]) -> Vec<Interpolation> {
+    let bytes = text.as_bytes();
+    let skip: Vec<(usize, usize)> = blocks
+        .iter()
+        .map(|b| (b.start as usize, b.end as usize))
+        .chain(style_blocks(text))
+        .collect();
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if let Some((_, end)) = skip.iter().find(|(s, e)| i >= *s && i < *e) {
+            i = *end;
+            continue;
+        }
+        // `{{ … }}`
+        if bytes[i] == b'{' && bytes.get(i + 1) == Some(&b'{') {
+            if let Some(close) = text[i..].find("}}").map(|at| at + i) {
+                out.push(Interpolation { start: i as u32, end: (close + 2) as u32 });
+                i = close + 2;
+                continue;
+            }
+            break;
+        }
+        // A directive attribute: `:p=`, `@e=`, `v-x=`, and the `#slot` shorthand.
+        let directive =
+            bytes[i] == b':' || bytes[i] == b'@' || text[i..].starts_with("v-") || bytes[i] == b'#';
+        if directive
+            && i > 0
+            && (bytes[i - 1].is_ascii_whitespace() || bytes[i - 1] == b'<')
+            && let Some(eq) = text[i..].find(['=', ' ', '>', '\n']).map(|at| at + i)
+            && bytes.get(eq) == Some(&b'=')
+        {
+            let quote = bytes.get(eq + 1).copied();
+            if quote == Some(b'"') || quote == Some(b'\'') {
+                let q = quote.expect("just matched a quote");
+                let value = eq + 2;
+                if let Some(close) = text[value..].find(q as char).map(|at| at + value) {
+                    out.push(Interpolation { start: value as u32, end: close as u32 });
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// The expression a Vue region states.
+///
+/// A mustache carries its own braces and a directive value does not, so the
+/// braces are stripped only when they are there. Nothing else is read away:
+/// unlike a Svelte tag there is no keyword to skip, because the directive NAME
+/// sits outside the region this was given.
+fn vue_expression(raw: &str) -> Option<MarkupExpression<'_>> {
+    let (inner, offset) = match raw.strip_prefix("{{").and_then(|r| r.strip_suffix("}}")) {
+        Some(inner) => (inner, 2u32),
+        None => (raw, 0u32),
+    };
+    let trimmed = inner.trim_start();
+    if trimmed.trim().is_empty() {
+        return None;
+    }
+    Some(MarkupExpression {
+        text: trimmed.trim_end(),
+        offset: offset + (inner.len() - trimmed.len()) as u32,
+        binds: Vec::new(),
+    })
 }
 
 /// What a `{ … }` region contains, once the Svelte tag around it is read away.
