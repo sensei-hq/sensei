@@ -263,13 +263,47 @@ because the two mint different identities.
 | php | yes | **yes** | never existed; detection entry only |
 | c | yes | **yes** (`.c`/`.h` only) | **deleted** — detection entry only |
 | kotlin | yes | not yet — two shapes open | live (`kotlin.rs` + `jvm.rs`) |
-| sql, swift | **no** | no | live |
+| sql | yes — **T-SQL only** | not yet — Postgres half open | live (`sql.rs`) |
+| swift | **no** | no | live |
 | **c++** (`.cpp`/`.hpp`/`.cc`) | **no** | no | **no entry at all** |
 
 **Additive vs cutover.** C# and PHP are the two entries that were never a
 cutover: `crate::languages` has never held a parser for either, so nothing was
 deleted when they flipped and there was no second producer to race. Every other
 row in the "yes" column traded one producer for another in a single commit.
+
+**SQL IS BUILT, NOT FLIPPED**, and the reason is a split corpus. SQL is the
+first language here whose DIALECT has to be established before anything can be
+read, and the two halves need different readers:
+
+- **T-SQL** — `lang::sql::tsql`, this crate's own lexer and statement-head
+  reader. Built because nothing off the shelf can declare a stored procedure:
+  `tree-sitter-sequel` has no `create_procedure` node (`grammar.js` says
+  `// TODO: procedure`) and `sqlparser`'s `MsSqlDialect` fails on the parenless
+  `CREATE PROCEDURE @p int AS` form, parsing 28% of files whole.
+- **Postgres** — waiting on [sensei-hq/dbd#19](https://github.com/sensei-hq/dbd/issues/19).
+  dbd already has the right model (`extract_view_info`, `extract_proc_refs`,
+  `extract_proc_reads_writes` — reads and writes SEPARATED), but those live in a
+  private `mod extractors`. dbd is Postgres-only: measured over 243 T-SQL files,
+  **0** parse.
+
+`Language::Sql` stays out of `PRODUCTION_LANGUAGES` until both halves exist, so
+v1's `sql.rs` keeps producing and nothing regresses.
+
+**THE DIALECT IS STATED, OR IT IS DETECTED.** The same split the whole indexer
+turns on. `design.yaml` carries `source.dialect: postgresql` — a manifest
+declaring it, which outranks anything read out of a file. Everything else is
+scored from markers that exist in exactly one dialect, and a tie or a blank is
+`Dialect::Unstated` rather than a guess: `CREATE TABLE t (id int)` is valid
+everywhere and states nothing.
+
+**A CHANGE SCRIPT IS NOT A DECLARATION, AND THE KEYWORDS SAY SO.** `CREATE`
+declares; `DROP` refers. `ALTER` is BOTH, and the object kind decides —
+`ALTER PROCEDURE X AS <body>` carries the complete definition (T-SQL's syntax
+requires it), while `ALTER TABLE X ADD COLUMN` is an edit to a table defined
+elsewhere. Reading every `ALTER` alike gets one of the two wrong: measured over
+Ethico, 956 procedures ship as `ALTER PROCEDURE` per release folder while
+`ALTER TABLE` outnumbers `CREATE TABLE` 159 to 101.
 
 **C NARROWED on the way through.** v1's `c_lang.rs` claimed `.cpp`, `.hpp` and
 `.cc` and read them with a line-based scanner; `tree-sitter-c` parses C, and

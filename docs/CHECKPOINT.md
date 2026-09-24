@@ -32,6 +32,35 @@ the wrong `nodes.language`. The table is gone; the adapter answers for itself, a
 
 ## Built, not flipped
 
+**SQL — T-SQL half only.** `lang::sql` detects the dialect and dispatches;
+`lang::sql::tsql` is this crate's own lexer + statement-head reader. Built
+because nothing off the shelf can declare a stored procedure —
+`tree-sitter-sequel`'s `grammar.js` says `// TODO: procedure`, and `sqlparser`'s
+`MsSqlDialect` fails on the parenless `CREATE PROCEDURE @p int AS` form.
+
+Measured over Ethico (9 repos, 2,042 files, 391 UTF-16 and unreadable):
+
+| | |
+|---|---:|
+| read as T-SQL | 1,778 |
+| declaring an object | 1,086 (2,370 objects) |
+| declaring nothing, correctly | 692 |
+| **missed** | **0** |
+| references | 36,177 (24,850 placed) |
+| colliding | 476 — **0 within a file** |
+
+The 476 are release folders (`4.2.1/` beside `4.3.0.2/`, one named
+`DO NOT USE_4.1/`) — one procedure, several versions.
+
+NOT FLIPPED: the Postgres half waits on
+[dbd#19](https://github.com/sensei-hq/dbd/issues/19). v1's `sql.rs` keeps
+producing, so nothing regresses.
+
+Three rules this settled:
+1. **Dialect is STATED or DETECTED** — `design.yaml` says `source.dialect`; everything else is scored, and a tie or a blank is `Unstated`, never a guess.
+2. **`CREATE` declares, `DROP` refers, `ALTER` is BOTH** — the object kind decides. `ALTER PROCEDURE X AS <body>` carries the whole definition; `ALTER TABLE X ADD` does not.
+3. **A qualified call is a hard edge; a bare one is a built-in** — T-SQL requires a scalar UDF to be schema-qualified and never qualifies a built-in, so dbd's soft/hard split is readable off the grammar here. Worth 4,628 function edges.
+
 **Kotlin** (`34325771`) — 245 files, 0 unreadable, 3,038 declarations, A7 = 39. Two shapes block it:
 
 1. **Android product flavours** — `src/{cityofdoral,ecuador,panama}/Color.kt` declare the same package, one compiled per build. rust's `cfg` problem via the *directory*; belongs to **placement**, not the walk.
@@ -54,7 +83,7 @@ adapter rescues nothing today and is there for the next C project.
 
 | language | files | grammar (ABI-checked, pinned) |
 |---|---:|---|
-| SQL (+ddl) | 7,435 | `tree-sitter-sequel 0.3` — v1's is regex-based, so a rewrite |
+| SQL — Postgres half | ~2,600 | dbd-core, pending [dbd#19](https://github.com/sensei-hq/dbd/issues/19) |
 | Swift | 2 | `tree-sitter-swift =0.6.0` |
 
 Then: deploy → `TRUNCATE sensei.nodes, sensei.edges CASCADE` → re-index → acceptance → wire `Stated::Gone`.
@@ -79,7 +108,11 @@ Never pipe a test or build through `tail` — a pipe reports the pipe's exit sta
    under "Makefile only" and unplaceable; `placement_on_disk` never looks at a
    Makefile, so the real figure was 7. The wrong number came from putting build
    SCRIPTS in the same priority list as manifests.
-8. **A flip is two registries**: `indexer::lang` (who parses) and `crate::languages` (what language is this). PHP needed a `DetectionOnly` entry or `.php` carried no language at all.
+8. **Two lints can conflict, and the type is the way out.** clippy wanted
+   `unwrap_or_default()` where the no-fabrication guard forbids it. Carrying
+   BOTH facts — the module string and whether the source wrote one — satisfied
+   each and was clearer than either.
+9. **A flip is two registries**: `indexer::lang` (who parses) and `crate::languages` (what language is this). PHP needed a `DetectionOnly` entry or `.php` carried no language at all.
 
 ## Known-broken / not deployed
 

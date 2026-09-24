@@ -147,6 +147,7 @@ was learned by getting it wrong first:
 | csharp | Ethico, 8,647 files | 137,859 | 392 | file copies, partial types, one duplicated class, and a vendored Syncfusion tree tree-sitter cannot recover from |
 | php | 3 repos, 2,263 files | 72,420 | 312 | two checked-in copies of one protoc-generated tree (204), and CakePHP 2.x global-namespace reuse (108) |
 | c | pljava, 129 files | 1,906 | 11 | `JNIEXPORT x JNICALL` read as a declaration of `x` — a macro a walk without a preprocessor cannot expand |
+| sql (T-SQL) | Ethico, 1,778 files | 2,370 objects | 476 | a release folder per version — `4.2.1/` beside `4.3.0.2/`, and one named `DO NOT USE_4.1/`. **0 within one file, 0 missed.** |
 | kotlin | 245 files | 3,038 | 39 | anonymous objects, Android product flavours |
 
 **C's `one file` bucket is ZERO too**, on both corpora of real C, and reaching
