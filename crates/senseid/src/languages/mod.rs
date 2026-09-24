@@ -4,10 +4,8 @@ pub mod common;
 mod corpus_tests;
 pub mod fqn;
 pub mod import_target;
-pub mod java;
 pub mod jvm;
 pub mod kotlin;
-pub mod python;
 pub mod rust_lang;
 pub mod sql;
 pub mod swift;
@@ -237,7 +235,6 @@ impl LanguageAdapter for DetectionOnly {
 
 pub fn all_adapters() -> Vec<Box<dyn LanguageAdapter>> {
     vec![
-        Box::new(python::PythonAdapter),
         // **THE TYPESCRIPT FAMILY IS v2's, AND THESE ARE DETECTION ONLY.**
         // Their parsers were DELETED — `languages/typescript.rs`,
         // `languages/svelte.rs` and `languages/vue.rs` are gone — and what is
@@ -252,6 +249,11 @@ pub fn all_adapters() -> Vec<Box<dyn LanguageAdapter>> {
             extensions: &[".js", ".jsx", ".mjs", ".cjs"],
         }),
         Box::new(DetectionOnly { language: "svelte", extensions: &[".svelte"] }),
+        // Java and Python cut over with the same change that deleted their
+        // parsers here. `languages/jvm.rs` STAYS: `kotlin.rs` shares its
+        // `resolve_supertype` / `resolve_type_call`, and Kotlin is still v1's.
+        Box::new(DetectionOnly { language: "java", extensions: &[".java"] }),
+        Box::new(DetectionOnly { language: "python", extensions: &[".py", ".pyi"] }),
         Box::new(DetectionOnly { language: "vue", extensions: &[".vue"] }),
         // **RUST IS v2's, AND THIS REGISTRATION IS NOW DETECTION ONLY.**
         // `process_file` routes every `.rs` file to `indexer::lang::rust`
@@ -265,7 +267,6 @@ pub fn all_adapters() -> Vec<Box<dyn LanguageAdapter>> {
         // Splitting detection from parsing is what lets this adapter's parse
         // half actually be deleted; until then it is unreachable, not absent.
         Box::new(rust_lang::RustAdapter),
-        Box::new(java::JavaAdapter),
         Box::new(sql::SqlAdapter),
         Box::new(swift::SwiftAdapter),
         Box::new(kotlin::KotlinAdapter),
@@ -861,12 +862,14 @@ mod tests {
         // `crate::indexer::lang`, whose scope machinery is its own and is
         // measured by `indexer::acceptance` over the real corpus rather than
         // declared in this matrix. What is left is what this registry parses.
-        for lang in ["rust", "java", "python"] {
-            assert!(
-                with_scope.contains(&lang),
-                "{lang} has a scope map and must declare it: with={with_scope:?}"
-            );
-        }
+        // RUST is the only one left here with a scope map — java, python and the
+        // TypeScript family all cut over, and kotlin has never had one. A list
+        // of one rather than a loop, because a loop over a single element is a
+        // list that used to be longer.
+        assert!(
+            with_scope.contains(&"rust"),
+            "rust has a scope map and must declare it: with={with_scope:?}"
+        );
         assert!(
             without.contains(&"kotlin"),
             "kotlin has NO scope map and must not claim one: without={without:?}"
@@ -897,7 +900,9 @@ mod tests {
         // same change. The framework-inheritance clause went with them — svelte
         // and vue were the only two frameworks this registry held, and with no
         // host left to delegate to there is nothing for it to assert.
-        for lang in ["java", "rust", "python", "kotlin"] {
+        // java and python cut over with the same change that deleted their
+        // parsers here. What is left is what this registry still parses.
+        for lang in ["rust", "kotlin"] {
             assert!(
                 claims.contains(&lang),
                 "{lang} emits relations and must declare it: {claims:?}"
@@ -915,11 +920,8 @@ mod tests {
         // producer and the adapters are gone with the cutover, and the same
         // property is now held by `crate::indexer::acceptance` over the real
         // corpus rather than over one fixture.
-        let source_only: &[(&str, &str, &str)] = &[
-            ("java", "T.java", "package p;\nclass C extends B {}\n"),
-            ("kotlin", "T.kt", "package p\nclass C : B() {}\n"),
-            ("python", "t.py", "class C(B):\n    pass\n"),
-        ];
+        let source_only: &[(&str, &str, &str)] =
+            &[("kotlin", "T.kt", "package p\nclass C : B() {}\n")];
         for (lang, file, src) in source_only {
             let Some(a) = adapter_for_filename(file) else {
                 panic!("no adapter for {file}");

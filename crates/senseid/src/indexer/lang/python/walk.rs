@@ -54,7 +54,14 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
     };
     walk.imports_of(root);
 
-    let scope = Scope { from: file.clone(), container: Container::File, locals: BTreeMap::new() };
+    let scope = Scope {
+        from: file.clone(),
+        container: Container::File,
+        locals: BTreeMap::new(),
+        fn_depth: 0,
+        container_at: 0,
+        fn_scope: Vec::new(),
+    };
     walk.children(&scope, root);
 
     // THE FILE DECLARES ITS OWN MODULE, and in Python that module is what every
@@ -108,6 +115,25 @@ struct Scope {
     /// Name -> the type READ for it. Never inferred: every entry came off an
     /// annotation or a constructor call written in the source.
     locals: BTreeMap<String, String>,
+    /// How many function BODIES enclose this point.
+    fn_depth: usize,
+    /// The chain of FUNCTIONS enclosing this point, outermost first.
+    ///
+    /// The same chain the Rust and TypeScript walks carry. A declaration inside
+    /// a body is named under it, so two `event_generator` nested in two
+    /// different handlers of one module stay two symbols. `fn` is the joint
+    /// because Python has no module that can be spelled `fn` — it is not a
+    /// keyword, but a module named `fn` would still be `pkg.fn`, and the joint
+    /// only has to be unambiguous WITHIN a module path this walk composes.
+    fn_scope: Vec<String>,
+    /// The [`Scope::fn_depth`] at which [`Scope::container`] was established.
+    ///
+    /// The same rule the Rust, TypeScript and Java walks carry, for the same
+    /// reason: it tells "the class this body sits in" from "a class declared BY
+    /// this body". A body does not declare attributes of the class it is
+    /// written in — `row = 1` inside a method is a LOCAL, and `Repo` declares no
+    /// such thing. A depth rather than a flag, because bodies nest.
+    container_at: usize,
 }
 
 struct Walk<'a> {
@@ -273,7 +299,17 @@ impl<'a> Walk<'a> {
     /// Mint the identity of a declaration in the current container.
     fn declare(&self, scope: &Scope, member: &str, reach: Reach) -> Result<Fqn, FqnError> {
         let lang = Language::Python;
-        let (package, module) = (self.package, self.module);
+        let package = self.package;
+        // The file's module, extended by every enclosing function. A local
+        // function is not reachable by path from outside, which is not a reason
+        // to leave it at module scope: it IS referenced, inside the body that
+        // declares it, and both sides compose the same way from the same scope.
+        let composed = if scope.fn_scope.is_empty() {
+            self.module.to_string()
+        } else {
+            format!("{}.fn.{}", self.module, scope.fn_scope.join("."))
+        };
+        let module = composed.as_str();
         match &scope.container {
             Container::File => {
                 fqn::define(&Form::Item { lang, package, module, name: member, reach })
@@ -307,10 +343,21 @@ impl<'a> Walk<'a> {
             self.node(scope, bases);
         }
 
+        // A NESTED class extends the enclosing class's name rather than
+        // replacing it. Pydantic writes `class Config:` inside every schema, so
+        // a leaf name put one module's schemas all on one `Config.<member>` —
+        // the same defect Java's nested `@interface Container` had.
+        let nested = match &scope.container {
+            Container::Class { name: outer } => format!("{outer}.{name}"),
+            Container::File => name.to_string(),
+        };
         let inner = Scope {
             from: fqn,
-            container: Container::Class { name: name.to_string() },
+            container: Container::Class { name: nested },
             locals: BTreeMap::new(),
+            fn_depth: scope.fn_depth,
+            container_at: scope.fn_depth,
+            fn_scope: scope.fn_scope.clone(),
         };
         if let Some(body) = node.child_by_field_name("body") {
             self.children(&inner, body);
@@ -360,7 +407,22 @@ impl<'a> Walk<'a> {
             locals.insert("cls".to_string(), ty.clone());
         }
 
-        let inner = Scope { from: fqn, container: scope.container.clone(), locals };
+        let inner = Scope {
+            from: fqn,
+            container: scope.container.clone(),
+            locals,
+            // The BODY is one level inside this function. What it declares is
+            // local to it, not a member of whatever class encloses it.
+            fn_depth: scope.fn_depth + 1,
+            container_at: scope.container_at,
+            // The body is INSIDE this function, and everything it declares is
+            // named so.
+            fn_scope: {
+                let mut chain = scope.fn_scope.clone();
+                chain.push(name.to_string());
+                chain
+            },
+        };
         if let Some(body) = node.child_by_field_name("body") {
             self.children(&inner, body);
         }
@@ -434,7 +496,15 @@ impl<'a> Walk<'a> {
         let at = span(node);
 
         // A CLASS-BODY assignment declares an attribute of that class.
+        // ONLY a class-BODY assignment. A body does not declare attributes of
+        // the class it sits in: `row = 1` inside a method is a LOCAL, and the
+        // class declares no such thing. Without the depth, three locals in three
+        // methods minted one field identity — 69 of 72 collisions measured over
+        // ai-hedge-fund.
+        //
+        // The type BINDING is untouched; `locals` is what types a receiver.
         if let Container::Class { .. } = &scope.container
+            && scope.fn_depth <= scope.container_at
             && left.kind() == "identifier"
             && let Ok(fqn) = self.declare(scope, self.text(left), Reach::Field)
         {
