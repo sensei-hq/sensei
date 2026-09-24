@@ -41,6 +41,7 @@ pub mod common;
 pub mod csharp;
 pub mod java;
 pub mod javascript;
+pub mod kotlin;
 pub mod python;
 pub mod rust;
 pub mod svelte;
@@ -395,6 +396,7 @@ pub fn all_adapters() -> &'static [&'static dyn LanguageAdapter] {
         &rust::RustAdapter,
         &java::JavaAdapter,
         &csharp::CSharpAdapter,
+        &kotlin::KotlinAdapter,
         &python::PythonAdapter,
         &javascript::TypeScriptAdapter,
         &javascript::JavaScriptAdapter,
@@ -696,6 +698,11 @@ mod tests {
                  const w = new Widget();\n\
                  </script>\n\
                  <p>{w.wide()}</p>\n"
+            }
+            "kotlin" => {
+                "package p\n\
+                 class Widget { fun wide(): Int { return 1 } }\n\
+                 class Free { fun go(): Int { val w = Widget(); return w.wide() } }\n"
             }
             "csharp" => {
                 "namespace P;\n\
