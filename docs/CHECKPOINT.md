@@ -2,50 +2,57 @@
 
 **Slice:** indexer v2 — languages, before the wipe + re-index (issue #130, phase `build`)
 
-## Cut over
+## Cut over (5)
 
-`PRODUCTION_LANGUAGES = [Rust, TypeScript, Java, Python, CSharp]`.
+`PRODUCTION_LANGUAGES = [Rust, TypeScript, Java, Python, CSharp]`
 
 | language | A7 | gate |
 |---|---|---|
 | Rust | 19 → **0** | `persist::…_rust_…` |
 | TypeScript (+js/svelte/vue) | 511 → **0** | `persist::…_typescript_…` |
-| Java | 409 → **14** (named) | `java::corpus::…` (`SENSEI_CORPUS`) |
-| Python | 72 → **0** | `python::tests::…` (`SENSEI_CORPUS`) |
-| **C#** | **414** (every bucket explained) | `csharp::tests::…` (`SENSEI_CORPUS`) |
+| Java | 409 → **14** (named) | `java::corpus::…` |
+| Python | 72 → **0** | `python::tests::…` |
+| C# | 452 → **392** (all buckets explained) | `csharp::tests::…` |
 
-**~5,600 lines of v1 parser deleted.** `languages/jvm.rs` stays — only Kotlin uses it.
+**~5,600 lines of v1 parser deleted.** C# was additive — 19,404 files that had no language now have a graph.
 
-C# was **additive**: v1 never had a parser, so 19,404 `.cs` files carrying no language and no nodes now have a graph. 137,484 declarations over 8,647 files, 0 unreadable.
+## Built, not flipped
 
-## The two rules that recur
+**Kotlin** (`34325771`) — 245 files, 0 unreadable, 3,038 declarations, A7 = 39. Two shapes block it:
 
-Check any new adapter against both **before** measuring. Every language has needed them:
-
-1. **A container is a PATH, not a leaf** — `Outer.Inner`.
-2. **A body does not declare members of what encloses it** — a local is not a field.
+1. **Android product flavours** — `src/{cityofdoral,ecuador,panama}/Color.kt` declare the same package, one compiled per build. rust's `cfg` problem via the *directory*; belongs to **placement**, not the walk.
+2. **Anonymous object expressions** — `val M = object : Migration(5,6) { fun migrate }`. This one *is* the walk's: name the scope after the property, as TypeScript does.
 
 ## Remaining
 
-1. SQL 7,435 · Kotlin 247 (takes `jvm.rs`) · C 160 · Swift 2 · PHP 2,251.
-2. Deploy → `TRUNCATE sensei.nodes, sensei.edges CASCADE` → re-index → acceptance → wire `Stated::Gone`.
+| language | files | grammar (ABI-checked) |
+|---|---:|---|
+| SQL (+ddl) | 7,435 | `tree-sitter-sequel` — v1's is regex-based, so a rewrite |
+| PHP | 2,251 | `tree-sitter-php` — additive, nothing has handled it |
+| C (+h) | 160 | `tree-sitter-c` |
+| Swift | 2 | `tree-sitter-swift` |
+
+Then: deploy → `TRUNCATE sensei.nodes, sensei.edges CASCADE` → re-index → acceptance → wire `Stated::Gone`.
 
 ## Next command
 
 ```
-SENSEI_CORPUS=/Users/Jerry/Work/Ethico cargo test -p senseid --bin senseid \
-  csharp::tests -- --ignored --nocapture
+SENSEI_CORPUS=/Users/Jerry/Work/Alert/repos/base-app-android \
+  cargo test -p senseid --bin senseid kotlin::tests -- --ignored --nocapture
 ```
 Never pipe a test or build through `tail` — a pipe reports the pipe's exit status.
 
-## Open questions
+## Hard-won rules for a new adapter
 
-- **C#'s residue is conditional compilation** (74 of 414): `#if`/`#else` declarations are rust's `cfg` problem in C#'s syntax. The answer is the same callable-plus-arm split; not applied yet, and the `#if` block appears to break containment (these land at file scope with no type segment).
-- C#'s base list gives a base class and an interface one syntax. Interfaces get `Extends`, classes `Implements`. Resolvable from the *target's* declaration, which is scan-level.
+1. **A container is a PATH, not a leaf** — every language has needed this.
+2. **A body does not declare members of what encloses it** — a local is not a field.
+3. **Check the grammar's ABI first**: `grep LANGUAGE_VERSION <crate>/src/parser.c`. The runtime accepts 13–14; `tree-sitter-c-sharp` 0.23.5 emits 15 and fails at *runtime*, on every file.
+4. **Trust the tree, not `node-types.json`** — Kotlin's manifest advertises fields the tree never builds.
+5. **Write fixtures the way the language is written.** A one-line fixture has now misled me three times.
 
 ## Known-broken / not deployed
 
-- **`tree-sitter-c-sharp` is pinned `=0.23.1`** — 0.23.5 emits ABI 15 against a 13–14 runtime and fails at `set_language` at *runtime*, on every `.cs` file.
-- This repo has no Java/Python/C#/Kotlin/Swift, so acceptance cannot measure them. Use `SENSEI_CORPUS`; an empty denominator is not a pass.
-- A real finding in Ethico: `Campaign_RiskAssesment.cs` and `Campaign_RiskAssessment.cs` are two 28-line files declaring the same class — one left behind when a filename typo was fixed.
+- `tree-sitter-c-sharp` pinned `=0.23.1` (ABI).
+- This repo has no Java/Python/C#/Kotlin/Swift — acceptance cannot measure them. Use `SENSEI_CORPUS`.
+- A real finding in Ethico: `Campaign_RiskAssesment.cs` beside `Campaign_RiskAssessment.cs`, same class, one left behind after a filename typo fix.
 - The daemon predates every cutover. The wipe is required — reconcile reads `props->'claims'`, which 0 of 467,707 nodes carry.
