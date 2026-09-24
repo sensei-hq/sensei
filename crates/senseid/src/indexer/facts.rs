@@ -100,6 +100,10 @@ pub enum Language {
     /// Kotlin. A JVM language with Java's namespace model and its own syntax —
     /// top-level declarations, a declaring primary constructor, `object`.
     Kotlin,
+    /// PHP. A namespace is its package, written in the file. The one language
+    /// here that states `extends` and `implements` in separate clauses, and the
+    /// one that forbids overloading outright.
+    Php,
 }
 
 impl Language {
@@ -113,6 +117,7 @@ impl Language {
             Language::Python,
             Language::CSharp,
             Language::Kotlin,
+            Language::Php,
         ]
     }
 
@@ -126,6 +131,7 @@ impl Language {
             Self::Python => "python",
             Self::CSharp => "csharp",
             Self::Kotlin => "kotlin",
+            Self::Php => "php",
         }
     }
 
@@ -140,6 +146,7 @@ impl Language {
             "python" => Some(Self::Python),
             "csharp" => Some(Self::CSharp),
             "kotlin" => Some(Self::Kotlin),
+            "php" => Some(Self::Php),
             _ => None,
         }
     }
@@ -1087,10 +1094,11 @@ mod tests {
                 | Language::Java
                 | Language::Python
                 | Language::CSharp
-                | Language::Kotlin => {}
+                | Language::Kotlin
+                | Language::Php => {}
             }
         }
-        assert_eq!(all_languages().len(), 6);
+        assert_eq!(all_languages().len(), 7);
 
         for k in all_symbol_kinds() {
             match k {
