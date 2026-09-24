@@ -2,9 +2,9 @@
 
 **Slice:** indexer v2 — languages, before the wipe + re-index (issue #130, phase `build`)
 
-## Cut over (5)
+## Cut over (6)
 
-`PRODUCTION_LANGUAGES = [Rust, TypeScript, Java, Python, CSharp]`
+`PRODUCTION_LANGUAGES = [Rust, TypeScript, Java, Python, CSharp, Php]`
 
 | language | A7 | gate |
 |---|---|---|
@@ -13,8 +13,21 @@
 | Java | 409 → **14** (named) | `java::corpus::…` |
 | Python | 72 → **0** | `python::tests::…` |
 | C# | 452 → **392** (all buckets explained) | `csharp::tests::…` |
+| PHP | **312**, `one file` = **0** | `php::tests::…` |
 
-**~5,600 lines of v1 parser deleted.** C# was additive — 19,404 files that had no language now have a graph.
+**~5,600 lines of v1 parser deleted.** C# and PHP were ADDITIVE — 19,404 + 2,251
+files that had no language now have a graph.
+
+PHP's 312 are all CROSS-FILE: 204 are two checked-in copies of one
+protoc-generated tree in grpc, 108 are CakePHP 2.x global-namespace reuse (the
+app class, the code-gen skeleton, the test fixture). The global ones are
+deliberately unpatched — the ladder has no directory, so a path-derived identity
+would trade them for thousands of dangling edges.
+
+**Fixed on the way:** `language_for_ext_slug` consulted a second table beside the
+registry and it had drifted — `.cs` resolved to `other`, so every C# node carried
+the wrong `nodes.language`. The table is gone; the adapter answers for itself, and
+`every_registered_extension_reports_its_own_adapters_language` pins it.
 
 ## Built, not flipped
 
@@ -25,20 +38,19 @@
 
 ## Remaining
 
-| language | files | grammar (ABI-checked) |
+| language | files | grammar (ABI-checked, pinned) |
 |---|---:|---|
-| SQL (+ddl) | 7,435 | `tree-sitter-sequel` — v1's is regex-based, so a rewrite |
-| PHP | 2,251 | `tree-sitter-php` — additive, nothing has handled it |
-| C (+h) | 160 | `tree-sitter-c` |
-| Swift | 2 | `tree-sitter-swift` |
+| SQL (+ddl) | 7,435 | `tree-sitter-sequel 0.3` — v1's is regex-based, so a rewrite |
+| C (+h) | 160 | `tree-sitter-c =0.23.4` |
+| Swift | 2 | `tree-sitter-swift =0.6.0` |
 
 Then: deploy → `TRUNCATE sensei.nodes, sensei.edges CASCADE` → re-index → acceptance → wire `Stated::Gone`.
 
 ## Next command
 
 ```
-SENSEI_CORPUS=/Users/Jerry/Work/Alert/repos/base-app-android \
-  cargo test -p senseid --bin senseid kotlin::tests -- --ignored --nocapture
+cargo test -p senseid --bin senseid 2>&1 | tail -5   # NO — see below
+cargo test -p senseid --bin senseid                  # yes
 ```
 Never pipe a test or build through `tail` — a pipe reports the pipe's exit status.
 
@@ -46,13 +58,15 @@ Never pipe a test or build through `tail` — a pipe reports the pipe's exit sta
 
 1. **A container is a PATH, not a leaf** — every language has needed this.
 2. **A body does not declare members of what encloses it** — a local is not a field.
-3. **Check the grammar's ABI first**: `grep LANGUAGE_VERSION <crate>/src/parser.c`. The runtime accepts 13–14; `tree-sitter-c-sharp` 0.23.5 emits 15 and fails at *runtime*, on every file.
+3. **Check the grammar's ABI first**: `grep LANGUAGE_VERSION <crate>/src/parser.c`. The runtime accepts 13–14; `tree-sitter-c-sharp` 0.23.5, and php/c/swift 0.24, emit 15 and fail at *runtime*, on every file.
 4. **Trust the tree, not `node-types.json`** — Kotlin's manifest advertises fields the tree never builds.
 5. **Write fixtures the way the language is written.** A one-line fixture has now misled me three times.
+6. **A copy is identical CONTENT, not an identical filename.** Reading the basename as proof filed 216 real PHP collisions under a bucket labelled CORRECT.
+7. **A flip is two registries**: `indexer::lang` (who parses) and `crate::languages` (what language is this). PHP needed a `DetectionOnly` entry or `.php` carried no language at all.
 
 ## Known-broken / not deployed
 
-- `tree-sitter-c-sharp` pinned `=0.23.1` (ABI).
-- This repo has no Java/Python/C#/Kotlin/Swift — acceptance cannot measure them. Use `SENSEI_CORPUS`.
+- Grammars pinned for ABI: `tree-sitter-c-sharp =0.23.1`, `tree-sitter-php =0.23.11`, `tree-sitter-c =0.23.4`, `tree-sitter-swift =0.6.0`.
+- This repo has no Java/Python/C#/Kotlin/PHP/Swift — acceptance cannot measure them. Use `SENSEI_CORPUS`, pointed at a checkout tree that holds them.
 - A real finding in Ethico: `Campaign_RiskAssesment.cs` beside `Campaign_RiskAssessment.cs`, same class, one left behind after a filename typo fix.
 - The daemon predates every cutover. The wipe is required — reconcile reads `props->'claims'`, which 0 of 467,707 nodes carry.

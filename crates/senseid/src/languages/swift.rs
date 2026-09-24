@@ -34,7 +34,7 @@ impl LanguageAdapter for SwiftAdapter {
         &[".swift"]
     }
 
-    fn language(&self) -> &str {
+    fn language(&self) -> &'static str {
         "swift"
     }
 

@@ -95,12 +95,15 @@ fn inline_tests_begin(text: &str, language: Language) -> Option<u32> {
         Language::Rust => "#[cfg(test)]",
         // C# joins the path-answered three: xUnit and NUnit tests are separate
         // files, conventionally `*Tests.cs` or under a `*.Tests` project, and
-        // there is no in-file marker to look for.
+        // there is no in-file marker to look for. PHP is the same — PHPUnit
+        // discovers `tests/` and `*Test.php`, both of which the path rule
+        // already answers.
         Language::TypeScript
         | Language::Java
         | Language::Python
         | Language::CSharp
-        | Language::Kotlin => {
+        | Language::Kotlin
+        | Language::Php => {
             return None;
         }
     };

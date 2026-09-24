@@ -27,7 +27,7 @@ target is declared somewhere" tells them what broke.
 | **A4** | after a completed scan, every edge whose target is not a declaration falls into one of three NAMED populations, each counted | `acceptance::every_first_party_edge_names_a_declaration_this_scan_holds` | **ceiling**: rust 1,200 / ts 700 dangling EDGES |
 | **A5** | fields, properties and enum variants exist for every type that declares them | `acceptance::every_type_owned_declaration_says_which_type_owns_it` | exact |
 | **A6** | re-indexing in a different file order produces an identical graph | order-independence tests over the corpus | exact |
-| **A7** | **no two declarations mint one identity** | `persist::no_two_declarations_in_this_repos_rust_mint_one_identity`, `…_typescript_mint_one_identity`, and `the_identities_this_repos_rust_cannot_keep_apart_are_a_known_and_bounded_set` | **RATCHET at ZERO**, rust and typescript |
+| **A7** | **no two declarations mint one identity** | `persist::no_two_declarations_in_this_repos_rust_mint_one_identity`, `…_typescript_mint_one_identity`, and `the_identities_this_repos_rust_cannot_keep_apart_are_a_known_and_bounded_set`; per-language `#[ignore]`d corpus gates in `lang::{java,python,csharp,kotlin,php}::tests` | **RATCHET at ZERO**, rust and typescript; at the measured value for the five languages this repository holds none of |
 | **A8** | re-indexing a file removes what it stopped claiming and nothing else | `persist` re-index tests (R10.6's four clauses) | exact |
 | **A9** | an unparseable file is ACTIONABLE and REACHABLE — the parser's verbatim message with line and column | `files.skip_detail`, `acceptance` | exact |
 
@@ -115,6 +115,52 @@ removed was never reader-facing.
 bound. It did not exist before, which is why 511 could accumulate: the ratchet
 beside it is rust-scoped, and the acceptance harness measures every language while
 gating none.
+
+#### Languages this repository holds none of
+
+Rust and TypeScript are measured by acceptance because this repository IS rust
+and typescript. Java, Python, C#, Kotlin and PHP are not here at all, so the
+denominator would be empty and a gate over it would pass by vacuity.
+
+Each therefore carries its own `#[ignore]`d gate in its adapter module, pointed
+at an external checkout by `SENSEI_CORPUS`. They share four rules, each of which
+was learned by getting it wrong first:
+
+1. **Partition by repository.** An identity is scoped to a folder because the
+   scan indexes per repo. Pooling asks a question production never asks — on
+   Java's corpus it read 16,561 where the real figure was 409, purely because
+   one repo vendored a copy of another.
+2. **Decompose before concluding**, and print WHICH files rather than six
+   capped examples. A capped sample is how "it is all one shape" gets believed
+   without being true.
+3. **A copy is identical CONTENT, not an identical filename.** PHP's run had 287
+   collisions under a bucket labelled "same filename — CORRECT"; asking the
+   bytes moved 216 of them out of it.
+4. **The bound sits AT the measurement**, never above it. A ceiling with slack
+   absorbs the next defect silently, which this repository has already paid for
+   once (A4's rust ceiling).
+
+| language | corpus | declarations | colliding | what the residue is |
+|---|---|---:|---:|---|
+| java | Dayamed, 5,088 files | — | 14 | overload sets, after the callable-plus-arm split |
+| python | — | — | 0 | — |
+| csharp | Ethico, 8,647 files | 137,859 | 392 | file copies, partial types, one duplicated class, and a vendored Syncfusion tree tree-sitter cannot recover from |
+| php | 3 repos, 2,263 files | 72,420 | 312 | two checked-in copies of one protoc-generated tree (204), and CakePHP 2.x global-namespace reuse (108) |
+| kotlin | 245 files | 3,038 | 39 | anonymous objects, Android product flavours |
+
+**PHP's `one file` bucket is ZERO** — the only one of the five where it is. That
+is the bucket the walk alone controls, and PHP gets it for free: the language
+forbids redeclaration outright, so the overload split Java, C# and Kotlin each
+needed has no shape to represent here. Its 312 are all CROSS-FILE, and both
+groups are the source declining to discriminate rather than the walk failing to:
+a file duplicated verbatim, or two classes of one name in the global namespace
+that PHP itself would refuse to load together.
+
+The global-namespace ones are deliberately NOT patched. The directory would tell
+them apart, but the ladder has no directory — every cross-file reference to a
+global-namespace class mints `<package>·<name>`, so moving the declaration side
+to a path-derived identity trades these collisions for thousands of dangling
+edges, which R4 ranks worse.
 
 ### A4 — the dangling-edge ceiling, with slack
 

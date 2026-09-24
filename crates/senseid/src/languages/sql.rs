@@ -16,7 +16,7 @@ impl LanguageAdapter for SqlAdapter {
         &[".sql", ".ddl"]
     }
 
-    fn language(&self) -> &str {
+    fn language(&self) -> &'static str {
         "sql"
     }
     fn display_name(&self) -> &str {
