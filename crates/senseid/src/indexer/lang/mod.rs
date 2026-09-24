@@ -38,6 +38,7 @@
 #![allow(dead_code)]
 
 pub mod common;
+pub mod csharp;
 pub mod java;
 pub mod javascript;
 pub mod python;
@@ -393,6 +394,7 @@ pub fn all_adapters() -> &'static [&'static dyn LanguageAdapter] {
     &[
         &rust::RustAdapter,
         &java::JavaAdapter,
+        &csharp::CSharpAdapter,
         &python::PythonAdapter,
         &javascript::TypeScriptAdapter,
         &javascript::JavaScriptAdapter,
@@ -694,6 +696,11 @@ mod tests {
                  const w = new Widget();\n\
                  </script>\n\
                  <p>{w.wide()}</p>\n"
+            }
+            "csharp" => {
+                "namespace P;\n\
+                 public class Widget { public int Wide() { return 1; } }\n\
+                 public class Free { public int Go() { var w = new Widget(); return w.Wide(); } }\n"
             }
             // The same component, in Vue's dialect: a MUSTACHE rather than a
             // single brace, which is the whole of what differs between the two.
