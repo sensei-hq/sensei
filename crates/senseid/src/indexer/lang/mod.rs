@@ -37,6 +37,7 @@
 // These modules have no caller on purpose — see the note in `indexer/mod.rs`.
 #![allow(dead_code)]
 
+pub mod c;
 pub mod common;
 pub mod csharp;
 pub mod java;
@@ -396,6 +397,7 @@ pub fn all_adapters() -> &'static [&'static dyn LanguageAdapter] {
     &[
         &rust::RustAdapter,
         &java::JavaAdapter,
+        &c::CAdapter,
         &csharp::CSharpAdapter,
         &kotlin::KotlinAdapter,
         &php::PhpAdapter,
@@ -443,6 +445,11 @@ pub const PRODUCTION_LANGUAGES: &[Language] = &[
     // not a cutover from one producer to another; it is the only producer
     // there has ever been.
     Language::Php,
+    // C is a CUTOVER, and `languages/c_lang.rs` went with it. Its parser was
+    // line-based, so this is a rewrite rather than a port — and the extension
+    // set NARROWED: v1 claimed `.cpp`, `.hpp` and `.cc`, which are C++ and
+    // which nothing here parses. See `no_adapter_claims_a_cpp_extension`.
+    Language::C,
 ];
 
 /// Whether this indexer is the production producer for `language`.
@@ -716,6 +723,14 @@ mod tests {
                 "package p\n\
                  class Widget { fun wide(): Int { return 1 } }\n\
                  class Free { fun go(): Int { val w = Widget(); return w.wide() } }\n"
+            }
+            // C states no namespace at all, so the fixture states none — and
+            // the two functions differ in LINKAGE, which is the only thing
+            // that decides where a C declaration lives.
+            "c" => {
+                "struct widget { int width; };\n\
+                 int wide(struct widget *w) { return w->width; }\n\
+                 static int twice(struct widget *w) { return wide(w) * 2; }\n"
             }
             // PHP states its namespace, so the fixture does — a file with none
             // is legal but tests the global-namespace path rather than the

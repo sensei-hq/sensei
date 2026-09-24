@@ -142,15 +142,26 @@ fn sensei_mcp_cargo_toml() {
 // ═══ Non-code files (conditional — may not exist) ════════════════
 
 #[test]
-fn c_parser_large_file() {
-    let root = workspace_root();
-    let abs = root.join("crates/senseid/grammars/kotlin/src/parser.c");
-    if abs.exists() {
-        let r = process_file(&abs.to_string_lossy(), &root.to_string_lossy(), "sensei").unwrap();
-        assert_eq!(r.kind, "file");
-        assert_eq!(r.tags, "src");
-        assert!(r.symbols.is_empty(), "large generated C file should have no symbols");
-    }
+/// **A C++ FILE GETS A FILE NODE AND NO SYMBOLS.**
+///
+/// `c_parser_large_file` stood here and routed a `.c` file through this
+/// router, which now reaches a `DetectionOnly` whose `parse` is
+/// `unreachable!()` — C is produced by `crate::indexer::lang::c` and
+/// `process_file` routes it there first.
+///
+/// What replaces it is the case this router DOES still own: `.cpp` is claimed
+/// by no adapter in either registry, so `code::process` returns `None` at its
+/// `adapter_for_ext(..)?` and the file lands on the "unknown file type" branch.
+/// That is the skip that makes deleting v1's C parser safe, and it is worth a
+/// test because the alternative — a `DetectionOnly` entry for `.cpp` — is a
+/// PANIC rather than a skip.
+fn a_cpp_file_is_a_file_node_with_no_symbols() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("widget.cpp");
+    std::fs::write(&file, "namespace app {\nclass Widget { public: int wide(); };\n}\n").unwrap();
+    let r = process_file(&file.to_string_lossy(), &dir.path().to_string_lossy(), "sensei").unwrap();
+    assert_eq!(r.kind, "file");
+    assert!(r.symbols.is_empty(), "nothing here parses C++, so it declares nothing");
 }
 
 // ═══ Tag classification ═══════════════════════════════════════════

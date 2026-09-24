@@ -2,9 +2,9 @@
 
 **Slice:** indexer v2 — languages, before the wipe + re-index (issue #130, phase `build`)
 
-## Cut over (6)
+## Cut over (7)
 
-`PRODUCTION_LANGUAGES = [Rust, TypeScript, Java, Python, CSharp, Php]`
+`PRODUCTION_LANGUAGES = [Rust, TypeScript, Java, Python, CSharp, Php, C]`
 
 | language | A7 | gate |
 |---|---|---|
@@ -14,6 +14,7 @@
 | Python | 72 → **0** | `python::tests::…` |
 | C# | 452 → **392** (all buckets explained) | `csharp::tests::…` |
 | PHP | **312**, `one file` = **0** | `php::tests::…` |
+| C | **11**, `one file` = **0** | `c::tests::…` |
 
 **~5,600 lines of v1 parser deleted.** C# and PHP were ADDITIVE — 19,404 + 2,251
 files that had no language now have a graph.
@@ -36,12 +37,24 @@ the wrong `nodes.language`. The table is gone; the adapter answers for itself, a
 1. **Android product flavours** — `src/{cityofdoral,ecuador,panama}/Color.kt` declare the same package, one compiled per build. rust's `cfg` problem via the *directory*; belongs to **placement**, not the walk.
 2. **Anonymous object expressions** — `val M = object : Migration(5,6) { fun migrate }`. This one *is* the walk's: name the scope after the property, as TypeScript does.
 
+**C narrowed on the way through.** v1's adapter claimed `.cpp`/`.hpp`/`.cc` and
+read them line-by-line; `tree-sitter-c` parses C, so v2 claims `.c`/`.h` only and
+**nothing** claims the C++ extensions. That absence must be total: a
+`DetectionOnly` entry for an extension no v2 adapter claims is a PANIC, not a
+skip. `c::walk::is_cpp` also refuses a `.h` holding C++ — 1,817 of 3,776 vendored
+files, with 0 false positives on real C.
+
+`CMakeManifestAdapter` landed with it (`project(name)` is the one place a C
+project states its name). **158 of 165 C files already placed** through an
+enclosing `pom.xml`/`Cargo.toml`/`composer.json`/`package.json`; the 7 that do
+not have no manifest above them at all, and no CMakeLists.txt either — so the
+adapter rescues nothing today and is there for the next C project.
+
 ## Remaining
 
 | language | files | grammar (ABI-checked, pinned) |
 |---|---:|---|
 | SQL (+ddl) | 7,435 | `tree-sitter-sequel 0.3` — v1's is regex-based, so a rewrite |
-| C (+h) | 160 | `tree-sitter-c =0.23.4` |
 | Swift | 2 | `tree-sitter-swift =0.6.0` |
 
 Then: deploy → `TRUNCATE sensei.nodes, sensei.edges CASCADE` → re-index → acceptance → wire `Stated::Gone`.
@@ -62,7 +75,11 @@ Never pipe a test or build through `tail` — a pipe reports the pipe's exit sta
 4. **Trust the tree, not `node-types.json`** — Kotlin's manifest advertises fields the tree never builds.
 5. **Write fixtures the way the language is written.** A one-line fixture has now misled me three times.
 6. **A copy is identical CONTENT, not an identical filename.** Reading the basename as proof filed 216 real PHP collisions under a bucket labelled CORRECT.
-7. **A flip is two registries**: `indexer::lang` (who parses) and `crate::languages` (what language is this). PHP needed a `DetectionOnly` entry or `.php` carried no language at all.
+7. **Measure placement with the right precedence.** A first count put 53 C files
+   under "Makefile only" and unplaceable; `placement_on_disk` never looks at a
+   Makefile, so the real figure was 7. The wrong number came from putting build
+   SCRIPTS in the same priority list as manifests.
+8. **A flip is two registries**: `indexer::lang` (who parses) and `crate::languages` (what language is this). PHP needed a `DetectionOnly` entry or `.php` carried no language at all.
 
 ## Known-broken / not deployed
 
