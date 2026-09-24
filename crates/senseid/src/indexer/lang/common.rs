@@ -339,7 +339,16 @@ pub fn specifier_names_a_module(language: Language, binding: &Binding) -> bool {
             // identically either way. The `function` and `const` forms name
             // neither a module nor a type, which is one more reason the last
             // segment cannot be read as a module.
-            Language::Rust | Language::Java | Language::Kotlin | Language::Php => false,
+            //
+            // C joins them by a different route: an `#include` is TEXTUAL, so
+            // it binds every name the header declares and arrives here as
+            // `Binding::Glob` rather than `Name`. This arm is therefore
+            // unreachable for C, and `false` is what says so — a C specifier is
+            // a FILE PATH, and no reference a C file makes is ever minted at
+            // `Reach::Mod`.
+            Language::Rust | Language::Java | Language::Kotlin | Language::Php | Language::C => {
+                false
+            }
         },
     }
 }

@@ -973,7 +973,20 @@ mod tests {
         assert_eq!(language_for_ext("swift"), "swift");
         assert_eq!(language_for_ext("c"), "c");
         assert_eq!(language_for_ext("h"), "c");
-        assert_eq!(language_for_ext("cpp"), "c");
+        assert_eq!(language_for_ext("php"), "php");
+        assert_eq!(language_for_ext("cs"), "csharp");
+        // **C++ IS NOT C**, and this used to say it was. v1's C adapter claimed
+        // `.cpp`/`.hpp`/`.cc` and read them with a line-based scanner, so every
+        // C++ file in the graph carried `language = 'c'`.
+        //
+        // `tree-sitter-c` parses C, so v2's adapter claims `.c`/`.h` and the C++
+        // extensions are claimed by no adapter at all. They are still SOURCE —
+        // `DEFAULT_SOURCE_EXTS` lists them — and they are labelled `cpp`, which
+        // is a file node with no symbols rather than symbols read out of a
+        // recovered parse.
+        assert_eq!(language_for_ext("cpp"), "cpp");
+        assert_eq!(language_for_ext("hpp"), "cpp");
+        assert_eq!(language_for_ext("cc"), "cpp");
     }
 
     #[test]
