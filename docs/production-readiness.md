@@ -211,13 +211,36 @@ DB-test lane.
 | `zz-a11y`, `multi-window`, `knowledge-sources`, `instruments-observatory`, `dojo-binding`, `db-setup`, `assistants-configure`, `activity-logs` | 1 each |
 
 **The first run produced nothing at all**: `Port 7744 did not open within
-240000ms`, zero specs. `make test-app-e2e` drops `sensei_e2e` for a clean slate,
-so that run had to CREATE the database and apply 123 tables before the daemon
-could bind. It did — `sensei_e2e` exists, created 08:39:15 with 123 tables — and
-then ran out of the 240s budget. The second run found the database already
-provisioned and booted immediately.
+240000ms`, zero specs.
 
-So the timeout is sized for a warm boot and the harness guarantees a cold one.
+**A first reading of this blamed the cold database** — `make test-app-e2e` drops
+`sensei_e2e`, so that run had to create it and apply 123 tables. **That reading
+is wrong, and the code says so.** `start_server` binds the port BEFORE it
+touches the database, deliberately: *"If the DB is down, we want the daemon to
+still serve /api/health so the frontend can show the actual cause."* It then
+retries the connection and, on persistent failure, serves a degraded router and
+self-heals. A slow or absent database therefore cannot stop the port opening —
+once `TcpListener::bind` succeeds the OS accepts into the backlog.
+
+**So the daemon never reached `start_server` at all.** Corroborated: on that run
+it wrote neither `~/.sensei-e2e/senseid.log` nor `~/.sensei-e2e/serve.pid`, both
+of which happen before the server starts. It exited earlier, in `main.rs`.
+
+**The candidate cause** (consistent with the evidence, not proven — the file has
+since been overwritten) is the already-running guard:
+
+```rust
+if alive {
+    eprintln!("senseid: already running (pid {})", pid);
+    std::process::exit(1);
+}
+```
+
+globalSetup `pkill -x senseid`s the real daemon just before; a stale
+`~/.sensei-e2e/serve.pid` whose PID had been reused by a live process would trip
+this. **And that message goes to the PARENT's stderr** — the app's, which was
+`stdio: 'ignore'`. The one line explaining the failure was the exact thing being
+discarded, which is why two runs were needed to learn anything.
 
 **And it was undiagnosable**: `globalSetup.ts` spawned the app with
 `stdio: 'ignore'`, so the app's stdout and stderr — bootstrap's health
@@ -225,10 +248,45 @@ resolution, the daemon spawn, any panic — were discarded. Fixed in this sessio
 output goes to `/tmp/sensei-e2e-app.log` and the timeout path prints its tail,
 because a log nobody prints is a log nobody reads.
 
-**Done looks like:** the cold-provision path gets its own budget (or globalSetup
-waits for the DB to exist before starting the port clock), and the 23 failures
-are triaged — several look like one cause (`boot-flow` + `db-setup` +
-`daemon-verification` are all bootstrap-gate screens).
+**Done looks like:** every pre-bind exit in `main.rs` routes through
+`write_startup_error` (see B3), the already-running guard distinguishes a stale
+PID file from a live daemon, and the 23 failures are triaged — several look like
+one cause (`boot-flow` + `db-setup` + `daemon-verification` are all
+bootstrap-gate screens).
+
+### B3 — a pre-bind exit is invisible; a post-bind one is not
+
+`api/server.rs` has `write_startup_error()`, which drops the reason into
+`~/.sensei*/startup-error.log` where the app can read it. **It has three
+callers, all inside `start_server`** — the two bind failures and the
+degraded-mode branch.
+
+Everything that can kill the daemon BEFORE that — the already-running guard,
+and the `.expect()`s on creating the data dir, opening the log and spawning the
+child — just `eprintln!`s and exits. In the e2e that goes to a discarded pipe;
+under launchd it goes somewhere nobody reads. The mechanism for reporting this
+already exists and one class of failure does not use it.
+
+**Done looks like:** those paths call `write_startup_error` too, and
+`sensei status` reads it.
+
+### B4 — `Full` and `Degraded` are two states for three situations
+
+`DaemonDbMode` is binary. But "the database is being provisioned for the first
+time" and "the database has gone away" are different conditions with different
+remedies, and today both render as degraded — the first-run message reads
+*"Database connection failed after startup retries … run `sensei bootstrap` (or
+`dbd reset`) to (re)provision"*, which is alarming advice to give someone whose
+install is simply still working.
+
+This is the same shape the backlog already flags elsewhere: two causes under one
+label, where the label names the rarer and scarier one.
+
+**Done looks like:** a third state — `Provisioning` — entered when the target
+database does not yet exist or its schema is mid-apply, distinct from a database
+that existed and stopped answering. `/health` then reports progress rather than
+a fault, and a client can wait instead of offering a reset. The daemon already
+stays up through this window, so the state is the only missing piece.
 
 ### D4 — `app/e2e/**` is outside every static gate
 
