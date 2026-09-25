@@ -419,25 +419,16 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         let pg = state.pg.clone();
         let queue = task_queue.clone();
         tokio::spawn(async move {
-            // Enqueue the task rather than calling the dispatcher directly.
+            // THE TRANSCRIPT BACKFILL ENQUEUE STOOD HERE, and standing here was
+            // the whole defect: boot was the only thing that ever asked for it,
+            // so transcript ingestion ran once per daemon start and never again
+            // — measured, every watermark and every turn frozen thirteen
+            // seconds after boot. It now lives with its cadence in
+            // `tasks::transcript_scheduler`, which owns its own boot pass the
+            // way `reconcile_scheduler` does, so there is ONE place that knows
+            // when this work happens rather than a schedule here and a cadence
+            // there to keep in step.
             //
-            // This was a THIRD copy of the backfill sequence and it had already
-            // drifted: it ran `dispatch` plus `repair_orphaned_sessions` (the
-            // events-based repair) only, so the transcript-based repair added
-            // later never ran on boot — the one path where it matters most,
-            // since boot is when newly-tracked folders make a previously
-            // unresolvable cwd resolvable. Enqueuing means startup gets whatever
-            // the task does, forever, with no third thing to keep in sync.
-            let kind = crate::tasks::TaskKind::IngestCaptures;
-            if queue.has_pending_kind(kind.clone()).await {
-                tracing::debug!("startup: transcript backfill already in flight");
-            } else {
-                let id = queue.enqueue(crate::tasks::Task::new(kind, "", "")).await;
-                tracing::info!(
-                    task_id = id,
-                    "startup: enqueued transcript backfill for metric history"
-                );
-            }
             // Persist-boot trigger: plan the per-day metric backfill for every project
             // (guarded + idempotent). On a fresh install this runs before synthesis
             // completes and finds little — trigger #1's analysis hook re-plans as
@@ -510,6 +501,12 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // activity.assistant_events so analysis isn't missing them; runs on boot +
     // every tick of the `capture_drain` schedule (seeded 300s).
     crate::tasks::capture_drain::spawn(Arc::new(state.pg.clone()), crate::paths::sensei_dir());
+
+    // Transcript ingestion: a boot pass, then the `ingest_captures` cadence.
+    // Beside capture_drain because the two are halves of one story — that one
+    // drains the hook-event spool, this one ingests the transcripts those
+    // events belong to — and only one of them had a schedule.
+    crate::tasks::transcript_scheduler::spawn(task_queue.clone(), Arc::new(state.pg.clone()));
 
     // Re-enqueue tasks for folders left in a non-terminal state by a
     // previous daemon session. Must run after workers and the progress
