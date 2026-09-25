@@ -295,6 +295,28 @@ separately from `isDegraded` so a surface can say "setting up" instead of
 raising a breakage banner. `dbd reset` is gone from the advice entirely,
 guarded by a test that fails if any destructive command reappears in it.
 
+### D3b — six e2e failures assert a contract the plugin migration retired
+
+`configure` no longer writes a hook dispatcher. It registers the marketplace and
+runs `claude plugin install sensei`, and the plugin supplies "skills, commands,
+agents, marketplace hooks, MCP". `~/.claude/hooks/sensei-hook-dev.ts` is now
+**legacy**, and the daemon actively STRIPS it —
+`LEGACY_SENSEI_HOOK_BASENAMES` exists for exactly that, with the comment
+*"installed by previous versions of the daemon … before the plugin migration"*.
+
+Six tests still assert that configure WRITES it, so they cannot pass:
+
+| spec | failures |
+|---|---:|
+| `configure-assistants` | 4 |
+| `daemon-verification` (assistants stage) | 1 |
+| `assistants-configure` | 1 |
+
+**Done looks like:** they assert the CURRENT contract — after configure, the
+marketplace is registered and the `sensei` plugin is installed (observable via
+`claude plugin list` / `installed_plugins.json`) — and the removal half asserts
+the plugin is uninstalled rather than a file deleted.
+
 ### D4 — `app/e2e/**` is outside every static gate
 
 `tsconfig.json` extends `.svelte-kit/tsconfig.json`, whose `include` covers

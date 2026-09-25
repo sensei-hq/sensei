@@ -166,6 +166,20 @@ impl SenseiConfig {
         Self { daemon_port: DAEMON_PORT, db_name, db_url, dir_suffix }
     }
 
+    /// True when this daemon runs against a THROWAWAY database and data dir
+    /// (`SENSEI_INSTANCE` is set — `sensei_e2e` in `~/.sensei-e2e/`).
+    ///
+    /// The point of an instance is isolation, and isolation is only as good as
+    /// the work that respects it. Boot work which reaches OUTSIDE the instance
+    /// — reading the developer's real `~/.claude` transcripts, say — copies
+    /// their data into the throwaway database and saturates the daemon doing
+    /// it. MEASURED: an e2e boot enqueued **590 `ingest_capture` tasks** in the
+    /// same second the port opened, and the first e2e specs then raced a
+    /// daemon that was busy for minutes.
+    pub fn is_isolated_instance(&self) -> bool {
+        self.dir_suffix != ".sensei"
+    }
+
     /// Daemon base URL derived from the configured port.
     pub fn daemon_url(&self) -> String {
         format!("http://127.0.0.1:{}", self.daemon_port)
@@ -377,6 +391,7 @@ mod tests {
         assert_eq!(cfg.daemon_port, 7744);
         assert_eq!(cfg.db_name, "sensei");
         assert_eq!(cfg.dir_suffix, ".sensei");
+        assert!(!cfg.is_isolated_instance(), "the real install is not an instance");
 
         // 2. Override — SENSEI_INSTANCE=e2e.
         unsafe {
@@ -385,6 +400,12 @@ mod tests {
         let cfg = SenseiConfig::from_env();
         assert_eq!(cfg.db_name, "sensei_e2e", "DB derived from instance");
         assert_eq!(cfg.dir_suffix, ".sensei-e2e", "dir derived from instance");
+        assert!(
+            cfg.is_isolated_instance(),
+            "an instance runs against a THROWAWAY db + data dir, and work that \
+             reaches outside them (reading the developer's real transcripts) \
+             must be able to ask"
+        );
         assert!(
             cfg.db_url.ends_with("/sensei_e2e"),
             "db_url embeds the derived db_name: {}",

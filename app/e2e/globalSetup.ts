@@ -174,5 +174,42 @@ export default async function globalSetup(): Promise<void> {
       `expected "${expectedDb}". Refusing to run tests against the wrong DB.`,
     );
   }
-  console.log(`[globalSetup] Daemon DB verified: ${health.dbName} — tests may begin.`);
+  console.log(`[globalSetup] Daemon DB verified: ${health.dbName}`);
+
+  // 6. WAIT FOR READY, NOT JUST FOR BOUND. A listening port says the daemon
+  //    exists; it says nothing about whether the app can render anything.
+  //    Every gated route reroutes to /health until health reports `ok`, and
+  //    `wizardState.setupComplete` only reconciles on a health TRANSITION
+  //    (see navigateToScreen's comment in helpers.ts) — so until that first
+  //    transition lands, a gated route goes somewhere else and the screen
+  //    selector never appears.
+  //
+  //    MEASURED: that window is ~50s on a cold boot, and the specs that run
+  //    inside it are the ones that fail. They are alphabetically first —
+  //    activity-logs, atlas, boot-flow, configure-assistants, db-setup — while
+  //    everything from `learnings` onward passes, having started after the
+  //    window closed. That is a harness race, not 24 separate defects.
+  //
+  //    So absorb it ONCE here rather than making every spec carry a retry
+  //    budget. Non-fatal on timeout: a daemon that never reaches `ok` is worth
+  //    reporting through the tests that then fail on it, with the component
+  //    statuses named, rather than one opaque globalSetup error.
+  const readyDeadline = Date.now() + 180_000;
+  let last = health;
+  while (Date.now() < readyDeadline) {
+    if (last?.status === 'ok') {
+      console.log('[globalSetup] Daemon health is ok — tests may begin.');
+      return;
+    }
+    await sleep(2_000);
+    last = await fetch(`${DAEMON_URL}/health`).then(r => r.json()).catch(() => null);
+  }
+  const notReady = (last?.components ?? [])
+    .filter((c: { status: string }) => c.status !== 'ready')
+    .map((c: { id: string; status: string }) => `${c.id}=${c.status}`)
+    .join(', ');
+  console.warn(
+    `[globalSetup] Daemon health never reached 'ok' in 180s (last: ${last?.status ?? 'unreachable'}` +
+    `${notReady ? `; not ready: ${notReady}` : ''}). Running anyway — gated routes may reroute.`,
+  );
 }
