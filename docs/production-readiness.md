@@ -270,23 +270,30 @@ already exists and one class of failure does not use it.
 **Done looks like:** those paths call `write_startup_error` too, and
 `sensei status` reads it.
 
-### B4 — `Full` and `Degraded` are two states for three situations
+### B4 — ~~`Full` and `Degraded` are two states for three situations~~ FIXED
 
-`DaemonDbMode` is binary. But "the database is being provisioned for the first
-time" and "the database has gone away" are different conditions with different
-remedies, and today both render as degraded — the first-run message reads
-*"Database connection failed after startup retries … run `sensei bootstrap` (or
-`dbd reset`) to (re)provision"*, which is alarming advice to give someone whose
-install is simply still working.
+`DaemonDbMode` was binary, so "the database is being built for the first time"
+and "the database has gone away" both rendered as degraded — and the first-run
+message read *"Database connection failed after startup retries … run
+`sensei bootstrap` (or `dbd reset`) to (re)provision"*. `dbd reset` DROPS the
+project's managed objects: a data-loss command offered to someone whose install
+was merely still working.
 
-This is the same shape the backlog already flags elsewhere: two causes under one
-label, where the label names the rarer and scarier one.
+Two causes under one label, where the label named the rarer and scarier one.
 
-**Done looks like:** a third state — `Provisioning` — entered when the target
-database does not yet exist or its schema is mid-apply, distinct from a database
-that existed and stopped answering. `/health` then reports progress rather than
-a fault, and a client can wait instead of offering a reset. The daemon already
-stays up through this window, so the state is the only missing piece.
+**Fixed.** `DaemonDbMode::Provisioning` is a third state, entered when the
+target database does not exist yet. Which failure it is comes from
+`database_exists` — the question the project already owns — rather than from the
+connect error's text, which arrives as a formatted `String` and would make the
+state machine depend on a Display format. The classifier is pure and
+`None` (the check itself failed) maps to `Degraded`, because not knowing whether
+a database exists is not evidence one is being built.
+
+Provisioning writes no `startup-error.log` (it is not a fault), carries no
+remedy (there is nothing to fix), and the app exposes `isProvisioning`
+separately from `isDegraded` so a surface can say "setting up" instead of
+raising a breakage banner. `dbd reset` is gone from the advice entirely,
+guarded by a test that fails if any destructive command reappears in it.
 
 ### D4 — `app/e2e/**` is outside every static gate
 
