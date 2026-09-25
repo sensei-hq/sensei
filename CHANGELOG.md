@@ -15,6 +15,50 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-09-25
+
+**0.10.0 published no artifacts.** Its `build-daemon` aarch64-linux leg failed,
+`release` needs every leg, so the GitHub Release, the assets and `update-tap`
+were all skipped — while `make bump` had already pushed the tap pointing at
+0.10.0 with `REPLACE_WITH_*_SHA256` placeholders. This release is what makes
+0.10.0's contents installable; read its notes below for what actually changed.
+
+### Fixed
+
+- **A FRESH POSTGRES COULD NOT PROVISION THE SCHEMA.** Twelve DDL files in the
+  `sensei` and `activity` schemas grant to Supabase's `anon`, `authenticated`
+  and `service_role`, and nothing in the tree created them. A `GRANT` resolves
+  its grantee at apply time, so the first such file aborted the whole deploy
+  with `role "authenticated" does not exist`. Those schemas are in the daemon's
+  `default` scope, so this was not skippable the way the `policies/dojo/*` files
+  are — same end state as 0.10.0's `import_libraries` bug: **a new install came
+  up with no daemon.** Invisible on any machine that already had the roles,
+  which is every machine that has ever run the dōjō locally.
+  `apply/before/roles.sql` creates them NOLOGIN, before the first entity is
+  written, and does nothing where they already exist. (#196)
+- **The release builds aarch64-linux natively.** It cross-compiled under
+  `cross`, where `pg_query`'s bindgen step ran a clang that could not find its
+  own `stdbool.h`. `pg_query` arrives through `dbd-core`, so it is not optional.
+  The matrix is also no longer fail-fast: one broken leg used to CANCEL the
+  other three, so each attempt revealed exactly one problem and each round cost
+  a version tag.
+- **The Rust CI job can actually provision.** Two errors in the workflow added
+  in 0.10.0: the dbd package is `dbd-cli` (the *binary* is `dbd`), and
+  `dbd deploy` with no `--scope` applies the full set rather than the `default`
+  scope the daemon deploys — which would have given CI a shape production never
+  has.
+- **Pure-module coverage was running database tests.** A libtest filter is a
+  substring match, not a root-module match, so `libraries::` also selected
+  `tasks::handlers::libraries::…` — 33 tests pulled into a no-database job, 7 of
+  which failed on `pool timed out`. A post-run guard now asserts every test that
+  ran has a pure root module.
+
+### Added
+
+- `make check-ddl-grants` — every role the schema grants to (or writes a policy
+  for) must be a role the schema creates. Runs in `test-fast`, so on every
+  commit, and in CI.
+
 ## [0.10.0] — 2026-09-25
 
 The release that makes indexer v2 the production path for seven languages and
@@ -164,5 +208,6 @@ measures each of these against the live system:
   database this way; the rows were pruned, the cause was not.
 - The e2e suite is outside the static gates and does not compile clean (#187).
 
-[Unreleased]: https://github.com/sensei-hq/sensei/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/sensei-hq/sensei/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/sensei-hq/sensei/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/sensei-hq/sensei/compare/v0.9.1...v0.10.0
