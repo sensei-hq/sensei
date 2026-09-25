@@ -98,10 +98,23 @@ fn event_ts(payload: &serde_json::Value, now_ms: i64) -> i64 {
 /// Parse a JSONL spool into `(events, skipped)`. Blank lines and lines that
 /// don't parse as a JSON object are skipped and counted — never fatal, so one
 /// corrupt line can't strand the rest of the file.
-fn parse_spool_lines(content: &str) -> (Vec<serde_json::Value>, usize) {
+fn parse_spool_lines(content: &[u8]) -> (Vec<serde_json::Value>, usize) {
     let mut events = Vec::new();
     let mut skipped = 0usize;
-    for line in content.lines() {
+    // **BYTES, SPLIT PER LINE, DECODED PER LINE.** Decoding the whole buffer
+    // first makes one malformed byte fatal for the file, which is the opposite
+    // of what this function promises — see
+    // `a_line_that_is_not_utf8_is_skipped_rather_than_stranding_the_file`.
+    //
+    // A spool file is append-only and written by many processes, so a partial
+    // write can leave a multi-byte character cut in half. That is a property of
+    // the transport, not of the events either side of it.
+    for raw in content.split(|b| *b == b'\n') {
+        let Ok(line) = std::str::from_utf8(raw) else {
+            // Unreadable — the same bucket an invalid-JSON line lands in.
+            skipped += 1;
+            continue;
+        };
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -198,13 +211,17 @@ async fn drain_once(pg: &PgStore, sensei_dir: &Path) -> Result<DrainStats, Strin
 /// A per-row insert error does NOT abort the file — the row is collected and,
 /// once the pass finishes, quarantined to `events.jsonl.rejected` so one poison
 /// payload (e.g. an embedded NUL that jsonb rejects) can't strand the rest.
+/// Neither does an unreadable LINE: the file is read as bytes and decoded one
+/// line at a time, because `read_to_string` made a single truncated character
+/// fatal for the whole file and so broke that promise before any row was seen.
 /// The exception is a *total* failure (nothing imported or deduped, yet rows
 /// errored): that signals the DB is unavailable rather than the data being bad,
 /// so the file is left untouched for the next tick instead of quarantining real
 /// events. Retries are idempotent via the payload dedup.
 async fn import_file(pg: &PgStore, path: &Path) -> Result<DrainStats, String> {
-    let content =
-        std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    // `read`, not `read_to_string`: a spool file with one truncated character
+    // must still yield every other line. See `parse_spool_lines`.
+    let content = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     let (mut events, skipped) = parse_spool_lines(&content);
     // Strip NULs the DB would reject, so a stray NUL byte in captured output
     // doesn't force an otherwise-good event into quarantine.
@@ -338,11 +355,50 @@ not json
 [1,2,3]
 {\"hook_event_name\":\"PreToolUse\",\"session_id\":\"b\"}
 ";
-        let (events, skipped) = parse_spool_lines(content);
+        let (events, skipped) = parse_spool_lines(content.as_bytes());
         assert_eq!(events.len(), 2, "two valid objects survive");
         assert_eq!(skipped, 2, "the non-json line and the json array are skipped");
         assert_eq!(events[0]["session_id"], "a");
         assert_eq!(events[1]["session_id"], "b");
+    }
+
+    /// **ONE BAD BYTE MUST NOT STRAND THE FILE.**
+    ///
+    /// `import_file`'s own doc promises that a poison payload "can't strand the
+    /// rest", and the row-level quarantine delivers that — but the promise was
+    /// broken on the function's FIRST LINE, by a `read_to_string` that refuses
+    /// the whole file when any byte in it is not valid UTF-8.
+    ///
+    /// LIVE COST, measured before this landed:
+    /// the spool's `events.jsonl.draining` was 176 MB and 29,622 lines,
+    /// stuck since Sep 16, and `capture_drain` had been failing every 5 minutes
+    /// for 8 days with `stream did not contain valid UTF-8`. The bad bytes were
+    /// `\xe2\x80` at offset 129,856,805 — the first two bytes of an em-dash,
+    /// with the third lost to a partial write. Two bytes held back 29,621 good
+    /// events.
+    ///
+    /// A line that is not UTF-8 is counted as SKIPPED, which is what `skipped`
+    /// already means for a line that could not be read — an invalid-JSON line
+    /// lands in the same bucket.
+    ///
+    /// MUTATION: decode the whole buffer up front instead of per line — this
+    /// test's spool yields nothing at all and the poison pill is back.
+    #[test]
+    fn a_line_that_is_not_utf8_is_skipped_rather_than_stranding_the_file() {
+        // A truncated em-dash: `\xe2\x80` with its third byte missing, exactly
+        // the shape a partial write leaves behind.
+        let mut spool: Vec<u8> = Vec::new();
+        spool.extend_from_slice(b"{\"hook_event_name\":\"Stop\",\"session_id\":\"before\"}\n");
+        spool.extend_from_slice(b"{\"hook_event_name\":\"Stop\",\"session_id\":\"bad");
+        spool.extend_from_slice(&[0xE2, 0x80]);
+        spool.extend_from_slice(b"\"}\n");
+        spool.extend_from_slice(b"{\"hook_event_name\":\"PreToolUse\",\"session_id\":\"after\"}\n");
+
+        let (events, skipped) = parse_spool_lines(&spool);
+        assert_eq!(events.len(), 2, "the lines either side of the bad one survive");
+        assert_eq!(skipped, 1, "the unreadable line is skipped, not fatal");
+        assert_eq!(events[0]["session_id"], "before");
+        assert_eq!(events[1]["session_id"], "after", "the file did not stop at the bad byte");
     }
 
     #[test]
