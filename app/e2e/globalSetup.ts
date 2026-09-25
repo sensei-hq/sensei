@@ -20,7 +20,7 @@
  * tests will exercise stale code — always go through the Makefile.
  */
 import { execFileSync, spawn } from 'child_process';
-import { existsSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { createConnection } from 'net';
 import { resolve, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -32,6 +32,8 @@ const APP_BINARY = join(
   'src-tauri/target/debug/bundle/macos/Sensei.app/Contents/MacOS/sensei-desktop',
 );
 const SOCKET = '/tmp/tauri-playwright.sock';
+/** Where the spawned .app's stdout+stderr go. Truncated per run. */
+const APP_LOG = '/tmp/sensei-e2e-app.log';
 const PID_FILE = '/tmp/sensei-e2e-pid';
 const DAEMON_PORT = 7744;
 const INSTANCE  = 'e2e';
@@ -102,9 +104,15 @@ export default async function globalSetup(): Promise<void> {
   //    bundle — the bundle can lag the code between bumps). Mirrors
   //    globalSetup-cold; without it, tests exercising new columns 500 on a
   //    "column does not exist" from the stale bundled schema.
+  // stdio went to 'ignore', and that is why a failed boot left NOTHING to read.
+  // When the daemon does not bind :7744 the only artifact is the timeout below;
+  // the app's own stdout/stderr — bootstrap's health resolution, the daemon
+  // spawn, any panic — was discarded. Capture it so a startup failure can be
+  // diagnosed from the log rather than re-run with a debugger attached.
+  const appLog = openSync(APP_LOG, 'w');
   const proc = spawn(APP_BINARY, [], {
     detached: true,
-    stdio: 'ignore',
+    stdio: ['ignore', appLog, appLog],
     env: {
       ...process.env,
       SENSEI_DDL_DIR: join(APP_REPO, '..', 'database'),
@@ -130,7 +138,23 @@ export default async function globalSetup(): Promise<void> {
   // The daemon compiles/loads the embedded model before it binds the port; a
   // cold box right after a build can take >2min, so allow generous headroom
   // (a genuine hang is still bounded by Playwright's own run timeout).
-  await waitForPort(DAEMON_PORT, 240_000);
+  //
+  // ON TIMEOUT, SAY WHY. Capturing the app's output is only half the fix — a
+  // log nobody prints is a log nobody reads, and this failure surfaces on CI
+  // and on other machines where nobody will think to `cat /tmp`. Re-throw
+  // after, so the run still fails.
+  try {
+    await waitForPort(DAEMON_PORT, 240_000);
+  } catch (e) {
+    console.error(`[globalSetup] Daemon never bound :${DAEMON_PORT}. Tail of ${APP_LOG}:`);
+    try {
+      const tail = readFileSync(APP_LOG, 'utf8').split('\n').slice(-40).join('\n');
+      console.error(tail.trim() || '(the app wrote nothing at all)');
+    } catch {
+      console.error(`(could not read ${APP_LOG})`);
+    }
+    throw e;
+  }
 
   // 5. Authoritative DB-isolation check — fetch /health from the daemon
   //    actually bound to the port and confirm it's on the expected
