@@ -45,6 +45,7 @@ pub mod schedule;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod ticker;
+pub mod transcript_scheduler;
 pub mod verdict_classifier;
 pub mod version_rescan;
 pub mod watchdog_scheduler;
