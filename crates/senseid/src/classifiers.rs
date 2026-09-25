@@ -491,6 +491,15 @@ const DEFAULT_EXCLUDE_GLOBS: &[&str] = &[
     "**/*.min.js",
     "**/*.min.css",
     "**/*.min.mjs",
+    // …and the same bundle kept under a SECOND suffix. `*.min.js` wants the
+    // name to end there, so `ej.web.all.min.new.js` — a hand-saved copy of a
+    // vendored Syncfusion bundle whose canonical sibling IS excluded and which
+    // the views reference eleven times — walked straight past it. MEASURED:
+    // exactly two files in the watched roots match this and nothing else does,
+    // so it costs no hand-written code.
+    "**/*.min.*.js",
+    "**/*.min.*.mjs",
+    "**/*.min.*.css",
     "**/*.bundle.js",
     "**/*.bundle.mjs",
     "**/*.map",
@@ -731,6 +740,44 @@ mod tests {
         assert!(!rules.is_binary_ext("rs"));
         assert!(rules.is_fallback_source_ext("go"));
         assert!(rules.exclude_globs().is_match("node_modules/x/y.js"));
+    }
+
+    /// **`.min.` IS THE SIGNAL, AND IT IS NOT ALWAYS THE LAST THING BEFORE
+    /// `.js`.**
+    ///
+    /// `**/*.min.js` wants the name to END there, so a vendored bundle kept
+    /// under a second suffix walks straight past it. MEASURED in the watched
+    /// roots: `ej.web.all.min.new.js` and `ej.web.all.min.intellisense.js`,
+    /// both Syncfusion Essential JS 12.3 (2014) sitting beside
+    /// `ej.web.all.min.js` — which the views reference eleven times and which
+    /// IS excluded. The `.new` copy is referenced nowhere and named in no
+    /// bundler config; it was saved by hand during an upgrade.
+    ///
+    /// The `.new` one is also the file whose nesting overflows the parser's
+    /// stack, which aborts the process rather than failing the file — so this
+    /// glob is what keeps it out of the corpus. It is NOT the fix for the
+    /// overflow itself; see docs/backlog.md.
+    ///
+    /// MUTATION: drop the `*.min.*.js` pattern and both rows below go false.
+    #[test]
+    fn a_minified_bundle_is_excluded_whatever_follows_the_min() {
+        let rules = ScanRules::from_overrides(&ScanRuleOverrides::default());
+        let g = rules.exclude_globs();
+        for path in [
+            "SC2016/Scripts/ej/web/ej.web.all.min.js",
+            "SC2016/Scripts/ej/web/ej.web.all.min.new.js",
+            "SC2016/Scripts/ej/web/ej.web.all.min.intellisense.js",
+            "vendor/thing.min.bundle.mjs",
+            "styles/site.min.rtl.css",
+        ] {
+            assert!(g.is_match(path), "{path} is minified output");
+        }
+        // Hand-written code keeps being indexed. `.min.` is a whole segment of
+        // the name, so a file that merely CONTAINS the letters is untouched.
+        for path in ["src/lib/minify.js", "src/administration.js", "src/min.js", "src/determine.js"]
+        {
+            assert!(!g.is_match(path), "{path} is source, not a bundle");
+        }
     }
 
     /// Upper-case extensions are real on case-preserving filesystems
