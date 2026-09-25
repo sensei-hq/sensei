@@ -36,10 +36,11 @@ make install-service    # ship 4aca8f99 + the transcript scheduler to the daemon
 
 ## Known-broken
 
-- **A 9.4MB `*.min.new.js` overflows the parse stack — aborts the process, not the
-  file.** Matches no exclude glob; masked today only by a `placement_on_disk` miss.
-  **The planned TRUNCATE + re-index re-parses everything.** Options in `docs/backlog.md`;
-  decision needed before the wipe.
+- **The parse stack is still unbounded — but the known trigger is gone.** `deba28fb`
+  widened the globs to `**/*.min.*.js`; the 9.4MB file was a vendored Syncfusion
+  bundle nothing references. Both watch roots now parse clean (9,697 + 17,953 files,
+  0 programs), so the wipe is no longer blocked on it. An input nobody has seen yet
+  still aborts the process rather than one file — options in `docs/backlog.md`.
 - Daemon log is 18 GB. `log_prune` runs daily.
 - Grammars pinned for ABI: c-sharp `=0.23.1`, php `=0.23.11`, c `=0.23.4`, swift `=0.6.0`.
 - This repo has no Java/Python/C#/Kotlin/PHP/Swift — use `SENSEI_CORPUS`.
