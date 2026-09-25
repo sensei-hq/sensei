@@ -1,6 +1,26 @@
 //! SQL — which dialect, and what a database object's identity is.
 //!
-//! The walk is in [`tsql`]; the tokeniser both share is in [`lex`].
+//! **The reading is dbd's; the IDENTITY is this indexer's.** `parse_sql_as`
+//! answers for the two dialects dbd has a grammar for — PostgreSQL and T-SQL —
+//! and [`facts`] maps what it returns onto symbols, references and relations.
+//!
+//! MySQL and SQLite are still refused. dbd's `ParserChoice::for_dialect_typed`
+//! sends SQLite to `Verbatim` and **MySQL to `PgQuery`**, so passing them
+//! through would parse MySQL as PostgreSQL and report `syntax error` for a file
+//! that is not broken. "We lack your grammar" and "your file is malformed" are
+//! different answers and only one of them is the author's problem.
+//!
+//! This module used to carry its own T-SQL lexer and statement-head reader
+//! (`lex.rs` + `tsql.rs`, 1,058 lines), written because nothing off the shelf
+//! could declare a stored procedure — `tree-sitter-sequel`'s grammar says
+//! `// TODO: procedure`, and `sqlparser`'s `MsSqlDialect` fails on the
+//! parenless `CREATE PROCEDURE @p int AS` form that is 28% of one corpus. dbd
+//! 0.15.0 ships that reader, having reached the same two rules below, so
+//! keeping a second copy would only mean two things to re-measure. They are
+//! deleted.
+//!
+//! The rules survive because they are what makes the identities correct, and
+//! they are recorded here as the reason this adapter trusts that parser:
 //!
 //! # THE DIALECT IS STATED, OR IT IS DETECTED
 //!
@@ -70,120 +90,21 @@ use crate::indexer::facts::{FileFacts, Fqn, Language};
 use crate::indexer::fqn::{self, Form, FqnError, Reach, Segment};
 use crate::indexer::resolve::Grammar;
 
-pub(crate) mod lex;
-mod postgres;
-mod tsql;
+mod facts;
 
-/// Which SQL this file is written in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Dialect {
-    /// Microsoft SQL Server. `GO` batches, `[bracketed]` names, `@@ROWCOUNT`.
-    TSql,
-    /// PostgreSQL. `$$` bodies, `::` casts, `plpgsql`.
-    PostgreSql,
-    MySql,
-    Sqlite,
-    /// No marker of any dialect. NOT a default — `CREATE TABLE t (id int)` is
-    /// valid everywhere and states nothing, and picking one would be an
-    /// invented fact.
-    Unstated,
-}
-
-impl Dialect {
-    /// The label a manifest writes, as `design.yaml` does in `source.dialect`.
-    pub fn from_label(label: &str) -> Option<Self> {
-        match label.trim().to_ascii_lowercase().as_str() {
-            "postgres" | "postgresql" | "pg" => Some(Self::PostgreSql),
-            "mssql" | "sqlserver" | "tsql" | "transact-sql" => Some(Self::TSql),
-            "mysql" | "mariadb" => Some(Self::MySql),
-            "sqlite" | "sqlite3" => Some(Self::Sqlite),
-            _ => None,
-        }
-    }
-
-    /// Read the dialect off the source.
-    ///
-    /// SCORED, not first-match: a Postgres migration may mention `nvarchar` in
-    /// a comment and a T-SQL script may contain a `::` in a string. The dialect
-    /// with the most markers wins, and a tie is [`Dialect::Unstated`] because a
-    /// tie is genuinely ambiguous.
-    ///
-    /// Every marker below exists in exactly ONE dialect. A marker two dialects
-    /// share says nothing and is deliberately absent — `AUTO_INCREMENT` is
-    /// here and `PRIMARY KEY` is not.
-    ///
-    /// And a marker must be a thing that dialect WRITES, not a character it
-    /// happens to use: a backtick was in this list until it was measured
-    /// turning a third of sensei's own Postgres DDL into MySQL, because a
-    /// commented schema is full of `-- \`like this\``.
-    pub fn detect(text: &str) -> Self {
-        let lower = text.to_ascii_lowercase();
-        let count =
-            |needles: &[&str]| -> usize { needles.iter().map(|n| lower.matches(n).count()).sum() };
-        // `GO` has to be matched as a LINE, not a substring — `go` appears
-        // inside `category`, `logo` and a hundred other words.
-        let go_batches = text
-            .lines()
-            .filter(|l| {
-                let t = l.trim();
-                let mut c = t.chars();
-                matches!(c.next(), Some('g' | 'G'))
-                    && matches!(c.next(), Some('o' | 'O'))
-                    && c.as_str().trim().is_empty()
-            })
-            .count();
-        let tsql = count(&[
-            "set ansi_nulls",
-            "set quoted_identifier",
-            "nvarchar",
-            "[dbo]",
-            "@@rowcount",
-            "@@identity",
-            "getdate()",
-            "isnull(",
-            "nonclustered",
-            "uniqueidentifier",
-            "begin tran",
-            "sp_executesql",
-        ]) + go_batches;
-        let postgres = count(&[
-            "language plpgsql",
-            "search_path",
-            "returns trigger",
-            "create extension",
-            "jsonb",
-            "serial primary key",
-            "$$",
-            "::text",
-            "::uuid",
-            "::int",
-            "on conflict",
-            "returning ",
-        ]);
-        // NO BACKTICK. It is MySQL's identifier quote, but it is also what
-        // everybody writes around a word in a comment — see
-        // `a_backtick_in_a_comment_does_not_make_a_schema_mysql`. A marker has
-        // to be a thing only that dialect WRITES.
-        let mysql = count(&["auto_increment", "engine=innodb", "unsigned int"]);
-        let sqlite = count(&["autoincrement", "pragma ", "without rowid"]);
-
-        let scores = [
-            (tsql, Self::TSql),
-            (postgres, Self::PostgreSql),
-            (mysql, Self::MySql),
-            (sqlite, Self::Sqlite),
-        ];
-        let best = scores.iter().max_by_key(|(n, _)| *n).copied().unwrap_or((0, Self::Unstated));
-        if best.0 == 0 {
-            return Self::Unstated;
-        }
-        // A TIE is ambiguous, and ambiguity is not a dialect.
-        if scores.iter().filter(|(n, _)| *n == best.0).count() > 1 {
-            return Self::Unstated;
-        }
-        best.1
-    }
-}
+/// WHICH SQL THIS FILE IS WRITTEN IN — dbd's, not a second copy.
+///
+/// This module carried its own `Dialect` with its own scored `detect`. dbd
+/// 0.15.0 has the same enum and the same detection, including the lesson that
+/// cost the most to learn: a BACKTICK is not a MySQL marker, because it is also
+/// what everybody writes around a word in a comment. Measured here before that
+/// was known — 2,132 backticks across 178 files of sensei's own Postgres DDL
+/// turned a third of it into MySQL.
+///
+/// Two copies of a scoring table drift, and the one that drifts is the one
+/// nobody re-measures. So the dialect is dbd's answer now, and
+/// `Dialect::from_label` still reads what a `design.yaml` states.
+pub use dbd_core::parser::Dialect;
 
 /// The names every T-SQL database has with nothing written.
 ///
@@ -276,24 +197,45 @@ impl LanguageAdapter for SqlAdapter {
         &GRAMMAR
     }
 
-    /// THE DIALECT CHOOSES THE READER, and there is one adapter rather than
-    /// two because `adapter_for_ext` dispatches on the EXTENSION: `.sql` and
-    /// `.ddl` cannot be claimed by a `tsql` adapter and a `postgres` adapter
-    /// both. So the split lives here, below the registry.
+    /// THE DIALECT CHOOSES THE GRAMMAR, never the identity.
     ///
-    /// Both halves mint the SAME identity shape — language, package, schema,
-    /// object, reach, because each calls `fqn::define` with `Form::Item` and
-    /// the schema as the module — so a reference written in one dialect can
-    /// meet a declaration read by the other. The dialect decides who reads a
-    /// file, never how the result is named.
+    /// There is one adapter rather than four because `adapter_for_ext`
+    /// dispatches on the EXTENSION: `.sql` and `.ddl` cannot be claimed by a
+    /// `tsql` adapter and a `postgres` adapter both. So the split lives here,
+    /// below the registry — and since dbd 0.15.0 it is no longer a split at
+    /// all. `parse_sql_as` answers for PostgreSQL, T-SQL, MySQL and SQLite
+    /// behind one entry point, and every dialect comes back as the same
+    /// `ParsedFile`, so one mapping names them all.
+    ///
+    /// Every dialect therefore mints the SAME identity shape — language,
+    /// package, schema, object, reach — and a reference written in one can meet
+    /// a declaration read by another.
+    ///
+    /// **TWO GRAMMARS EXIST, AND THE OTHER DIALECTS ARE STILL REFUSED.** dbd
+    /// 0.15.0 ships `pg` and `tsql`; `ParserChoice::for_dialect_typed` sends
+    /// SQLite to `Verbatim` (which `parse_sql_with` errors on) and **MySQL to
+    /// `PgQuery`**. So handing MySQL to `parse_sql_as` does not read it — it
+    /// parses it as PostgreSQL and fails on the first backtick, reporting
+    /// `syntax error` for a file that is not broken.
+    ///
+    /// That is worse than saying nothing, so the refusal is kept HERE, where
+    /// the honest reason is available: no reader for this dialect. A parse
+    /// error means the file is malformed; it must not also mean we lack its
+    /// grammar.
+    ///
+    /// `Unstated` is refused for the other reason:
+    /// `CREATE TABLE t (id int)` is valid in every dialect and says nothing
+    /// about which it is in, so parsing it as any of them would read structure
+    /// out of a grammar the file is not written in.
     fn read(&self, source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, super::ReadError> {
         match Dialect::detect(source.text) {
-            Dialect::TSql => tsql::read(source, types),
-            Dialect::PostgreSql => postgres::read(source, types),
-            // REFUSED, not guessed. MySQL and SQLite have no reader here, and
-            // `Unstated` means the file named no dialect — handing either to
-            // one of the two that exist would read structure out of a grammar
-            // it is not written in.
+            readable @ (Dialect::PostgreSql | Dialect::TSql) => {
+                facts::read(readable, source, types)
+            }
+            Dialect::Unstated => Err(super::ReadError::GrammarUnavailable(format!(
+                "{}: the file states no dialect",
+                source.path
+            ))),
             other => Err(super::ReadError::GrammarUnavailable(format!(
                 "{}: no reader for {other:?}",
                 source.path
@@ -581,15 +523,25 @@ mod tests {
             let package = repo.rsplit('/').next().unwrap_or("pkg").to_string();
             let mut sites: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
             for (path, text) in sources {
-                *by_dialect.entry(format!("{:?}", Dialect::detect(text))).or_default() += 1;
+                let dialect = Dialect::detect(text);
+                *by_dialect.entry(format!("{dialect:?}")).or_default() += 1;
+                // **ONLY THE T-SQL FILES.** This gate is labelled T-SQL and its
+                // numbers are only actionable if that is what they measure.
+                //
+                // It used to feed EVERY file to this crate's own `tsql::read`
+                // and let the reader refuse what it could not handle, which
+                // filtered the corpus as a side effect. dbd's reader is a
+                // lenient statement-head walk that accepts almost anything, so
+                // the same loop started reading 78 PostgreSQL and 187
+                // dialect-less files AS T-SQL — reporting them as misses and
+                // minting a declaration called `if`. The filter has to be
+                // explicit now that the reader no longer does it by accident.
+                if dialect != Dialect::TSql {
+                    continue;
+                }
                 let rel = path.strip_prefix(repo).unwrap_or(path).trim_start_matches('/');
                 let source = Source { package: &package, module: rel, path: rel, text };
-                // `tsql::read`, NOT `SqlAdapter::read`. The adapter dispatches
-                // on dialect, so once the PostgreSQL half existed it started
-                // handing this gate files dbd had read — and a gate labelled
-                // T-SQL that counts another reader's output measures nothing
-                // anybody can act on. Each reader has its own gate.
-                let Ok(facts) = super::tsql::read(&source, &TypeHomes::unknown()) else {
+                let Ok(facts) = facts::read(Dialect::TSql, &source, &TypeHomes::unknown()) else {
                     continue;
                 };
                 tsql_files += 1;
@@ -728,6 +680,63 @@ mod tests {
     /// MUTATION: return on the first marker seen — a Postgres migration that
     /// mentions `nvarchar` once in a comment is read as T-SQL, and every
     /// declaration in it is handed to the wrong reader.
+    /// **THE GRAMMARS dbd HAS ARE READ; THE ONES IT LACKS ARE SAID SO.**
+    ///
+    /// I expected 0.15.0 to add a MySQL parser and wrote this test asserting
+    /// four dialects read. It does not. `ParserChoice::for_dialect_typed` maps
+    /// SQLite to `Verbatim` — which `parse_sql_with` errors on — and **MySQL to
+    /// `PgQuery`**, and `dbd-core/src/parser/` contains only `pg/` and
+    /// `tsql.rs`.
+    ///
+    /// So routing MySQL through `parse_sql_as` would not read it: it would
+    /// parse it as PostgreSQL and fail on the first backtick with
+    /// `syntax error at or near "`"`. That reports a file as MALFORMED when the
+    /// truth is that we lack its grammar, and those must stay different
+    /// answers — one is the author's problem, the other is ours.
+    ///
+    /// MUTATION: let the `other` arm fall through to `facts::read` and the
+    /// MySQL row below starts reporting a syntax error instead of a refusal.
+    #[test]
+    fn a_grammar_we_lack_is_refused_not_reported_as_broken() {
+        let read = |label: &str, text: &str| {
+            SqlAdapter.read(
+                &Source {
+                    package: "db",
+                    module: "schema",
+                    path: &format!("schema/{label}.sql"),
+                    text,
+                },
+                &TypeHomes::unknown(),
+            )
+        };
+
+        // The two dbd has a grammar for.
+        for (label, text, expect) in [
+            ("tsql", "CREATE TABLE [dbo].[Orders] (Id int);\nGO\n", "Orders"),
+            (
+                "postgres",
+                "CREATE TABLE public.orders (id int);\nCREATE FUNCTION f() RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql;\n",
+                "orders",
+            ),
+        ] {
+            let facts = read(label, text).unwrap_or_else(|e| panic!("{label} must be read: {e:?}"));
+            let names: Vec<&str> = facts.symbols.iter().map(|s| s.name.as_str()).collect();
+            assert!(names.iter().any(|n| n.eq_ignore_ascii_case(expect)), "{label}: {names:?}");
+        }
+
+        // The ones it does not. `GrammarUnavailable`, never `NotParsedBecause`.
+        for (label, text) in [
+            ("mysql", "CREATE TABLE `orders` (id INT) ENGINE=InnoDB;\n"),
+            ("sqlite", "CREATE TABLE orders (id INTEGER) WITHOUT ROWID;\nPRAGMA foo;\n"),
+            ("plain", "CREATE TABLE t (id int);\n"),
+        ] {
+            match read(label, text) {
+                Err(crate::indexer::lang::ReadError::GrammarUnavailable(_)) => {}
+                other => panic!("{label} must be refused for want of a grammar, got {other:?}"),
+            }
+        }
+    }
+
     #[test]
     fn the_dialect_is_the_one_with_the_most_markers() {
         let d = Dialect::detect;

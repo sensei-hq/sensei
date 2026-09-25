@@ -49,7 +49,7 @@ encoding_rs = "0.8"
 # extraction — its `parse_sql` is path-free and its `Entity` carries a
 # read/write split no other language's parser produces — so this indexer calls
 # it rather than growing a second implementation.
-dbd-core = { git = "https://github.com/sensei-hq/dbd", tag = "v0.14.0" }
+dbd-core = { git = "https://github.com/sensei-hq/dbd", tag = "v0.15.0" }
 tree-sitter-c-sharp = "=0.23.1"
 tree-sitter-kotlin-ng = "1.1"
 tree-sitter-php = "=0.23.11"
