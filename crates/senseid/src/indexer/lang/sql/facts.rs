@@ -70,6 +70,10 @@ fn symbol_kind(entity_type: EntityType) -> Option<(SymbolKind, &'static str)> {
         EntityType::MaterializedView => Some((SymbolKind::Struct, "materialized_view")),
         EntityType::Function => Some((SymbolKind::Function, "function")),
         EntityType::Procedure => Some((SymbolKind::Function, "procedure")),
+        // A trigger is executable and declared by name, so it is a Function the
+        // same way a procedure is; `declared_type` keeps dbd's own word. New in
+        // dbd 0.15.0 — the exhaustive match is what surfaced it.
+        EntityType::Trigger => Some((SymbolKind::Function, "trigger")),
         EntityType::Enum => Some((SymbolKind::Enum, "enum")),
         EntityType::Sequence => Some((SymbolKind::Static, "sequence")),
         EntityType::Role => Some((SymbolKind::Const, "role")),
@@ -79,9 +83,25 @@ fn symbol_kind(entity_type: EntityType) -> Option<(SymbolKind, &'static str)> {
     }
 }
 
-/// Read one PostgreSQL file.
-pub fn read(source: &Source<'_>, _types: &TypeHomes) -> Result<FileFacts, ReadError> {
-    let parsed = dbd_core::parser::parse_sql(source.text)
+/// Read one SQL file in a STATED dialect.
+///
+/// Dialect-agnostic since dbd 0.15.0: `parse_sql_as` answers for PostgreSQL,
+/// T-SQL, MySQL and SQLite behind one entry point, and every one of them comes
+/// back as the same [`dbd_core::parser::ParsedFile`]. So the mapping below —
+/// entity to symbol, reference to edge — is written once and the dialect only
+/// decides which grammar produced the input.
+///
+/// This is what let this crate's own T-SQL lexer and statement-head reader
+/// (`lex.rs` + `tsql.rs`, 1,058 lines) be deleted rather than maintained beside
+/// dbd's, which reached the same two rules — `ALTER PROCEDURE` carries a
+/// definition where `ALTER TABLE` does not, and a qualified call is an edge
+/// where a bare one is a built-in.
+pub fn read(
+    dialect: dbd_core::parser::Dialect,
+    source: &Source<'_>,
+    _types: &TypeHomes,
+) -> Result<FileFacts, ReadError> {
+    let parsed = dbd_core::parser::parse_sql_as(dialect, source.text)
         .map_err(|e| ReadError::NotParsedBecause(format!("{}: {e}", source.path)))?;
 
     // **`Ok` IS NOT SUCCESS.** `parse_sql` returns the file it managed to read
@@ -292,11 +312,15 @@ impl Walk<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dbd_core::parser::Dialect;
 
+    /// Read a fixture as PostgreSQL — the dialect these tests are written in.
+    /// The dialect is an ARGUMENT now rather than something detected, so a
+    /// fixture cannot silently be read by a grammar it was not written for.
     fn read_sql(text: &str) -> FileFacts {
         let source =
             Source { package: "pkg", module: "database/x.ddl", path: "database/x.ddl", text };
-        read(&source, &TypeHomes::unknown()).expect("the fixture parses")
+        read(Dialect::PostgreSql, &source, &TypeHomes::unknown()).expect("the fixture parses")
     }
 
     fn declared(f: &FileFacts) -> Vec<(&str, &str)> {
@@ -415,20 +439,36 @@ mod tests {
             path: "m.ddl",
             text: "CREATE TABLE ( THIS IS NOT SQL",
         };
-        let Err(ReadError::NotParsedBecause(why)) = read(&broken, &TypeHomes::unknown()) else {
+        let Err(ReadError::NotParsedBecause(why)) =
+            read(Dialect::PostgreSql, &broken, &TypeHomes::unknown())
+        else {
             panic!("broken SQL must fail WITH a reason")
         };
         assert!(why.contains("syntax error"), "the reason is Postgres's own: {why}");
 
-        // A T-SQL file that reached this reader is refused the same way —
-        // `[dbo]` is not Postgres — rather than read as declaring nothing.
+        // THE DIALECT ARGUMENT IS LOAD-BEARING. The same T-SQL text is refused
+        // when read as PostgreSQL — `[dbo]` is not Postgres — and read fine
+        // when read as T-SQL. Before dbd 0.15.0 this file could only be refused,
+        // because this module had one Postgres reader and its own T-SQL walk;
+        // now the grammar is chosen and being wrong about it still fails loudly
+        // rather than yielding an empty file.
         let tsql = Source {
             package: "pkg",
             module: "m.sql",
             path: "m.sql",
             text: "CREATE TABLE [dbo].[Issues] ([Id] int)",
         };
-        assert!(read(&tsql, &TypeHomes::unknown()).is_err());
+        assert!(
+            read(Dialect::PostgreSql, &tsql, &TypeHomes::unknown()).is_err(),
+            "T-SQL read as Postgres is refused, not read as declaring nothing"
+        );
+        let as_tsql = read(Dialect::TSql, &tsql, &TypeHomes::unknown())
+            .expect("the same text reads when the right grammar is named");
+        assert!(
+            as_tsql.symbols.iter().any(|s| s.name.eq_ignore_ascii_case("Issues")),
+            "{:?}",
+            as_tsql.symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
     }
 
     /// A migration that only inserts declares nothing, and that is not an
