@@ -46,6 +46,10 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
         "Forge-token standing — verifies each persona GitHub token, records expiry, and marks a dead one so the UI can say \"sign in again\"",
     ),
     ("index_audit", "Index integrity audit (read-only drift check)"),
+    (
+        "ingest_captures",
+        "Transcript ingestion — enqueues one pass per changed assistant transcript, then repairs sessions whose cwd has become resolvable",
+    ),
     ("library_update", "Library-update detection — a new upstream version → a recommendation"),
     ("log_prune", "Structured-log TTL pruning"),
     ("metrics", "Metrics engine — one compute wave per project against its watermark"),
