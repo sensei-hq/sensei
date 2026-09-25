@@ -32,7 +32,7 @@ the wrong `nodes.language`. The table is gone; the adapter answers for itself, a
 
 ## Built, not flipped
 
-**SQL — T-SQL half only.** `lang::sql` detects the dialect and dispatches;
+**SQL — BOTH halves now.** `lang::sql` detects the dialect and dispatches;
 `lang::sql::tsql` is this crate's own lexer + statement-head reader. Built
 because nothing off the shelf can declare a stored procedure —
 `tree-sitter-sequel`'s `grammar.js` says `// TODO: procedure`, and `sqlparser`'s
@@ -52,9 +52,21 @@ Measured over Ethico (9 repos, 2,419 files, 14 unreadable):
 The 544 are release folders (`4.2.1/` beside `4.3.0.2/`, one named
 `DO NOT USE_4.1/`) — one procedure, several versions.
 
-NOT FLIPPED: the Postgres half waits on
-[dbd#19](https://github.com/sensei-hq/dbd/issues/19). v1's `sql.rs` keeps
-producing, so nothing regresses.
+**PostgreSQL half landed** on dbd 0.14.0's `parse_sql` (path-free, so no
+`parse_entity` path-fabrication). Over sensei + torii + magpie: 649 files,
+17 refused, ~610 objects, **0 collisions in all three**. dbd's read/write split
+survives the seam — 137 reads / 64 writes across the three.
+
+STILL NOT FLIPPED, and the reason is now arithmetic rather than a missing
+reader. The two cover 86%:
+
+| T-SQL | 4,289 (57.7%) | PostgreSQL | 2,104 (28.3%) |
+|---|---:|---|---:|
+| **Unstated** | **961 (12.9%)** | MySQL/SQLite | 52 (0.7%) |
+
+Of the 961 Unstated, only **19** sit under a `design.yaml` that states a
+dialect — so the manifest plumbing I deferred would rescue 19 files, not 961,
+and stays deferred.
 
 Three rules this settled:
 1. **Dialect is STATED or DETECTED** — `design.yaml` says `source.dialect`; everything else is scored, and a tie or a blank is `Unstated`, never a guess.
