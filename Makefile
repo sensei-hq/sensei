@@ -376,12 +376,22 @@ website-build:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: test-crates-fast test-app-unit
+test-fast: check-ddl-grants test-crates-fast test-app-unit
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
 
-test: test-crates test-app-unit test-dojo test-db-if-reachable
+# Every role the DDL grants to (or writes a policy for) must be a role the DDL
+# itself creates. A GRANT resolves its grantee at apply time, so one that nothing
+# creates aborts the whole deploy — which is how a first install could not
+# provision its database at all (#196), invisibly on any machine that already had
+# the roles. Instant and needs no database, so it runs in `test-fast` and
+# therefore on every commit; CI calls this same target rather than the script, so
+# there is one entry point to keep correct.
+check-ddl-grants:
+	@python3 scripts/check-grant-targets.py
+
+test: check-ddl-grants test-crates test-app-unit test-dojo test-db-if-reachable
 
 test-crates:
 	cargo test --workspace
