@@ -15,7 +15,9 @@ export type PackageManagerId = 'homebrew' | 'winget';
  *  daemon has no working pool yet (e.g. it lost the cold-boot race) and is
  *  self-healing, even if Postgres itself probes 'ready'. Absent when the payload
  *  wasn't produced by a daemon. */
-export type DaemonDbMode = 'full' | 'degraded';
+// `provisioning` is a first install whose database is still being built — a
+// wait, not a fault. Mirrors `sensei_bootstrap::DaemonDbMode`; keep in step.
+export type DaemonDbMode = 'full' | 'provisioning' | 'degraded';
 
 export const COMPONENT_ORDER: readonly ComponentId[] =
   ['postgres', 'ollama', 'sensei', 'database', 'daemon'] as const;
