@@ -2723,6 +2723,120 @@ async fn upsert_node_by_fqn_resolves_two_files_declaring_one_fqn() {
     assert_eq!(holders, 1, "an fqn must name exactly one node");
 }
 
+/// **THE ROW MOVES ON ONE RULE AND THE RECOVERY SEARCHES BY ANOTHER.**
+///
+/// MEASURED on the live daemon, 44 files in one day, every one failing WHOLE
+/// rather than losing a single edge:
+///
+/// ```text
+/// adopt node by identity (generatePrescriptionSchedule): no rows returned…  14
+/// adopt node by identity (uploadPrescriptionImage): no rows returned…        9
+/// ```
+///
+/// `upsert_node_ex`'s `ON CONFLICT (folder_id, fqn) DO UPDATE` sets
+///
+/// ```sql
+/// parent_id = COALESCE(EXCLUDED.parent_id, nodes.parent_id)
+/// ```
+///
+/// — KEEP THE OLD PARENT when the incoming one is NULL. `parent_id` is part of
+/// `nodes_unique_identity`, so the row the update becomes, and therefore the
+/// row it collides with, carries the OLD parent. `adopt_node_by_identity` then
+/// searches with the INCOMING parent (NULL), matches nothing, and `fetch_one`
+/// turns that into `RowNotFound` → the file fails → `fail_folder` withholds the
+/// `files` row → the reconcile re-drives the folder forever.
+///
+/// It is the poison pill the arm directly above already names, on a path that
+/// did not get the same treatment. Deterministic — no concurrency, which is
+/// what I assumed twice before reading the two update rules side by side.
+///
+/// The fix does not depend on which column disagrees: the `ON CONFLICT` already
+/// matched a row BY FQN, so when the identity search comes back empty that row
+/// is the answer. Breaking mutation: restore `fetch_one` and this returns Err.
+#[tokio::test]
+async fn an_upsert_whose_identity_moved_does_not_fail_the_file() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("adopt_miss_{}", uuid::Uuid::new_v4())).await;
+    let file = "src/svc.ts";
+
+    // A parent to hang the first revision off.
+    let parent = s
+        .seed_node(&fid, "class", "PrescriptionService", file, None, None, Some(1), Some(99))
+        .await
+        .unwrap();
+
+    let held = "ts·app·svc·generatePrescriptionSchedule";
+
+    // X holds the fqn, nested under the parent at line 10.
+    let x = s
+        .seed_node_by_fqn(
+            &fid,
+            held,
+            "function",
+            "generatePrescriptionSchedule",
+            Some("typescript"),
+            Some(FqnDef {
+                file_path: file,
+                signature: None,
+                line_start: Some(10),
+                line_end: Some(10),
+                is_exported: true,
+                parent_id: Some(&parent),
+            }),
+        )
+        .await
+        .unwrap();
+
+    // Y already occupies the identity X MOVES INTO when re-declared at line 20
+    // with no parent: the COALESCE keeps X's old parent, so the collision is at
+    // (file, function, name, PARENT, 20) — while the recovery will look for
+    // that same row with parent NULL.
+    s.seed_node(
+        &fid,
+        "function",
+        "generatePrescriptionSchedule",
+        file,
+        Some(&parent),
+        None,
+        Some(20),
+        Some(20),
+    )
+    .await
+    .unwrap();
+
+    // The upsert that used to fail: same fqn, now top-level (no parent), line 20.
+    let got = s
+        .upsert_node_by_fqn(
+            &fid,
+            held,
+            "function",
+            "generatePrescriptionSchedule",
+            Some("typescript"),
+            Some(FqnDef {
+                file_path: file,
+                signature: None,
+                line_start: Some(20),
+                line_end: Some(20),
+                is_exported: true,
+                parent_id: None,
+            }),
+        )
+        .await
+        .expect("an upsert whose identity moved must not fail the whole file");
+
+    assert_eq!(got, x, "the fqn still names the node that held it");
+
+    let holders: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND fqn=$2",
+    )
+    .bind(fid)
+    .bind(held)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(holders, 1, "an fqn must still name exactly one node");
+}
+
 #[tokio::test]
 async fn upsert_node_by_fqn_merges_ref_and_def() {
     // FQN get-or-create (SCIP/LSIF moniker model): a REFERENCE creates an

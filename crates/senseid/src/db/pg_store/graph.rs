@@ -908,6 +908,35 @@ impl PgStore {
                         })?;
                         (id,)
                     }
+                    // THE IDENTITY SEARCH CAN COME BACK EMPTY, and that is not
+                    // a corruption — it is the two update rules disagreeing.
+                    //
+                    // The `DO UPDATE` above sets
+                    // `parent_id = COALESCE(EXCLUDED.parent_id, nodes.parent_id)`
+                    // and guards `kind`/`line_start` on `resolved`, so the row
+                    // it BECOMES — and therefore the row it collides with on
+                    // `nodes_unique_identity` — can carry old values where the
+                    // adopt below searches with new ones. It then matches
+                    // nothing.
+                    //
+                    // `fetch_one` turned that into `RowNotFound` and failed the
+                    // WHOLE FILE: `fail_folder` withheld the `files` row and the
+                    // reconcile re-drove the folder every tick. MEASURED at 44
+                    // files in one day. Exactly the poison pill the arm above
+                    // describes, on the path that did not get the treatment.
+                    //
+                    // The answer does not need to know WHICH column disagreed:
+                    // `ON CONFLICT (folder_id, fqn)` already matched a row by
+                    // fqn, so that row is the one this upsert is about.
+                    Err(sqlx_core::error::Error::RowNotFound) => {
+                        let id = self.node_id_by_fqn(folder_id, fqn).await?.ok_or_else(|| {
+                            format!(
+                                "adopt node by identity ({name}): no row holds {fqn} either — \
+                                 the conflict and the graph disagree"
+                            )
+                        })?;
+                        (id,)
+                    }
                     Err(e) => return Err(format!("adopt node by identity ({name}): {e}")),
                 }
             }
