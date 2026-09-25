@@ -263,7 +263,7 @@ because the two mint different identities.
 | php | yes | **yes** | never existed; detection entry only |
 | c | yes | **yes** (`.c`/`.h` only) | **deleted** — detection entry only |
 | kotlin | yes | not yet — two shapes open | live (`kotlin.rs` + `jvm.rs`) |
-| sql | yes — **T-SQL only** | not yet — Postgres half open | live (`sql.rs`) |
+| sql | yes — **T-SQL + PostgreSQL** | not yet — 14% of the corpus has no reader | live (`sql.rs`) |
 | swift | **no** | no | live |
 | **c++** (`.cpp`/`.hpp`/`.cc`) | **no** | no | **no entry at all** |
 
@@ -332,14 +332,38 @@ read, and the two halves need different readers:
   `tree-sitter-sequel` has no `create_procedure` node (`grammar.js` says
   `// TODO: procedure`) and `sqlparser`'s `MsSqlDialect` fails on the parenless
   `CREATE PROCEDURE @p int AS` form, parsing 28% of files whole.
-- **Postgres** — waiting on [sensei-hq/dbd#19](https://github.com/sensei-hq/dbd/issues/19).
-  dbd already has the right model (`extract_view_info`, `extract_proc_refs`,
-  `extract_proc_reads_writes` — reads and writes SEPARATED), but those live in a
-  private `mod extractors`. dbd is Postgres-only: measured over 243 T-SQL files,
-  **0** parse.
+- **Postgres** — `lang::sql::postgres`, over dbd 0.14.0's `parse_sql`. That
+  function is PATH-FREE, which is the whole seam: `parse_entity` derives type,
+  schema and name from `ddl/<type>/<schema>/<name>.ddl` and outside that layout
+  falls back to `EntityType::Table`, so a stored procedure reads as a table.
+  dbd's `Entity` carries `reads` and `writes` SEPARATELY — a distinction no
+  other language's walk here produces — and a `ref_type` of `function` marks a
+  SOFT reference, which Postgres cannot tell from a built-in at parse time.
 
-`Language::Sql` stays out of `PRODUCTION_LANGUAGES` until both halves exist, so
-v1's `sql.rs` keeps producing and nothing regresses.
+  **`Ok` is not success.** `parse_sql` returns the entities it managed plus a
+  list of file-level failures rather than an `Err`, so a reader checking only
+  the `Result` treats a file that failed to parse exactly like a migration that
+  declares nothing. The errors are surfaced as `ReadError::NotParsedBecause`,
+  carrying Postgres's own complaint into `index_errors`.
+
+Measured over three real dbd schemas — sensei, torii, magpie — 649 files,
+17 refused, ~610 objects, and **0 colliding identities in all three**.
+
+`Language::Sql` is still out of `PRODUCTION_LANGUAGES`. Both halves now exist,
+but they cover 86% of the corpus and flipping would stop indexing the rest:
+
+| dialect | files | reader |
+|---|---:|---|
+| T-SQL | 4,289 (57.7%) | `sql::tsql` |
+| PostgreSQL | 2,104 (28.3%) | `sql::postgres`, via dbd |
+| **Unstated** | **961 (12.9%)** | **none — refused** |
+| MySQL / SQLite | 52 (0.7%) | none — refused |
+
+An `Unstated` file names no dialect and is usually valid in all of them. The
+manifest cannot rescue many: of the 961, only **19** sit under a `design.yaml`
+that states one, and 904 have no dbd manifest above them at all. So threading
+`DbdManifestAdapter::stated_dialect` through `Placement`/`Source` is still not
+worth four call sites — the number that would have justified it is 19.
 
 **THE DIALECT IS STATED, OR IT IS DETECTED.** The same split the whole indexer
 turns on. `design.yaml` carries `source.dialect: postgresql` — a manifest

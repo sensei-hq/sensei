@@ -71,6 +71,7 @@ use crate::indexer::fqn::{self, Form, FqnError, Reach, Segment};
 use crate::indexer::resolve::Grammar;
 
 pub(crate) mod lex;
+mod postgres;
 mod tsql;
 
 /// Which SQL this file is written in.
@@ -275,8 +276,29 @@ impl LanguageAdapter for SqlAdapter {
         &GRAMMAR
     }
 
+    /// THE DIALECT CHOOSES THE READER, and there is one adapter rather than
+    /// two because `adapter_for_ext` dispatches on the EXTENSION: `.sql` and
+    /// `.ddl` cannot be claimed by a `tsql` adapter and a `postgres` adapter
+    /// both. So the split lives here, below the registry.
+    ///
+    /// Both halves mint the SAME identity shape — language, package, schema,
+    /// object, reach, because each calls `fqn::define` with `Form::Item` and
+    /// the schema as the module — so a reference written in one dialect can
+    /// meet a declaration read by the other. The dialect decides who reads a
+    /// file, never how the result is named.
     fn read(&self, source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, super::ReadError> {
-        tsql::read(source, types)
+        match Dialect::detect(source.text) {
+            Dialect::TSql => tsql::read(source, types),
+            Dialect::PostgreSql => postgres::read(source, types),
+            // REFUSED, not guessed. MySQL and SQLite have no reader here, and
+            // `Unstated` means the file named no dialect — handing either to
+            // one of the two that exist would read structure out of a grammar
+            // it is not written in.
+            other => Err(super::ReadError::GrammarUnavailable(format!(
+                "{}: no reader for {other:?}",
+                source.path
+            ))),
+        }
     }
 
     fn file_fqn(&self, package: &str, module: &str, path: &str) -> Result<Fqn, FqnError> {
@@ -364,6 +386,128 @@ mod tests {
     /// rise in the other two is a release folder somebody added.
     const A7_BOUND: usize = 544;
 
+    /// **COVERAGE for the PostgreSQL half, over real dbd schemas.**
+    ///
+    /// The T-SQL gate below asks whether a reader built on statement heads
+    /// finds the declarations. This asks a different question, because the
+    /// reading is dbd's: does the SEAM hold — does every entity dbd reports
+    /// become a node with an identity, and does the read/write split survive?
+    ///
+    ///     SENSEI_CORPUS=/path/with/design.yaml cargo test -p senseid \
+    ///       --bin senseid sql::tests::the_postgres_corpus_reads_through_dbd \
+    ///       -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn the_postgres_corpus_reads_through_dbd() {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let Ok(root) = std::env::var("SENSEI_CORPUS") else {
+            println!("SENSEI_CORPUS unset — nothing to read. See this test's docs.");
+            return;
+        };
+
+        let (mut files, mut refused, mut declaring) = (0usize, 0usize, 0usize);
+        let (mut reads, mut writes, mut calls, mut structural) = (0usize, 0usize, 0usize, 0usize);
+        let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+        let mut sites: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut why: BTreeMap<String, usize> = BTreeMap::new();
+
+        for entry in walkdir::WalkDir::new(&root).into_iter().filter_map(Result::ok) {
+            let path = entry.path();
+            if path.extension().is_none_or(|e| e != "ddl" && e != "sql") {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(path) else { continue };
+            let crate::classifiers::Decoded::Text(text) = crate::classifiers::decode_source(&bytes)
+            else {
+                continue;
+            };
+            if Dialect::detect(&text) != Dialect::PostgreSql {
+                continue;
+            }
+            files += 1;
+            let rel = path.strip_prefix(&root).unwrap_or(path).to_string_lossy().to_string();
+            let source = Source { package: "corpus", module: &rel, path: &rel, text: &text };
+            let facts = match SqlAdapter.read(&source, &TypeHomes::unknown()) {
+                Ok(f) => f,
+                Err(e) => {
+                    refused += 1;
+                    // The FIRST LINE of the reason, grouped — a histogram of
+                    // why files are refused is what says whether the seam is
+                    // sound or whether dbd and this corpus disagree.
+                    let reason = format!("{e:?}");
+                    let head: String = reason.chars().take(70).collect();
+                    *why.entry(head).or_default() += 1;
+                    continue;
+                }
+            };
+            let objects: Vec<_> = facts
+                .symbols
+                .iter()
+                .filter(|s| s.kind != crate::indexer::facts::SymbolKind::Module)
+                .collect();
+            if !objects.is_empty() {
+                declaring += 1;
+            }
+            for s in objects {
+                if let crate::indexer::facts::DeclaredType::Stated(label) = &s.declared_type {
+                    *kinds.entry(label.clone()).or_default() += 1;
+                }
+                sites
+                    .entry(s.fqn.as_str().to_string())
+                    .or_default()
+                    .insert(format!("{} at {rel}", s.name));
+            }
+            for r in &facts.references {
+                match r.kind {
+                    crate::indexer::facts::RefKind::Reads => reads += 1,
+                    crate::indexer::facts::RefKind::Writes => writes += 1,
+                    crate::indexer::facts::RefKind::Calls => calls += 1,
+                    _ => structural += 1,
+                }
+            }
+        }
+
+        let colliding: Vec<_> = sites.iter().filter(|(_, at)| at.len() > 1).collect();
+        println!("\n── PostgreSQL through dbd ──");
+        println!("postgres files  {files} ({refused} refused)");
+        println!("  declaring     {declaring}");
+        println!("  objects       {kinds:?}");
+        println!("  reads {reads}  writes {writes}  calls {calls}  structural {structural}");
+        println!("COLLIDING       {}", colliding.len());
+        for (head, n) in &why {
+            println!("  refused {n:>4}x  {head}");
+        }
+        for (fqn, at) in colliding.iter().take(6) {
+            println!("    {fqn}  {:?}", at.iter().take(2).collect::<Vec<_>>());
+        }
+
+        // THE SPLIT IS THE POINT — but only a corpus with ROUTINES can show
+        // it. A schema of tables and views has nothing to read or write from,
+        // and magpie's is exactly that: 77 files, 62 tables, 15 views, zero
+        // functions. Asserting `reads > 0` unconditionally made this gate fail
+        // on a corpus it had no complaint about, which is a test asserting a
+        // property of the CORPUS rather than of the seam.
+        let routines: usize = kinds.get("function").copied().unwrap_or(0)
+            + kinds.get("procedure").copied().unwrap_or(0);
+        if routines == 0 {
+            println!("  (no routines here, so the read/write split is untestable on this corpus)");
+        } else {
+            assert!(
+                reads + writes > 0,
+                "{routines} routines and no table access — the split dbd is called for was dropped"
+            );
+        }
+
+        // EVERY entity dbd reported became a node, or the seam lost one.
+        assert!(
+            colliding.is_empty(),
+            "{} identities minted twice: {:?}",
+            colliding.len(),
+            colliding.iter().take(3).collect::<Vec<_>>()
+        );
+    }
+
     /// **A7 + COVERAGE for T-SQL over a real corpus.**
     ///
     /// Two questions at once, because for this language they are the same
@@ -440,7 +584,14 @@ mod tests {
                 *by_dialect.entry(format!("{:?}", Dialect::detect(text))).or_default() += 1;
                 let rel = path.strip_prefix(repo).unwrap_or(path).trim_start_matches('/');
                 let source = Source { package: &package, module: rel, path: rel, text };
-                let Ok(facts) = SqlAdapter.read(&source, &TypeHomes::unknown()) else { continue };
+                // `tsql::read`, NOT `SqlAdapter::read`. The adapter dispatches
+                // on dialect, so once the PostgreSQL half existed it started
+                // handing this gate files dbd had read — and a gate labelled
+                // T-SQL that counts another reader's output measures nothing
+                // anybody can act on. Each reader has its own gate.
+                let Ok(facts) = super::tsql::read(&source, &TypeHomes::unknown()) else {
+                    continue;
+                };
                 tsql_files += 1;
                 text_of.insert(rel.to_string(), text.clone());
                 let objects: Vec<&crate::indexer::facts::Symbol> = facts
