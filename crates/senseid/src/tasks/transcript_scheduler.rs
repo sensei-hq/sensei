@@ -53,12 +53,29 @@ async fn enqueue_backfill(queue: &TaskQueue) -> bool {
     true
 }
 
+/// Whether this daemon should ingest transcripts at all.
+///
+/// Pure so the rule is testable without an env var. An ISOLATED instance
+/// (`SENSEI_INSTANCE=e2e`) gets a throwaway database and data dir, and
+/// transcript ingest reaches outside both — into the developer's real
+/// `~/.claude` — so running it there copies their conversations into a database
+/// that exists to be dropped, and saturates the daemon doing it.
+fn ingests_transcripts(isolated_instance: bool) -> bool {
+    !isolated_instance
+}
+
 /// Spawn the transcript scheduler for the daemon's lifetime.
 pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
     tokio::spawn(run(queue, pg));
 }
 
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
+    if !ingests_transcripts(sensei_bootstrap::SenseiConfig::from_env().is_isolated_instance()) {
+        tracing::info!(
+            "transcript_scheduler: isolated instance — not ingesting transcripts (they live outside this instance's data dir)"
+        );
+        return;
+    }
     // THE BOOT PASS ALWAYS RUNS, and it is not the schedule's business: a
     // restart is the one moment a newly-tracked folder can make a previously
     // unresolvable cwd resolvable, so the session repair wants to happen then
@@ -81,6 +98,24 @@ async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **AN ISOLATED INSTANCE DOES NOT READ THE DEVELOPER'S TRANSCRIPTS.**
+    ///
+    /// `SENSEI_INSTANCE=e2e` exists to give a run a throwaway database and data
+    /// dir. Transcript ingest reaches OUTSIDE both — into `~/.claude` — so it
+    /// copies real conversation data into the throwaway database, and takes a
+    /// long time doing it. MEASURED on an e2e boot: **590 `ingest_capture`
+    /// tasks enqueued in the same second the port opened**, which is what the
+    /// first specs were racing when 23 of them failed on a daemon too busy to
+    /// render.
+    ///
+    /// MUTATION: make `ingests_transcripts` ignore its argument and the
+    /// isolated row below goes true.
+    #[test]
+    fn an_isolated_instance_never_ingests_transcripts() {
+        assert!(ingests_transcripts(false), "the real install ingests");
+        assert!(!ingests_transcripts(true), "a throwaway instance does not");
+    }
 
     /// The tick enqueues the dispatcher, and a second tick while it is still
     /// in flight does NOT stack a duplicate.

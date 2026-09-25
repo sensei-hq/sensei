@@ -8,6 +8,17 @@
 import { test, expect } from '../fixtures';
 import { navigateTo } from '../helpers';
 
+/** Where the app may legitimately be once bootstrap is past. `/` is the
+ *  observatory home — `(observatory)` is a route GROUP, so it adds no segment. */
+const POST_BOOTSTRAP_PATHS = ['/', '/setup/welcome', '/health'];
+
+/** The app's current path, read from the webview. */
+async function pathname(tauriPage: {
+  evaluate: (script: string) => Promise<unknown>;
+}): Promise<string> {
+  return (await tauriPage.evaluate('window.location.pathname')) as string;
+}
+
 test.describe('Boot flow', () => {
   /**
    * Cold-start routing — verifies the WKWebView blank-screen fix.
@@ -29,6 +40,23 @@ test.describe('Boot flow', () => {
     // (proving the page is loaded and IPC is draining), then clear health,
     // then navigate to '/' to test the cold-start routing.
     await navigateTo(tauriPage, '/health');
+    // GATES ARE A TRANSIENT. globalSetup now waits for daemon health to reach
+    // `ok` before any spec runs — which is what stopped ~20 gated-route specs
+    // racing the ~50s cold-boot window — and once it is `ok` the health page
+    // has nothing left to gate and advances. So the gate rows this asserts are
+    // gone by construction in the warm suite.
+    //
+    // The two siblings below already carry this tolerance ("that is also a
+    // pass"); these two did not, which is why they failed on every run. The
+    // cold-boot window itself is what `tests-cold/` + `globalSetup-cold.ts`
+    // exist for — a genuine cold-start assertion belongs there, not here.
+    if (await tauriPage.locator('.gate-row').count() === 0) {
+      // Already past bootstrap. The claim that survives is the one in this
+      // test's NAME: '/' is not force-navigated away from.
+      await navigateTo(tauriPage, '/');
+      expect(POST_BOOTSTRAP_PATHS).toContain(await pathname(tauriPage));
+      return;
+    }
     await expect(tauriPage.locator('.gate-row').first()).toBeVisible({ timeout: 15_000 });
 
     // Clear health gate — IPC is no longer saturated at this point
@@ -48,6 +76,13 @@ test.describe('Boot flow', () => {
 
   test('health page loads', async ({ tauriPage }) => {
     await navigateTo(tauriPage, '/health');
+    // Same transient as above: with health already `ok` the page advances and
+    // renders no gates. What still holds is that /health is REACHABLE and
+    // leaves the app somewhere valid rather than blank or erroring.
+    if (await tauriPage.locator('.gate-row').count() === 0) {
+      expect(POST_BOOTSTRAP_PATHS).toContain(await pathname(tauriPage));
+      return;
+    }
     await expect(tauriPage.locator('.gate-row').first()).toBeVisible({ timeout: 10_000 });
   });
 
@@ -59,9 +94,14 @@ test.describe('Boot flow', () => {
     if (count > 0) {
       expect(count).toBeGreaterThan(0);
     } else {
-      // Already past bootstrap — verify we landed on a valid post-bootstrap page
-      const url = await tauriPage.url();
-      expect(url).toMatch(/\/(setup\/welcome|observatory|health)/);
+      // Already past bootstrap — verify we landed on a valid post-bootstrap page.
+      //
+      // The old assertion looked for `observatory` in the URL. `(observatory)`
+      // is a SvelteKit route GROUP — the parentheses mean it contributes NO
+      // path segment — so the observatory home is `/` and `/observatory` has
+      // never existed. A correct landing on `tauri://localhost/` could not
+      // match, which is why this failed on every run.
+      expect(POST_BOOTSTRAP_PATHS).toContain(await pathname(tauriPage));
     }
   });
 
@@ -70,11 +110,12 @@ test.describe('Boot flow', () => {
     // If all gates become ready within 30 s the page auto-advances.
     // If gates are still pending (slow environment), staying on /health is also a pass.
     try {
-      await tauriPage.waitForURL(/\/(setup\/welcome|observatory)/, { timeout: 30_000 });
+      // `$` anchors the observatory home, which is `/` — see the note above on
+      // why a bare `observatory` alternative can never match.
+      await tauriPage.waitForURL(/(\/setup\/welcome|localhost\/$)/, { timeout: 30_000 });
     } catch {
       // waitForURL timeout does not guarantee the URL hasn't moved — accept either outcome
-      const url = await tauriPage.url();
-      expect(url).toMatch(/\/(setup\/welcome|observatory|health)/);
+      expect(POST_BOOTSTRAP_PATHS).toContain(await pathname(tauriPage));
     }
   });
 });

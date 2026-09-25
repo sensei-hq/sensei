@@ -54,9 +54,12 @@ test.describe('Bootstrap verification — daemon health and DB state', () => {
     expect(body.status, 'status field must be present').toBeTruthy();
     expect(typeof body.version, 'version must be a string').toBe('string');
     expect(body.version.length, 'version must not be empty').toBeGreaterThan(0);
-    // daemon returns "healthy" or "degraded"
-    expect(['healthy', 'degraded', 'starting'].includes(body.status),
-      `status '${body.status}' should be a known value`).toBe(true);
+    // The wire values are `HealthStatus` (kebab-case), NOT the
+    // "healthy"/"degraded"/"starting" this once asserted — that set never
+    // existed on this endpoint, so the test could only ever fail. Keep it in
+    // step with `sensei_bootstrap::HealthStatus`.
+    expect(['checking', 'resolving', 'ok', 'needs-action'].includes(body.status),
+      `status '${body.status}' should be a known HealthStatus`).toBe(true);
   });
 
   test('daemon reports uptime in health response', async () => {

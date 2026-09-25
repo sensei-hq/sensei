@@ -50,6 +50,15 @@ retires roughly 5,600 lines of v1.
   `task_failures` are the restart list.
 - **Transcript ingestion has a schedule.** `ingest_captures` joins
   `schedule::SCHEDULABLE` with a 300s cadence.
+- **A `provisioning` daemon DB state.** `DaemonDbMode` was `full | degraded` —
+  two states for three situations. A first install has no database until
+  bootstrap creates it, and the daemon stays up through that window on purpose
+  (it binds its port before it touches Postgres), so that window could only be
+  reported as `degraded`, which means "it was working and stopped". A normal
+  first run announced itself as a fault. Which failure it is now comes from
+  `database_exists` rather than the connect error's text; provisioning writes no
+  `startup-error.log`, carries no remedy and logs INFO, and the app exposes
+  `isProvisioning` separately from `isDegraded`.
 
 ### Changed
 
