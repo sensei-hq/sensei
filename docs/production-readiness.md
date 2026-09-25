@@ -6,6 +6,12 @@ date: 2026-09-25
 
 # Production readiness
 
+**Filed as issues 2026-09-25**: #175 (A1) · #176 (A2) · #177 (A3) · #178 (B1) ·
+#179 (B3) · #180 (C1) · #181 (C2) · #182 (D1) · #183 (D2) · #184 (E1) · #185 (E2) ·
+#186 (E3) · #187 (D4) · #188 (B2) · #189 (G2) · #191 (F). The e2e triage went on
+#134; A4 is covered by #141/#146, the a11y contrast by #136, fresh-provision
+drift by #142, and dbd version skew by #122. The dbd 0.15.0 switchover is #190.
+
 Every item below is a MEASUREMENT taken on 2026-09-25 against the live daemon,
 the live `sensei` database and this working tree — not a checklist copied from
 somewhere. Where a number is quoted, the query that produced it is quoted with
