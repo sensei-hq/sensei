@@ -125,6 +125,13 @@ scopes:
 # schema-adjacent config — which tables are eligible for Realtime — so it belongs
 # with `apply`, not tacked onto the end of the data load.
 apply:
+  # Runs BEFORE the first entity is written, which is the only place it can:
+  # twelve `sensei`/`activity` files grant to Supabase's roles, and a GRANT
+  # resolves its grantee at apply time, so on a Postgres that never hosted
+  # Supabase the first of them aborted the whole deploy. See the file — it is a
+  # no-op wherever the roles already exist.
+  before:
+    - apply/before/roles.sql
   after:
     - apply/after/realtime_publication.sql
 
