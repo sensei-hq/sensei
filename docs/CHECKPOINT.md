@@ -1,47 +1,60 @@
 # Checkpoint
 
-**Slice:** indexer v2 — before the wipe + re-index (issue #130, phase `build`)
+**Slice:** production readiness (issue #130 phase `build` → next is assessment)
 
-## Done
+## State
 
-`PRODUCTION_LANGUAGES = [Rust, TypeScript, Java, Python, CSharp, Php, C]` — 7 cut
-over, ~5,600 lines of v1 deleted. A7 per language: Rust 0, TS 0, Java 14, Python 0,
-C# 392 (all buckets explained), PHP 312 (cross-file only), C 11.
+**Still 0.9.1 — NOT bumped.** The release checklist wants a green e2e and it is
+23 red. `make bump v=minor` publishes (tag → `release.yml` → homebrew tap +
+marketplace subtrees) and carries **38 unpushed commits**, so it waits on a
+decision, not on more work.
 
-**Built, not flipped:** SQL both halves (`tsql` this crate's own lexer; Postgres over
-dbd 0.14.0 `parse_sql`) — covers 86% of 7,435 files, `Unstated` 961 is why it waits.
-Kotlin (245 files, A7 39) blocked on anonymous objects + Android flavours.
+| gate | result |
+|---|---|
+| senseid suite | **3,318 pass / 0 fail** |
+| clippy `-D warnings`, fmt | clean |
+| app unit / bootstrap | 1,698 / 174 pass |
+| **Tauri e2e** | **107 pass / 23 fail / 20 skip** |
+| `make install` | Sensei.app 08:10, daemon 0.9.1 healthy |
 
-**Recent fixes:** UTF-16 decode owned by `classifiers::decode_source` (+377 files);
-capture_drain's 8-day 176MB poison pill (`66af0d97`); names-are-not-programs
-(`4aca8f99`) — 357 edges were named by source text, 10 broke an index and cost
-9 files every symbol they had; transcript ingestion had no schedule at all.
+## What this session established
 
-## Remaining
-
-| | files | blocker |
-|---|---:|---|
-| SQL flip | ~1,013 would go dark | `Unstated` dialect |
-| Swift | 2 | `tree-sitter-swift =0.6.0` |
-| Kotlin flip | 245 | two named shapes |
-
-Then: deploy → `TRUNCATE sensei.nodes, sensei.edges CASCADE` → re-index →
-acceptance → wire `Stated::Gone`.
+- **E2E diagnosed.** First run gave ZERO specs — `make test-app-e2e` drops
+  `sensei_e2e`, so the daemon must create the DB + 123 tables before binding
+  :7744 and blew the 240s budget. Second run found it provisioned and ran fine.
+  The timeout is sized for a warm boot; the harness guarantees a cold one.
+  `globalSetup` no longer discards the app's stdio (`790f90b7`).
+- **Root add/remove journey passes** (`setup-wizard.spec.ts`).
+- **Dōjō:** fixed a real blocker — vite binds IPv6, the daemon dials IPv4, so
+  `dojo_sync` could never connect (`--host 127.0.0.1`, now `last_ok=t`). But
+  **the sync has never sent a row**: membership stuck at `authenticating`,
+  outbox `held` since 2026-08-29.
+- **Token metrics exist** (5 of them) but `metered_cost` is never non-zero and
+  `Tokens per day` is 99.9996% cache reads.
 
 ## Next command
 
 ```
-make install-service    # ship 4aca8f99 + the transcript scheduler to the daemon
+# pick one, then continue:
+make bump v=minor          # publishes 0.10.0 + 38 commits
+# or triage the 23 e2e failures first — 4 configure-assistants, 4 boot-flow,
+# 3 instruments-t2-slices, 2 each daemon-verification/atlas
 ```
+
+## New this session
+
+- `CHANGELOG.md` — starts at 0.10.0; the 67 prior tags are not reconstructed.
+- `docs/production-readiness.md` — **20 measured items**, each with the query
+  beside the number. Top five: **A1** `adopt_node_by_identity` uses `fetch_one`
+  so a moved row fails the whole file (44 today) · **C1** `public.logs` is 25 GB
+  of a 37 GB database · **D1** CI runs no Rust tests, clippy or fmt · **E1**
+  dōjō has never synced · **A2** cost is never measured.
 
 ## Known-broken
 
-- **The parse stack is still unbounded — but the known trigger is gone.** `deba28fb`
-  widened the globs to `**/*.min.*.js`; the 9.4MB file was a vendored Syncfusion
-  bundle nothing references. Both watch roots now parse clean (9,697 + 17,953 files,
-  0 programs), so the wipe is no longer blocked on it. An input nobody has seen yet
-  still aborts the process rather than one file — options in `docs/backlog.md`.
-- Daemon log is 18 GB. `log_prune` runs daily.
-- Grammars pinned for ABI: c-sharp `=0.23.1`, php `=0.23.11`, c `=0.23.4`, swift `=0.6.0`.
-- This repo has no Java/Python/C#/Kotlin/PHP/Swift — use `SENSEI_CORPUS`.
-- Never pipe a test or build through `tail`; you read the pipe's exit status.
+- Indexing never fully completed: 380 folders `discovered`, 12 `indexing`.
+- Deps behind, untouched: rokkit 1.4.0 (app) / 1.3.4 (dojo) vs **1.6.0**;
+  kavach 1.1.3 vs **1.2.0** (pinned exact, needs a manifest edit).
+- Supabase is up (33 containers) and dojo dev is on :5173 — both will need
+  restarting next session.
+- SQL/Kotlin/Swift unflipped, so `crate::languages` still ships.
