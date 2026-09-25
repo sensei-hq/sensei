@@ -221,12 +221,41 @@ pub(super) fn named(minted: Result<Fqn, FqnError>) -> Vec<Observation> {
     minted.map(Observation::Named).into_iter().collect()
 }
 
-/// Evidence must always name something. In a tree full of ERROR nodes a node's
-/// text can be empty, and an unnameable miss is one nobody can act on, so the
-/// node kind stands in.
+/// The longest a name may be before it is treated as source text.
+///
+/// Chosen against the corpus rather than against the storage limit: the longest
+/// legitimate name measured in the live graph is 134 bytes, a deeply nested
+/// module path, so this leaves roughly fourfold headroom for a name and still
+/// sits an order of magnitude under the 2,704-byte btree limit on
+/// `edges_unique_unresolved` that unbounded text was breaking.
+pub(super) const MAX_NAME_BYTES: usize = 512;
+
+/// Evidence must always name something, and what it names must be a NAME. In a
+/// tree full of ERROR nodes a node's text can be empty, and a walk handed a
+/// shape it cannot name can reach for that shape's source text instead — an
+/// unnameable miss and a miss named by a program are both ones nobody can act
+/// on, so the node kind stands in for either.
+///
+/// The bound belongs here rather than at each call site because every walk in
+/// every language arrives through [`Miss`], and a rule enforced per-adapter is
+/// one each new adapter gets to forget.
 pub(super) fn readable(name: &str, node_kind: &str) -> String {
     let name = name.trim();
-    if name.is_empty() { node_kind.to_string() } else { name.to_string() }
+    if is_a_name(name) { name.to_string() } else { node_kind.to_string() }
+}
+
+/// Whether this text can be a name at all.
+///
+/// Two refusals, and both are about KIND rather than quality. A name occupies
+/// one line — source text spanning lines is a program, whatever else it is —
+/// and a name is bounded, because an identity the graph cannot store is not one
+/// the graph can answer with.
+///
+/// Deliberately NOT a judgement on the characters: a module path carries `/`
+/// and `.`, a generic carries `<`, `,` and spaces, and a rule tight enough to
+/// exclude minified source would exclude those too.
+fn is_a_name(name: &str) -> bool {
+    !name.is_empty() && name.len() <= MAX_NAME_BYTES && !name.contains('\n')
 }
 
 #[cfg(test)]
@@ -261,6 +290,53 @@ mod tests {
                 Resolution::Resolved { fqn, .. } => panic!("a miss resolved to {fqn}"),
             }
         }
+    }
+
+    /// The other half of the property above: a miss is never named by a
+    /// PROGRAM. Nothing named here can ever be resolved, and an identity with
+    /// no upper bound on its length is one the graph cannot store — so a name
+    /// that is source text is not a weaker name, it is a different kind of
+    /// thing wearing the name field.
+    ///
+    /// MEASURED in the live graph before this guard existed: 357 edges carried
+    /// a `target_name` that was source text rather than an identifier. Six
+    /// exceeded the 2,704-byte btree limit on `edges_unique_unresolved` and
+    /// four more exceeded the 8,191-byte limit on `edges_occurrences_gin` — and
+    /// because the failing insert aborts the whole `process_file` task, nine
+    /// files lost EVERY symbol and edge they had, then retried forever.
+    ///
+    /// The fallback is the node kind, which is what this function already does
+    /// for an empty name: it says what the shape was and declines to pretend
+    /// the shape had a name.
+    ///
+    /// MUTATION: drop either arm of the `is_a_name` test and the matching row
+    /// below comes back as source text.
+    #[test]
+    fn no_miss_is_named_by_a_program() {
+        let iife = "function () {\n    var x = 1;\n    return x;\n}";
+        let named = Miss::because(
+            Reason::DynamicDispatch,
+            "FunctionExpression",
+            iife,
+            Reach::Item,
+            Vec::new(),
+        );
+        assert_eq!(named.name, "FunctionExpression", "a multi-line body is not a name");
+
+        // Minified source is one line and still a program. The bound is what
+        // catches it, and it sits far above the longest name this corpus has:
+        // 134 characters, a deeply nested module path.
+        let minified = format!("function(){{{}}}", "var a=1;".repeat(80));
+        assert!(minified.len() > MAX_NAME_BYTES, "the fixture has to exceed the bound to test it");
+        let long = Miss::unhandled("FunctionExpression", &minified, Reach::Item);
+        assert_eq!(long.name, "FunctionExpression", "a name has an upper bound");
+
+        // The bound does NOT reject a real name that happens to be long. This
+        // is the regression the guard could most easily cause.
+        let path = "MyEmployeesPortal/employee-portal/src/app/shared/formio-custom-components/participant-details-element/participant-details.constants.ts";
+        assert!(path.len() > 128, "the longest real names measured are around 134 bytes");
+        let module = Miss::unplaced("ImportDeclaration", path, Reach::Mod, Vec::new());
+        assert_eq!(module.name, path, "a long module path is still a name");
     }
 
     /// The reason is chosen by the door, not by the caller passing one twice.

@@ -1001,9 +1001,22 @@ fn names_one_type(raw: &str) -> Option<&str> {
         return None;
     }
     // A tuple, an object literal type, a string literal, a primitive keyword —
-    // an identifier starts with a letter, `_` or `$`, so anything else names no
-    // declaration this grammar can mint a segment for.
-    if !name.starts_with(|c: char| c.is_alphabetic() || c == '_' || c == '$') {
+    // an identifier starts with a letter, `_` or `$`, and GOES ON being one to
+    // its end, so anything else names no declaration this grammar can mint a
+    // segment for.
+    //
+    // Testing only that first character accepted every PHRASE beginning with a
+    // letter: `keyof Widget` minted a type called "keyof Widget", and
+    // `declare global { … }` minted one named by its entire body, which is
+    // where the 5,017-byte `target_name` in the live graph came from. Both are
+    // identities nothing can ever declare.
+    //
+    // Over CHARS rather than bytes: a TypeScript identifier may start with any
+    // Unicode letter, and `name[1..]` splits `Ünicode` through the middle of
+    // its first character.
+    let mut chars = name.chars();
+    let starts = chars.next().is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$');
+    if !starts || !chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$') {
         return None;
     }
     Some(name)
@@ -4352,6 +4365,150 @@ mod tests {
                 "`{raw}` names no single type"
             );
         }
+    }
+
+    /// **A TYPE NAME IS AN IDENTIFIER, NOT A PHRASE THAT STARTS LIKE ONE.**
+    ///
+    /// The reduction checked only the FIRST CHARACTER of what it had left, so
+    /// anything beginning with a letter was accepted whole. `{ a: number }` was
+    /// caught because it starts with a brace; `declare global { … }` starts
+    /// with `d`, so the entire 5,017-byte block became a type name and then an
+    /// edge's `target_name`. The short cases are the same defect and are worse
+    /// for being plausible: `keyof Widget` minted a type called "keyof Widget",
+    /// which is a fabricated identity nothing can ever declare.
+    ///
+    /// MUTATION: drop the whole-identifier test from `names_one_type` and every
+    /// `is_err` row below comes back as a type named by its own source text.
+    #[test]
+    fn a_type_name_is_an_identifier_and_not_a_phrase_beginning_with_one() {
+        for raw in [
+            "declare global { interface Store { put(k: string): void } }",
+            "keyof Widget",
+            "typeof widget",
+            "infer T",
+            "Widget extends Gadget ? A : B",
+        ] {
+            assert!(
+                matches!(type_segment(raw), Err(FqnError::NotATypeName { .. })),
+                "`{raw}` is a phrase, not a type name — got {:?}",
+                type_segment(raw)
+            );
+        }
+        // The reductions that DO name one type still do. This is the half the
+        // identifier test could most easily break.
+        for (raw, named) in [
+            ("Widget", "Widget"),
+            ("ns.deep.Widget<T>", "Widget"),
+            ("readonly Widget", "Widget"),
+            ("Widget | null", "Widget"),
+            ("$el", "$el"),
+            ("_private", "_private"),
+            ("Widget2", "Widget2"),
+            // A TypeScript identifier may start with any Unicode letter, and
+            // the identifier test walks CHARS for exactly this: indexing the
+            // rest of the string from byte 1 splits `Ü` down the middle and
+            // panics the walk on a file that parses perfectly well.
+            ("Ünicode", "Ünicode"),
+            ("Ünicode | null", "Ünicode"),
+        ] {
+            assert_eq!(type_segment(raw).as_deref(), Ok(named), "`{raw}` names `{named}`");
+        }
+    }
+
+    /// **NO NAME IS A PROGRAM, over a real corpus.**
+    ///
+    /// The fixtures above pin the two doors this defect came through. This
+    /// measures the property over whatever JavaScript and TypeScript is
+    /// actually there, because the shapes that broke it — an IIFE wrapping a
+    /// module, `it.each([…])` spanning lines, `declare global { … }` — are ones
+    /// this repo's own sources happen not to contain, so the fixtures alone
+    /// would have gone on passing while the live graph filled with programs.
+    ///
+    /// MEASURED before the fix: 357 edges named by source text, of which the
+    /// 10 largest aborted their whole `process_file` task against the
+    /// `edges_unique_unresolved` btree limit and the `edges_occurrences_gin`
+    /// index, costing nine files every symbol and edge they had.
+    ///
+    ///     SENSEI_CORPUS=/path/to/js cargo test -p senseid --bin senseid \
+    ///       javascript::tests::no_name_in_the_corpus_is_a_program \
+    ///       -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn no_name_in_the_corpus_is_a_program() {
+        let Ok(root) = std::env::var("SENSEI_CORPUS") else {
+            println!("SENSEI_CORPUS unset — nothing to read. See this test's docs.");
+            return;
+        };
+
+        let mut files = 0usize;
+        let mut names = 0usize;
+        let mut excluded = 0usize;
+        let mut offenders: Vec<(String, usize, String)> = Vec::new();
+        // THE PRODUCTION EXCLUSIONS, for the same reason the decode below is the
+        // production one: without them this walks `node_modules`, `dist` and
+        // every minified bundle, and a gate measuring files the daemon never
+        // opens is reporting on a corpus that does not exist.
+        //
+        // They are not enough on their own. A 9.4 MB bundle named
+        // `*.min.new.js` matches no glob here — `**/*.min.js` wants the name to
+        // END there — and parsing it overflows the stack, which aborts the
+        // process rather than failing the file. The daemon does not hit it only
+        // because `placement_on_disk` finds no manifest naming a package above
+        // it, which is a coincidence of that repo and not a guarantee. Tracked
+        // in docs/backlog.md; this gate is where it was found.
+        let rules = crate::classifiers::scan_rules();
+        for entry in walkdir::WalkDir::new(&root).into_iter().filter_map(Result::ok) {
+            let path = entry.path();
+            let Some(ext) = path.extension().and_then(|e| e.to_str()) else { continue };
+            if !matches!(ext, "js" | "mjs" | "cjs" | "ts" | "tsx" | "jsx" | "mts" | "cts") {
+                continue;
+            }
+            // Matched on the path RELATIVE to the corpus root, which is how the
+            // daemon matches it — an absolute path defeats a `**/dist/**` glob
+            // whenever the root itself sits under a directory of that name.
+            if rules.exclude_globs().is_match(path.strip_prefix(&root).unwrap_or(path)) {
+                excluded += 1;
+                continue;
+            }
+            // THE PRODUCTION DECODER, so this reads the corpus the indexer sees.
+            let Ok(bytes) = std::fs::read(path) else { continue };
+            let crate::classifiers::Decoded::Text(text) = crate::classifiers::decode_source(&bytes)
+            else {
+                continue;
+            };
+            let display = path.to_string_lossy().to_string();
+            // A BREADCRUMB, because the failure this gate has to survive cannot
+            // be caught. A file nested deeply enough overflows the parser's
+            // stack, and a Rust stack overflow aborts the process — no panic, no
+            // backtrace, no test name, nothing to say WHICH file did it. So the
+            // path goes to disk before the parse rather than after.
+            let _ = std::fs::write(std::env::temp_dir().join("sensei-corpus-last.txt"), &display);
+            let source =
+                Source { package: "corpus", module: "corpus", path: &display, text: &text };
+            let Ok(facts) = read(&source, &TypeHomes::unknown()) else { continue };
+            files += 1;
+            for name in facts.references.iter().filter_map(|r| match &r.target {
+                Resolution::Unresolved { evidence, .. } => Some(&evidence.name),
+                Resolution::Resolved { .. } => None,
+            }) {
+                names += 1;
+                if name.contains('\n') || name.len() > crate::indexer::lang::common::MAX_NAME_BYTES
+                {
+                    offenders.push((display.clone(), name.len(), name.chars().take(60).collect()));
+                }
+            }
+        }
+
+        println!(
+            "{files} files ({excluded} excluded by the scan rules), {names} unresolved names, \
+             {} of them programs",
+            offenders.len()
+        );
+        for (path, len, head) in offenders.iter().take(20) {
+            println!("  {len:>6} bytes  {path}\n         {head}");
+        }
+        assert!(files > 0, "no JavaScript under SENSEI_CORPUS — nothing to measure");
+        assert!(offenders.is_empty(), "{} names are source text, not names", offenders.len());
     }
 
     // ── 04b §3: what JavaScript has that Rust does not ───────────────────────
