@@ -19,11 +19,16 @@ decision, not on more work.
 
 ## What this session established
 
-- **E2E diagnosed.** First run gave ZERO specs — `make test-app-e2e` drops
-  `sensei_e2e`, so the daemon must create the DB + 123 tables before binding
-  :7744 and blew the 240s budget. Second run found it provisioned and ran fine.
-  The timeout is sized for a warm boot; the harness guarantees a cold one.
-  `globalSetup` no longer discards the app's stdio (`790f90b7`).
+- **E2E diagnosed, and the first diagnosis was wrong.** It is NOT cold-database
+  timing: `start_server` binds BEFORE touching the DB, on purpose, and falls
+  back to a degraded router that self-heals — so a slow DDL cannot stop the port
+  opening. The daemon never reached `start_server` at all (it wrote neither
+  `senseid.log` nor `serve.pid`). Candidate: the already-running PID guard in
+  `main.rs`, whose message goes to the parent's stderr — which was
+  `stdio: 'ignore'`. `globalSetup` now captures it (`790f90b7`).
+  See readiness **B3** (pre-bind exits skip `write_startup_error`, which has
+  three callers and all are post-bind) and **B4** (`Full`/`Degraded` is two
+  states for three situations — provisioning is not a fault).
 - **Root add/remove journey passes** (`setup-wizard.spec.ts`).
 - **Dōjō:** fixed a real blocker — vite binds IPv6, the daemon dials IPv4, so
   `dojo_sync` could never connect (`--host 127.0.0.1`, now `last_ok=t`). But
