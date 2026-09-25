@@ -18,6 +18,14 @@ jobs:
   # ── Daemon binaries (4 platforms) ──────────────────────────────────────────
   build-daemon:
     strategy:
+      # NOT fail-fast. `release` needs every leg of this matrix, so a single
+      # broken target blocks the release either way — but with fail-fast the
+      # other three legs are CANCELLED, and a cancelled leg reports nothing.
+      # On v0.10.0 that meant one failing target (aarch64-linux) hid the state
+      # of the other three, so each attempt could only ever reveal one problem
+      # and each round of finding out costs a version tag. Let them all finish
+      # and report.
+      fail-fast: false
       matrix:
         include:
           - target: aarch64-apple-darwin
@@ -32,13 +40,24 @@ jobs:
             os: ubuntu-latest
             artifact: sensei-linux-x86_64
             embedded: true
-          # aarch64-linux stays without embedded-llama-cpp until the cross
-          # Docker image is validated to carry cmake + the target C/C++
-          # toolchain. Track under #78; enable by flipping `embedded: true`.
+          # aarch64-linux builds NATIVELY on a GitHub-hosted ARM runner. It
+          # used to cross-compile in `cross`'s Docker image, and that failed on
+          # v0.10.0: `pg_query`'s build script runs bindgen, and the clang in
+          # that image could not find its own `stdbool.h`, so the whole release
+          # produced no artifacts at all. A native runner has a working
+          # toolchain and apt, which removes the entire class of
+          # target-C-headers-missing failure rather than patching one instance
+          # of it. `pg_query` reaches us through `dbd-core`, so this is not
+          # optional — the schema library brings a real PostgreSQL parser with
+          # it.
+          #
+          # Still `embedded: false`, deliberately: the reason to want a native
+          # runner here was #78, but flipping llama.cpp on in the same change
+          # that fixes a broken release would mean two variables at once. #78
+          # is now a one-line change (`embedded: true`).
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm
             artifact: sensei-linux-arm64
-            use-cross: true
             embedded: false
 
     runs-on: ${{ matrix.os }}
@@ -61,27 +80,21 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
-      - name: Install cross
-        if: matrix.use-cross
-        run: cargo install cross --locked
-
       # Embedded llama.cpp compiles native C++ via cmake — macOS has clang
-      # from the Xcode CLT preinstalled; ubuntu-latest doesn't ship cmake.
+      # from the Xcode CLT preinstalled; the Ubuntu runners don't ship cmake.
       - name: Install cmake (Linux, embedded builds only)
-        if: matrix.embedded && runner.os == 'Linux' && !matrix.use-cross
+        if: matrix.embedded && runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y cmake
 
+      # Every target now builds natively on a runner of its own architecture,
+      # so there is one build command rather than a cross/cargo branch. The
+      # `cross` install and the `if` around it went with the last
+      # cross-compiled target; re-add both together if one ever comes back.
       - name: Build binaries
         env:
           BUILD_TARGET: ${{ matrix.target }}
-          USE_CROSS: ${{ matrix.use-cross }}
           FEATURES: ${{ matrix.embedded && '--features senseid/embedded-llama-cpp' || '' }}
-        run: |
-          if [ "$USE_CROSS" = "true" ]; then
-            cross build --release --target "$BUILD_TARGET" -p senseid -p sensei-cli -p sensei-mcp $FEATURES
-          else
-            cargo build --release --target "$BUILD_TARGET" -p senseid -p sensei-cli -p sensei-mcp $FEATURES
-          fi
+        run: cargo build --release --target "$BUILD_TARGET" -p senseid -p sensei-cli -p sensei-mcp $FEATURES
 
       - name: Package binaries
         env:
@@ -317,7 +330,14 @@ jobs:
             exit 1
           fi
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to the action's master commit like every other use of it in this
+      # file — this one instance was left floating on `@stable`, which a tag
+      # owner can silently repoint. The Rust channel is still chosen by the
+      # explicit `toolchain:` input, so pinning the action does not freeze the
+      # compiler version.
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
 
       - name: Install dbd
         # Pinned to a tag, like every other dependency. dbd's own schema handling
