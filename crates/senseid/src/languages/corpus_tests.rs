@@ -79,11 +79,20 @@ fn read(path: &Path) -> Option<(Box<dyn super::LanguageAdapter>, String)> {
 fn no_import_name_contains_syntax() {
     let mut bad = Vec::new();
     let mut files = 0usize;
-    // ts/js/svelte are GONE from this list, not from the guarantee: their
-    // parsers moved to `crate::indexer::lang` with the TypeScript cutover, and
-    // this registry holds only a detection entry for them. The same property is
-    // held there by the walk's own import tests over the same corpus.
-    for path in corpus(&["rs", "py", "java"]) {
+    // `rs` ONLY, and everything else is gone from this list rather than from the
+    // guarantee: ts/js/svelte moved to `crate::indexer::lang` with the
+    // TypeScript cutover, and `py`/`java` moved with theirs. This registry holds
+    // a `DetectionOnly` entry for each, whose `parse` is an `unreachable!`. The
+    // same property is held in v2 by the walk's own import tests over the same
+    // corpus.
+    //
+    // `py` and `java` outlived their cutover here because this test was GREEN BY
+    // ACCIDENT: the walked tree contained no `.py` and no `.java` file, so the
+    // stale entries never reached the `unreachable!`. Adding the repo's first
+    // Python file — `scripts/check-grant-targets.py` — was what finally tripped
+    // it. A stale extension in this list is a latent panic, not a no-op, and it
+    // stays quiet exactly until someone adds an ordinary file.
+    for path in corpus(&["rs"]) {
         let Some((adapter, content)) = read(&path) else { continue };
         files += 1;
         let pf = adapter.parse(&content, &path.to_string_lossy());
@@ -383,6 +392,15 @@ fn trait_impl_relations_are_produced_and_mostly_resolve_over_the_real_tree() {
 /// fixture that happens to be simple.
 ///
 /// Loose floors: this pins "the producer works broadly", not counts that churn.
+///
+/// PERMANENTLY VACUOUS AS WRITTEN, and saying so is the point. Java cut over to
+/// `crate::indexer::lang`, so this registry answers with a `DetectionOnly` whose
+/// `supports_fqn()` is false and whose `fqn_output` is therefore `None` — every
+/// file is skipped, `files` stays 0, and the early return below reports that it
+/// asserted nothing. Adding `.java` to the tree would not revive it. Unlike the
+/// `parse`-based test above it at least fails SAFE rather than panicking, which
+/// is why it is still here rather than deleted: the property is real and wants
+/// re-homing in v2's own corpus tests, not discarding.
 #[test]
 fn java_heritage_over_the_real_tree_is_de_keyworded_and_mostly_resolves() {
     let mut total = 0usize;
