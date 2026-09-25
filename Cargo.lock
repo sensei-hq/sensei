@@ -1431,6 +1431,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbd-core"
+version = "0.15.0"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.15.0#2e0e5bfde151beb0630b7ae75fa70c3349c24ae6"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "dirs",
+ "encoding_rs",
+ "flate2",
+ "futures-lite",
+ "indexmap 2.14.0",
+ "pg_query",
+ "rayon",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2 0.10.9",
+ "sqlparser 0.62.0",
+ "sqlx",
+ "tar",
+ "thiserror 2.0.18",
+ "tokio",
+ "walkdir",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4665,7 +4694,7 @@ name = "sensei-bootstrap"
 version = "0.9.1"
 dependencies = [
  "chrono",
- "dbd-core",
+ "dbd-core 0.14.0",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -4835,7 +4864,7 @@ dependencies = [
  "cc",
  "chrono",
  "clap",
- "dbd-core",
+ "dbd-core 0.15.0",
  "dirs",
  "dojo-protocol",
  "encoding_rs",
