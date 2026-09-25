@@ -1,0 +1,109 @@
+name: Rust
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+# Least-privilege: these jobs only read the repo.
+permissions:
+  contents: read
+
+# NO UNTRUSTED INPUT REACHES A `run:` BLOCK IN THIS FILE. The only `${{ }}` is
+# `github.ref` in the concurrency group below, which is a ref name used as a
+# grouping key and never interpolated into a shell command. Nothing here reads
+# an issue title, a PR body, a branch label or a commit message — the inputs
+# that make a workflow injectable. Keep it that way: anything event-derived
+# must arrive through `env:` and be referenced as "$VAR", quoted.
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+# WHY THIS EXISTS. Until now no workflow ran `cargo test`, `cargo clippy` or
+# `cargo fmt` — `coverage.yml` runs the app and dōjō vitest suites and measures
+# Rust coverage, but measuring coverage is not the same as gating on a failure.
+# The 3,300-test senseid suite, which covers the indexer, the daemon, the task
+# engine and the store, ran only when someone remembered to run it by hand, and
+# the pre-commit hook covers `sensei-bootstrap` and the app — not senseid.
+#
+# TWO JOBS, on purpose. `lint` needs no infrastructure and finishes in minutes,
+# so a formatting or clippy failure is reported fast rather than behind a
+# 20-minute suite. `test` needs a provisioned Postgres and is slow; splitting
+# means one cannot mask the other.
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2
+      - name: Format
+        run: cargo fmt --check
+      # `--all-targets` so test code is linted too: a lint that only covers the
+      # library lets a warning land in the half of the tree that describes what
+      # the library is supposed to do.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      # pgvector, not plain postgres: `sensei.nodes.embedding` is a `vector`
+      # column and the schema will not apply without the extension. The daemon
+      # also puts `extensions` on the search_path for exactly this.
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The monorepo convention: `cargo test` NEVER touches `sensei`. See
+      # `PgStore::connect_test`, which refuses to default anywhere else.
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sensei_test
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2
+
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      # dbd owns the schema. Building it from source is slow, which is why it is
+      # cached with the rest of the Rust build.
+      - name: Install dbd
+        run: cargo install --git https://github.com/sensei-hq/dbd dbd --locked || cargo install --git https://github.com/sensei-hq/dbd dbd
+
+      # PROVISION FROM THE DDL TREE, not from a released bundle. A test database
+      # built from a published snapshot ages out of the tree and then tests
+      # exercising a new column fail on "column does not exist" — the drift
+      # issue #142 is about. This is also the path that caught #190's
+      # `import_libraries` bug: a FRESH provision runs the import procedures,
+      # and a long-lived database never re-runs them.
+      - name: Provision sensei_test
+        run: |
+          createdb -h localhost -U postgres sensei_test
+          cd database && DATABASE_URL="$TEST_DATABASE_URL" dbd deploy
+
+      # The suite that had no gate. `--bin senseid` because that is where it
+      # lives; the other crates are covered separately below.
+      - name: Test senseid
+        run: cargo test -p senseid --bin senseid
+
+      - name: Test the rest of the workspace
+        run: cargo test --workspace --exclude senseid
