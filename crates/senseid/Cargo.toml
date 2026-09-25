@@ -45,6 +45,11 @@ tree-sitter-java = "0.23"
 # `classifiers::decode_source` can read a BOM rather than calling every
 # UTF-16 file a binary.
 encoding_rs = "0.8"
+# The PostgreSQL half of `indexer::lang::sql`. dbd owns SQL reference
+# extraction — its `parse_sql` is path-free and its `Entity` carries a
+# read/write split no other language's parser produces — so this indexer calls
+# it rather than growing a second implementation.
+dbd-core = { git = "https://github.com/sensei-hq/dbd", tag = "v0.14.0" }
 tree-sitter-c-sharp = "=0.23.1"
 tree-sitter-kotlin-ng = "1.1"
 tree-sitter-php = "=0.23.11"

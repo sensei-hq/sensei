@@ -90,6 +90,15 @@ pub enum ReadError {
     /// The parser returned no tree. Distinct from a tree full of ERROR nodes,
     /// which is a normal thing to walk.
     NotParsed,
+    /// The parser returned no tree AND SAID WHY.
+    ///
+    /// Separate from [`ReadError::NotParsed`] because the two carry different
+    /// amounts of truth: tree-sitter gives a bare `None`, while dbd's
+    /// `parse_sql` returns the complaint Postgres itself made about the SQL.
+    /// `process_file` writes the reason to `index_errors`, where an operator
+    /// reads it — so folding this into the payload-free variant would throw
+    /// away the only thing that makes a failed file actionable.
+    NotParsedBecause(String),
     /// The file's own identity could not be minted, so nothing inside it could
     /// be named either.
     NoFileIdentity(FqnError),

@@ -132,6 +132,11 @@ pub fn read(source: &Source<'_>, _types: &TypeHomes) -> Result<FileFacts, ReadEr
         )));
     }
 
+    // NOTE: `SqlAdapter::read` already dispatched on the dialect, so this is
+    // the second check of one fact. It is kept because this function is also
+    // called directly — by its own tests and by the corpus gate — and a reader
+    // that trusts its caller to have checked is one that reads a Postgres file
+    // the moment somebody calls it without checking.
     let file = SqlAdapter
         .file_fqn(source.package, source.module, source.path)
         .map_err(ReadError::NoFileIdentity)?;
