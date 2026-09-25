@@ -1670,3 +1670,49 @@ such signal, which is why dbd has to defer it.
 language provides this and we do not model it", kept out of the A4 denominator,
 rather than a per-language list of built-in names — the prelude table already
 plays that role and is enumerated per language.
+
+## A single file can abort the daemon: the parser's stack is not bounded
+
+FOUND while running the new `no_name_in_the_corpus_is_a_program` gate over a
+real tree. One file overflows the parse stack, and a Rust stack overflow is not
+a panic — there is no unwind, no backtrace and no file name. The process
+aborts.
+
+    <a repo>/Scripts/ej/web/ej.web.all.min.new.js   9,364,200 bytes, minified
+
+`process_file` already takes care that one bad file cannot wedge the pool: the
+parse runs on `spawn_blocking` precisely so the watchdog can preempt it. That
+protects against a parse that HANGS. It does nothing about one that aborts —
+`spawn_blocking` runs in the same process, so the whole daemon goes with it.
+
+**Why it is not happening today, and why that is not reassurance.** Three
+things each independently hide it, none of them a guarantee:
+
+1. The exclude globs nearly catch it. `**/*.min.js` requires the name to END
+   there, and this one is `*.min.new.js`. The sibling `ej.web.all.min.js` does
+   match.
+2. `placement_on_disk` finds no manifest naming a package above it — the
+   nearest is a `.csproj`, which names no package for a `.js` file — so
+   `process_file` returns at that check, 4 ms, before it ever reads the bytes.
+3. Its content has not changed, so nothing re-parses it.
+
+Point 2 is the load-bearing one, and it is a property of that repository rather
+than of the indexer. The same bundle under a `package.json` would be parsed.
+**The planned `TRUNCATE nodes, edges` + full re-index re-parses everything**,
+so this wants deciding before that runs rather than after.
+
+**The options, which differ in what they cost:**
+
+- **Bound the input.** Refuse to parse a file above a size, or one whose
+  longest line is far past anything hand-written, and record an explicit skip.
+  Matches how `classifiers.rs` already reasons about generated output, and how
+  `query.rs` already caps `max_line_len` at 240. Needs a name for the skip:
+  either reuse `excluded_by_config` or add a `sensei.scan_skip_reason` value,
+  and the latter is a DDL change and a deploy.
+- **Widen the globs** to `**/*.min.*.js` and friends. Cheapest, and it fixes
+  this file rather than the class — the next bundle is named something else.
+- **Give the parse thread a large stack.** Raises the ceiling without
+  establishing one; a deeper file still aborts, just later.
+
+Bounding the input is the only one that states a rule. The other two move the
+line.
