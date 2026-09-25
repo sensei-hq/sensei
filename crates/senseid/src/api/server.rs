@@ -14,6 +14,29 @@ fn write_startup_error(msg: &str) {
     let _ = std::fs::write(dir.join("startup-error.log"), msg);
 }
 
+/// What to tell a user whose database exists and cannot be used.
+///
+/// Names `sensei bootstrap` and NOTHING destructive. The earlier wording
+/// offered `dbd reset` as a peer alternative, and `dbd reset` drops the
+/// project's managed objects — a data-loss command one copy-paste away from a
+/// daemon that has usually just lost a cold-boot race and will self-heal on its
+/// own. The safe path is idempotent, so it is the only one worth naming.
+fn degraded_startup_message(database_url: &str, error: &str) -> String {
+    format!(
+        "[senseid] Database connection failed after startup retries — daemon staying alive in degraded mode; it will self-heal automatically when the DB becomes reachable.\n  URL: {database_url}\n  Error: {error}\n  Hint: if it does not recover, run `sensei bootstrap` to provision the database."
+    )
+}
+
+/// What to say while the database is still being created.
+///
+/// Deliberately carries NO remedy: nothing is broken and there is nothing for
+/// the user to do. Advice here would be advice to interrupt a working install.
+fn provisioning_startup_message(db_name: &str) -> String {
+    format!(
+        "[senseid] Database `{db_name}` does not exist yet — it is being provisioned. The daemon is up and will switch to full mode as soon as the schema is in place."
+    )
+}
+
 fn clear_startup_error() {
     let dir = sensei_bootstrap::SenseiConfig::from_env().sensei_dir();
     let _ = std::fs::remove_file(dir.join("startup-error.log"));
@@ -156,17 +179,38 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
                 (router.layer(cors), Some(queue))
             }
             Err(e) => {
-                let msg = format!(
-                    "[senseid] Database connection failed after startup retries — daemon staying alive in degraded mode; it will self-heal automatically when the DB becomes reachable.\n  URL: {}\n  Error: {}\n  Hint: run `sensei bootstrap` (or `dbd reset`) to (re)provision the database.",
-                    database_url, e
-                );
+                // WHICH failure is this? A database that does not exist yet is
+                // a first install still being built — a WAIT — and reporting it
+                // as degraded told people their install had broken. Ask the
+                // question the project already owns rather than reading the
+                // connect error's text (see `resilience::mode_after_failed_connect`).
+                let exists = sensei_bootstrap::database::database_exists(&cfg.db_name).ok();
+                let mode = crate::api::resilience::mode_after_failed_connect(exists);
+                let provisioning = mode == sensei_bootstrap::DaemonDbMode::Provisioning;
+                let msg = if provisioning {
+                    provisioning_startup_message(&cfg.db_name)
+                } else {
+                    degraded_startup_message(&database_url, &e)
+                };
                 eprintln!("{}", msg);
-                write_startup_error(&msg);
-                crate::api::resilience::mark_degraded();
-                tracing::warn!(
-                    "senseid listening on :{} (degraded — DB unavailable; self-heal armed)",
-                    port
-                );
+                // A startup-error file is for FAULTS. Provisioning is not one,
+                // and leaving a file behind would make the app show an error
+                // for an install that is working.
+                if provisioning {
+                    clear_startup_error();
+                    crate::api::resilience::mark_provisioning();
+                    tracing::info!(
+                        "senseid listening on :{} (provisioning — database being created; self-heal armed)",
+                        port
+                    );
+                } else {
+                    write_startup_error(&msg);
+                    crate::api::resilience::mark_degraded();
+                    tracing::warn!(
+                        "senseid listening on :{} (degraded — DB unavailable; self-heal armed)",
+                        port
+                    );
+                }
 
                 // Serve the degraded router through a swappable handle so the
                 // background task below can replace it in place once the DB is up.
@@ -758,7 +802,10 @@ mod bind_host_tests {
 
 #[cfg(test)]
 mod worker_count_tests {
-    use super::{WORKER_DB_RESERVE, WORKER_FLOOR, resolve_worker_count};
+    use super::{
+        WORKER_DB_RESERVE, WORKER_FLOOR, degraded_startup_message, provisioning_startup_message,
+        resolve_worker_count,
+    };
 
     /// The cap is derived from the DB pool size, not hardcoded — assert it so a
     /// future change to `DB_POOL_MAX_CONNECTIONS` (or the reserve) is caught here
@@ -815,5 +862,44 @@ mod worker_count_tests {
         assert_eq!(resolve_worker_count(8, Some("nope".to_string())), 8);
         assert_eq!(resolve_worker_count(64, Some("0".to_string())), cap());
         assert_eq!(resolve_worker_count(1, Some("nope".to_string())), WORKER_FLOOR);
+    }
+
+    /// **NEVER RECOMMEND A DESTRUCTIVE COMMAND TO SOMEBODY WHOSE PROBLEM MIGHT
+    /// BE THAT THEIR DATABASE IS STILL BEING BUILT.**
+    ///
+    /// The degraded message used to end *"run `sensei bootstrap` (or
+    /// `dbd reset`) to (re)provision the database"*. `dbd reset` DROPS the
+    /// project's managed objects. Offering it as a peer alternative to
+    /// `sensei bootstrap` — which is the safe, idempotent path — puts data loss
+    /// one copy-paste away from a daemon that may simply have lost a cold-boot
+    /// race, and the daemon self-heals from that without anyone typing
+    /// anything.
+    ///
+    /// MUTATION: put any of the named commands back and this goes red.
+    #[test]
+    fn the_degraded_advice_never_proposes_dropping_the_database() {
+        let msg = degraded_startup_message("postgres://localhost/sensei", "connection refused");
+        for destructive in ["dbd reset", "dropdb", "DROP DATABASE", "TRUNCATE"] {
+            assert!(
+                !msg.contains(destructive),
+                "degraded advice must not mention `{destructive}`:\n{msg}"
+            );
+        }
+        assert!(msg.contains("sensei bootstrap"), "it should still name the SAFE path");
+        // The cause is still reported — dropping the advice must not drop the
+        // diagnosis with it.
+        assert!(msg.contains("connection refused"), "the error must survive");
+    }
+
+    /// A database that does not exist yet is a WAIT, not a fault — so its
+    /// message says so and offers no remedy at all, because there is nothing
+    /// for the user to fix.
+    #[test]
+    fn the_provisioning_message_asks_for_patience_not_action() {
+        let msg = provisioning_startup_message("sensei_e2e");
+        assert!(msg.contains("sensei_e2e"), "name the database being built");
+        for remedy in ["dbd reset", "dropdb", "sensei bootstrap"] {
+            assert!(!msg.contains(remedy), "provisioning is not actionable: `{remedy}`");
+        }
     }
 }
