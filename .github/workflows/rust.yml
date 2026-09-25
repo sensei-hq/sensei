@@ -49,6 +49,14 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # Not Rust, but this is the workflow's fast no-infrastructure gate and the
+      # check is a static read of `database/`. It guards the failure that the
+      # `test` job below only catches after a full provision: a role granted to
+      # but never created aborts the deploy (#196). Calls the make target rather
+      # than the script so the entry point stays single.
+      - name: DDL grant targets
+        run: make check-ddl-grants
+
   test:
     runs-on: ubuntu-latest
     services:
