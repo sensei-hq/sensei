@@ -65,6 +65,29 @@ impl TestGate {
 /// anything derived from them.
 pub(crate) static CORRECTIONS_TABLE_LOCK: TestGate = TestGate::new();
 
+/// Serialises the tests that call `prune_activity`, which is DATABASE-WIDE.
+///
+/// It selects every eligible session in `activity.sessions` — analyzed, older
+/// than the cutoff, and either covered by a session-derived daily metric or past
+/// the hard backstop — and deletes their children, including
+/// `activity.capture_watermarks` keyed on `client_session_id`. Being global is the
+/// behaviour under test, so these tests cannot be isolated by scoping their own
+/// rows: each one deliberately AGES and ANALYZES its session and seeds a covering
+/// metric precisely to make it eligible, which also makes it eligible for every
+/// sibling's prune.
+///
+/// Concurrently they delete each other's fixtures. Observed in CI as
+/// `prune_activity_deletes_analyzed_sessions_past_cutoff_and_children` failing its
+/// own `assert_eq!(wm_before.0, 1, "watermark fixture did not land")` with
+/// `left: 0` — the watermark had landed and a sibling's prune removed it before
+/// the count. The assertion exists because "assert the row is GONE" passes
+/// trivially when it was never there; it caught a sibling instead.
+///
+/// Hold it for the whole span between seeding and the last assertion, not just
+/// around the `prune_activity` call — the damage is done to the FIXTURE, before
+/// the call under test.
+pub(crate) static ACTIVITY_PRUNE_GATE: TestGate = TestGate::new();
+
 /// Serialises the tests that edit a SEEDED `sensei.schedules` row, or run the
 /// seed import.
 ///
