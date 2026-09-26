@@ -25,9 +25,12 @@
 ##   Homebrew tap: sensei-hq/homebrew-tap (tracked as git subtree at homebrew/)
 ##   macOS install: brew tap sensei-hq/tap && brew install sensei
 ##
-## Subtrees (editable in-repo, synced to their own GitHub repos):
-##   homebrew/    → sensei-hq/homebrew-tap   (make tap-push)
-##   marketplace/ → sensei-hq/marketplace    (make marketplace-push)
+## Mirrored to their own GitHub repos (editable in-repo; each target clones and
+## copies — these are not git subtrees despite the historical wording):
+##   marketplace/ → sensei-hq/marketplace    (make marketplace-push, run by bump)
+##   homebrew/    → sensei-hq/homebrew-tap   — TEMPLATES. Rendered and published
+##                  by release.yml's `update-tap`, never by `bump`. `tap-push` is
+##                  a manual escape hatch that refuses an unrendered template.
 
 .PHONY: crates crates-debug crates-all \
         install install-service install-app install-debug \
@@ -651,8 +654,17 @@ bump:
 	@# so the next daemon deploy fetches v$(_v)'s DDL instead of serving the
 	@# previous version's cached bundle (which would re-apply the old schema).
 	@$(MAKE) dbd-cache-clear
-	@echo "Syncing homebrew-tap and marketplace..."
-	@$(MAKE) tap-push marketplace-push
+	@# DELIBERATELY NOT `tap-push`. The homebrew formula and cask are templates
+	@# carrying `REPLACE_WITH_*_SHA256`, because a checksum cannot exist until the
+	@# release assets do. Pushing them here published a version nobody could
+	@# install and left `release.yml`'s `update-tap` to repair it minutes later —
+	@# fail-OPEN. When TAP_GITHUB_TOKEN expired the repair stopped, and the tap sat
+	@# advertising placeholder checksums for ~8 releases with the last good formula
+	@# already overwritten. `update-tap` is now the sole writer of both files and
+	@# renders them from these templates, so a failure leaves the tap on the
+	@# previous installable release.
+	@echo "Syncing marketplace..."
+	@$(MAKE) marketplace-push
 	@# Install the version we just tagged, so the machine that cut the release is
 	@# running it. Deliberately AFTER the push: the tag is what CI builds from, so
 	@# a local toolchain problem must not strand a release that is already valid
@@ -687,7 +699,24 @@ dbd-cache-clear:
 
 # Sync homebrew/ files to the tap repo (sensei-hq/homebrew-tap).
 # Uses a temporary clone so it works regardless of subtree/squash history.
+# Manual escape hatch for a formula/cask BODY change (install steps, deps,
+# caveats) that must reach the tap outside a release. It is NOT part of `bump`
+# any more — `update-tap` renders and publishes both files from these templates.
+#
+# REFUSES to publish an unrendered template. The check is the whole point: these
+# files normally hold `REPLACE_WITH_*_SHA256`, and copying them over the tap's
+# rendered copy is exactly what left `brew install` broken for ~8 releases. To
+# change the body, edit it here and let the next release publish it; if it cannot
+# wait, render it first with real checksums from the current release's assets.
 tap-push:
+	@if grep -q 'REPLACE_WITH_' homebrew/Formula/sensei.rb homebrew/Casks/senseihq.rb; then \
+	  echo "refusing to push: homebrew/ still holds REPLACE_WITH_* placeholders."; \
+	  echo "  These are templates — release.yml's update-tap renders them from the"; \
+	  echo "  published assets. Pushing them would replace the tap's real checksums"; \
+	  echo "  with placeholders and break 'brew install'."; \
+	  echo "  Body-only change? Let the next release carry it."; \
+	  exit 1; \
+	fi
 	@tmpdir=$$(mktemp -d) && \
 	git clone git@github.com:sensei-hq/homebrew-tap.git "$$tmpdir" 2>&1 && \
 	cp homebrew/Formula/sensei.rb "$$tmpdir/Formula/" && \
