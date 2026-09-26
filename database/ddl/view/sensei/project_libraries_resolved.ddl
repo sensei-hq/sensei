@@ -1,3 +1,5 @@
+set search_path to sensei, extensions;
+
 CREATE OR REPLACE VIEW sensei.project_libraries_resolved AS
 SELECT
     l.*,

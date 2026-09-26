@@ -1,3 +1,5 @@
+set search_path to sensei, extensions;
+
 CREATE TABLE IF NOT EXISTS sensei.library_enablement (
   library_id   uuid         NOT NULL REFERENCES sensei.libraries(id) ON DELETE CASCADE,
   project_id   uuid         REFERENCES sensei.projects(id) ON DELETE CASCADE,

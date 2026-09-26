@@ -1,3 +1,5 @@
+set search_path to public, extensions;
+
 create table if not exists public.logs (
   id                       uuid        primary key default gen_random_uuid()
 , level                    varchar     not null
