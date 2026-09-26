@@ -36,14 +36,51 @@ select e.id              as edge_id
      -- make the replace fail against an existing database.
      , coalesce(tgt.name, e.target_name) as target_symbol
      -- WHY an unresolved edge is unresolved, from the walk that could not
-     -- place it. Written by the indexer into `props.reason`; the vocabulary is
-     -- sensei.reason_codes under domain `code_graph`, and Reason::as_label on
-     -- the Rust side is the one producer of these strings.
+     -- place it. The vocabulary is sensei.reason_codes under domain
+     -- `code_graph`, and Reason::as_label on the Rust side is the one producer
+     -- of these strings. Written by the indexer PER USE — see the reduction
+     -- below; this comment used to say `props.reason` and that was never a
+     -- writer path.
      --
      -- A named column rather than every consumer spelling `props->>'reason'`
      -- for itself. Appended last for the reason target_symbol was: `create or
      -- replace view` may only add columns at the end.
-     , e.props->>'reason' as unresolved_reason
+     --
+     -- READ FROM THE OCCURRENCES, which is where the indexer actually puts it.
+     -- This column used to be `e.props->>'reason'` alone, and the comment above
+     -- said the indexer writes `props.reason` — it does not.
+     -- `persist::with_outcome` is called from `occurrence_prop`, so the verdict
+     -- lands on each USE, nested under the file that made it:
+     --   props.occurrences["src/a.rs"][0].reason
+     -- There is no writer path that produces a top-level key. The result was
+     -- this column reading NULL on all 2,428,016 unresolved edges, so not one
+     -- production miss could be classified, in any language — while the tests
+     -- stayed green because they seed the top-level shape by hand.
+     --
+     -- AN EDGE AGGREGATES MANY USES, so this is a REDUCTION and the rule is
+     -- LOWEST PRECEDENCE WINS. `reason_codes.precedence` is severity order, so
+     -- an edge whose uses are `plumbing` (a deliberate refusal, 90) and
+     -- `receiver_type_unknown` (a fault, 30) reports the FAULT: a real gap must
+     -- not be hidden by a filter that happens to share the edge.
+     --
+     -- `jsonb_path_query` rather than `jsonb_each` + `jsonb_array_elements`:
+     -- jsonpath is LAX, so a props shape that does not match yields no rows
+     -- instead of raising "cannot extract elements from a scalar", and one
+     -- malformed edge must not fail every query over the folder.
+     --
+     -- The top-level key is still preferred when present, so an explicit
+     -- edge-level verdict (what the view tests seed) outranks the reduction.
+     , coalesce(
+         e.props->>'reason',
+         ( select rc.code
+             from jsonb_path_query(
+                    coalesce(e.props->'occurrences', '{}'::jsonb), '$.*[*].reason') v
+             join reason_codes rc
+               on rc.domain = 'code_graph'
+              and rc.code   = v #>> '{}'
+            order by rc.precedence
+            limit 1 )
+       )                 as unresolved_reason
      , src.language       as source_language
      -- WHICH RUNG of the resolution ladder placed a resolved edge. The
      -- sibling of unresolved_reason above: that one says why the ladder
@@ -54,7 +91,22 @@ select e.id              as edge_id
      -- Vocabulary: sensei.reason_codes under domain `code_graph_rung`, whose
      -- precedence is CLIMB ORDER. Written by the indexer into `props.rung`;
      -- Rung::as_label on the Rust side is the one producer of these strings.
-     , e.props->>'rung'   as resolved_via
+     --
+     -- Same nesting and the same reduction as unresolved_reason above: the rung
+     -- is written per USE, and precedence here is CLIMB ORDER, so the strongest
+     -- proof sorts first. An edge placed `declared_here` by one use and
+     -- `in_the_prelude` by another is reported on the stronger evidence.
+     , coalesce(
+         e.props->>'rung',
+         ( select rc.code
+             from jsonb_path_query(
+                    coalesce(e.props->'occurrences', '{}'::jsonb), '$.*[*].rung') v
+             join reason_codes rc
+               on rc.domain = 'code_graph_rung'
+              and rc.code   = v #>> '{}'
+            order by rc.precedence
+            limit 1 )
+       )                 as resolved_via
   from edges         e
   join folders       f
     on f.id          = e.folder_id
