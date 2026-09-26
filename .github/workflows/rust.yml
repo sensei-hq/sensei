@@ -101,13 +101,19 @@ jobs:
       # repo's ROOT package rather than a `crates/*` member, so it does not
       # appear in a listing of the workspace members.
       #
-      # PINNED, and pinned SEPARATELY from `dbd-core`. The crate pins
-      # `dbd-core` at v0.15.0 for the SQL reader in `indexer::lang::sql`; this
-      # pin is the tool that deploys the schema. They are different concerns
-      # and move on their own — v0.17.0 is the version verified to deploy the
-      # current `database/` tree. Do not "align" them.
+      # PINNED to the SAME version as `dbd-core` in `crates/senseid` and
+      # `crates/bootstrap` — v0.19.0 everywhere.
+      #
+      # An earlier version of this comment argued the opposite: that the CLI
+      # (the schema tool) and the library (the SQL reader) are different concerns
+      # which should move independently, and said "do not align them". That was
+      # wrong, and `release.yml` already recorded why — the daemon embeds
+      # `dbd-core` to deploy its OWN schema, so a CLI that accepts DDL the
+      # embedded library cannot parse means CI provisions a database differently
+      # from an install. The tree had drifted four ways (v0.12.0 / v0.14.0 /
+      # v0.15.0 / v0.17.0); see #197. One version, moved in one commit.
       - name: Install dbd
-        run: cargo install --git https://github.com/sensei-hq/dbd --tag v0.17.0 dbd-cli --locked
+        run: cargo install --git https://github.com/sensei-hq/dbd --tag v0.19.0 dbd-cli --locked
 
       # PROVISION FROM THE DDL TREE, not from a released bundle. A test database
       # built from a published snapshot ages out of the tree and then tests
