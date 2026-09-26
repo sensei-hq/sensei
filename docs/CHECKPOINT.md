@@ -52,15 +52,27 @@ cd app && bun run test:e2e
 
 ## Open questions
 
-- **#198 blocks every future release from finishing green.** `TAP_GITHUB_TOKEN`
-  is unset/expired so `update-tap` cannot write the tap — 0.10.1's SHAs were
-  filled BY HAND and that does not generalise. Separately `deploy-dojo` has no
-  `DOJO_DATABASE_URL` and correctly refuses; that is a **Postgres wire-protocol
-  URL for applying DDL**, not a stand-in for the Cloudflare Worker's
-  `PUBLIC_SUPABASE_URL` (PostgREST/Auth over HTTPS) — the two are different
-  layers. The real question is whether that job should exist at all, since the
-  dōjō schema has been pushed by hand since `dojo-mind` was removed. Both need a
-  decision, not code.
+- **#200 is live and unmitigated.** `DOJO_DATABASE_URL` is now set, `dojo-prod`
+  has **no required reviewers**, and `design.yaml` has no `released: true` — so
+  the next `make bump` runs `dbd reconcile --scope dojo` against **production
+  Supabase, unattended**. Pre-release dōjō automation was deferred ON PURPOSE
+  (automating it forces migration-version maintenance before v1), and that
+  deferral was encoded only as "the secret is absent". Mitigate by adding
+  reviewers to `dojo-prod` or unsetting the secret; the fix is to gate the job on
+  `released: true`. Agreed: **track, do not implement yet.**
+- **#198 — the tap has been broken since 2026-08-08, not since 0.10.0.**
+  `TAP_GITHUB_TOKEN` IS configured (2026-05-29) but the API rejects it as *Bad
+  credentials* — expired or revoked. Last `github-actions[bot]` tap commit was
+  v0.7.2; the tap at 2026-08-26 read `version "0.9.1"` with all four
+  `REPLACE_WITH_*` placeholders. ~7 weeks, ~8 releases where `brew install` could
+  not work. 0.10.1's SHAs were filled BY HAND and that does not generalise.
+  **Do not run `make tap-push` until a release's `update-tap` succeeds** — the
+  in-repo formula is a template and would overwrite the tap's real checksums.
+- `DOJO_DATABASE_URL` is a **Postgres wire-protocol URL for applying DDL**, not a
+  stand-in for the Cloudflare Worker's `PUBLIC_SUPABASE_URL` (PostgREST/Auth over
+  HTTPS). PostgREST cannot issue DDL, so the two are different layers, not
+  duplicates. What IS duplicated is the credential: the same value already lives
+  in dōjō's git-ignored `.env`, and there is no `supabase/migrations/` tree.
 - **#197** — four different dbd versions pinned (release.yml v0.12.0, bootstrap
   v0.14.0, senseid v0.15.0, rust.yml v0.17.0), and release.yml violates the
   invariant it documents. Two `dbd-core` copies compile, so `pg_query` builds
