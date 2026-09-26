@@ -149,7 +149,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
+    #[cfg_attr(not(target_os = "macos"), ignore = "needs the macOS Keychain")]
     fn roundtrip_set_get_delete() {
         let id = unique_id();
         assert!(!has_key(&id), "fresh id should not have a key");
@@ -165,7 +165,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
+    #[cfg_attr(not(target_os = "macos"), ignore = "needs the macOS Keychain")]
     fn set_replaces_existing_value() {
         let id = unique_id();
         set_key(&id, "first").unwrap();
@@ -175,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
+    #[cfg_attr(not(target_os = "macos"), ignore = "needs the macOS Keychain")]
     fn delete_missing_is_noop() {
         let id = unique_id();
         delete_key(&id).expect("delete on missing should not error");
@@ -213,6 +213,16 @@ mod argv_tests {
 
     /// The secret still round-trips, so the stdin path actually works — a write
     /// that leaks nothing but stores nothing would pass the test above.
+    ///
+    /// macOS ONLY, and the gate marks a PRODUCT gap rather than a test that does
+    /// not apply. This module shells out to `/usr/bin/security` with no
+    /// `cfg(target_os)` anywhere, so on Linux every credential read and write in
+    /// here fails with `NotFound` — and the release publishes
+    /// `sensei-linux-x86_64` and `sensei-linux-arm64` regardless. The gate keeps
+    /// the Linux CI suite honest (a Keychain assertion cannot mean anything
+    /// without a Keychain); it does not make the Linux daemon able to store a
+    /// key. Tracked separately — do not read this attribute as "handled".
+    #[cfg_attr(not(target_os = "macos"), ignore = "needs the macOS Keychain")]
     #[test]
     fn a_secret_written_over_stdin_reads_back_intact() {
         let secret = format!("ztest-{}", uuid::Uuid::new_v4().simple());
