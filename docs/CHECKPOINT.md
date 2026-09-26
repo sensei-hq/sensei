@@ -54,8 +54,13 @@ cd app && bun run test:e2e
 
 - **#198 blocks every future release from finishing green.** `TAP_GITHUB_TOKEN`
   is unset/expired so `update-tap` cannot write the tap — 0.10.1's SHAs were
-  filled BY HAND and that does not generalise. `DOJO_DATABASE_URL` is also unset,
-  so `deploy-dojo` correctly refuses. Both need a decision, not code.
+  filled BY HAND and that does not generalise. Separately `deploy-dojo` has no
+  `DOJO_DATABASE_URL` and correctly refuses; that is a **Postgres wire-protocol
+  URL for applying DDL**, not a stand-in for the Cloudflare Worker's
+  `PUBLIC_SUPABASE_URL` (PostgREST/Auth over HTTPS) — the two are different
+  layers. The real question is whether that job should exist at all, since the
+  dōjō schema has been pushed by hand since `dojo-mind` was removed. Both need a
+  decision, not code.
 - **#197** — four different dbd versions pinned (release.yml v0.12.0, bootstrap
   v0.14.0, senseid v0.15.0, rust.yml v0.17.0), and release.yml violates the
   invariant it documents. Two `dbd-core` copies compile, so `pg_query` builds
