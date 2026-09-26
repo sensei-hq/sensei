@@ -366,10 +366,15 @@ jobs:
         # step with the dbd-core tag in crates/bootstrap/Cargo.toml — the daemon
         # embeds the same library to deploy its own schema, and a skew means the
         # CLI accepts DDL the daemon cannot parse.
-        run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.12.0 dbd-cli
+        #
+        # That invariant was VIOLATED by this very line until #197: it pinned
+        # v0.12.0 against bootstrap's v0.14.0, and this is the pin that deploys
+        # the dōjō's production schema. Now v0.19.0, matching both `dbd-core`
+        # pins and `rust.yml`.
+        run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.19.0 dbd-cli
 
       - name: Fail on any unparseable DDL
-        # THE critical guard, and still required at 0.12.0. dbd drops a file it
+        # THE critical guard, and still required at 0.19.0. dbd drops a file it
         # cannot parse from the entity set SILENTLY and still reports success —
         # that is how dojo.set_pack_adoption and dojo.can_read_repository_metric
         # were never created on any database. 0.12.0 fixed the specific parse
