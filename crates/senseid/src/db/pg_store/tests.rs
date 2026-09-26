@@ -13895,6 +13895,116 @@ async fn get_callers_by_name_finds_a_caller_through_an_unresolved_edge() {
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
 
+/// The rung and the reason must be read from the shape THE INDEXER WRITES.
+///
+/// `graph_resolution_says_which_rung_placed_each_edge` and its boundary sibling
+/// both seed props at the TOP level — `{"rung": "declared_here"}` — via
+/// `insert_edge_with_props`, which bypasses `persist::write`. The real writer
+/// puts the verdict on each OCCURRENCE, nested under the file that made it:
+///
+///     props.occurrences["src/a.rs"][0].rung
+///     props.occurrences["src/a.rs"][0].reason
+///
+/// `persist::with_outcome` is called from `occurrence_prop`, so there is no path
+/// that produces a top-level key. The consequence in production: `resolved_via`
+/// was NULL on all 1,640,215 placed edges and `unresolved_reason` NULL on all
+/// 2,428,016 missed ones — every match and every miss unclassifiable, in every
+/// language — while both existing tests stayed green on a shape nothing emits.
+///
+/// AN EDGE AGGREGATES MANY OCCURRENCES, so the edge-level label is a REDUCTION,
+/// and the rule is the same on both sides: LOWEST PRECEDENCE WINS.
+/// `reason_codes.precedence` is climb order for a rung and severity order for a
+/// reason, so the strongest proof and the most serious fault both sort first. An
+/// edge whose uses are `plumbing` (refusal, 90) and `receiver_type_unknown`
+/// (fault, 30) reports the fault — a real gap must not be hidden by a
+/// deliberate filter that happens to share the edge.
+///
+/// Mutation that must break this test: reverse the `order by rc.precedence`, or
+/// drop the `jsonb_each` over occurrences and read only the top-level key.
+#[tokio::test]
+async fn the_rung_and_reason_come_from_the_occurrences_the_indexer_writes() {
+    let s = pg_store().await;
+    let folder = format!("nested_verdict_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    let caller = s
+        .seed_node(&fid, "function", "caller", "src/a.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    let callee = s
+        .seed_node(&fid, "function", "callee", "src/b.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+
+    // PLACED, with the rung nested exactly as `occurrence_prop` writes it. Two
+    // occurrences with different rungs, so the reduction is exercised rather
+    // than assumed: `declared_here` (10) must win over `in_the_prelude` (60).
+    s.insert_edge_with_props(
+        &fid,
+        &caller,
+        Some(&callee),
+        None,
+        None,
+        "calls",
+        &serde_json::json!({ "occurrences": { "src/a.rs": [
+            { "fact": "use", "kind": "calls", "at": [1, 1, 1, 9], "rung": "in_the_prelude" },
+            { "fact": "use", "kind": "calls", "at": [2, 1, 2, 9], "rung": "declared_here" }
+        ]}}),
+    )
+    .await
+    .unwrap();
+
+    // MISSED, likewise nested. A refusal and a fault share the edge; the fault
+    // must surface, because an edge reported as `plumbing` is an edge nobody
+    // investigates.
+    let stray = s
+        .seed_node(&fid, "function", "stray", "src/c.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    s.insert_edge_with_props(
+        &fid,
+        &stray,
+        None,
+        Some("nowhere"),
+        None,
+        "calls",
+        &serde_json::json!({ "occurrences": { "src/c.rs": [
+            { "fact": "use", "kind": "calls", "at": [1, 1, 1, 9], "reason": "plumbing" },
+            { "fact": "use", "kind": "calls", "at": [2, 1, 2, 9], "reason": "receiver_type_unknown" }
+        ]}}),
+    )
+    .await
+    .unwrap();
+
+    let via: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT resolved_via FROM sensei.graph_resolution WHERE folder_id = $1",
+    )
+    .bind(fid)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        via.as_deref(),
+        Some("declared_here"),
+        "the rung is nested under props.occurrences, and the strongest of the two wins"
+    );
+
+    let reason: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT reason_code FROM sensei.graph_boundary WHERE folder_id = $1",
+    )
+    .bind(fid)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        reason.as_deref(),
+        Some("receiver_type_unknown"),
+        "a fault outranks a refusal sharing the same edge"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
 /// `graph_resolution` says how a placed edge was placed.
 ///
 /// The sibling of `graph_boundary`. That one is where the graph stops; this is
