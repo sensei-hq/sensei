@@ -40,7 +40,10 @@
 //! would mean a reference from one dialect could never meet a declaration from
 //! the other.
 
-use dbd_core::entity::{Entity, EntityType, REF_TYPE_FUNCTION};
+// dbd has its own `RefKind` since 0.19, with the same name as this crate's and
+// a deliberately narrower set. Aliased rather than renamed locally so the match
+// below reads as the translation it is.
+use dbd_core::entity::{Entity, EntityType, RefKind as DbdRefKind};
 
 use super::SqlAdapter;
 use crate::indexer::facts::{
@@ -128,9 +131,29 @@ pub fn read(
 
     let mut walk = Walk {
         package: source.package,
-        // dbd resolves an unqualified name against the file's first search
-        // path, so the same default is used for a reference it left bare.
-        default_schema: parsed.search_paths.first().cloned(),
+        // The file's OWN schema, and only its own. dbd resolves an unqualified
+        // name against the first entry of the search path, so this mirrors that
+        // for a reference it left bare — but ONLY when the file established the
+        // path itself.
+        //
+        // Before dbd 0.18 that distinction did not exist: a file stating no
+        // `SET search_path` reported `["public"]`, indistinguishable from one
+        // that said `public`. So this picked `public` for files that never said
+        // so — which is precisely what `Walk::refer` documents it will not do
+        // ("the ladder gets the bare name rather than this picking `public` on a
+        // file that never said so"). The comment was right and the code did not
+        // match it, because dbd could not tell us.
+        //
+        // `PathSource` now says whose answer it is, and only `File` is this
+        // file's fact. `Project` (design.yaml's `source.search_path`) and
+        // `SessionDefault` (`"$user", public`, moved by any `ALTER ROLE`/`ALTER
+        // DATABASE`) are guesses about the connection, and a guess must not mint
+        // a qualified identity — a wrong edge is worse than a missing one.
+        default_schema: parsed
+            .schema_path
+            .stated()
+            .then(|| parsed.schema_path.default_schema().map(str::to_string))
+            .flatten(),
         symbols: Vec::new(),
         references: Vec::new(),
         relations: Vec::new(),
@@ -288,21 +311,39 @@ impl Walk<'_> {
         // **THE READ/WRITE SPLIT, which is the reason to call dbd at all.**
         // Every other language here can say only that one thing referenced
         // another.
-        for table in &entity.reads {
-            self.refer(&fqn.clone(), RefKind::Reads, table);
-        }
-        for table in &entity.writes {
-            self.refer(&fqn.clone(), RefKind::Writes, table);
-        }
-        for reference in &entity.references {
-            // SOFT vs HARD. A `function` reference may be a built-in — dbd
-            // cannot tell, because Postgres does not require qualification —
-            // so it is emitted as a CALL and the ladder decides. Everything
-            // else names a relation structurally: a foreign key, a view's
-            // dependency, a trigger's table.
-            let kind = match reference.ref_type.as_deref() {
-                Some(REF_TYPE_FUNCTION) => RefKind::Calls,
-                _ => RefKind::TypeUse,
+        //
+        // ONE list, walked ONCE. Until dbd 0.19 the same facts lived in four
+        // parallel fields, and this read three of them: `reads`, `writes`, and
+        // `references` — where `ref_type` was `None` for reads AND writes
+        // alike. So every table a routine read was emitted TWICE, once as
+        // `Reads` from one field and once as `TypeUse` from the other. That is
+        // what inflated the old `structural` tally, and it is why the count
+        // below FALLS while the facts get more complete, not less: the
+        // duplicates are gone.
+        // The FIELD, not `refers()`: that accessor omits references dbd could
+        // not resolve, and an unresolved reference is one this crate most wants
+        // — `Walk::refer` turns it into a `Resolution::Unresolved` carrying the
+        // written name, which is what lets the ladder place it later. Dropping
+        // it here would lose the edge entirely.
+        for reference in &entity.refs {
+            // dbd's kinds are defined by what the SQL did, so the mapping is
+            // structural rather than a judgement:
+            //   Reads   — FROM, JOIN, or a foreign key's TARGET. Hard.
+            //   Writes  — INSERT/UPDATE/MERGE, or what an ALTER/DROP names. Hard.
+            //   Calls   — EXEC or a qualified call. SOFT: a body is full of
+            //             built-ins (`now()`, `coalesce()`) that look identical
+            //             to a project-managed function, so the ladder decides.
+            //   Member  — a role granted to a role. Hard, but deliberately NOT
+            //             a read: it is not data flow, and a caller tracing
+            //             flow must not find role grants in it. `TypeUse` is
+            //             this crate's structural-but-not-flow kind, which is
+            //             also where it landed before 0.19 (via `ref_type:
+            //             None`), so the edge is preserved rather than dropped.
+            let kind = match reference.kind {
+                DbdRefKind::Reads => RefKind::Reads,
+                DbdRefKind::Writes => RefKind::Writes,
+                DbdRefKind::Calls => RefKind::Calls,
+                DbdRefKind::Member => RefKind::TypeUse,
             };
             self.refer(&fqn.clone(), kind, &reference.name);
         }
