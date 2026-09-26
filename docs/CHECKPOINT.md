@@ -66,8 +66,13 @@ cd app && bun run test:e2e
   v0.7.2; the tap at 2026-08-26 read `version "0.9.1"` with all four
   `REPLACE_WITH_*` placeholders. ~7 weeks, ~8 releases where `brew install` could
   not work. 0.10.1's SHAs were filled BY HAND and that does not generalise.
-  **Do not run `make tap-push` until a release's `update-tap` succeeds** — the
-  in-repo formula is a template and would overwrite the tap's real checksums.
+  Token has since been rotated (2026-09-26). **Fixed fail-closed:** `update-tap`
+  is now the sole writer of the tap and renders the templates via
+  `scripts/render-homebrew-tap.py`; `bump` no longer pushes the tap and
+  `tap-push` refuses an unrendered template. Verified by rendering the real
+  0.10.1 checksums and diffing byte-for-byte against the published tap.
+  Functional proof of the token itself comes on the next release — watch for a
+  `github-actions[bot]` commit on the tap minutes after the bump.
 - `DOJO_DATABASE_URL` is a **Postgres wire-protocol URL for applying DDL**, not a
   stand-in for the Cloudflare Worker's `PUBLIC_SUPABASE_URL` (PostgREST/Auth over
   HTTPS). PostgREST cannot issue DDL, so the two are different layers, not
