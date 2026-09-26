@@ -1,3 +1,5 @@
+set search_path to sensei, extensions;
+
 -- Patterns scoped to a project. `inference.detected_patterns` now carries
 -- `project_id` (the authoritative scoping key) AND `folder_id` directly, so the
 -- historical `SELECT dp.*, f.project_id` (which derived project_id from a folder
