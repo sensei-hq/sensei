@@ -198,6 +198,18 @@ jobs:
   #         CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   # ── Update Homebrew tap ────────────────────────────────────────────────────
+  # SOLE WRITER OF THE TAP'S FORMULA AND CASK.
+  #
+  # `make bump` used to push the monorepo's `homebrew/` templates to the tap and
+  # rely on this job to fill their checksums minutes later. That is fail-OPEN: when
+  # `TAP_GITHUB_TOKEN` expired, the repair stopped and the tap was left advertising
+  # a version whose every checksum was the literal `REPLACE_WITH_*_SHA256`, with
+  # the last good formula already overwritten. `brew install` could not work for
+  # ~8 releases (v0.7.3 … v0.10.0) and nothing surfaced it.
+  #
+  # Now the monorepo holds the TEMPLATE and this job renders it. A failure anywhere
+  # — expired token, missing asset, bad checksum — leaves the tap at the previous
+  # release, which is still installable. `make bump` no longer touches the tap.
   update-tap:
     needs: release
     runs-on: ubuntu-latest
@@ -205,6 +217,13 @@ jobs:
       TAG: ${{ github.ref_name }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      # FIRST, and it must stay first: `actions/checkout` cleans its target
+      # directory, so checking the monorepo out after the asset downloads below
+      # would delete the tarballs whose checksums we just computed.
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
       - name: Derive version from tag
         env:
           TAG_NAME: ${{ github.ref_name }}
@@ -214,9 +233,14 @@ jobs:
 
       - name: Download CLI tarballs and compute SHA256s
         run: |
-          # sensei-hq/sensei is PRIVATE, so release assets require auth — a bare
-          # `curl` at the releases/download URL 404s. Use `gh release download`,
-          # which authenticates via GH_TOKEN (set at the job level).
+          # `gh release download` rather than `curl`, which authenticates via
+          # GH_TOKEN (set at the job level). The original reason — "the repo is
+          # private so a bare curl 404s" — is STALE: sensei-hq/sensei is public
+          # now, and the unauthenticated releases/download URL serves the same
+          # bytes (verified by re-fetching and re-hashing). Keeping `gh` anyway:
+          # it is rate-limited as an authenticated caller, and the formula's own
+          # URLs are the public ones either way, so nothing here depends on the
+          # repo's visibility.
           for artifact in sensei-macos-arm64 sensei-macos-x86_64 sensei-linux-arm64 sensei-linux-x86_64; do
             gh release download "${TAG}" --repo sensei-hq/sensei \
               -p "${artifact}.tar.gz" -O "${artifact}.tar.gz" --clobber
@@ -230,15 +254,17 @@ jobs:
           dmg_name=$(gh release view "${TAG}" --repo sensei-hq/sensei \
             --json assets --jq '.assets[] | select(.name | endswith(".dmg")) | .name' \
             | head -1)
+          # No `DMG_FOUND` flag: an UNSET `SHA256_dmg` is the signal, and the
+          # renderer reads it as "leave the tap's cask alone" rather than
+          # "publish a cask with no checksum". One piece of state instead of two
+          # that can disagree.
           if [ -n "$dmg_name" ]; then
             gh release download "${TAG}" --repo sensei-hq/sensei \
               -p "$dmg_name" -O "$dmg_name" --clobber
             sha=$(sha256sum "$dmg_name" | cut -d' ' -f1)
             echo "SHA256_dmg=${sha}" >> "$GITHUB_ENV"
-            echo "DMG_FOUND=true" >> "$GITHUB_ENV"
           else
-            echo "DMG_FOUND=false" >> "$GITHUB_ENV"
-            echo "No DMG in release — cask SHA256 will not be updated"
+            echo "No DMG in release — the cask stays at its current version"
           fi
 
       - name: Checkout homebrew-tap
@@ -250,34 +276,26 @@ jobs:
           token: ${{ secrets.TAP_GITHUB_TOKEN }}
           path: tap
 
-      - name: Update formula (version + SHA256s)
-        run: |
-          f="tap/Formula/sensei.rb"
-          sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" "$f"
-          awk -v arm64="$SHA256_sensei_macos_arm64" \
-              -v x86_64="$SHA256_sensei_macos_x86_64" \
-              -v lnx_arm64="$SHA256_sensei_linux_arm64" \
-              -v lnx_x86_64="$SHA256_sensei_linux_x86_64" '
-            /if OS\.mac\? && Hardware::CPU\.arm\?/    { plat="mac_arm" }
-            /elsif OS\.mac\? && Hardware::CPU\.intel\?/ { plat="mac_x86" }
-            /elsif OS\.linux\? && Hardware::CPU\.arm\?/ { plat="lnx_arm" }
-            /^[[:space:]]*else[[:space:]]*$/          { plat="lnx_x86" }
-            /sha256/ {
-              gsub(/"([0-9a-f]{64}|REPLACE_WITH_[A-Z0-9_]+)"/, \
-                plat=="mac_arm"  ? "\"" arm64   "\"" : \
-                plat=="mac_x86"  ? "\"" x86_64  "\"" : \
-                plat=="lnx_arm"  ? "\"" lnx_arm64  "\"" : \
-                                   "\"" lnx_x86_64 "\"")
-            }
-            { print }
-          ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-
-      - name: Update cask (version + SHA256)
-        if: env.DMG_FOUND == 'true'
-        run: |
-          f="tap/Casks/senseihq.rb"
-          sed -i "s/version \"[^\"]*\"/version \"${VERSION}\"/" "$f"
-          sed -i "s/sha256 \"[^\"]*\"/sha256 \"${SHA256_dmg}\"/" "$f"
+      # Renders BOTH files from the monorepo templates and verifies the result
+      # before it can be committed: every url must carry the checksum belonging to
+      # the artifact it names, and no placeholder may survive. See the script's
+      # header for the two defects this replaced — chiefly that the previous
+      # `awk` chose checksums POSITIONALLY, by tracking `if`/`elsif`/`else` lines,
+      # so a reordered platform block would have written a valid-looking checksum
+      # for the wrong artifact. That fails as a MISMATCH on a user's machine,
+      # which reads like a tampered download.
+      #
+      # Checksums go through the environment, not argv, so they never reach `ps`.
+      - name: Render formula and cask into the tap
+        env:
+          SHA_MACOS_ARM64: ${{ env.SHA256_sensei_macos_arm64 }}
+          SHA_MACOS_X86_64: ${{ env.SHA256_sensei_macos_x86_64 }}
+          SHA_LINUX_ARM64: ${{ env.SHA256_sensei_linux_arm64 }}
+          SHA_LINUX_X86_64: ${{ env.SHA256_sensei_linux_x86_64 }}
+          # Empty when the release carries no DMG, which the script treats as
+          # "leave the cask alone" rather than "publish a cask with no checksum".
+          SHA_DMG: ${{ env.SHA256_dmg }}
+        run: python3 scripts/render-homebrew-tap.py tap "$VERSION"
 
       - name: Sweep legacy dev artefacts from tap
         # The dev/prod split has been removed (commits 4f269126 onward).
