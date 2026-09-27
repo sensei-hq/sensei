@@ -664,15 +664,34 @@ impl PgStore {
         file_path: &str,
         occurrences: &serde_json::Value,
     ) -> Result<(), String> {
+        // The verdict columns are re-derived HERE and not computed in Rust,
+        // because the reduction is over EVERY file's occurrences and this process
+        // only holds one file's. Merging a second file can change the winner — a
+        // `plumbing` refusal joined by a `receiver_type_unknown` fault must start
+        // reporting the fault — so the column has to be recomputed from the
+        // merged value, which only the database has.
+        //
+        // `FROM (…)` rather than three SET expressions: every SET sees the OLD
+        // row, so the merged props would otherwise have to be spelled out three
+        // times and could drift between them.
         sqlx_core::query::query(
-            "UPDATE sensei.edges
-                SET props = jsonb_set(
-                        props,
-                        '{occurrences}',
-                        coalesce(props -> 'occurrences', '{}'::jsonb)
-                            || jsonb_build_object($2::text, $3::jsonb)),
-                    modified_at = now()
-              WHERE id = $1",
+            "UPDATE sensei.edges e
+                SET props             = m.merged,
+                    resolved_via      = sensei.edge_verdict(
+                                          m.merged -> 'occurrences', 'code_graph_rung', 'rung'),
+                    unresolved_reason = sensei.edge_verdict(
+                                          m.merged -> 'occurrences', 'code_graph', 'reason'),
+                    modified_at       = now()
+               FROM (
+                    SELECT jsonb_set(
+                             props,
+                             '{occurrences}',
+                             coalesce(props -> 'occurrences', '{}'::jsonb)
+                                 || jsonb_build_object($2::text, $3::jsonb)) AS merged
+                      FROM sensei.edges
+                     WHERE id = $1
+                    ) m
+              WHERE e.id = $1",
         )
         .bind(edge_id)
         .bind(file_path)
@@ -702,14 +721,27 @@ impl PgStore {
         file_path: &str,
     ) -> Result<Dropped, String> {
         let row: Option<(bool,)> = sqlx_core::query_as::query_as(
-            "UPDATE sensei.edges
-                SET props = jsonb_set(
-                        props,
-                        '{occurrences}',
-                        coalesce(props -> 'occurrences', '{}'::jsonb) - $2),
-                    modified_at = now()
-              WHERE id = $1
-          RETURNING coalesce(props -> 'occurrences', '{}'::jsonb) = '{}'::jsonb",
+            // Re-derives the verdict columns for the same reason the merge does,
+            // in the opposite direction: dropping the file that held the only
+            // `receiver_type_unknown` must leave the edge reporting whatever the
+            // remaining files say, not the fault that left with them.
+            "UPDATE sensei.edges e
+                SET props             = m.kept,
+                    resolved_via      = sensei.edge_verdict(
+                                          m.kept -> 'occurrences', 'code_graph_rung', 'rung'),
+                    unresolved_reason = sensei.edge_verdict(
+                                          m.kept -> 'occurrences', 'code_graph', 'reason'),
+                    modified_at       = now()
+               FROM (
+                    SELECT jsonb_set(
+                             props,
+                             '{occurrences}',
+                             coalesce(props -> 'occurrences', '{}'::jsonb) - $2) AS kept
+                      FROM sensei.edges
+                     WHERE id = $1
+                    ) m
+              WHERE e.id = $1
+          RETURNING coalesce(e.props -> 'occurrences', '{}'::jsonb) = '{}'::jsonb",
         )
         .bind(edge_id)
         .bind(file_path)

@@ -11,6 +11,31 @@ create table if not exists edges (
 , confidence               edge_confidence not null default 'extracted'
 , confidence_score         numeric(3,2)
 , props                    jsonb           not null default '{}'
+  -- THE EDGE-LEVEL VERDICT, as columns rather than as JSON.
+  --
+  -- The per-use verdicts stay in `props.occurrences.*[*].{rung,reason}` — an edge
+  -- aggregates many use sites and each has its own span and its own outcome, so
+  -- that list is variable-length and belongs in jsonb. These two are the
+  -- REDUCTION over it (see `sensei.edge_verdict`), and a reduction is scalar and
+  -- universal, which is what earns a column.
+  --
+  -- Why they are not read out of props instead: they were, and it did not work.
+  -- Both were `props->>'rung'` / `props->>'reason'` at the TOP level, where no
+  -- writer has ever put them, so `resolved_via` was NULL on all 1,640,215 placed
+  -- edges and `unresolved_reason` NULL on all 2,428,016 missed ones — no match and
+  -- no miss classifiable, in any language. Measured on 2026-09-26.
+  --
+  -- Exactly one of the two is set on any edge: a placed edge has a rung, a missed
+  -- one has a reason. Both NULL means the writer recorded no verdict at all, which
+  -- is the pre-v2 shape and is itself worth counting.
+  --
+  -- NO FOREIGN KEY to reason_codes, deliberately. The views join it LEFT so that
+  -- a code with no seeded prose still surfaces raw rather than dropping the edge
+  -- that carries it; an FK would turn that tolerance into a write failure, and a
+  -- new Reason variant landing in Rust before its row lands in the seed would
+  -- then fail the whole index instead of showing up as an unlabelled code.
+, resolved_via             text
+, unresolved_reason        text
 , modified_at              timestamptz     not null default now()
 );
 
