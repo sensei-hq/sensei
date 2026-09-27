@@ -540,9 +540,9 @@ mod tests {
         let c = ctx();
         let cases = [
             "edit /Users/dev/work/acme-api/src/main.rs please", // known + POSIX
-            "look under /etc/nginx/sites-enabled/default",        // unknown POSIX
-            "config at ~/.sensei/acme-api/config.toml",           // home
-            r"open C:\work\acme-api\mod.rs in the ide",           // windows
+            "look under /etc/nginx/sites-enabled/default",      // unknown POSIX
+            "config at ~/.sensei/acme-api/config.toml",         // home
+            r"open C:\work\acme-api\mod.rs in the ide",         // windows
         ];
         for input in cases {
             let out = dereference(input, &c);

@@ -981,7 +981,9 @@ mod tests {
     fn clean_legacy_sensei_hooks_strips_release_ts_too() {
         let tmp = make_tmp_home();
         let settings = tmp.path().join("settings.json");
-        std::fs::write(&settings, r#"{
+        std::fs::write(
+            &settings,
+            r#"{
             "hooks": {
                 "PostToolUse": [{
                     "hooks": [
@@ -989,7 +991,9 @@ mod tests {
                     ]
                 }]
             }
-        }"#).unwrap();
+        }"#,
+        )
+        .unwrap();
 
         let stripped = clean_legacy_sensei_hooks(&settings).unwrap();
         assert_eq!(stripped, vec!["PostToolUse".to_string()]);

@@ -958,9 +958,7 @@ mod tests {
         // A multi-segment relative run, the second live exclusion's shape.
         let ex = vec!["sample-board/docs/proposal/deck-node".to_string()];
         assert!(is_excluded(
-            Path::new(
-                "/Users/dev/Work/group-a/sample-board/docs/proposal/deck-node/include/a.h"
-            ),
+            Path::new("/Users/dev/Work/group-a/sample-board/docs/proposal/deck-node/include/a.h"),
             &ex,
         ));
         assert!(!is_excluded(Path::new("/Users/dev/Work/group-a/sample-board/src/a.ts"), &ex));
