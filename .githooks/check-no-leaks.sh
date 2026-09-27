@@ -25,10 +25,55 @@ RED=$'\033[0;31m'; YEL=$'\033[0;33m'; NC=$'\033[0m'
 # Placeholder user names that are FINE in a path — the point is to allow
 # synthetic fixtures while catching real home directories.
 SAFE_USERS='user|users|dev|dev\.user|jane|john|alice|bob|acme|test|tester|example|runner|linuxbrew|home|root|USERNAME|<[a-z-]+>|\$\{?[A-Za-z_]+\}?'
+# Placeholder conventions this tree already uses, added when `--audit` flagged 8
+# files that were never leaking: a SINGLE LETTER (`/Users/j`, `/Users/r`), an
+# ellipsis (`/Users/...`), and the synthetic given names fixtures use. Kept
+# separate from the list above so it is obvious these are shape-only stand-ins.
+# A one-letter real username is not a thing; `k.nakamura` and `mjackson` stay
+# OUT, because the self-test relies on them being caught.
+SAFE_USERS="$SAFE_USERS|[a-z]|[a-z][a-z]|\.\.\.|keiko|name"
+# NO USERNAME AT ALL is not a leaked username, and three shapes produce it:
+#   /Users/.cursor/…      the user segment elided, leaving a dotfile
+#   /home/.copilot/…      same
+#   /Users/</code> …      prose or markup where the segment is a placeholder
+# The last one is UI copy explaining that paths ARE redacted, so flagging it
+# accused the redaction notice of being the leak.
+SAFE_USERS="$SAFE_USERS|\.[a-z][a-z.]*|<[a-z/<>-]*|…"  # last is U+2026 …
+#
+# The DELIMITER after a safe user matters as much as the list. It was
+# `[/\\"' ]`, which does not include a backtick — so `(`/Users/keiko` → …)`
+# in prose read as a real home directory, because the placeholder was
+# terminated by a character the rule had never heard of. Markdown is where
+# most of these examples live, so backtick, paren, comma, semicolon and `>`
+# are all ordinary terminators now.
 
 # Domains that may legitimately appear. Everything else is treated as a real
 # mailbox until someone adds it here deliberately.
 SAFE_MAIL='sensei-hq\.com|example\.com|example-corp\.com|example\.org|acme[a-z-]*\.(com|co)|sensei\.test|users\.noreply\.github\.com|github\.com|anthropic\.com|devuser\.name|[a-z]\.(co|dev)$'
+
+# PRIVATE NAMES — a denylist that lives OUTSIDE the repository, because the list
+# itself is the thing being protected. Committing "here are our clients" would
+# leak exactly what it guards against.
+#
+# Default: $SENSEI_PRIVATE_NAMES, else ~/.sensei/private-names. One name per
+# line, `#` comments and blanks ignored, matched case-insensitively as a
+# substring. Absent file = this rule is skipped, silently — a developer who has
+# not set one up must still be able to commit.
+#
+# WHY THIS EXISTS. An audit on 2026-09-27 found seven private names across 24
+# tracked files of a PUBLIC repo — in production source comments and in test
+# assertions — together with client codebase metrics ("8,647 files", "4,311
+# nodes", "1,230 folders"). TWO OF THEM WERE COMMITTED AFTER THIS GUARD LANDED on
+# 2026-08-26 — five and six days after. It did not catch them because it only ever
+# checked the USERNAME segment of a path, and a client name used as a namespace or
+# a package root (`<Client>.Policy.Services`, `com.<org>.<client>.service`) has no
+# path in it at all.
+PRIVATE_NAMES_FILE="${SENSEI_PRIVATE_NAMES:-$HOME/.sensei/private-names}"
+private_re=''
+if [ -r "$PRIVATE_NAMES_FILE" ]; then
+  private_re=$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+                 "$PRIVATE_NAMES_FILE" | grep -v '^$' | paste -sd'|' -)
+fi
 
 fail=0
 note() { printf '%s%s%s\n' "$RED" "$1" "$NC" >&2; fail=1; }
@@ -69,14 +114,29 @@ scan_content() {
     case "$file" in .githooks/check-no-leaks.sh) continue ;; esac
 
     # 2. A real home directory: /Users/<name>, C:\Users\<name>, /home/<name>.
-    if printf '%s' "$text" | grep -qiE "(/Users/|/home/|[Cc]:\\\\+Users\\\\+)" &&
-       ! printf '%s' "$text" | grep -qiE "(/Users/|/home/|[Cc]:\\\\+Users\\\\+)($SAFE_USERS)([/\\\\\"' ]|$)"; then
+      # The SAME two refinements `audit_tree` carries, and they must stay in step:
+      # a home path never follows an alphanumeric (a route list such as
+      # `logout/home/session` is not a home directory), and the delimiter after a
+      # placeholder admits every ordinary terminator — markdown backticks above all,
+      # since that is where these examples live.
+    if printf '%s' "$text" | grep -qiE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\\\+Users\\\\+)" &&
+       ! printf '%s' "$text" | grep -qiE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\\\+Users\\\\+)($SAFE_USERS)([/\\\\\"'\` ),;>]|$)"; then
       note "  $file:$lineno — real home directory in a path; use a placeholder"
       printf '    %s\n' "$(printf '%s' "$text" | cut -c1-100)" >&2
     fi
 
     # 3. A mailbox outside the allow-list.
     local mail
+    # 2b. A private name, from the out-of-repo denylist. Substring and
+    #     case-insensitive on purpose: a client name in a namespace, the same
+    #     name lowercased in a package path, and the same name again as a
+    #     directory are ONE leak with three spellings. The name is NOT echoed —
+    #     printing it would put the leak in CI logs and in every terminal
+    #     scrollback that reads the failure.
+    if [ -n "$private_re" ] && printf '%s' "$text" | grep -qiE "($private_re)"; then
+      note "  $file:$lineno — a name from your private-names denylist; use a placeholder"
+    fi
+
     mail=$(printf '%s' "$text" | grep -oiE '[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}' | head -1)
     if [ -n "$mail" ] && ! printf '%s' "$mail" | grep -qiE "@($SAFE_MAIL)"; then
       note "  $file:$lineno — email address '$mail' is not an allow-listed domain"
@@ -122,6 +182,16 @@ self_test() {
   check "corporate mailbox"  'jane.doe@bigcorp.example.net'          hit
   check "allow-listed"       'hi@sensei-hq.com'                      clean
   check "example domain"     'dev@example-corp.com'                  clean
+
+  # The denylist rule, with a denylist of its OWN so the test does not depend on
+  # whoever is running it having one — and so it never reads the real list.
+  local saved_re="$private_re"
+  private_re='northgate|umbrella-corp'
+  check "denylisted name"    'namespace Northgate.Policy.Services'   hit
+  check "denylisted, cased"  '// over NORTHGATE 8,647 files'          hit
+  check "denylisted in path" '"/Users/dev/Work/umbrella-corp/x"'      hit
+  check "unlisted name"      'namespace Contoso.Policy.Services'      clean
+  private_re="$saved_re"
   fail=0
   scan_paths 'reports/facets/manoj/x.json'  2>/dev/null; [ $fail -eq 1 ] && { pass=$((pass+1)); echo "  ok    facets path"; } || echo "  FAIL  facets path"; t=$((t+1))
   fail=0
@@ -130,7 +200,39 @@ self_test() {
   [ "$pass" -eq "$t" ]
 }
 
+# ── Whole-tree audit ─────────────────────────────────────────────────────────
+# THE SECOND GAP the 2026-09-27 audit found: this guard has only ever seen
+# STAGED diffs, so everything committed before it landed was never checked — and
+# that is where most of what the audit found was sitting. `--audit` scans every
+# tracked file instead, so the question "is the tree clean right now" has an
+# answer that does not depend on what happens to be staged.
+#
+# Not run by the hook: it is O(tree) and a pre-commit hook must stay instant.
+# Run it before a release, or after changing the denylist.
+audit_tree() {
+  local f n=0
+  echo "check-no-leaks --audit: every tracked file"
+  [ -z "$private_re" ] && printf '%s  no denylist at %s — name rules skipped%s\n' \
+      "$YEL" "$PRIVATE_NAMES_FILE" "$NC"
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    # Same two rules as the staged path, applied to whole content. Binary files
+    # are skipped by grep -I rather than filtered by extension: an extension
+    # list is a second thing to keep in step with reality.
+    if [ -n "$private_re" ] && grep -qiIE "($private_re)" "$f" 2>/dev/null; then
+      note "  $f — contains a name from the private-names denylist"; n=$((n + 1))
+    fi
+    if grep -qiIE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\+Users\\+)" "$f" 2>/dev/null &&
+       ! grep -qiIE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\+Users\\+)($SAFE_USERS)([/\\\"'\` ),;>]|$)" "$f" 2>/dev/null; then
+      note "  $f — contains a real home directory"; n=$((n + 1))
+    fi
+  done < <(git ls-files)
+  if [ "$n" -eq 0 ]; then printf 'clean — no tracked file carries a private name or a real home path\n'; fi
+  return $fail
+}
+
 if [ "${1:-}" = "--test" ]; then self_test; exit $?; fi
+if [ "${1:-}" = "--audit" ]; then audit_tree; exit $?; fi
 
 if ! run_scan; then
   printf '\n%sCommit blocked — the above looks like transcript, log or personal data.%s\n' "$YEL" "$NC" >&2
