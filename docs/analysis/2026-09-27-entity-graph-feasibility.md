@@ -4,6 +4,18 @@ Research only. No code changed. Measured against this repository's own schema an
 adapters on 2026-09-27; every number below is reproducible by the command beside
 it.
 
+> **SUPERSEDED IN TWO PLACES, same day.** This was measured against dbd **0.19**'s
+> SchemaModel v1. dbd **0.22** ships v2, which adds the `entities` and `deps` the
+> section below says the diagram lacks — so "the diagram cannot replace the walk
+> because it has no routine dependencies" is **no longer true**, and the ORM
+> finding was corrected by the private corpus: EF Core there is fluent, not
+> attribute-based, so the blocker is call-argument literals rather than the
+> annotations this doc names. Both corrections are marked inline, and the design
+> that supersedes this is [`docs/spec/indexer/20-schema-entities.md`](../spec/indexer/20-schema-entities.md).
+> Kept rather than rewritten: the v1 measurements are what made the gap visible,
+> and a doc that quietly acquires the right answer teaches nothing about how it
+> was reached.
+
 Three questions were asked:
 
 1. What would the node model need to carry dbd's entity diagram (tables,
@@ -60,6 +72,16 @@ file attribution** (nothing maps a table back to the `.ddl` that declares it).
 **So the diagram cannot replace the per-file walk.** The walk produces 695
 read/write/call references from view and routine bodies; the diagram has 106
 foreign keys. Those are different populations, not a subset relationship.
+
+> **CORRECTED — dbd 0.22.** v2 adds `entities` (views, materialized views,
+> functions, procedures) and `deps` — "what reads, writes and calls what, the
+> call/reference graph the ER diagram could never show", a pre-resolved projection
+> of `Entity::refs`. So the routine dependency graph IS in the model now, and
+> `DepEdge.kind` is `reads | writes | calls | member` — exactly this crate's
+> `RefKind`. What remains absent is spans and file attribution, which is still
+> enough to keep both producers: the model cannot answer "where is this
+> declared". The rest of this section's reasoning holds; only "the diagram has no
+> dependency graph" was true of v1 alone.
 
 ### The part that IS better than a resolver
 
@@ -164,6 +186,22 @@ Adapters exist for every one of those ecosystems: `pyproject, dotnet, npm, maven
 gradle, composer, go, ruby, cargo, swiftpm, cmake, dbd`.
 
 ### Extraction — the walks discard the tokens that carry the answer
+
+> **CORRECTED by the private corpus.** The conclusion below — extraction is
+> blocked — is right about the mechanism and wrong about which mechanism matters.
+> It names ANNOTATIONS as the blocker because C# filters `attribute_list` out of
+> the walk. Measured over the corpus, attributes are barely used: `[Table(` in 2
+> files, `[Column(` in **0**, against fluent `.ToTable(` in 308 and
+> `.HasColumnName(` in 229. **EF Core there is fluent**, so the blocked fact is a
+> CALL ARGUMENT literal, not an annotation argument.
+>
+> Two things this doc calls impossible are therefore possible today: the entity
+> inventory by convention (the C# walk already records `declared_type`, so
+> `DbSet<Order> Orders` yields `Stated("DbSet<Order>")`, with `: DbContext` giving
+> the container — 71 and 36 files), and the partial-usage question (`FromSqlRaw` /
+> `ExecuteSqlRaw` are ordinary calls and already edges — 139 files against 36
+> `DbContext`s). Only the EXPLICIT names need the new fact. See
+> [`docs/spec/indexer/20-schema-entities.md`](../spec/indexer/20-schema-entities.md).
 
 This is the blocking finding, and it is a property of `Symbol`, not of any one
 language:

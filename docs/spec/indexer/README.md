@@ -472,6 +472,7 @@ frontmatter so supersession is visible without reading it.
 | [`16-scenarios.md`](16-scenarios.md) | Gherkin for every flow, each naming the test that pins it |
 | [`11-progress.md`](11-progress.md) | what a scan reports while it runs |
 | [`19-observability.md`](19-observability.md) | the four views: what the graph holds, and which jobs are still broken |
+| [`20-schema-entities.md`](20-schema-entities.md) | *(draft)* tables, columns, indexes and dependencies as graph facts, from dbd's SchemaModel v2 and from ORM layers |
 | [`12-incremental.md`](12-incremental.md) | *(superseded — its S2 is inverted; discovery reads the FILESYSTEM)* |
 
 **History**
