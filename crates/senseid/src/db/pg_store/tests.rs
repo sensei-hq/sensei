@@ -13895,6 +13895,83 @@ async fn get_callers_by_name_finds_a_caller_through_an_unresolved_edge() {
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
 
+/// The verdict COLUMNS are populated by the writer, and re-derived when the
+/// occurrence set changes in either direction.
+///
+/// `the_rung_and_reason_come_from_the_occurrences_the_indexer_writes` proves the
+/// view can READ the nested shape. This proves the write path fills the columns,
+/// which is what makes the read cheap and the contract explicit in the schema
+/// rather than asserted in a comment.
+///
+/// WHY THE DATABASE DERIVES THEM AND NOT RUST: the reduction is over EVERY file's
+/// occurrences, and the indexing process holds one file's. Merging a second file
+/// can change the winner, so only the database has the value to reduce over. Both
+/// directions are asserted here:
+///
+///   1. one file, a refusal        -> `plumbing`
+///   2. a second file adds a fault -> must become `receiver_type_unknown`
+///   3. drop the second file       -> must fall back to `plumbing`
+///
+/// Step 3 is the one an implementation is most likely to miss: it is easy to
+/// derive on merge and forget on drop, which leaves the column claiming a fault
+/// that left with the file that held it.
+///
+/// Mutation that must break this test: remove the `resolved_via`/
+/// `unresolved_reason` assignment from `drop_edge_occurrences`, or reverse
+/// `edge_verdict`'s `order by rc.precedence`.
+#[tokio::test]
+async fn the_writer_fills_the_verdict_columns_and_redrives_them_on_change() {
+    let s = pg_store().await;
+    let folder = format!("verdict_cols_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    let src = s
+        .seed_node(&fid, "function", "caller", "src/a.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    let edge = s.insert_edge(&fid, &src, None, Some("nowhere"), None, "calls").await.unwrap();
+
+    let refusal = serde_json::json!([
+        { "fact": "use", "kind": "calls", "at": [1, 1, 1, 9], "reason": "plumbing" }
+    ]);
+    let fault = serde_json::json!([
+        { "fact": "use", "kind": "calls", "at": [2, 1, 2, 9], "reason": "receiver_type_unknown" }
+    ]);
+
+    async fn stored(s: &PgStore, id: &uuid::Uuid) -> (Option<String>, Option<String>) {
+        sqlx_core::query_as::query_as(
+            "SELECT resolved_via, unresolved_reason FROM sensei.edges WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+    }
+
+    s.merge_edge_occurrences(&edge, "src/a.rs", &refusal).await.unwrap();
+    assert_eq!(
+        stored(&s, &edge).await,
+        (None, Some("plumbing".to_string())),
+        "one file, one refusal: the column carries it and no rung is claimed"
+    );
+
+    s.merge_edge_occurrences(&edge, "src/b.rs", &fault).await.unwrap();
+    assert_eq!(
+        stored(&s, &edge).await,
+        (None, Some("receiver_type_unknown".to_string())),
+        "a second file adds a FAULT, which outranks the refusal (lower precedence)"
+    );
+
+    s.drop_edge_occurrences(&edge, "src/b.rs").await.unwrap();
+    assert_eq!(
+        stored(&s, &edge).await,
+        (None, Some("plumbing".to_string())),
+        "dropping the file that held the fault must take the fault with it"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
 /// The rung and the reason must be read from the shape THE INDEXER WRITES.
 ///
 /// `graph_resolution_says_which_rung_placed_each_edge` and its boundary sibling

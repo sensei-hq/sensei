@@ -63,23 +63,22 @@ select e.id              as edge_id
      -- `receiver_type_unknown` (a fault, 30) reports the FAULT: a real gap must
      -- not be hidden by a filter that happens to share the edge.
      --
-     -- `jsonb_path_query` rather than `jsonb_each` + `jsonb_array_elements`:
-     -- jsonpath is LAX, so a props shape that does not match yields no rows
-     -- instead of raising "cannot extract elements from a scalar", and one
-     -- malformed edge must not fail every query over the folder.
+     -- THREE SOURCES, in this order, and each later one is a fallback for rows
+     -- the earlier one does not cover:
      --
-     -- The top-level key is still preferred when present, so an explicit
-     -- edge-level verdict (what the view tests seed) outranks the reduction.
+     --   1. `e.unresolved_reason` — the stored column, re-derived by
+     --      merge_edge_occurrences / drop_edge_occurrences on every write.
+     --   2. `props->>'reason'` — an explicit edge-level verdict, which is what
+     --      the view tests seed by hand.
+     --   3. `sensei.edge_verdict(...)` — the reduction over the per-use
+     --      verdicts, for the 3.1M rows written before the column existed.
+     --
+     -- (3) is what keeps this view answering on today's data with no re-index;
+     -- it can go once every folder has been re-indexed, and not before.
      , coalesce(
+         e.unresolved_reason,
          e.props->>'reason',
-         ( select rc.code
-             from jsonb_path_query(
-                    coalesce(e.props->'occurrences', '{}'::jsonb), '$.*[*].reason') v
-             join reason_codes rc
-               on rc.domain = 'code_graph'
-              and rc.code   = v #>> '{}'
-            order by rc.precedence
-            limit 1 )
+         sensei.edge_verdict(e.props -> 'occurrences', 'code_graph', 'reason')
        )                 as unresolved_reason
      , src.language       as source_language
      -- WHICH RUNG of the resolution ladder placed a resolved edge. The
@@ -90,22 +89,17 @@ select e.id              as edge_id
      --
      -- Vocabulary: sensei.reason_codes under domain `code_graph_rung`, whose
      -- precedence is CLIMB ORDER. Written by the indexer into `props.rung`;
-     -- Rung::as_label on the Rust side is the one producer of these strings.
+     -- Rung::as_label on the Rust side is the one producer of these strings. Same
+     -- three-source chain as unresolved_reason above.
      --
      -- Same nesting and the same reduction as unresolved_reason above: the rung
      -- is written per USE, and precedence here is CLIMB ORDER, so the strongest
      -- proof sorts first. An edge placed `declared_here` by one use and
      -- `in_the_prelude` by another is reported on the stronger evidence.
      , coalesce(
+         e.resolved_via,
          e.props->>'rung',
-         ( select rc.code
-             from jsonb_path_query(
-                    coalesce(e.props->'occurrences', '{}'::jsonb), '$.*[*].rung') v
-             join reason_codes rc
-               on rc.domain = 'code_graph_rung'
-              and rc.code   = v #>> '{}'
-            order by rc.precedence
-            limit 1 )
+         sensei.edge_verdict(e.props -> 'occurrences', 'code_graph_rung', 'rung')
        )                 as resolved_via
   from edges         e
   join folders       f
