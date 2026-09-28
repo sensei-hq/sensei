@@ -7,12 +7,11 @@
 - **v0.11.0 released, merged to main, CI green.** `brew fetch` verifies formula
   and cask against the published assets. Suites: senseid 3,312 · bootstrap 175 ·
   app 1,700 · dojo 1,535; clippy `-D warnings` and fmt clean.
-- **The repository was REPLACED.** `sensei-hq/sensei-archive` is private+archived
-  and **must stay so** — it holds the unscrubbed history and issues. Backup:
-  `~/sensei-history-backup/`. Releases were not migrated.
-- **Production dōjō reconciled** — 7 created, 13 altered; `dbd diff --scope dojo
-  --exit-code` → 0. Applied attended: the 5 constraint drops were safe only
-  because all three tables were empty (0 rows, verified).
+- **Repo REPLACED.** `sensei-hq/sensei-archive` is private+archived and **must
+  stay so** — unscrubbed history and issues. Backup `~/sensei-history-backup/`.
+- **Production dōjō reconciled** — 7 created, 13 altered, `dbd diff` → 0. Applied
+  attended: the 5 constraint drops were safe only because all three tables were
+  empty (0 rows, verified).
 - **`dojo-prod` now has `required_reviewers`** (was `protection_rules=NONE`) —
   #200's actual complaint.
 - **Architecture metrics are computing live**: graph_confidence 72 rows,
