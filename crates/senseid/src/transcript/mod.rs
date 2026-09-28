@@ -1086,6 +1086,52 @@ mod tests {
         assert_eq!(ads.len(), 6, "all 6 adapters registered");
     }
 
+    /// Every adapter's `family()` must be a value `sensei.assistant_family` can
+    /// store.
+    ///
+    /// It could not, for two of them. `copilot_cli` returns `"copilot"` and
+    /// `vscode` returns `"vscode"`, and the enum held neither — so
+    /// `insert_assistant_event`, which casts to it, would fail outright for
+    /// either adapter. It stayed hidden because the two halves disagree:
+    /// `transcript_turns.family` is plain `text` and would have accepted them,
+    /// and neither adapter had ever ingested a row, so nothing exercised the
+    /// path that casts.
+    ///
+    /// Read from the DDL rather than from a list repeated here. A hardcoded copy
+    /// is a second thing to keep in step, and it would pass while the database
+    /// rejected the value — which is the exact failure being guarded against.
+    #[test]
+    fn every_adapter_family_is_a_value_the_enum_can_store() {
+        let ddl = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../database/ddl/enum/sensei/assistant_family.ddl");
+        let text =
+            std::fs::read_to_string(&ddl).unwrap_or_else(|e| panic!("read {}: {e}", ddl.display()));
+        // Strip `--` comments BEFORE looking for quoted values. Without it an
+        // apostrophe in ordinary prose — "a value's ordinal" — reads as the start
+        // of a literal and shifts every value after it by one, so the parse
+        // returns nonsense while still looking like a list. Found by writing
+        // exactly that sentence into the DDL.
+        let sql: String =
+            text.lines().map(|l| l.split("--").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
+        let allowed: Vec<String> = sql.split('\'').skip(1).step_by(2).map(str::to_string).collect();
+        assert!(
+            allowed.len() >= 8,
+            "parsed only {} values from assistant_family.ddl — the parse is wrong, \
+             not the enum: {allowed:?}",
+            allowed.len()
+        );
+        for a in adapters() {
+            assert!(
+                allowed.iter().any(|v| v == a.family()),
+                "adapter {:?} returns family {:?}, which sensei.assistant_family \
+                 cannot store — assistant_events.family casts to that enum, so \
+                 ingesting this source would fail. Allowed: {allowed:?}",
+                a.source(),
+                a.family()
+            );
+        }
+    }
+
     // ── the anonymised fixture corpus (Tier 2) ───────────────────────────────
     //
     // The tests above build their input from inline literals, which is safe but

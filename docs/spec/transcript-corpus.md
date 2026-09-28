@@ -102,10 +102,17 @@ Record the tool version at capture time. A fixture that does not say which
 version of which tool produced it cannot be distinguished from a stale one, and
 `--tool-version` is required for that reason.
 
-## Known gap — two adapters emit a family the enum rejects
+## Fixed — two adapters emitted a family the enum rejected
 
-Found while writing this, and verified against the running database rather than
-inferred.
+Found while writing this, verified against the running database rather than
+inferred, and fixed the same day: `copilot` and `vscode` are now values of
+`sensei.assistant_family`, appended rather than inserted so no existing value's
+ordinal moves. `every_adapter_family_is_a_value_the_enum_can_store` reads the
+allowed values out of the DDL — not from a list repeated in Rust, which would
+pass while the database rejected the value — so a new adapter whose family the
+enum cannot store fails the build instead of failing at ingest.
+
+The original finding, kept because it explains why it hid for so long:
 
 `sensei.assistant_family` holds `claude cursor zed continue codex aider opencode
 kiro`. `copilot_cli.rs` returns `family() = "copilot"` and `vscode.rs` returns
@@ -127,7 +134,7 @@ It is LATENT, not live: `assistant_events` currently holds `claude` 493,483,
 `zed` 12,794, `opencode` 4,207 and `cursor` 18, and no rows at all from those
 two adapters. Nothing has exercised the path yet.
 
-Fix it before capturing a Copilot or VS Code session for Tier 2, or the fixture
-will be the first thing to trip it. Either add both values to the enum or map
-`copilot`/`vscode` onto existing ones — the first is honest, the second loses
-the distinction between a harness and its host editor.
+Both values were added rather than mapped onto existing ones. `vscode` is the
+HOST EDITOR and `copilot` the harness, and folding them together would make
+"which tool produced this turn" unanswerable for exactly the two sources that
+most need it.
