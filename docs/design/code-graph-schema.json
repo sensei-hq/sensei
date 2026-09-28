@@ -355,7 +355,7 @@
         { "name": "line_end",     "type": "integer",     "nullable": true,  "meaning": "One-based end line. The span is a usable size signal." },
         { "name": "is_exported",  "type": "boolean",     "nullable": false, "meaning": "Part of the file's public surface. A candidate for emphasis." },
         { "name": "is_test",      "type": "boolean",     "nullable": false, "meaning": "Belongs to a test file. 19.5% of nodes." },
-        { "name": "community_id", "type": "integer",     "nullable": true,  "meaning": "Leiden cluster id, batch-computed. NULL until computed — needs an empty state." },
+        { "name": "community_id", "type": "integer",     "nullable": true,  "meaning": "Leiden cluster id, batch-computed. POPULATED: 1,182,656 of 1,182,676 nodes carry one, across 37,700 distinct communities (measured 2026-09-28). Only 20 are NULL. This is the richest grouping key available and it is live today — the DDL comment saying 'Null until computed' describes a state the database left long ago." },
         { "name": "embedding",    "type": "vector(384)", "nullable": true,  "meaning": "Semantic embedding, HNSW-indexed. Powers 'find similar', not layout." },
         { "name": "tags",         "type": "text[]",      "nullable": false, "meaning": "Free filtering tags." },
         { "name": "props",        "type": "jsonb",       "nullable": false, "meaning": "Per-kind extras. section: {level:2}. rationale: {tag:'WHY'}. directory module: {dir:'...'}." },
@@ -563,7 +563,7 @@
     { "rule": "Make the test filter a primary control.", "why": "230,241 of 1,182,526 nodes are tests. Mixed in, they swamp production structure." },
     { "rule": "Separate the three node populations visually.", "why": "A declaration, a reference stub and an external lib· symbol look identical if you only read `name`, but they say very different things about how much the graph knows." },
     { "rule": "Use resolved_via rank as the trust signal, not confidence.", "why": "confidence is a constant today — every edge is 'extracted'. resolved_via is the field that actually varies, and its ladder is ordered: declared_here is a fact, through_a_glob is the weakest first-party inference." },
-    { "rule": "Design empty and unclassified states deliberately.", "why": "folder.role is NULL for most folders, community_id is NULL until the Leiden pass runs, and 88,690 nodes are kind 'unknown'. All three are common, not edge cases." },
+    { "rule": "Design empty and unclassified states deliberately.", "why": "folder.role is NULL for most folders and 88,690 nodes are kind 'unknown'. Both are common, not edge cases. NOTE: community_id is NOT one of these — it is populated on all but 20 nodes." },
     { "rule": "Treat an edge as a bundle of occurrences.", "why": "props.occurrences is keyed by file and each use site carries its own span and outcome, so a detail view can show where a relationship actually happens." }
   ],
 
@@ -572,6 +572,6 @@
     "Schema entities (tables, columns, indexes, foreign keys as graph nodes) are specified in docs/spec/indexer/20-schema-entities.md but not implemented. All examples marked PROPOSED.",
     "6 of 11 edge kinds have zero rows: depends_on, traces_to, covers, rationale_for, duplicates, similar_to.",
     "edge_confidence values 'inferred' and 'ambiguous' have zero rows.",
-    "community_id is NULL throughout until the Leiden clustering pass runs."
+    "Clustering is computed but nothing reads it, and that is a DECISION rather than an oversight: issue #149 measured that 62% of communities restate the file boundary and 36% are stub singletons, so a cohesion view built on community_id would be showing the clustering algorithm rather than the architecture. Use it for grouping if it reads well; do not present it as a quality signal."
   ]
 }
