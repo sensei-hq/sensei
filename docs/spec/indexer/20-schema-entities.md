@@ -91,6 +91,71 @@ two spellings for one idea. `parent_id` gives column→table containment;
 
 **Nothing in `node_kind` or `edge_kind` changes.**
 
+### The exact values this uses
+
+The shared vocabulary is defined once in
+[`17-vocabulary.md`](17-vocabulary.md) — `SymbolKind` (§2), `RelationKind` (§3)
+and the `Rung` ladder (§4) — and is not restated here. What follows is only what
+a schema object writes, plus the two things that vocabulary does not yet cover.
+
+Of the 25 `node_kind` values, this work writes **four**: `struct` (table, view,
+materialized view), `function` (function, procedure), `field` (column),
+`property` (index). Of the 11 `edge_kind` values it writes **one**:
+`references`, for a foreign key. `edge_confidence` is **`extracted`** — the
+enum's comment glosses that as "AST-certain", and a schema fact arrives from a
+declarative source rather than an AST, but the distinction `confidence` actually
+draws is read-vs-guessed. `inferred` means embeddings and `ambiguous` means
+drift; a table that dbd read is neither.
+
+`declared_type` is a `text` column, so nothing in the database constrains it.
+This spec nevertheless treats it as a **closed set** — `table`, `view`,
+`materialized_view`, `function`, `procedure`, `column`, `index` — because the
+whole point of the two-level vocabulary is that a consumer can switch on the
+specific word. A producer inventing an eighth spelling silently creates a
+category no reader handles.
+
+dbd's `deps` map onto `RefKind`, which already has every kind needed:
+`reads` → `Reads`, `writes` → `Writes`, `calls` → `Calls`, `member` → `TypeUse`.
+
+### `resolved_via` needs one new rung, and this is why
+
+The eight existing rungs all answer the same question — *what, in this file,
+told us where the target lives* — and a schema fact answers a different one.
+dbd's `SchemaModel` arrives already resolved, schema-qualified, with no file
+behind it at all. None of `DeclaredHere`, `ThroughAnImport` or the rest is true
+of it.
+
+Reusing the closest one would make the audit trail lie. §4's whole claim is that
+"every edge can be audited back to its reason", so an edge stamped
+`DeclaredHere` when no file declared anything is worse than an unlabelled edge:
+it is a *wrong* reason, which R4 ranks below no reason.
+
+```rust
+/// The schema itself states the relationship — a dbd `SchemaModel` ref, a
+/// declarative schema file. No source file was read to place it.
+///
+/// ABOVE every other rung. The one rule this spec rests on is that the
+/// database's own name is the identity and every other producer defers to
+/// it; a rung ordered below the source-code rungs would contradict that at
+/// exactly the point the two disagree.
+StatedBySchema,
+```
+
+**`unresolved_reason` needs nothing new, but it does need a stated mapping.**
+dbd's `DepEdge.unresolved` means the endpoint is not placeable — the same
+doctrine as `Resolution::Unresolved`. That maps to **`ExternalBoundary`**: the
+reference names something outside what this scan indexes, which is precisely
+what that reason was measured into existence for. It is deliberately *not*
+`NoImportInScope` (a source-language notion with no meaning in SQL) and not
+`Unplaced` (which asserts the ladder has not run yet, and must be empty once it
+has).
+
+**Open, and it belongs to step 2:** an ORM-sourced mapping whose table name came
+from convention rather than a stated name is a *weaker* claim than
+`StatedBySchema`, so it wants its own rung below the source-code ones rather
+than sharing this one. It is left out here because nothing emits it until
+step 4, and a rung with no writer is a vocabulary entry that cannot be audited.
+
 ## `Symbol::schema` — the optional prop
 
 What has no home is the per-kind detail: a column's `pk`, an index's `def`, and —
@@ -120,10 +185,52 @@ pub struct SchemaFacts {
 pub enum SchemaSource {
     /// dbd's SchemaModel — the schema describing itself.
     Dbd,
-    /// An ORM or data-access layer, named. `EfCore`, `SqlAlchemy`, `Jpa`, …
-    /// Carried so "this app uses EF Core" is a fact about nodes rather than a
-    /// separate inventory that can drift from them.
+    /// An ORM or data-access layer, named. Carried so "this app uses EF Core"
+    /// is a fact about nodes rather than a separate inventory that can drift
+    /// from them.
     Orm(OrmKind),
+}
+
+/// The ORM that described the mapping.
+///
+/// A CLOSED enum rather than a `String`, for the reason every other vocabulary
+/// here is closed: a consumer asking "is this EF Core" must not have to know
+/// that the detector writes `EfCore` and someone else wrote `ef-core`. The
+/// variants are exactly the ecosystems `ManifestAdapter::stack_labels` can
+/// already name from a dependency, so adding one is a detector change and not
+/// a guess.
+///
+/// `Other(String)` exists because the alternative is worse. An ORM nobody
+/// enumerated yet is a real mapping that was really read, and dropping it to
+/// `None` would make it indistinguishable from "no ORM here" — the same
+/// honest-empty-masks-a-failure trap the no-fabrication rule forbids.
+pub enum OrmKind {
+    /// .NET. `DbSet<T>`, `: DbContext`, `.ToTable(…)`.
+    EfCore,
+    /// .NET, micro-ORM. Raw SQL in string literals, so it yields the
+    /// DEVIATION surface rather than an entity inventory.
+    Dapper,
+    /// Python. `declarative_base()`, `__tablename__`.
+    SqlAlchemy,
+    /// Python, Django's built-in. `models.Model`, `class Meta: db_table`.
+    DjangoOrm,
+    /// JVM. `@Entity`, `@Table(name = …)`.
+    Jpa,
+    /// TypeScript/JavaScript, schema-file-first — `schema.prisma` states the
+    /// whole schema, which is why it needs no walk change at all.
+    Prisma,
+    /// TypeScript/JavaScript. `pgTable(…)` in ordinary source.
+    Drizzle,
+    /// TypeScript/JavaScript. `@Entity()` decorators.
+    TypeOrm,
+    /// Ruby. ActiveRecord, where the table name is pure convention —
+    /// `Naming::Convention` by construction unless `self.table_name` states it.
+    ActiveRecord,
+    /// Go. `gorm:"…"` struct tags.
+    Gorm,
+    /// Detected from a manifest, not yet enumerated here. Carries the
+    /// dependency name that named it.
+    Other(String),
 }
 
 pub enum Naming {
