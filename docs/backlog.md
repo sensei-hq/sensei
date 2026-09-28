@@ -1240,3 +1240,68 @@ re-index re-parses everything.**
 Bounding the input is the only one that states a rule. It is no longer urgent
 now that the corpus parses clean, but it is the difference between one file
 failing and the daemon dying.
+
+## Metrics — the graph has 0 metric consumers, and it has grown 5x since that was filed (re-measured 2026-09-28)
+
+27 live metrics across 9 families, and **not one of them reads the code graph**.
+The families are `quality` 9, `outcome` 6, `usage` 5, `velocity` 3, `autonomy`
+2, `tool` 1, `knowledge` 1, `cost` 1, `composite` 1. There is no `architecture`
+family at all.
+
+**The gap has widened, which is the only new thing here.** Issue #156 filed this
+against a graph of 811,071 edges and 395,016 nodes. Today:
+
+| table | at #156 | 2026-09-28 | growth | metric consumers |
+|---|---|---|---|---|
+| `sensei.edges` | 811,071 | 4,078,536 | 5.0x | 0 |
+| `sensei.nodes` | 395,016 | 1,182,758 | 3.0x | 0 |
+| `inference.communities` | 32,495 | 117,647 | 3.6x | 0 |
+
+Quote the current figures, not #156's. The table above exists because the ones
+in that issue title are now five times out of date, and a stale number invites
+re-deriving a conclusion from it.
+
+### Architecture — the whole family is missing
+
+No coupling, cohesion, fan-in/fan-out, dependency-cycle, instability or layering
+metric. `module_quality` is named as if it were one and is a project-level qlty
+smell density — neither per-module nor structural.
+
+Three signals are buildable today with no resolver dependency —
+`graph_confidence`, `public_surface_ratio`, `symbol_size_p95`. Ship
+`graph_confidence` first: it is a MEASUREMENT-quality signal rather than a
+code-quality one, and it has to gate and annotate every architecture metric that
+follows.
+
+The module-level ones are blocked on the resolver, not on metric design: #156
+measured the whole repository collapsing to **13 distinct module→module edges**,
+all of them TypeScript, with Rust contributing none (#146, #151, #152). Building
+a coupling metric on 13 edges would produce a confident number over nothing,
+which the no-fabrication rule forbids. `layering_violations` is blocked on a
+second thing — there is no declared layer order, and `folders.role` is set on
+154 of 9,378 folders.
+
+Proposal and prototype queries: #156,
+`docs/features/metrics/architecture-metrics.md`.
+
+### Knowledge — three of four metrics are unregistered
+
+`sensei.metrics` holds exactly one `knowledge` row, `memory_promotion`.
+`recall_hit`, `repeat_mistake` and `guidance_adherence` match nothing in the
+table — verified by key pattern, not by reading a doc.
+
+### Per-module quality — project-wide only
+
+`duplication_ratio` and `module_quality` both exist and both report at project
+grain. The blocker is the same one the architecture family hits: `folder_id` is
+repo-grained, so a module has to be derived from a path prefix before anything
+can report per-module.
+
+### Not a gap — cohesion from `community_id`
+
+Deliberately excluded, and it should stay excluded until the clustering changes.
+#149 measured 62% of communities restating the file boundary and 36% being stub
+singletons, so a cohesion metric over them would be measuring the clustering
+algorithm rather than the architecture. Recorded here because 117,647 unused
+rows look like an obvious opportunity to anyone who has not read that
+measurement.
