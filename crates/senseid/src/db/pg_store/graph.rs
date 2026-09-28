@@ -1560,10 +1560,31 @@ impl PgStore {
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = if let Some(tid) = target_id {
             sqlx_core::query_as::query_as(
-                "INSERT INTO sensei.edges(folder_id, source_id, target_id, kind, props)
-                 VALUES($1, $2, $3, $4::sensei.edge_kind, $5)
+                // The verdict is DERIVED HERE, not left to the merge path. A
+                // first insert never goes through `merge_occurrences`, so the
+                // column stayed NULL on every edge the indexer created and only
+                // filled in if something later merged into it. Measured while
+                // fixing this: of 130,614 edges touched in ten minutes, 14,217
+                // carried a verdict.
+                //
+                // On conflict it recomputes from `edges.props || EXCLUDED.props`
+                // — the SAME expression the props column is set to, spelled once
+                // per statement — because a verdict derived from only the new
+                // half would contradict the props it claims to summarise.
+                "INSERT INTO sensei.edges(folder_id, source_id, target_id, kind, props,
+                                          resolved_via, unresolved_reason)
+                 VALUES($1, $2, $3, $4::sensei.edge_kind, $5,
+                        sensei.edge_verdict($5 -> 'occurrences', 'code_graph_rung', 'rung'),
+                        sensei.edge_verdict($5 -> 'occurrences', 'code_graph', 'reason'))
                  ON CONFLICT (folder_id, source_id, target_id, kind) WHERE target_id IS NOT NULL
-                   DO UPDATE SET modified_at = now(), props = edges.props || EXCLUDED.props
+                   DO UPDATE SET modified_at = now()
+                               , props = edges.props || EXCLUDED.props
+                               , resolved_via = sensei.edge_verdict(
+                                     (edges.props || EXCLUDED.props) -> 'occurrences',
+                                     'code_graph_rung', 'rung')
+                               , unresolved_reason = sensei.edge_verdict(
+                                     (edges.props || EXCLUDED.props) -> 'occurrences',
+                                     'code_graph', 'reason')
                  RETURNING id",
             )
             .bind(folder_id)
@@ -1576,10 +1597,25 @@ impl PgStore {
             .map_err(|e| e.to_string())?
         } else {
             sqlx_core::query_as::query_as(
-                "INSERT INTO sensei.edges(folder_id, source_id, target_name, target_file, kind, props)
-                 VALUES($1, $2, $3, $4, $5::sensei.edge_kind, $6)
+                // Same derivation as the resolved branch above; the two must stay
+                // in step. An UNRESOLVED edge is the one that most needs its
+                // reason on the column — it is the population every gap report
+                // groups by, and grouping four million rows through a jsonpath
+                // reduction in a view is what promoting it to a column avoided.
+                "INSERT INTO sensei.edges(folder_id, source_id, target_name, target_file, kind, props,
+                                          resolved_via, unresolved_reason)
+                 VALUES($1, $2, $3, $4, $5::sensei.edge_kind, $6,
+                        sensei.edge_verdict($6 -> 'occurrences', 'code_graph_rung', 'rung'),
+                        sensei.edge_verdict($6 -> 'occurrences', 'code_graph', 'reason'))
                  ON CONFLICT (folder_id, source_id, target_name, target_file, kind) WHERE target_id IS NULL
-                   DO UPDATE SET modified_at = now(), props = edges.props || EXCLUDED.props
+                   DO UPDATE SET modified_at = now()
+                               , props = edges.props || EXCLUDED.props
+                               , resolved_via = sensei.edge_verdict(
+                                     (edges.props || EXCLUDED.props) -> 'occurrences',
+                                     'code_graph_rung', 'rung')
+                               , unresolved_reason = sensei.edge_verdict(
+                                     (edges.props || EXCLUDED.props) -> 'occurrences',
+                                     'code_graph', 'reason')
                  RETURNING id"
             ).bind(folder_id).bind(source_id).bind(target_name).bind(target_file).bind(kind).bind(props)
                 .fetch_one(&self.pool).await.map_err(|e| e.to_string())?
