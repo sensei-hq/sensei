@@ -86,6 +86,17 @@ scan_paths() {
     [ -z "$f" ] && continue
     case "$f" in
       database/import/*) continue ;;
+      # The anonymised transcript corpus (Tier 2). These files ARE transcripts,
+      # so the shape rule below would block every one of them — the carve-out is
+      # deliberate and is exactly one directory deep.
+      #
+      # It is NOT a hole. Every CONTENT rule still runs over these files, and a
+      # separate repo test requires each fixture to carry a `.meta.json` naming
+      # the tool, its version and the anonymiser run that produced it. That is
+      # the control: a fixture is machine-generated from an out-of-repo capture,
+      # never hand-copied from a live session — which is the exact move that
+      # caused the incident this whole script exists for.
+      crates/senseid/tests/fixtures/transcripts/*) continue ;;
     esac
     case "$f" in
       *.jsonl|*.log|*events.jsonl|*chatSessions/*|*workspaceStorage/*|*/transcripts/*|*/facets/*)
@@ -106,12 +117,20 @@ scan_content() {
       *) continue ;;
     esac
     [ -z "$file" ] && continue
-    # This guard's own file is exempt: it necessarily contains strings shaped
-    # like the things it detects. That exemption is a standing obligation —
-    # every example below MUST be synthetic. The first version of this script
-    # used a real contributor's username in its own self-test and the exemption
-    # waved it straight through.
-    case "$file" in .githooks/check-no-leaks.sh) continue ;; esac
+    # A DETECTOR NECESSARILY CONTAINS DETECTABLE STRINGS. This guard's own file
+    # is exempt for that reason, and so is the anonymiser, whose self-test has to
+    # prove it replaces a NON-placeholder username — `/Users/dev` would prove
+    # nothing, since `dev` is on the safe list above.
+    #
+    # The exemption is a standing obligation: every example in both files MUST be
+    # synthetic. The first version of this script used a real contributor's
+    # username in its own self-test and the exemption waved it straight through.
+    #
+    # `audit_tree` grants NEITHER file an exemption, deliberately — that is what
+    # caught the real client names this script's own comments once carried.
+    case "$file" in
+      .githooks/check-no-leaks.sh|scripts/anonymize-transcript.py) continue ;;
+    esac
 
     # 2. A real home directory: /Users/<name>, C:\Users\<name>, /home/<name>.
       # The SAME two refinements `audit_tree` carries, and they must stay in step:
@@ -120,7 +139,7 @@ scan_content() {
       # placeholder admits every ordinary terminator — markdown backticks above all,
       # since that is where these examples live.
     if printf '%s' "$text" | grep -qiE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\\\+Users\\\\+)" &&
-       ! printf '%s' "$text" | grep -qiE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\\\+Users\\\\+)($SAFE_USERS)([/\\\\\"'\` ),;>]|$)"; then
+       ! printf '%s' "$text" | grep -qiE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\\\+Users\\\\+)(($SAFE_USERS)([/\\\\\"'\` ),;>]|$)|[\"'\`]|$)"; then
       note "  $file:$lineno — real home directory in a path; use a placeholder"
       printf '    %s\n' "$(printf '%s' "$text" | cut -c1-100)" >&2
     fi
@@ -187,6 +206,13 @@ self_test() {
   check "windows home"       '"C:\\Users\\rkale\\work"'              hit
   check "placeholder home"   '"/Users/dev.user/Documents/app"'       clean
   check "generic home"       '"/home/user/project"'                  clean
+  # A BARE PREFIX NAMES NOBODY. Source code that searches for the string
+  # `"/Users/"` carries no username at all, which is the case the rule already
+  # forgives for `/Users/.cursor/` and `/Users/</code>`. It blocked this repo's
+  # own transcript-identity test, whose whole job is to find real home paths.
+  check "bare prefix in code" 'for (at, _) in line.match_indices("/Users/") {'  clean
+  check "bare prefix indexed" 'let rest = &line[at + "/Users/".len()..];'        clean
+  check "still catches a user" 'let p = "/Users/rkale/notes";'                   hit
   check "personal mailbox"   'contact: someone@icloud.com'           hit
   check "corporate mailbox"  'jane.doe@bigcorp.example.net'          hit
   check "allow-listed"       'hi@sensei-hq.com'                      clean
@@ -213,9 +239,22 @@ self_test() {
   check "same name as word"  'repos under Work/Deca and Developer/zorp' hit
   private_re="$saved_re"
   fail=0
-  scan_paths 'reports/facets/manoj/x.json'  2>/dev/null; [ $fail -eq 1 ] && { pass=$((pass+1)); echo "  ok    facets path"; } || echo "  FAIL  facets path"; t=$((t+1))
+  scan_paths 'reports/facets/dev/x.json'  2>/dev/null; [ $fail -eq 1 ] && { pass=$((pass+1)); echo "  ok    facets path"; } || echo "  FAIL  facets path"; t=$((t+1))
   fail=0
   scan_paths 'database/import/staging/models.jsonl' 2>/dev/null; [ $fail -eq 0 ] && { pass=$((pass+1)); echo "  ok    seed jsonl allowed"; } || echo "  FAIL  seed jsonl allowed"; t=$((t+1))
+  # The anonymised transcript corpus. These files ARE transcripts — that is the
+  # point of them — so the shape rule above would block every one. The carve-out
+  # is exactly one directory, and it buys nothing on its own: the CONTENT rules
+  # still run over these files, and `transcript_fixtures_carry_provenance` in
+  # crates/senseid/tests/ requires each to have a `.meta.json` naming the tool,
+  # its version and the anonymiser that produced it. A hand-copied session has
+  # no such sibling, which is the check that matters here.
+  fail=0
+  scan_paths 'crates/senseid/tests/fixtures/transcripts/claude/tool-use.jsonl' 2>/dev/null
+  [ $fail -eq 0 ] && { pass=$((pass+1)); echo "  ok    anonymised fixture allowed"; } || echo "  FAIL  anonymised fixture allowed"; t=$((t+1))
+  fail=0
+  scan_paths 'crates/senseid/src/transcripts/session.jsonl' 2>/dev/null
+  [ $fail -eq 1 ] && { pass=$((pass+1)); echo "  ok    transcript elsewhere blocked"; } || echo "  FAIL  transcript elsewhere blocked"; t=$((t+1))
   echo "  $pass/$t passed"
   [ "$pass" -eq "$t" ]
 }
@@ -247,7 +286,7 @@ audit_tree() {
       note "  $f — contains a name from the private-names denylist"; n=$((n + 1))
     fi
     if grep -qiIE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\+Users\\+)" "$f" 2>/dev/null &&
-       ! grep -qiIE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\+Users\\+)($SAFE_USERS)([/\\\"'\` ),;>]|$)" "$f" 2>/dev/null; then
+       ! grep -qiIE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\+Users\\+)(($SAFE_USERS)([/\\\"'\` ),;>]|$)|[\"'\`]|$)" "$f" 2>/dev/null; then
       note "  $f — contains a real home directory"; n=$((n + 1))
     fi
   done < <(git ls-files)
