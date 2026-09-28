@@ -791,13 +791,14 @@ dependencies = [
 
 [[package]]
 name = "dbd-core"
-version = "0.14.0"
-source = "git+https://github.com/sensei-hq/dbd?tag=v0.14.0#0dfff3463c785850d630ec70b78d0c54f5023f92"
+version = "0.19.0"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.19.0#23090e47c07314e5d5be778b5f6056e9eeb39f3f"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
  "dirs",
+ "encoding_rs",
  "flate2",
  "futures-lite",
  "indexmap 2.14.0",
@@ -3922,7 +3923,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-bootstrap"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "dbd-core",
@@ -3938,7 +3939,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-desktop"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "sensei-bootstrap",
