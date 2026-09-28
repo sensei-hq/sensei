@@ -38,7 +38,7 @@ SAFE_USERS="$SAFE_USERS|[a-z]|[a-z][a-z]|\.\.\.|keiko|name"
 #   /Users/</code> …      prose or markup where the segment is a placeholder
 # The last one is UI copy explaining that paths ARE redacted, so flagging it
 # accused the redaction notice of being the leak.
-SAFE_USERS="$SAFE_USERS|\.[a-z][a-z.]*|<[a-z/<>-]*|…"  # last is U+2026 …
+SAFE_USERS="$SAFE_USERS|\.[a-z][a-z.]*|<[a-z/<>-]*|\{[a-z_]+\}|…"  # last is U+2026 …
 #
 # The DELIMITER after a safe user matters as much as the list. It was
 # `[/\\"' ]`, which does not include a backtick — so `(`/Users/keiko` → …)`
@@ -139,7 +139,7 @@ scan_content() {
       # placeholder admits every ordinary terminator — markdown backticks above all,
       # since that is where these examples live.
     if printf '%s' "$text" | grep -qiE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\\\+Users\\\\+)" &&
-       ! printf '%s' "$text" | grep -qiE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\\\+Users\\\\+)(($SAFE_USERS)([/\\\\\"'\` ),;>]|$)|[\"'\`]|$)"; then
+       ! printf '%s' "$text" | grep -qiE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\\\+Users\\\\+)(($SAFE_USERS)([/\\\\\"'\` ),;>]|$)|[\"'\` ]|$)"; then
       note "  $file:$lineno — real home directory in a path; use a placeholder"
       printf '    %s\n' "$(printf '%s' "$text" | cut -c1-100)" >&2
     fi
@@ -212,7 +212,13 @@ self_test() {
   # own transcript-identity test, whose whole job is to find real home paths.
   check "bare prefix in code" 'for (at, _) in line.match_indices("/Users/") {'  clean
   check "bare prefix indexed" 'let rest = &line[at + "/Users/".len()..];'        clean
+  check "bare prefix in prose" "it('leaves strings without /Users/ untouched')"  clean
+  check "api route placeholder" 'via GET /users/{owner}), GitLab {group}'        clean
   check "still catches a user" 'let p = "/Users/rkale/notes";'                   hit
+  # The windows form is the reason the no-username branch is NARROW. `\` is an
+  # ordinary delimiter, so in `C:\\Users\\rkale` the SECOND backslash satisfies
+  # it — a blanket-optional placeholder group excused a real username here.
+  check "windows still caught"  '"C:\\Users\\mjackson\\src"'                     hit
   check "personal mailbox"   'contact: someone@icloud.com'           hit
   check "corporate mailbox"  'jane.doe@bigcorp.example.net'          hit
   check "allow-listed"       'hi@sensei-hq.com'                      clean
@@ -285,10 +291,29 @@ audit_tree() {
        sed -E 's/[A-Za-z0-9]{32,}/<DIGEST>/g' "$f" 2>/dev/null | grep -qiE "($private_re)"; then
       note "  $f — contains a name from the private-names denylist"; n=$((n + 1))
     fi
-    if grep -qiIE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\+Users\\+)" "$f" 2>/dev/null &&
-       ! grep -qiIE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\+Users\\+)(($SAFE_USERS)([/\\\"'\` ),;>]|$)|[\"'\`]|$)" "$f" 2>/dev/null; then
-      note "  $f — contains a real home directory"; n=$((n + 1))
-    fi
+    # PER LINE, not per file. This check used to ask "does the file contain a
+    # home path AND contain no safe one anywhere" — two whole-file greps — so a
+    # single `/Users/dev/…` excused every real home directory in the same file.
+    # Proven: a file holding both was reported clean while a file holding only
+    # the real one was flagged. The staged path has always been per line; this is
+    # the drift those two comments keep warning about.
+    #
+    # The two detector files are exempt from THIS rule only, on the same standing
+    # obligation as the staged path. The denylist rule above stays un-exempt for
+    # every file — that is the rule that caught the real client names once sitting
+    # in this script's own comments, and it must keep being able to.
+    case "$f" in
+      .githooks/check-no-leaks.sh|scripts/anonymize-transcript.py) ;;
+      *)
+        if grep -qI . "$f" 2>/dev/null; then
+          while IFS= read -r hl; do
+            [ -z "$hl" ] && continue
+            note "  $f:${hl%%:*} — contains a real home directory"; n=$((n + 1))
+          done < <(grep -niE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\+Users\\+)" "$f" 2>/dev/null |
+                   grep -viE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\+Users\\+)(($SAFE_USERS)([/\\\"'\` ),;>]|$)|[\"'\` ]|$)")
+        fi
+        ;;
+    esac
   done < <(git ls-files)
   if [ "$n" -eq 0 ]; then printf 'clean — no tracked file carries a private name or a real home path\n'; fi
   return $fail
