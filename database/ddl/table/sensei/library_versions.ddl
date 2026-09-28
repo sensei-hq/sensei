@@ -23,12 +23,6 @@ set search_path to sensei, extensions;
 create table if not exists library_versions (
   id               uuid        primary key default gen_random_uuid()
 , library_id       uuid        not null references sensei.libraries(id) on delete cascade
-  -- An ACTUAL version, or the literal 'unknown' when it has not been
-  -- established. NEVER 'latest' — that is a TAG (see is_latest), not a
-  -- version, and conflating them fabricates: at migration rokkit's 94 pages
-  -- were keyed 'latest' while its real version, 1.4.1, sat in the
-  -- package.json on disk. 'unknown' says what we know; 'latest' claimed
-  -- something we had not established.
 , version          text        not null
 , resolved_version text
 , source_type      sensei.library_source_type
@@ -36,9 +30,6 @@ create table if not exists library_versions (
 , docs_url         text
 , local_path       text
 , page_count       integer     not null default 0
-  -- THE TAG. Which registered version is currently the latest, as a movable
-  -- pointer rather than a magic value in `version`. At most one per library,
-  -- enforced by a partial unique index — not merely intended.
 , is_latest        boolean     not null default false
 , fetched_at       timestamptz
 , props            jsonb       not null default '{}'
@@ -62,9 +53,13 @@ goes stale for older pins, while a repo homepage does not, which is why
 libraries.homepage_url stays put.';
 
 comment on column library_versions.version
-     is 'An ACTUAL version, or ''unknown'' when it has not been established. NEVER ''latest'' — latest is a TAG (is_latest), not a version. Keying content on ''latest'' fabricates: at migration rokkit''s 94 pages were keyed that way while its real version, 1.4.1, was readable from package.json on disk.';
+     is 'An ACTUAL version, or ''unknown'' when it has not been established. NEVER ''latest'' — latest is a TAG (is_latest), not a version. Keying content on ''latest'' fabricates: at migration rokkit''s 94 pages were keyed that way while its real version, 1.4.1, was readable from package.json on disk.
+
+An ACTUAL version, or the literal ''unknown'' when it has not been established. NEVER ''latest'' — that is a TAG (see is_latest), not a version, and conflating them fabricates: at migration rokkit''s 94 pages were keyed ''latest'' while its real version, 1.4.1, sat in the package.json on disk. ''unknown'' says what we know; ''latest'' claimed something we had not established.';
 comment on column library_versions.is_latest
-     is 'Whether this is the library''s current version — a movable TAG, at most one per library (partial unique index). Separate from `version` deliberately: "which version is this" and "is this the current one" are different questions, and answering the first with the second is how a stale row starts claiming to be current.';
+     is 'Whether this is the library''s current version — a movable TAG, at most one per library (partial unique index). Separate from `version` deliberately: "which version is this" and "is this the current one" are different questions, and answering the first with the second is how a stale row starts claiming to be current.
+
+THE TAG. Which registered version is currently the latest, as a movable pointer rather than a magic value in `version`. At most one per library, enforced by a partial unique index — not merely intended.';
 comment on column library_versions.resolved_version
      is 'The concrete version a fetch resolved to when the request was for a moving target. NULL when unknown. This is what makes "is our latest still latest?" answerable — the question library_update_scheduler asks.';
 comment on column library_versions.source_type

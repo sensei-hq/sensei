@@ -5,17 +5,6 @@ create table if not exists nodes (
 , parent_id                uuid        references sensei.nodes(id) on delete cascade
 , kind                     node_kind   not null
 , name                     text        not null
-  -- R13. The file this node is DECLARED in, as a key rather than a repeated
-  -- path. ON DELETE RESTRICT, never CASCADE: removing a file row must not
-  -- silently delete every declaration in it — a file's removal goes through
-  -- reconcile, one declaration at a time, with inbound edges unresolved first
-  -- (R10.8). Nullable, because PARTIAL (referenced, not yet declared) and
-  -- EXTERNAL (`lib·`) nodes have no file by definition.
-  --
-  -- This foreign key is what makes the ORPHANED state UNREPRESENTABLE. 8,147
-  -- nodes previously named a file the scanner did not track and read as
-  -- COMPLETE to every consumer; they were swept when this column landed, and
-  -- the constraint is why they cannot come back.
 , file_id                  uuid        references sensei.files(id) on delete restrict
 , fqn                      text
 , resolved                 boolean     not null default false
@@ -195,3 +184,5 @@ comment on column nodes.props
      is 'Extensible metadata. For sections: {level:2}. For rationale: {tag:"WHY"}. For files: {language:"rust"}.';
 comment on column nodes.modified_at
      is 'Timestamp of the last modification to this row.';
+comment on column nodes.file_id
+     is 'The file this node is DECLARED in, as a key rather than a repeated path. ON DELETE RESTRICT, never CASCADE: a file''s removal goes through reconcile, one declaration at a time. NULL for reference stubs and external `lib·` nodes, which have no file by definition. See docs/database/sensei.md.';

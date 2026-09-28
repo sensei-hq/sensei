@@ -19,24 +19,7 @@ create table if not exists files (
 , mtime                    bigint      not null
 , content_hash             text        not null
 , skip_reason              sensei.scan_skip_reason
-  -- The parser's VERBATIM message with line and column (R10.9, A9). `skip_reason`
-  -- carries the CODE; this carries the text. "parse_error" tells an agent a file
-  -- is broken; "x.rs:142: expected `}`" tells it what to do. It lives here rather
-  -- than on a node's props because splitting the code and the detail across two
-  -- tables recreates the two-copies-of-one-fact problem R10.9 exists to avoid.
 , skip_detail              text
-  -- The file LIFECYCLE's missing bit (03 S4). The design names four states —
-  -- discovered / parsed / unparseable / skipped — and `skip_reason` already
-  -- separates the last two from the rest. What it cannot separate is
-  -- `discovered` from `parsed`: both are skip_reason NULL, so a parse task
-  -- that never ran looks exactly like one that succeeded and found nothing
-  -- (a real state, R10.3). This column is that one bit and nothing more.
-  --   parsed_at NULL, skip_reason NULL -> discovered  (stalled, if it lingers)
-  --   parsed_at set,  skip_reason NULL -> parsed
-  --   parsed_at set,  skip_reason set  -> unparseable | skipped, per the reason
-  -- A four-value enum column was the other option and was rejected: it would
-  -- restate what skip_reason already says, giving two writes of one fact that
-  -- can disagree. See indexer.md R13.
 , parsed_at                timestamptz
 , indexed_at               timestamptz not null default now()
 , modified_at              timestamptz not null default now()

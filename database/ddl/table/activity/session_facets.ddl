@@ -23,8 +23,6 @@ create table if not exists activity.session_facets (
   , stage            work_stage                          -- which stage of the work this session was doing
   , stage_source     stage_source                        -- recorded by the developer, or inferred from the transcript
   , analyzed_at      timestamptz not null default now()
-  -- A stage is either absent or attributed. Recording one without saying where
-  -- it came from would let an inference be read as a declaration.
   , constraint session_facets_stage_attributed
       check ((stage is null) = (stage_source is null))
 );

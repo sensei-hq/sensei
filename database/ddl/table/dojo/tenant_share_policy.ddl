@@ -8,8 +8,6 @@ set search_path to dojo, extensions;
 -- mandate exists to prevent.
 create table if not exists tenant_share_policy (
   tenant_id            uuid        primary key references dojo.tenants(id) on delete cascade
-  -- FALSE deliberately: an organisation that has not decided has not mandated.
-  -- The absence of a policy is not consent.
 , private_repos_shared boolean     not null default false
 , set_by               uuid        references dojo.principals(id) on delete set null
 , set_at               timestamptz not null default now()
@@ -27,6 +25,8 @@ dojo.repository_elections overrides this either way, which is how "share all
 private repos except this one" is expressed.';
 
 comment on column tenant_share_policy.private_repos_shared
-     is 'The org''s mandate for its private repos. Members cannot override it in either direction.';
+     is 'The org''s mandate for its private repos. Members cannot override it in either direction.
+
+FALSE deliberately: an organisation that has not decided has not mandated. The absence of a policy is not consent.';
 comment on column tenant_share_policy.set_by
      is 'The admin who set it. Nullable so removing a member does not erase the policy they set.';

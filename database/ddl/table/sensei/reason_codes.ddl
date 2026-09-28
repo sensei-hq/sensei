@@ -17,17 +17,9 @@ set search_path to sensei, extensions;
 --
 -- See docs/architecture/reason-codes.md.
 create table if not exists reason_codes (
-  -- Which subsystem's vocabulary. Scoping by domain is what keeps `precedence`
-  -- meaningful: "fix the subscription before the election" is a real ordering,
-  -- "fix the subscription before the schedule window" is not.
   domain      text                not null
 , code        text                not null
 , kind        sensei.reason_kind  not null
-  -- Lower = fix this FIRST, ordered within a domain. A thing can fail several
-  -- ways at once; without an explicit order the answer depends on which SQL
-  -- branch happened to run first, which is the accidental behaviour this registry
-  -- exists to remove. Unique per domain so an accidental overlap fails loudly
-  -- rather than silently picking one.
 , precedence  smallint            not null
 , summary     text                not null
 , detail      text                not null
@@ -38,9 +30,6 @@ create table if not exists reason_codes (
 , modified_at timestamptz         not null default now()
 , primary key (domain, code)
 , unique (domain, precedence)
-  -- `normal` means it clears itself, so it addresses nobody. A remedy on a
-  -- `normal` row is the contradiction that made `forge_visibility_unknown` look
-  -- benign while it was permanently stuck.
 , constraint reason_codes_normal_is_silent
       check (kind <> 'normal' or (remedy is null and actor is null))
 );
@@ -55,11 +44,15 @@ the test for whether logic has leaked in.
 Seeded from database/import/staging/reason_codes.jsonl.';
 
 comment on column reason_codes.domain
-     is 'The subsystem whose vocabulary this belongs to (repository_sharing, schedule, metric_push, …). Scopes `precedence`, which is meaningless across domains.';
+     is 'The subsystem whose vocabulary this belongs to (repository_sharing, schedule, metric_push, …). Scopes `precedence`, which is meaningless across domains.
+
+Which subsystem''s vocabulary. Scoping by domain is what keeps `precedence` meaningful: "fix the subscription before the election" is a real ordering, "fix the subscription before the schedule window" is not.';
 comment on column reason_codes.kind
      is 'normal | refusal | fault. The axis is "does this clear itself without a human?", not "did anyone decide?".';
 comment on column reason_codes.precedence
-     is 'Lower = fix first, WITHIN a domain. A thing failing several ways reports the lowest; without this the answer depends on SQL branch order.';
+     is 'Lower = fix first, WITHIN a domain. A thing failing several ways reports the lowest; without this the answer depends on SQL branch order.
+
+Lower = fix this FIRST, ordered within a domain. A thing can fail several ways at once; without an explicit order the answer depends on which SQL branch happened to run first, which is the accidental behaviour this registry exists to remove. Unique per domain so an accidental overlap fails loudly rather than silently picking one.';
 comment on column reason_codes.remedy
      is 'What the reader can do about it. NULL when nobody can — and always NULL for a `normal` code, which the CHECK enforces.';
 comment on column reason_codes.actor

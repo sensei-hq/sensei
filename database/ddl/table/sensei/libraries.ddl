@@ -6,19 +6,6 @@ create table if not exists libraries (
 , name                     text         not null
 , ecosystem                library_ecosystem not null
 , description              text
-  -- Where the library's SOURCE lives, from the registry's own record of it
-  -- (02b S8). The input the github docs route needs, and what R11.2's
-  -- upstreaming has to file against — blocked until now because only 2 of
-  -- 1,121 rows carried any URL at all.
-  --
-  -- On `libraries`, not `library_versions`: a library's repository is part of
-  -- its identity and does not change per release. Where a given release's DOCS
-  -- were fetched from is a different question and lives on the version
-  -- (`base_url` / `docs_url`).
-  --
-  -- NULL means the registry did not state one. NEVER derived from the package
-  -- name — `github.com/<name>/<name>` is wrong far more often than right, and
-  -- a fabricated URL is worse than none because something will fetch it.
 , repository_url           text
 , homepage_url             text
 , embedding                vector(384)
