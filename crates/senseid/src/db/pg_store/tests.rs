@@ -14082,6 +14082,128 @@ async fn the_rung_and_reason_come_from_the_occurrences_the_indexer_writes() {
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
 
+/// The verdict must land on the COLUMN at insert, not only in the view.
+///
+/// The test above reads `sensei.graph_resolution`, which calls `edge_verdict`
+/// at QUERY time — so it passes whether or not `edges.resolved_via` was ever
+/// written. That is exactly how the column stayed empty without a red test:
+/// every consumer that mattered went through a view, and the materialised
+/// column was verified by nothing.
+///
+/// It matters because the column is not decoration. A view recomputing a
+/// jsonpath reduction over `props.occurrences` cannot be indexed or grouped at
+/// four million rows, which is the whole reason the reduction was promoted to a
+/// column in the first place. MEASURED at the time this was written: of 130,614
+/// edges the indexer had touched in ten minutes, 14,217 carried a verdict —
+/// because only the merge path in `indexer.rs` wrote one, and a first insert
+/// never goes through it.
+///
+/// Mutation that must break this test: drop either `edge_verdict` call from
+/// `insert_edge_with_props`.
+#[tokio::test]
+async fn an_inserted_edge_carries_its_verdict_on_the_column_not_just_the_view() {
+    let s = pg_store().await;
+    let folder = format!("verdict_col_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    let caller =
+        s.seed_node(&fid, "function", "c", "src/a.rs", None, None, Some(1), Some(9)).await.unwrap();
+    let callee =
+        s.seed_node(&fid, "function", "t", "src/b.rs", None, None, Some(1), Some(9)).await.unwrap();
+
+    let placed = s
+        .insert_edge_with_props(
+            &fid,
+            &caller,
+            Some(&callee),
+            None,
+            None,
+            "calls",
+            &serde_json::json!({ "occurrences": { "src/a.rs": [
+                { "fact": "use", "kind": "calls", "at": [1, 1, 1, 9], "rung": "in_the_prelude" },
+                { "fact": "use", "kind": "calls", "at": [2, 1, 2, 9], "rung": "declared_here" }
+            ]}}),
+        )
+        .await
+        .unwrap();
+
+    let (via, reason): (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT resolved_via, unresolved_reason FROM sensei.edges WHERE id = $1",
+    )
+    .bind(placed)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        via.as_deref(),
+        Some("declared_here"),
+        "a placed edge must carry the strongest rung on the column at insert"
+    );
+    assert_eq!(reason, None, "exactly one of the two is set: a placed edge has no reason");
+
+    let missed = s
+        .insert_edge_with_props(
+            &fid,
+            &caller,
+            None,
+            Some("nowhere"),
+            None,
+            "calls",
+            &serde_json::json!({ "occurrences": { "src/a.rs": [
+                { "fact": "use", "kind": "calls", "at": [3, 1, 3, 9], "reason": "plumbing" },
+                { "fact": "use", "kind": "calls", "at": [4, 1, 4, 9], "reason": "receiver_type_unknown" }
+            ]}}),
+        )
+        .await
+        .unwrap();
+
+    let (via2, reason2): (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT resolved_via, unresolved_reason FROM sensei.edges WHERE id = $1",
+    )
+    .bind(missed)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        reason2.as_deref(),
+        Some("receiver_type_unknown"),
+        "a missed edge must carry the most serious reason on the column at insert"
+    );
+    assert_eq!(via2, None, "exactly one of the two is set: a missed edge has no rung");
+
+    // AND ON RE-INSERT. The upsert merges props, so the verdict has to be
+    // recomputed from the MERGED value — a second occurrence carrying a stronger
+    // rung must move the column, or the materialised value drifts from the props
+    // it claims to summarise.
+    s.insert_edge_with_props(
+        &fid,
+        &caller,
+        None,
+        Some("nowhere"),
+        None,
+        "calls",
+        &serde_json::json!({ "occurrences": { "src/a.rs": [
+            { "fact": "use", "kind": "calls", "at": [5, 1, 5, 9], "reason": "unhandled_form" }
+        ]}}),
+    )
+    .await
+    .unwrap();
+    let reason3: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT unresolved_reason FROM sensei.edges WHERE id = $1",
+    )
+    .bind(missed)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        reason3.as_deref(),
+        Some("unhandled_form"),
+        "the upsert recomputes from the merged props, so a stronger reason wins"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
 /// `graph_resolution` says how a placed edge was placed.
 ///
 /// The sibling of `graph_boundary`. That one is where the graph stops; this is
