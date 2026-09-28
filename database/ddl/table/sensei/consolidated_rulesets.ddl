@@ -11,13 +11,6 @@ create table if not exists consolidated_rulesets (
 , status       text        not null default 'proposed'
 , created_at   timestamptz not null default now()
 , constraint consolidated_rulesets_scope_version unique (scope, version)
-  -- Only `origin` from the shared vocabulary (sensei.entity_origin).
-  --
-  -- NOT `scope`: this table already has one, and it means something else — the
-  -- GOVERNANCE scope the ruleset belongs to (it keys the unique constraint with
-  -- `version`, and matches sensei.scopes). That is applicability, not visibility.
-  -- Adding a second column of the same name would have been the exact confusion
-  -- this vocabulary exists to end.
 , origin       entity_origin not null default 'learned'
 );
 
@@ -48,3 +41,7 @@ comment on column consolidated_rulesets.status
      is 'proposed (awaiting approval) | approved (active, feeds rules.md) | superseded (an older approved version).';
 comment on column consolidated_rulesets.created_at
      is 'When this version was produced.';
+comment on column consolidated_rulesets.origin
+     is 'Only `origin` from the shared vocabulary (sensei.entity_origin).
+
+NOT `scope`: this table already has one, and it means something else — the GOVERNANCE scope the ruleset belongs to (it keys the unique constraint with `version`, and matches sensei.scopes). That is applicability, not visibility. Adding a second column of the same name would have been the exact confusion this vocabulary exists to end.';

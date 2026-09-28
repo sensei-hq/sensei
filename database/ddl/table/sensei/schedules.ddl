@@ -19,14 +19,10 @@ create table if not exists schedules (
   name           text        primary key
 , enabled        boolean     not null default true
 , interval_secs  integer     not null
-      -- A CHECK, not a runtime fallback: a zero interval busy-loops a core, and
-      -- the database is the right place to make that unrepresentable.
       check (interval_secs > 0)
 , window_start   time
 , window_end     time
 , days           smallint[]
-      -- ISO weekdays: 1 = Monday … 7 = Sunday. Rejects anything else rather than
-      -- silently never matching.
       check (days is null or (
              array_length(days, 1) between 1 and 7
          and days <@ array[1,2,3,4,5,6,7]::smallint[]))

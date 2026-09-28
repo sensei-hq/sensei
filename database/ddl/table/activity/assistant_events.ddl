@@ -11,10 +11,6 @@ create table if not exists assistant_events (
 , success          boolean
 , payload          jsonb             not null default '{}'
 , created_at       timestamptz       not null default now()
--- Derived attributes (populated by the EnrichAssistantEvents worker from
--- tool_name + payload->tool_input + cwd — a base-insert + post-update split so the
--- hot capture path is never blocked and the derivation is re-runnable/backfillable).
--- All nullable; `enriched_at` NULL marks a row the worker has not processed yet.
 , repository_id    uuid              references sensei.repositories(id) on delete set null
 , plugin           text
 , method           text
@@ -72,3 +68,5 @@ comment on column assistant_events.payload
      is 'Full JSON payload received from stdin — complete event data.';
 comment on column assistant_events.created_at
      is 'Server-side timestamp when this row was inserted.';
+comment on column assistant_events.repository_id
+     is 'Derived attributes (populated by the EnrichAssistantEvents worker from tool_name + payload->tool_input + cwd — a base-insert + post-update split so the hot capture path is never blocked and the derivation is re-runnable/backfillable). All nullable; `enriched_at` NULL marks a row the worker has not processed yet.';

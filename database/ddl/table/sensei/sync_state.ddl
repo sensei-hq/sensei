@@ -13,17 +13,12 @@ set search_path to sensei, extensions;
 -- would hide whichever failed second.
 create table if not exists sync_state (
   entity          sync_entity    not null
-  -- The entity's DURABLE key, not a local uuid: repo_key for a repository,
-  -- metric key for the catalogue. A local uuid differs between installs, so a
-  -- sync row keyed on one could never be reconciled against the other side.
 , entity_key      text           not null
 , direction       sync_direction not null
 , local_version   bigint
 , remote_version  bigint
 , state           text           not null default 'pending'
       check (state in ('pending', 'synced', 'error', 'skipped'))
-  -- Kept, not cleared on the next attempt: a sync that fails, retries and fails
-  -- differently is a different problem, and overwriting loses the first cause.
 , last_error      text
 , attempted_at    timestamptz
 , synced_at       timestamptz
@@ -45,3 +40,7 @@ reconciled against the other side.';
 
 comment on column sync_state.state
      is 'pending → not yet reconciled; synced → both sides agree; error → last attempt failed (see last_error); skipped → deliberately not synced (private repo, deactivated metric).';
+comment on column sync_state.entity_key
+     is 'The entity''s DURABLE key, not a local uuid: repo_key for a repository, metric key for the catalogue. A local uuid differs between installs, so a sync row keyed on one could never be reconciled against the other side.';
+comment on column sync_state.last_error
+     is 'Kept, not cleared on the next attempt: a sync that fails, retries and fails differently is a different problem, and overwriting loses the first cause.';

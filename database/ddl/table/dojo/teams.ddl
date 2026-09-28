@@ -14,8 +14,6 @@ create table if not exists teams (
   id          uuid        primary key default gen_random_uuid()
 , tenant_id   uuid        not null references dojo.tenants(id) on delete cascade
 , name        text        not null
-  -- The auto-created catch-all. Exactly one per tenant, enforced below: two
-  -- defaults would make "who is in the fallback team" ambiguous.
 , is_default  boolean     not null default false
 , created_at  timestamptz not null default now()
 , unique (tenant_id, name)
@@ -34,3 +32,5 @@ drop policy if exists teams_service_only on teams;
 create policy teams_service_only on teams
     for all to authenticated, anon
     using (false) with check (false);
+comment on column teams.is_default
+     is 'The auto-created catch-all. Exactly one per tenant, enforced below: two defaults would make "who is in the fallback team" ambiguous.';

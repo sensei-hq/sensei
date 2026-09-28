@@ -8,18 +8,10 @@ create table if not exists intake_guide (
 , enabled     boolean     not null default true
 , source      text        not null default 'builtin'
 , created_at  timestamptz not null default now()
--- Bumped whenever the row changes. The staging import guards on it: a re-import
--- only overwrites a row when the DATAFILE's stamp is at least as new, so an edit
--- made in place survives redeployment. Without this column the import had nothing
--- to compare and fell back to clobbering (playbooks) or to never updating at all
--- (intake_guide, playbook_rules) — see docs/backlog.md.
 , modified_at  timestamptz not null default now()
 , constraint intake_guide_kind_chk check (kind in ('frame','axis'))
 , constraint intake_guide_axis_chk check ((kind='axis') = (axis is not null))
 , constraint intake_guide_source_chk check (source in ('builtin','org','learned'))
-  -- Shared vocabulary (see sensei.entity_scope / sensei.entity_origin).
-  -- scope answers WHO MAY SEE IT and therefore whether it syncs; origin answers
-  -- WHERE IT CAME FROM and therefore what a re-import may safely replace.
 , scope         entity_scope  not null default 'local'
 , origin        entity_origin not null default 'builtin'
 );
@@ -31,3 +23,7 @@ create table if not exists intake_guide (
 -- and over, one per deploy, with nothing flagging it.
 create unique index if not exists intake_guide_kind_axis_unique
     on sensei.intake_guide (kind, axis) nulls not distinct;
+comment on column intake_guide.modified_at
+     is 'Bumped whenever the row changes. The staging import guards on it: a re-import only overwrites a row when the DATAFILE''s stamp is at least as new, so an edit made in place survives redeployment. Without this column the import had nothing to compare and fell back to clobbering (playbooks) or to never updating at all (intake_guide, playbook_rules) — see docs/backlog.md.';
+comment on column intake_guide.scope
+     is 'Shared vocabulary (see sensei.entity_scope / sensei.entity_origin). scope answers WHO MAY SEE IT and therefore whether it syncs; origin answers WHERE IT CAME FROM and therefore what a re-import may safely replace.';

@@ -9,9 +9,6 @@ create table if not exists dojo.relay_segments (
 , summary          text
 , detail           text
 , state            dojo.segment_state not null default 'pending'
--- Plan-authored task metadata (labels only — zero-knowledge D10). Set when a run
--- is seeded from a registered plan (register_plan); NULL for cadence-derived and
--- TodoWrite segments.
 , agent            text
 , model            text
 , spec_ref         text
@@ -45,3 +42,5 @@ comment on column dojo.relay_segments.response_verdict
      is 'Per-segment review verdict: approve | request_changes | comment. Null until reviewed.';
 comment on column dojo.relay_segments.submitted_at
      is 'When the batched (PR-review-style) response was sent; null while a local draft.';
+comment on column relay_segments.agent
+     is 'Plan-authored task metadata (labels only — zero-knowledge D10). Set when a run is seeded from a registered plan (register_plan); NULL for cadence-derived and TodoWrite segments.';

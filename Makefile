@@ -379,7 +379,7 @@ website-build:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: check-ddl-grants test-crates-fast test-app-unit
+test-fast: check-ddl-grants check-ddl-comments test-crates-fast test-app-unit
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
@@ -394,7 +394,17 @@ test-crates-fast:
 check-ddl-grants:
 	@python3 scripts/check-grant-targets.py
 
-test: check-ddl-grants test-crates test-app-unit test-dojo test-db-if-reachable
+# A column list is a DECLARATION, and paragraphs of rationale between two columns
+# bury the shape a reader opened the file for. Worse, that prose is invisible to
+# everything except a human reading this one file: `comment on column` reaches
+# the catalog, and design history belongs in docs/database/<schema>.md next to
+# the decision it explains. A single line — a group label, a `── … ──` divider —
+# is formatting and is left alone; two consecutive lines is where narrative
+# starts. Instant and needs no database, so it runs on every commit.
+check-ddl-comments:
+	@python3 scripts/check-ddl-comments.py
+
+test: check-ddl-grants check-ddl-comments test-crates test-app-unit test-dojo test-db-if-reachable
 
 test-crates:
 	cargo test --workspace
