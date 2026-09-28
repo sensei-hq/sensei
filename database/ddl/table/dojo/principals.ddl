@@ -21,9 +21,6 @@ set search_path to dojo, extensions;
 -- referenced the login in the first place.
 create table if not exists principals (
   id            uuid        primary key default gen_random_uuid()
-  -- A POINTER, not the identity. Nullable so a principal can exist before (or
-  -- after) it has a login — a re-attribution transiently has neither side
-  -- attached, and an invited-but-unregistered member has no account yet.
 , auth_user_id  uuid        unique
 , display_name  text
 , created_at    timestamptz not null default now()
@@ -41,4 +38,6 @@ and provides no operation to split a user afterwards — so the only way to undo
 one without losing history is to own the mapping ourselves.';
 
 comment on column principals.auth_user_id
-     is 'The Supabase auth.users row this principal currently signs in as. Re-pointable by design; UNIQUE so two principals can never claim one login.';
+     is 'The Supabase auth.users row this principal currently signs in as. Re-pointable by design; UNIQUE so two principals can never claim one login.
+
+A POINTER, not the identity. Nullable so a principal can exist before (or after) it has a login — a re-attribution transiently has neither side attached, and an invited-but-unregistered member has no account yet.';

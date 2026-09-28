@@ -30,18 +30,8 @@ set search_path to sensei, extensions;
 -- and an enable/disable screen has nothing to read. Per-repository rows are what
 -- `sensei.metric_status` reports a reason from.
 create table if not exists metric_deactivations (
-  -- The repository, by its stable id. `repo_key` is what the dōjō speaks (it is
-  -- the identity both planes share), resolved to an id on write so this table
-  -- joins like every other repo-scoped table and cascades when a repository goes.
   repository_id uuid        not null references sensei.repositories(id) on delete cascade
-  -- The catalogue KEY, not a metric id. `sensei.metrics.id` differs between the
-  -- two planes — separate databases loaded from the same staging file — so the
-  -- key is the only value that survives the trip. Deliberately NOT a foreign key
-  -- for the same reason a dōjō may name a metric this install has not seeded yet;
-  -- an unknown key simply matches nothing.
 , metric_key    text        not null
-  -- When the daemon last learned this. Distinguishes a ruling confirmed this
-  -- cycle from one left behind by a sync that has since stopped running.
 , observed_at   timestamptz not null default now()
 , primary key (repository_id, metric_key)
 );
@@ -56,3 +46,7 @@ ruling: staleness costs a cycle of compute, never consent.';
 
 comment on column metric_deactivations.metric_key
      is 'Catalogue key, not an id — sensei.metrics.id differs between the daemon and dōjō planes. Intentionally not an FK: a dōjō may name a metric this install has not seeded, and an unknown key should match nothing rather than fail the write.';
+comment on column metric_deactivations.repository_id
+     is 'The repository, by its stable id. `repo_key` is what the dōjō speaks (it is the identity both planes share), resolved to an id on write so this table joins like every other repo-scoped table and cascades when a repository goes.';
+comment on column metric_deactivations.observed_at
+     is 'When the daemon last learned this. Distinguishes a ruling confirmed this cycle from one left behind by a sync that has since stopped running.';

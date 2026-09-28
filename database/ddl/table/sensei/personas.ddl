@@ -35,59 +35,15 @@ set search_path to sensei, extensions;
 -- identity.
 create table if not exists personas (
   id            uuid        primary key default gen_random_uuid()
-  -- DISPLAY name. Provisional until the persona is connected: before OAuth it
-  -- can only be a guess derived from a git email or a repository owner, and
-  -- guesses are wrong — `sensei-hq` was inferred from an email domain when the
-  -- real GitHub login is `sensei-hq-org`.
 , label         text        not null
-  -- VERIFIED identity, set only by a completed OAuth sign-in. NULL means "we
-  -- have not proven who this is", which is a different and more useful state
-  -- than a plausible-looking label.
 , github_login   text
-  -- The stable GitHub id. A login can be RENAMED — the id cannot — so this, not
-  -- the login, is what an identity is matched on across time.
 , github_user_id bigint
 , verified_at    timestamptz
-  -- FALSE for a contributor who is NOT the local user. `contributor@example.com`
-  -- above may well be someone else; folding it into the user's own numbers would
-  -- be a fabricated attribution, so an unrecognised email gets its own persona
-  -- with is_self = false rather than a guess.
 , is_self       boolean     not null default true
-  -- The dōjō login this persona pushes under. Plain uuid, no FK: the referent
-  -- lives in another database, exactly as `sensei.repositories.tenant_id` does.
-  -- NULL until the user links this persona (Phase 6).
 , principal_id  uuid
-  -- The KEYCHAIN SLOT this persona's dōjō session is stored under, as chosen by
-  -- whoever started the sign-in (`/api/auth/signin?persona=X`).
-  --
-  -- Distinct from `label`, and that distinction is the whole reason the column
-  -- exists. `label` is a DISPLAY name that a successful sign-in REWRITES to the
-  -- verified GitHub login — a user who signs in as `default` ends up with a row
-  -- labelled `sensei-hq-org`. An unattended task that looked up the session by
-  -- `label` would read `refresh_token.sensei-hq-org`, find nothing, and skip the
-  -- persona while reporting the cycle successful. Observed, not theorised.
 , session_slot  text
-  -- What we currently believe about this persona's FORGE token — GitHub's,
-  -- not the dōjō session's. Two different credentials with two different
-  -- lifetimes: the dōjō session refreshes on every use, while the GitHub token
-  -- expires on a measured ~8-hour cycle. Nothing recorded the difference, so
-  -- `GET /api/auth/status` reported `signedIn: true` for a whole morning while
-  -- every forge call answered 401.
-  --
-  -- `unknown` is the DEFAULT and a real state, not a placeholder: a persona
-  -- created before anything asked GitHub genuinely has no standing, and
-  -- defaulting to `active` would claim a credential we have never tested.
 , forge_token_state      sensei.forge_token_state not null default 'unknown'
-  -- When the token stops working, as the FORGE states it. Null when no expiry
-  -- has ever been learned — GoTrue's exchange does not report the provider's
-  -- deadline, so it can only come from GitHub's own
-  -- `github-authentication-token-expiration` response header. Null therefore
-  -- means "not yet known", never "does not expire".
 , forge_token_expires_at timestamptz
-  -- When we last learned anything about it. Distinguishes a standing that is
-  -- current from one recorded days ago, and is deliberately NOT stamped when a
-  -- probe could not reach the forge: claiming a check that told us nothing
-  -- would make a stale belief look fresh.
 , forge_token_checked_at timestamptz
 , created_at    timestamptz not null default now()
 , modified_at   timestamptz not null default now()
@@ -123,22 +79,36 @@ Not a "people" table. One human may own several personas by choice, and a
 persona may belong to someone else entirely (is_self = false).';
 
 comment on column personas.label
-     is 'Display name, unique case-insensitively. PROVISIONAL until verified_at is set — before a sign-in it can only be inferred from a git email or repo owner, and such inferences are wrong (sensei-hq vs the real sensei-hq-org). NOT a category of repo — one persona spans many owners.';
+     is 'Display name, unique case-insensitively. PROVISIONAL until verified_at is set — before a sign-in it can only be inferred from a git email or repo owner, and such inferences are wrong (sensei-hq vs the real sensei-hq-org). NOT a category of repo — one persona spans many owners.
+
+DISPLAY name. Provisional until the persona is connected: before OAuth it can only be a guess derived from a git email or a repository owner, and guesses are wrong — `sensei-hq` was inferred from an email domain when the real GitHub login is `sensei-hq-org`.';
 comment on column personas.github_login
      is 'The GitHub login, proven by OAuth. NULL until the persona is connected — an unproven identity should look unproven rather than merely unlabelled.';
 comment on column personas.github_user_id
-     is 'GitHub''s stable numeric id. Matched on in preference to the login, which the user can rename.';
+     is 'GitHub''s stable numeric id. Matched on in preference to the login, which the user can rename.
+
+The stable GitHub id. A login can be RENAMED — the id cannot — so this, not the login, is what an identity is matched on across time.';
 comment on column personas.verified_at
      is 'When OAuth last confirmed this identity. NULL = discovered from git only.';
 comment on column personas.is_self
-     is 'FALSE when this persona is another contributor, not the local user — so their commits are never counted as "mine".';
+     is 'FALSE when this persona is another contributor, not the local user — so their commits are never counted as "mine".
+
+FALSE for a contributor who is NOT the local user. `contributor@example.com` above may well be someone else; folding it into the user''s own numbers would be a fabricated attribution, so an unrecognised email gets its own persona with is_self = false rather than a guess.';
 comment on column personas.principal_id
-     is 'The dōjō login this persona pushes under (dojo.principals.id). Plain uuid — the referent is in another database. NULL until linked.';
+     is 'The dōjō login this persona pushes under (dojo.principals.id). Plain uuid — the referent is in another database. NULL until linked.
+
+The dōjō login this persona pushes under. Plain uuid, no FK: the referent lives in another database, exactly as `sensei.repositories.tenant_id` does. NULL until the user links this persona (Phase 6).';
 comment on column personas.session_slot
-     is 'The Keychain slot holding this persona''s dōjō session (session.rs::account_for formats refresh_token.<slot>). NOT the label: a successful sign-in rewrites label to the verified GitHub login, so signing in as "default" yields a row labelled "sensei-hq-org" whose session is still at refresh_token.default. Looking the session up by label finds nothing and silently skips the persona. NULL = never signed in from this machine.';
+     is 'The Keychain slot holding this persona''s dōjō session (session.rs::account_for formats refresh_token.<slot>). NOT the label: a successful sign-in rewrites label to the verified GitHub login, so signing in as "default" yields a row labelled "sensei-hq-org" whose session is still at refresh_token.default. Looking the session up by label finds nothing and silently skips the persona. NULL = never signed in from this machine.
+
+The KEYCHAIN SLOT this persona''s dōjō session is stored under, as chosen by whoever started the sign-in (`/api/auth/signin?persona=X`).
+
+Distinct from `label`, and that distinction is the whole reason the column exists. `label` is a DISPLAY name that a successful sign-in REWRITES to the verified GitHub login — a user who signs in as `default` ends up with a row labelled `sensei-hq-org`. An unattended task that looked up the session by `label` would read `refresh_token.sensei-hq-org`, find nothing, and skip the persona while reporting the cycle successful. Observed, not theorised.';
 comment on column personas.forge_token_state
      is 'What we believe about this persona''s FORGE (GitHub) token — a different credential from the dōjō session, with a different lifetime. The session refreshes on every use; the GitHub token expires on a measured ~8h cycle. `unknown` is the default and a REAL state: a persona nothing has asked GitHub about has no standing, and defaulting to `active` would claim a credential never tested.';
 comment on column personas.forge_token_expires_at
-     is 'When the forge token stops working, as the forge states it. NULL = not yet known, never "does not expire" — GoTrue''s exchange does not report the provider''s deadline, so it can only come from GitHub''s `github-authentication-token-expiration` response header.';
+     is 'When the forge token stops working, as the forge states it. NULL = not yet known, never "does not expire" — GoTrue''s exchange does not report the provider''s deadline, so it can only come from GitHub''s `github-authentication-token-expiration` response header.
+
+When the token stops working, as the FORGE states it. Null when no expiry has ever been learned — GoTrue''s exchange does not report the provider''s deadline, so it can only come from GitHub''s own `github-authentication-token-expiration` response header. Null therefore means "not yet known", never "does not expire".';
 comment on column personas.forge_token_checked_at
      is 'When anything was last learned about the forge token. Deliberately NOT stamped when a probe could not reach the forge: recording a check that told us nothing would make a stale belief look fresh.';

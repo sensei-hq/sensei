@@ -4,12 +4,6 @@ create sequence if not exists dojo.relay_inbox_seq;
 
 create table if not exists dojo.relay_inbox (
   id            uuid                         primary key default gen_random_uuid()
--- `::regclass` is not decoration. Postgres NORMALISES a sequence default to
--- nextval('...'::regclass) in the catalog, so a design written without the cast
--- never matches what the database reports: `dbd diff` reports a difference
--- forever and `reconcile` re-applies the same ALTER on every run without
--- converging. That also makes `dbd diff --exit-code` unusable as a CI gate,
--- which is what surfaced it.
 , seq           bigint                       not null default nextval('dojo.relay_inbox_seq'::regclass)
 , session_id    uuid                         not null references dojo.relay_sessions(id) on delete cascade
 , segment_id    uuid                         references dojo.relay_segments(id) on delete cascade
@@ -47,3 +41,5 @@ comment on column dojo.relay_inbox.reply
      is 'The human''s response (verdict / chosen option / free-text). Consumed by the daemon.';
 comment on column dojo.relay_inbox.segment_id
      is 'The outline segment this row gates/annotates (null for a free-standing chat/nudge).';
+comment on column relay_inbox.seq
+     is '`::regclass` is not decoration. Postgres NORMALISES a sequence default to nextval(''...''::regclass) in the catalog, so a design written without the cast never matches what the database reports: `dbd diff` reports a difference forever and `reconcile` re-applies the same ALTER on every run without converging. That also makes `dbd diff --exit-code` unusable as a CI gate, which is what surfaced it.';

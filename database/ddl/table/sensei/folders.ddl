@@ -16,21 +16,6 @@ create table if not exists folders (
 , props                    jsonb         not null default '{}'
 , tags                     text[]        not null default '{}'
 , repository_id            uuid          references sensei.repositories(id) on delete set null
-  -- WHICH workspace declares this module, when one does.
-  --
-  -- Membership is a RELATIONSHIP, so it is stored as one — not as a `kind`.
-  -- `kind` says what a folder IS; this says who claims it, and says WHICH
-  -- workspace rather than a bare yes/no, so "the members of this workspace"
-  -- is a single indexed lookup.
-  --
-  -- NULL means nothing declares it: a real and common state. `marketplace/`,
-  -- `app/`, `dojo/` and `website/` here are all real build units that no
-  -- workspace lists. NULL is "undeclared", never "unknown".
-  --
-  -- DERIVED from the declaring manifest's member list (package.json
-  -- `workspaces`, Cargo.toml `[workspace] members`), matched on the
-  -- repo-relative PATH. Refreshed on every scan, because a folder that leaves
-  -- the list must stop reading as a member.
 , workspace_root_id        uuid          references sensei.folders(id) on delete set null
 , branch                   text
 , modified_at              timestamptz   not null default now()
@@ -90,7 +75,15 @@ It does NOT say who claims the folder. Whether a workspace declares a module is 
 comment on column folders.workspace_root_id
      is 'The folder whose manifest DECLARES this module as a workspace member (package.json `workspaces`, Cargo.toml `[workspace] members`). NULL means nothing declares it — a real state, and the common one for a repo with several independent build units. Derived from the declaring manifest and matched on repo-relative PATH, never on the directory name or its position in the tree; asserting membership no manifest states is the R4 fabrication. Refreshed on every scan so a folder that leaves the member list stops reading as a member.
 
-Only the REPO ROOT''s manifest is read today, so a nested workspace root is not detected — its members resolve as undeclared. A named gap, not a silent one.';
+Only the REPO ROOT''s manifest is read today, so a nested workspace root is not detected — its members resolve as undeclared. A named gap, not a silent one.
+
+WHICH workspace declares this module, when one does.
+
+Membership is a RELATIONSHIP, so it is stored as one — not as a `kind`. `kind` says what a folder IS; this says who claims it, and says WHICH workspace rather than a bare yes/no, so "the members of this workspace" is a single indexed lookup.
+
+NULL means nothing declares it: a real and common state. `marketplace/`, `app/`, `dojo/` and `website/` here are all real build units that no workspace lists. NULL is "undeclared", never "unknown".
+
+DERIVED from the declaring manifest''s member list (package.json `workspaces`, Cargo.toml `[workspace] members`), matched on the repo-relative PATH. Refreshed on every scan, because a folder that leaves the list must stop reading as a member.';
 comment on column folders.status
      is 'Indexing lifecycle: discovered → queued → indexing → indexed, or failed. Or archived, when the directory is gone but its history is worth keeping.
 

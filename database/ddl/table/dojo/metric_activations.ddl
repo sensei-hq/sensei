@@ -25,20 +25,7 @@ set search_path to dojo, extensions;
 -- switched it off.
 create table if not exists metric_activations (
   tenant_id   uuid        not null references dojo.tenants(id) on delete cascade
--- The repository this ruling applies to. A tenant's answer for one repository
--- says nothing about another: churn may be worth paying for on the service you
--- operate and noise on a vendored mirror.
 , repository_id uuid      not null references dojo.repositories(id) on delete cascade
--- References sensei.metrics — the ONE metric catalogue, not a dōjō-side copy.
---
--- Product-owned reference data follows the sensei.rule_packs pattern: a single
--- table in the `sensei` schema, deployed to BOTH planes (the daemon through the
--- default scope, Supabase through the `dojo` scope's includes). These are
--- separate databases, so each gets its own rows from the same staging file.
---
--- A dojo.metrics mirror existed briefly. Two tables for one thing diverge, and
--- these two already had: different columns, and text where the catalogue uses
--- enums. Deleted rather than kept in sync by hand.
 , metric_id   uuid        not null references sensei.metrics(id) on delete cascade
 , enabled     boolean     not null default true
 , updated_at  timestamptz not null default now()
@@ -56,3 +43,11 @@ alter table metric_activations enable row level security;
 drop policy if exists metric_activations_service_only on metric_activations;
 create policy metric_activations_service_only on metric_activations
     for all to authenticated, anon using (false) with check (false);
+comment on column metric_activations.repository_id
+     is 'The repository this ruling applies to. A tenant''s answer for one repository says nothing about another: churn may be worth paying for on the service you operate and noise on a vendored mirror.';
+comment on column metric_activations.metric_id
+     is 'References sensei.metrics — the ONE metric catalogue, not a dōjō-side copy.
+
+Product-owned reference data follows the sensei.rule_packs pattern: a single table in the `sensei` schema, deployed to BOTH planes (the daemon through the default scope, Supabase through the `dojo` scope''s includes). These are separate databases, so each gets its own rows from the same staging file.
+
+A dojo.metrics mirror existed briefly. Two tables for one thing diverge, and these two already had: different columns, and text where the catalogue uses enums. Deleted rather than kept in sync by hand.';
