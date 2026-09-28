@@ -15,6 +15,101 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-09-28
+
+**The repository was rebuilt.** `sensei-hq/sensei` is a new repository as of this
+release; the pre-scrub original is `sensei-hq/sensei-archive`, private and
+archived. Every commit SHA before this release changed. If you have a fork or a
+local clone from before 2026-09-28, re-clone rather than pull — the histories
+share no commits.
+
+### Security
+
+- **Private client names removed from the whole tree AND from history.** An
+  audit found names across tracked files of a PUBLIC repository — in production
+  source comments and in test assertions, not only docs — together with metrics
+  about those codebases. All of history was rewritten: 4,048 commits, every
+  occurrence replaced with an obviously-fictional placeholder, 9 commit messages
+  cleaned, and a corporate address removed from commit metadata. Blob counts
+  before and after are identical, so nothing was dropped to achieve it.
+- **Issues carried names that no history rewrite can reach.** Three private
+  names sat in issue bodies, two of which appeared in no git blob at all. All
+  200 issues were scrubbed on migration, with their numbers preserved — 173
+  distinct `#NNN` references in commit messages would otherwise have broken.
+- **The leak guard now catches what it was built to catch.** It only ever
+  examined the USERNAME segment of a path, so a client name used as a namespace
+  or a package root carried no path and was invisible. There is now a denylist
+  rule, sourced from OUTSIDE the repository (`$SENSEI_PRIVATE_NAMES`, else
+  `~/.sensei/private-names`) — a committed list of client names would leak
+  exactly what it guards.
+- **`--audit` asked the wrong question.** Its home-directory rule was two
+  whole-file greps: flag a file that contains a home path AND contains no safe
+  one *anywhere*. A file holding `/Users/dev/x` on one line and a real home
+  directory on the next was reported clean. It is per line now, and names the
+  line.
+- **A digest is not a name.** A four-letter client name lands inside a checksum
+  by chance — 130 times across `Cargo.lock`, `bun.lock` and a tsbuildinfo. Runs
+  of 32+ alphanumerics are collapsed before matching, so the rule stops
+  accusing hashes. Not an extension exemption: skipping `*.lock` would blind it
+  to a real name in a lockfile.
+
+### Added
+
+- **An `architecture` metric family — the first metrics that read the code
+  graph.** 27 live metrics across 9 families and not one read `sensei.edges` or
+  `sensei.nodes`, while the graph grew to 4,078,536 edges and 1,182,758 nodes.
+  Three now do: `graph_confidence` (placed ÷ total edges),
+  `public_surface_ratio` (exported ÷ declared symbols) and `symbol_size_p95`
+  (p95 callable span, with the over-100 count beside it).
+  `graph_confidence` ships first and gates the rest — it is a MEASUREMENT-quality
+  signal, and at 31% a structural metric is describing under a third of a
+  codebase. Coupling, instability and dependency-cycle metrics are deliberately
+  NOT here: the module graph currently collapses to 13 distinct module→module
+  pairs, and a confident number over 13 edges is a fabricated one. (#156)
+- **`edges.resolved_via` and `edges.unresolved_reason`** — the edge-level
+  verdict as columns, reduced from the per-use verdicts in
+  `props.occurrences`. Exactly one is set on any edge: a placed edge has a rung,
+  a missed one has a reason.
+- **An anonymised transcript fixture corpus.** Six adapters were tested from 109
+  inline string literals and zero file fixtures, which is a hand-written guess
+  at formats that change without notice. `scripts/anonymize-transcript.py` turns
+  a real capture into a committable fixture — shape preserved, content replaced —
+  verifies its own output and refuses to write when a real home directory,
+  mailbox or denylisted name survives. A fixture's `.meta.json` records the tool
+  version and a sha256, so a hand-edit fails the build.
+- **`copilot` and `vscode` in `sensei.assistant_family`.** Both adapters have
+  existed for some time and both returned a family the enum could not store.
+- **A gate keeping prose out of column lists** (`make check-ddl-comments`, run
+  on every commit), and `docs/database/<schema>.md` as the home for schema design
+  history.
+
+### Fixed
+
+- **A first insert left the edge verdict NULL.** Only the merge path derived it,
+  and a new edge never goes through that path — of 130,614 edges the indexer
+  touched in ten minutes, 14,217 carried a verdict. Both INSERT branches derive
+  it now, and the upsert recomputes from the merged props. It went unnoticed
+  because every consumer read a VIEW that recomputes the reduction at query
+  time, so the materialised column was verified by nothing.
+- **Two resolution rungs were never seeded into the live database.**
+  `named_by_this_file` and `declared_by_its_type` had been in the seed file since
+  2026-09-21 and never imported. The verdict function joins the code table, so an
+  occurrence carrying an unseeded rung matched nothing and vanished — 14,486
+  placed edges would have been left unclassifiable.
+- **Seven DDL files stated no `search_path`**, and four of them were not indexed.
+- **The rung and the reason were recorded all along** — the view read one level
+  too shallow, at `props->>'rung'` where no writer has ever put them.
+
+### Changed
+
+- **434 lines of prose moved out of 39 column lists.** A `create table` column
+  list is a declaration, and paragraphs of rationale between two columns buried
+  the shape a reader opened the file for — while being invisible to everything
+  except a human reading that one file. What a column MEANS now lives in
+  `comment on column`, where the catalog can serve it; why it is that way lives
+  in `docs/database/<schema>.md`.
+- **dbd 0.19.0 everywhere** — one version, one reference list.
+
 ## [0.10.1] — 2026-09-25
 
 **0.10.0 published no artifacts.** Its `build-daemon` aarch64-linux leg failed,
@@ -208,6 +303,7 @@ measures each of these against the live system:
   database this way; the rows were pruned, the cause was not.
 - The e2e suite is outside the static gates and does not compile clean (#187).
 
-[Unreleased]: https://github.com/sensei-hq/sensei/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/sensei-hq/sensei/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/sensei-hq/sensei/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/sensei-hq/sensei/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/sensei-hq/sensei/compare/v0.9.1...v0.10.0
