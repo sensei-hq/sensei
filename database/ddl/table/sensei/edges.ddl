@@ -109,14 +109,7 @@ comment on column edges.props
      is 'Extensible metadata, MERGED on re-insert (props || EXCLUDED.props) so a later writer cannot erase an earlier one. For imports: {names:["a","b"]}. For duplicates: {similarity:0.86}. For extends/implements: {relation:"extends"|"implements"|"trait_impl"} — the discriminant that separates a Rust trait impl from Java-style interface implementation, which share the implements kind.';
 comment on column edges.modified_at
      is 'Timestamp of the last modification to this row.';
-
--- NO `comment on column` for `resolved_via` / `unresolved_reason` YET, and that
--- is deliberate rather than an omission. Both columns are declared above but are
--- NOT in the deployed table — sensei.edges has 11 columns live, verified
--- 2026-09-28 — because `dbd apply` creates a table it does not find and does not
--- evolve one it does. A comment naming a column that is not there is a hard Err
--- from `surface_step_failures`, so adding these two now would turn a dormant
--- schema drift into a failed daemon setup on every existing install.
---
--- Add them in the same change that deploys the columns. The prose is already
--- written, in docs/database/sensei.md.
+comment on column edges.resolved_via
+     is 'Which resolution rung placed this edge — the reduction over the per-use rungs in props.occurrences. NULL on an edge that was not placed. Exactly one of resolved_via / unresolved_reason is set; both NULL means the writer recorded no verdict, which is the pre-v2 shape. See docs/database/sensei.md.';
+comment on column edges.unresolved_reason
+     is 'Why this edge could not be placed — the reduction over the per-use reasons in props.occurrences. NULL on a placed edge. NOT an error list: external_boundary and dynamic_dispatch are correct outcomes, not defects. See docs/database/sensei.md.';
