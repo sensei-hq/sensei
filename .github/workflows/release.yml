@@ -337,6 +337,20 @@ jobs:
     # Settings → Environments → dojo-prod.
     environment: dojo-prod
     env:
+      # DOJO_DATABASE_URL MUST BE THE POOLER ON PORT 5432. Two distinct failures
+      # cost a release each, and both are invisible until this job runs:
+      #
+      #   db.<ref>.supabase.co       -> "Network is unreachable (os error 101)".
+      #     The direct host has an AAAA record and NO A record; the runner is
+      #     IPv4-only. It resolves and is simply unroutable from here.
+      #
+      #   pooler :6543 (transaction) -> 'prepared statement "sqlx_s_1" already
+      #     exists'. Transaction pooling does not support prepared statements and
+      #     dbd's sqlx uses them. Reproduced both ways on 2026-09-28: `dbd diff`
+      #     succeeds on :5432 and fails on :6543 against the same database.
+      #
+      # So: aws-0-<region>.pooler.supabase.com:5432 (SESSION mode). The port is
+      # the whole difference — same host, same credentials, different pooling.
       DATABASE_URL: ${{ secrets.DOJO_DATABASE_URL }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
