@@ -3,11 +3,11 @@ import { getInitials } from './initials';
 
 describe('getInitials', () => {
 	it('takes the first letter of the first two words', () => {
-		expect(getInitials('Dev Thomas')).toBe('JT');
+		expect(getInitials('Dev User')).toBe('DU');
 	});
 
 	it('strips parenthetical qualifiers', () => {
-		expect(getInitials('Dev Thomas (Admin)')).toBe('JT');
+		expect(getInitials('Dev User (Admin)')).toBe('DU');
 	});
 
 	it('caps at two letters', () => {
@@ -28,6 +28,6 @@ describe('getInitials', () => {
 	});
 
 	it('skips words that do not start alphanumeric', () => {
-		expect(getInitials('— Dev')).toBe('J');
+		expect(getInitials('— Dev')).toBe('D');
 	});
 });

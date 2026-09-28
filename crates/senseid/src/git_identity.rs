@@ -117,8 +117,8 @@ mod tests {
     fn parse_show_origin_keeps_spaces_in_value() {
         // A display name has spaces; only the first TAB separates origin/value.
         assert_eq!(
-            parse_show_origin("file:/Users/dev/.gitconfig\tJerry Thomas"),
-            Some(("Dev Thomas".to_string(), "file:/Users/dev/.gitconfig".to_string()))
+            parse_show_origin("file:/Users/dev/.gitconfig\tDev User"),
+            Some(("Dev User".to_string(), "file:/Users/dev/.gitconfig".to_string()))
         );
     }
 

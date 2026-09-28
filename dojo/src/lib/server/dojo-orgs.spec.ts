@@ -212,7 +212,7 @@ describe('principalIdForSession — the page plane must translate, like resolveC
 //
 // Provisioning wrote `kind = 'employer'` for EVERY org it discovered, because
 // GitHub cannot tell us which of your organisations employs you. Live data:
-// trey-thomas-visuals, examplecorpinc and sensei-hq were all "Employer" — one
+// trey-user-visuals, examplecorpinc and sensei-hq were all "Employer" — one
 // is an employer, one is a personal venture, one is a product org.
 //
 // `origin` IS knowable: the forge says whether a tenant is an org or a personal

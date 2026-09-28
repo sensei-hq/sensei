@@ -125,7 +125,7 @@ describe('kitMe — the viewer monogram source', () => {
 	});
 
 	it('falls back to the email local-part, then "You"', () => {
-		expect(kitMe({ email: 'dev.thomas@acme.dev' }).name).toBe('dev.thomas');
+		expect(kitMe({ email: 'dev.user@acme.dev' }).name).toBe('dev.user');
 		expect(kitMe(undefined).name).toBe('You');
 	});
 });

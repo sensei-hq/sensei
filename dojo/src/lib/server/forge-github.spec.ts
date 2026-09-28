@@ -30,7 +30,7 @@ function fakeFetch(routes: Record<string, { status?: number; body: unknown }>) {
 	return { fn, calls };
 }
 
-const USER_OK = { id: 4242, login: 'devuser', name: 'Dev Thomas', email: 'j@example.com' };
+const USER_OK = { id: 4242, login: 'devuser', name: 'Dev User', email: 'j@example.com' };
 
 describe('fetchGithubUser', () => {
 	it('returns the stable id as text, plus login/name/email', async () => {
@@ -38,7 +38,7 @@ describe('fetchGithubUser', () => {
 		expect(await fetchGithubUser('tok', fn)).toEqual({
 			id: '4242',
 			login: 'devuser',
-			name: 'Dev Thomas',
+			name: 'Dev User',
 			email: 'j@example.com'
 		});
 		// The token travels as a header, never in the URL (where it would land in

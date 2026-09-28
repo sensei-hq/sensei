@@ -72,7 +72,7 @@ export async function principalIdForSession(locals: unknown): Promise<string | n
 }
 
 /** First+last initial of a display name. For an email, derive from the local
- *  part (before @) so `dev.thomas@…` → "JT", not "JC" (dev…com). */
+ *  part (before @) so `dev.user@…` → "DU", not "DC" (dev…com). */
 function initials(nameOrEmail: string): string {
 	const base = nameOrEmail.includes('@') ? nameOrEmail.split('@')[0] : nameOrEmail;
 	const parts = base.trim().split(/[\s._-]+/).filter(Boolean);
