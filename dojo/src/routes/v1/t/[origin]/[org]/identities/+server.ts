@@ -45,7 +45,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		await recordAudit(db, caller.tenantId, caller.userId, {
 			action: 'identity_added',
 			target: input.subject,
-			detail: { provider: input.provider, user_id: input.user_id }
+			detail: { provider: input.provider, principal_id: input.principal_id }
 		});
 		return Response.json(result);
 	} catch (e) {

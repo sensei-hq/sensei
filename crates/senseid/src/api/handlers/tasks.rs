@@ -133,9 +133,15 @@ pub(crate) fn event_task_id(event: &TaskEvent) -> Option<u64> {
         | TaskEvent::Started { task_id, .. }
         | TaskEvent::Completed { task_id, .. }
         | TaskEvent::Failed { task_id, .. } => Some(*task_id),
-        // Folder-level rollups carry no task id, so they cannot be attributed to
-        // one follower and are dropped rather than broadcast to everybody.
-        TaskEvent::FolderQueued { .. } => None,
+        // Folder-level rollups and pipeline-stage events carry no task id, so
+        // they cannot be attributed to one follower and are dropped rather than
+        // broadcast to everybody. A stage is not a queue task: it has no id by
+        // construction, and minting one to make it fit here would attribute it
+        // to a follower it has nothing to do with.
+        TaskEvent::FolderQueued { .. }
+        | TaskEvent::StageStarted { .. }
+        | TaskEvent::StageCompleted { .. }
+        | TaskEvent::StageFailed { .. } => None,
     }
 }
 
@@ -300,7 +306,11 @@ mod tests {
         // It carries no task id, so forwarding it would send every follower
         // another follower's noise.
         assert_eq!(
-            event_task_id(&TaskEvent::FolderQueued { folder_path: "/x".into(), files_total: 3 }),
+            event_task_id(&TaskEvent::FolderQueued {
+                folder_path: "/x".into(),
+                files_total: 3,
+                files_expected: Some(9),
+            }),
             None
         );
     }

@@ -1,3 +1,5 @@
+set search_path to sensei, extensions;
+
 CREATE OR REPLACE VIEW sensei.project_extensions_resolved AS
 SELECT
     e.id,

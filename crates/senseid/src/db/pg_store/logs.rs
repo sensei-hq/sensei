@@ -244,6 +244,22 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
 
+        // (3b) The capture watermark for those sessions. Without this the prune
+        //      is self-sealing: `ingest_one` gates the turn re-import on
+        //      `prose_fresh` (watermark >= source mtime), so a pruned session
+        //      never re-imports its turns — while `synthesize_session` happily
+        //      re-creates the session row from the still-present source file.
+        //      The result is a session that exists, has no transcript, and
+        //      reports as fully ingested. It cannot heal (#125).
+        let wm = sqlx_core::query::query(
+            "DELETE FROM activity.capture_watermarks WHERE session_id = ANY($1::text[])",
+        )
+        .bind(&client_ids)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+        let _ = wm;
+
         // (4) assistant_events for the same client_session_ids.
         let ae_session = sqlx_core::query::query(
             "DELETE FROM activity.assistant_events WHERE session_id = ANY($1::text[])",

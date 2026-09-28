@@ -1,4 +1,5 @@
 export { default as DaemonStatusBanner } from './DaemonStatusBanner.svelte';
+export { default as SignInOverlay } from './SignInOverlay.svelte';
 export { default as EmptyState } from './EmptyState.svelte';
 export { default as Eyebrow } from './Eyebrow.svelte';
 export { default as FtrStrip } from './FtrStrip.svelte';

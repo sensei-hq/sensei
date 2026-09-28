@@ -12,6 +12,7 @@
 // and keep a default branch so an unexpected value degrades rather than throws —
 // mirroring the dojo-connections / dojo-upgrades state modules' discipline.
 
+import { isoDay } from '$lib/dates.js';
 import type { SenseiApi } from '$lib/api.js';
 import type {
   CollectiveAttribution,
@@ -175,12 +176,11 @@ export const ATTRIBUTION_OPTIONS: readonly AttributionMeta[] = [
 // ── Small display helpers ────────────────────────────────────────────────────
 
 /** Pure: the date portion of an RFC-3339 string, or '' when absent /
- *  unparseable. Takes the leading `YYYY-MM-DD` directly (no `Date`) so the
- *  display-only label never shifts by timezone. */
+ *  unparseable. Delegates to the shared `isoDay` — this was one of three copies
+ *  of the same three lines — and keeps the empty-string contract its callers
+ *  render directly. */
 export function collectiveDateLabel(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const m = /^(\d{4}-\d{2}-\d{2})/.exec(iso.trim());
-  return m ? m[1] : '';
+  return isoDay(iso) ?? '';
 }
 
 /** Pure: the "last changed …" line, or a defaults hint when never saved. */

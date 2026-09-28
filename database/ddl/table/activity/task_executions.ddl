@@ -4,9 +4,6 @@ create table if not exists task_executions (
   id                       uuid        primary key default gen_random_uuid()
 , task_id                  bigint      not null
 , parent_task_id           bigint
-  -- Enum, not text: a renamed or retired kind used to orphan its history
-  -- silently (four such orphans accumulated before this constraint existed).
-  -- See the type's header for the retired values and why they are kept.
 , task_kind                task_execution_kind not null
 , folder_path              text        not null default ''
 , path                     text        not null default ''

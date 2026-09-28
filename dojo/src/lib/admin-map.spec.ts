@@ -98,7 +98,7 @@ describe('toKitChatTurn / toKitAuditThread', () => {
 function identity(over: Partial<Identity> = {}): Identity {
 	return {
 		id: 'id1',
-		user_id: 'u1',
+		principal_id: 'p1',
 		provider: 'github_oauth',
 		subject: 'gh|1',
 		email: null,

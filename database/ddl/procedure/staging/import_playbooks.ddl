@@ -4,7 +4,8 @@ language plpgsql as $$
 begin
   insert into sensei.playbooks (name, title, when_to_use, opening_tone, method_ref, enabled, source, modified_at)
   select name, title, when_to_use, opening_tone, method_ref,
-         coalesce(enabled, true), coalesce(source,'builtin'), coalesce(modified_at, now())
+         coalesce(enabled, true), coalesce(source,'builtin')::sensei.source_kind,
+         coalesce(modified_at, now())
     from staging.playbooks
   on conflict (name) do update
      set title=excluded.title, when_to_use=excluded.when_to_use,

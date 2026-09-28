@@ -43,9 +43,12 @@ as $$
          -- …or a tenant admin. Deliberately NOT the whole team: "metrics by
          -- user" visible to every peer is surveillance, not transparency.
          or exists (
+              -- memberships.user_id is a PRINCIPAL id (§VIII.2). This compared it
+              -- to p.auth_user_id — the LOGIN id — so the admin branch never
+              -- matched and a tenant admin silently lost per-user metrics.
               select 1 from dojo.memberships m
                where m.tenant_id = p_tenant_id
-                 and m.user_id  = p.auth_user_id
+                 and m.user_id  = p.id
                  and m.role     = 'admin'
                  and m.disabled_at is null)
        )
@@ -55,12 +58,7 @@ $$;
 revoke all on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) from public;
 grant execute on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) to authenticated;
 
--- No argument list on the COMMENT: dbd's SQL parser handles
--- `comment on function <name> is …` but not `…(uuid, text, …) is …`, and a file
--- it cannot parse is dropped from the entity set SILENTLY — the function is then
--- never created and the policy that calls it fails at deploy. Unambiguous here
--- because the function is not overloaded.
-comment on function dojo.can_read_repository_metric is
+comment on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) is
 'Row authorization for dojo.repository_metrics: principal → team_members → team →
 team_projects → project → repositories_in_projects → repository.
 

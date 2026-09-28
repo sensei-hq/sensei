@@ -12,11 +12,11 @@ all pass, wrong-gate-hunter clean after the same fix. Screen at `(observatory)/i
   Slot-4 project-window Accept button (same handler).
 
 ## Deferred (documented; none block)
-- **insight-copy not wired in `get_insights`.** Rec `title`/`why`/`impact` come straight from
-  `inference.recommendations` columns — raw DB text, not routed through `[[pipeline/insight-copy]]`.
-  Per the run-wide decision insight-copy is deferred and static/raw text is the accepted fallback;
+- **narration-cache not wired in `get_insights`.** Rec `title`/`why`/`impact` come straight from
+  `inference.recommendations` columns — raw DB text, not routed through `[[pipeline/narration-cache]]`.
+  Per the run-wide decision narration-cache is deferred and static/raw text is the accepted fallback;
   the wrong-gate symptom (homogeneous copy) is ABSENT (live titles are varied). Wire the copy chain
-  when insight-copy lands (#65).
+  when narration-cache lands (#65).
 - **Server `counts` in the /api/insights payload is unused by the client.** The frontend recomputes
   counts from the live arrays so optimistic Apply/Dismiss removals stay honest (a card removed on
   Apply must decrement its column). The server counts are therefore dead payload — harmless, but

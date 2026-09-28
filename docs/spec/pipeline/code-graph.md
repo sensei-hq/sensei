@@ -305,7 +305,7 @@ DDL + `upsert_node`/prune change + a one-time reindex; **raise with the user bef
    `parent_id` containment; drop the dead `implements`. Assign singletons to their
    file/module community instead of skipping, so coverage → ~100 %.
 5. **Enrich** — populate `communities.god_node_ids` (top-5 by `degree`) and `description` via
-   [[pipeline/insight-copy]]; populate `nodes.degree` during `ResolveEdges`. On insight-copy
+   [[pipeline/narration-cache]]; populate `nodes.degree` during `ResolveEdges`. On narration-cache
    failure, leave `description` **NULL (honest-empty), never a templated placeholder** — per
    the never-fabricate rule.
 
@@ -511,7 +511,7 @@ Done gate points at.
   ```
 - **Community enrichment** — a scanned fixture has `god_node_ids`; `description` is either
   model-authored or honest-NULL, **never templated**. Since SQL can't tell prose from a
-  template, the writer must stamp provenance (`props.source ∈ {'insight-copy','null'}`, never a
+  template, the writer must stamp provenance (`props.source ∈ {'narration-cache','null'}`, never a
   static-fallback marker) and the gate checks that, not just non-NULL:
   ```sql
   SELECT count(*) FILTER (WHERE array_length(god_node_ids,1) IS NULL) no_god,
@@ -561,7 +561,7 @@ Done gate points at.
 - **A deleted symbol lingers, or an inbound edge to it vanishes** — prune-not-in missing, or
   the unresolve-before-prune step (D3.3) dropped, cascade-deleting cross-file edges.
 - **Fabricated grouping / description** — empty `package` nodes, defaulted `subtree` kinds, or
-  a templated community `description` on insight-copy failure (must be honest-empty).
+  a templated community `description` on narration-cache failure (must be honest-empty).
 - **Re-scan is a full rebuild** — the `scan_state` gate bypassed, "idempotent" only by doing
   all the work every time (ties to the churn regression — see *Related*).
 - **A daemon restart mid-scan loses or duplicates work** — boot-reconcile/resume (D6b) not

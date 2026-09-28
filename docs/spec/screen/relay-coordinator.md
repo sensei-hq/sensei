@@ -224,4 +224,4 @@ field.
 - [[architecture/dojo]] — the shared queue the team variant routes into
 - [[journeys/relay]] — run & supervise the round-trip
 - [[screen/observatory-instruments-health]] — sibling Observatory rail item (format reference)
-- [[pipeline/insight-copy]] — mentor-voice text for any generated status copy
+- [[pipeline/narration-cache]] — mentor-voice text for any generated status copy

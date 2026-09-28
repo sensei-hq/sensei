@@ -17,7 +17,7 @@
 //!     with no restart.
 
 use std::future::Future;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -65,36 +65,73 @@ impl RetryPolicy {
     }
 }
 
-/// Process-global flag: is the daemon currently serving the degraded router
-/// (DB pool unavailable)? Defaults to `false` (full mode). `start_server` sets
-/// it when it falls back to degraded, and the self-heal clears it after it
-/// hot-swaps back to the full router. The `/health` handler reads it so a
-/// caller can distinguish "Postgres is reachable" (a component probe) from
-/// "the daemon has a working pool" (this flag) — the exact gap that let a
+/// Process-global state: which DB mode is the daemon serving in? Defaults to
+/// full. `start_server` sets it when it falls back, and the self-heal clears it
+/// after it hot-swaps back to the full router. The `/health` handler reads it
+/// so a caller can distinguish "Postgres is reachable" (a component probe) from
+/// "the daemon has a working pool" (this) — the exact gap that let a
 /// stale-pool daemon report a green Postgres component.
-static DEGRADED: AtomicBool = AtomicBool::new(false);
+///
+/// THREE states, not two. `Provisioning` and `Degraded` share a router — both
+/// mean "no pool" — but they are different situations with different advice,
+/// and collapsing them made a first install report itself as a breakage.
+/// An integer rather than a bool because the router swap keys on
+/// [`is_degraded`] while `/health` needs the finer answer.
+static MODE: AtomicU8 = AtomicU8::new(MODE_FULL);
 
-/// Record that the daemon is serving in degraded mode (no DB pool).
+const MODE_FULL: u8 = 0;
+const MODE_PROVISIONING: u8 = 1;
+const MODE_DEGRADED: u8 = 2;
+
+/// Record that the daemon is serving degraded — the database is there and
+/// unusable.
 pub fn mark_degraded() {
-    DEGRADED.store(true, Ordering::Relaxed);
+    MODE.store(MODE_DEGRADED, Ordering::Relaxed);
+}
+
+/// Record that the database does not exist yet and is being built. Same router
+/// as degraded; a different answer on `/health`.
+pub fn mark_provisioning() {
+    MODE.store(MODE_PROVISIONING, Ordering::Relaxed);
 }
 
 /// Record that the daemon has a working DB pool (full mode).
 pub fn mark_full() {
-    DEGRADED.store(false, Ordering::Relaxed);
+    MODE.store(MODE_FULL, Ordering::Relaxed);
 }
 
-/// True while the daemon is serving degraded (DB pool unavailable).
-pub fn is_degraded() -> bool {
-    DEGRADED.load(Ordering::Relaxed)
+/// True while the daemon has no usable pool — degraded OR provisioning. A
+/// database that does not exist yet is exactly as unusable as one that broke;
+/// only the REPORTED state differs.
+#[cfg(test)]
+fn has_no_pool() -> bool {
+    MODE.load(Ordering::Relaxed) != MODE_FULL
 }
 
 /// Current mode as the shared health enum, for the `/health` handler to report.
 pub fn db_mode() -> sensei_bootstrap::DaemonDbMode {
-    if is_degraded() {
-        sensei_bootstrap::DaemonDbMode::Degraded
-    } else {
-        sensei_bootstrap::DaemonDbMode::Full
+    match MODE.load(Ordering::Relaxed) {
+        MODE_PROVISIONING => sensei_bootstrap::DaemonDbMode::Provisioning,
+        MODE_DEGRADED => sensei_bootstrap::DaemonDbMode::Degraded,
+        _ => sensei_bootstrap::DaemonDbMode::Full,
+    }
+}
+
+/// Which mode a FAILED connect means, given whether the target database exists.
+///
+/// Pure, so the decision is testable without psql — the caller supplies the
+/// answer from `sensei_bootstrap::database::database_exists`. The connect error
+/// itself cannot decide this: it arrives as a formatted `String`, so reading it
+/// would make the daemon's state machine depend on a Display format.
+///
+/// `None` is "the existence check itself failed", and it maps to `Degraded`:
+/// not knowing whether a database exists is not evidence that one is being
+/// built, and reporting progress nobody observed is the optimistic fabrication
+/// this codebase refuses everywhere else.
+pub fn mode_after_failed_connect(db_exists: Option<bool>) -> sensei_bootstrap::DaemonDbMode {
+    match db_exists {
+        Some(false) => sensei_bootstrap::DaemonDbMode::Provisioning,
+        Some(true) | None => sensei_bootstrap::DaemonDbMode::Degraded,
     }
 }
 
@@ -344,10 +381,49 @@ mod tests {
         // regardless of ordering — it is the only test that touches the flag.
         use sensei_bootstrap::DaemonDbMode;
         mark_degraded();
-        assert!(is_degraded());
+        assert!(has_no_pool());
         assert_eq!(db_mode(), DaemonDbMode::Degraded);
         mark_full();
-        assert!(!is_degraded());
+        assert!(!has_no_pool());
         assert_eq!(db_mode(), DaemonDbMode::Full);
+        // The third state is still "no usable pool" — a database that does not
+        // exist yet is just as unusable as one that broke. Only the REPORTED
+        // state differs, which is the whole point of adding it.
+        mark_provisioning();
+        assert!(has_no_pool(), "provisioning still has no pool");
+        assert_eq!(db_mode(), DaemonDbMode::Provisioning);
+        mark_full();
+    }
+
+    /// **WHICH FAILURE IS IT? ASK WHETHER THE DATABASE IS THERE.**
+    ///
+    /// The connect error cannot answer this: it arrives as a formatted String,
+    /// so deciding on its text would be a Display-format dependency. The
+    /// project already owns the real question —
+    /// `sensei_bootstrap::database::database_exists` — and this is the pure
+    /// half, so the decision is testable without psql.
+    ///
+    /// `None` means the check itself failed, and that maps to `Degraded`: not
+    /// knowing whether a database exists is not evidence that one is being
+    /// built, and claiming progress we cannot see would be the optimistic
+    /// fabrication the no-fallback rule exists to prevent.
+    #[test]
+    fn a_missing_database_is_provisioning_and_anything_else_is_degraded() {
+        use sensei_bootstrap::DaemonDbMode;
+        assert_eq!(
+            mode_after_failed_connect(Some(false)),
+            DaemonDbMode::Provisioning,
+            "no database yet — it is being built, so a client should wait"
+        );
+        assert_eq!(
+            mode_after_failed_connect(Some(true)),
+            DaemonDbMode::Degraded,
+            "the database is there and unusable — that is a fault"
+        );
+        assert_eq!(
+            mode_after_failed_connect(None),
+            DaemonDbMode::Degraded,
+            "could not tell — never claim provisioning we have not observed"
+        );
     }
 }

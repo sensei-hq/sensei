@@ -20,6 +20,14 @@ export class DaemonHealth {
     return this.dbMode === 'degraded';
   }
 
+  /** The database is still being created — a first install in progress.
+   *  Deliberately NOT `isDegraded`: that banner says something broke and
+   *  offers recovery, which is the wrong thing to show someone whose install
+   *  is simply still working. A surface can render "setting up" from this. */
+  get isProvisioning(): boolean {
+    return this.dbMode === 'provisioning';
+  }
+
   /** Update from a daemon /health payload. Pure — the poll and tests share it. */
   apply(payload: { daemonDbMode?: DaemonDbMode }): void {
     this.dbMode = payload.daemonDbMode;

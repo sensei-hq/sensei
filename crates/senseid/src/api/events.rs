@@ -75,9 +75,15 @@ pub struct ScanFolder {
 #[serde(rename_all = "snake_case")]
 pub enum FolderKind {
     Git,
-    WorkspaceMember,
+    /// A manifest-bearing build unit inside a repo. Mirrors
+    /// `sensei.folder_kind`'s `module`; was `WorkspaceMember` until membership
+    /// moved to `folders.workspace_root_id`, where it belongs — whether a
+    /// workspace declares a module is a relationship, not what the folder is.
+    Module,
     Subtree,
-    Sibling,
+    /// Non-git, no git siblings. Written only by v1 scan paths and retiring
+    /// with them. `Sibling` was alongside it until `sensei.folder_kind` lost
+    /// the value — nothing produced it, so nothing could deserialise into it.
     Standalone,
 }
 

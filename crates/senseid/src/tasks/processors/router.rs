@@ -22,7 +22,14 @@ pub fn process_file(
 
     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
-    let raw = std::fs::read_to_string(file_path).map_err(|e| format!("Failed to read: {}", e))?;
+    // BYTES THEN DECODE, so this agrees with the scan gate. `read_to_string`
+    // refuses a UTF-16 file that `classify_unscannable` has already called
+    // text, which would skip it here with no reason recorded anywhere.
+    let bytes = std::fs::read(file_path).map_err(|e| format!("Failed to read: {}", e))?;
+    let raw = match crate::classifiers::decode_source(&bytes) {
+        crate::classifiers::Decoded::Text(text) => text,
+        other => return Err(format!("Not text ({other:?})")),
+    };
 
     // Normalize line endings to LF before any parsing. tree-sitter byte offsets
     // and the per-line / byte buffers used for text extraction must agree; a
@@ -74,15 +81,20 @@ mod tests {
     /// overshot the extraction buffer and panicked on such files.
     #[test]
     fn process_file_handles_crlf_without_panicking() {
+        // KOTLIN, not Python. The property under test is the ROUTER's — it
+        // normalises line endings before dispatching, so any extension this
+        // registry still parses exercises it. Python moved to
+        // `crate::indexer::lang` and its parser here was deleted, so a `.py`
+        // fixture now asserts nothing about CRLF and everything about routing.
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("crlf.py");
-        // Function body padded so node byte-ranges are well past a CR-stripped
-        // length — the condition that triggered the panic.
-        let mut src = String::from("def greet(name):\r\n");
+        let path = dir.path().join("crlf.kt");
+        // Body padded so node byte-ranges are well past a CR-stripped length —
+        // the condition that triggered the panic.
+        let mut src = String::from("fun greet(name: String) {\r\n");
         for i in 0..200 {
-            src.push_str(&format!("    x{i} = compute(name, {i})  # pad line\r\n"));
+            src.push_str(&format!("    val x{i} = compute(name, {i})  // pad line\r\n"));
         }
-        src.push_str("    return name\r\n");
+        src.push_str("}\r\n");
         std::fs::write(&path, &src).unwrap();
 
         let result = process_file(&path.to_string_lossy(), dir.path().to_str().unwrap(), "repo");

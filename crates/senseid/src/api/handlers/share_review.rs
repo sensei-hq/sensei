@@ -17,6 +17,7 @@ use axum::{
     response::Json,
 };
 
+use crate::api::handlers::err;
 use crate::api::state::AppState;
 use crate::collective::anonymize::ContributorIdentity;
 use crate::dojo::contribute;
@@ -61,10 +62,6 @@ pub(crate) async fn publish_batch(
             }
         })?;
     Ok(Json(serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null)))
-}
-
-fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (status, Json(serde_json::json!({ "error": msg })))
 }
 
 fn internal(e: String) -> (StatusCode, Json<serde_json::Value>) {

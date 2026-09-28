@@ -62,7 +62,7 @@ Kanji is 果 — *result*.
   theme.
 - Revert on a regression archives the underlying memory,
   dismisses the recommendation, and records the reason.
-- Verdict notes come through insight-copy when the model is
+- Verdict notes come through narration-cache when the model is
   available.
 - Delta chart values match `before` and `after` exactly (no
   chart-vs-number drift).

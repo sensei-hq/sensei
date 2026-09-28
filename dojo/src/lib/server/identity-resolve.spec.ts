@@ -6,7 +6,7 @@ import { pickBestIdentity, resolveDisplayNames, type IdentityNameRow } from './i
 import { AdminError, type DojoClient } from './admin-data';
 
 function row(over: Partial<IdentityNameRow> = {}): IdentityNameRow {
-	return { user_id: 'u1', display_name: null, email: null, last_login_at: null, ...over };
+	return { principal_id: 'u1', display_name: null, email: null, last_login_at: null, ...over };
 }
 
 describe('pickBestIdentity', () => {
@@ -74,12 +74,12 @@ describe('resolveDisplayNames', () => {
 		await resolveDisplayNames(db, 't1', ['u1', 'u1', 'u2', '']);
 		expect(captured.ids).toEqual(['u1', 'u2']); // deduped + blanks dropped
 	});
-	it('groups multiple identity rows per user and picks the best', async () => {
+	it('groups multiple identity rows per principal and picks the best', async () => {
 		const { db } = makeDb({
 			data: [
-				{ user_id: 'u1', display_name: null, email: 'u1@x.co', last_login_at: null },
-				{ user_id: 'u1', display_name: 'Ada', email: null, last_login_at: '2026-07-01T00:00:00Z' },
-				{ user_id: 'u2', display_name: 'Bob', email: 'bob@x.co', last_login_at: null }
+				{ principal_id: 'u1', display_name: null, email: 'u1@x.co', last_login_at: null },
+				{ principal_id: 'u1', display_name: 'Ada', email: null, last_login_at: '2026-07-01T00:00:00Z' },
+				{ principal_id: 'u2', display_name: 'Bob', email: 'bob@x.co', last_login_at: null }
 			],
 			error: null
 		});
@@ -88,7 +88,7 @@ describe('resolveDisplayNames', () => {
 		expect(map.get('u2')).toEqual({ display_name: 'Bob', email: 'bob@x.co' });
 	});
 	it('omits users with no identity row (caller falls back to shortId)', async () => {
-		const { db } = makeDb({ data: [{ user_id: 'u1', display_name: 'Ada', email: null, last_login_at: null }], error: null });
+		const { db } = makeDb({ data: [{ principal_id: 'u1', display_name: 'Ada', email: null, last_login_at: null }], error: null });
 		const map = await resolveDisplayNames(db, 't1', ['u1', 'ghost']);
 		expect(map.has('ghost')).toBe(false);
 	});

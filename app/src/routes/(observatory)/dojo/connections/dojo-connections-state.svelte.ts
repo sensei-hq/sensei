@@ -1,6 +1,13 @@
 // Observatory · Dōjō connections — derivations, status→token mapping, copy and
-// the connect-form state. The daemon owns memberships + sync-status derivation
+// the connect-form state. The daemon owns memberships
 // (`crates/senseid/src/dojo/memberships.rs`); this module only maps the wire
+//
+// NOTE: the sync-status DERIVATION this pane displays does not exist yet. No
+// code writes `dojo_memberships.last_heartbeat_at`, and the only `sync_status`
+// setter has no callers, so every row reads `authenticating` forever and the
+// `healthy` count below is permanently 0 ("1 connection · 0 healthy"). The
+// mapping is kept because the vocabulary is right; only the producer is
+// missing. See `database/ddl/enum/dojo/sync_status.ddl`.
 // discriminators (sync_status, kind) to named-token chip classes + copy, and
 // keeps the add-a-connection form's fields / validation / submit state so the
 // `+page.svelte` stays a pure template.

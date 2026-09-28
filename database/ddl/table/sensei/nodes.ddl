@@ -5,7 +5,7 @@ create table if not exists nodes (
 , parent_id                uuid        references sensei.nodes(id) on delete cascade
 , kind                     node_kind   not null
 , name                     text        not null
-, file_path                text
+, file_id                  uuid        references sensei.files(id) on delete restrict
 , fqn                      text
 , resolved                 boolean     not null default false
 , language                 text
@@ -18,29 +18,29 @@ create table if not exists nodes (
 , is_exported              boolean     not null default false
 , is_test                  boolean     not null default false
 , community_id             integer
-, degree                   integer
 , embedding                vector(384)
 , tags                     text[]      not null default '{}'
 , props                    jsonb       not null default '{}'
 , modified_at              timestamptz not null default now()
 );
 
--- Node identity (line-based). A PARTIAL unique index (`where file_path is not
--- null`) so it governs only rows that HAVE a local file — every legacy node and
--- every migrated definition — and NOT the FQN reference stubs / `lib_symbol` nodes
--- (file_path NULL), which are governed solely by `nodes_unique_fqn`. That split is
--- what lets two same-simple-name, different-FQN stubs stay distinct: they would
--- otherwise collide on `(folder_id, NULL, kind, name, NULL, NULL)` and false-merge.
--- Behaviour-preserving for existing data — every current row has a non-null
--- file_path, so the partial index covers exactly the same rows as the old table
--- constraint. Keyed on `line_start` (not `signature`): same-name methods across
--- impl blocks share a decl-line text and would collapse under a signature key
--- (D5c nesting would fix that). NULLS NOT DISTINCT treats NULLs as equal so a
--- file/module node (parent_id/line_start NULL) conflicts rather than duplicates.
+-- Node identity (line-based). A PARTIAL unique index (`where file_id is not
+-- null`) so it governs only rows that HAVE a file — every declaration — and NOT
+-- the reference stubs and external `lib·` nodes (file_id NULL), which are
+-- governed solely by `nodes_unique_fqn`. That split is what lets two
+-- same-simple-name, different-FQN stubs stay distinct: they would otherwise
+-- collide on `(folder_id, NULL, kind, name, NULL, NULL)` and false-merge.
+-- Keyed on `line_start` (not `signature`): same-name methods across impl blocks
+-- share a decl-line text and would collapse under a signature key. NULLS NOT
+-- DISTINCT treats NULLs as equal so a file/module node (parent_id/line_start
+-- NULL) conflicts rather than duplicates.
+--
+-- R13 re-keyed this from `file_path` to `file_id`: 16 bytes instead of a 47-byte
+-- repeated path, and a file rename no longer rewrites every node in it.
 create unique index if not exists nodes_unique_identity
-    on nodes (folder_id, file_path, kind, name, parent_id, line_start)
+    on nodes (folder_id, file_id, kind, name, parent_id, line_start)
     nulls not distinct
- where file_path is not null;
+ where file_id is not null;
 
 -- FQN identity (SCIP/LSIF moniker model). A definition AND every reference to it
 -- get-or-create the same node keyed on the fully-qualified name, so a call edge
@@ -48,13 +48,36 @@ create unique index if not exists nodes_unique_identity
 -- fqn-bearing rows) so it coexists with the line-based `nodes_unique_identity`:
 --   • legacy nodes (file/section/rationale + not-yet-migrated languages): fqn NULL
 --     → governed by the (partial) identity index only.
---   • reference stubs + external `lib_symbol` nodes: file_path NULL, fqn set
+--   • reference stubs + external `lib·` nodes: file_id NULL, fqn set
 --     → governed by this index only (the partial identity index excludes them, so
 --       same-name different-fqn stubs never false-merge).
---   • migrated defs: both file_path and fqn set → in both indexes (consistent).
+--   • definitions: both file_id and fqn set → in both indexes (consistent).
 create unique index if not exists nodes_unique_fqn
     on nodes (folder_id, fqn)
  where fqn is not null;
+
+-- Structural identity: the nodes that name a DIRECTORY, not a file.
+--
+-- The folder pass writes one `module` node per source directory. A directory has
+-- no `files` row and never will, so these carry `file_id` NULL — which puts them
+-- outside `nodes_unique_identity` (partial on `file_id is not null`), and they
+-- carry no fqn either, so they are outside `nodes_unique_fqn` as well. Without
+-- this index they are governed by nothing and duplicate on every scan.
+--
+-- Before R13 the identity index covered them, because the directory was written
+-- into the `file_path` column — the column then meant two different things
+-- depending on the row, which is exactly what moving to a `files` foreign key
+-- ends. The directory now lives in `props.dir` and identity is `(folder, kind,
+-- name)`, which is what distinguishes two structural nodes anyway.
+--
+-- `fqn is null` is load-bearing: a reference stub also has no file, and merging
+-- a stub into a directory node on a name collision would be a false merge.
+create unique index if not exists nodes_unique_structural
+    on nodes (folder_id, kind, name)
+ where file_id is null and fqn is null;
+
+create index if not exists nodes_file_id_idx
+    on nodes(file_id);
 
 create index if not exists nodes_folder_id_idx
     on nodes(folder_id);
@@ -65,9 +88,6 @@ create index if not exists nodes_parent_id_idx
 
 create index if not exists nodes_kind_idx
     on nodes(kind);
-
-create index if not exists nodes_file_path_idx
-    on nodes(folder_id, file_path);
 
 create index if not exists nodes_name_idx
     on nodes(folder_id, name);
@@ -108,7 +128,9 @@ Node kinds:
   section — documentation heading (level stored in props)
   rationale — extracted from NOTE/WHY/HACK/TODO/IMPORTANT comments
 
-file_path is denormalized on every node for fast file-scoped queries.
+file_id references the files table (R13) — a key, not a repeated path, so a
+rename rewrites one row instead of every node in the file, and a node naming an
+untracked file is UNREPRESENTABLE rather than merely wrong.
 Relationships between nodes are stored in the edges table.';
 
 comment on column nodes.id
@@ -121,18 +143,14 @@ comment on column nodes.kind
      is 'Node classification. See table comment for full list.';
 comment on column nodes.name
      is 'Identifier name or heading text.';
-comment on column nodes.file_path
-     is 'Folder-relative path of the source file. Denormalized for query performance.
-NULL for reference stubs and external lib_symbol nodes, which have no local file
-(see resolved/fqn). Non-NULL for every definition and legacy node.';
 comment on column nodes.fqn
      is 'Fully-qualified name (SCIP/LSIF moniker). Definitions and references
 get-or-create the same node by (folder_id, fqn) so call edges resolve at emit.
 NULL for legacy / not-yet-migrated nodes, which fall back to bare-name matching.';
 comment on column nodes.resolved
-     is 'True once a definition has been seen for this fqn (file_path/signature/line
-filled). False for a reference-first stub awaiting its definition. lib_symbol nodes
-are resolved=true (the external symbol IS the definition; nothing to enrich).';
+     is 'True once a definition has been seen for this fqn (file_id/signature/line
+filled). False for a reference-first stub awaiting its definition. External `lib·`
+nodes are resolved=true (the external symbol IS the definition; nothing to enrich).';
 comment on column nodes.language
      is 'Language slug (rust/python/typescript/…) derived from the file extension at
 write time. Scopes the bare-name fallback to same-language candidates during the
@@ -154,12 +172,10 @@ comment on column nodes.is_exported
 comment on column nodes.is_test
      is 'True when this node belongs to a test file (path-convention: tests/ dirs,
 *.test.*/*.spec.*, *_test.*, test_*.py, *Test.java, …; see languages::is_test_path).
-Lets the UI filter tests out when focusing on production code. lib_symbol/lib_package
-(external deps) are never test. Reference stubs inherit it from their definition.';
+Lets the UI filter tests out when focusing on production code. External `lib·`
+nodes are never test. Reference stubs inherit it from their definition.';
 comment on column nodes.community_id
      is 'Leiden community cluster ID. Batch-computed. Null until computed.';
-comment on column nodes.degree
-     is 'Precomputed in+out edge count. Used for god-node detection.';
 comment on column nodes.embedding
      is '384-dim vector embedding for semantic search. Computed by local model during indexing. HNSW indexed.';
 comment on column nodes.tags
@@ -168,3 +184,5 @@ comment on column nodes.props
      is 'Extensible metadata. For sections: {level:2}. For rationale: {tag:"WHY"}. For files: {language:"rust"}.';
 comment on column nodes.modified_at
      is 'Timestamp of the last modification to this row.';
+comment on column nodes.file_id
+     is 'The file this node is DECLARED in, as a key rather than a repeated path. ON DELETE RESTRICT, never CASCADE: a file''s removal goes through reconcile, one declaration at a time. NULL for reference stubs and external `lib·` nodes, which have no file by definition. See docs/database/sensei.md.';

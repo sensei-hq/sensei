@@ -388,6 +388,9 @@ pub(super) async fn compute(
         // at each repository's first AI-transcript day — not its whole (years of,
         // all-authors) git history. `full`/`N` opt into pre-AI history.
         let baseline = crate::tasks::metrics_scheduler::baseline_history(pg).await;
+        // Loaded once, not per repository: it is one config read and the ruling
+        // does not change mid-pass.
+        let gate = super::MetricGate::load(pg).await;
         for (repository_id, root) in pg.repository_roots_for_project(&project_id).await? {
             // Resolve this repository's history floor. A repo with no captured AI
             // activity is SKIPPED under the default (nothing to measure).
@@ -399,7 +402,20 @@ pub(super) async fn compute(
             // identity=NULL) then one author-filtered row per local git identity
             // (scope=user, identity=that email — the value the project view pools).
             // A checkout with no git identity contributes only the scope=repo twin.
-            let mut scopes: Vec<(&str, Option<String>)> = vec![(SCOPE_REPO, None)];
+            // The whole-tree twin is the expensive half — a `git log` over ALL
+            // authors, and nothing outside the dōjō reads it. Skipped when every
+            // consuming tenant has switched off BOTH of this group's repo-scope
+            // metrics; one survivor pays for the log.
+            let repo_key = pg.repo_key_for_repository(&repository_id).await.unwrap_or(None);
+            let mut scopes: Vec<(&str, Option<String>)> = Vec::new();
+            if gate.wants_any(repo_key.as_deref(), &[KEY_CHURN_RATE, KEY_CHURN_CONCENTRATION]) {
+                scopes.push((SCOPE_REPO, None));
+            } else {
+                tracing::debug!(
+                    repository_id = %repository_id,
+                    "churn: whole-tree log skipped — every tenant disabled its repo-scope metrics"
+                );
+            }
             for email in local_identities(&root) {
                 scopes.push((SCOPE_USER, Some(email)));
             }
@@ -1238,12 +1254,37 @@ mod tests {
         assert_eq!(read.4.as_deref(), Some("builtin"), "tool_kind = builtin");
         assert_eq!(read.1, None, "no cwd → no repository_id (honest-empty)");
 
-        // Idempotent: a second pass enriches nothing (all enriched_at set).
-        assert_eq!(
-            pg.enrich_assistant_events(100).await.unwrap(),
-            0,
-            "re-run enriches nothing (enriched_at set)"
+        // Idempotent: a second pass leaves already-enriched rows alone.
+        //
+        // Asserted over THIS session's rows, not over the sweep's return count.
+        // enrich_assistant_events is table-wide — it takes up to N un-enriched
+        // events from anywhere — so a sibling test inserting one between the two
+        // passes makes the second return 1 and the old `== 0` assertion fail on a
+        // run where nothing is actually wrong. Observed 2026-08-25.
+        let before: Vec<(String, Option<chrono::DateTime<chrono::Utc>>)> = query_as(
+            "SELECT tool_name, enriched_at FROM activity.assistant_events \
+              WHERE session_id = $1 ORDER BY tool_name",
+        )
+        .bind(&sid)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        assert!(
+            before.iter().all(|(_, at)| at.is_some()),
+            "the first pass stamped every seeded event: {before:?}"
         );
+
+        pg.enrich_assistant_events(100).await.unwrap();
+
+        let after: Vec<(String, Option<chrono::DateTime<chrono::Utc>>)> = query_as(
+            "SELECT tool_name, enriched_at FROM activity.assistant_events \
+              WHERE session_id = $1 ORDER BY tool_name",
+        )
+        .bind(&sid)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(before, after, "a re-run must not touch already-enriched rows");
 
         sqlx_core::query::query("DELETE FROM activity.assistant_events WHERE session_id = $1")
             .bind(&sid)

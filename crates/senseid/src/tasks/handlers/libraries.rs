@@ -318,6 +318,11 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
                 Some(&page.doc.content),
                 page.source_type,
                 page.doc.component.as_deref(),
+                // package_name: no ingestion route reports which package a
+                // page documents yet — 02b S1's manifest read supplies it.
+                // `None` is "not stated", never inferred from the title.
+                None,
+                None,
             )
             .await
         {
@@ -341,20 +346,17 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
     // in v1 — a manifest read needs the files on disk) so its declared skills/agents
     // become associable capabilities. Non-fatal: a bad/absent manifest never fails
     // the doc index. Manifest-authoritative — removed entries disappear on re-index.
-    if let LibSource::LocalDir(p) = &source
-        && let Some((version, skills, agents)) =
-            crate::libraries::load_manifest_from_root(std::path::Path::new(p))
-    {
-        match ctx
-            .pg()
-            .replace_library_capabilities(&lib_id, "manifest", Some(&version), &skills, &agents)
-            .await
+    if let LibSource::LocalDir(p) = &source {
+        // Through the shared ingestion so this path also records `local_path` and
+        // the declared `packages`. It used to write capabilities only, which is why
+        // nothing could ever re-read a manifest: the location was never stored.
+        match crate::libraries::ingest_manifest_at(ctx.pg(), &lib_id, std::path::Path::new(p)).await
         {
-            Ok((ns, na)) => tracing::info!(
-                "index_library: {lib_name} sensei.library.json → {ns} skill(s), {na} agent(s)"
+            Some((ns, na, np)) => tracing::info!(
+                "index_library: {lib_name} sensei.library.json → {ns} skill(s), {na} agent(s), {np} package(s)"
             ),
-            Err(e) => {
-                tracing::warn!(error = %e, lib = %lib_name, "index_library: replace_library_capabilities failed")
+            None => {
+                tracing::debug!(lib = %lib_name, "index_library: no usable sensei.library.json")
             }
         }
     }
@@ -399,7 +401,20 @@ pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let summary = &summary[..summary.len().min(200)];
 
     ctx.pg()
-        .upsert_library_page(&lib_id, title, url, None, Some(summary), Some(content), "http", None)
+        .upsert_library_page(
+            &lib_id,
+            title,
+            url,
+            None,
+            Some(summary),
+            Some(content),
+            "http",
+            None,
+            // package_name: the http route does not state one (02b S1)
+            None,
+            // version: this path is handed a URL with no release attached.
+            None,
+        )
         .await
         .map_err(|e| format!("upsert_library_page failed: {}", e))?;
 
@@ -421,8 +436,8 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
     let folder_name = folder["name"].as_str().unwrap_or_else(|| task.folder_name());
     let folder_id = crate::api::util::json_uuid(&folder["id"]).ok_or("Invalid folder id")?;
     // The folder's project (NULL for standalone folders) — used to roll each
-    // detected dependency up to project_libraries so it shows on the Projects
-    // screen (#30). project_libraries is the project↔library M2M the indexer
+    // detected dependency up to library_enablement so it shows on the Projects
+    // screen (#30). library_enablement is the project↔library M2M the indexer
     // owns; referenced_libraries below is only folder-grained.
     let project_id = crate::api::util::json_uuid(&folder["project_id"]);
 
@@ -447,17 +462,24 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         if let Some(target) = &dep.local_source {
             let protocol = local_source_protocol(&dep.source, &dep.raw_version);
             let resolved = resolve_local_target(repo_path, protocol, target);
-            if let Some(pid) = project_id
-                && let Some(abs_target) = resolved.as_ref().and_then(|p| p.to_str())
+            // FOLDER -> FOLDER (D11). The target folder is already in hand, so
+            // this no longer reaches through it to a project id. Two guards
+            // went away with the regrain and their loss is the point: the old
+            // code required `project_id` to be Some and the two projects to
+            // DIFFER, which discarded every intra-project edge — measured, all
+            // 384 folders of this repo share one project, so all 8 workspace
+            // members' `path=` deps were dropped and the table stayed empty.
+            // Only the self-edge check remains, mirroring the table's CHECK so
+            // the common case fails without a round trip.
+            if let Some(abs_target) = resolved.as_ref().and_then(|p| p.to_str())
                 && let Ok(Some(target_folder)) = ctx.pg().get_repo_by_path(abs_target).await
-                && let Some(to_pid) = crate::api::util::json_uuid(&target_folder["project_id"])
-                && to_pid != pid
+                && let Some(to_folder_id) = crate::api::util::json_uuid(&target_folder["id"])
+                && to_folder_id != folder_id
                 && let Err(e) = ctx
                     .pg()
-                    .upsert_project_dependency(
-                        &pid,
-                        &to_pid,
+                    .upsert_folder_dependency(
                         &folder_id,
+                        &to_folder_id,
                         protocol,
                         &dep.source,
                         Some(target),
@@ -466,7 +488,7 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             {
                 tracing::warn!(
                     error = %e, lib = %dep.lib_name, folder = %folder_name,
-                    "extract_deps: upsert_project_dependency failed"
+                    "extract_deps: upsert_folder_dependency failed"
                 );
             }
             if resolved.is_some() {
@@ -551,7 +573,7 @@ pub async fn extract_deps(ctx: &TaskContext, task: &Task) -> Result<u32, String>
 
     // #83 T1 commands surface — one pass over the root's known manifests,
     // calling each ManifestAdapter's `parse_commands` and replacing the
-    // folder's rows in `sensei.project_commands`. Idempotent (delete+insert
+    // folder's rows in `sensei.folder_commands`. Idempotent (delete+insert
     // per ecosystem); cheap enough to run alongside the dep pass since it
     // re-reads only the manifest at the folder root, not the whole tree.
     let cmd_count = extract_and_persist_commands(ctx, &folder_id, repo_path).await;
@@ -606,7 +628,7 @@ async fn extract_and_persist_commands(
 /// - `link` / `file` → filesystem path relative to the declaring folder (npm).
 /// - `workspace` → name lookup inside the same monorepo (intra-project by
 ///   design — no cross-project edge).
-fn local_source_protocol(source: &str, raw_version: &str) -> &'static str {
+pub(crate) fn local_source_protocol(source: &str, raw_version: &str) -> &'static str {
     if source == "Cargo.toml" {
         return "path";
     }
@@ -634,7 +656,7 @@ fn local_source_protocol(source: &str, raw_version: &str) -> &'static str {
 /// to exist and follows symlinks in a way that surprises the caller when the
 /// folder is symlinked. Lexical normalization is enough for looking up in
 /// `sensei.folders` by `abs_path`, which itself stores the pre-canonical path.
-fn resolve_local_target(
+pub(crate) fn resolve_local_target(
     from_abs_path: &str,
     protocol: &str,
     target: &str,
@@ -720,6 +742,8 @@ fn public_member_libs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tasks::test_support::make_ctx;
+    use crate::tasks::{Task, TaskKind};
     use crate::types::PackageInfo;
 
     fn member(name: &str, pkg_type: &str, private: bool) -> PackageInfo {
@@ -932,5 +956,29 @@ mod tests {
         let r = resolve_index_library_id(&pg, &ghost.to_string(), &name, "local", Some("/x")).await;
         assert!(r.is_err(), "an unresolvable lib_id fails closed");
         assert!(!npm_row_exists(&pg, &name).await, "and creates no fallback (npm, name) row");
+    }
+
+    #[tokio::test]
+    async fn resolve_libs_is_fail_closed_on_a_failed_folder() {
+        // D4.1/D6d: resolve_libs stamps the walked libs but no longer advances
+        // the folder status, so a `failed` folder stays `failed` here — the
+        // terminal barrier (DetectCommunities) is the only writer of `indexed`.
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap(); // empty dir → no libs to walk
+        let folder_path = tmp.path().to_string_lossy().to_string();
+        let root_id =
+            ctx.pg().add_watch_root(&folder_path, "rl_fc", &serde_json::json!([])).await.unwrap();
+        let fid = ctx.pg().upsert_repo(&root_id, "rl-fc-repo", &folder_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "failed").await.unwrap();
+
+        let task = Task::new(TaskKind::ResolveLibs, &folder_path, &folder_path);
+        resolve_libs(&ctx, &task).await.unwrap();
+
+        assert_eq!(
+            ctx.pg().get_folder_status(&fid).await.unwrap().as_deref(),
+            Some("failed"),
+            "resolve_libs must not mark a failed folder indexed (fail-closed)"
+        );
+        ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 }

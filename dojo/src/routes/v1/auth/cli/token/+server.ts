@@ -18,6 +18,47 @@
 import type { RequestHandler } from './$types';
 import { env as pub } from '$env/dynamic/public';
 import { apiError } from '$lib/server/dojo-auth';
+import { dojoDb } from '$lib/server/dojo-supabase';
+import { resolvePrincipalId } from '$lib/server/principal-resolve';
+import { provisionWithToken } from '$lib/server/provisioning';
+
+/**
+ * Provision on the way through — the daemon caller of §II.7.
+ *
+ * This exchange is the ONE moment `provider_token` is guaranteed to exist, so
+ * provisioning here means a CLI-initiated first connection can create the user's
+ * dōjōs without a web sign-in first.
+ *
+ * It reads a COPY of the upstream body and never touches what is returned. The
+ * handler's own contract is that the response passes through unchanged, because
+ * re-modelling it is how `provider_token` ends up quietly dropped.
+ *
+ * Best-effort, and deliberately so: the exchange has already succeeded by this
+ * point, and failing the request would throw away a valid session and force the
+ * user to sign in again over something they cannot act on. The failure is not
+ * swallowed — it is logged, and `ensureProvisioned` is idempotent, so the
+ * daemon's next `POST /v1/you/provision` re-attempts it and surfaces the error
+ * on an endpoint that can actually report one.
+ */
+async function provisionFromSession(sessionJson: string): Promise<void> {
+	let session: Record<string, unknown>;
+	try {
+		session = JSON.parse(sessionJson) as Record<string, unknown>;
+	} catch {
+		return; // not JSON — the upstream error body, already being passed through
+	}
+	const user = (session.user ?? null) as { id?: unknown; email?: unknown } | null;
+	const authUserId = typeof user?.id === 'string' ? user.id : '';
+	if (!authUserId) return; // an error payload, not a session
+
+	const providerToken =
+		typeof session.provider_token === 'string' ? session.provider_token : null;
+	const db = dojoDb();
+	const principalId = await resolvePrincipalId(db, authUserId);
+	await provisionWithToken(db, principalId, providerToken, {
+		email: typeof user?.email === 'string' ? user.email : null
+	});
+}
 
 export const POST: RequestHandler = async ({ request }) => {
 	const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
@@ -42,7 +83,21 @@ export const POST: RequestHandler = async ({ request }) => {
 		return apiError(502, 'could not reach the identity provider');
 	}
 
-	return new Response(await upstream.text(), {
+	const sessionText = await upstream.text();
+
+	if (upstream.ok) {
+		try {
+			await provisionFromSession(sessionText);
+		} catch (e) {
+			// Not silent: the daemon's next POST /v1/you/provision re-attempts the
+			// same idempotent operation and reports the failure there, on an
+			// endpoint whose job is to answer. Losing the caller's just-earned
+			// session over this would be the worse trade.
+			console.error('[cli/token] provisioning failed after a successful exchange', e);
+		}
+	}
+
+	return new Response(sessionText, {
 		status: upstream.status,
 		headers: { 'content-type': 'application/json' }
 	});

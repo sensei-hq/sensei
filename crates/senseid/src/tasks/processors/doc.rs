@@ -37,7 +37,6 @@ pub fn process(
         symbols: vec![],
         unresolved_imports: vec![],
         unresolved_calls: vec![],
-        parent_refs: vec![],
         file_refs,
         fn_mentions,
         sections,

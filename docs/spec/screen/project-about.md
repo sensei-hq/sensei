@@ -82,7 +82,7 @@ Kanji is 識 — *knowledge / awareness*.
 
 - [[pipeline/capture]] — multi-repo membership + split endpoint
 - [[pipeline/project-icon]] — icon inference source
-- [[pipeline/insight-copy]] — proposed vision suggestions (future)
+- [[pipeline/narration-cache]] — proposed vision suggestions (future)
 - [[pipeline/dojo-lifecycle]] — binding + attribution
 - [[screen/project-overview]] — vision consumer
 - [[screen/preferences]] — profile identity + name auto-derive

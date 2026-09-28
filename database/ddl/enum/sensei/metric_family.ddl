@@ -22,4 +22,11 @@ create type metric_family
       , 'knowledge'
       , 'tool'
       , 'composite'
+      -- STRUCTURE, not hygiene. `quality` measures how the code is written —
+      -- duplication, smells, churn, coverage. Nothing measured how it is SHAPED,
+      -- even though the graph holds 4,078,536 edges and 1,182,758 nodes and, as of
+      -- 2026-09-28, exactly zero metrics read either (#156).
+      --
+      -- Appended so no existing ordinal moves; `metric_family` is a sort key.
+      , 'architecture'
     );

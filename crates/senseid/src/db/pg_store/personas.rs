@@ -13,7 +13,111 @@
 
 use super::PgStore;
 
+/// The `personas.session_slot` value for a persona name.
+///
+/// The persona reaches the daemon from a QUERY STRING, so its case is the
+/// caller's choice, not a fact. The Keychain side settled this long ago —
+/// `dojo_client::session::account_for` lowercases, with a test spelling out that
+/// "Sensei-HQ" and "sensei-hq" must not become two half-signed-in states — and
+/// the registry has to agree or the two halves of a sign-out disagree about
+/// which row they are talking about.
+///
+/// One function for the write and the clear so they cannot drift: they did, and
+/// `?persona=Sensei-HQ` deleted the credentials while matching no row, leaving
+/// `session_slot` set for [`PgStore::signed_in_personas`] to keep enumerating.
+fn slot_of(persona: &str) -> String {
+    persona.to_lowercase()
+}
+
+/// One persona as the sign-in list needs it.
+///
+/// Includes personas that have NEVER been connected — sensei infers them from
+/// commit authorship, so a fresh install has several, and they are precisely the
+/// ones a "connect an identity" list exists to offer. `forge_token_rows` cannot
+/// serve this: it filters to signed-in personas on purpose.
+#[derive(Debug, Clone)]
+pub struct PersonaRow {
+    pub label: String,
+    pub github_login: Option<String>,
+    /// `None` = never signed in from this machine.
+    pub session_slot: Option<String>,
+    pub verified: bool,
+    pub state: String,
+    pub expires_at: Option<i64>,
+}
+
 impl PgStore {
+    /// The KEYCHAIN SLOTS of personas that have completed a dōjō sign-in.
+    ///
+    /// The persona registry. `docs/spec/dojo/daemon-sync.md` §3 originally proposed
+    /// a `sensei.dojo_personas` table for it; the registry already existed in
+    /// `sensei.personas`, so the table was never created.
+    ///
+    /// **Returns `session_slot`, NOT `label`, and that is the whole subtlety.**
+    /// The spec's first version claimed they were the same string. They are not:
+    /// `link_persona_identity` REWRITES `label` to the verified GitHub login, so a
+    /// user who signs in as `default` ends up with a row labelled `sensei-hq-org`
+    /// whose session is still at `refresh_token.default`. Returning the label sent
+    /// `live_access_token` looking for a slot that does not exist, which reported
+    /// `SignedOut`, skipped the persona, and left the cycle claiming success while
+    /// pushing nothing. Observed live before this column existed, not theorised.
+    ///
+    /// Both conditions are needed. `session_slot IS NOT NULL` is the one that
+    /// matters — it is written at sign-in, cleared by
+    /// [`Self::clear_persona_session`] at sign-out, and is the only field that
+    /// names a real Keychain entry. `verified_at IS NOT NULL` is kept beside it
+    /// so a row that was given a slot but never completed the OAuth callback is
+    /// not enumerated.
+    ///
+    /// This comment used to claim `verified_at` was what kept a signed-out row
+    /// from being re-enumerated. It was false in both halves: sign-out cleared
+    /// neither column, and `verified_at` is never cleared at all, so the cycle
+    /// went on listing signed-out personas every cadence forever.
+    ///
+    /// A row proves a sign-in HAPPENED, not that its token is still valid — the
+    /// caller resolves a live access token per slot and skips the expired ones.
+    pub async fn signed_in_personas(&self) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT session_slot FROM sensei.personas \
+              WHERE session_slot IS NOT NULL AND verified_at IS NOT NULL \
+              ORDER BY session_slot",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("signed_in_personas: {e}"))?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    /// Release a persona's Keychain slot — the DATABASE half of signing out.
+    ///
+    /// Returns whether a row actually held the slot, so the caller can tell "I
+    /// forgot your session" from "there was nothing to forget". Reporting success
+    /// either way would hide a persona/slot mismatch, which is the class of bug
+    /// `session_slot` exists to make visible.
+    ///
+    /// Clears ONLY the slot. `verified_at`, `github_login` and `github_user_id`
+    /// stay: which GitHub account this persona is remains true after a sign-out,
+    /// and discarding it would force a second OAuth round trip to re-learn
+    /// something already proved. [`Self::signed_in_personas`] requires the slot,
+    /// so nulling it is sufficient to stop the sync cycle picking the row up.
+    ///
+    /// Takes the PERSONA as the caller has it — a query-string parameter whose
+    /// case is not a fact — and normalises through [`slot_of`], the same function
+    /// the sign-in writes with. Comparing the raw parameter meant
+    /// `?persona=Sensei-HQ` cleared the Keychain (which lowercases) and matched
+    /// no row, which is the original defect restored by a capital letter.
+    pub async fn clear_persona_session(&self, persona: &str) -> Result<bool, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.personas SET session_slot = NULL, modified_at = now() \
+              WHERE session_slot = $1",
+        )
+        .bind(slot_of(persona))
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("clear_persona_session: {e}"))?;
+        Ok(res.rows_affected() > 0)
+    }
+
     /// Create a persona, or return the existing one with that label.
     ///
     /// Idempotent on `lower(label)` so a re-run of a seed/backfill converges
@@ -175,12 +279,21 @@ impl PgStore {
                                       SELECT 1 FROM sensei.personas o \
                                        WHERE lower(o.label) = lower($2) AND o.id <> p.id) \
                                  THEN $2 ELSE p.label END, \
+                    session_slot = $4, \
                     modified_at = now() \
               WHERE p.id = $1",
         )
         .bind(id)
         .bind(github_login)
         .bind(github_user_id)
+        // The slot the session was actually stored under — the hint string, NOT
+        // the label the line above may have just rewritten. Recording it here is
+        // what keeps the registry's lookup key and the Keychain key the same
+        // string; deriving one from the other is what silently skipped the
+        // persona. Through [`slot_of`], so the sign-out that has to find this row
+        // again normalises with the same function rather than a second copy of
+        // the rule.
+        .bind(slot_of(persona_hint))
         .execute(&self.pool)
         .await
         .map_err(|e| format!("link_persona_identity (verify): {e}"))?;
@@ -243,5 +356,301 @@ impl PgStore {
         .await
         .map_err(|e| format!("resolve_persona_for_identity (by hint): {e}"))?;
         Ok(by_hint.map(|(id,)| id))
+    }
+}
+
+/// A persona's forge-token standing, as the scheduled check needs it.
+///
+/// Keyed on `session_slot` rather than the persona LABEL: the Keychain account
+/// is `provider_token.<session_slot>`, and `link_persona_identity` rewrites
+/// `label` to the verified GitHub login — so a user who signed in as `default`
+/// ends up labelled `sensei-hq-org` while the credential still lives at
+/// `.default`. Reading the label here would look for a slot that does not exist,
+/// report SignedOut, and skip the persona silently. That exact bug shipped once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForgeTokenRow {
+    pub session_slot: String,
+    pub state: String,
+    /// Unix seconds. `None` when no expiry has ever been learned — see the
+    /// column comment: GoTrue does not report the provider's expiry.
+    pub expires_at: Option<i64>,
+}
+
+impl PgStore {
+    /// Every persona, connected or not, for the sign-in list.
+    ///
+    /// Ordered so the connected ones come first: they are the rows a user is
+    /// most likely to be looking for, and an inferred persona they have never
+    /// heard of should not head the list.
+    pub async fn persona_rows(&self) -> Result<Vec<PersonaRow>, String> {
+        type Row = (
+            String,
+            Option<String>,
+            Option<String>,
+            bool,
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+        );
+        let rows: Vec<Row> = sqlx_core::query_as::query_as(
+            "SELECT label \
+                  , github_login \
+                  , session_slot \
+                  , (verified_at IS NOT NULL) AS verified \
+                  , forge_token_state::text \
+                  , forge_token_expires_at \
+               FROM sensei.personas \
+              ORDER BY (session_slot IS NULL), label",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("persona_rows: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(label, github_login, session_slot, verified, state, exp)| PersonaRow {
+                label,
+                github_login,
+                session_slot,
+                verified,
+                state,
+                expires_at: exp.map(|t| t.timestamp()),
+            })
+            .collect())
+    }
+
+    /// Every persona whose forge token the scheduled check should consider.
+    ///
+    /// Filters on `session_slot IS NOT NULL` for the reason above, and on
+    /// `verified_at IS NOT NULL` so a row whose slot survives a sign-out is not
+    /// re-enumerated — the same pair `signed_in_personas` uses.
+    pub async fn forge_token_rows(&self) -> Result<Vec<ForgeTokenRow>, String> {
+        let rows: Vec<(String, String, Option<chrono::DateTime<chrono::Utc>>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT session_slot, forge_token_state::text, forge_token_expires_at \
+                   FROM sensei.personas \
+                  WHERE session_slot IS NOT NULL AND verified_at IS NOT NULL \
+                  ORDER BY session_slot",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("forge_token_rows: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(session_slot, state, exp)| ForgeTokenRow {
+                session_slot,
+                state,
+                expires_at: exp.map(|t| t.timestamp()),
+            })
+            .collect())
+    }
+
+    /// Record what the check learned.
+    ///
+    /// `expires_at` is `Option` and is written ONLY when `Some`: a probe that
+    /// confirms the token is alive but carries no expiry header must not erase
+    /// an expiry learned earlier. Overwriting it with NULL would silently
+    /// downgrade a known deadline to `unknown` and turn a `Refresh` into a
+    /// `Verify` on every subsequent run.
+    ///
+    /// `checked_at` is always stamped, so "we asked and learned nothing" is
+    /// distinguishable from "we never asked".
+    pub async fn set_forge_token_state(
+        &self,
+        session_slot: &str,
+        state: &str,
+        expires_at: Option<i64>,
+    ) -> Result<(), String> {
+        let exp = expires_at.and_then(chrono::DateTime::from_timestamp_secs);
+        sqlx_core::query::query(
+            "UPDATE sensei.personas \
+                SET forge_token_state      = $2::sensei.forge_token_state \
+                  , forge_token_expires_at = COALESCE($3, forge_token_expires_at) \
+                  , forge_token_checked_at = now() \
+                  , modified_at            = now() \
+              WHERE session_slot = $1",
+        )
+        .bind(session_slot)
+        .bind(state)
+        .bind(exp)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_forge_token_state: {e}"))?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod forge_token_state_tests {
+    use super::*;
+
+    /// Remove what a test created. These run against a SHARED `sensei_test`, and
+    /// a persona with a `session_slot` + `verified_at` is by definition
+    /// "signed in" — so leaving one behind makes
+    /// `dojo_sync::a_pass_with_no_signed_in_personas_is_a_no_op` fail for a
+    /// reason that has nothing to do with dojo_sync. It did: 21 rows accumulated
+    /// before this existed.
+    async fn cleanup(pg: &PgStore, slot: &str) {
+        sqlx_core::query::query("DELETE FROM sensei.personas WHERE session_slot = $1")
+            .bind(slot)
+            .execute(pg.pool())
+            .await
+            .ok();
+    }
+
+    async fn seed(pg: &PgStore, slot: &str) -> uuid::Uuid {
+        let id = uuid::Uuid::new_v4();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.personas (id, label, session_slot, verified_at) \
+             VALUES ($1, $2, $2, now())",
+        )
+        .bind(id)
+        .bind(slot)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        id
+    }
+
+    #[tokio::test]
+    async fn a_new_persona_starts_unknown_not_active() {
+        // The default must not flatter. A stored token nobody has verified is
+        // `unknown`; calling it `active` would make the very first check decide
+        // `Refresh` on a credential whose standing has never been established.
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let slot = format!("ztest-fts-{}", uuid::Uuid::new_v4());
+        seed(&pg, &slot).await;
+        let row = pg.forge_token_rows().await.unwrap().into_iter().find(|r| r.session_slot == slot);
+        let row = row.expect("the seeded persona is enumerated");
+        assert_eq!(row.state, "unknown");
+        assert_eq!(row.expires_at, None);
+        cleanup(&pg, &slot).await;
+    }
+
+    #[tokio::test]
+    async fn a_probe_with_no_expiry_does_not_erase_one_already_known() {
+        // The load-bearing case. GitHub returns the expiry header on some calls
+        // and not others, so a successful probe that carries none must leave the
+        // deadline standing. Overwriting with NULL would downgrade a known
+        // expiry to `unknown` and turn every later run into a Verify — the token
+        // would then be re-probed forever instead of refreshed on time.
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let slot = format!("ztest-fts-{}", uuid::Uuid::new_v4());
+        seed(&pg, &slot).await;
+
+        pg.set_forge_token_state(&slot, "active", Some(1_800_000_000)).await.unwrap();
+        pg.set_forge_token_state(&slot, "active", None).await.unwrap();
+
+        let row = pg
+            .forge_token_rows()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|r| r.session_slot == slot)
+            .expect("row");
+        assert_eq!(
+            row.expires_at,
+            Some(1_800_000_000),
+            "a probe carrying no expiry must not erase the one we already had"
+        );
+        assert_eq!(row.state, "active");
+        cleanup(&pg, &slot).await;
+    }
+
+    #[tokio::test]
+    async fn marking_dead_is_recorded_and_the_expiry_is_kept_as_evidence() {
+        // The expiry is WHY it is dead. Clearing it on death would discard the
+        // reason and leave the UI unable to say more than "not working".
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let slot = format!("ztest-fts-{}", uuid::Uuid::new_v4());
+        seed(&pg, &slot).await;
+        pg.set_forge_token_state(&slot, "active", Some(1_700_000_000)).await.unwrap();
+        pg.set_forge_token_state(&slot, "dead", None).await.unwrap();
+        let row = pg
+            .forge_token_rows()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|r| r.session_slot == slot)
+            .expect("row");
+        assert_eq!(row.state, "dead");
+        assert_eq!(row.expires_at, Some(1_700_000_000));
+        cleanup(&pg, &slot).await;
+    }
+}
+
+#[cfg(test)]
+mod forge_token_observe_tests {
+    use super::*;
+    use crate::dojo_client::forge_token::observe;
+
+    async fn seed(pg: &PgStore, slot: &str) {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.personas (id, label, session_slot, verified_at) \
+             VALUES (gen_random_uuid(), $1, $1, now())",
+        )
+        .bind(slot)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    }
+    async fn cleanup(pg: &PgStore, slot: &str) {
+        sqlx_core::query::query("DELETE FROM sensei.personas WHERE session_slot = $1")
+            .bind(slot)
+            .execute(pg.pool())
+            .await
+            .ok();
+    }
+    async fn state_of(pg: &PgStore, slot: &str) -> (String, Option<i64>) {
+        let r = pg
+            .forge_token_rows()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|r| r.session_slot == slot)
+            .expect("row");
+        (r.state, r.expires_at)
+    }
+
+    #[tokio::test]
+    async fn a_successful_call_records_active_and_the_deadline_it_carried() {
+        // The point of observing: sign-in reads /user/orgs anyway, so the token
+        // gets its expiry immediately instead of up to a scheduling interval later.
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let slot = format!("ztest-obs-{}", uuid::Uuid::new_v4());
+        seed(&pg, &slot).await;
+        observe(&pg, &slot, Some(200), Some("2026-08-30 12:00:00 UTC")).await;
+        assert_eq!(state_of(&pg, &slot).await, ("active".into(), Some(1_788_091_200)));
+        cleanup(&pg, &slot).await;
+    }
+
+    #[tokio::test]
+    async fn a_401_on_an_ordinary_call_marks_the_token_dead() {
+        // A token that dies between checks is caught by the next thing that uses
+        // it, rather than waiting for the scheduled probe.
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let slot = format!("ztest-obs-{}", uuid::Uuid::new_v4());
+        seed(&pg, &slot).await;
+        observe(&pg, &slot, Some(401), None).await;
+        assert_eq!(state_of(&pg, &slot).await.0, "dead");
+        cleanup(&pg, &slot).await;
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_forge_writes_nothing_at_all() {
+        // The caller is probably handling its own network error. Recording a
+        // standing we did not learn would be a fabrication — and `checked_at`
+        // must stay untouched so "asked and learned nothing" is distinguishable
+        // from "never asked".
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let slot = format!("ztest-obs-{}", uuid::Uuid::new_v4());
+        seed(&pg, &slot).await;
+        observe(&pg, &slot, Some(200), Some("2026-08-30 12:00:00 UTC")).await;
+        observe(&pg, &slot, None, None).await; // network failure
+        observe(&pg, &slot, Some(500), None).await; // forge is unwell
+        assert_eq!(
+            state_of(&pg, &slot).await,
+            ("active".into(), Some(1_788_091_200)),
+            "a call we could not make must not change what we believe"
+        );
+        cleanup(&pg, &slot).await;
     }
 }

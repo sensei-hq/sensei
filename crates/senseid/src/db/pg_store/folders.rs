@@ -1,5 +1,29 @@
 use super::*;
 
+/// The `mtime` a BARRIER-seeded `files` row carries.
+///
+/// Zero, and deliberately not a real timestamp. Stage 3's barrier (R14) writes
+/// a row to say "this file exists and is queued", not to claim it has been
+/// read — and the two must be distinguishable, because the parse handler
+/// advances a file's fingerprint as its record of "this file was processed".
+///
+/// **LOAD-BEARING, not tidy.** `process_git_folder`'s `prior_state` carries
+/// only `(mtime, hash)` and `plan_reindex` never reads `parsed_at`, so a
+/// barrier row bearing the file's TRUE mtime would be classified UNCHANGED on
+/// the very next pass and the file would never be indexed at all. Zero cannot
+/// be a real mtime, so the file stays a candidate until a parse advances it.
+///
+/// Lived in the `#[cfg(test)]` `graph_seed` module while the barrier existed
+/// only in fixtures; it is production's now, and `graph_seed` re-exports THIS
+/// one so there is a single definition.
+pub(crate) const BARRIER_MTIME: i64 = 0;
+
+/// The `content_hash` a BARRIER-seeded row carries: empty, because nothing has
+/// been read. The column is `not null`, and an empty string can never equal a
+/// real sha256 — so the content gate keeps the file a candidate rather than
+/// matching a fabricated fingerprint (R4).
+pub(crate) const BARRIER_HASH: &str = "";
+
 /// A resolved repo anchor for an absolute path (spec 2026-08-18): the durable repo a
 /// session/transcript attaches to — the nearest repo-kind ancestor (git/subtree/
 /// standalone-project-root), alias-aware, deepest+live wins.
@@ -10,6 +34,22 @@ pub struct RepoAnchor {
     pub repo_abs_path: String,
     /// "live" (a current abs_path) or "alias" (a former path, after a move/rename).
     pub matched_via: String,
+}
+
+/// Resolve ONE stored exclusion entry against its root.
+///
+/// Stored entries are RELATIVE to the root (`"Code"`, `"archive/old"`) — see
+/// `root_exclusion_prefixes_resolves_relative_entries_against_root`. This is the
+/// single place that turns one into the absolute prefix the watcher compares and
+/// the pruner deletes under.
+///
+/// It exists because there were briefly two copies: `root_exclusion_prefixes`
+/// (feeding the live watcher) and a closure in `update_watch_root` (feeding the
+/// prune). Two copies of a path formula is how a stored exclusion comes to gate
+/// the watcher while pruning nothing.
+pub(crate) fn resolve_exclusion(root_path: &str, entry: &str) -> String {
+    let root = root_path.trim_end_matches('/');
+    format!("{root}/{}", entry.trim_start_matches('/').trim_end_matches('/'))
 }
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
@@ -35,7 +75,7 @@ impl PgStore {
             .into_iter()
             .filter_map(|e| e.as_str().map(str::to_string))
             .filter(|e| !e.is_empty())
-            .map(|e| format!("{root}/{}", e.trim_start_matches('/')))
+            .map(|e| resolve_exclusion(root, &e))
             .collect())
     }
 
@@ -61,7 +101,7 @@ impl PgStore {
         }))
     }
 
-    /// Delete every folder at or under `prefix` (cascade nodes/edges/scan_state).
+    /// Delete every folder at or under `prefix` (cascade nodes/edges/files).
     /// Used when an exclusion is added; the emptied projects are then removed by
     /// [`Self::prune_empty_projects`]. `starts_with` is exact-prefix (no LIKE
     /// wildcard hazard). Returns folders deleted.
@@ -85,7 +125,7 @@ impl PgStore {
         name: &str,
         abs_path: &str,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_folder(root_id, "git", name, name, abs_path, None, None).await
+        self.upsert_folder(root_id, "git", name, name, abs_path, None, None, None).await
     }
 
     /// Register a project root with an explicit folder kind — `git` for real
@@ -134,11 +174,12 @@ impl PgStore {
     }
 
     /// Upsert a structural subfolder with an explicit `kind` — `folder` (the
-    /// navigable filesystem-tree row) or `workspace_member` (a monorepo member,
-    /// D5a). Status is terminal (`indexed`) — these rows model the tree, not scan
-    /// progress. On conflict the kind is relabelled ONLY between the two
-    /// structural kinds (`folder`↔`workspace_member`); a path that is actually a
-    /// (nested) project ROOT (`git`/`standalone`/`subtree`) is never reclassified.
+    /// navigable filesystem-tree row) or `module` (a manifest-bearing build
+    /// unit, D5a). Status is terminal (`indexed`) — these rows model the tree,
+    /// not scan progress. On conflict the kind is relabelled ONLY between the
+    /// two structural kinds (`folder`↔`module`); a path that is actually a
+    /// (nested) project ROOT (`git`/`standalone`/`subtree`) is never
+    /// reclassified.
     pub async fn upsert_subfolder_kind(
         &self,
         root_id: &uuid::Uuid,
@@ -153,7 +194,7 @@ impl PgStore {
             "INSERT INTO sensei.folders(root_id, kind, status, name, path, abs_path, parent_id, project_id)
              VALUES($1, $2::sensei.folder_kind, 'indexed'::sensei.folder_status, $3, $4, $5, $6, $7)
              ON CONFLICT(abs_path) DO UPDATE SET
-                kind = CASE WHEN folders.kind IN ('folder'::sensei.folder_kind, 'workspace_member'::sensei.folder_kind)
+                kind = CASE WHEN folders.kind IN ('folder'::sensei.folder_kind, 'module'::sensei.folder_kind)
                             THEN EXCLUDED.kind ELSE folders.kind END,
                 name = EXCLUDED.name,
                 parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
@@ -193,6 +234,38 @@ impl PgStore {
         Ok(row.map(|(id, name, abs, pid, props, modified)| {
             serde_json::json!({ "id": id, "name": name, "abs_path": abs, "project_id": pid, "props": props, "modified_at": modified.to_rfc3339() })
         }))
+    }
+
+    /// Record the checked-out branch in the TYPED column.
+    ///
+    /// `folders.branch` was declared and never written — NULL in all 7,772 rows —
+    /// while `process_git_folder` put the value in `props->>'branch'`. Two stores
+    /// for one fact, and the dead one was the typed, indexable, queryable one.
+    ///
+    /// It is a genuine partition key rather than a label, because the design is one
+    /// folder per checkout ("develop vs main = two folders, one repository") and
+    /// that is already live: fitness, strategos and website each have two folder
+    /// rows on two branches, so their graphs are already separate. Filtering
+    /// `sensei.graph_nodes` by branch therefore separates real graphs — no
+    /// branch-in-node-identity needed, which would have cost ~2.1 GB per extra
+    /// branch (nodes is 2,150 MB, dominated by embeddings).
+    ///
+    /// Guarded so a re-index to the same branch changes 0 rows.
+    pub async fn set_folder_branch(
+        &self,
+        folder_id: &uuid::Uuid,
+        branch: &str,
+    ) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.folders SET branch = $2, modified_at = now()
+              WHERE id = $1 AND branch IS DISTINCT FROM $2",
+        )
+        .bind(folder_id)
+        .bind(branch)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_folder_branch: {e}"))?;
+        Ok(res.rows_affected())
     }
 
     /// Set folder props (metadata like stack, libs, indexed_at, etc.).
@@ -394,7 +467,7 @@ impl PgStore {
         Ok(())
     }
 
-    /// Delete a folder (cascade deletes nodes, edges, scan_state, etc.).
+    /// Delete a folder (cascade deletes nodes, edges, files, etc.).
     pub async fn delete_repo_by_name(&self, name: &str) -> Result<(), String> {
         sqlx_core::query::query(
             "DELETE FROM sensei.folders WHERE name = $1 AND kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind, 'standalone'::sensei.folder_kind)"
@@ -413,15 +486,62 @@ impl PgStore {
         abs_path: &str,
         parent_id: Option<&uuid::Uuid>,
         project_id: Option<&uuid::Uuid>,
+        workspace_root_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, parent_id, project_id)
-             VALUES($1, $2::sensei.folder_kind, $3, $4, $5, $6, $7)
-             ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name, project_id = COALESCE(EXCLUDED.project_id, folders.project_id), modified_at = now()
-             RETURNING id"
-        ).bind(root_id).bind(kind).bind(name).bind(path).bind(abs_path).bind(parent_id).bind(project_id)
-            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+            // `kind` IS refreshed on conflict. It is DERIVED — from whether an
+            // ancestor manifest declares this directory (03 S1) — so a folder
+            // that leaves a workspace's member list must stop reading as a
+            // member. Leaving it stale was why every folder here kept the
+            // `workspace_member` an earlier run wrote, and the derivation
+            // silently had no effect.
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, parent_id, project_id, workspace_root_id)
+             VALUES($1, $2::sensei.folder_kind, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT(abs_path) DO UPDATE SET
+               kind = EXCLUDED.kind,
+               name = EXCLUDED.name,
+               parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
+               project_id = COALESCE(EXCLUDED.project_id, folders.project_id),
+               -- ASSIGNED, not COALESCEd. Membership is derived, so a module
+               -- dropped from a `workspaces` array must stop reading as a
+               -- member; COALESCE would pin the first answer forever.
+               workspace_root_id = EXCLUDED.workspace_root_id,
+               modified_at = now()
+             RETURNING id",
+        )
+        .bind(root_id)
+        .bind(kind)
+        .bind(name)
+        .bind(path)
+        .bind(abs_path)
+        .bind(parent_id)
+        .bind(project_id)
+        .bind(workspace_root_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.0)
+    }
+
+    /// Just the folder IDs under one watch root — the scope a root-level
+    /// reconcile step needs to hand to a `_scoped` query.
+    ///
+    /// Separate from [`Self::list_folders_by_root`] because that returns the full
+    /// row as JSON for every folder (7,642 of them under this machine's
+    /// `Developer` root), and a caller that only needs a scope array would be
+    /// paying for eight columns plus JSON construction per folder to throw all of
+    /// it away.
+    pub async fn folder_ids_for_root(
+        &self,
+        root_id: &uuid::Uuid,
+    ) -> Result<Vec<uuid::Uuid>, String> {
+        let rows: Vec<(uuid::Uuid,)> =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.folders WHERE root_id = $1")
+                .bind(root_id)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
     pub async fn list_folders_by_root(
@@ -622,6 +742,138 @@ impl PgStore {
         Ok(assigned)
     }
 
+    /// Every folder under `root_id` that could take part in symlink de-duplication,
+    /// as `(id, abs_path, repository_id)`.
+    ///
+    /// Deliberately NOT filtered to `kind IN ('git','subtree')` the way
+    /// `assign_repositories` is: the symlinked twin of a git checkout is
+    /// classified `standalone` (it has no `.git` of its own to find), and
+    /// excluding it is exactly why nothing ever linked
+    /// `~/Developer/sensei-hq/gateway` to `~/Developer/gateway`.
+    pub async fn folder_identities_for_root(
+        &self,
+        root_id: &uuid::Uuid,
+    ) -> Result<Vec<(uuid::Uuid, String, Option<uuid::Uuid>)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT id, abs_path, repository_id FROM sensei.folders \
+              WHERE root_id = $1 AND parent_id IS NULL",
+        )
+        .bind(root_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    /// Point each folder at the given repository. Returns the rows actually
+    /// changed, so a settled registry reports 0 rather than churning.
+    pub async fn link_folders_to_repositories(
+        &self,
+        links: &[(uuid::Uuid, uuid::Uuid)],
+    ) -> Result<u64, String> {
+        let mut changed = 0u64;
+        for (folder_id, repository_id) in links {
+            let res = sqlx_core::query::query(
+                "UPDATE sensei.folders SET repository_id = $2, modified_at = now() \
+                  WHERE id = $1 AND repository_id IS DISTINCT FROM $2",
+            )
+            .bind(folder_id)
+            .bind(repository_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+            changed += res.rows_affected();
+        }
+        Ok(changed)
+    }
+
+    /// Folders indexed TWICE because one is registered inside another and BOTH
+    /// hold nodes for the same files — `(outer_path, inner_path, files_in_both,
+    /// inner_files)`.
+    ///
+    /// Distinct from `detect_nested_standalone_roots`, which only matches a
+    /// `standalone` folder inside a `git` one. The live case is git-inside-git:
+    /// `acme-corp/documentation` is its own checkout (its own remote) sitting inside
+    /// the `acme-corp` repo, so 469 files carry nodes under both folders.
+    ///
+    /// KEYED ON NODES, NOT `files`, and that distinction is the whole
+    /// accuracy of this check. A first version compared `files.content_hash`
+    /// and reported SEVEN cases; six were false. `heal_nested_standalone_roots`
+    /// deletes a mis-scoped root's NODES and re-classifies the folder but leaves
+    /// its `files` rows behind, so a folder that was healed long ago still
+    /// looks fully duplicated by content while holding a single module container
+    /// node. Measured: `cluster/server` 1 node against 1,970 stale `files`
+    /// rows, `cluster/scheduler` 1 against 1,816, `sensei/marketplace` 1 against
+    /// 77. Only `acme-corp/documentation` (4,311 own nodes) was real.
+    ///
+    /// Asking "does the same FILE have nodes under both folders" answers the
+    /// question the report actually makes — this content is in the graph twice —
+    /// and is immune to stale bookkeeping. Measured 0.20s over the live index.
+    ///
+    /// Read-only, and it must stay that way: a nested checkout can be deliberate
+    /// (a git subtree, a vendored dependency), and nothing here tells that apart
+    /// from an accident.
+    pub async fn contained_duplicate_folders(
+        &self,
+    ) -> Result<Vec<(String, String, i64, i64)>, String> {
+        sqlx_core::query_as::query_as(
+            // BOTH sides are narrowed to folders that actually hold a
+            // file-bearing node BEFORE the pair join. Without that the join is a
+            // self-cross-product over every folder row — measured 70s against a
+            // test database holding 107,230 folders, where the live index's 9,131
+            // hid the cost entirely.
+            // The paths come from `sensei.node_paths`, the one owner of the
+            // files/folders join and the repo-relative grain rule (R13). Asking
+            // `nodes` for a path directly is what this used to do, and the
+            // column is gone — the FACT it named now needs the view.
+            "WITH nf AS (SELECT DISTINCT folder_id FROM sensei.nodes \
+                          WHERE file_id IS NOT NULL), \
+                  f AS (SELECT fo.id, fo.abs_path FROM sensei.folders fo \
+                          JOIN nf ON nf.folder_id = fo.id), \
+                  pair AS ( \
+                SELECT o.id AS oid, o.abs_path AS opath, i.id AS iid, i.abs_path AS ipath, \
+                       substring(i.abs_path from length(o.abs_path) + 2) AS rel \
+                  FROM f o JOIN f i \
+                    ON i.id <> o.id AND starts_with(i.abs_path, o.abs_path || '/')) \
+             SELECT p.opath, p.ipath, \
+                    count(DISTINCT npi.file_path) AS files_both, \
+                    (SELECT count(DISTINCT np2.file_path) FROM sensei.node_paths np2 \
+                      WHERE np2.folder_id = p.iid) AS inner_files \
+               FROM pair p \
+               JOIN sensei.node_paths npi ON npi.folder_id = p.iid \
+               JOIN sensei.node_paths npo ON npo.folder_id = p.oid \
+                                    AND npo.file_path = p.rel || '/' || npi.file_path \
+              GROUP BY p.opath, p.ipath, p.iid \
+              ORDER BY files_both DESC, p.ipath",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    /// Repositories registered at MORE THAN ONE folder path — a clone, a symlink
+    /// or a stale checkout left behind. Read-only: the caller reports it and
+    /// recommends removing one, because which copy is canonical is the user's
+    /// call, not the daemon's.
+    ///
+    /// Returns `(repository name, remote_url, paths)` ordered by how many paths
+    /// claim the repository.
+    pub async fn duplicate_repository_paths(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Vec<String>)>, String> {
+        let rows: Vec<(String, Option<String>, Vec<String>)> = sqlx_core::query_as::query_as(
+            "SELECT r.name, r.remote_url, array_agg(f.abs_path ORDER BY f.abs_path) \
+               FROM sensei.folders f \
+               JOIN sensei.repositories r ON r.id = f.repository_id \
+              GROUP BY r.id, r.name, r.remote_url \
+             HAVING count(*) > 1 \
+              ORDER BY count(*) DESC, r.name",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
     /// The repositories a project spans — the distinct `repository_id`s on its
     /// git/subtree checkout folders (D2: a project is a GROUP of repositories). The
     /// repo-grain compute iterates THIS instead of the single `project_root_path`
@@ -733,9 +985,8 @@ impl PgStore {
     /// resume: `discovered` (scan ran, ProcessGitFolder hadn't started),
     /// `queued` (enqueued, not started), `indexing` (a scan was in-flight when
     /// the daemon stopped — its in-memory task was lost, D6a), and `failed`
-    /// (errored, should retry). `indexed`, `deferred` (intentionally not indexed
-    /// — sibling/standalone), and `archived` (directory gone) are terminal and
-    /// excluded.
+    /// (errored, should retry). `indexed` (done) and `archived` (directory
+    /// gone, history kept) are terminal and excluded.
     ///
     /// Called once at daemon startup to rebuild the in-memory queue, which
     /// otherwise loses every task on restart. Re-enqueuing an already-running
@@ -920,10 +1171,234 @@ impl PgStore {
         self.write_scan_state(folder_id, file_path, mtime, content_hash, Some(reason)).await
     }
 
+    // ── indexer stages 1-3 (docs/spec/indexer/01..03) ────────────────────
+
+    /// Upsert a `sensei.repositories` row keyed on the NORMALIZED REMOTE
+    /// (stage 1, S4/S5).
+    ///
+    /// `repo_key` is the identity, never the path, so two clones, a rename or
+    /// a re-checkout all resolve to ONE row and its metric history survives a
+    /// folder move. A remote-less repo gets `repo_key = NULL`: the column is
+    /// UNIQUE with nulls distinct, so many local-only repos coexist.
+    ///
+    /// NEVER mints a synthetic key from the path (S5). That would make a
+    /// repo's identity change when it moves, which is the one thing this key
+    /// exists to prevent — and it is the D10 leak `normalize_repo_key`
+    /// already refuses at the parsing layer.
+    pub async fn upsert_repository(
+        &self,
+        name: &str,
+        remote: Option<&str>,
+    ) -> Result<uuid::Uuid, String> {
+        let key = remote.and_then(super::repo_key::normalize_repo_key);
+        if let Some(k) = key.as_deref() {
+            let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "INSERT INTO sensei.repositories(repo_key, remote_url, name)
+                 VALUES($1, $2, $3)
+                 ON CONFLICT(repo_key) DO UPDATE SET
+                   remote_url = COALESCE(EXCLUDED.remote_url, repositories.remote_url),
+                   name = EXCLUDED.name, modified_at = now()
+                 RETURNING id",
+            )
+            .bind(k)
+            .bind(remote)
+            .bind(name)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+            return Ok(row.0);
+        }
+        // No remote: nulls are distinct, so this inserts a fresh local-only
+        // row rather than colliding with every other keyless repo.
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.repositories(repo_key, name) VALUES(NULL, $1) RETURNING id",
+        )
+        .bind(name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// Point a repo-root FOLDER at its repository (stage 1, S4/S6).
+    ///
+    /// Only the root folder carries `repository_id`; subfolders resolve by
+    /// nearest ancestor. S6 asserts both directions after a scan — every root
+    /// has one, and every repository has a folder — because this repo's own
+    /// row had ZERO linked folders before the assertion existed.
+    pub async fn link_folder_to_repository(
+        &self,
+        folder_id: &uuid::Uuid,
+        repository_id: &uuid::Uuid,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.folders SET repository_id = $2, modified_at = now() WHERE id = $1",
+        )
+        .bind(folder_id)
+        .bind(repository_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Create or refresh a `files` row and RETURN its id (stage 3, S2).
+    ///
+    /// The id is the point: `nodes.file_id` references it, and persistence
+    /// LOOKS IT UP rather than get-or-creating (R13). A node naming an
+    /// untracked file must fail closed — get-or-create there would mint a
+    /// phantom `files` row with no mtime, no hash and no indexed_at, which is
+    /// the 8,147-ORPHANED problem one table over and worse, because the
+    /// foreign key would then certify it.
+    ///
+    /// Called by the WALK, before any parse task exists (S1). That ordering
+    /// is what removes the race rather than locking around it.
+    ///
+    /// A CONTENT CHANGE RESETS `parsed_at` to NULL — the file returns to
+    /// `discovered`, because the previous parse described bytes that are gone.
+    /// Carrying the old timestamp forward would leave a changed file counted as
+    /// decided by `folder_completeness` while its declarations are stale. An
+    /// unchanged file (a `touch`, or a re-run) keeps its timestamp, which is
+    /// what stops a re-scan from re-reporting the whole tree as unparsed.
+    pub async fn upsert_file_row(
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+        mtime: i64,
+        content_hash: &str,
+        skip_reason: Option<crate::classifiers::ScanSkipReason>,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.files(folder_id, file_path, mtime, content_hash, skip_reason)
+             VALUES($1, $2, $3, $4, $5::sensei.scan_skip_reason)
+             ON CONFLICT(folder_id, file_path) DO UPDATE SET
+               mtime = EXCLUDED.mtime, content_hash = EXCLUDED.content_hash,
+               skip_reason = EXCLUDED.skip_reason, indexed_at = now(), modified_at = now(),
+               parsed_at = CASE
+                   WHEN sensei.files.content_hash IS DISTINCT FROM EXCLUDED.content_hash
+                   THEN NULL ELSE sensei.files.parsed_at END
+             RETURNING id",
+        )
+        .bind(folder_id)
+        .bind(file_path)
+        .bind(mtime)
+        .bind(content_hash)
+        .bind(skip_reason.map(|r| r.as_db()))
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(row.0)
+    }
+
+    /// Resolve a caller's `(folder, path)` to the `files.id` that `nodes.file_id`
+    /// needs — FAILING CLOSED (06 S6, R13).
+    ///
+    /// `None` means no such file is tracked. The caller must treat that as an
+    /// error, never as licence to create one: a get-or-create here would mint a
+    /// `files` row with no mtime, no hash and no parse outcome, which is the
+    /// 8,147-ORPHANED problem one table over and worse, because the foreign key
+    /// would then certify it.
+    ///
+    /// **The caller's OWN folder wins, then the absolute path.** Two rules, in
+    /// that order, and the order is the whole of it.
+    ///
+    /// The absolute-path rule exists because the two sides use different grains:
+    /// a caller holding the REPO folder and a repo-relative path
+    /// (`crates/senseid/src/lib.rs`) is naming a file that belongs to the
+    /// `crates/senseid` MODULE folder under the folder-relative `src/lib.rs`.
+    /// Matching `(folder_id, file_path)` alone would miss every file in a module
+    /// — 17 of this repo's 18 folders — while looking like an ordinary "not
+    /// indexed" answer. Anchoring both sides to the absolute path makes the two
+    /// grains meet.
+    ///
+    /// But that rule ALONE resolves across folders, and two folders can hold a
+    /// row for the same file on purpose: a nested duplicate checkout is exactly
+    /// the state [`Self::contained_duplicate_folders`] reports on. Absolute-path
+    /// matching then picks either row arbitrarily, and a node in the inner
+    /// folder ends up keyed to the outer folder's file — after which the node
+    /// reports a path assembled from the wrong folder. MEASURED: a node in
+    /// `crates/member` read back as `crates/member/crates/member/src/lib.rs`.
+    ///
+    /// Trying the caller's own folder first removes the arbitrariness without
+    /// giving up the grain bridge: an exact `(folder_id, file_path)` hit is the
+    /// most specific answer there is, and it is also the cheapest (it is the
+    /// table's unique key). The absolute-path rule stays as the fallback, which
+    /// is the only case it was ever for.
+    pub async fn file_id_for(
+        &self,
+        folder_id: &uuid::Uuid,
+        path: &str,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "WITH anchor AS (SELECT abs_path FROM sensei.folders WHERE id = $1),
+                  own AS (SELECT id FROM sensei.files
+                           WHERE folder_id = $1 AND file_path = $2),
+                  anywhere AS (
+                    SELECT fi.id
+                      FROM sensei.files fi
+                      JOIN sensei.folders fo ON fo.id = fi.folder_id
+                     WHERE fo.abs_path || '/' || fi.file_path =
+                           CASE WHEN $2 LIKE '/%' THEN $2
+                                ELSE (SELECT abs_path FROM anchor) || '/' || $2 END)
+             SELECT id FROM (
+               SELECT id, 0 AS rank FROM own
+               UNION ALL
+               SELECT id, 1 AS rank FROM anywhere) candidates
+              ORDER BY rank
+              LIMIT 1",
+        )
+        .bind(folder_id)
+        .bind(path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("file_id_for({path}): {e}"))?;
+        Ok(row.map(|r| r.0))
+    }
+
+    /// Record that a parse RAN for this file and succeeded (03 S4).
+    ///
+    /// This is the only thing that moves a file from `discovered` to `parsed`,
+    /// and `sensei.folder_completeness` counts exactly these plus deliberate
+    /// skips. Creating the file row is DISCOVERY — the walk saying "this
+    /// exists" — and must not be mistaken for a verdict; that conflation is
+    /// what made the view report every folder complete before any work ran.
+    ///
+    /// Clears `skip_reason`/`skip_detail`: a file that previously failed to
+    /// parse and now parses is fixed, and leaving the old reason behind would
+    /// keep reporting it as broken.
+    ///
+    /// Returns the number of rows touched, so a caller naming a file that has
+    /// no row can tell — 0 means the walk never saw it, which is a pipeline
+    /// bug and not something to paper over (R13).
+    pub async fn mark_file_parsed(
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+    ) -> Result<u64, String> {
+        let r = sqlx_core::query::query(
+            "UPDATE sensei.files
+                SET parsed_at = now(), skip_reason = NULL, skip_detail = NULL,
+                    modified_at = now()
+              WHERE folder_id = $1 AND file_path = $2",
+        )
+        .bind(folder_id)
+        .bind(file_path)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(r.rows_affected())
+    }
+
     /// Single writer behind [`upsert_scan_state`] / [`upsert_scan_state_skipped`]
     /// so the statement lives in exactly one place. `skip_reason` is always
     /// assigned on conflict (never left stale) so a file can move between
     /// indexed and skipped in either direction.
+    ///
+    /// Delegates to [`Self::upsert_file_row`] and drops the id. Both were the
+    /// same INSERT ... ON CONFLICT against `files` differing only in whether
+    /// the caller wanted the returned id, and keeping two copies meant every
+    /// change to the conflict clause — the `parsed_at` reset being the one
+    /// that prompted this — had to be made twice or silently diverge.
     async fn write_scan_state(
         &self,
         folder_id: &uuid::Uuid,
@@ -932,13 +1407,7 @@ impl PgStore {
         content_hash: &str,
         reason: Option<crate::classifiers::ScanSkipReason>,
     ) -> Result<(), String> {
-        sqlx_core::query::query(
-            "INSERT INTO sensei.scan_state(folder_id, file_path, mtime, content_hash, skip_reason)
-             VALUES($1, $2, $3, $4, $5::sensei.scan_skip_reason)
-             ON CONFLICT(folder_id, file_path) DO UPDATE SET mtime = EXCLUDED.mtime, content_hash = EXCLUDED.content_hash, skip_reason = EXCLUDED.skip_reason, indexed_at = now(), modified_at = now()"
-        ).bind(folder_id).bind(file_path).bind(mtime).bind(content_hash)
-            .bind(reason.map(|r| r.as_db()))
-            .execute(&self.pool).await.map_err(|e| e.to_string())?;
+        self.upsert_file_row(folder_id, file_path, mtime, content_hash, reason).await?;
         Ok(())
     }
 
@@ -951,7 +1420,7 @@ impl PgStore {
         let mut stale = Vec::new();
         for (path, mtime) in current_files {
             let row: Option<(i64,)> = sqlx_core::query_as::query_as(
-                "SELECT mtime FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2",
+                "SELECT mtime FROM sensei.files WHERE folder_id = $1 AND file_path = $2",
             )
             .bind(folder_id)
             .bind(path)
@@ -967,13 +1436,141 @@ impl PgStore {
         Ok(stale)
     }
 
+    /// Drop every `files` row under a watch root, so the next scan re-derives
+    /// the graph instead of skipping unchanged files. Returns rows cleared.
+    ///
+    /// This is what makes a version rescan actually rescan. `plan_reindex`
+    /// compares `(rel_path, mtime)` and then a content hash — there is NO
+    /// indexer-version component — so a content-identical file is skipped no
+    /// matter how much the PRODUCER changed. `version_rescan` enqueued one
+    /// `ScanRoot` per root and its doc claimed "the code graph rebuilds under the
+    /// new binary", but the fan-out hit that gate and rebuilt nothing: observed
+    /// `process_git_folder: OmniRoute — 0 changed files, 9822 unchanged`. Every
+    /// measurement of an indexer fix this cycle needed a manual
+    /// `DELETE FROM sensei.files` first, which is the same admission.
+    ///
+    /// The number of indexable files this folder had on disk at its last walk —
+    /// the DENOMINATOR for deciding whether the folder is fully indexed.
+    ///
+    /// `None` means "never walked", which is deliberately NOT zero: zero is a
+    /// legitimate value meaning "walked, and it holds no indexable files", i.e.
+    /// complete. Collapsing the two would mark every unvisited folder complete.
+    pub async fn folder_expected_files(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<Option<i64>, String> {
+        let row: Option<(Option<i64>,)> = sqlx_core::query_as::query_as(
+            "SELECT (props->>'expected_files')::bigint FROM sensei.folders WHERE id = $1",
+        )
+        .bind(folder_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("folder_expected_files: {e}"))?;
+        Ok(row.and_then(|(v,)| v))
+    }
+
+    /// Record the folder's indexable-file count, set by the walk that counted it.
+    ///
+    /// Folder status is currently decided by the task queue reaching
+    /// `DetectCommunities`, which is not dependable — the daily analyzer enqueues
+    /// that task UNBLOCKED (`analyzer_scheduler.rs:252`), so it can run against a
+    /// partially-indexed folder. Completeness derived from persisted per-file
+    /// facts is trustworthy instead, but needs something to count against:
+    /// counting only the `files` rows that EXIST is vacuous, because a walk
+    /// that died at file 40 of 100 leaves 40 decided rows and 60 with no row.
+    ///
+    /// Writes a single key with `||`, so the folder's identity props
+    /// (label/role/summary/frontmatter) survive. Always overwrites rather than
+    /// taking a max: a re-walk that finds FEWER files must lower the bar, or
+    /// deleting files would leave the folder permanently short of a denominator
+    /// it can never meet.
+    pub async fn set_folder_expected_files(
+        &self,
+        folder_id: &uuid::Uuid,
+        expected: i64,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.folders
+                SET props = coalesce(props, '{}'::jsonb)
+                           || jsonb_build_object('expected_files', $2::bigint)
+              WHERE id = $1",
+        )
+        .bind(folder_id)
+        .bind(expected)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_folder_expected_files: {e}"))?;
+        Ok(())
+    }
+
+    /// Scoped to the root being rescanned and driven only by a binary-version
+    /// change, so an ordinary reconcile keeps its cheap stat-only path.
+    pub async fn clear_scan_state_for_root(&self, root_id: &uuid::Uuid) -> Result<u64, String> {
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.files s USING sensei.folders f \
+              WHERE s.folder_id = f.id AND f.root_id = $1",
+        )
+        .bind(root_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("clear_scan_state_for_root: {e}"))?;
+        Ok(res.rows_affected())
+    }
+
     pub async fn delete_scan_state(&self, folder_id: &uuid::Uuid) -> Result<(), String> {
-        sqlx_core::query::query("DELETE FROM sensei.scan_state WHERE folder_id = $1")
+        sqlx_core::query::query("DELETE FROM sensei.files WHERE folder_id = $1")
             .bind(folder_id)
             .execute(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// Every folder at or under `repo_abs`, as `abs_path -> id`.
+    ///
+    /// What the manifest pass needs to turn a `link:`/`workspace:` sibling
+    /// dependency into a real folder→folder edge: the target is a PATH, and the
+    /// edge needs the id of the row at that path.
+    pub async fn folder_ids_under(
+        &self,
+        repo_abs: &str,
+    ) -> Result<std::collections::BTreeMap<std::path::PathBuf, uuid::Uuid>, String> {
+        let rows: Vec<(String, uuid::Uuid)> = sqlx_core::query_as::query_as(
+            "SELECT abs_path, id FROM sensei.folders
+              WHERE abs_path = $1 OR abs_path LIKE $1 || '/%'",
+        )
+        .bind(repo_abs)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(p, id)| (std::path::PathBuf::from(p), id)).collect())
+    }
+
+    /// The files that still need a parse: examined, not deliberately skipped,
+    /// and with no parse outcome recorded yet — the `files` lifecycle's
+    /// DISCOVERED state (`parsed_at NULL, skip_reason NULL`).
+    ///
+    /// This is what `ProcessRepoFiles` fans out over once the manifest gate
+    /// opens. Reading it back from the table rather than carrying a work list
+    /// on the task is what makes the gate IDEMPOTENT: a re-run enqueues only
+    /// what is still unparsed, because `parsed_at` advanced for everything the
+    /// previous run got through.
+    ///
+    /// `skip_reason IS NOT NULL` is excluded deliberately, not forgotten — an
+    /// unsupported or unparseable file HAS a row so the skip sticks, and
+    /// re-enqueueing it every pass is the infinite re-index loop that
+    /// fingerprinting the skip exists to prevent.
+    pub async fn list_unparsed_files(&self, folder_id: &uuid::Uuid) -> Result<Vec<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT file_path FROM sensei.files
+              WHERE folder_id = $1 AND skip_reason IS NULL AND parsed_at IS NULL
+              ORDER BY file_path",
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(p,)| p).collect())
     }
 
     /// All scan-state fingerprints for a folder as `(file_path, mtime,
@@ -987,7 +1584,7 @@ impl PgStore {
         folder_id: &uuid::Uuid,
     ) -> Result<Vec<(String, i64, String)>, String> {
         let rows: Vec<(String, i64, String)> = sqlx_core::query_as::query_as(
-            "SELECT file_path, mtime, content_hash FROM sensei.scan_state WHERE folder_id = $1",
+            "SELECT file_path, mtime, content_hash FROM sensei.files WHERE folder_id = $1",
         )
         .bind(folder_id)
         .fetch_all(&self.pool)
@@ -1018,14 +1615,12 @@ impl PgStore {
         folder_id: &uuid::Uuid,
         file_path: &str,
     ) -> Result<(), String> {
-        sqlx_core::query::query(
-            "DELETE FROM sensei.scan_state WHERE folder_id = $1 AND file_path = $2",
-        )
-        .bind(folder_id)
-        .bind(file_path)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+        sqlx_core::query::query("DELETE FROM sensei.files WHERE folder_id = $1 AND file_path = $2")
+            .bind(folder_id)
+            .bind(file_path)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 

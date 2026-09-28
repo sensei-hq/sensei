@@ -3,7 +3,8 @@
 //! A long-lived tokio task (mirroring [`crate::tasks::log_pruner`]) that
 //! periodically deletes captured activity older than a retention window,
 //! after the analyzer has extracted its value. Both the interval and the
-//! retention are config-driven (`activity.prune_interval_secs`,
+//! Cadence lives in `sensei.schedules` (name `activity_prune`). Retention stays
+//! config-driven (
 //! `activity.retention_days`) with sensible defaults.
 //!
 //! What gets pruned:
@@ -20,12 +21,11 @@
 //! The analyzer already distilled those; they survive the raw-event window.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::db::pg_store::PgStore;
+use crate::tasks::ticker;
 
 /// Prune daily by default.
-const DEFAULT_INTERVAL_SECS: u64 = 86_400;
 /// Keep raw activity for 90 days by default (raw sessions/events/turns; the
 /// distilled metric snapshots in `sensei.project_metrics` are the long-term store).
 const DEFAULT_RETENTION_DAYS: i32 = 90;
@@ -51,12 +51,6 @@ fn parse_positive(cfg: Option<String>, default: i32) -> i32 {
     cfg.and_then(|v| v.trim().parse::<i32>().ok()).filter(|n| *n > 0).unwrap_or(default)
 }
 
-fn parse_interval(cfg: Option<String>) -> u64 {
-    cfg.and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_INTERVAL_SECS)
-}
-
 fn parse_retention(cfg: Option<String>) -> i32 {
     cfg.and_then(|v| v.trim().parse::<i32>().ok())
         .filter(|n| *n > 0)
@@ -80,79 +74,91 @@ pub fn spawn(pg: Arc<PgStore>) {
 }
 
 async fn run(pg: Arc<PgStore>) {
-    let secs = parse_interval(pg.get_config("activity.prune_interval_secs").await.ok().flatten());
-    let mut ticker = tokio::time::interval(Duration::from_secs(secs));
-    // Skip the immediate boot tick — do NOT prune the instant the daemon starts.
-    // On boot the history synthesizer → analyzer → metric planner are re-capturing
-    // backfilled history into durable snapshots; pruning immediately would reclaim
-    // sessions older than the capture backstop BEFORE their session-anchored metrics
-    // (ftr/throughput) are captured, since capture-before-reclaim can't protect a
-    // session past the backstop. Waiting one interval lets capture win the race; the
-    // backstop still bounds anything that is never captured (retention isn't urgent
-    // at boot — one interval's delay retains at most one extra window of activity).
-    ticker.tick().await;
-    loop {
-        ticker.tick().await; // subsequent ticks wait a full interval before pruning
-        // Re-read retention each tick so config changes take effect without a restart.
-        let days = parse_retention(pg.get_config("activity.retention_days").await.ok().flatten());
-        let backstop = parse_backstop(
-            pg.get_config("activity.capture_backstop_days").await.ok().flatten(),
-            days,
-        );
-        // Task-execution history rides the same tick rather than getting its own
-        // pruner: it is the same concern (reclaim captured activity) on the same
-        // schedule, and a second loop would be a second thing to keep in sync.
-        //
-        // Its retention is SEPARATE from `activity.retention_days` and much
-        // shorter, because the two answer different questions. Raw activity is
-        // the evidence metrics are derived from; a task-execution row is a job
-        // receipt whose value collapses into a daily count once it succeeds.
-        // Failures keep their own, longer window — the error message is the
-        // whole point of the log, and they are ~0.7% of rows.
-        let exec_days = parse_positive(
-            pg.get_config("tasks.execution_retention_days").await.ok().flatten(),
-            DEFAULT_EXECUTION_RETENTION_DAYS,
-        );
-        let exec_failed_days = parse_positive(
-            pg.get_config("tasks.execution_failed_retention_days").await.ok().flatten(),
-            DEFAULT_EXECUTION_FAILED_RETENTION_DAYS,
-        );
-        match pg.rollup_and_prune_task_executions(exec_days, exec_failed_days).await {
-            Ok((rolled, pruned)) if pruned > 0 => tracing::info!(
-                rolled,
-                pruned,
-                "activity_pruner: rolled up + reclaimed task_executions older than {exec_days}d \
-                 (failures kept {exec_failed_days}d)",
-            ),
-            Ok(_) => {}
-            Err(e) => tracing::warn!(error = %e, "activity_pruner: task_execution rollup failed"),
-        }
+    // Cadence lives in `sensei.schedules` (name `activity_prune`).
+    //
+    // DEFERRED on purpose: do NOT prune the instant the daemon starts. On boot
+    // the history synthesizer → analyzer → metric planner are re-capturing
+    // backfilled history into durable snapshots, and pruning immediately would
+    // reclaim sessions older than the capture backstop BEFORE their
+    // session-anchored metrics (ftr/throughput) are captured. Waiting one
+    // interval lets capture win the race; the backstop still bounds anything
+    // never captured, and one interval's delay retains at most one extra window.
+    let store = pg.clone();
+    ticker::run_scheduled_deferred(pg, "activity_prune", move || {
+        let pg = store.clone();
+        async move { prune_once(&pg).await }
+    })
+    .await;
+}
 
-        // The capture-before-reclaim guard (I20) is scoped inside prune_activity to
-        // metrics with `capture_source = 'session'` — the registry's own record of
-        // which metrics are session-derived delivery signals, so a git/snapshot row
-        // can never mark a session's day "captured" (the pruner reads the column
-        // directly; no planner feed to drift from).
-        match pg.prune_activity(days, backstop).await {
-            Ok(c) => {
-                let total = c.sessions + c.turns + c.transcript_turns + c.assistant_events;
-                if total > 0 {
-                    tracing::info!(
-                        sessions = c.sessions,
-                        turns = c.turns,
-                        transcript_turns = c.transcript_turns,
-                        assistant_events = c.assistant_events,
-                        "activity_pruner: pruned {total} rows older than {days}d",
-                    );
-                }
-                // Reclaim dead tuples + refresh planner stats once per daily tick,
-                // after the prune ("after all processing"). Best-effort: a VACUUM
-                // failure is logged, never fatal to the loop.
-                if let Err(e) = pg.vacuum_activity().await {
-                    tracing::warn!(error = %e, "activity_pruner: VACUUM (ANALYZE) failed");
-                }
+/// One prune pass. Extracted from the old loop unchanged so the schedule owns
+/// only WHEN it happens.
+///
+/// Every config value is re-read per pass, so a retention change takes effect
+/// without a restart. Individual failures are logged and swallowed — a
+/// task-execution rollup failure must not stop the activity prune that follows
+/// it — and the pass reports Err only if the main prune failed, which is what
+/// the schedule row records.
+async fn prune_once(pg: &PgStore) -> Result<(), String> {
+    let days = parse_retention(pg.get_config("activity.retention_days").await.ok().flatten());
+    let backstop =
+        parse_backstop(pg.get_config("activity.capture_backstop_days").await.ok().flatten(), days);
+
+    // Task-execution history rides the same pass rather than getting its own
+    // pruner: it is the same concern (reclaim captured activity) on the same
+    // schedule, and a second loop would be a second thing to keep in sync.
+    //
+    // Its retention is SEPARATE from `activity.retention_days` and much shorter,
+    // because the two answer different questions. Raw activity is the evidence
+    // metrics are derived from; a task-execution row is a job receipt whose value
+    // collapses into a daily count once it succeeds. Failures keep their own,
+    // longer window — the error message is the whole point of the log, and they
+    // are ~0.7% of rows.
+    let exec_days = parse_positive(
+        pg.get_config("tasks.execution_retention_days").await.ok().flatten(),
+        DEFAULT_EXECUTION_RETENTION_DAYS,
+    );
+    let exec_failed_days = parse_positive(
+        pg.get_config("tasks.execution_failed_retention_days").await.ok().flatten(),
+        DEFAULT_EXECUTION_FAILED_RETENTION_DAYS,
+    );
+    match pg.rollup_and_prune_task_executions(exec_days, exec_failed_days).await {
+        Ok((rolled, pruned)) if pruned > 0 => tracing::info!(
+            rolled,
+            pruned,
+            "activity_pruner: rolled up + reclaimed task_executions older than {exec_days}d \
+             (failures kept {exec_failed_days}d)",
+        ),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "activity_pruner: task_execution rollup failed"),
+    }
+
+    // The capture-before-reclaim guard (I20) is scoped inside prune_activity to
+    // metrics with `capture_source = 'session'` — the registry's own record of
+    // which metrics are session-derived delivery signals, so a git/snapshot row
+    // can never mark a session's day "captured".
+    match pg.prune_activity(days, backstop).await {
+        Ok(c) => {
+            let total = c.sessions + c.turns + c.transcript_turns + c.assistant_events;
+            if total > 0 {
+                tracing::info!(
+                    sessions = c.sessions,
+                    turns = c.turns,
+                    transcript_turns = c.transcript_turns,
+                    assistant_events = c.assistant_events,
+                    "activity_pruner: pruned {total} rows older than {days}d",
+                );
             }
-            Err(e) => tracing::warn!(error = %e, days, "activity_pruner: prune failed"),
+            // Reclaim dead tuples + refresh planner stats once per pass, after the
+            // prune. Best-effort: a VACUUM failure is logged, never fatal.
+            if let Err(e) = pg.vacuum_activity().await {
+                tracing::warn!(error = %e, "activity_pruner: VACUUM (ANALYZE) failed");
+            }
+            Ok(())
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, days, "activity_pruner: prune failed");
+            Err(e.to_string())
         }
     }
 }
@@ -160,15 +166,6 @@ async fn run(pg: Arc<PgStore>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_interval_falls_back_on_missing_invalid_or_zero() {
-        assert_eq!(parse_interval(None), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("nope".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("0".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("3600".into())), 3600);
-        assert_eq!(parse_interval(Some(" 7200 ".into())), 7200);
-    }
 
     #[test]
     fn parse_retention_falls_back_on_missing_invalid_or_nonpositive() {

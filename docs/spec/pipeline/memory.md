@@ -35,7 +35,7 @@ Kanji is 覚 — *to remember / awareness*.
 
 - `sensei.memories` — one row per memory:
   - `id` uuid
-  - `what` text (statement — model-generated, cached in insight_copy)
+  - `what` text (statement — model-generated, cached in narration_cache)
   - `because` text (causal chain — model-generated)
   - `state` enum `proposed | reinforced | battle-tested | challenged | archived`
   - `strength` numeric 0..1
@@ -225,7 +225,7 @@ absence matters too.
   to `archived` at the next analyzer tick unless the user
   reinforces first.
 - The `what` and `because` text on every memory is populated via
-  [[pipeline/insight-copy]] with `kind = memory_what` /
+  [[pipeline/narration-cache]] with `kind = memory_what` /
   `kind = memory_because` — templated fallbacks otherwise.
 - Scope resolution is deterministic: the same session id resolves
   to the same memory set within a tick.
@@ -394,7 +394,7 @@ Surface: same anatomy view but tagged so the user sees these as
 "about my patterns" rather than "about the assistant's patterns".
 
 Not shipped in v1. Called out here so the schema and the
-insight-copy `kind` vocabulary can be built with this direction
+narration-cache `kind` vocabulary can be built with this direction
 in mind.
 
 **Related assistant behaviour** — when the LLM notices it lacks
@@ -410,7 +410,7 @@ surface enforces. Wire pointed at a future
 
 - [[pipeline/analyzer]] — schedules consolidate + strength recompute
 - [[pipeline/signals]] — the correction-signal that seeds candidates
-- [[pipeline/insight-copy]] — `what` and `because` text
+- [[pipeline/narration-cache]] — `what` and `because` text
 - [[pipeline/governance]] — Dōjō upstream/downstream for memories
 - [[screen/observatory-memories]] — the human anatomy / curation surface
 - [[screen/observatory-insights]] — proposed and challenged land here

@@ -100,15 +100,25 @@ pub async fn detect_communities_for_folder(
         let label = generate_community_label(&nodes, members);
         let member_node_ids: Vec<uuid::Uuid> =
             members.iter().filter_map(|&idx| uuid::Uuid::parse_str(&node_ids[idx]).ok()).collect();
-        // D4.5 god nodes: the community's top-5 members by `degree` (the hubs).
+        // D4.5 god nodes: the community's top-5 members by degree (the hubs).
+        //
+        // Degree is counted from `adjacency`, which this function has already built
+        // from every calls/imports/extends/references edge plus parent containment.
+        // It used to be read from a `nodes.degree` column that a separate
+        // `build_connections` barrier had to populate first — a cache of a
+        // `count(*)`, whose only consumer was this loop, running immediately after
+        // it. Measured live: 56 of 430,988 rows were stale and 19 were NULL, and
+        // that drift produced wrong god nodes in 4 of 76,973 communities.
+        //
+        // The adjacency count is also the BETTER number here: it spans exactly the
+        // semantic + containment edges that formed the community, where the column
+        // counted every edge kind plus source-side occurrences of unresolved edges.
+        //
         // Rank by degree desc, tie-break on member index asc (== natural key, since
         // nodes are sorted) so the set is deterministic for an unchanged graph.
         let mut by_degree = members.clone();
-        by_degree.sort_by(|&a, &b| {
-            let da = nodes[a]["degree"].as_i64().unwrap_or(0);
-            let db = nodes[b]["degree"].as_i64().unwrap_or(0);
-            db.cmp(&da).then_with(|| a.cmp(&b))
-        });
+        by_degree
+            .sort_by(|&a, &b| adjacency[b].len().cmp(&adjacency[a].len()).then_with(|| a.cmp(&b)));
         let god_node_ids: Vec<uuid::Uuid> = by_degree
             .iter()
             .take(5)
@@ -155,11 +165,50 @@ fn natural_key(node: &serde_json::Value) -> (String, i64, String, String, String
     )
 }
 
+/// The edge kinds community detection walks.
+///
+/// Named so it can be pinned: a typo here does not error, it silently drops a
+/// whole edge class from adjacency and quietly changes every community.
+///
+/// `implements` is here because inheritance is a real structural tie — a
+/// subclass belongs with its supertype. Unresolved edges are skipped below, so
+/// adding a kind with no resolved rows yet is inert rather than distorting.
+/// Whether an edge of this kind, pointing at a node of that kind, is a
+/// CODE-STRUCTURE tie for community purposes.
+///
+/// False only for an import of an EXTERNAL package. Two files that both
+/// `import node:fs` are not one module — they share a dependency, not a
+/// structure. Admitting those would make one external node a hub: `node:test`
+/// alone has 3,365 importers and `java.util.List` 2,641, so resolving external
+/// imports would merge thousands of unrelated files into single communities.
+///
+/// Deliberately narrow. A CALL into a library IS a structural tie — the caller
+/// genuinely depends on that code path — and 54,816 such edges already inform
+/// adjacency, so widening this to all lib targets would silently drop them.
+/// The companion test pins that distinction.
+///
+/// Landed while measurably INERT: zero import edges point at a lib node today,
+/// so this changes nothing now and prevents a regression the moment externals
+/// start resolving.
+///
+/// Keyed on the target's FQN, not its kind. D12 removed `lib_symbol` and
+/// `lib_package` from `sensei.node_kind` — kind says WHAT a node is, the FQN's
+/// `lib` prefix says WHERE it came from ([`fqn::is_external`]). Left on the kind
+/// this would have gone on compiling and silently stopped excluding anything,
+/// which for a filter is the worst failure available: no error, and every
+/// community quietly different.
+fn admits_to_adjacency(edge_kind: &str, target_fqn: Option<&str>) -> bool {
+    !(edge_kind == "imports" && target_fqn.is_some_and(crate::languages::fqn::is_external))
+}
+
+const COMMUNITY_EDGE_KINDS: &[&str] = &["calls", "imports", "extends", "references", "implements"];
+
 /// Build the undirected adjacency list community detection runs over.
 ///
 /// D4.4 — two adjacency sources:
-/// - **Semantic edges** `calls,imports,extends,references` (resolved only). The
-///   dead `implements` kind (0 rows produced) is dropped.
+/// - **Semantic edges** [`COMMUNITY_EDGE_KINDS`] (resolved only). `implements`
+///   was excluded here while it had 0 rows; slice 2 gives it a producer, so it
+///   is back in the set.
 /// - **Structural containment** via `parent_id`: a node is adjacent to its
 ///   enclosing parent (file/class/module). This clusters a file's symbols
 ///   together and gives a symbol with no semantic edge a path into its
@@ -172,7 +221,7 @@ async fn build_adjacency(
 ) -> Result<Vec<Vec<usize>>, String> {
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
 
-    for kind in &["calls", "imports", "extends", "references"] {
+    for kind in COMMUNITY_EDGE_KINDS {
         let edges = pg
             .get_edges_by_kind(folder_id, kind)
             .await
@@ -186,6 +235,12 @@ async fn build_adjacency(
             };
 
             if let (Some(&si), Some(&ti)) = (id_to_idx.get(src), id_to_idx.get(tgt)) {
+                // The target's fqn is already projected by `get_nodes_scoped`,
+                // so this costs no extra query.
+                let tfqn = nodes[ti]["fqn"].as_str();
+                if !admits_to_adjacency(kind, tfqn) {
+                    continue;
+                }
                 adj[si].push(ti);
                 adj[ti].push(si); // undirected
             }
@@ -281,7 +336,7 @@ const DESCRIPTION_ENRICH_CAP: i64 = 25;
 /// every error/timeout is swallowed. For the folder's largest
 /// [`DESCRIPTION_ENRICH_CAP`] communities it generates a one-line model summary
 /// (cache-first, so a re-detect of an unchanged community reuses it) and stamps
-/// `description` + `props.source='insight-copy'`; on any miss the honest-empty
+/// `description` + `props.source='narration-cache'`; on any miss the honest-empty
 /// NULL / `'null'` written by the authoritative step is left in place — never a
 /// static template (never-fabricate).
 pub async fn enrich_community_descriptions(
@@ -322,8 +377,8 @@ pub async fn enrich_community_descriptions(
     }
 }
 
-/// Generate one community's description via insight-copy, or honest-empty.
-/// Returns `Some((prose, "insight-copy"))` only when the model authored a valid
+/// Generate one community's description via narration-cache, or honest-empty.
+/// Returns `Some((prose, "narration-cache"))` only when the model authored a valid
 /// summary; `None` on cache-miss + model failure / breaker back-off / validation
 /// rejection — NEVER a static template. Cache-first so an unchanged community
 /// reuses its copy (stable text across re-detects).
@@ -332,23 +387,24 @@ async fn generate_description(
     gateway: &gateway::Gateway,
     facts: &serde_json::Value,
 ) -> Option<(String, &'static str)> {
-    use crate::analysis::insight_copy::{self, CopyLimits, InsightKind};
+    use crate::analysis::narration_cache::{self, CopyLimits, InsightKind};
 
-    let copy =
-        match insight_copy::read_cached_copy(pg, InsightKind::CommunityDescription, facts).await {
-            Some(c) => Some(c),
-            None => {
-                insight_copy::generate_and_cache(
-                    pg,
-                    gateway,
-                    InsightKind::CommunityDescription,
-                    facts,
-                    CopyLimits::default(),
-                )
-                .await
-            }
-        };
-    copy.map(|c| (c.detail, "insight-copy"))
+    let copy = match narration_cache::read_cached_copy(pg, InsightKind::CommunityDescription, facts)
+        .await
+    {
+        Some(c) => Some(c),
+        None => {
+            narration_cache::generate_and_cache(
+                pg,
+                gateway,
+                InsightKind::CommunityDescription,
+                facts,
+                CopyLimits::default(),
+            )
+            .await
+        }
+    };
+    copy.map(|c| (c.detail, "narration-cache"))
 }
 
 #[cfg(test)]
@@ -425,5 +481,68 @@ mod tests {
         let label = generate_community_label(&nodes, &[0, 1, 2]);
         assert!(label.contains("function"));
         assert!(label.contains("src/api"));
+    }
+}
+
+#[cfg(test)]
+mod community_edge_kind_tests {
+    use super::COMMUNITY_EDGE_KINDS;
+
+    /// Every community edge kind must be a declared `edge_kind` label, and
+    /// inheritance must be among them.
+    ///
+    /// `get_edges_by_kind` binds the label as text, so a typo returns zero rows
+    /// instead of erroring — the community set would silently change with
+    /// nothing to notice.
+    ///
+    /// Breaking mutation: drop `"implements"`, or misspell any entry.
+    #[test]
+    fn community_edge_kinds_are_declared_and_include_inheritance() {
+        let declared = crate::types::declared_edge_kinds();
+        for k in COMMUNITY_EDGE_KINDS {
+            assert!(declared.contains(k), "{k:?} is not an edge_kind label: {declared:?}");
+        }
+        assert!(
+            COMMUNITY_EDGE_KINDS.contains(&"implements"),
+            "inheritance is a structural tie and belongs in adjacency: {COMMUNITY_EDGE_KINDS:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod adjacency_policy_tests {
+    use super::admits_to_adjacency;
+
+    /// An external import is a DEPENDENCY tie, not a structural one.
+    ///
+    /// Without this, resolving external imports makes one external node a hub:
+    /// `node:test` has 3,365 importers and `java.util.List` 2,641, so thousands
+    /// of unrelated files would merge into single communities the moment
+    /// externals start resolving.
+    ///
+    /// Breaking mutation: make `admits_to_adjacency` return `true`
+    /// unconditionally.
+    #[test]
+    fn an_external_import_is_not_a_structural_tie() {
+        assert!(!admits_to_adjacency("imports", Some("lib·node:fs··readFile")));
+        assert!(!admits_to_adjacency("imports", Some("lib·serde")));
+    }
+
+    /// The exclusion is NARROW on purpose, and this is what stops it widening.
+    ///
+    /// A CALL into a library is a real structural tie — the caller depends on
+    /// that code path — and 54,816 such edges already inform adjacency.
+    /// Excluding all lib targets would silently drop every one of them.
+    ///
+    /// Breaking mutation: change the guard to exclude any lib target
+    /// regardless of edge kind.
+    #[test]
+    fn a_call_into_a_library_is_still_a_structural_tie() {
+        assert!(admits_to_adjacency("calls", Some("lib·node:fs··readFile")));
+        assert!(admits_to_adjacency("references", Some("lib·node:fs··readFile")));
+        // And a local import is unaffected.
+        assert!(admits_to_adjacency("imports", Some("rust·senseid·api·routes")));
+        // A node with no fqn cannot be external — a legacy row, not a dependency.
+        assert!(admits_to_adjacency("imports", None));
     }
 }
