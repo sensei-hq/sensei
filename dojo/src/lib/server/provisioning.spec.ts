@@ -61,7 +61,7 @@ function tables(seed: Partial<Record<string, FakeTable>> = {}): Record<string, F
 
 const FACTS: ForgeFacts = {
 	provider: 'github',
-	user: { id: '4242', login: 'devuser', name: 'Dev Thomas', email: 'j@example.com' },
+	user: { id: '4242', login: 'devuser', name: 'Dev User', email: 'j@example.com' },
 	orgs: [
 		{ id: '11', login: 'sensei-hq', role: 'admin' },
 		{ id: '22', login: 'acme', role: 'member' }
@@ -587,7 +587,7 @@ describe('provisionWithToken — the composition all three callers share', () =>
 		}) as unknown as typeof fetch;
 	}
 
-	const GH_USER = { id: 4242, login: 'devuser', name: 'Dev Thomas', email: 'j@example.com' };
+	const GH_USER = { id: 4242, login: 'devuser', name: 'Dev User', email: 'j@example.com' };
 	const GH_ORGS = [{ state: 'active', role: 'admin', organization: { id: 11, login: 'sensei-hq' } }];
 
 	it('reads the forge and provisions everything when a token is present', async () => {
@@ -769,7 +769,7 @@ describe('provisionWithToken — the composition all three callers share', () =>
 // ── Concurrent provisioning must converge, not fork ─────────────────────────
 //
 // OBSERVED LIVE, not hypothesised. Signing in produced NINE tenants where five
-// were expected: `examplecorpinc` AND `examplecorpinc-2`, `trey-thomas-visuals`
+// were expected: `examplecorpinc` AND `examplecorpinc-2`, `trey-user-visuals`
 // AND `-2`, `devuser` AND `-2`. The duplicates were created 2 MILLISECONDS
 // apart — two provisioning passes in flight at once (kavach's `onSessionSync`
 // and the console's `POST /v1/you/provision`), both missing the lookup, both

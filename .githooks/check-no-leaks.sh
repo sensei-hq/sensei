@@ -49,7 +49,7 @@ SAFE_USERS="$SAFE_USERS|\.[a-z][a-z.]*|<[a-z/<>-]*|\{[a-z_]+\}|…"  # last is U
 
 # Domains that may legitimately appear. Everything else is treated as a real
 # mailbox until someone adds it here deliberately.
-SAFE_MAIL='sensei-hq\.com|example\.com|example-corp\.com|example\.org|acme[a-z-]*\.(com|co)|sensei\.test|users\.noreply\.github\.com|github\.com|anthropic\.com|devuser\.name|[a-z]\.(co|dev)$'
+SAFE_MAIL='sensei-hq\.com|example\.com|example-corp\.com|example\.org|acme[a-z-]*\.(com|co|dev)|sensei\.test|users\.noreply\.github\.com|github\.com|anthropic\.com|devuser\.name|[a-z]\.(co|dev)$'
 
 # PRIVATE NAMES — a denylist that lives OUTSIDE the repository, because the list
 # itself is the thing being protected. Committing "here are our clients" would
@@ -223,6 +223,12 @@ self_test() {
   check "corporate mailbox"  'jane.doe@bigcorp.example.net'          hit
   check "allow-listed"       'hi@sensei-hq.com'                      clean
   check "example domain"     'dev@example-corp.com'                  clean
+  # `acme` is the canonical placeholder organisation and was already allow-listed
+  # on .com and .co. A fixture using acme.dev is the same synthetic name on a TLD
+  # the list had simply never been extended to — it blocked a commit that only
+  # renamed the local part of an address already in the tree.
+  check "acme on .dev"       'email: dev.user@acme.dev'              clean
+  check "real corp on .dev"  'email: someone@realcorp.dev'           hit
 
   # The denylist rule, with a denylist of its OWN so the test does not depend on
   # whoever is running it having one — and so it never reads the real list.

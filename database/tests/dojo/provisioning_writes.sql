@@ -21,7 +21,7 @@ insert into dojo.principals (id, auth_user_id, display_name) values
 -- provider mapping in provisioning.ts needs revisiting, so pin it.
 insert into dojo.identities (principal_id, provider, subject, email, display_name, last_login_at)
 values ('aaaaaaaa-1111-1111-1111-111111111111', 'github_oauth', '4242',
-        'j@example.com', 'Dev Thomas', now());
+        'j@example.com', 'Dev User', now());
 
 do $$
 begin
@@ -36,7 +36,7 @@ end $$;
 
 -- ── step 2: the personal tenant + its admin membership ──────────────────────
 insert into dojo.tenants (key, origin, slug, name, dojo_url, scope)
-values ('personal/ztest-devuser', 'personal', 'ztest-devuser', 'Dev Thomas''s Dōjō',
+values ('personal/ztest-devuser', 'personal', 'ztest-devuser', 'Dev User''s Dōjō',
         'dojo.sensei-hq.org/personal/ztest-devuser', 'private');
 
 insert into dojo.memberships (tenant_id, user_id, kind, authenticated_via, role)
