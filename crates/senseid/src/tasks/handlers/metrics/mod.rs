@@ -32,6 +32,7 @@ use crate::db::pg_store::PgStore;
 /// (Phase 5.4), `knowledge` (Phase 5.5), and `tool` (Phase 5.6) complete the base
 /// groups; `quality` (Phase 8) is the git-worktree + `qlty` code-quality group that
 /// superseded the former own-graph `duplication` snapshot.
+mod architecture;
 mod autonomy;
 mod churn;
 mod cost;
@@ -167,6 +168,11 @@ pub(crate) enum MetricGroup {
     /// Context-reuse efficiency (`cache_reuse`) from the per-turn token split.
     /// DAY-KEYED: each day's sessions are settled once the day is past.
     Usage,
+    /// Structure of the code graph: `graph_confidence`, `public_surface_ratio`,
+    /// `symbol_size_p95`. SNAPSHOT — the graph has one current shape, and a past
+    /// day's shape cannot be recovered from it, so there is nothing to backfill
+    /// and no watermark to carry. Deliberately NOT in `DayKeyedGroup`.
+    Architecture,
 }
 
 impl MetricGroup {
@@ -181,6 +187,7 @@ impl MetricGroup {
             "knowledge" => Some(Self::Knowledge),
             "cost" => Some(Self::Cost),
             "usage" => Some(Self::Usage),
+            "architecture" => Some(Self::Architecture),
             "coverage" => Some(Self::Coverage),
             "session_process" => Some(Self::SessionProcess),
             _ => None,
@@ -197,6 +204,7 @@ impl MetricGroup {
             Self::Knowledge => "knowledge",
             Self::Cost => "cost",
             Self::Usage => "usage",
+            Self::Architecture => "architecture",
             Self::Coverage => "coverage",
             Self::SessionProcess => "session_process",
         }
