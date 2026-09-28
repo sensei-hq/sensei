@@ -413,14 +413,45 @@ jobs:
         #
         # Either way: no --allow-destructive and no --prune. Automation gets the
         # safe subset; a drop or a rename stays a deliberate manual act.
+        #
+        # RECONCILE IS ALL-OR-NOTHING, which is the thing to know here. It does
+        # not apply the additive part of a plan and skip the rest: one DROP
+        # anywhere and it refuses the whole plan, creates included. Measured
+        # 2026-09-28 against the production dojo — 7 creates and 5 column adds
+        # were held back by 5 constraint drops.
+        #
+        # That is correct behaviour and this job does NOT work around it. Those 5
+        # drops were safe only because all three tables happened to be EMPTY, and
+        # "is there data in it" is a judgement a human makes once, not a property
+        # automation can assume. So the pre-release branch turns the refusal into
+        # an instruction instead of a cryptic exit code.
+        #
+        # THREE STATES, and only the middle one needs a human:
+        #   fresh database  - every entity is a CREATE, nothing to drop, passes
+        #   existing + drop - fails HERE with the command to run attended
+        #   released        - reconcile is disabled; changes travel as snapshots
         working-directory: database
         run: |
           if grep -qE '^[[:space:]]*released:[[:space:]]*true' design.yaml; then
-            echo "Project is released — the deploy step migrates from the committed snapshot."
+            echo "Project is released - the deploy step migrates from the committed snapshot."
             dbd migrate --status
-          else
-            dbd reconcile --scope dojo
+            exit 0
           fi
+
+          set +e
+          dbd reconcile --scope dojo 2>&1 | tee reconcile.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          [ "$rc" -eq 0 ] && exit 0
+
+          if grep -q 'allow-destructive' reconcile.log; then
+            echo "::error::Pre-release schema drift includes a DROP, so reconcile refused the WHOLE plan - the additive part included. Automation will not drop from production. Review the plan and apply it attended:"
+            echo "::error::  cd database && dbd reconcile --dry-run --scope dojo --verbose   # read every DROP"
+            echo "::error::  # confirm the affected tables are empty or the data is expendable, then:"
+            echo "::error::  cd database && dbd reconcile --scope dojo --allow-destructive"
+            echo "::error::Re-run this job afterwards; it passes once 'dbd diff --scope dojo' is clean."
+          fi
+          exit "$rc"
 
       - name: Apply seed data, policies and after-scripts
         # Pre-release, reconcile handled the schema and this runs the import phase
