@@ -1,31 +1,190 @@
 //! Library intelligence (workstream D) — a library declares the skills/agents/tools
 //! it provides via a `sensei.library.json` manifest committed in its OWN repo; sensei
-//! ingests that manifest into `sensei.library_skills` / `sensei.library_agents` and
+//! ingests that manifest into `sensei.library_content` (kind `skill` / `agent`) and
 //! associates the capabilities to any project that depends on the library.
 //!
 //! This is `crate::libraries` — distinct from `crate::api::handlers::libraries` (the
 //! HTTP handlers) and `crate::adapters::manifest` (per-ecosystem dependency parsing).
 
 pub mod advisory;
+pub mod docs_source;
 pub mod manifest;
 pub mod registry;
 pub mod version;
 
 use std::path::Path;
 
-/// Read + resolve a library's `sensei.library.json` from its local source root.
-/// Returns `(version, skills, agents)` with each entry's `body` filled from its
-/// `path` (read relative to `root`). Entries whose file can't be read — or whose
-/// path escapes the root (`..`) — are left body-less (dropped downstream; never a
-/// fabricated body). `None` when there is no manifest or it's malformed.
-pub fn load_manifest_from_root(
+/// A library's `sensei.library.json`, resolved: capability bodies read from disk
+/// and the declared package names carried through.
+///
+/// A named type rather than a tuple because there are four fields and clippy is
+/// right that nobody can read the tuple. It also replaced
+/// `load_manifest_from_root`, which returned three of them — two readers over one
+/// file is how a caller silently stops seeing a field, and the packages field is
+/// exactly the sort of thing that would have been missed.
+#[derive(Debug, Clone)]
+pub struct ResolvedManifest {
+    /// The library's own name — what its capabilities are addressed by.
+    pub library: String,
+    /// Semver RANGE the capabilities apply to (free text in v1).
+    pub version: String,
+    pub skills: Vec<manifest::ProvidedSkill>,
+    pub agents: Vec<manifest::ProvidedAgent>,
+    /// Packages this library publishes under other names. Empty is the common case.
+    pub packages: Vec<String>,
+}
+
+/// How deep to look for `sensei.library.json` under a scanned root.
+///
+/// 2 covers `<root>/<repo>/sensei.library.json`, which is where a sibling-repo
+/// checkout puts it. Deeper would start walking `node_modules` and vendored trees
+/// for a file that belongs at a repository root.
+pub const MANIFEST_SCAN_DEPTH: usize = 2;
+
+/// Every `sensei.library.json` under `root`, to `MANIFEST_SCAN_DEPTH`.
+///
+/// Bounded and non-recursive-by-default on purpose: a manifest belongs at a
+/// repository root, and an unbounded walk here would repeat the mistake that put
+/// 1,211 vendored folders in the graph (#129).
+///
+/// Skips a directory it cannot read rather than failing the whole scan — one
+/// unreadable sibling should not stop the others being registered.
+pub fn find_manifests(root: &Path, max_depth: usize) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut frontier = vec![(root.to_path_buf(), 0usize)];
+    while let Some((dir, depth)) = frontier.pop() {
+        if dir.join(manifest::MANIFEST_FILENAME).is_file() {
+            out.push(dir.clone());
+            // A manifest marks a library root; do not descend into it looking for
+            // more. A nested one would belong to a vendored copy, not to this tree.
+            continue;
+        }
+        if depth >= max_depth {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            // Skip dotted and dependency directories — a manifest under
+            // node_modules describes a vendored copy, not this checkout.
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.starts_with('.') || name == "node_modules" || name == "target" {
+                continue;
+            }
+            if p.is_dir() {
+                frontier.push((p, depth + 1));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Ingest one library's `sensei.library.json` from a local root: capabilities,
+/// declared packages, and — crucially — the PATH it was read from.
+///
+/// The single place manifest ingestion happens. It was previously inline in
+/// `index_library`, which coupled it to doc indexing and to a transient
+/// `LocalDir` source: a library with a manifest but no local docs never got its
+/// skills, and nothing recorded where the manifest lived, so nothing could
+/// re-read it. Measured before this: rokkit had 4 of 5 skills and 2 of 3 agents
+/// (both missing files present on disk), dbd and kavach had none at all, and
+/// `libraries.local_path` was empty on all 1,121 rows.
+///
+/// Storing `local_path` FIRST is deliberate: if a later step fails, the location
+/// is still recorded and a refresh can retry. Losing the location is the failure
+/// that made this unfixable without being handed the path again.
+///
+/// Returns `(skills, agents, packages)` counts. `None` when there is no manifest
+/// or it is malformed — never a partial claim of success.
+pub async fn ingest_manifest_at(
+    pg: &crate::db::pg_store::PgStore,
+    library_id: &uuid::Uuid,
     root: &Path,
-) -> Option<(String, Vec<manifest::ProvidedSkill>, Vec<manifest::ProvidedAgent>)> {
+) -> Option<(u32, u32, u64)> {
+    let m = read_manifest(root)?;
+
+    // The location first — see above.
+    if let Err(e) = pg.set_library_local_path(library_id, &root.to_string_lossy()).await {
+        tracing::warn!(error = %e, root = %root.display(), "ingest_manifest: set_library_local_path failed");
+    }
+
+    let (ns, na) = match pg
+        .replace_library_capabilities(
+            library_id,
+            "manifest",
+            Some(&m.version),
+            &m.skills,
+            &m.agents,
+        )
+        .await
+    {
+        Ok(counts) => counts,
+        Err(e) => {
+            tracing::warn!(error = %e, root = %root.display(), "ingest_manifest: replace_library_capabilities failed");
+            (0, 0)
+        }
+    };
+
+    // THE GROUPING, from two sources with DISTINCT provenance (S2, S4).
+    //
+    // `source` is not decoration: a manifest is the library speaking about
+    // itself, a `workspaces` array is the same repo declaring it elsewhere,
+    // and a user grouping is a local judgement. They differ in authority and
+    // must stay distinguishable forever. `replace_library_packages` is
+    // whole-set PER SOURCE, so the two coexist without clobbering.
+    let mut np = match pg.replace_library_packages(library_id, "manifest", &m.packages).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(error = %e, root = %root.display(), "ingest_manifest: replace_library_packages failed");
+            0
+        }
+    };
+
+    // Measured: none of rokkit's, kavach's or dbd's manifests declares
+    // `packages`, so without this the grouping stays empty and the
+    // node -> package -> library chain is unwalkable. Asked unconditionally
+    // rather than only when the manifest is silent: a member added to the
+    // workspace after the manifest was written should still group, and the
+    // per-source replace keeps the manifest's own claims intact.
+    // Members PLUS the workspace root's own package. A root is not in its own
+    // member list, so without this `dbd-cli` — publishable and named unlike
+    // its library — grouped under nothing and a dependency on it reached no
+    // library at all. `private` still decides: rokkit's root (`rokkit`) and
+    // kavach's (`kavach-workspace`) are both private container names and stay
+    // out.
+    let mut members = crate::config::detector::detect_workspace_members(root);
+    members.extend(
+        crate::adapters::manifest::registered_adapters()
+            .iter()
+            .filter_map(|a| a.root_package(root)),
+    );
+    let from_workspace = group_from_workspace(&members);
+    if !from_workspace.is_empty() {
+        match pg.replace_library_packages(library_id, "workspace", &from_workspace).await {
+            Ok(n) => np += n,
+            Err(e) => {
+                tracing::warn!(error = %e, root = %root.display(), "ingest_manifest: replace_library_packages(workspace) failed");
+            }
+        }
+    }
+
+    Some((ns, na, np))
+}
+
+/// Read and resolve a library's `sensei.library.json` from its local source root.
+///
+/// Capability bodies are filled from their `path` (relative to `root`). An entry
+/// whose file cannot be read — or whose path escapes the root via `..` — is left
+/// body-less and dropped downstream, never given a fabricated body.
+///
+/// `None` when there is no manifest or it is malformed.
+pub fn read_manifest(root: &Path) -> Option<ResolvedManifest> {
     let text = std::fs::read_to_string(root.join(manifest::MANIFEST_FILENAME)).ok()?;
     let m = match manifest::parse_library_manifest(&text) {
         Ok(m) => m,
         Err(e) => {
-            tracing::warn!(error = %e, root = %root.display(), "load_manifest_from_root: invalid manifest, skipping");
+            tracing::warn!(error = %e, root = %root.display(), "read_manifest: invalid manifest, skipping");
             return None;
         }
     };
@@ -37,7 +196,13 @@ pub fn load_manifest_from_root(
     for a in &mut agents {
         resolve_body(root, &mut a.body, a.path.as_deref(), &a.name);
     }
-    Some((m.version, skills, agents))
+    Some(ResolvedManifest {
+        library: m.library,
+        version: m.version,
+        skills,
+        agents,
+        packages: m.packages,
+    })
 }
 
 /// Fill `body` from `path` (relative to `root`) if `body` is empty. A `..` in the
@@ -84,7 +249,8 @@ mod tests {
         )
         .unwrap();
 
-        let (version, skills, _agents) = load_manifest_from_root(root).unwrap();
+        let m = read_manifest(root).unwrap();
+        let (version, skills) = (m.version, m.skills);
         assert_eq!(version, ">=1.3");
         let styling = skills.iter().find(|s| s.focus == "styling").unwrap();
         assert_eq!(styling.body.as_deref(), Some("# styling body"), "path resolved to file body");
@@ -99,8 +265,181 @@ mod tests {
     }
 
     #[test]
+    fn find_manifests_finds_sibling_repos_and_stops_at_a_library_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // Two sibling library repos, one plain repo, and a vendored copy that must
+        // NOT be picked up.
+        for r in ["rokkit", "kavach"] {
+            std::fs::create_dir_all(root.join(r)).unwrap();
+            std::fs::write(
+                root.join(r).join(manifest::MANIFEST_FILENAME),
+                format!(r#"{{"library":"{r}","version":"1"}}"#),
+            )
+            .unwrap();
+        }
+        std::fs::create_dir_all(root.join("plain/src")).unwrap();
+        std::fs::create_dir_all(root.join("app/node_modules/rokkit")).unwrap();
+        std::fs::write(
+            root.join("app/node_modules/rokkit").join(manifest::MANIFEST_FILENAME),
+            r#"{"library":"rokkit","version":"1"}"#,
+        )
+        .unwrap();
+
+        let found = find_manifests(root, MANIFEST_SCAN_DEPTH);
+        assert_eq!(found.len(), 2, "the two sibling library repos: {found:?}");
+        assert!(found.contains(&root.join("kavach")));
+        assert!(found.contains(&root.join("rokkit")));
+        assert!(
+            !found.iter().any(|p| p.to_string_lossy().contains("node_modules")),
+            "a vendored manifest describes someone else's copy, not this checkout",
+        );
+    }
+
+    #[test]
+    fn find_manifests_does_not_descend_into_a_library_root() {
+        // A manifest marks a library root. Descending further would pick up a
+        // nested/vendored manifest and register it as a second library.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let lib = root.join("lib");
+        std::fs::create_dir_all(lib.join("packages/inner")).unwrap();
+        std::fs::write(lib.join(manifest::MANIFEST_FILENAME), r#"{"library":"l","version":"1"}"#)
+            .unwrap();
+        std::fs::write(
+            lib.join("packages/inner").join(manifest::MANIFEST_FILENAME),
+            r#"{"library":"inner","version":"1"}"#,
+        )
+        .unwrap();
+
+        let found = find_manifests(root, 4);
+        assert_eq!(found, vec![lib], "stops at the library root");
+    }
+
+    #[test]
+    fn read_manifest_carries_the_declared_packages() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join(manifest::MANIFEST_FILENAME),
+            r#"{"library":"rokkit","version":">=1.3","packages":["@rokkit/ui","@rokkit/actions"]}"#,
+        )
+        .unwrap();
+        let m = read_manifest(root).unwrap();
+        assert_eq!(m.library, "rokkit");
+        assert_eq!(m.version, ">=1.3");
+        assert_eq!(m.packages, vec!["@rokkit/ui", "@rokkit/actions"]);
+    }
+
+    #[test]
     fn no_manifest_is_none() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(load_manifest_from_root(dir.path()).is_none());
+        assert!(read_manifest(dir.path()).is_none());
+    }
+}
+
+/// The packages a library publishes, derived from its WORKSPACE MEMBERS (02b S2).
+/// PURE.
+///
+/// The manifest is the first source of this list, and measured against the
+/// three real `sensei.library.json` files on this machine — rokkit, kavach,
+/// dbd — **not one of them declares `packages`**. So the manifest alone leaves
+/// `library_packages` empty, and with it the whole
+/// node → package → library → content chain.
+///
+/// A `workspaces` array IS a declaration; it is simply stated in a different
+/// file. `rokkit/package.json` lists `./packages/*`, which resolves to the 14
+/// published `@rokkit/*` names that dependency detection already records — the
+/// two identities meet with nothing inferred.
+///
+/// PRIVATE MEMBERS ARE EXCLUDED. `@rokkit/learn` is `apps/learn` with
+/// `"private": true` — a first-party app, never published, so no dependency
+/// file can ever name it. The grouping key is the package name a REFERENCE can
+/// see (02b §4), and a name nothing can reference is not one.
+///
+/// NEVER a prefix rule (S3). `@rokkit/*` → rokkit is tempting and it is a
+/// guess: `@types/node` belongs to no "types" library, and gateway's crates
+/// share no prefix at all. An invented grouping is a fabricated fact about a
+/// dependency, and it would be believed.
+pub fn group_from_workspace(members: &[crate::types::PackageInfo]) -> Vec<String> {
+    let mut names: Vec<String> = members
+        .iter()
+        .filter(|m| !m.private)
+        .map(|m| m.name.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .collect();
+    // Sorted and deduped so the grouping cannot depend on the order the
+    // adapters happened to yield members in (R6).
+    names.sort();
+    names.dedup();
+    names
+}
+
+#[cfg(test)]
+mod grouping_tests {
+    use super::*;
+    use crate::types::PackageInfo;
+
+    fn pkg(name: &str, private: bool) -> PackageInfo {
+        PackageInfo {
+            name: name.to_string(),
+            path: format!("packages/{name}"),
+            version: None,
+            pkg_type: "npm_workspace".into(),
+            private,
+        }
+    }
+
+    #[test]
+    fn the_published_members_become_the_librarys_packages() {
+        let got = group_from_workspace(&[
+            pkg("@rokkit/ui", false),
+            pkg("@rokkit/core", false),
+            pkg("@rokkit/actions", false),
+        ]);
+        assert_eq!(got, vec!["@rokkit/actions", "@rokkit/core", "@rokkit/ui"]);
+    }
+
+    #[test]
+    fn a_private_member_is_not_a_package_anything_can_reference() {
+        // `@rokkit/learn` is apps/learn with "private": true — a first-party
+        // app, never published, so no dependency file can name it. Grouping it
+        // would add a row no reference can ever reach.
+        let got = group_from_workspace(&[pkg("@rokkit/ui", false), pkg("@rokkit/learn", true)]);
+        assert_eq!(got, vec!["@rokkit/ui"]);
+    }
+
+    #[test]
+    fn packages_sharing_no_prefix_still_group_when_a_workspace_declares_them() {
+        // S3's counterpart: grouping is DECLARED, so it works for libraries
+        // whose packages are not named after them. A prefix rule fails here.
+        let got = group_from_workspace(&[
+            pkg("dbd-core", false),
+            pkg("@devuser/adapters", false),
+            pkg("totally-unrelated", false),
+        ]);
+        assert_eq!(got.len(), 3, "no prefix agreement required");
+    }
+
+    #[test]
+    fn the_order_members_arrive_in_cannot_change_the_grouping() {
+        // R6/A6. Adapters are asked in registry order; that must not leak.
+        let a = group_from_workspace(&[pkg("z", false), pkg("a", false), pkg("m", false)]);
+        let b = group_from_workspace(&[pkg("a", false), pkg("m", false), pkg("z", false)]);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn one_package_declared_by_two_adapters_yields_one_row() {
+        // A repo with both a Cargo workspace and npm workspaces is asked of
+        // every adapter, and the lists can overlap.
+        let got = group_from_workspace(&[pkg("dup", false), pkg("dup", false)]);
+        assert_eq!(got, vec!["dup"]);
+    }
+
+    #[test]
+    fn a_repo_with_no_workspace_groups_nothing_and_that_is_not_an_error() {
+        // S5: an ungrouped package stays ungrouped. COMPLETE, not wrong.
+        assert!(group_from_workspace(&[]).is_empty());
     }
 }

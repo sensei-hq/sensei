@@ -3,7 +3,7 @@
 
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
-use super::scan_logic::{self, FolderKind};
+use super::scan_logic::{self};
 use crate::api::events::*;
 use std::path::Path;
 use std::time::Instant;
@@ -60,95 +60,92 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         .await
         .map_err(|e| format!("read exclusions for {watch_root_path}: {e}"))?;
 
-    // 1. Find all git folders
-    let git_folders: Vec<_> = scan_logic::find_git_folders(root, scan_logic::MAX_SCAN_DEPTH)
-        .into_iter()
-        .filter(|p| !scan_logic::is_excluded(p, &exclusions))
-        .collect();
+    // 1. DISCOVER — one walk, from disk, exclusions applied as it descends.
+    //    A repository is a directory holding a `.git`, which is a DIRECTORY for
+    //    a clone and a FILE for a submodule or linked worktree. There is no
+    //    second kind: the `standalone` quasi-repo (a manifest-bearing directory
+    //    with no `.git`) was retired, because "looks like a project" is a guess
+    //    and a `.git` is a fact.
+    // OFF THE ASYNC WORKER — see `repo_scan::process_git_folder`. A hung mount
+    // inside a synchronous walk holds a tokio worker that no timeout can reach.
+    let walk_root = root.to_path_buf();
+    let walk_exclusions = exclusions.clone();
+    let discovered = tokio::task::spawn_blocking(move || {
+        crate::indexer::repo::discover(&walk_root, &walk_exclusions)
+    })
+    .await
+    .map_err(|e| format!("root discovery walk panicked: {e}"))?
+    .map_err(|e| format!("discover {}: {e}", task.path))?;
 
-    // Emit discover activity per git folder
-    for gf in &git_folders {
+    // An unreadable subtree is coverage this scan did NOT have. It is reported
+    // rather than swallowed because "holds no repositories" and "could not be
+    // opened" are opposite facts that look identical in the result — and on
+    // macOS the second is routine (a TCC-protected directory returns
+    // `Operation not permitted` and reads as EMPTY).
+    for u in &discovered.unreadable {
+        tracing::warn!(path = ?u.path, reason = %u.reason, "scan_root: directory unreadable");
+    }
+
+    // 1b. NARROW — an event batch only concerns the repositories that OWN a
+    //     changed path. The walk above still runs (it is `.git`-only and
+    //     pruned, and it is how a repository created since the last scan is
+    //     found at all); what narrows is the fan-out, which is the expensive
+    //     half. A full scan keeps everything.
+    let repos = match &task.scope {
+        crate::tasks::Scope::Full => discovered.repos.clone(),
+        crate::tasks::Scope::Events { .. } => {
+            crate::indexer::repo::narrow(discovered.repos.clone(), task.scope.changed())
+        }
+    };
+
+    for r in &repos {
         emit(StateEvent::activity(ActivityEvent::new(
             ActivityLevel::Discover,
-            &format!("{} · git folder", gf.display()),
+            &format!("{} · git folder", r.display()),
             start.elapsed().as_secs_f64(),
         )));
     }
 
-    // 2. Classify into project roots: git repos + quasi-repos (non-git project
-    //    roots that contain indexable code). Subfolders are never promoted.
-    let all_dirs: Vec<_> = scan_logic::all_directories(root, scan_logic::MAX_SCAN_DEPTH)
-        .into_iter()
-        .filter(|p| !scan_logic::is_excluded(p, &exclusions))
-        .collect();
-    let classified =
-        scan_logic::classify_folders(root, &git_folders, &all_dirs, scan_logic::has_indexable_code);
-
-    // Emit discover activity for quasi-repos (git folders were emitted above).
-    for f in &classified {
-        if f.kind == FolderKind::Standalone {
-            emit(StateEvent::activity(ActivityEvent::new(
-                ActivityLevel::Discover,
-                &format!("{} · standalone folder", f.path.display()),
-                start.elapsed().as_secs_f64(),
-            )));
-        }
-    }
-
-    // 3. (watch root already resolved above as `root_id` — top-level only.)
-
-    // 4. Register each project root with its kind and enqueue processing.
-    //    ProcessGitFolder indexes any directory (a `.git` is not required), so a
-    //    quasi-repo is indexed exactly like a real repo.
-    for f in &classified {
-        let kind = match f.kind {
-            FolderKind::Git => "git",
-            FolderKind::Standalone => "standalone",
-        };
-        let path_str = f.path.to_string_lossy();
-        match ctx.pg().upsert_repo_kind(&root_id, kind, &f.name, &path_str).await {
+    // 2. Register each repository and enqueue its scan.
+    for path in &repos {
+        let path_str = path.to_string_lossy();
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        match ctx.pg().upsert_repo_kind(&root_id, "git", &name, &path_str).await {
             Ok(fid) => {
-                // A quasi-repo with no manifest (loose source / docs) is a likely-but-
-                // unconfirmed project — flag it `needs-review` so it surfaces for the
-                // user to keep / organise / discard. Manifest-backed roots and real git
-                // repos are confident; clear any stale flag on them.
-                let needs_review = f.kind == FolderKind::Standalone
-                    && matches!(
-                        scan_logic::classify_quasi_repo(&f.path),
-                        Some(scan_logic::QuasiKind::LooseCode)
-                    );
-                if needs_review {
-                    if let Err(e) = ctx.pg().tag_folder(&fid, "needs-review").await {
-                        tracing::warn!(error = %e, folder_id = %fid, "scan_root: tag_folder needs-review failed");
-                    }
-                } else if let Err(e) = ctx.pg().untag_folder(&fid, "needs-review").await {
-                    tracing::warn!(error = %e, folder_id = %fid, "scan_root: untag_folder needs-review failed");
-                }
-                // Capture the git root's remotes so a future rename can be auto-detected
-                // by shared remote (reconcile_roots → find_live_root_by_remote). Only
-                // write when we actually read some, so a transient git failure never
-                // clobbers a previously-captured set with an empty one.
-                if f.kind == FolderKind::Git {
-                    let remotes = read_git_remotes(&path_str);
-                    if !remotes.is_empty()
-                        && let Err(e) = ctx
-                            .pg()
-                            .update_folder_remotes(&fid, &serde_json::Value::Array(remotes))
-                            .await
-                    {
-                        tracing::warn!(error = %e, folder_id = %fid, "scan_root: update_folder_remotes failed");
-                    }
+                // Capture the remotes so a future rename can be auto-detected by
+                // shared remote (reconcile_roots → find_live_root_by_remote).
+                // Written only when some were READ, so a transient `git` failure
+                // never clobbers a captured set with an empty one.
+                let owned = path_str.to_string();
+                let remotes = tokio::task::spawn_blocking(move || read_git_remotes(&owned))
+                    .await
+                    .unwrap_or_default();
+                if !remotes.is_empty()
+                    && let Err(e) = ctx
+                        .pg()
+                        .update_folder_remotes(&fid, &serde_json::Value::Array(remotes))
+                        .await
+                {
+                    tracing::warn!(error = %e, folder_id = %fid, "scan_root: update_folder_remotes failed");
                 }
             }
             Err(e) => {
                 tracing::warn!(error = %e, path = %path_str, "scan_root: upsert_repo_kind failed")
             }
         }
-        let process_task =
-            Task::for_folder(TaskKind::ProcessGitFolder, &path_str).with_parent(task.id);
         // Single-writer (D6e/W5): skip if this folder is already being scanned,
-        // so a concurrent ScanRoot can't fan out a second ProcessGitFolder for it.
-        let _ = ctx.queue.enqueue_unique(process_task).await;
+        // so a concurrent ScanRoot can't fan out a second scan for it.
+        let _ = ctx
+            .queue
+            .enqueue_unique(
+                Task::for_folder(TaskKind::ProcessGitFolder, &path_str)
+                    .with_parent(task.id)
+                    // Each repository gets the slice of the batch that lies
+                    // under it — and, with it, whether its own file walk may
+                    // read absence as deletion.
+                    .with_scope(task.scope.under(path)),
+            )
+            .await;
     }
 
     // 4.5 Reconcile: self-heal the index the scan can't fix additively.
@@ -161,10 +158,36 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         tracing::warn!(error = %e, "scan_root: heal_nested_standalone_roots failed");
         0
     });
+    // Removals are only derivable from an EXHAUSTIVE walk. A scan that hit an
+    // unreadable directory did not see everything, so it must not conclude that
+    // the repositories it missed were deleted — a removal cascades nodes, edges
+    // and files.
     let live: std::collections::HashSet<std::path::PathBuf> =
-        classified.iter().map(|f| f.path.clone()).collect();
-    let ReconcileRootsOutcome { removed, marked, remapped, archived } =
-        reconcile_roots(ctx.pg(), &root_id, &live).await;
+        discovered.repos.iter().cloned().collect();
+    // REMOVALS ARE ONLY DERIVABLE FROM AN EXHAUSTIVE, COMPLETE WALK.
+    //
+    // Two ways this scan may have seen less than everything, and both are fatal
+    // to the inference:
+    //   * an EVENT scope looked at a shortlist, so every repository not on it
+    //     is unvisited rather than gone;
+    //   * an unreadable directory (a macOS TCC-protected folder returns
+    //     `Operation not permitted` and reads as EMPTY) hides whatever is under
+    //     it.
+    // Either way `live` is a subset of what exists, and `reconcile_roots` would
+    // read the difference as deleted — cascading nodes, edges and files for
+    // repositories that are simply still there.
+    let exhaustive = task.scope.is_exhaustive() && discovered.is_complete();
+    let ReconcileRootsOutcome { removed, marked, remapped, archived } = if exhaustive {
+        reconcile_roots(ctx.pg(), &root_id, &live).await
+    } else {
+        tracing::info!(
+            scope_exhaustive = task.scope.is_exhaustive(),
+            walk_complete = discovered.is_complete(),
+            unreadable = discovered.unreadable.len(),
+            "scan_root: skipping root reconcile — this scan did not see everything"
+        );
+        ReconcileRootsOutcome::default()
+    };
     // Populate the canonical `sensei.repositories` registry + `folders.repository_id`
     // from the git roots' captured remotes (the repo-grain metric grain, D10). Runs
     // after the upsert loop stamped remote_urls. Best-effort — a failure is logged,
@@ -173,11 +196,45 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         tracing::warn!(error = %e, "scan_root: assign_repositories failed");
         0
     });
+    // A SYMLINKED checkout adopts the repository of the directory it points at.
+    //
+    // `assign_repositories` keys on a git remote, and the symlinked twin of a
+    // checkout has no `.git` of its own — it is classified `standalone`, so it
+    // was skipped and left `repository_id = NULL`. Measured:
+    // `~/Developer/sensei-hq/gateway` symlinks to `~/Developer/gateway`, one
+    // inode tree indexed under two paths, sharing 4,543 fqns — the largest
+    // duplicate pair in the graph and the whole rust duplicate population.
+    //
+    // Canonicalisation happens HERE because it touches the filesystem; the
+    // grouping decision is pure and lives in `scan_logic`. Best-effort, like the
+    // assignment above: a symlink we cannot resolve is simply not grouped.
+    let symlinks_linked = match ctx.pg().folder_identities_for_root(&root_id).await {
+        Ok(rows) => {
+            let identities: Vec<super::scan_logic::FolderPathIdentity> = rows
+                .into_iter()
+                .map(|(id, abs_path, repository_id)| {
+                    let real_path = std::fs::canonicalize(&abs_path)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| abs_path.clone());
+                    super::scan_logic::FolderPathIdentity { id, abs_path, real_path, repository_id }
+                })
+                .collect();
+            let links = super::scan_logic::symlink_repository_links(&identities);
+            ctx.pg().link_folders_to_repositories(&links).await.unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "scan_root: link_folders_to_repositories failed");
+                0
+            })
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "scan_root: folder_identities_for_root failed");
+            0
+        }
+    };
     // Then prune ghost folder subtrees whose directory was deleted/moved on disk
     // (e.g. a renamed sub-crate). `reconcile_roots` only prunes project ROOTS and
     // `prune_vanished` only reconciles files *within* an indexed folder, so nothing
     // else removes a non-root `kind='folder'` row whose dir vanished — it lingers
-    // dragging its whole subtree of nodes/edges/scan_state.
+    // dragging its whole subtree of nodes/edges/files.
     let ghosts = prune_vanished_folders(ctx.pg(), &root_id).await;
     // Enforce one-node-one-owner: prune any code node a structural (folder-kind)
     // subfolder still holds a duplicate of under the project's canonical root
@@ -187,6 +244,61 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         tracing::warn!(error = %e, "scan_root: dedup_structural_folder_nodes failed");
         0
     });
+    // MUST FOLLOW THE DEDUP. The dedup CREATES orphan stubs: deleting a
+    // structural duplicate cascades its edges away, and an edge pointing at a
+    // stub is precisely what made that stub ineligible for collection. The
+    // per-folder pass already ran at the community terminal barrier by this
+    // point, so nothing collected the rows the dedup had just orphaned —
+    // measured 9,863 stubs matching the GC predicate exactly and surviving
+    // anyway, every one of them in a `kind='folder'` folder.
+    //
+    // Fail-OPEN like the per-folder pass: reclaiming garbage is housekeeping and
+    // must not fail a scan that indexed correctly. The rows wait for next pass.
+    //
+    // The same pass also collects the mislabelled containment rows the retired
+    // `parent_refs` emit wrote under `extends` (7,916 in the live graph, all
+    // unresolved). Both are housekeeping over the same folder set, so they
+    // share the one `folder_ids_for_root` read.
+    let (stubs_collected, bogus_extends) = match ctx.pg().folder_ids_for_root(&root_id).await {
+        Ok(ids) => {
+            let stubs = ctx.pg().prune_orphan_stubs_scoped(&ids).await.unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "scan_root: prune_orphan_stubs_scoped failed");
+                0
+            });
+            let bogus =
+                ctx.pg().prune_mislabelled_containment_extends(&ids).await.unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "scan_root: prune_mislabelled_extends failed");
+                    0
+                });
+            // Lib nodes are GC-exempt from the stub pass above, so without this
+            // one a minted lib node is permanent. It runs on every reconcile so
+            // externals-as-lib_symbol is reversible by rescanning rather than by
+            // hand-written SQL.
+            let libs =
+                ctx.pg().prune_unreferenced_lib_nodes_scoped(&ids).await.unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "scan_root: prune_unreferenced_lib_nodes failed");
+                    0
+                });
+            if libs > 0 {
+                tracing::info!("scan_root reconcile: collected {libs} unreferenced lib node(s)");
+            }
+            (stubs, bogus)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "scan_root: folder_ids_for_root failed — stub GC skipped");
+            (0, 0)
+        }
+    };
+    if bogus_extends > 0 {
+        tracing::info!(
+            "scan_root reconcile: removed {bogus_extends} mislabelled containment `extends` edge(s)"
+        );
+    }
+    if stubs_collected > 0 {
+        tracing::info!(
+            "scan_root reconcile: collected {stubs_collected} stub(s) the dedup orphaned"
+        );
+    }
     let orphaned = ctx.pg().mark_orphaned_projects().await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "scan_root: mark_orphaned_projects failed");
         0
@@ -217,18 +329,20 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
         || archived > 0
         || ghosts > 0
         || deduped > 0
+        || stubs_collected > 0
         || pruned_projects > 0
         || repos_assigned > 0
+        || symlinks_linked > 0
     {
         emit(StateEvent::activity(ActivityEvent::new(
             ActivityLevel::Info,
             &format!(
-                "reconcile · {removed} stale roots removed · {remapped} moved roots remapped · {archived} vanished roots archived · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {pruned_projects} empty projects purged · {repos_assigned} folders linked to repositories · {marked} flagged stale · {orphaned} projects re-tagged"
+                "reconcile · {removed} stale roots removed · {remapped} moved roots remapped · {archived} vanished roots archived · {ghosts} ghost folders pruned · {deduped} duplicate nodes deduped · {stubs_collected} orphaned stubs collected · {pruned_projects} empty projects purged · {repos_assigned} folders linked to repositories · {symlinks_linked} symlinked checkouts grouped · {marked} flagged stale · {orphaned} projects re-tagged"
             ),
             start.elapsed().as_secs_f64(),
         )));
         tracing::info!(
-            "scan_root reconcile: removed={removed} remapped={remapped} archived={archived} ghost_folders={ghosts} deduped_nodes={deduped} empty_projects_purged={pruned_projects} repos_assigned={repos_assigned} marked={marked} orphaned_retagged={orphaned}"
+            "scan_root reconcile: removed={removed} remapped={remapped} archived={archived} ghost_folders={ghosts} deduped_nodes={deduped} stubs_collected={stubs_collected} empty_projects_purged={pruned_projects} repos_assigned={repos_assigned} symlinks_linked={symlinks_linked} marked={marked} orphaned_retagged={orphaned}"
         );
     }
 
@@ -244,22 +358,16 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     }
 
     // 6. Summary activity
-    let git_count = classified.iter().filter(|f| f.kind == FolderKind::Git).count();
-    let quasi_count = classified.iter().filter(|f| f.kind == FolderKind::Standalone).count();
+    let found = discovered.repos.len();
 
     emit(StateEvent::activity(ActivityEvent::new(
         ActivityLevel::Info,
-        &format!("{} git · {} standalone project roots discovered", git_count, quasi_count),
+        &format!("{found} git repositories discovered"),
         start.elapsed().as_secs_f64(),
     )));
 
-    tracing::info!(
-        "scan_root: {} git, {} standalone project roots in {}",
-        git_count,
-        quasi_count,
-        task.path
-    );
-    Ok((git_count + quasi_count) as u32)
+    tracing::info!("scan_root: {found} git repositories in {}", task.path);
+    Ok(found as u32)
 }
 
 /// Prune project roots the scan no longer discovers, healing the index after a
@@ -403,9 +511,9 @@ async fn reconcile_roots(
 /// into a directory that is gone, [`prune_vanished`] only reconciles FILE nodes
 /// *within* one indexed folder, and [`reconcile_roots`] only prunes project
 /// ROOTS — so nothing else ever removes such a row, and it lingers dragging its
-/// whole subtree of nodes/edges/scan_state (137 orphan nodes in the live sensei
+/// whole subtree of nodes/edges/files (137 orphan nodes in the live sensei
 /// index). Each ghost folder row is deleted via [`crate::db::pg_store::PgStore::delete_folder_tree`],
-/// cascading its nodes, edges, scan_state and descendant folder rows.
+/// cascading its nodes, edges, files and descendant folder rows.
 ///
 /// SAFETY: a subfolder is pruned only when its enclosing project ROOT (kind
 /// git/standalone/subtree) is confirmed PRESENT on disk. A root whose own
@@ -454,7 +562,7 @@ pub(crate) async fn detect_vanished_folders(
     for r in &recorded {
         // Only structural subfolders (`folder` + the monorepo-member `workspace_member`,
         // D5a); project ROOTS (git/standalone/subtree) are owned by reconcile_roots.
-        if !matches!(r["kind"].as_str(), Some("folder") | Some("workspace_member")) {
+        if !matches!(r["kind"].as_str(), Some("folder") | Some("module")) {
             continue;
         }
         let Some(abs) = r["abs_path"].as_str() else { continue };
@@ -475,7 +583,7 @@ pub(crate) async fn detect_vanished_folders(
 
 /// Delete each detected ghost folder subtree via
 /// [`crate::db::pg_store::PgStore::delete_folder_tree`], cascading its nodes,
-/// edges, scan_state and descendant folder rows. Non-fatal — a failed delete is
+/// edges, files and descendant folder rows. Non-fatal — a failed delete is
 /// logged and skipped. Idempotent. Returns the number pruned. The apply half of
 /// [`detect_vanished_folders`], shared by the scan reconcile and the audit.
 pub(crate) async fn apply_folder_prune(
@@ -511,7 +619,7 @@ pub(crate) fn dir_present(p: &std::path::Path) -> bool {
 /// Compares the folder's indexed file paths (`sensei.nodes`, module nodes
 /// excluded) against `live_paths` — the repo-relative paths present on disk now
 /// — and drops nodes for any indexed path not in the live set. This catches
-/// orphans the incremental `scan_state` diff and the fs-watcher missed (e.g. a
+/// orphans the incremental `files` diff and the fs-watcher missed (e.g. a
 /// moved sub-crate whose files vanished but whose struct nodes lingered). For
 /// each vanished file it un-resolves inbound edges (preserving `target_name` for
 /// re-resolution), deletes the nodes (cascading their edges) and clears the
@@ -558,7 +666,7 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<u32, String
 
     // No wipe. A branch switch is just an incremental re-index: git rewrites
     // exactly the files that differ between the two branches (updating their
-    // mtime), so process_git_folder's scan_state diff re-indexes only those —
+    // mtime), so process_git_folder's `files` diff re-indexes only those —
     // unchanged files keep their nodes + embeddings, and files that exist on the
     // old branch but not the new one are dropped as "removed". process_git_folder
     // records the new branch (from the task) in props.branch.
@@ -612,10 +720,16 @@ fn parse_git_remote_config(stdout: &str) -> Vec<serde_json::Value> {
 /// Shells out to `git config` (the codebase carries no git2 dep). Empty on any
 /// failure or a repo with no remote: an honest "no remote", never a fabricated
 /// one — a remote-less repo simply can't be rename-detected by remote.
-fn read_git_remotes(repo_path: &str) -> Vec<serde_json::Value> {
+pub(crate) fn read_git_remotes(repo_path: &str) -> Vec<serde_json::Value> {
+    // STDIN NULLED. `git` prompts on stdin for credentials in some configs;
+    // inheriting the daemon's would block this call for ever. There is no
+    // deadline here because `output()` cannot take one — the caller runs this
+    // inside `spawn_blocking`, so a hang costs a blocking thread rather than an
+    // async worker, and the scan's own budget can still fire.
     let Ok(output) = std::process::Command::new("git")
         .args(["config", "--get-regexp", r"^remote\..*\.url$"])
         .current_dir(repo_path)
+        .stdin(std::process::Stdio::null())
         .output()
     else {
         return Vec::new();
@@ -631,6 +745,7 @@ mod tests {
     use super::super::super::executor::TaskContext;
     use super::*;
     use crate::api::state::SharedState;
+    use crate::db::pg_store::graph_seed::SeedGraph;
     use crate::tasks::Task;
     use crate::tasks::queue::TaskQueue;
     use std::sync::Arc;
@@ -747,7 +862,7 @@ mod tests {
         // a `file` node (whose `name` IS the repo-relative path).
         let root_twin = ctx
             .pg()
-            .upsert_node(
+            .seed_node(
                 &repo_fid,
                 "function",
                 "run_task",
@@ -761,7 +876,7 @@ mod tests {
             .unwrap();
         let root_file = ctx
             .pg()
-            .upsert_node(
+            .seed_node(
                 &repo_fid,
                 "file",
                 "crates/member/src/lib.rs",
@@ -792,20 +907,20 @@ mod tests {
         // A duplicate of the git-root symbol → pruned (name equal, path-suffix twin).
         let dup = ctx
             .pg()
-            .upsert_node(&member_fid, "function", "run_task", "src/lib.rs", None, None, None, None)
+            .seed_node(&member_fid, "function", "run_task", "src/lib.rs", None, None, None, None)
             .await
             .unwrap();
         // A duplicate `file` node → pruned via NAME path-suffix ("src/lib.rs" ⊂
         // "crates/member/src/lib.rs"), the case a name-EQUAL rule would miss.
         let dup_file = ctx
             .pg()
-            .upsert_node(&member_fid, "file", "src/lib.rs", "src/lib.rs", None, None, None, None)
+            .seed_node(&member_fid, "file", "src/lib.rs", "src/lib.rs", None, None, None, None)
             .await
             .unwrap();
         // A symbol the root does NOT hold → KEPT (never lose a unique).
         let unique = ctx
             .pg()
-            .upsert_node(
+            .seed_node(
                 &member_fid,
                 "function",
                 "orphan_only",
@@ -820,7 +935,7 @@ mod tests {
         // A `file` node the root does NOT hold → KEPT (guard protects unique files too).
         let unique_file = ctx
             .pg()
-            .upsert_node(&member_fid, "file", "src/gone.rs", "src/gone.rs", None, None, None, None)
+            .seed_node(&member_fid, "file", "src/gone.rs", "src/gone.rs", None, None, None, None)
             .await
             .unwrap();
 
@@ -852,6 +967,138 @@ mod tests {
                     .unwrap();
             assert_eq!(alive, 1, "{msg}");
         }
+    }
+
+    /// THE ORDERING: the reconcile's dedup ORPHANS stubs, so the stub GC has to
+    /// run AFTER it, not before.
+    ///
+    /// The per-folder GC fires at the community terminal barrier, then
+    /// `scan_root reconcile` runs `dedup_structural_folder_nodes` and deletes the
+    /// structural duplicates. That cascade takes their edges with them — and an
+    /// edge pointing at a stub is the only thing that made the stub ineligible
+    /// for collection. Nothing ran the GC again, so live 9,863 stubs matched the
+    /// GC predicate exactly and survived anyway, every one of them in a
+    /// `kind='folder'` folder (the dedup's exact target set) across 4 folders.
+    ///
+    /// Driven through `scan_root` on purpose: the defect IS the order of two
+    /// calls inside the reconcile, so a test that called dedup and then prune
+    /// itself would pass while production stayed broken.
+    #[tokio::test]
+    async fn reconcile_collects_stubs_the_dedup_orphans() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let root_str = root.to_string_lossy().to_string();
+
+        // Real directories, INCLUDING `.git`, so the walk classifies `repo` as a
+        // live git root. Without it `reconcile_roots` prunes the root as
+        // undiscovered and the whole subtree cascades away — which silently
+        // satisfies the stub assertion for the wrong reason.
+        let repo = root.join("repo");
+        let member = repo.join("crates/member");
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+
+        let root_id =
+            ctx.pg().add_watch_root(&root_str, "gcorder", &serde_json::json!([])).await.unwrap();
+        let pid = ctx.pg().create_project("gcorder-proj", None, None).await.unwrap();
+        let repo_fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        ctx.pg().set_folder_project(&repo_fid, &pid, "root", None).await.unwrap();
+        let member_fid = ctx
+            .pg()
+            .upsert_subfolder(
+                &root_id,
+                "member",
+                "crates/member",
+                &member.to_string_lossy(),
+                Some(&repo_fid),
+                Some(&pid),
+            )
+            .await
+            .unwrap();
+
+        // The canonical root copy, and the structural duplicate the dedup removes.
+        ctx.pg()
+            .seed_node(
+                &repo_fid,
+                "function",
+                "run_task",
+                "crates/member/src/lib.rs",
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let dup = ctx
+            .pg()
+            .seed_node(&member_fid, "function", "run_task", "src/lib.rs", None, None, None, None)
+            .await
+            .unwrap();
+
+        // A stub whose ONLY in-edge comes from the duplicate. Before the dedup it
+        // is correctly ineligible — something references it. After the dedup that
+        // edge is gone and it is garbage.
+        let stub = ctx
+            .pg()
+            .seed_node_by_fqn(
+                &member_fid,
+                "rust·p·m·Ghost·vanishes",
+                "function",
+                "vanishes",
+                Some("rust"),
+                None,
+            )
+            .await
+            .unwrap();
+        ctx.pg().insert_edge(&member_fid, &dup, Some(&stub), None, None, "calls").await.unwrap();
+
+        // Pre-state: the GC would NOT take it, which is what makes the ordering
+        // the whole defect rather than a weak predicate.
+        assert_eq!(
+            ctx.pg().prune_orphan_stubs(&member_fid).await.unwrap(),
+            0,
+            "while the duplicate still references it, the stub is legitimately kept"
+        );
+
+        let task = Task::new(TaskKind::ScanRoot, "", &root_str);
+        scan_root(&ctx, &task).await.unwrap();
+
+        // The member FOLDER must survive: if the reconcile pruned it instead,
+        // every node under it would cascade away and this test would pass for
+        // entirely the wrong reason.
+        let (member_alive,): (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.folders WHERE id=$1")
+                .bind(member_fid)
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
+        assert_eq!(member_alive, 1, "the structural member folder is still indexed");
+
+        let (dup_alive,): (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
+                .bind(dup)
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
+        assert_eq!(dup_alive, 0, "the reconcile's dedup removed the structural duplicate");
+
+        let (stub_alive,): (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id=$1")
+                .bind(stub)
+                .fetch_one(ctx.pg().pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            stub_alive, 0,
+            "the dedup orphaned this stub, so the SAME reconcile must collect it — \
+             leaving it is the 9,863-stub residue"
+        );
     }
 
     #[tokio::test]
@@ -924,7 +1171,7 @@ mod tests {
             .unwrap();
         ctx.pg().set_folder_project(&repo_fid, &live, "root", None).await.unwrap();
         ctx.pg()
-            .upsert_node(&repo_fid, "function", "f", "live/lib.rs", None, None, None, None)
+            .seed_node(&repo_fid, "function", "f", "live/lib.rs", None, None, None, None)
             .await
             .unwrap();
 
@@ -1171,16 +1418,15 @@ mod tests {
             "live git repo should remain"
         );
 
-        // revived (lost .git, still has code) → relabelled standalone, not stale/removed
-        let revived_row = ctx
-            .pg()
-            .get_repo_by_path(&revived.to_string_lossy())
-            .await
-            .unwrap()
-            .expect("revived quasi-repo should remain");
-        assert_eq!(
-            revived_row["kind"], "standalone",
-            "former git root with code should relabel standalone"
+        // A folder that LOST its `.git` is no longer a repository. It used to
+        // be relabelled `standalone` — a quasi-repo — on the grounds that it
+        // still held code; that kind is retired, because "looks like a project"
+        // is a guess and a `.git` is a fact. It is now simply not rediscovered,
+        // and `reconcile_roots` decides its fate from its content and history.
+        let revived_row = ctx.pg().get_repo_by_path(&revived.to_string_lossy()).await.unwrap();
+        assert!(
+            revived_row.is_none_or(|r| r["kind"] != "standalone"),
+            "a folder with no .git is not registered as a repository kind"
         );
     }
 
@@ -1204,71 +1450,9 @@ mod tests {
 
         // A subtree must NOT be clobbered by a root re-registration.
         let p2 = tmp.path().join("b").to_string_lossy().to_string();
-        ctx.pg().upsert_folder(&root_id, "subtree", "b", "b", &p2, None, None).await.unwrap();
+        ctx.pg().upsert_folder(&root_id, "subtree", "b", "b", &p2, None, None, None).await.unwrap();
         ctx.pg().upsert_repo_kind(&root_id, "git", "b", &p2).await.unwrap();
         assert_eq!(ctx.pg().get_repo_by_path(&p2).await.unwrap().unwrap()["kind"], "subtree");
-    }
-
-    #[tokio::test]
-    async fn scan_flags_loose_quasi_repos_and_skips_data_only() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        // manifest-backed quasi-repo → confident, no flag
-        std::fs::create_dir_all(root.join("manifest-proj")).unwrap();
-        std::fs::write(root.join("manifest-proj/Cargo.toml"), "[package]\nname=\"m\"").unwrap();
-        // loose source, no manifest → flagged needs-review
-        std::fs::create_dir_all(root.join("loose-code")).unwrap();
-        std::fs::write(root.join("loose-code/run.py"), "print('hi')\n").unwrap();
-        // data only → not a project root at all
-        std::fs::create_dir_all(root.join("data-only")).unwrap();
-        std::fs::write(root.join("data-only/rows.csv"), "a,b\n1,2\n").unwrap();
-
-        let ctx = make_ctx().await;
-        let task = Task::new(TaskKind::ScanRoot, "", &root.to_string_lossy());
-        scan_root(&ctx, &task).await.unwrap();
-
-        let tags_of = |row: &serde_json::Value| -> Vec<String> {
-            row["tags"]
-                .as_array()
-                .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
-                .unwrap_or_default()
-        };
-
-        // manifest → standalone, NOT flagged
-        let manifest = ctx
-            .pg()
-            .get_repo_by_path(&root.join("manifest-proj").to_string_lossy())
-            .await
-            .unwrap()
-            .expect("manifest quasi-repo should be registered");
-        assert_eq!(manifest["kind"], "standalone");
-        assert!(
-            !tags_of(&manifest).contains(&"needs-review".to_string()),
-            "manifest-backed quasi-repo should not be flagged"
-        );
-
-        // loose code → standalone, flagged needs-review
-        let loose = ctx
-            .pg()
-            .get_repo_by_path(&root.join("loose-code").to_string_lossy())
-            .await
-            .unwrap()
-            .expect("loose quasi-repo should be registered");
-        assert_eq!(loose["kind"], "standalone");
-        assert!(
-            tags_of(&loose).contains(&"needs-review".to_string()),
-            "loose-code quasi-repo should be flagged needs-review"
-        );
-
-        // data only → not promoted
-        assert!(
-            ctx.pg()
-                .get_repo_by_path(&root.join("data-only").to_string_lossy())
-                .await
-                .unwrap()
-                .is_none(),
-            "data-only folder should not be promoted to a project root"
-        );
     }
 
     #[tokio::test]
@@ -1282,9 +1466,9 @@ mod tests {
 
         // Two indexed files: a.rs (still on disk) and a moved-away b.rs (orphan),
         // plus a module node (abs dir path) that must never be pruned.
-        ctx.pg().upsert_node(&fid, "file", "a.rs", "a.rs", None, None, None, None).await.unwrap();
+        ctx.pg().seed_node(&fid, "file", "a.rs", "a.rs", None, None, None, None).await.unwrap();
         ctx.pg()
-            .upsert_node(
+            .seed_node(
                 &fid,
                 "struct",
                 "Gone",
@@ -1296,10 +1480,7 @@ mod tests {
             )
             .await
             .unwrap();
-        ctx.pg()
-            .upsert_node(&fid, "module", "src", &format!("{repo_path}/src"), None, None, None, None)
-            .await
-            .unwrap();
+        ctx.pg().upsert_dir_node(&fid, "module", "src", &format!("{repo_path}/src")).await.unwrap();
         ctx.pg().upsert_scan_state(&fid, "crates/hive-mind/src/config.rs", 1, "h").await.unwrap();
 
         // Live working-tree set: only a.rs survives.
@@ -1314,7 +1495,7 @@ mod tests {
         let ss = ctx.pg().list_scan_state(&fid).await.unwrap();
         assert!(
             ss.iter().all(|(p, _)| !p.contains("hive-mind")),
-            "scan_state for the vanished file cleared"
+            "files row for the vanished file cleared"
         );
     }
 
@@ -1353,12 +1534,12 @@ mod tests {
             .unwrap();
         let live_node = ctx
             .pg()
-            .upsert_node(&live_fid, "struct", "Kept", "live/mod.rs", None, None, None, None)
+            .seed_node(&live_fid, "struct", "Kept", "mod.rs", None, None, None, None)
             .await
             .unwrap();
 
         // A GHOST subtree: `gone/` (renamed/moved away) + its child `gone/sub/` no
-        // longer exist on disk, yet still carry folder rows + nodes/edge/scan_state.
+        // longer exist on disk, yet still carry folder rows + nodes/edge/files.
         let gone_dir = repo.join("gone"); // NOT created on disk
         let gone_sub = gone_dir.join("sub"); // NOT created on disk
         let gone_fid = ctx
@@ -1387,30 +1568,12 @@ mod tests {
             .unwrap();
         let ghost_a = ctx
             .pg()
-            .upsert_node(
-                &gone_fid,
-                "struct",
-                "HiveConfig",
-                "gone/config.rs",
-                None,
-                None,
-                None,
-                None,
-            )
+            .seed_node(&gone_fid, "struct", "HiveConfig", "config.rs", None, None, None, None)
             .await
             .unwrap();
         let ghost_b = ctx
             .pg()
-            .upsert_node(
-                &sub_fid,
-                "struct",
-                "HiveStore",
-                "gone/sub/store.rs",
-                None,
-                None,
-                None,
-                None,
-            )
+            .seed_node(&sub_fid, "struct", "HiveStore", "store.rs", None, None, None, None)
             .await
             .unwrap();
         let ghost_edge = ctx
@@ -1447,7 +1610,7 @@ mod tests {
         );
         assert!(abs_paths.contains(&repo.to_string_lossy().to_string()), "repo root kept");
 
-        // Cascade: ghost nodes + edge + scan_state gone; live node survives.
+        // Cascade: ghost nodes + edge + files gone; live node survives.
         let (ghost_nodes,): (i64,) =
             sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id = ANY($1)")
                 .bind(vec![ghost_a, ghost_b])
@@ -1471,7 +1634,7 @@ mod tests {
         assert_eq!(edge_count, 0, "ghost edge cascade-deleted");
         assert!(
             ctx.pg().list_scan_state(&gone_fid).await.unwrap().is_empty(),
-            "ghost scan_state cascade-deleted"
+            "ghost files rows cascade-deleted"
         );
         assert_eq!(
             ctx.pg().list_indexed_files(&live_fid).await.unwrap(),
@@ -1485,7 +1648,7 @@ mod tests {
 
     #[tokio::test]
     async fn prune_vanished_folders_drops_ghost_workspace_member() {
-        // D5a: a monorepo member (kind='workspace_member') whose dir vanished is
+        // D5a: a monorepo member (kind='module') whose dir vanished is
         // ghost-pruned like a structural `folder` — detect_vanished_folders was
         // extended to include workspace_member so a deleted member doesn't linger.
         let ctx = make_ctx().await;
@@ -1510,7 +1673,7 @@ mod tests {
         ctx.pg()
             .upsert_subfolder_kind(
                 &root_id,
-                "workspace_member",
+                "module",
                 "live",
                 "packages/live",
                 &live.to_string_lossy(),
@@ -1523,7 +1686,7 @@ mod tests {
         ctx.pg()
             .upsert_subfolder_kind(
                 &root_id,
-                "workspace_member",
+                "module",
                 "gone",
                 "packages/gone",
                 &gone.to_string_lossy(),
@@ -1577,7 +1740,7 @@ mod tests {
             .unwrap();
         let node = ctx
             .pg()
-            .upsert_node(&sub_fid, "struct", "Untouched", "src/lib.rs", None, None, None, None)
+            .seed_node(&sub_fid, "struct", "Untouched", "src/lib.rs", None, None, None, None)
             .await
             .unwrap();
 
@@ -1627,15 +1790,18 @@ mod tests {
             );
         }
 
-        // Discover events: 2 git + 1 quasi-repo = 3 (code-less `notes` is skipped)
+        // Discover events: one per GIT repository. A directory with code but no
+        // `.git` is not a repository and emits nothing.
         let discovers: Vec<_> = events.iter().filter(|e| e.data["level"] == "discover").collect();
-        assert_eq!(discovers.len(), 3, "expected 3 discover events, got {}", discovers.len());
+        assert_eq!(discovers.len(), 2, "expected 2 discover events, got {}", discovers.len());
 
         // Info summary
         let infos: Vec<_> = events.iter().filter(|e| e.data["level"] == "info").collect();
         assert_eq!(infos.len(), 1);
         let msg = infos[0].data["message"].as_str().unwrap();
-        assert!(msg.contains("2 git"), "summary: {}", msg);
-        assert!(msg.contains("1 standalone"), "summary: {}", msg);
+        assert!(msg.contains("2 git repositories"), "summary: {}", msg);
+        // No standalone count: the kind is retired, so the summary reports one
+        // number and not two.
+        assert!(!msg.contains("standalone"), "summary: {}", msg);
     }
 }

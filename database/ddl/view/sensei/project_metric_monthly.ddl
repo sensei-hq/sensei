@@ -6,7 +6,13 @@ select project_id
      , metric
      , date_trunc('month', date)::date as period
      , case
+         -- Guarded, like the daily view it reads: a ratio/pct metric whose
+         -- writer supplies no numerator/denominator (cache_reuse, deliberately
+         -- a mean of per-session ratios) would otherwise pool to NULL and break
+         -- every reader that decodes `value` as non-nullable. Falls through to
+         -- the most recent day's value instead.
          when type in ('ratio', 'pct')
+              and bool_or(props ? 'denominator')
            then sum((props->>'numerator')::numeric)
                 / nullif(sum((props->>'denominator')::numeric), 0)
          when type in ('count', 'currency')

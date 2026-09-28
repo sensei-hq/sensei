@@ -1,0 +1,1567 @@
+//! Stages 1-3 wired end to end: scan_root -> scan_repo -> structure write.
+//!
+//! Specs: `docs/spec/indexer/01-scan-root.md`, `02-scan-repo.md`,
+//! `03-structure-write.md`.
+//!
+//! This is the IO half. The decisions all live in the pure functions those
+//! stages already provide — [`super::repo::discover`],
+//! [`super::scan_repo::scan_repo_files`], [`super::structure::plan_structure`]
+//! — and this module only executes a plan it does not think about. That split
+//! is why the interesting behaviour is testable without a database.
+//!
+//! It writes repositories, folders and files. It writes NO nodes and NO
+//! edges, and enqueues no parse task: stage 3's barrier ends here (R14).
+//
+// These stages have no caller on purpose: the shipped indexer under
+// `crate::languages` keeps producing the graph until cutover
+// (`docs/spec/indexer/10-cutover.md`), and wiring them in early would put two
+// producers with different rules on one set of tables. The allow goes when the
+// cutover gives them callers — it is not a licence for genuinely dead code.
+#![allow(dead_code)]
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::repo;
+use super::scan_repo::{self, RepoScan};
+use super::structure::{self, ChangeKind, FileFacts};
+use crate::db::pg_store::PgStore;
+use crate::tasks::progress::StageEvents;
+
+/// What one repo's structure write produced. Counts only — the rows are in
+/// the database, which is where they are inspected.
+#[derive(Debug, Clone, Default)]
+pub struct RepoResult {
+    pub abs_path: String,
+    pub repository_id: Option<uuid::Uuid>,
+    pub folder_id: Option<uuid::Uuid>,
+    pub folders: usize,
+    pub files: usize,
+    pub manifests: usize,
+    pub lockfiles: usize,
+    pub submodules: usize,
+    pub added: usize,
+    pub changed: usize,
+    pub unchanged: usize,
+    pub removed: usize,
+    /// The library this repo declares itself to be, if it ships a
+    /// `sensei.library.json` at its root.
+    pub library: Option<String>,
+    /// Package names grouped under that library (02b S2).
+    pub library_packages: u64,
+    /// Documentation pages walked from its local `docs/llms/` corpus (S7b.1).
+    pub library_pages: u32,
+    /// Why the docs walk found nothing, when it did (S7b.2). Distinct from a
+    /// library that legitimately ships none.
+    pub library_docs_error: Option<String>,
+    /// folder -> library edges written (`referenced_libraries`).
+    pub external_deps: u32,
+    /// folder -> folder edges written for first-party siblings.
+    pub local_deps: u32,
+    /// How many of `external_deps` got a version from the LOCKFILE that
+    /// differs from the manifest's range floor — the measure of what reading
+    /// lockfiles actually buys.
+    pub deps_pinned_by_lockfile: u32,
+    pub errors: Vec<String>,
+}
+
+/// The whole scan.
+#[derive(Debug, Clone, Default)]
+pub struct ScanSummary {
+    pub repos: Vec<RepoResult>,
+    pub roots_found: usize,
+    pub unreadable: Vec<String>,
+}
+
+impl ScanSummary {
+    pub fn total_files(&self) -> usize {
+        self.repos.iter().map(|r| r.files).sum()
+    }
+    pub fn total_folders(&self) -> usize {
+        self.repos.iter().map(|r| r.folders).sum()
+    }
+    pub fn total_manifests(&self) -> usize {
+        self.repos.iter().map(|r| r.manifests).sum()
+    }
+    /// Every repo-level failure, prefixed with the repo it came from. A caller
+    /// that only looks at the counts cannot tell a repo that failed from one
+    /// that legitimately had nothing — this is how it tells.
+    pub fn errors(&self) -> Vec<String> {
+        self.repos
+            .iter()
+            .flat_map(|r| r.errors.iter().map(move |e| format!("{}: {e}", r.abs_path)))
+            .collect()
+    }
+}
+
+/// Read `origin`'s URL, or the first remote if there is no `origin`.
+///
+/// Reuses the walk-level reader in `tasks::handlers::scan` rather than
+/// shelling out a second time — a second copy would be a second place for
+/// "what counts as this repo's remote" to be answered differently.
+fn origin_remote(repo_path: &str) -> Option<String> {
+    let remotes = crate::tasks::handlers::scan::read_git_remotes(repo_path);
+    let pick = remotes.iter().find(|r| r["name"] == "origin").or_else(|| remotes.first())?;
+    pick["url"].as_str().map(str::to_string)
+}
+
+/// This file's `(mtime, sha256)`, reusing the previous scan's hash when the
+/// timestamp has not moved.
+///
+/// The hash is what decides re-parsing, and computing it means READING the
+/// file — 48,665 reads on a repo this size. The mtime is a stat. So the mtime
+/// gates the read: if the file was seen before at this exact timestamp its
+/// bytes cannot have changed, and last scan's hash is still its hash.
+///
+/// This is the two-tier gate the legacy scan already used (`scan_logic::plan_reindex`),
+/// kept OUT of [`structure::plan_structure`] so that function stays pure and
+/// hash-only. It is a caching decision, not a classification one.
+fn file_facts(path: &std::path::Path, previous: Option<&FileFacts>) -> Option<FileFacts> {
+    let mtime = crate::tasks::handlers::helpers::file_mtime_ms(path)?;
+    if let Some(prev) = previous
+        && prev.mtime == mtime
+    {
+        return Some(FileFacts { mtime, hash: prev.hash.clone() });
+    }
+    let hash = crate::tasks::handlers::helpers::hash_file(path)?;
+    Some(FileFacts { mtime, hash })
+}
+
+/// Every workspace member this repo DECLARES, as repo-relative paths.
+///
+/// Asks every registered adapter, because one repo can declare members in more
+/// than one ecosystem — this one has a Cargo workspace AND npm workspaces, and
+/// taking only the first adapter's answer would label the other's members
+/// `package`.
+///
+/// Reads the filesystem (each adapter opens the root manifest and resolves its
+/// globs), which is why it lives here in the IO half rather than inside
+/// [`structure::plan_folders`], which stays pure and is handed the result.
+fn declared_workspace_members(repo_root: &std::path::Path) -> BTreeSet<String> {
+    crate::adapters::manifest::registered_adapters()
+        .iter()
+        .flat_map(|a| a.detect_workspace_members(repo_root))
+        .map(|m| m.path)
+        .collect()
+}
+
+/// Run stages 1-3 over `scan_dir` and write the structure.
+///
+/// `root_id` is the `folders_to_watch` row every folder hangs off.
+pub async fn scan_and_write_structure(
+    pg: &PgStore,
+    scan_dir: &std::path::Path,
+    root_id: &uuid::Uuid,
+    events: StageEvents<'_>,
+) -> ScanSummary {
+    let mut summary = ScanSummary::default();
+    let scan_path = scan_dir.display().to_string();
+
+    // ── Stage 1 ──────────────────────────────────────────────────────────
+    let stage = events.begin("scan_root", &scan_path);
+    let discovered = match repo::discover(scan_dir, &[]) {
+        Ok(d) => d,
+        Err(e) => {
+            // A search that could not even be built found nothing and must not
+            // report an empty tree, which reads as "there are no repositories".
+            stage.failed(&e);
+            summary.unreadable.push(format!("{scan_path}: {e}"));
+            return summary;
+        }
+    };
+    summary.roots_found = discovered.repos.len();
+    summary.unreadable =
+        discovered.unreadable.iter().map(|u| format!("{:?}: {}", u.path, u.reason)).collect();
+    // S5: an unreadable directory is coverage this scan did NOT have, and
+    // reporting only the roots found would read as having seen everything.
+    if discovered.is_complete() {
+        stage.completed(discovered.repos.len() as u64);
+    } else {
+        stage.completed_capped(
+            discovered.repos.len() as u64,
+            &format!(
+                "{} directories were unreadable and not descended",
+                discovered.unreadable.len()
+            ),
+        );
+    }
+
+    for root in &discovered.repos {
+        summary.repos.push(write_one_repo(pg, root, root_id, events).await);
+    }
+    summary
+}
+
+async fn write_one_repo(
+    pg: &PgStore,
+    root: &std::path::Path,
+    root_id: &uuid::Uuid,
+    events: StageEvents<'_>,
+) -> RepoResult {
+    let abs = root.to_string_lossy().to_string();
+    let mut out = RepoResult { abs_path: abs.clone(), ..Default::default() };
+    let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+
+    // ── Stage 1 S4/S5: repository identity, then the root folder ────────
+    match pg.upsert_repository(&name, origin_remote(&abs).as_deref()).await {
+        Ok(id) => out.repository_id = Some(id),
+        Err(e) => out.errors.push(format!("upsert_repository: {e}")),
+    }
+
+    // A repo gets a PROJECT, 1:1, as `folders.project_id` documents. Without it
+    // every folder had project_id NULL, and the chain that answers "which
+    // projects use this library" — and everything keyed on it, including the
+    // update scheduler and therefore the registry-URL extraction — had no input
+    // at all. Matched by name, so the 147 projects predating this scan are
+    // reused rather than duplicated.
+    let project_id = match pg.get_or_create_project_by_name(&name).await {
+        Ok((id, _created)) => Some(id),
+        Err(e) => {
+            out.errors.push(format!("get_or_create_project_by_name({name}): {e}"));
+            None
+        }
+    };
+
+    let folder_id = match pg
+        .upsert_folder(root_id, "git", &name, &abs, &abs, None, project_id.as_ref(), None)
+        .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            out.errors.push(format!("upsert_folder(root): {e}"));
+            return out;
+        }
+    };
+    out.folder_id = Some(folder_id);
+    out.folders += 1;
+
+    // S4/S6: the link, both directions asserted by the caller.
+    if let Some(rid) = out.repository_id
+        && let Err(e) = pg.link_folder_to_repository(&folder_id, &rid).await
+    {
+        out.errors.push(format!("link_folder_to_repository: {e}"));
+    }
+
+    // ── Stage 2 ──────────────────────────────────────────────────────────
+    let stage = events.begin("scan_repo", &abs);
+    if let Ok(text) = std::fs::read_to_string(root.join(".gitmodules")) {
+        out.submodules = scan_repo::find_submodules(&text).len();
+    }
+    let scan: RepoScan = scan_repo::scan_repo_files(root);
+    out.manifests = scan.manifests.len();
+    out.lockfiles = scan.lockfiles.len();
+    // The count is FILES, the thing this stage is here to find. Manifests and
+    // lockfiles are also counted, into `RepoResult`, where a reader can see all
+    // three rather than one number standing in for the others.
+    stage.completed(scan.files.len() as u64);
+
+    // ── Stage 3 ──────────────────────────────────────────────────────────
+    let stage = events.begin("structure_write", &abs);
+    // One repo's barrier failing is recorded against THAT repo and does not
+    // stop the scan: the other roots are independent and their structure is
+    // still correct. `out.errors` non-empty is how a caller tells the
+    // difference between "this repo has no files" and "this repo failed".
+    let folder_ids =
+        match write_structure(pg, root_id, root, &folder_id, project_id.as_ref(), &scan, &mut out)
+            .await
+        {
+            Ok(ids) => {
+                // The BARRIER's own number, the same one `folder_completeness`
+                // divides by — not a recount (08 S2).
+                stage.completed(out.files as u64);
+                ids
+            }
+            Err(e) => {
+                // S4: a stage that fails says so. Silence here is what leaves a UI
+                // showing a scan that stopped running minutes ago.
+                stage.failed(&e);
+                out.errors.push(e);
+                BTreeMap::new()
+            }
+        };
+
+    // ── Stage 2 S8/S11: the dependency edges ─────────────────────────────
+    write_dependencies(pg, root, &scan, &folder_ids, &mut out).await;
+
+    // ── Stage 2b: this repo may BE a library ─────────────────────────────
+    let stage = events.begin("library_discovery", &abs);
+    ingest_library(pg, root, &scan, &mut out).await;
+    match out.library_docs_error.as_deref() {
+        // A docs walk that failed is not an ingestion of zero pages. Saying so
+        // is the difference between "this library ships no docs" and "we could
+        // not read them" (R4).
+        Some(err) => stage.failed(err),
+        None => stage.completed(u64::from(out.library_pages)),
+    }
+    out
+}
+
+/// Version prefixes that mark a FIRST-PARTY dep rather than a release.
+/// Mirrors the protocols `local_source_protocol` understands; a version
+/// starting with one of these is a pointer, not a version.
+const LOCAL_PROTOCOLS: &[&str] = &["link:", "workspace:", "file:", "path:", "portal:"];
+
+/// Write each manifest's dependency edges: folder -> library for externals,
+/// folder -> folder for local siblings (02 S8, 02b S11).
+///
+/// THE MISSING WRITER. `referenced_libraries` is how "which projects use this
+/// library" and every version-drift question are answered, and nothing here
+/// wrote it — `extract_deps` does, but only as a separate task handler that
+/// this scan never invokes. Without it there are no folder -> library edges
+/// at all, and `library_update_scheduler` (the only consumer of the registry
+/// URLs) has nothing to tick over.
+///
+/// **The version recorded is the LOCKFILE PIN, not the manifest's range.**
+/// `clean_version` strips the operator, so `^2.60.1` becomes `2.60.1` — a
+/// range FLOOR indistinguishable from a pin once stored. Measured over this
+/// machine's repos, 128 of 219 direct deps get a different, correct version
+/// from the lockfile. The manifest selects WHICH packages; the lockfile
+/// supplies WHICH version, looked up by name so the transitive tree stays out.
+/// ONE manifest's worth of facts. The single per-manifest pass.
+///
+/// Both callers go through here: the repo-wide structure write
+/// ([`write_dependencies`]) and the per-manifest task
+/// (`crate::tasks::handlers::process_manifest`). A second implementation that
+/// read only the package name is exactly the underpowered duplicate the
+/// adapter pattern exists to prevent — the adapter already knows the
+/// ecosystem, the dependencies, its own lockfile formats and how to pin, and a
+/// caller that takes only `.name` throws all of it away and re-opens the file
+/// somewhere else to get the rest.
+pub(crate) struct ManifestJob<'a> {
+    pub repo_root: &'a std::path::Path,
+    /// ABSOLUTE path to the manifest.
+    pub manifest: &'a std::path::Path,
+    pub ecosystem: &'a str,
+    /// The folder row that HOLDS the manifest — facts belong to it (D11).
+    pub folder_id: uuid::Uuid,
+    /// Repo folders by absolute path, for resolving a `link:`/`workspace:`
+    /// sibling to a real folder id.
+    pub folder_ids: &'a BTreeMap<std::path::PathBuf, uuid::Uuid>,
+    /// Lockfile candidates in this repo; `nearest_lockfile` picks from them.
+    pub lockfiles: &'a [std::path::PathBuf],
+}
+
+/// What one manifest yielded.
+#[derive(Debug, Default)]
+pub(crate) struct ManifestOutcome {
+    /// The package this manifest NAMES. `None` is a real state — a manifest
+    /// may declare only a workspace — and never a fabricated name.
+    pub package: Option<String>,
+    pub local_deps: u32,
+    pub external_deps: u32,
+    pub deps_pinned_by_lockfile: u32,
+    /// Rows written to `sensei.folder_commands` for this manifest.
+    pub commands: u32,
+    pub errors: Vec<String>,
+}
+
+pub(crate) async fn apply_manifest(pg: &PgStore, job: ManifestJob<'_>) -> ManifestOutcome {
+    let mut out = ManifestOutcome::default();
+    let Some(dir) = job.manifest.parent() else { return out };
+
+    // The adapter is resolved from the ECOSYSTEM the classifier already
+    // determined, so the two cannot disagree about which adapter owns a file.
+    let Some(adapter) = crate::adapters::manifest::registered_adapters()
+        .iter()
+        .find(|a| a.ecosystem() == job.ecosystem)
+    else {
+        out.errors.push(format!("no adapter for ecosystem {}", job.ecosystem));
+        return out;
+    };
+    let Ok(content) = std::fs::read_to_string(job.manifest) else {
+        out.errors.push(format!("read manifest {}: unreadable", job.manifest.display()));
+        return out;
+    };
+
+    // The package this manifest names — the PLACEMENT half, which is why every
+    // manifest must be read before any file is parsed.
+    out.package = crate::indexer::placement::package_named_by(job.manifest, &content);
+
+    // The named commands this ecosystem exposes for THIS manifest — the
+    // project window's action buttons and the `get_commands` MCP tool read
+    // them out of `sensei.folder_commands`.
+    //
+    // Per MANIFEST, which is the fix: `extract_deps` asks only for manifests at
+    // the REPO ROOT (`repo.join(filename)`), so every member package of a
+    // monorepo had its scripts silently undiscovered. Running per manifest
+    // reaches them without a second walk.
+    //
+    // Non-fatal: a command scan that fails must not cost the manifest its
+    // dependencies. Idempotent — `replace_folder_commands` is delete+insert
+    // scoped to (folder, ecosystem).
+    let commands = adapter.parse_commands(&content);
+    if !commands.is_empty() {
+        let rows: Vec<(String, String, Option<&str>)> = commands
+            .iter()
+            .map(|c| (c.raw_name.clone(), c.command_line.clone(), c.category))
+            .collect();
+        match pg
+            .replace_folder_commands(&job.folder_id, job.ecosystem, job.manifest.to_str(), &rows)
+            .await
+        {
+            Ok(n) => out.commands = n as u32,
+            Err(e) => out.errors.push(format!("replace_folder_commands: {e}")),
+        }
+    }
+
+    // The nearest lockfile AT OR ABOVE this manifest, stopping at the repo
+    // root (02 S6c). Not the repo root's: `tools/session-report` has its
+    // own Cargo.lock and they genuinely disagree.
+    let pins = scan_repo::nearest_lockfile(
+        dir,
+        job.repo_root,
+        adapter.lockfile_filenames(),
+        job.lockfiles,
+    )
+    .and_then(|lock| {
+        let name = lock.file_name()?.to_str()?.to_string();
+        let content = std::fs::read_to_string(&lock).ok()?;
+        Some(scan_repo::pins_by_name(job.ecosystem, &name, &content))
+    })
+    .unwrap_or_default();
+
+    for dep in adapter.parse_dependencies(&content) {
+        // A `link:`/`workspace:`/`file:`/`path=` dep is a FIRST-PARTY
+        // sibling, not a library. It becomes a folder -> folder edge and
+        // must never reach `libraries`, or a monorepo's own packages get
+        // registered as external dependencies of themselves.
+        if let Some(target) = &dep.local_source {
+            let protocol = crate::tasks::handlers::libraries::local_source_protocol(
+                &dep.source,
+                &dep.raw_version,
+            );
+            let Some(abs) = crate::tasks::handlers::libraries::resolve_local_target(
+                &dir.to_string_lossy(),
+                protocol,
+                target,
+            ) else {
+                continue;
+            };
+            let Some(to_id) = job.folder_ids.get(&abs).copied() else {
+                continue; // target is outside this repo, or has no row yet
+            };
+            if to_id == job.folder_id {
+                continue; // the table's CHECK forbids a self-edge
+            }
+            if let Err(e) = pg
+                .upsert_folder_dependency(
+                    &job.folder_id,
+                    &to_id,
+                    protocol,
+                    &dep.source,
+                    Some(target),
+                )
+                .await
+            {
+                out.errors.push(format!("upsert_folder_dependency({}): {e}", dep.lib_name));
+            } else {
+                out.local_deps += 1;
+            }
+            continue;
+        }
+
+        // `link:kavach` is a PROTOCOL, not a release. `local_source` is
+        // unset when the payload is a bare name rather than a path, so the
+        // dep reached here looking external and its "version" was stored
+        // verbatim — producing a `library_versions` row keyed
+        // `link:kavach` that no pin can ever match. A protocol-shaped
+        // version means the dep is first-party; it is not a library.
+        if LOCAL_PROTOCOLS.iter().any(|p| dep.version.starts_with(p)) {
+            continue;
+        }
+        let version = scan_repo::resolve_pin(&pins, &dep.lib_name, &dep.version);
+        let lib_id = match pg
+            .upsert_library(&dep.lib_name, job.ecosystem, Some(&version), None, None, None)
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => {
+                out.errors.push(format!("upsert_library({}): {e}", dep.lib_name));
+                continue;
+            }
+        };
+        if let Err(e) =
+            pg.upsert_referenced_library(&job.folder_id, &lib_id, Some(&version), None).await
+        {
+            out.errors.push(format!("upsert_referenced_library({}): {e}", dep.lib_name));
+            continue;
+        }
+        out.external_deps += 1;
+        if version != dep.version {
+            out.deps_pinned_by_lockfile += 1;
+        }
+    }
+    out
+}
+
+/// Every manifest in the repo, through [`apply_manifest`].
+async fn write_dependencies(
+    pg: &PgStore,
+    repo_root: &std::path::Path,
+    scan: &RepoScan,
+    folder_ids: &BTreeMap<std::path::PathBuf, uuid::Uuid>,
+    out: &mut RepoResult,
+) {
+    for (manifest, ecosystem) in &scan.manifests {
+        let Some(dir) = manifest.parent() else { continue };
+        // Facts belong to the folder that holds the manifest (D11). A manifest
+        // in a directory with no folder row is a `plan_folders` disagreement,
+        // not something to attach to the repo root as a guess.
+        let Some(folder_id) = folder_ids.get(dir).copied() else { continue };
+        let o = apply_manifest(
+            pg,
+            ManifestJob {
+                repo_root,
+                manifest,
+                ecosystem,
+                folder_id,
+                folder_ids,
+                lockfiles: &scan.lockfiles,
+            },
+        )
+        .await;
+        out.local_deps += o.local_deps;
+        out.external_deps += o.external_deps;
+        out.deps_pinned_by_lockfile += o.deps_pinned_by_lockfile;
+        out.errors.extend(o.errors);
+    }
+}
+
+/// A Cargo root's `[workspace.package] version`, for a package that writes
+/// `version.workspace = true`.
+///
+/// `parse_manifest` reads `package.version` and gets a TABLE rather than a
+/// string there, so it returns `None` — and dbd's docs landed under `unknown`
+/// as a result. The inherited value is in the same file for a workspace root,
+/// which is the only manifest this is asked about.
+fn workspace_inherited_version(content: &str) -> Option<String> {
+    let v: toml::Value = content.parse().ok()?;
+    v.get("workspace")?.get("package")?.get("version")?.as_str().map(str::to_string)
+}
+
+/// If this repo ships a `sensei.library.json` at its root, register the
+/// library and group the packages it publishes (02b S1, S2).
+///
+/// THE MISSING TRIGGER. Every piece of this was already built —
+/// `read_manifest`, `ingest_manifest_at`, `replace_library_packages` — and
+/// `library_packages` still had zero rows, because the only two callers were a
+/// manual API endpoint and a task that requires a URL. Nothing ran it during a
+/// scan, so a library sitting on disk was never noticed.
+async fn ingest_library(
+    pg: &PgStore,
+    repo_root: &std::path::Path,
+    scan: &RepoScan,
+    out: &mut RepoResult,
+) {
+    let Some(m) = crate::libraries::read_manifest(repo_root) else {
+        return; // not a library. The common case, and not an error.
+    };
+    out.library = Some(m.library.clone());
+
+    // The ecosystem comes from the manifest AT THE REPO ROOT — rokkit's
+    // package.json makes it npm, dbd's Cargo.toml makes it cargo. It is never
+    // guessed from the name: `libraries` is keyed `(ecosystem, name)`, so a
+    // wrong ecosystem mints a second identity for one library and the grouping
+    // attaches to the wrong row. No root manifest means no answer, and this
+    // says so rather than picking one.
+    let Some(ecosystem) =
+        scan.manifests.iter().find(|(p, _)| p.parent() == Some(repo_root)).map(|(_, eco)| *eco)
+    else {
+        out.errors.push(format!(
+            "library {}: no manifest at the repo root, so its ecosystem is unknown — not registered",
+            m.library
+        ));
+        return;
+    };
+
+    // The library's OWN version, from the package manifest at the repo root —
+    // rokkit's package.json says 1.4.1. NOT `m.version`, which is the
+    // sensei.library.json's applies-to RANGE (`>=1.3`): a range is not a
+    // release, and storing one as a version key produced rows like `>=1.3`
+    // holding the local pages, which no pin can ever match.
+    let own_version =
+        scan.manifests.iter().find(|(p, _)| p.parent() == Some(repo_root)).and_then(|(p, eco)| {
+            let content = std::fs::read_to_string(p).ok()?;
+            let a = crate::adapters::manifest::registered_adapters()
+                .iter()
+                .find(|a| a.ecosystem() == *eco)?;
+            a.parse_manifest(&content).version.or_else(|| workspace_inherited_version(&content))
+        });
+    let library_id = match pg
+        .upsert_library(&m.library, ecosystem, own_version.as_deref(), None, None, None)
+        .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            out.errors.push(format!("upsert_library({}): {e}", m.library));
+            return;
+        }
+    };
+
+    match crate::libraries::ingest_manifest_at(pg, &library_id, repo_root).await {
+        Some((_, _, np)) => out.library_packages = np,
+        None => out.errors.push(format!("ingest_manifest_at({}): returned nothing", m.library)),
+    }
+
+    ingest_library_pages(pg, &library_id, repo_root, &m.library, out).await;
+}
+
+/// Walk a library's LOCAL docs corpus and store its pages (02b S7b.1).
+///
+/// The local route's trigger. `resolve_library_pages` has implemented this arm
+/// all along; nothing called it during a scan, so kavach sat with 15 `.txt`
+/// files in `docs/llms/` and ZERO pages — the content was already on disk and
+/// the system knew where it was.
+///
+/// Offline by construction: `LibSource::LocalDir` reads the filesystem, so this
+/// runs in the scan without putting network I/O anywhere near it.
+async fn ingest_library_pages(
+    pg: &PgStore,
+    library_id: &uuid::Uuid,
+    repo_root: &std::path::Path,
+    lib_name: &str,
+    out: &mut RepoResult,
+) {
+    use crate::indexer::lib_indexer::{LibSource, resolve_library_pages};
+
+    let source = LibSource::LocalDir(repo_root.to_string_lossy().to_string());
+    let pages = match resolve_library_pages(&source, lib_name).await {
+        Ok(p) => p,
+        Err(e) => {
+            // S7b.2/S7b.3. The error IS the staleness signal — recorded against
+            // the version so it is queryable, NOT swallowed into a log. Any
+            // pages already held are left alone: they are the last known-true
+            // content, and dropping them on a read error trades a stale answer
+            // for no answer.
+            //
+            // S7b.4: the local convention is `docs/llms/*.txt`, not markdown.
+            // A library with a rich `docs/` tree and no `docs/llms/` lands
+            // here, which is correct and confusing — so the recorded reason is
+            // the resolver's verbatim message, naming the path it looked in.
+            if let Err(e2) = pg.record_library_docs_error(library_id, Some(&e)).await {
+                out.errors.push(format!("record_library_docs_error({lib_name}): {e2}"));
+            }
+            out.library_docs_error = Some(e);
+            return;
+        }
+    };
+
+    for page in &pages {
+        // A local page's location is a filesystem path, so it belongs in
+        // `local_path`; `url` stays null rather than holding a path.
+        match pg
+            .upsert_library_page(
+                library_id,
+                &page.doc.title,
+                None,
+                Some(page.location.as_str()),
+                Some(&page.doc.summary),
+                Some(&page.doc.content),
+                page.source_type,
+                page.doc.component.as_deref(),
+                // package_name: the local walk sees files, not package
+                // membership — nothing in `docs/llms/list.txt` says it
+                // documents `@rokkit/ui`. `None` is "not stated"; inferring it
+                // from the component name would be the R4 guess.
+                None,
+                None,
+            )
+            .await
+        {
+            Ok(_) => out.library_pages += 1,
+            Err(e) => out.errors.push(format!("upsert_library_page({}): {e}", page.doc.title)),
+        }
+    }
+
+    if let Err(e) = pg.update_library_page_count(library_id).await {
+        out.errors.push(format!("update_library_page_count({lib_name}): {e}"));
+    }
+    // Docs are current: clear any staleness recorded by an earlier run.
+    if let Err(e) = pg.record_library_docs_error(library_id, None).await {
+        out.errors.push(format!("record_library_docs_error({lib_name}): {e}"));
+    }
+}
+
+/// The barrier (S1): every folder row, then every file row, then stop.
+///
+/// Returns `Err` rather than a half-written structure. A partial structure
+/// means the barrier never happened, and half a denominator is worse than
+/// none (03 §4) — so the folder loop aborts on the first failure and the
+/// previous-state read is propagated, never defaulted.
+async fn write_structure(
+    pg: &PgStore,
+    root_id: &uuid::Uuid,
+    repo_root: &std::path::Path,
+    root_folder_id: &uuid::Uuid,
+    project_id: Option<&uuid::Uuid>,
+    scan: &RepoScan,
+    out: &mut RepoResult,
+) -> Result<BTreeMap<std::path::PathBuf, uuid::Uuid>, String> {
+    let declared = declared_workspace_members(repo_root);
+    let fplan = structure::plan_folders(repo_root, &scan.manifest_dirs(), &declared, &scan.files);
+
+    // Folders first, parents before children — `plan_folders` guarantees that
+    // ordering, and it is what lets `parent_id` be resolved from the map
+    // rather than created on the fly, which would hide an ordering bug.
+    let mut ids: BTreeMap<std::path::PathBuf, uuid::Uuid> = BTreeMap::new();
+    ids.insert(repo_root.to_path_buf(), *root_folder_id);
+    for f in &fplan.folders {
+        if f.abs_path == repo_root {
+            continue; // written by `write_one_repo` as kind `git`
+        }
+        let parent = f.parent.as_ref().and_then(|p| ids.get(p.as_path())).copied();
+        let parent = parent.ok_or_else(|| {
+            format!("folder {} has no parent row — plan_folders ordering bug", f.abs_path.display())
+        })?;
+        let rel = f.abs_path.strip_prefix(repo_root).map_err(|e| e.to_string())?;
+        let name =
+            f.abs_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        // The workspace that DECLARES this module, resolved from its path to
+        // the folder id. `plan_folders` names WHICH root rather than a bare
+        // flag, so this is a map lookup — and it stays correct if a nested
+        // workspace root is ever detected.
+        let ws_root = f.workspace_root.as_ref().and_then(|w| ids.get(w.as_path())).copied();
+        let id = pg
+            .upsert_folder(
+                root_id,
+                f.kind,
+                &name,
+                &rel.to_string_lossy(),
+                &f.abs_path.to_string_lossy(),
+                Some(&parent),
+                // A module belongs to its repo's project — the 1:1 rule, with
+                // the modules inheriting rather than each minting its own.
+                project_id,
+                ws_root.as_ref(),
+            )
+            .await
+            .map_err(|e| format!("upsert_folder({}): {e}", rel.display()))?;
+        ids.insert(f.abs_path.clone(), id);
+        out.folders += 1;
+    }
+
+    // Then the files, one folder at a time. The plan is per FOLDER because
+    // `files` is keyed `(folder_id, file_path)` and `expected_files` is a
+    // per-folder denominator — a repo-wide plan would give every workspace
+    // member a denominator of zero and make the recursive rollup meaningless.
+    for (folder_abs, planned) in fplan.by_folder() {
+        let folder_id =
+            ids.get(folder_abs).copied().ok_or_else(|| format!("no id for {folder_abs:?}"))?;
+
+        // What the LAST scan recorded. Read before the walk's facts, because
+        // it supplies the hashes `file_facts` reuses for files whose mtime has
+        // not moved.
+        //
+        // The error is PROPAGATED, never defaulted to empty. An empty previous
+        // state is a real thing — a folder scanned for the first time — and a
+        // failed read that returned one would be indistinguishable from it:
+        // every file would classify as Added and re-parse, and `plan.removed`
+        // would be empty so nothing already-deleted would ever reconcile.
+        let previous: BTreeMap<String, FileFacts> = pg
+            .list_scan_state_full(&folder_id)
+            .await
+            .map_err(|e| format!("list_scan_state_full({folder_abs:?}): {e}"))?
+            .into_iter()
+            .map(|(path, mtime, hash)| (path, FileFacts { mtime, hash }))
+            .collect();
+
+        let current: BTreeMap<String, FileFacts> = planned
+            .iter()
+            .filter_map(|pf| {
+                let facts = file_facts(&pf.abs_path, previous.get(&pf.rel_path))?;
+                Some((pf.rel_path.clone(), facts))
+            })
+            .collect();
+
+        let plan = structure::plan_structure(&current, &previous);
+        out.added += plan.count(ChangeKind::Added);
+        out.changed += plan.count(ChangeKind::ContentChanged);
+        out.unchanged += plan.count(ChangeKind::Unchanged) + plan.count(ChangeKind::TouchedOnly);
+        out.removed += plan.removed.len();
+
+        for (rel, _) in &plan.files {
+            let Some(f) = current.get(rel) else { continue };
+            pg.upsert_file_row(&folder_id, rel, f.mtime, &f.hash, None)
+                .await
+                .map_err(|e| format!("upsert_file_row({rel}): {e}"))?;
+            out.files += 1;
+        }
+
+        // S3: the denominator, recorded AT the barrier from the plan — never
+        // recomputed later by a second count.
+        pg.set_folder_expected_files(&folder_id, plan.expected_files() as i64)
+            .await
+            .map_err(|e| format!("set_folder_expected_files({folder_abs:?}): {e}"))?;
+    }
+    Ok(ids)
+}
+
+/// **ONE FILE IN, ROWS OUT — the IO half of stages 4-6.**
+///
+/// The join `pipeline.rs` deliberately stopped short of: its header says stage
+/// 3 "writes NO nodes and NO edges, and enqueues no parse task", because R14
+/// puts the structure barrier first and the per-file work second. This is that
+/// second half, and it is the whole of what a parse task does.
+///
+/// Pure decisions stay where they were — [`index_file`] reads the file and
+/// [`persist::write`] writes the facts. Nothing is decided here; this executes.
+///
+/// **AN EMPTY READ IS A RESULT, NOT A FAILURE** (S2, §7). A file no adapter
+/// claims, or one that parsed to nothing, returns `Ok(None)`: there are no rows
+/// to write and no error to report. The caller records the reason from the
+/// returned [`FileIndex`] rather than inferring it from an absence — which is
+/// why the reason rides along instead of being flattened to `None`.
+///
+/// **THE FIRST PASS RESOLVES NOTHING, BY DESIGN.** `index_file` is handed
+/// `TypeHomes::unknown()` because one file may not reach for a repo-wide table
+/// (S5), so its references arrive `Unresolved` and `persist` keys them by the
+/// name it could not place (`TargetKey::Named`, against the nullable
+/// `target_id`/`target_name`). No heal PASS is needed: the fqn is the join key,
+/// so the file that DECLARES a target fills its node in on its own upsert and
+/// every edge already naming it is linked by that write.
+///
+/// Takes [`FileInput`] rather than its six fields loose: the type already
+/// exists for exactly this bundle, and a second parameter list naming the same
+/// things is how the two drift.
+pub async fn index_and_persist(
+    pg: &PgStore,
+    folder_id: &uuid::Uuid,
+    input: crate::indexer::index::FileInput<'_>,
+) -> Result<Option<crate::indexer::persist::Written>, String> {
+    let index = crate::indexer::index::index_file(input);
+    match index.indexed {
+        crate::indexer::index::Indexed::Read(facts) => {
+            // **RECONCILE, NOT A BARE WRITE.** `persist::write` only ADDS, so a
+            // call deleted from a source file would keep its edge for ever.
+            // `reconcile` is the re-index primitive — "write what it says now,
+            // remove what it stopped saying, and touch nothing that belongs to
+            // another file" (R10.6) — and it calls `persist::write` itself, so
+            // this is the same write plus the release of the claims this file
+            // no longer makes.
+            //
+            // `again` is the second read the brake needs, and the ONE exception
+            // R1 records to "no stage re-reads source bytes": reconcile has no
+            // IO of its own, so re-reading is the caller's business. Here it is
+            // the text we were handed — this function is given the bytes, so a
+            // re-read is the same bytes and the brake compares like with like.
+            let for_again = facts.clone();
+            let stated = crate::indexer::reconcile::Stated::Parsed(facts);
+            let again = move || Ok(crate::indexer::reconcile::Stated::Parsed(for_again.clone()));
+            let reconciled =
+                crate::indexer::reconcile::reconcile(pg, folder_id, &stated, &again).await?;
+            Ok(match reconciled.wrote {
+                crate::indexer::reconcile::Wrote::Facts(w) => Some(w),
+                crate::indexer::reconcile::Wrote::Nothing => None,
+            })
+        }
+        // No nodes and no edges, and the reason is already in `index`. Writing
+        // nothing is the correct outcome, so it is `Ok` — and it is `None`
+        // rather than an empty `Written`, which a caller could not tell from a
+        // file that genuinely wrote zero rows.
+        crate::indexer::index::Indexed::Empty(_) => Ok(None),
+    }
+}
+
+/// The sets a PER-FILE scan is told, owned so a [`World`] can borrow them.
+///
+/// **AN EMPTY WORLD IS SAFE BY CONSTRUCTION, AND THAT IS THE DESIGN RATHER THAN
+/// A COMPROMISE.** Four of [`World`]'s five fields are repo-wide artifacts of a
+/// completed pass, and each documents the same contract: *"Empty means 'not
+/// supplied', and then nothing is reclassified — the previous behaviour, and
+/// never a guess."* The rung that would call a member external guards on
+/// `!first_party_members.is_empty()`, so an unsupplied set reclassifies
+/// nothing. A file indexed alone therefore resolves what its OWN TEXT
+/// establishes (S7) and leaves the rest unresolved — never mis-filed as
+/// external.
+///
+/// That is heal-later in one sentence: the unresolved edge carries the name,
+/// and when the file that DECLARES the target is indexed, `persist`'s
+/// `OnMiss::CreateStub` has already minted that fqn's node and the declaring
+/// write fills it in. Nothing needs relinking because the id was never wrong.
+///
+/// `first_party` IS supplied: the package set is a fact the scan holds and the
+/// file is told, exactly like its package and module.
+pub struct TellFile {
+    first_party: std::collections::BTreeSet<String>,
+    members: std::collections::BTreeSet<String>,
+    declared: std::collections::BTreeSet<crate::indexer::facts::Fqn>,
+    returns: std::collections::BTreeMap<crate::indexer::facts::Fqn, String>,
+    scanned: std::collections::BTreeSet<crate::indexer::facts::Fqn>,
+}
+
+impl TellFile {
+    /// What the scan knows, for a file in `package`.
+    pub fn about(package: &str) -> Self {
+        Self {
+            first_party: [package.to_string()].into_iter().collect(),
+            members: std::collections::BTreeSet::new(),
+            declared: std::collections::BTreeSet::new(),
+            returns: std::collections::BTreeMap::new(),
+            scanned: std::collections::BTreeSet::new(),
+        }
+    }
+
+    pub fn world(&self) -> crate::indexer::resolve::World<'_> {
+        crate::indexer::resolve::World {
+            first_party: &self.first_party,
+            first_party_members: &self.members,
+            declared_members: &self.declared,
+            returns: &self.returns,
+            scanned: &self.scanned,
+        }
+    }
+}
+
+/// The package and module a file sits in, resolved FROM DISK.
+///
+/// The IO counterpart of [`super::placement`], which is pure and takes the
+/// manifest list as an argument. This is the half that goes and finds it: climb
+/// from the file to the repo root looking for a registered manifest filename,
+/// read it, and let the pure functions decide.
+///
+/// **THE HANDLER CLIMBS; THE ADAPTER NEVER DOES.** A language adapter is TOLD
+/// its package and module (`no_adapter_reads_the_filesystem` enforces it), so
+/// somebody has to resolve them first and that somebody is the task layer. Kept
+/// here rather than in `placement.rs` so the pure module stays testable without
+/// a filesystem.
+///
+/// `None` when no manifest at or above the file names a package — the same
+/// verdict `load_repo` reaches as `Skipped::Unplaced`. An unplaced file is NOT
+/// indexed: without a package there is no identity to mint, and inventing one
+/// would put every file of a manifest-less tree under a fabricated package.
+pub fn placement_on_disk(
+    file: &std::path::Path,
+    repo_root: &std::path::Path,
+    language: crate::indexer::facts::Language,
+) -> Option<crate::indexer::placement::Placement> {
+    let names = crate::adapters::manifest::all_manifest_filenames();
+    let mut dir = file.parent()?;
+    loop {
+        // Deterministic: the pure `owning_manifest` breaks a several-manifests
+        // -in-one-directory tie by NAME rather than by walk order (R6), so the
+        // candidates for this directory are sorted the same way before asking.
+        let mut here: Vec<std::path::PathBuf> =
+            names.iter().map(|n| dir.join(n)).filter(|p| p.is_file()).collect();
+        here.sort();
+        for manifest in &here {
+            let Ok(text) = std::fs::read_to_string(manifest) else { continue };
+            if let Some(package) = crate::indexer::placement::package_named_by(manifest, &text) {
+                return Some(crate::indexer::placement::placement_of(
+                    file, &package, dir, language,
+                ));
+            }
+        }
+        if dir == repo_root {
+            return None;
+        }
+        dir = dir.parent()?;
+    }
+}
+
+#[cfg(test)]
+mod parse_task {
+    use super::*;
+
+    /// **THE ONE MISSING JOIN: `index_file` -> `persist::write`.**
+    ///
+    /// Every piece of v2's per-file path is built and test-covered, and none of
+    /// it is reachable from production: `index_file` (stage 11's I8, "one file
+    /// in, nodes and edges out") and `persist::write` (stage 6) have no caller
+    /// between them. `pipeline.rs` stops at the structure barrier by its own
+    /// header — "writes NO nodes and NO edges, and enqueues no parse task" —
+    /// and `TaskKind::ProcessFile` still runs v1. So this is the seam, and it
+    /// is the whole of what a v2 rust cycle needs.
+    ///
+    /// **THE FIRST PASS RESOLVES NOTHING, AND THAT IS THE DESIGN RATHER THAN A
+    /// GAP.** `index_file` is handed `TypeHomes::unknown()` because one file may
+    /// not reach for a repo-wide table (S5). Its references therefore arrive as
+    /// `Resolution::Unresolved`, and `persist` already has the shape for that:
+    /// `TargetKey::Named` keys an edge by "the name it could not place" against
+    /// the nullable `target_id`/`target_name` columns. Healing needs no pass —
+    /// the fqn IS the join key, so when the file that DECLARES the target is
+    /// indexed, its upsert fills the node in and every edge already pointing at
+    /// that name is linked.
+    ///
+    /// So what this asserts is deliberately NOT "the edge resolved". It is that
+    /// the facts reached the database at all, which is the property the seam
+    /// owns. Resolution is the next file's business.
+    ///
+    /// MUTATION: drop the `persist::write` call from `index_and_persist` — the
+    /// read-back is empty and the first assertion names what it got.
+    #[tokio::test]
+    async fn a_parsed_file_reaches_the_database() {
+        let Ok(pg) = PgStore::connect_test().await else {
+            println!("no database — skipping");
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+
+        let rid = pg
+            .add_watch_root(&root.to_string_lossy(), "v2_parse_seam", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let repo = root.to_string_lossy().to_string();
+        pg.upsert_repo_kind(&rid, "git", "seam", &repo).await.unwrap();
+        let (folder_id,): (uuid::Uuid,) =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.folders WHERE abs_path = $1")
+                .bind(&repo)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+
+        // Stage 3's barrier: the `files` row exists before the parse, which is
+        // what lets node persistence fail closed on a missing one (R13).
+        pg.upsert_file_row(
+            &folder_id,
+            "src/lib.rs",
+            crate::db::pg_store::folders::BARRIER_MTIME,
+            crate::db::pg_store::folders::BARRIER_HASH,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let told = TellFile::about("p");
+        let world = told.world();
+
+        let written = index_and_persist(
+            &pg,
+            &folder_id,
+            crate::indexer::index::FileInput {
+                repo: &repo,
+                path: "src/lib.rs",
+                mode: crate::indexer::index::Mode::New,
+                package: "p",
+                module: "lib",
+                text: "pub struct Widget;\npub fn make() -> Widget { Widget }\n",
+                world: &world,
+            },
+        )
+        .await
+        .expect("the seam writes");
+
+        let stored = crate::indexer::persist::read_back(&pg, &folder_id).await.expect("read back");
+        assert!(
+            stored.symbols.iter().any(|s| s.name == "Widget"),
+            "the declarations the walk read must reach the database: wrote {written:?}, read \
+             back {:?}",
+            stored.symbols.iter().map(|s| s.name.as_str()).collect::<Vec<_>>()
+        );
+        assert!(
+            stored.symbols.iter().any(|s| s.name == "make"),
+            "every declaration, not just the first: {:?}",
+            stored.symbols.iter().map(|s| s.name.as_str()).collect::<Vec<_>>()
+        );
+
+        // **AND THE LADDER RAN.** This is the property the seam was missing:
+        // before `index_file` placed its references, every one came back
+        // `Reason::Unplaced` with no fqn, so persistence had nothing to point
+        // an edge at and wrote `target_name` with a null target. Now a
+        // reference the file's own text establishes is `Resolved`, which is
+        // what lets `TargetRef::Internal { on_miss: CreateStub }` mint the
+        // target node and reuse its id — no separate relink, and no
+        // `target_id` fix-up pass.
+        //
+        // Asserted on `target_fqn` rather than on a count, because a count
+        // passes on an edge that resolved to the wrong thing.
+        let resolved: Vec<&str> = stored
+            .references
+            .iter()
+            .filter_map(|r| match &r.target {
+                crate::indexer::persist::TargetRow::Resolved { fqn, .. } => Some(fqn.as_str()),
+                crate::indexer::persist::TargetRow::Unresolved { .. } => None,
+            })
+            .collect();
+        let unplaced = stored
+            .references
+            .iter()
+            .filter(|r| {
+                matches!(
+                    &r.target,
+                    crate::indexer::persist::TargetRow::Unresolved {
+                        reason: crate::indexer::facts::Reason::Unplaced,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(
+            unplaced, 0,
+            "`Reason::Unplaced` means the ladder never ran — it must be EMPTY once it has. \
+             Resolved targets were {resolved:?}"
+        );
+        assert!(
+            resolved.iter().any(|f| f.contains("Widget")),
+            "`make() -> Widget` must reach a RESOLVED target the writer can stub and reuse \
+             the id of: resolved {resolved:?}"
+        );
+
+        pg.remove_watch_root(&rid).await.ok();
+    }
+}
+
+#[cfg(test)]
+mod corpus {
+    use super::*;
+    use crate::tasks::progress::TaskEvent;
+
+    /// What to scan: `SENSEI_SCAN_DIR` if set, else the repo this crate lives
+    /// in (`crates/senseid` up two levels). The override is how the same
+    /// runner does the real rebuild over `~/Developer` instead of one repo.
+    fn scan_dir() -> std::path::PathBuf {
+        match std::env::var("SENSEI_SCAN_DIR") {
+            Ok(d) => std::path::PathBuf::from(d).canonicalize().expect("SENSEI_SCAN_DIR"),
+            Err(_) => std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .canonicalize()
+                .unwrap(),
+        }
+    }
+
+    /// The `folders_to_watch` row `dir` belongs under.
+    ///
+    /// Longest existing prefix wins. Creating a root nested inside another is
+    /// the failure this avoids: the same directory would then be described by
+    /// two trees with different `root_id`s, and `folder_ids_for_root` — which
+    /// scopes reconcile — would return a different set depending on which one
+    /// the caller started from.
+    async fn resolve_watch_root(pg: &PgStore, dir: &std::path::Path) -> uuid::Uuid {
+        let existing: Vec<(uuid::Uuid, String)> =
+            sqlx_core::query_as::query_as("SELECT id, path FROM sensei.folders_to_watch")
+                .fetch_all(pg.pool())
+                .await
+                .expect("list watch roots");
+
+        let best = existing
+            .iter()
+            .filter(|(_, p)| dir.starts_with(p))
+            .max_by_key(|(_, p)| p.len())
+            .map(|(id, _)| *id);
+        if let Some(id) = best {
+            return id;
+        }
+
+        let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.folders_to_watch(path, name, status)
+             VALUES($1, $2, 'watching'::sensei.watch_status)
+             ON CONFLICT (path) DO UPDATE SET name = EXCLUDED.name
+             RETURNING id",
+        )
+        .bind(dir.to_string_lossy().to_string())
+        .bind(dir.file_name().unwrap().to_string_lossy().to_string())
+        .fetch_one(pg.pool())
+        .await
+        .expect("create watch root");
+        id
+    }
+
+    /// The THREE INGESTION ROUTES, against the real rokkit / kavach / dbd —
+    /// local, github AT A VERSION TAG, and the published website (02b §3b).
+    ///
+    /// `#[ignore]`: network + database. Every library indexed so far arrived by
+    /// the LOCAL route, so S9's precedence had never ranked more than one
+    /// candidate. This is what puts three real routes in the table at once.
+    ///
+    /// The github arm is the one worth proving: `LibSource::GitHubTree`'s
+    /// `branch` field goes straight into the contents API's `?ref=`, which
+    /// resolves a TAG as readily as a branch — so docs can be pinned to the
+    /// release they describe rather than to whatever `develop` holds today.
+    ///
+    /// `cargo test -p senseid --bin senseid three_routes -- --ignored --nocapture`
+    /// Every stage is visible in the stream the UI already subscribes to
+    /// (08 S1/S4).
+    ///
+    /// Before this, `scan_and_write_structure` emitted NOTHING — stages 1, 2, 2b
+    /// and 3 ran silently, so a scan could only be waited on, not watched. The
+    /// mechanism was never missing; the stages simply never reached it.
+    ///
+    /// Asserted as START-AND-TERMINAL PER STAGE rather than as a total count:
+    /// "twelve events were emitted" is the kind of tally that is correct over
+    /// the wrong population. A stage that emits a start and never finishes is
+    /// exactly what leaves a UI spinning forever, and only the pairing catches
+    /// it.
+    #[tokio::test]
+    async fn every_stage_reaches_the_progress_stream() {
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname=\"emit\"\nversion=\"0.1.0\"")
+            .unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn a() {}").unwrap();
+
+        let root_id = resolve_watch_root(&pg, tmp.path()).await;
+        let (tx, mut rx) = tokio::sync::broadcast::channel(256);
+        scan_and_write_structure(&pg, tmp.path(), &root_id, StageEvents::to(&tx)).await;
+
+        let mut started: BTreeSet<String> = BTreeSet::new();
+        let mut ended: BTreeSet<String> = BTreeSet::new();
+        while let Ok(evt) = rx.try_recv() {
+            match evt {
+                TaskEvent::StageStarted { stage, .. } => {
+                    started.insert(stage);
+                }
+                TaskEvent::StageCompleted { stage, .. } | TaskEvent::StageFailed { stage, .. } => {
+                    ended.insert(stage);
+                }
+                _ => {}
+            }
+        }
+
+        let expected: BTreeSet<String> =
+            ["scan_root", "scan_repo", "library_discovery", "structure_write"]
+                .into_iter()
+                .map(String::from)
+                .collect();
+        assert_eq!(started, expected, "every stage announces itself");
+        assert_eq!(
+            ended, expected,
+            "and every stage reaches a terminal event — a stage that starts and never ends is \
+             what leaves the UI showing work that is already over"
+        );
+
+        pg.remove_watch_root(&root_id).await.ok();
+    }
+
+    /// **No silent caps** (08 S5). A stage that could not see everything says
+    /// so, in the event, at the one moment it is knowable.
+    ///
+    /// A directory the scan could not descend is coverage it did not have.
+    /// Reporting only "3 roots found" reads as having seen the whole tree, and
+    /// nothing downstream can tell that reading from a complete one — which is
+    /// the shape of wrong answer R4 ranks below no answer.
+    #[tokio::test]
+    async fn a_scan_that_could_not_see_everything_says_so() {
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname=\"cap\"\nversion=\"0.1.0\"")
+            .unwrap();
+
+        let locked = tmp.path().join("locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        // Running as root defeats the fixture — permissions do not apply — and a
+        // test that silently passes because it measured nothing is worse than
+        // one that is absent.
+        if std::fs::read_dir(&locked).is_ok() {
+            return;
+        }
+
+        let root_id = resolve_watch_root(&pg, tmp.path()).await;
+        let (tx, mut rx) = tokio::sync::broadcast::channel(256);
+        scan_and_write_structure(&pg, tmp.path(), &root_id, StageEvents::to(&tx)).await;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).ok();
+        }
+
+        let mut capped = None;
+        while let Ok(evt) = rx.try_recv() {
+            if let TaskEvent::StageCompleted { stage, capped: c, .. } = evt
+                && stage == "scan_root"
+            {
+                capped = Some(c);
+            }
+        }
+        let capped = capped.expect("scan_root completed, so it reported").expect(
+            "a directory it could not descend is a CAP on coverage and must be named in the event",
+        );
+        assert!(
+            capped.contains("unreadable"),
+            "and the cap says what was missed, not merely that something was: {capped}"
+        );
+
+        pg.remove_watch_root(&root_id).await.ok();
+    }
+
+    /// One progress mechanism, not two (08 §2, §5).
+    ///
+    /// An earlier draft of the spec proposed an append-only
+    /// `~/.sensei/scan-progress.jsonl` alongside the SSE stream. It was
+    /// withdrawn, because two mechanisms mean the UI and the daemon can disagree
+    /// about what a scan is doing and neither is wrong. This is what keeps the
+    /// withdrawal from being re-invented by someone who did not read the spec.
+    #[test]
+    fn no_second_progress_channel_exists() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut read = 0;
+        for entry in walkdir::WalkDir::new(&root) {
+            let entry = entry.expect("the source tree must be readable");
+            if entry.path().extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            // Only PRODUCTION code. A test may name the banned thing — this one
+            // does, in its own assertion — and forbidding that would make the
+            // guard unable to say what it guards against. Same split the fqn
+            // guard uses, and the same reason.
+            let body = std::fs::read_to_string(entry.path()).expect("a source file reads");
+            let body = crate::indexer::outside_tests(&body);
+            let relative = entry.path().strip_prefix(&root).unwrap().display().to_string();
+            read += 1;
+            for banned in ["scan-progress", "scan_progress", "progress.jsonl"] {
+                assert!(
+                    !body.contains(banned),
+                    "{relative} names `{banned}` — a second progress channel beside the SSE \
+                     stream. Two mechanisms can disagree about what a scan is doing, which is \
+                     why the JSONL draft was withdrawn; extend `TaskEvent` instead."
+                );
+            }
+        }
+        assert!(read > 100, "the guard read {read} files, so it nearly passed vacuously");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn three_routes_ingest_the_same_libraries() {
+        use crate::indexer::lib_indexer::{LibSource, resolve_library_pages};
+
+        let pg = PgStore::connect_test().await.expect("connect");
+
+        /// One library to ingest by all three routes:
+        /// `(library, ecosystem, owner, repo, tag, website llms URL)`.
+        type SeedLibrary = (
+            &'static str,
+            &'static str,
+            &'static str,
+            &'static str,
+            &'static str,
+            Option<&'static str>,
+        );
+
+        // The website URLs are the ones each library's OWN
+        // `sensei.library.json` declares under `llms.index` — NOT a guessed
+        // `/llms.txt`, and NOT GitHub's `homepage` field. Both of those led
+        // somewhere wrong: kavach's repo homepage points at an unrelated
+        // application, and `/llms.txt` is not where either library publishes.
+        let libs: &[SeedLibrary] = &[
+            (
+                "rokkit",
+                "npm",
+                "devuser",
+                "rokkit",
+                "v1.4.1",
+                Some("https://rokkit.sensei-hq.com/llms/index.txt"),
+            ),
+            (
+                "kavach",
+                "npm",
+                "devuser",
+                "kavach",
+                "v1.1.3",
+                Some("https://kavach.sensei-hq.com/llms/llms.txt"),
+            ),
+            (
+                "dbd",
+                "cargo",
+                "sensei-hq",
+                "dbd",
+                "v0.12.6",
+                Some("https://dbd.sensei-hq.com/llms.txt"),
+            ),
+        ];
+
+        for (name, eco, owner, repo, tag, site) in libs {
+            let lib_id = pg
+                .upsert_library(name, eco, None, None, None, None)
+                .await
+                .unwrap_or_else(|e| panic!("{name}: upsert_library: {e}"));
+
+            // ── github, AT THE VERSION TAG ───────────────────────────────
+            let src = LibSource::GitHubTree {
+                owner: (*owner).to_string(),
+                repo: (*repo).to_string(),
+                branch: (*tag).to_string(),
+                path: "docs/llms".to_string(),
+            };
+            // The version these docs describe IS the tag, minus the `v`.
+            let version = tag.trim_start_matches('v');
+            match resolve_library_pages(&src, name).await {
+                Ok(pages) => {
+                    let mut n = 0;
+                    for page in &pages {
+                        if pg
+                            .upsert_library_page(
+                                &lib_id,
+                                &page.doc.title,
+                                Some(page.location.as_str()),
+                                None,
+                                Some(&page.doc.summary),
+                                Some(&page.doc.content),
+                                page.source_type,
+                                page.doc.component.as_deref(),
+                                None,
+                                Some(version),
+                            )
+                            .await
+                            .is_ok()
+                        {
+                            n += 1;
+                        }
+                    }
+                    println!("  {name:8} github @{tag:10} -> {n:4} pages (version {version})");
+                    assert!(n > 0, "{name}: the tag yielded no pages");
+                }
+                Err(e) => panic!("{name}: github @{tag} failed: {e}"),
+            }
+
+            // ── website ──────────────────────────────────────────────────
+            let Some(url) = site else {
+                println!("  {name:8} website              -- publishes no llms.txt");
+                continue;
+            };
+            match resolve_library_pages(&LibSource::Website((*url).to_string()), name).await {
+                Ok(pages) => {
+                    let mut n = 0;
+                    for page in &pages {
+                        if pg
+                            .upsert_library_page(
+                                &lib_id,
+                                &page.doc.title,
+                                Some(page.location.as_str()),
+                                None,
+                                Some(&page.doc.summary),
+                                Some(&page.doc.content),
+                                page.source_type,
+                                page.doc.component.as_deref(),
+                                None,
+                                // A site documents whatever is current. S11:
+                                // `latest` IS a version, and recording it as
+                                // one keeps the dedup key total.
+                                Some("latest"),
+                            )
+                            .await
+                            .is_ok()
+                        {
+                            n += 1;
+                        }
+                    }
+                    println!("  {name:8} website              -> {n:4} pages (version latest)");
+                    assert!(n > 0, "{name}: the website yielded no pages");
+                }
+                Err(e) => panic!("{name}: website {url} failed: {e}"),
+            }
+        }
+
+        // ── S9 across THREE REAL ROUTES ──────────────────────────────────
+        // Until now every library arrived by the local route, so the
+        // precedence had never ranked more than one candidate. dbd now holds
+        // 0.13.0 (local, its working tree), 0.12.6 (github, the tag) and
+        // `latest` (website) — three sources, three versions.
+        use crate::libraries::docs_source::{DocCandidate, DocRoute, VersionFit, choose_docs};
+        let dbd = [
+            DocCandidate { route: DocRoute::Local, version: Some("0.13.0".into()) },
+            DocCandidate { route: DocRoute::GitHub, version: Some("0.12.6".into()) },
+            DocCandidate { route: DocRoute::Website, version: Some("latest".into()) },
+        ];
+
+        // A project ON the released version gets the GITHUB tag — not the
+        // website, which outranks it, and not the local tree that is ahead.
+        // This is the inversion the whole rule exists for.
+        let pinned = choose_docs("0.12.6", &dbd).unwrap();
+        println!("\n  S9  pin 0.12.6 -> {:?} {:?}", pinned.route, pinned.fit);
+        assert_eq!(pinned.route, DocRoute::GitHub);
+        assert_eq!(pinned.fit, VersionFit::Exact);
+
+        // A project on a version NOBODY holds gets the closest, LABELLED.
+        let other = choose_docs("0.12.0", &dbd).unwrap();
+        println!("  S9  pin 0.12.0 -> {:?} {:?}", other.route, other.fit.label());
+        assert_eq!(other.route, DocRoute::GitHub, "0.12.6 is closer than 0.13.0");
+        assert!(other.fit.label().is_some(), "a wrong-version answer must say so");
+    }
+
+    /// Run stages 1-3 against THIS repository and write the structure.
+    ///
+    /// `#[ignore]` because it needs a database and writes real rows — the same
+    /// reason stage 2's corpus check is ignored. Run it deliberately:
+    ///
+    /// ```text
+    /// cargo test -p senseid --lib indexer::pipeline::corpus -- --ignored --nocapture
+    /// ```
+    ///
+    /// Defaults to `sensei_test`. Point it at another database with
+    /// `TEST_DATABASE_URL`.
+    #[tokio::test]
+    #[ignore]
+    async fn scan_this_repo_and_write_structure() {
+        let pg = PgStore::connect_test().await.expect("connect");
+        let root = scan_dir();
+
+        // The watch root every folder hangs off. Resolve to the LONGEST
+        // EXISTING root that contains the scan dir before creating one:
+        // `~/Developer` is already a watch root here, and adding a
+        // second one nested inside it would give this repo's folders a
+        // different root_id from every sibling repo's — two trees describing
+        // one directory. Only a scan dir under no existing root gets a new one.
+        let root_id = resolve_watch_root(&pg, &root).await;
+
+        let t = std::time::Instant::now();
+        let summary = scan_and_write_structure(&pg, &root, &root_id, StageEvents::none()).await;
+        let elapsed = t.elapsed();
+
+        println!("\n── stages 1-3 over {} ──", root.display());
+        println!("roots found     {}", summary.roots_found);
+        println!("folders written {}", summary.total_folders());
+        println!("files written   {}", summary.total_files());
+        println!("manifests       {}", summary.total_manifests());
+        let ext: u32 = summary.repos.iter().map(|r| r.external_deps).sum();
+        let loc: u32 = summary.repos.iter().map(|r| r.local_deps).sum();
+        let pinned: u32 = summary.repos.iter().map(|r| r.deps_pinned_by_lockfile).sum();
+        println!("external deps   {ext} ({pinned} corrected by a lockfile)");
+        println!("local deps      {loc}");
+        let libs: Vec<&RepoResult> = summary.repos.iter().filter(|r| r.library.is_some()).collect();
+        println!("libraries       {}", libs.len());
+        for l in &libs {
+            println!(
+                "  library {:14} packages={:<4} pages={:<5} {}",
+                l.library.as_deref().unwrap_or(""),
+                l.library_packages,
+                l.library_pages,
+                l.library_docs_error.as_deref().unwrap_or("")
+            );
+        }
+        for r in &summary.repos {
+            println!(
+                "  {} -> repo={:?} folders={} files={} manifests={} lockfiles={} submodules={} \
+                 added={} changed={} unchanged={} removed={}",
+                r.abs_path,
+                r.repository_id.is_some(),
+                r.folders,
+                r.files,
+                r.manifests,
+                r.lockfiles,
+                r.submodules,
+                r.added,
+                r.changed,
+                r.unchanged,
+                r.removed
+            );
+        }
+        let errors = summary.errors();
+        for e in &errors {
+            println!("  ERROR {e}");
+        }
+        println!("elapsed         {elapsed:?}\n");
+
+        assert!(errors.is_empty(), "structure write reported failures");
+        assert!(summary.roots_found >= 1, "at least one repo root");
+        assert!(summary.total_files() > 1_000, "this repo has thousands of files");
+        assert!(
+            summary.total_manifests() >= 18,
+            "stage 2 measured 18 manifests in this repo alone"
+        );
+    }
+}

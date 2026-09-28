@@ -377,6 +377,43 @@ pub(crate) struct AddRootBody {
     pub excluded: Vec<String>,
 }
 
+/// One exclusion entry, resolved against its root and checked against disk.
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct ExclusionCheck {
+    pub entry: String,
+    pub resolved: String,
+    pub exists: bool,
+}
+
+/// Resolve each exclusion against `root` and report whether it names a real
+/// directory.
+///
+/// Exists because an exclusion that resolves nowhere is otherwise a SILENT
+/// NO-OP: `root_exclusion_prefixes` joins `root + entry`, the join points at
+/// nothing, and the scanner indexes the very content the user excluded. Live
+/// cost of that silence: 329,087 nodes of a vendored Node/OpenSSL tree — 45% of
+/// the graph — indexed from a path that HAD an exclusion entry, which was simply
+/// missing one path segment.
+///
+/// Resolution goes through [`crate::db::pg_store::folders::resolve_exclusion`],
+/// the same function the scanner and watcher resolve with, so this check cannot
+/// disagree with what will actually be matched.
+///
+/// A non-existent path is REPORTED, not rejected: excluding a directory before
+/// creating it is legitimate, and a hard failure would block it. The point is
+/// that the caller can see it.
+pub(crate) fn check_exclusions(root: &str, excluded: &[String]) -> Vec<ExclusionCheck> {
+    excluded
+        .iter()
+        .filter(|e| !e.trim().is_empty())
+        .map(|entry| {
+            let resolved = crate::db::pg_store::folders::resolve_exclusion(root, entry);
+            let exists = std::path::Path::new(&resolved).is_dir();
+            ExclusionCheck { entry: entry.clone(), resolved, exists }
+        })
+        .collect()
+}
+
 /// Add a watch root to the DB immediately (synchronous) — does not start scanning.
 /// The Scan page is responsible for calling POST /api/scan to trigger the actual scan.
 ///
@@ -398,6 +435,20 @@ pub(crate) async fn add_watch_root(
         .and_then(|n| n.to_str())
         .unwrap_or("root")
         .to_string();
+    // Resolve every exclusion and check it names a real directory. A miss is
+    // NOT fatal (excluding a not-yet-created path is legitimate) but it is
+    // logged and returned, because the alternative — silent acceptance — is how
+    // an entry missing one path segment let 329,087 vendored nodes into the
+    // graph with nothing reporting it.
+    let checks = check_exclusions(&expanded, &body.excluded);
+    for c in checks.iter().filter(|c| !c.exists) {
+        tracing::warn!(
+            entry = %c.entry, resolved = %c.resolved,
+            "add_watch_root: exclusion resolves to a path that does not exist — it will match \
+             NOTHING and the content will be indexed"
+        );
+    }
+
     let excluded_json = serde_json::Value::Array(
         body.excluded.iter().map(|s| serde_json::Value::String(s.clone())).collect(),
     );
@@ -413,7 +464,15 @@ pub(crate) async fn add_watch_root(
         let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(queue);
         match w_mutex.lock() {
             Ok(mut w) => {
-                w.register(std::path::PathBuf::from(&expanded), body.excluded.clone());
+                // RESOLVED prefixes, not the raw entries. `scan.rs` registers
+                // the watcher with `root_exclusion_prefixes` output; passing the
+                // raw relative form here meant the watcher saw a different shape
+                // depending on which path registered it — the reason it had
+                // grown its own two-form matcher.
+                w.register(
+                    std::path::PathBuf::from(&expanded),
+                    checks.iter().map(|c| c.resolved.clone()).collect(),
+                );
                 w.start().is_ok()
                     && *w.status() == crate::watcher::root_watcher::WatcherStatus::Watching
             }
@@ -429,6 +488,10 @@ pub(crate) async fn add_watch_root(
 
     Ok(Json(serde_json::json!({
         "ok": true, "id": id, "path": expanded, "excluded": body.excluded,
+        // What the exclusions actually RESOLVE to, and whether each names a real
+        // directory — so a typo is visible at the moment it is made rather than
+        // discovered later as unexpectedly-indexed content.
+        "exclusionChecks": checks,
     })))
 }
 
@@ -479,12 +542,13 @@ pub(crate) async fn update_watch_root(
 
     let mut pruned_folders: u64 = 0;
     if let Some(new_list) = body.excluded.as_ref() {
-        let abs = |entry: &str| {
-            format!("{}/{}", root_path.trim_end_matches('/'), entry.trim_start_matches('/'))
-        };
         // Added entries → delete the matching subtree (folders + children).
         for entry in new_list.iter().filter(|e| !old_excluded.contains(*e)) {
-            pruned_folders += state.pg.prune_under_prefix(&abs(entry)).await.unwrap_or_else(|e| {
+            // The SAME resolver the live watcher is registered with, so a stored
+            // exclusion cannot gate the watcher while pruning nothing. A second
+            // copy of this formula is exactly how that happens.
+            let prefix = crate::db::pg_store::folders::resolve_exclusion(&root_path, entry);
+            pruned_folders += state.pg.prune_under_prefix(&prefix).await.unwrap_or_else(|e| {
                 tracing::warn!(error = %e, entry, "update_watch_root: prune excluded subtree failed"); 0
             });
         }
@@ -746,4 +810,50 @@ pub(crate) async fn stop() -> Json<serde_json::Value> {
         std::process::exit(0);
     });
     Json(serde_json::json!({"ok": true}))
+}
+
+#[cfg(test)]
+mod exclusion_tests {
+    use super::*;
+
+    /// An exclusion that resolves to a path which does not exist is a SILENT
+    /// NO-OP today: `root_exclusion_prefixes` joins `root + entry`, the join
+    /// points nowhere, and the scanner happily indexes the content the user
+    /// meant to exclude. That is how 329,087 nodes of a vendored Node/OpenSSL
+    /// tree — 45% of the graph — got indexed from a path that HAD an exclusion
+    /// entry: the entry read `sample-board/…` when the real path was
+    /// `group-a/sample-board/…`, so the resolved prefix matched nothing and
+    /// nothing said so.
+    ///
+    /// Reporting `resolved` + `exists` back to the caller turns a typo into
+    /// something visible at the moment it is made.
+    ///
+    /// Breaking mutation: make `exists` always true — the typo case stops being
+    /// distinguishable from the real one.
+    #[test]
+    fn an_exclusion_that_resolves_nowhere_is_reported_not_silently_accepted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_string_lossy().to_string();
+        std::fs::create_dir_all(tmp.path().join("group-a/vendored")).unwrap();
+
+        let checks =
+            check_exclusions(&root, &["group-a/vendored".to_string(), "vendored".to_string()]);
+        assert_eq!(checks.len(), 2);
+
+        assert_eq!(checks[0].resolved, format!("{root}/group-a/vendored"));
+        assert!(checks[0].exists, "the correct entry resolves to a real directory");
+
+        assert_eq!(checks[1].resolved, format!("{root}/vendored"));
+        assert!(
+            !checks[1].exists,
+            "the entry missing its `group-a/` segment resolves nowhere — exactly the live \
+             typo, and it must be REPORTED rather than stored silently"
+        );
+
+        // Leading/trailing slashes are normalised by the shared resolver, so a
+        // second copy of that rule cannot drift from it.
+        let checks = check_exclusions(&root, &["/group-a/vendored/".to_string()]);
+        assert_eq!(checks[0].resolved, format!("{root}/group-a/vendored"));
+        assert!(checks[0].exists);
+    }
 }

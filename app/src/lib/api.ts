@@ -16,6 +16,8 @@ import type {
   SessionReplayResponse, McpServerRow, McpServerToolsManifest,
   ObservatoryToday, ObservatoryFtr, ProjectOverview,
   InsightsBoard, LogRow, ScheduledTask,
+  MetricStatusResponse, MetricStatusSummary, MetricActivationOutcome,
+  SyncStateResponse,
   IntakeGuide, PlaybookRecommendation,
   ProvisionModel, ProvisionPhase,
 } from './types.js';
@@ -33,6 +35,8 @@ import type {
 import type { ProjectHealth } from './metrics/health-radar.js';
 
 export type { DaySessions, DrilldownSession, ToolUsage };
+
+import type { PersonaWire } from './personas.svelte.js';
 
 export type ApiError = { status: number; message: string } | { status: 0; message: string };
 
@@ -168,7 +172,55 @@ export function senseiApi(port: number) {
     }
   }
 
+  // Error-propagating PATCH returning the parsed body. Same daemon-message
+  // extraction as `tryPutJson`: on a refusal the endpoint's own text is the
+  // useful part (a dōjō 403/404 travels through the daemon's 502 as a message),
+  // and collapsing it to "Bad Gateway" would strip the reason.
+  async function tryPatchJson<T>(path: string, body: unknown): Promise<ApiResult<T>> {
+    try {
+      const res = await fetch(`${base}${path}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) return { ok: true, data: await res.json() as T };
+      let message = res.statusText;
+      try {
+        const j = await res.json() as { error?: string };
+        if (j && typeof j.error === 'string' && j.error) message = j.error;
+      } catch { /* non-JSON error body — keep the status text */ }
+      return { ok: false, error: { status: res.status, message } };
+    } catch (e) {
+      return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
+    }
+  }
+
   return {
+    // ── Auth ──────────────────────────────────────────────────────────────
+    // Result-based on purpose. A failed read of the credential's standing must
+    // NOT collapse into a fallback body: `{}` is indistinguishable from a
+    // daemon reporting a shape we do not understand, and either way the caller
+    // would be told something about a credential we never asked about.
+    tryGetAuthStatus: (persona = 'default') =>
+      tryGet<Record<string, unknown>>(`/api/auth/status?persona=${encodeURIComponent(persona)}`),
+
+    /** Every identity and what each one needs. Result-based: a failed read must
+     *  not become `[]`, which reads as "you have no identities". */
+    tryGetPersonas: () => tryGet<{ personas: PersonaWire[] }>('/api/auth/personas'),
+
+    /** Begin the PKCE flow. The daemon returns a URL rather than opening one —
+     *  it may be headless — so the caller owns the browser.
+     *
+     *  `expectedLogin` is passed through to GitHub so it preselects the right
+     *  account. Without it a browser already signed in to another account
+     *  quietly re-links THAT one — a success as the wrong person. */
+    tryStartSignIn: (persona = 'default', expectedLogin: string | null = null) =>
+      tryPost<{ authorizeUrl?: string }>(
+        `/api/auth/signin?persona=${encodeURIComponent(persona)}` +
+          (expectedLogin ? `&github_login=${encodeURIComponent(expectedLogin)}` : ''),
+        {},
+      ),
+
     // ── Health ────────────────────────────────────────────────────────────
     getHealth: () => get<Record<string, unknown>>('/health', {}),
 
@@ -782,6 +834,21 @@ export function senseiApi(port: number) {
     removeWatchRoot: (id: string) =>
       del(`/api/scan/roots/${enc(id)}`),
 
+    /**
+     * Replace one root's scan exclusions.
+     *
+     * A FULL REPLACE, which is what the endpoint is: it diffs the new list
+     * against the stored one to decide which subtrees to prune and which to
+     * re-scan. A delta would leave it unable to tell a removal from an omission.
+     *
+     * Error-propagating: an exclusion that appears set but was not stored means
+     * the sweep continues while the screen says it stopped.
+     */
+    updateWatchRoot: (id: string, excluded: string[]) =>
+      tryPutJson<{ ok: boolean; excluded: string[] }>(
+        `/api/scan/roots/${enc(id)}`, { excluded },
+      ),
+
     scanFolder: (root: string, maxDepth = 3) =>
       post<{ ok: boolean; scanning: boolean }>(
         '/api/scan', { root, max_depth: maxDepth }, { ok: false, scanning: false },
@@ -1065,8 +1132,11 @@ export function senseiApi(port: number) {
     // instead of a fabricated rewrite — the UI shows the error, keeps the
     // original. On success the daemon flips `generalised = true` and stores the
     // rewrite, so the caller re-fetches to reflect the new chip state.
+    // `example` is a SYNTHETIC illustration minted by the same rewrite; it is
+    // null when the model produced none — an absent illustration is not a failed
+    // generalisation, and the daemon never substitutes one.
     generaliseMemory: (id: string) =>
-      tryPost<{ id: string; original: string; generalised: string }>(
+      tryPost<{ id: string; original: string; generalised: string; example: string | null }>(
         `/api/knowledge/memories/${enc(id)}/generalise`, {},
       ),
 
@@ -1269,6 +1339,53 @@ export function senseiApi(port: number) {
 
     putCollectivePreferences: (body: CollectivePreferences) =>
       tryPutJson<CollectivePreferences>('/api/preferences/collective', body),
+
+    // ── Metric computation status + activation (Settings · Metrics) ──────────
+    // Two reads, because "every repository × every metric" is a cross join and
+    // unbounded (10.9M rows in sensei_test): the SUMMARY is aggregated in SQL and
+    // bounded by repository count; the per-metric rows are one repository at a
+    // time. Both carry the reason vocabulary, so no row's code renders as a slug.
+    //
+    // Error-propagating throughout: a failed read here is a real error, and
+    // showing an empty metric list would read as "nothing to configure".
+    tryGetMetricStatusSummary: () =>
+      tryGet<MetricStatusSummary>('/api/metrics/status/summary'),
+
+    /** `repo` is a repo_key OR a repository uuid — a local-only repository has
+     *  no key, so the uuid is the only handle that always works. */
+    tryGetMetricStatus: (repo: string) =>
+      tryGet<MetricStatusResponse>(`/api/metrics/status?repo=${enc(repo)}`),
+
+    /**
+     * Switch one metric on or off for one repository under one tenant.
+     *
+     * A PROXY, not a local write: `dojo.metric_activations` is the tenant's
+     * record, and the daemon only reads the consequence back through the sync
+     * plan. So the response is the dōjō's re-read ruling, and the local
+     * `deactivated` column does not change until the next sync.
+     *
+     * `persona` is the KEYCHAIN SESSION SLOT (`personas.session_slot`), not a
+     * display label — signing against the label addresses a different credential
+     * or none. The tenant is deliberately NOT a parameter: the dōjō derives it
+     * from the caller's own repositories, so one dōjō's member cannot write
+     * another's cost decision.
+     */
+    patchMetricActivation: (
+      persona: string,
+      repoKey: string,
+      metric: string,
+      enabled: boolean,
+    ) =>
+      tryPatchJson<MetricActivationOutcome>('/api/dojo/metric-activation', {
+        persona, repo_key: repoKey, metric, enabled,
+      }),
+
+    // ── Dōjō sync state (Settings · Dōjō) ────────────────────────────────────
+    // When each entity last AGREED with the dōjō, and what went wrong where it
+    // has not. Error-propagating: an empty list on a failed read would say
+    // "everything is fine", which for a sync surface is the most expensive lie
+    // available.
+    tryGetDojoSyncState: () => tryGet<SyncStateResponse>('/api/dojo/sync-state'),
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     stop: () => post('/stop', {}, {}),

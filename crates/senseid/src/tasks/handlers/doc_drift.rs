@@ -85,6 +85,16 @@ mod tests {
             .unwrap();
         let fid = pg.upsert_repo(&root, "drift-repo", &abs).await.unwrap();
         pg.set_folder_project(&fid, &pid, "primary", None).await.unwrap();
+        // Stage 3's barrier (R14) first: `nodes.file_id` is a foreign key into
+        // `sensei.files` (R13), so the file a doc node names has to be tracked
+        // before the node can be written. The scan does this; a fixture calling
+        // the writer directly has to do it too.
+        {
+            use crate::db::pg_store::graph_seed::SeedGraph;
+            for f in ["README.md", "src/events.rs"] {
+                pg.seed_only_file(&fid, f).await.unwrap();
+            }
+        }
         pg.merge_doc(&fid, "README", "README.md").await.unwrap();
 
         let task = Task::new(TaskKind::ScanDocDrift, "", &pid.to_string());

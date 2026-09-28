@@ -14,18 +14,10 @@ create table if not exists sessions (
 , corrections              integer     not null default 0
 , tokens_in                integer
 , tokens_out               integer
--- Session-total usage SPLIT. `tokens_in` above keeps its meaning (all input the
--- model processed) so existing consumers are untouched; these carry the parts.
--- Cache reads are ~96-98% of input across every source measured and bill far
--- cheaper, so anything reading cost off the folded total is ~8x high AND moves
--- the wrong way as caching improves.
 , tokens_fresh     integer     -- input EXCLUDING cache (the expensive part)
 , cache_read       integer
 , cache_write      integer
 , tokens_reasoning integer     -- where the source separates thinking (OpenCode)
--- Metered cost in whole currency units, where the source knows it (OpenCode).
--- 0.0 is a REAL reading on a subscription plan — distinct from NULL, "not
--- reported". Subscription cost is user-configured; see crate::cost.
 , metered_cost     numeric
 , duration                 interval
 , module                   text
@@ -136,3 +128,7 @@ comment on column sessions.process_analyzed_at
 set to now() after a successful pass. Cleared when a transcript re-ingest bumps
 the session so its judgments are recomputed. props.process holds the judgments;
 activity.session_process_evidence holds the cited turns.';
+comment on column sessions.metered_cost
+     is 'Metered cost in whole currency units, where the source knows it (OpenCode). 0.0 is a REAL reading on a subscription plan — distinct from NULL, "not reported". Subscription cost is user-configured; see crate::cost.';
+comment on column sessions.tokens_fresh
+     is 'Fresh (uncached) input tokens for the session. `tokens_in` keeps its meaning as the folded total of everything the model processed; this is its uncached part. Split because cache reads are 96-98% of input and bill far cheaper, so cost read off the folded total is roughly 8x high. See docs/database/activity.md.';

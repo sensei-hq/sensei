@@ -26,7 +26,7 @@ pub(crate) fn file_mtime_ms(path: &std::path::Path) -> Option<i64> {
 }
 
 /// SHA-256 hex of a file's bytes — the authoritative content-change signal
-/// recorded in `scan_state`. This is the ONLY read the change-detection does,
+/// recorded in `sensei.files`. This is the ONLY read the change-detection does,
 /// and it runs only for files the cheap mtime gate flagged as candidates (an
 /// unchanged file is never hashed). Returns `None` if the file can't be read.
 pub(crate) fn hash_file(path: &std::path::Path) -> Option<String> {
@@ -39,7 +39,7 @@ pub(crate) fn hash_file(path: &std::path::Path) -> Option<String> {
 
 /// Incremental-index fingerprint: `(mtime_ms, sha256_hex)`. The mtime gates
 /// re-indexing cheaply; the content hash is the authoritative change signal
-/// recorded in `scan_state`. Returns `None` if the file can't be read.
+/// recorded in `sensei.files`. Returns `None` if the file can't be read.
 pub(crate) fn file_fingerprint(path: &std::path::Path) -> Option<(i64, String)> {
     let mtime = file_mtime_ms(path)?;
     let hash = hash_file(path)?;
@@ -73,6 +73,20 @@ fn sniff_content(path: &std::path::Path) -> Option<ScanSkipReason> {
         Err(_) => return Some(ScanSkipReason::BinaryContent), // unreadable → skippable
     };
     let slice = &buf[..n];
+    // **A BOM IS A POSITIVE STATEMENT OF ENCODING, and it is read FIRST.**
+    //
+    // UTF-16LE ASCII is `X 00 X 00`, so the null test below fires on every
+    // UTF-16 file. Once a BOM is present the nulls are explained and the file
+    // is text — see `classifiers::decode_source`, which is the reader this
+    // gate has to agree with.
+    //
+    // The head is NOT decoded here, deliberately. This buffer is 8KB of a
+    // possibly larger file, so it may end mid-character or mid-surrogate, and a
+    // decode of it would report an error that says nothing about the file. The
+    // BOM alone answers the question this gate asks.
+    if encoding_rs::Encoding::for_bom(slice).is_some() {
+        return None;
+    }
     if slice.contains(&0) {
         return Some(ScanSkipReason::BinaryContent);
     }
@@ -83,20 +97,6 @@ fn sniff_content(path: &std::path::Path) -> Option<ScanSkipReason> {
         Err(e) if e.valid_up_to() + 4 < n => Some(ScanSkipReason::InvalidUtf8),
         Err(_) => None,
     }
-}
-
-/// Decide whether a file can be indexed as source text, and if not, why.
-///
-/// `None` means "index it". `Some(reason)` is recorded on the file's
-/// `scan_state` row together with its fingerprint, so the skip sticks across
-/// reconciles instead of the file looking changed forever. The extension test
-/// comes first because it is a pure string compare — the content sniff only
-/// reads the head of files the cheap test didn't already settle.
-pub(crate) fn classify_unscannable(path: &std::path::Path, ext: &str) -> Option<ScanSkipReason> {
-    if is_binary_ext(ext) {
-        return Some(ScanSkipReason::UnsupportedFormat);
-    }
-    sniff_content(path)
 }
 
 /// Path patterns excluded from directory discovery.
@@ -119,33 +119,6 @@ pub(crate) fn build_walker(path: &std::path::Path) -> ignore::WalkBuilder {
     let mut b = ignore::WalkBuilder::new(path);
     b.hidden(true).git_ignore(true).git_global(true).git_exclude(true).require_git(false);
     b
-}
-
-/// The set of files in `dir` that the scan's ignore rules leave VISIBLE — i.e.
-/// what [`build_walker`] would yield for that one directory.
-///
-/// This exists so the fs-watcher and the scan cannot disagree about what belongs
-/// in the index. The watcher receives raw FSEvents, which know nothing about
-/// `.gitignore`; without this it enqueued a `ProcessFile` for every generated
-/// artifact (an i18n compiler's 131 emitted message files, say). The scan then
-/// correctly did NOT see those files, so they landed in `plan.removed` and had
-/// their nodes deleted and edges unresolved — and the next build re-added them.
-/// A permanent add/prune churn loop over files that should never be indexed.
-///
-/// Implemented by reusing `build_walker` at `max_depth(1)` rather than
-/// re-deriving the ignore rules: `parents(true)` (the default) still reads
-/// `.gitignore` from every ancestor, so a nested `.gitignore` — the case that
-/// actually bit us — is honoured exactly as the full walk honours it. Reusing the
-/// builder means the two paths cannot drift apart.
-///
-/// Costs one directory read, so callers handling a batch should group by parent
-/// and call this once per directory.
-pub(crate) fn visible_files_in_dir(
-    dir: &std::path::Path,
-) -> std::collections::HashSet<std::path::PathBuf> {
-    let mut w = build_walker(dir);
-    w.max_depth(Some(1));
-    w.build().flatten().filter(|e| e.path().is_file()).map(|e| e.path().to_path_buf()).collect()
 }
 
 /// Flip a folder to `indexed` at the terminal community barrier (D4.1),
@@ -188,6 +161,20 @@ pub(crate) async fn mark_folder_indexed_fail_closed(
     }
 }
 
+/// Decide whether a file can be indexed as source text, and if not, why.
+///
+/// `None` means "index it". `Some(reason)` is recorded on the file's
+/// `sensei.files` row together with its fingerprint, so the skip sticks across
+/// reconciles instead of the file looking changed forever. The extension test
+/// comes first because it is a pure string compare — the content sniff only
+/// reads the head of files the cheap test didn't already settle.
+pub(crate) fn classify_unscannable(path: &std::path::Path, ext: &str) -> Option<ScanSkipReason> {
+    if is_binary_ext(ext) {
+        return Some(ScanSkipReason::UnsupportedFormat);
+    }
+    sniff_content(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +196,30 @@ mod tests {
         assert!(is_binary_ext("docx"));
         assert!(is_binary_ext("xlsx"));
         assert!(is_binary_ext("icns"));
+    }
+
+    /// **A UTF-16 SOURCE FILE IS NOT A BINARY**, and the scan gate is where it
+    /// was being called one.
+    ///
+    /// UTF-16LE ASCII is `X 00 X 00`, so the null-byte test fired on every one.
+    /// MEASURED before this landed: all 754 UTF-16 `.sql` files in the watched
+    /// roots carried `skip_reason = binary_content`, and SSMS exports UTF-16LE
+    /// by default — so an entire codebase of change scripts was invisible to
+    /// the indexer before any parser was involved.
+    ///
+    /// MUTATION: drop the BOM check from `sniff_content` — every UTF-16 file
+    /// goes back to being skipped as opaque.
+    #[test]
+    fn a_bom_carrying_utf16_file_is_text_rather_than_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let sql = dir.path().join("sp_X.sql");
+        let mut bytes = vec![0xFFu8, 0xFE];
+        for c in "CREATE PROCEDURE [dbo].[sp_X] AS SELECT 1".chars() {
+            bytes.extend_from_slice(&(c as u16).to_le_bytes());
+        }
+        std::fs::write(&sql, &bytes).unwrap();
+        assert!(!is_probably_binary(&sql), "a BOM explains the nulls");
+        assert_eq!(classify_unscannable(&sql, "sql"), None, "it is indexable");
     }
 
     #[test]
@@ -320,71 +331,53 @@ mod tests {
         assert!(!is_binary_ext(""));
     }
 
-    /// The watcher/scan parity check must honour a NESTED `.gitignore` — that is
-    /// the exact shape that leaked: a generated directory carrying its own
-    /// `.gitignore` containing `*`, holding 131 emitted i18n files. FSEvents
-    /// reported them, the scan's walker did not, so they were indexed then pruned
-    /// then re-indexed forever.
+    /// DEPENDENCIES and GENERATED OUTPUT are excluded; TESTS are not.
+    ///
+    /// This test previously asserted the opposite for tests — `src/foo.spec.ts`,
+    /// `src/foo.test.tsx`, `tests/foo_test.py`, `pkg/foo_test.go` were all
+    /// required to match. That pinned the old list rather than the intent: the
+    /// graph describes code, TESTS and docs, and a test is often the only place a
+    /// public API's real usage is written down. Those globs were also INERT on
+    /// the indexing path, so the files were indexed anyway while
+    /// `count_indexable_files` reported them excluded.
     #[test]
-    fn visible_files_in_dir_honours_nested_gitignore() {
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        // Make it a repo-ish root with a top-level ignore file too.
-        std::fs::write(root.join(".gitignore"), "*.log\n").unwrap();
-
-        let gen_dir = root.join("generated");
-        std::fs::create_dir_all(&gen_dir).unwrap();
-        // The generated dir disowns everything inside it.
-        std::fs::write(gen_dir.join(".gitignore"), "*\n").unwrap();
-        std::fs::write(gen_dir.join("messages_a.js"), "export const a = 1\n").unwrap();
-        std::fs::write(gen_dir.join("messages_b.js"), "export const b = 2\n").unwrap();
-
-        let visible = visible_files_in_dir(&gen_dir);
-        assert!(
-            visible.is_empty(),
-            "a nested .gitignore of `*` must hide every file in that directory, got {visible:?}"
-        );
-
-        // A sibling directory with tracked files stays visible, and the
-        // root-level rule still applies within it.
-        let src = root.join("src");
-        std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(src.join("main.rs"), "fn main() {}\n").unwrap();
-        std::fs::write(src.join("debug.log"), "noise\n").unwrap();
-
-        let visible = visible_files_in_dir(&src);
-        assert!(visible.contains(&src.join("main.rs")), "tracked source stays visible");
-        assert!(
-            !visible.contains(&src.join("debug.log")),
-            "an ancestor .gitignore rule must still apply to a nested directory"
-        );
-    }
-
-    /// A directory with no ignore rules at all yields its files — guards against
-    /// the helper accidentally hiding everything (which would silently stop the
-    /// watcher from indexing anything).
-    #[test]
-    fn visible_files_in_dir_yields_unignored_files() {
-        let dir = tempfile::tempdir().unwrap();
-        let f = dir.path().join("thing.ts");
-        std::fs::write(&f, "export const x = 1\n").unwrap();
-        let visible = visible_files_in_dir(dir.path());
-        assert!(visible.contains(&f), "an unignored file must be visible, got {visible:?}");
-    }
-
-    #[test]
-    fn build_globset_matches_excluded_paths() {
+    fn build_globset_excludes_dependencies_and_generated_output() {
         let gs = build_globset();
         assert!(gs.is_match("node_modules/foo/bar.js"));
-        assert!(gs.is_match("src/foo.spec.ts"));
-        assert!(gs.is_match("src/foo.test.tsx"));
-        assert!(gs.is_match("tests/foo_test.py"));
-        assert!(gs.is_match("pkg/foo_test.go"));
-        assert!(gs.is_match("src/types.d.ts"));
         assert!(gs.is_match("dist/bundle.js"));
         assert!(gs.is_match("target/debug/foo"));
         assert!(gs.is_match("__pycache__/foo.pyc"));
         assert!(gs.is_match("__MACOSX/._foo"));
+        assert!(gs.is_match("src/types.d.ts"), "generated declarations");
+
+        // Build output that lives OUTSIDE dist/build — the case that put 3,555
+        // minified nodes in the graph.
+        assert!(gs.is_match("web/static/app.min.js"));
+        assert!(gs.is_match("web/static/app.min.css"));
+        assert!(gs.is_match("web/static/app.bundle.js"));
+        assert!(gs.is_match("web/static/app.js.map"));
+        assert!(
+            gs.is_match("documentation/artifacts/erd/assets/index-Cgv8QKbu.js"),
+            "a Vite content-hashed asset"
+        );
+    }
+
+    /// A TEST is part of the structure being described, so it must NOT match.
+    #[test]
+    fn build_globset_keeps_tests_and_normal_source() {
+        let gs = build_globset();
+        for kept in [
+            "src/foo.spec.ts",
+            "src/foo.test.tsx",
+            "tests/foo_test.py",
+            "pkg/foo_test.go",
+            "crates/x/src/lib_test.rs",
+            "app/e2e/flow.spec.ts",
+        ] {
+            assert!(!gs.is_match(kept), "{kept} is part of the codebase");
+        }
+        // A hand-written asset with no content hash is untouched.
+        assert!(!gs.is_match("src/assets/index.js"), "no hash suffix — not generated");
     }
 
     #[test]

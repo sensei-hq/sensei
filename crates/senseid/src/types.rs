@@ -145,6 +145,85 @@ impl NodeKind {
     }
 }
 
+/// The `edge_kind` labels the DDL actually declares.
+///
+/// Test-only, and the ONE owner of this parse: `RelationKind`,
+/// `GRAPH_LAYOUT_KINDS` and `COMMUNITY_EDGE_KINDS` all need to check
+/// themselves against the schema, and three hand-copies of the same
+/// `split('\'')` trick would be three chances to drift.
+#[cfg(test)]
+pub(crate) fn declared_edge_kinds() -> std::collections::HashSet<&'static str> {
+    let ddl = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../database/ddl/enum/sensei/edge_kind.ddl"
+    ));
+    // Enum labels are the only single-quoted tokens in this file.
+    ddl.split('\'').skip(1).step_by(2).collect()
+}
+
+/// How one type relates to another.
+///
+/// `IRClass.extends: Option<String>` holds ONE parent, which cannot faithfully
+/// represent any real language: Java has one superclass PLUS N interfaces,
+/// Python has N bases, Rust has no inheritance but N `impl Trait for`. That
+/// mismatch is plausibly why the field was extracted and never persisted.
+///
+/// Maps onto the ALREADY-DECLARED `extends` / `implements` edge kinds rather
+/// than adding enum values — but keeps its own discriminant, because
+/// `TraitImpl` and `Implements` are the same shape of fact and not the same
+/// fact. "What implements Serializable" and "what impls Display" must stay
+/// separable, so the discriminant is persisted in `edges.props.relation` while
+/// the edge kind stays `implements`.
+///
+/// The ADR (§4b) also listed a `Mixin` variant. It is deliberately absent:
+/// `IRClass.mixins` has no writer in any adapter, so a variant would exist that
+/// no producer could ever emit. The ADR records that omission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelationKind {
+    /// Single-inheritance: Java `extends`, Python base class, TS `extends`.
+    Extends,
+    /// Interface implementation: Java/TS `implements`.
+    Implements,
+    /// Rust `impl Trait for Type` — same shape as `Implements`, different fact.
+    TraitImpl,
+}
+
+/// `as_str`/`edge_kind` are consumed by the inheritance persist step, which
+/// lands after this enum — the producer must exist before there is anything to
+/// persist. Silenced the same way `NodeKind::all()` and
+/// `LanguageAdapter::display_name` are, rather than left as a warning; the DDL
+/// guard test calls both, so they are not unverified in the meantime.
+#[allow(dead_code)]
+impl RelationKind {
+    /// The `edges.props.relation` discriminant. Distinguishes variants that
+    /// deliberately share an edge kind.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Extends => "extends",
+            Self::Implements => "implements",
+            Self::TraitImpl => "trait_impl",
+        }
+    }
+
+    /// The `sensei.edge_kind` label this relation is stored under.
+    ///
+    /// `insert_edge` casts this to the enum, so an undeclared label fails at
+    /// runtime and silently drops the edge — which is why
+    /// `relation_kinds_map_onto_declared_edge_kinds_and_stay_distinguishable`
+    /// reads the DDL rather than trusting this match.
+    pub fn edge_kind(&self) -> &'static str {
+        match self {
+            Self::Extends => "extends",
+            Self::Implements | Self::TraitImpl => "implements",
+        }
+    }
+
+    /// Every relation kind, in declaration order. Backs the DDL guard test.
+    pub fn all() -> &'static [RelationKind] {
+        &[Self::Extends, Self::Implements, Self::TraitImpl]
+    }
+}
+
 impl std::fmt::Display for NodeKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
@@ -372,8 +451,41 @@ mod tests {
 
 #[cfg(test)]
 mod node_kind_schema_tests {
-    use super::NodeKind;
+    use super::{NodeKind, RelationKind};
     use std::collections::HashSet;
+
+    /// A relation kind must map onto a DECLARED `edge_kind` label, because
+    /// `insert_edge` binds it as `$6::sensei.edge_kind` — an undeclared label is
+    /// a runtime cast failure that drops the edge, not a compile error.
+    ///
+    /// Also pins the discriminant/edge-kind SPLIT: `TraitImpl` rides the
+    /// `implements` edge kind (a Rust trait impl is not Java interface
+    /// implementation, but it is the same shape of fact) while keeping its own
+    /// `as_str()` so a consumer can tell the two apart. Collapsing them would
+    /// make "what implements Serializable" and "what impls Display" the same
+    /// query, which they are not.
+    ///
+    /// Breaking mutation: make `TraitImpl::edge_kind()` return `"extends"`, or
+    /// make `as_str()` return `"implements"` for it.
+    #[test]
+    fn relation_kinds_map_onto_declared_edge_kinds_and_stay_distinguishable() {
+        let enum_values = super::declared_edge_kinds();
+        for r in RelationKind::all() {
+            assert!(
+                enum_values.contains(r.edge_kind()),
+                "RelationKind::{r:?} emits edge_kind {:?}, absent from edge_kind.ddl: {enum_values:?}",
+                r.edge_kind()
+            );
+        }
+
+        assert_eq!(RelationKind::Extends.edge_kind(), "extends");
+        assert_eq!(RelationKind::Implements.edge_kind(), "implements");
+        assert_eq!(RelationKind::TraitImpl.edge_kind(), "implements");
+
+        // Same edge kind, different discriminant — that is the whole point.
+        assert_eq!(RelationKind::TraitImpl.as_str(), "trait_impl");
+        assert_ne!(RelationKind::TraitImpl.as_str(), RelationKind::Implements.as_str());
+    }
 
     /// Every NodeKind::as_str() must be a value in the node_kind DDL enum.
     /// Otherwise upsert_node's `$2::sensei.node_kind` cast fails and the node

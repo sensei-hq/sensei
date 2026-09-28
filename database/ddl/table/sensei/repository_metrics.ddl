@@ -15,27 +15,15 @@ set search_path to sensei, extensions;
 create table if not exists repository_metrics (
   id            uuid          primary key default gen_random_uuid()
 , metric_id     uuid          not null references sensei.metrics(id) on delete cascade
-  -- NOT NULL now. It was nullable for "legacy rows pending migration"; that
-  -- migration is done (0 nulls), so the column states the invariant instead of
-  -- documenting an exception that no longer exists.
 , repository_id uuid          not null references sensei.repositories(id) on delete cascade
 , scope         metric_scope  not null default 'user'
 , identity      text
-  -- The persona `identity` resolves to. NULLABLE and DERIVED — never a
-  -- replacement for the raw email above. Resolving at write time would be a
-  -- destructive merge: each row came from `git log --author=<email>`, so
-  -- combining two aliases must SUM, and a later persona reassignment would have
-  -- no source left to recompute from. Keeping both makes re-attribution a
-  -- re-derivation over immutable raw attribution.
 , persona_id    uuid          references sensei.personas(id) on delete set null
 , commit_sha    text
 , computed_on   date          not null
 , grain         metric_grain  not null
 , value         numeric       not null
 , props         jsonb         not null default '{}'
-  -- WHO computed this row — the loop-breaker for pull-else-compute. Without it
-  -- local cannot tell a value dōjō handed down from one it produced, so it
-  -- recomputes the shared value and pushes it back, forever.
 , computed_by   metric_computed_by not null default 'local'
   -- When this row was last pushed. NULL = never shared.
 , shared_at     timestamptz
@@ -77,7 +65,9 @@ Never-fabricate invariants:
 comment on column repository_metrics.metric_id
      is 'FK to sensei.metrics — which registered metric this value is for.';
 comment on column repository_metrics.repository_id
-     is 'The grain. A value is attributed to the repository, regardless of which project(s) include it — which is why the same number is shared rather than recomputed per project.';
+     is 'The grain. A value is attributed to the repository, regardless of which project(s) include it — which is why the same number is shared rather than recomputed per project.
+
+NOT NULL now. It was nullable for "legacy rows pending migration"; that migration is done (0 nulls), so the column states the invariant instead of documenting an exception that no longer exists.';
 comment on column repository_metrics.scope
      is 'repo (whole repository, all authors) vs user (this identity''s own commits ∩ touched files).';
 comment on column repository_metrics.identity
@@ -94,3 +84,7 @@ comment on column repository_metrics.props
      is 'Extensible parts: numerator/denominator, session_count, correction_count, low_n, evidence ids.';
 comment on column repository_metrics.source
      is 'Provenance: measured | estimated. estimated is never rendered as truth.';
+comment on column repository_metrics.persona_id
+     is 'The persona `identity` resolves to. NULLABLE and DERIVED — never a replacement for the raw email above. Resolving at write time would be a destructive merge: each row came from `git log --author=<email>`, so combining two aliases must SUM, and a later persona reassignment would have no source left to recompute from. Keeping both makes re-attribution a re-derivation over immutable raw attribution.';
+comment on column repository_metrics.computed_by
+     is 'WHO computed this row — the loop-breaker for pull-else-compute. Without it local cannot tell a value dōjō handed down from one it produced, so it recomputes the shared value and pushes it back, forever.';

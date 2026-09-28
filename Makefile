@@ -16,7 +16,8 @@
 ##
 ## Versioning:
 ##   VERSION file is the single source of truth.
-##   `make bump v=patch|minor|major|0.3.0` updates VERSION + all manifests, commits, tags, and pushes.
+##   `make bump v=patch|minor|major|0.3.0` updates VERSION + all manifests, commits, tags, pushes,
+##   installs locally, then cleans target/ (so the next dev build is cold).
 ##   The tag push triggers GitHub Actions which build release artifacts and
 ##   update the Homebrew tap SHA256s automatically.
 ##
@@ -24,9 +25,12 @@
 ##   Homebrew tap: sensei-hq/homebrew-tap (tracked as git subtree at homebrew/)
 ##   macOS install: brew tap sensei-hq/tap && brew install sensei
 ##
-## Subtrees (editable in-repo, synced to their own GitHub repos):
-##   homebrew/    → sensei-hq/homebrew-tap   (make tap-push)
-##   marketplace/ → sensei-hq/marketplace    (make marketplace-push)
+## Mirrored to their own GitHub repos (editable in-repo; each target clones and
+## copies — these are not git subtrees despite the historical wording):
+##   marketplace/ → sensei-hq/marketplace    (make marketplace-push, run by bump)
+##   homebrew/    → sensei-hq/homebrew-tap   — TEMPLATES. Rendered and published
+##                  by release.yml's `update-tap`, never by `bump`. `tap-push` is
+##                  a manual escape hatch that refuses an unrendered template.
 
 .PHONY: crates crates-debug crates-all \
         install install-service install-app install-debug \
@@ -97,6 +101,23 @@ supabase-down:  ## Stop the local Dōjō supabase auth stack
 # debug binaries.
 
 install: install-service install-app
+	@# RECLAIM THE BUILD TREE. `target/` reaches tens of GB — measured at 49G
+	@# against 51Gi free on 2026-08-29, i.e. one more full build from a full
+	@# disk. A release install is infrequent and its artifacts are ALREADY
+	@# overlaid into the brew prefix by this point, so deleting the tree costs
+	@# nothing that was just built.
+	@#
+	@# Same trade `bump` makes and for the same reason: the next dev build is
+	@# COLD. That is plainly the right side of the trade HERE, because you just
+	@# shipped.
+	@#
+	@# `install-debug` MAKES THE SAME TRADE — see its own recipe and the
+	@# 2026-08-29 decision recorded there. This comment used to claim it "instead
+	@# prunes caches without discarding the build", which has been false since
+	@# that decision and cost a reader a wrong prediction about deploy cost.
+	@# `clean-cache` was measured and rejected there: it would have left ~43G.
+	@echo "Reclaiming the build tree..."
+	@$(MAKE) clean
 
 # Snapshot the sensei DB before any install* runs. Custom-format pg_dump
 # (-F c) is binary, compressed, and supports `pg_restore -d sensei -c …`
@@ -271,6 +292,28 @@ install-debug: db-backup crates-debug
 	@echo "Restarting sensei service so the new daemon is live..."
 	-@brew services start sensei
 	@$(MAKE) mcp-refresh-note
+	@# RECLAIM THE BUILD TREE — user decision, 2026-08-29. `target/` was measured
+	@# at 49G against 51Gi free, i.e. roughly one more full build from a full
+	@# disk, so the disk wins over the rebuild.
+	@#
+	@# THE COST IS REAL AND IS ACCEPTED: this is the FAST-ITERATION target, and
+	@# the next `install-debug` is now a COLD build of several minutes rather
+	@# than an incremental one. Stated here so nobody later "fixes" it as an
+	@# oversight. The binaries are already overlaid into the brew prefix above,
+	@# so nothing just built is lost.
+	@#
+	@# `clean-cache` WAS CONSIDERED HERE AND MEASURED, not dismissed. On
+	@# 2026-08-29, target/debug was 49G: deps/ 42G (86%), incremental/ 6.3G,
+	@# everything else under 1G. `clean-cache` prunes only incremental and keeps
+	@# the 5 newest per crate, so it would have left ~43G — above the ceiling.
+	@#
+	@# An age-based sweep of deps/ was measured too and reclaims NOTHING: not one
+	@# of its 55,617 files was even a day old. The 42G is same-day churn — each
+	@# rebuild of a widely-depended-on crate re-emits everything under new
+	@# hashes, and cargo never collects the old ones. There is no stale layer to
+	@# shave, so there is no keep-it-warm-and-small option to find.
+	@echo "Reclaiming the build tree..."
+	@$(MAKE) clean
 
 # Post-install MCP/plugin refresh (shared by install-service + install-debug).
 # The sensei MCP is a long-lived stdio subprocess owned by the Claude Code
@@ -336,12 +379,32 @@ website-build:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: test-crates-fast test-app-unit
+test-fast: check-ddl-grants check-ddl-comments test-crates-fast test-app-unit
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
 
-test: test-crates test-app-unit
+# Every role the DDL grants to (or writes a policy for) must be a role the DDL
+# itself creates. A GRANT resolves its grantee at apply time, so one that nothing
+# creates aborts the whole deploy — which is how a first install could not
+# provision its database at all (#196), invisibly on any machine that already had
+# the roles. Instant and needs no database, so it runs in `test-fast` and
+# therefore on every commit; CI calls this same target rather than the script, so
+# there is one entry point to keep correct.
+check-ddl-grants:
+	@python3 scripts/check-grant-targets.py
+
+# A column list is a DECLARATION, and paragraphs of rationale between two columns
+# bury the shape a reader opened the file for. Worse, that prose is invisible to
+# everything except a human reading this one file: `comment on column` reaches
+# the catalog, and design history belongs in docs/database/<schema>.md next to
+# the decision it explains. A single line — a group label, a `── … ──` divider —
+# is formatting and is left alone; two consecutive lines is where narrative
+# starts. Instant and needs no database, so it runs on every commit.
+check-ddl-comments:
+	@python3 scripts/check-ddl-comments.py
+
+test: check-ddl-grants check-ddl-comments test-crates test-app-unit test-dojo test-db-if-reachable
 
 test-crates:
 	cargo test --workspace
@@ -350,6 +413,39 @@ test-app: test-app-unit
 
 test-app-unit:
 	cd app && bun run test:unit
+
+# The dōjō's vitest suite. Was in no aggregate target at all, so it only ran when
+# someone remembered to — which is part of how two dead code paths sat behind a
+# green suite (spec dojo-auth-provisioning §VIII.4). Needs no database.
+test-dojo:
+	cd dojo && bun run test
+
+# SQL assertions against a REAL Postgres — RLS, constraints, policy grants: the
+# things a mocked supabase-js client cannot check and therefore cannot fail on.
+#   DATABASE_URL overrides the target; defaults to the local Supabase.
+test-db:
+	./database/tests/run.sh
+
+# The same suite, wired into `make test` — but SKIPPED, loudly, when the database
+# is simply not there.
+#
+# It used to sit outside `make test` on the grounds that "a missing service
+# should not read as a test failure". That reasoning is right and the conclusion
+# was too strong: the cost was that these files ran only when someone remembered,
+# and the two repository-sharing suites had never been executed at all until
+# 2026-08-29 — they passed, but nothing would have said so if they had not.
+#
+# `run.sh` already separates the two outcomes, which is what makes this safe:
+# exit 69 (EX_UNAVAILABLE) means "could not reach the database", 127 means "no
+# psql", and any OTHER non-zero is a real assertion failure. Only the first two
+# are skipped; a genuine failure still fails the build.
+test-db-if-reachable:
+	@./database/tests/run.sh; s=$$?; \
+	if [ $$s -eq 69 ] || [ $$s -eq 127 ]; then \
+		echo "  SKIPPED SQL tests — no reachable database (run 'supabase start', then 'make test-db')"; \
+	elif [ $$s -ne 0 ]; then \
+		exit $$s; \
+	fi
 
 # E2E runs against the throw-away `sensei_e2e` DB (set by SENSEI_INSTANCE=e2e
 # in the e2e globalSetup). Dropping it here guarantees each run starts clean.
@@ -441,16 +537,24 @@ update:
 # and tag (which triggers the GitHub Actions release workflows), then syncs
 # the updated Homebrew formula version to the tap and marketplace.
 # GitHub Actions will fill in the real SHA256s once artifacts are built.
+#
+# Then, locally: `make install` (so the machine that cut the release is running
+# it — the daemon once sat on v0.2.29 for ten releases) and `make clean` (so
+# target/, which reaches tens of GB, does not survive the release).
+# NOTE: the next dev build after a bump is therefore COLD.
 
-# One-shot local release: bump the version then install the RELEASE build, so
-# the running daemon + brew binaries are never left stale behind a bump (the
-# stale-daemon class of bug where the daemon ran v0.2.29 for 10 releases).
+# ALIAS for `bump`, kept for muscle memory and any script that calls it.
+#
+# `ship` existed because `bump` did not install, which left the running daemon
+# stale behind a release (it once ran v0.2.29 for ten releases). `bump` now
+# installs as its final step, so the two are the same thing — and this must
+# DELEGATE rather than call `bump` and then `install` again, which would build
+# and install the same version twice.
 # Usage: make ship v=patch
 .PHONY: ship
 ship:
 	@if [ -z "$(v)" ]; then echo "Usage: make ship v=patch|minor|major|<version>"; exit 1; fi
-	$(MAKE) bump v=$(v)
-	$(MAKE) install
+	@$(MAKE) bump v=$(v)
 
 bump:
 	@if [ -z "$(v)" ]; then echo "Usage: make bump v=patch|minor|major|<version>"; exit 1; fi
@@ -514,6 +618,31 @@ bump:
 	@sed -i '' 's/"version": "[^"]*"/"version": "$(_v)"/' marketplace/plugins/sensei/.claude-plugin/plugin.json
 	@# Website footer version
 	@sed -i '' 's/v[0-9]*\.[0-9]*\.[0-9]*<\/div>/v$(_v)<\/div>/' website/src/routes/+page.svelte
+	@# Capture the schema as a versioned snapshot — but ONLY once the project is
+	@# released. Pre-release nothing is written, so `database/snapshots/` does not
+	@# exist and the folder stays clean until there is a baseline worth diffing
+	@# against.
+	@#
+	@# `dbd release` (run once, at the first public release) sets `released: true`
+	@# in database/design.yaml, disables `reconcile`, and writes the baseline. From
+	@# that point this step becomes load-bearing: `dbd deploy` migrates from the
+	@# committed snapshot, and a release whose DDL changed WITHOUT one deploys
+	@# nothing while reporting success. So post-release, a missing dbd is a hard
+	@# error rather than a skipped step.
+	@#
+	@# Self-skipping even then: dbd prints "No schema changes detected — snapshot
+	@# skipped" when the design is unchanged. Needs no database — a snapshot is a
+	@# diff against the PREVIOUS snapshot, not a live server.
+	@if grep -qE '^[[:space:]]*released:[[:space:]]*true' database/design.yaml 2>/dev/null; then \
+	  command -v dbd >/dev/null || { \
+	    echo "Error: dbd not found — a released project must carry its schema snapshot."; \
+	    echo "Install: cargo install --git https://github.com/sensei-hq/dbd dbd"; \
+	    exit 1; \
+	  }; \
+	  (cd database && dbd snapshot --name "v$(_v)"); \
+	else \
+	  echo "dbd: pre-release — no snapshot (run 'dbd release' once at first public release)"; \
+	fi
 	@# Commit everything
 	@git add VERSION Cargo.lock app/src-tauri/Cargo.lock \
 	  app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml \
@@ -524,6 +653,8 @@ bump:
 	  marketplace/package.json marketplace/catalog.json \
 	  marketplace/.claude-plugin/marketplace.json \
 	  marketplace/plugins/sensei/.claude-plugin/plugin.json
+	@# Schema snapshot artefacts, when the project is released (see above).
+	@if [ -d database/snapshots ]; then git add database/design.yaml database/snapshots; fi
 	@git commit -m "chore: bump to v$(_v)"
 	@git tag v$(_v)
 	@git push origin HEAD
@@ -533,11 +664,36 @@ bump:
 	@# so the next daemon deploy fetches v$(_v)'s DDL instead of serving the
 	@# previous version's cached bundle (which would re-apply the old schema).
 	@$(MAKE) dbd-cache-clear
-	@# Prune stale rustc incremental caches so target/ doesn't drift over
-	@# release cadence (cargo doesn't GC target/debug/incremental).
-	@$(MAKE) clean-cache
-	@echo "Syncing homebrew-tap and marketplace..."
-	@$(MAKE) tap-push marketplace-push
+	@# DELIBERATELY NOT `tap-push`. The homebrew formula and cask are templates
+	@# carrying `REPLACE_WITH_*_SHA256`, because a checksum cannot exist until the
+	@# release assets do. Pushing them here published a version nobody could
+	@# install and left `release.yml`'s `update-tap` to repair it minutes later —
+	@# fail-OPEN. When TAP_GITHUB_TOKEN expired the repair stopped, and the tap sat
+	@# advertising placeholder checksums for ~8 releases with the last good formula
+	@# already overwritten. `update-tap` is now the sole writer of both files and
+	@# renders them from these templates, so a failure leaves the tap on the
+	@# previous installable release.
+	@echo "Syncing marketplace..."
+	@$(MAKE) marketplace-push
+	@# Install the version we just tagged, so the machine that cut the release is
+	@# running it. Deliberately AFTER the push: the tag is what CI builds from, so
+	@# a local toolchain problem must not strand a release that is already valid
+	@# everywhere else. It re-runs db-backup, release-builds the crates, and
+	@# replaces /Applications/Sensei.app (quitting a running instance first).
+	@echo "Installing v$(_v) locally..."
+	@$(MAKE) install
+	@# ...and `install` now ends with `make clean` itself, so the tree that build
+	@# needed is reclaimed as part of it. There is deliberately NO second clean
+	@# here: it would be a no-op running `cargo clean` over an already-empty
+	@# target/, and a reader would reasonably wonder which one was the real one.
+	@#
+	@# This supersedes the `clean-cache` prune that used to run here: that kept the
+	@# 5 newest incremental caches, and `clean` removes target/ outright, so doing
+	@# both would just be pruning something a moment before deleting its parent.
+	@#
+	@# The trade is deliberate: the next dev build after a bump is COLD (a full
+	@# rebuild, several minutes). A release is infrequent and target/ reaches tens
+	@# of GB, so paying the rebuild once per release beats carrying the disk.
 
 # Clear the dbd schema-source cache. The daemon resolves its DDL from
 # `sensei-hq/sensei/database@v<VERSION>` and dbd caches resolved sources per
@@ -553,7 +709,24 @@ dbd-cache-clear:
 
 # Sync homebrew/ files to the tap repo (sensei-hq/homebrew-tap).
 # Uses a temporary clone so it works regardless of subtree/squash history.
+# Manual escape hatch for a formula/cask BODY change (install steps, deps,
+# caveats) that must reach the tap outside a release. It is NOT part of `bump`
+# any more — `update-tap` renders and publishes both files from these templates.
+#
+# REFUSES to publish an unrendered template. The check is the whole point: these
+# files normally hold `REPLACE_WITH_*_SHA256`, and copying them over the tap's
+# rendered copy is exactly what left `brew install` broken for ~8 releases. To
+# change the body, edit it here and let the next release publish it; if it cannot
+# wait, render it first with real checksums from the current release's assets.
 tap-push:
+	@if grep -q 'REPLACE_WITH_' homebrew/Formula/sensei.rb homebrew/Casks/senseihq.rb; then \
+	  echo "refusing to push: homebrew/ still holds REPLACE_WITH_* placeholders."; \
+	  echo "  These are templates — release.yml's update-tap renders them from the"; \
+	  echo "  published assets. Pushing them would replace the tap's real checksums"; \
+	  echo "  with placeholders and break 'brew install'."; \
+	  echo "  Body-only change? Let the next release carry it."; \
+	  exit 1; \
+	fi
 	@tmpdir=$$(mktemp -d) && \
 	git clone git@github.com:sensei-hq/homebrew-tap.git "$$tmpdir" 2>&1 && \
 	cp homebrew/Formula/sensei.rb "$$tmpdir/Formula/" && \

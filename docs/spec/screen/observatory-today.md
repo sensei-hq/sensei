@@ -76,7 +76,7 @@ registered `/api/observatory/*` routes are `ftr-daily`, `tool-usage`,
 - `GET /api/observatory/today` — new handler assembling the payload above:
   maturity per the `dataMaturity` bullet; hero koan + `insights[]` from the
   insights / tool-signal derivation (static fallback copy is acceptable until
-  [[pipeline/insight-copy]] is wired); `adopted[]` from `list_active_memories`;
+  [[pipeline/narration-cache]] is wired); `adopted[]` from `list_active_memories`;
   `recentSessions[]` from the recent `activity.sessions` rows with their `ftr`.
 - `GET /api/observatory/ftr` — new handler that **projects** the existing
   `sensei.ftr_daily` per-day rows (via `PgStore::get_ftr_daily(None, 28)`) into
@@ -155,6 +155,6 @@ curl -s http://localhost:7744/api/observatory/today | jq '{maturity: .dataMaturi
 - [[pipeline/ftr]] — the FTR chip
 - [[pipeline/memory]] — what feeds the adopted lane
 - [[pipeline/insights]] — the triage that produces the hero + insights
-- [[pipeline/insight-copy]] — the copy chain every koan / card / adopted
+- [[pipeline/narration-cache]] — the copy chain every koan / card / adopted
   string routes through (static fallback until wired)
 - [[screen/observatory-sessions]] — where the recent-sessions row jumps

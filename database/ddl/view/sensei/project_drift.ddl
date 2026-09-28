@@ -1,3 +1,5 @@
+set search_path to sensei, extensions;
+
 CREATE OR REPLACE VIEW sensei.project_drift AS
 SELECT di.*, f.project_id
   FROM inference.drift_items di

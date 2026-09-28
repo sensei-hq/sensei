@@ -45,7 +45,7 @@ Kanji is 支 — *support / foundation*.
 - **Ollama is a soft dependency.** The daemon ships with an
   embedded ollama, so a system ollama that's absent or
   unreachable falls to `remedy` **without blocking** subsequent
-  gates. The user can continue into the app; insight-copy and
+  gates. The user can continue into the app; narration-cache and
   other inference chains route to embedded gemma4. Upgrading a
   soft-remedy gate later is a "Re-check" away. Deferred
   refinement: better copy on the row that says "embedded ollama

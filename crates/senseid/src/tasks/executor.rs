@@ -116,12 +116,13 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::ProcessGitFolder => handlers::process_git_folder(ctx, task).await,
             TaskKind::ProcessFolder => handlers::process_folder(ctx, task).await,
             TaskKind::ProcessFile => handlers::process_file(ctx, task).await,
+            TaskKind::ProcessManifest => handlers::process_manifest(ctx, task).await,
+            TaskKind::ProcessRepoFiles => handlers::process_repo_files(ctx, task).await,
             TaskKind::DeleteFile => handlers::delete_file(ctx, task).await,
             TaskKind::DeleteFolder => handlers::delete_folder(ctx, task).await,
             TaskKind::ResolveLibs => handlers::resolve_libs(ctx, task).await,
             TaskKind::ImportLib => handlers::import_lib(ctx, task).await,
             TaskKind::BranchSwitch => handlers::branch_switch(ctx, task).await,
-            TaskKind::BuildConnections => handlers::build_connections(ctx, task).await,
             TaskKind::EmbedNodes => handlers::embed_nodes(ctx, task).await,
             TaskKind::IndexLibrary => handlers::index_library(ctx, task).await,
             TaskKind::IndexLibraryPage => handlers::index_library_page(ctx, task).await,
@@ -138,7 +139,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
                 handlers::classify_pending_verdicts(ctx, task).await
             }
             TaskKind::ConsolidateGovernance => handlers::consolidate_governance(ctx, task).await,
-            TaskKind::WarmInsightCopy => handlers::warm_insight_copy(ctx, task).await,
+            TaskKind::WarmInsightCopy => handlers::warm_narration_cache(ctx, task).await,
             TaskKind::LearnPlaybooks => handlers::learn_playbooks(ctx, task).await,
             TaskKind::PublishRelaySegments => handlers::publish_relay_segments(ctx, task).await,
             TaskKind::AdvanceRun => handlers::advance_run(ctx, task).await,
@@ -263,19 +264,6 @@ mod tests {
             ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
         }
         let task = Task::new(TaskKind::ResolveLibs, "repo", "");
-        let result = execute_task(&ctx, &task).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn execute_task_dispatches_build_connections() {
-        let ctx = make_ctx().await;
-        {
-            let root_id =
-                ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
-        }
-        let task = Task::new(TaskKind::BuildConnections, "repo", "");
         let result = execute_task(&ctx, &task).await;
         assert!(result.is_ok());
     }

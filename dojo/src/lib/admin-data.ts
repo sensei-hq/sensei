@@ -64,10 +64,12 @@ export interface Membership {
 /** An identity-provider method — `dojo.auth_method` (api.rs `is_auth_method`). */
 export type AuthMethod = 'sso' | 'github_oauth' | 'device_code';
 
-/** One identity mapping — `store.list_identities` (store.rs:792). */
+/** One identity mapping — `store.list_identities` (store.rs:792). Keys on
+ *  `principal_id`: an identity belongs to a `dojo.principals` row, not to a
+ *  Supabase login and not to a tenant (spec dojo-auth-provisioning §VIII.2). */
 export interface Identity {
 	id: string;
-	user_id: string;
+	principal_id: string;
 	provider: string;
 	subject: string;
 	email: string | null;
@@ -140,9 +142,11 @@ export interface NewMembershipBody {
 	role?: string;
 }
 
-/** `POST …/identities` body — `NewIdentity` (api.rs:630). */
+/** `POST …/identities` body — `NewIdentity` (api.rs:630). The server's
+ *  `parseNewIdentity` requires `principal_id` and REJECTS the old `user_id`
+ *  outright, so this name is the wire contract, not a preference. */
 export interface NewIdentityBody {
-	user_id: string;
+	principal_id: string;
 	provider: string;
 	subject: string;
 	email?: string;

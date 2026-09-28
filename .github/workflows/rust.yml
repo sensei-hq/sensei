@@ -1,0 +1,143 @@
+name: Rust
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+# Least-privilege: these jobs only read the repo.
+permissions:
+  contents: read
+
+# NO UNTRUSTED INPUT REACHES A `run:` BLOCK IN THIS FILE. The only `${{ }}` is
+# `github.ref` in the concurrency group below, which is a ref name used as a
+# grouping key and never interpolated into a shell command. Nothing here reads
+# an issue title, a PR body, a branch label or a commit message — the inputs
+# that make a workflow injectable. Keep it that way: anything event-derived
+# must arrive through `env:` and be referenced as "$VAR", quoted.
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+# WHY THIS EXISTS. Until now no workflow ran `cargo test`, `cargo clippy` or
+# `cargo fmt` — `coverage.yml` runs the app and dōjō vitest suites and measures
+# Rust coverage, but measuring coverage is not the same as gating on a failure.
+# The 3,300-test senseid suite, which covers the indexer, the daemon, the task
+# engine and the store, ran only when someone remembered to run it by hand, and
+# the pre-commit hook covers `sensei-bootstrap` and the app — not senseid.
+#
+# TWO JOBS, on purpose. `lint` needs no infrastructure and finishes in minutes,
+# so a formatting or clippy failure is reported fast rather than behind a
+# 20-minute suite. `test` needs a provisioned Postgres and is slow; splitting
+# means one cannot mask the other.
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2
+      - name: Format
+        run: cargo fmt --check
+      # `--all-targets` so test code is linted too: a lint that only covers the
+      # library lets a warning land in the half of the tree that describes what
+      # the library is supposed to do.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Not Rust, but this is the workflow's fast no-infrastructure gate and the
+      # check is a static read of `database/`. It guards the failure that the
+      # `test` job below only catches after a full provision: a role granted to
+      # but never created aborts the deploy (#196). Calls the make target rather
+      # than the script so the entry point stays single.
+      - name: DDL grant targets
+        run: make check-ddl-grants
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      # pgvector, not plain postgres: `sensei.nodes.embedding` is a `vector`
+      # column and the schema will not apply without the extension. The daemon
+      # also puts `extensions` on the search_path for exactly this.
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # The monorepo convention: `cargo test` NEVER touches `sensei`. See
+      # `PgStore::connect_test`, which refuses to default anywhere else.
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sensei_test
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2
+
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      # dbd owns the schema. Building it from source is slow, which is why it is
+      # cached with the rest of the Rust build.
+      #
+      # THE PACKAGE IS `dbd-cli`; the BINARY it installs is `dbd`. Asking for
+      # `dbd` fails with "could not find `dbd` in <repo> with version `*`",
+      # which reads like a missing tag and is not. `dbd-cli` is also the
+      # repo's ROOT package rather than a `crates/*` member, so it does not
+      # appear in a listing of the workspace members.
+      #
+      # PINNED to the SAME version as `dbd-core` in `crates/senseid` and
+      # `crates/bootstrap` — v0.19.0 everywhere.
+      #
+      # An earlier version of this comment argued the opposite: that the CLI
+      # (the schema tool) and the library (the SQL reader) are different concerns
+      # which should move independently, and said "do not align them". That was
+      # wrong, and `release.yml` already recorded why — the daemon embeds
+      # `dbd-core` to deploy its OWN schema, so a CLI that accepts DDL the
+      # embedded library cannot parse means CI provisions a database differently
+      # from an install. The tree had drifted four ways (v0.12.0 / v0.14.0 /
+      # v0.15.0 / v0.17.0); see #197. One version, moved in one commit.
+      - name: Install dbd
+        run: cargo install --git https://github.com/sensei-hq/dbd --tag v0.19.0 dbd-cli --locked
+
+      # PROVISION FROM THE DDL TREE, not from a released bundle. A test database
+      # built from a published snapshot ages out of the tree and then tests
+      # exercising a new column fail on "column does not exist" — the drift
+      # issue #142 is about. This is also the path that caught #190's
+      # `import_libraries` bug: a FRESH provision runs the import procedures,
+      # and a long-lived database never re-runs them.
+      #
+      # `--scope default` is EXPLICIT and load-bearing. `dbd deploy` with no
+      # scope applies the full set, which includes the `dojo` service schema —
+      # but the daemon deploys the `default` scope (see
+      # `bootstrap::database::deploy`, which resolves it and excludes `dojo`
+      # plus the tenant staging pair). Provisioning the full set would give CI
+      # a shape production never has, so a test could pass here against a table
+      # the daemon's own database does not contain.
+      - name: Provision sensei_test
+        run: |
+          createdb -h localhost -U postgres sensei_test
+          cd database && DATABASE_URL="$TEST_DATABASE_URL" dbd deploy --scope default
+
+      # The suite that had no gate. `--bin senseid` because that is where it
+      # lives; the other crates are covered separately below.
+      - name: Test senseid
+        run: cargo test -p senseid --bin senseid
+
+      - name: Test the rest of the workspace
+        run: cargo test --workspace --exclude senseid

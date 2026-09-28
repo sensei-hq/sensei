@@ -23,9 +23,6 @@ create table if not exists task_execution_daily (
 , runs            bigint              not null
 , failures        bigint              not null default 0
 , items_processed bigint
-  -- Duration percentiles, not just an average: task duration is heavily skewed
-  -- (a cold embedded model, a huge repo) and a mean hides exactly the tail that
-  -- matters when the queue feels slow.
 , p50_ms          integer
 , p95_ms          integer
 , max_ms          integer
@@ -56,4 +53,6 @@ comment on column task_execution_daily.items_processed
      is 'Sum of the handlers own return values (files queued, rows written …) —
 NULL when no row in the bucket reported one.';
 comment on column task_execution_daily.p50_ms
-     is 'Median wall-clock duration. NULL when no row in the bucket completed.';
+     is 'Median wall-clock duration. NULL when no row in the bucket completed.
+
+Duration percentiles, not just an average: task duration is heavily skewed (a cold embedded model, a huge repo) and a mean hides exactly the tail that matters when the queue feels slow.';

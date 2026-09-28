@@ -1,3 +1,5 @@
+set search_path to sensei, extensions;
+
 CREATE OR REPLACE VIEW sensei.project_libraries_resolved AS
 SELECT
     l.*,
@@ -10,4 +12,4 @@ SELECT
     END               AS scope,
     pl.project_id     AS scoped_project_id
 FROM sensei.libraries l
-JOIN sensei.project_libraries pl ON pl.library_id = l.id;
+JOIN sensei.library_enablement pl ON pl.library_id = l.id;

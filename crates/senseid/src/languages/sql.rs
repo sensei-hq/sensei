@@ -8,14 +8,27 @@ use sqlparser::parser::Parser as SqlParser;
 pub struct SqlAdapter;
 
 impl LanguageAdapter for SqlAdapter {
-    fn language(&self) -> &str {
+    fn supports_fqn(&self) -> bool {
+        true
+    }
+
+    fn extensions(&self) -> &[&'static str] {
+        &[".sql", ".ddl"]
+    }
+
+    fn language(&self) -> &'static str {
         "sql"
     }
     fn display_name(&self) -> &str {
         "SQL"
     }
 
-    fn fqn_output(&self, abs_path: &str, content: &str) -> Option<super::fqn::FqnFileOutput> {
+    fn fqn_output(
+        &self,
+        abs_path: &str,
+        _rel_path: &str,
+        content: &str,
+    ) -> Option<super::fqn::FqnFileOutput> {
         Some(sql_fqn::produce_fqns(content, &sql_fqn::schema_from_path(abs_path)))
     }
 
@@ -317,6 +330,7 @@ pub(crate) mod sql_fqn {
                     docstring: None,
                     parent_type: None,
                     parent_fqn: None,
+                    return_type: None,
                 });
                 current = Some(fqn_str);
             }
@@ -329,6 +343,7 @@ pub(crate) mod sql_fqn {
                         target_fqn: Some(fqn::item(SQL_LANG, &tsch, "", &tname)),
                         target_name: tname,
                         is_lib: false,
+                        receiver: None,
                     });
                 }
             }
@@ -357,16 +372,8 @@ mod tests {
     }
 
     // ── FQN producer (Phase 6.7) ────────────────────────────────────────────
-    use crate::languages::fqn::{FqnFileOutput, FqnReference};
-    fn def_fqn<'a>(out: &'a FqnFileOutput, name: &str) -> &'a str {
-        out.defs.iter().find(|d| d.name == name).map(|d| d.fqn.as_str()).unwrap_or("<no-def>")
-    }
-    fn ref_to<'a>(out: &'a FqnFileOutput, target_name: &str) -> &'a FqnReference {
-        out.refs
-            .iter()
-            .find(|r| r.target_name == target_name)
-            .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
-    }
+
+    use crate::languages::fqn::finders::{def_fqn, ref_to};
 
     #[test]
     fn sql_def_fqn() {

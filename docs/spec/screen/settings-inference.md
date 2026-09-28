@@ -19,12 +19,12 @@ Kanji is 推 — *inference*.
 - `GET /api/preferences/inference` returns:
   ```json
   {
-    "chains": [ { "name": "insight-copy", "primary": {…}, "fallback": [] }, … ],
+    "chains": [ { "name": "narration-cache", "primary": {…}, "fallback": [] }, … ],
     "installed_models": [ { "provider": "ollama", "model": "gemma4:12b", "size_gb": 8 }, … ],
     "recommended_tier": "balanced" | "advanced" | "lite" | "no-inference",
     "budget": { "daily_usd": number, "monthly_usd": number,
                  "consumed_today_usd": number, "consumed_month_usd": number },
-    "circuit_state": { "chain": "insight-copy", "state": "closed|open|half-open", "next_probe_at": iso? }
+    "circuit_state": { "chain": "narration-cache", "state": "closed|open|half-open", "next_probe_at": iso? }
   }
   ```
 - Read/edit via `PUT /api/preferences/inference/…`.

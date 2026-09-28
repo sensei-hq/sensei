@@ -11,7 +11,7 @@ describe('personal-home-view — soloIdentity', () => {
 
 	it('derives initials from the name (or the email local-part)', () => {
 		expect(soloIdentity({ name: 'Rin Saito' }).initials).toBe('RS');
-		expect(soloIdentity({ email: 'dev.thomas@x.dev' }).initials).toBe('JT');
+		expect(soloIdentity({ email: 'dev.user@x.dev' }).initials).toBe('DU');
 		expect(soloIdentity({}).initials).toBe('?');
 	});
 });

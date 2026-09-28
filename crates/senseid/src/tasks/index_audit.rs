@@ -34,7 +34,6 @@
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
 
 use chrono::Utc;
 use serde::Serialize;
@@ -42,18 +41,12 @@ use serde::Serialize;
 use crate::api::util::json_uuid;
 use crate::db::pg_store::PgStore;
 use crate::tasks::handlers::scan;
+use crate::tasks::ticker;
 
-/// Daily. A full stat sweep over every indexed file/folder is heavier than the
-/// 300s reconcile, and the drift it repairs is the rare/residual class the cheap
-/// reconcile misses — so a conservative cadence is right. Configurable via
-/// `audit.interval_secs`.
-const DEFAULT_INTERVAL_SECS: u64 = 86_400;
 /// `sensei.config` key holding the last integrity-audit run (epoch millis). The
 /// watermark GATES the pass (unlike the boot-always reconcile) so frequent
 /// restarts can't re-run the heavier sweep more than once per interval.
 const LAST_RUN_KEY: &str = "audit.last_run";
-/// `sensei.config` key overriding the audit cadence (seconds).
-const INTERVAL_KEY: &str = "audit.interval_secs";
 
 /// At most this many sample paths/ids per drift class in the report — enough to
 /// make a doctor report actionable without dumping a whole tree.
@@ -78,6 +71,12 @@ pub struct AuditSamples {
     pub nested_standalone: Vec<String>,
     /// Ids of duplicate-name phantom projects.
     pub duplicate_name_projects: Vec<String>,
+    /// One repository registered at several paths, rendered as
+    /// `name: /path/a | /path/b` so the report names the copies to choose between.
+    pub duplicate_repository_paths: Vec<String>,
+    /// A folder indexed twice because it is registered inside another holding the
+    /// same files, rendered as `inner (n files) inside outer`.
+    pub contained_duplicate_folders: Vec<String>,
 }
 
 impl AuditSamples {
@@ -113,6 +112,15 @@ pub struct AuditReport {
     pub nested_standalone: u64,
     /// Duplicate-name phantom projects (merged / to merge).
     pub duplicate_name_projects: u64,
+    /// Repositories registered at MORE THAN ONE path — a clone, a symlink or a
+    /// stale checkout. REPORTED ONLY, never repaired: which copy is canonical is
+    /// the user's call. Measured before symlink grouping existed, the largest
+    /// such pair (`~/Developer/gateway` and its symlink) duplicated 4,543 fqns.
+    pub duplicate_repository_paths: u64,
+    /// Folders indexed TWICE because one is registered inside another and holds
+    /// the same files. REPORTED ONLY: `homebrew/` and `marketplace/` are git
+    /// SUBTREES of this repository and are indistinguishable here from a mistake.
+    pub contained_duplicate_folders: u64,
     /// A few example paths/ids per class.
     pub samples: AuditSamples,
 }
@@ -124,6 +132,8 @@ impl AuditReport {
             || self.ghost_folders > 0
             || self.nested_standalone > 0
             || self.duplicate_name_projects > 0
+            || self.duplicate_repository_paths > 0
+            || self.contained_duplicate_folders > 0
     }
 }
 
@@ -255,6 +265,53 @@ pub async fn audit_index_integrity(
         }
     }
 
+    // Class 5 — ONE REPOSITORY REGISTERED AT SEVERAL PATHS. A clone, a symlink,
+    // or a checkout left behind after a move: the same code indexed twice, so
+    // every symbol in it has a twin and every count over it is doubled.
+    //
+    // REPORTED, NEVER REPAIRED — and that is deliberate rather than unfinished.
+    // Both paths are real directories the user may still be working in, and the
+    // graph cannot know which is canonical. Deleting the wrong one loses work;
+    // deleting either without being asked is not the daemon's call. Nor is this
+    // always a mistake: `homebrew/` and `marketplace/` are git SUBTREES of this
+    // very repository, legitimately present twice.
+    //
+    // Symlinked twins are grouped onto one repository by `scan_root`, which is
+    // what makes them visible here at all — before that they carried
+    // `repository_id = NULL` and no query could relate them.
+    match pg.duplicate_repository_paths().await {
+        Ok(dups) => {
+            report.duplicate_repository_paths = dups.len() as u64;
+            AuditSamples::extend_capped(
+                &mut report.samples.duplicate_repository_paths,
+                dups.iter().map(|(name, _, paths)| format!("{name}: {}", paths.join(" | "))),
+            );
+        }
+        Err(e) => tracing::warn!(error = %e, "index_audit: duplicate_repository_paths failed"),
+    }
+
+    // Class 6 — A FOLDER INDEXED TWICE because it is registered INSIDE another
+    // that holds the same files. Git-inside-git, which class 3 cannot see: it
+    // only matches a `standalone` folder inside a `git` one.
+    //
+    // REPORTED, NEVER REPAIRED, for the same reason as class 5 and one more:
+    // `homebrew/` and `marketplace/` are git SUBTREES of this very repository —
+    // intentionally present twice — and nothing here distinguishes them from an
+    // accidental nested checkout. Measured live, every case sits at exactly 100%
+    // overlap, subtree and accident alike.
+    match pg.contained_duplicate_folders().await {
+        Ok(dups) => {
+            report.contained_duplicate_folders = dups.len() as u64;
+            AuditSamples::extend_capped(
+                &mut report.samples.contained_duplicate_folders,
+                dups.iter().map(|(outer, inner, _, files)| {
+                    format!("{inner} ({files} files) inside {outer}")
+                }),
+            );
+        }
+        Err(e) => tracing::warn!(error = %e, "index_audit: contained_duplicate_folders failed"),
+    }
+
     report
 }
 
@@ -296,108 +353,61 @@ pub async fn run_doctor(pg: &PgStore) -> AuditReport {
     run_audit(pg, false).await
 }
 
-/// Resolve the audit cadence (seconds) from config, falling back to the default
-/// for missing / unparseable / zero values.
-fn parse_interval(cfg: Option<String>) -> u64 {
-    cfg.and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_INTERVAL_SECS)
-}
-
-/// True when an audit is "due": never run, or the interval has elapsed since the
-/// last run. Pure (clock injected) so it's testable. Unlike the reconcile boot
-/// pass, the audit IS watermark-gated — it's the heavier sweep, so a restart
-/// within the interval must not re-run it.
-fn due_for_audit(now_ms: i64, last_run_ms: Option<i64>, interval_secs: u64) -> bool {
-    match last_run_ms {
-        None => true,
-        Some(prev) => now_ms - prev >= interval_secs as i64 * 1000,
-    }
-}
-
 /// Spawn the periodic repair audit for the daemon's lifetime.
 pub fn spawn(pg: Arc<PgStore>) {
     tokio::spawn(run(pg));
 }
 
 async fn run(pg: Arc<PgStore>) {
-    let secs = parse_interval(pg.get_config(INTERVAL_KEY).await.ok().flatten());
-    tracing::info!(
-        interval_secs = secs,
-        "index_audit: started (periodic invariant self-audit + repair)"
-    );
-    let mut ticker = tokio::time::interval(Duration::from_secs(secs));
-    loop {
-        ticker.tick().await; // first tick fires immediately
-        let now_ms = Utc::now().timestamp_millis();
-
-        // Watermark-gated: skip if a prior audit ran within the interval (e.g. a
-        // recent restart). Non-fatal on a read failure — treat as due.
-        let last = pg
-            .get_config(LAST_RUN_KEY)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|v| v.trim().parse::<i64>().ok());
-        if !due_for_audit(now_ms, last, secs) {
-            tracing::debug!("index_audit: not due yet (recent watermark) — skipping this tick");
-            continue;
+    // Cadence lives in `sensei.schedules` (name `index_audit`).
+    //
+    // The old loop GATED itself on a `LAST_RUN_KEY` watermark to avoid
+    // re-auditing after a quick restart. `should_run` now answers exactly that
+    // question from `schedules.last_run_at`, so the hand-rolled gate is gone
+    // rather than kept as a second source of truth.
+    //
+    // The watermark is still WRITTEN, but nothing reads it any more:
+    // `GET /api/tasks/scheduled` now shows `schedules.last_run_at` (step 4 of
+    // the schedules spec). The write is a no-op cost kept out of this slice —
+    // retiring it is a separate change, along with the key itself.
+    let store = pg.clone();
+    ticker::run_scheduled(pg, "index_audit", move || {
+        let pg = store.clone();
+        async move {
+            audit_pass(&pg).await;
+            Ok(())
         }
+    })
+    .await;
+}
 
-        let report = run_audit(&pg, true).await;
-        if report.has_drift() {
-            tracing::info!(
-                orphan_files = report.orphan_files,
-                ghost_folders = report.ghost_folders,
-                nested_standalone = report.nested_standalone,
-                duplicate_name_projects = report.duplicate_name_projects,
-                roots_present = report.roots_present,
-                roots_absent = report.roots_absent,
-                "index_audit: repaired index drift",
-            );
-        } else {
-            tracing::debug!(
-                roots_present = report.roots_present,
-                "index_audit: index invariant-clean"
-            );
-        }
-
-        // Record the run watermark (non-fatal — the in-memory cadence keeps going).
-        if let Err(e) = pg.set_config(LAST_RUN_KEY, &now_ms.to_string()).await {
-            tracing::warn!(error = %e, "index_audit: persisting last_run watermark failed");
-        }
+/// One audit + repair pass.
+async fn audit_pass(pg: &PgStore) {
+    let report = run_audit(pg, true).await;
+    // Non-fatal: the audit happened; only the visibility watermark failed.
+    let now_ms = Utc::now().timestamp_millis();
+    if let Err(e) = pg.set_config(LAST_RUN_KEY, &now_ms.to_string()).await {
+        tracing::warn!(error = %e, "index_audit: persisting last_run watermark failed");
+    }
+    if report.has_drift() {
+        tracing::info!(
+            orphan_files = report.orphan_files,
+            ghost_folders = report.ghost_folders,
+            nested_standalone = report.nested_standalone,
+            duplicate_name_projects = report.duplicate_name_projects,
+            roots_present = report.roots_present,
+            roots_absent = report.roots_absent,
+            "index_audit: repaired index drift",
+        );
+    } else {
+        tracing::debug!("index_audit: no drift");
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── Pure helpers ─────────────────────────────────────────────────────────
-
-    #[test]
-    fn parse_interval_falls_back_on_missing_invalid_or_zero() {
-        assert_eq!(parse_interval(None), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("nope".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("0".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("3600".into())), 3600);
-        assert_eq!(parse_interval(Some("  7200 ".into())), 7200);
-    }
-
-    #[test]
-    fn default_cadence_is_conservative_daily() {
-        // The audit stats every indexed file/folder — heavier than the 300s
-        // reconcile — so its default must be a slow (daily) cadence.
-        assert_eq!(DEFAULT_INTERVAL_SECS, 86_400);
-    }
-
-    #[test]
-    fn due_for_audit_never_run_or_interval_elapsed() {
-        let day = 86_400u64;
-        assert!(due_for_audit(1_000_000, None, day), "never run → due");
-        assert!(due_for_audit(day as i64 * 1000, Some(0), day), "exactly one interval later → due");
-        assert!(!due_for_audit(day as i64 * 500, Some(0), day), "half an interval later → not due");
-    }
+    use crate::db::pg_store::graph_seed::SeedGraph;
 
     #[test]
     fn samples_are_capped() {
@@ -430,8 +440,8 @@ mod tests {
         let fid =
             pg.upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy()).await.unwrap();
         // live.rs exists on disk; gone.rs does not.
-        pg.upsert_node(&fid, "function", "a", "live.rs", None, None, None, None).await.unwrap();
-        pg.upsert_node(&fid, "struct", "Gone", "gone.rs", None, None, None, None).await.unwrap();
+        pg.seed_node(&fid, "function", "a", "live.rs", None, None, None, None).await.unwrap();
+        pg.seed_node(&fid, "struct", "Gone", "gone.rs", None, None, None, None).await.unwrap();
 
         // READ-ONLY first: detects the orphan without mutating.
         let doctor = audit_index_integrity(&pg, std::slice::from_ref(&root), false).await;
@@ -492,7 +502,7 @@ mod tests {
             )
             .await
             .unwrap();
-        pg.upsert_node(&gone_fid, "struct", "Ghost", "gone/x.rs", None, None, None, None)
+        pg.seed_node(&gone_fid, "struct", "Ghost", "gone/x.rs", None, None, None, None)
             .await
             .unwrap();
 
@@ -554,6 +564,7 @@ mod tests {
             &repo.to_string_lossy(),
             None,
             Some(&gpid),
+            None,
         )
         .await
         .unwrap();
@@ -571,6 +582,7 @@ mod tests {
                 &nested.to_string_lossy(),
                 None,
                 Some(&spid),
+                None,
             )
             .await
             .unwrap();
@@ -616,6 +628,7 @@ mod tests {
             &repo.to_string_lossy(),
             None,
             Some(&survivor),
+            None,
         )
         .await
         .unwrap();
@@ -671,15 +684,12 @@ mod tests {
                 &repo.to_string_lossy(),
                 None,
                 Some(&gpid),
+                None,
             )
             .await
             .unwrap();
-        pg.upsert_node(&repo_fid, "function", "a", "live.rs", None, None, None, None)
-            .await
-            .unwrap();
-        pg.upsert_node(&repo_fid, "struct", "Gone", "gone.rs", None, None, None, None)
-            .await
-            .unwrap();
+        pg.seed_node(&repo_fid, "function", "a", "live.rs", None, None, None, None).await.unwrap();
+        pg.seed_node(&repo_fid, "struct", "Gone", "gone.rs", None, None, None, None).await.unwrap();
 
         // (b) ghost subfolder (dir absent) with a node (ghost-folder class).
         let ghost_dir = repo.join("ghost"); // never created on disk
@@ -694,7 +704,7 @@ mod tests {
             )
             .await
             .unwrap();
-        pg.upsert_node(&ghost_fid, "struct", "Ghost", "ghost/x.rs", None, None, None, None)
+        pg.seed_node(&ghost_fid, "struct", "Ghost", "ghost/x.rs", None, None, None, None)
             .await
             .unwrap();
 
@@ -713,6 +723,7 @@ mod tests {
             &nested.to_string_lossy(),
             None,
             Some(&spid),
+            None,
         )
         .await
         .unwrap();
@@ -730,6 +741,7 @@ mod tests {
             &extra_repo.to_string_lossy(),
             None,
             Some(&survivor),
+            None,
         )
         .await
         .unwrap();

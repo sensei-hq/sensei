@@ -10,7 +10,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
 
 use super::queue::TaskQueue;
 use super::{Task, TaskKind};
@@ -18,6 +17,7 @@ use crate::db::pg_store::PgStore;
 use crate::libraries::advisory::{Advisory, OsvVulnSource, VulnSource, security_verdict};
 use crate::libraries::registry::{HttpVersionSource, VersionSource};
 use crate::libraries::version::{Bump, UpdateAction, classify_bump, update_action};
+use crate::tasks::ticker;
 
 /// True iff the docs still need a re-index for `latest` — the applied marker is
 /// absent or stale. Equal marker ⇒ `index_library` already stamped a confirmed,
@@ -128,14 +128,8 @@ async fn maybe_enqueue_reindex(
     tracing::info!(lib = %name, %latest, "library_update_scheduler: enqueued docs re-index");
 }
 
-const DEFAULT_INTERVAL_SECS: u64 = 86_400; // daily
 const DEFAULT_CHECK_TTL_SECS: i64 = 82_800; // ~23h — reuse a lib's cached latest if newer
 
-fn parse_interval(cfg: Option<String>) -> u64 {
-    cfg.and_then(|s| s.trim().parse::<u64>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_INTERVAL_SECS)
-}
 fn parse_ttl(cfg: Option<String>) -> i64 {
     cfg.and_then(|s| s.trim().parse::<i64>().ok())
         .filter(|n| *n > 0)
@@ -150,14 +144,16 @@ pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 }
 
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
-    let secs = parse_interval(pg.get_config("library.update_interval_secs").await.ok().flatten());
-    let mut ticker = tokio::time::interval(Duration::from_secs(secs));
-    let src = HttpVersionSource;
-    let vuln = OsvVulnSource;
-    loop {
-        ticker.tick().await; // first tick fires immediately → a boot pass
-        tick(&pg, &queue, &src, &vuln).await;
-    }
+    // Cadence lives in `sensei.schedules` (name `library_update`).
+    let store = pg.clone();
+    ticker::run_scheduled(pg, "library_update", move || {
+        let (queue, pg) = (queue.clone(), store.clone());
+        async move {
+            tick(&pg, &queue, &HttpVersionSource, &OsvVulnSource).await;
+            Ok(())
+        }
+    })
+    .await;
 }
 
 /// One pass. Testable with a stub [`VersionSource`]. Never panics; every failure is
@@ -191,11 +187,19 @@ pub(crate) async fn tick(
         let latest = match fresh {
             Some(v) => Some(v), // within TTL — reuse cache, no network
             None => match src.latest(ecosystem, name, local_path.as_deref()).await {
-                Some(v) => {
-                    if let Err(e) = pg.set_library_latest_cache(lib_id, &v, now).await {
+                Some(info) => {
+                    if let Err(e) = pg.set_library_latest_cache(lib_id, &info.version, now).await {
                         tracing::warn!(error = %e, lib = %name, "library_update_scheduler: cache write failed");
                     }
-                    Some(v)
+                    // The URLs rode in on the SAME response (02b S8). Persisted
+                    // here because this is where the body already is; a
+                    // separate pass would be a second fetch for a body we had.
+                    if !info.urls.is_empty()
+                        && let Err(e) = pg.set_library_urls(lib_id, &info.urls).await
+                    {
+                        tracing::warn!(error = %e, lib = %name, "library_update_scheduler: url write failed");
+                    }
+                    Some(info.version)
                 }
                 None => {
                     tracing::debug!(lib = %name, "library_update_scheduler: no latest resolved — skip (fail-closed)");
@@ -306,8 +310,13 @@ mod tests {
     struct Stub(Option<String>);
     #[async_trait::async_trait]
     impl VersionSource for Stub {
-        async fn latest(&self, _e: &str, _n: &str, _l: Option<&str>) -> Option<String> {
-            self.0.clone()
+        async fn latest(
+            &self,
+            _e: &str,
+            _n: &str,
+            _l: Option<&str>,
+        ) -> Option<crate::libraries::registry::LatestInfo> {
+            self.0.clone().map(crate::libraries::registry::LatestInfo::version_only)
         }
     }
 
@@ -332,13 +341,6 @@ mod tests {
                 fixed: crate::libraries::version::parse_semver(fixed),
             }],
         }])
-    }
-
-    #[test]
-    fn parse_interval_falls_back() {
-        assert_eq!(parse_interval(None), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("0".into())), DEFAULT_INTERVAL_SECS);
-        assert_eq!(parse_interval(Some("3600".into())), 3600);
     }
 
     async fn seed_pin(s: &PgStore, version_used: &str) -> (uuid::Uuid, uuid::Uuid) {

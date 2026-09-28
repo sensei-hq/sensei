@@ -8,7 +8,7 @@
 //!
 //! Cache-guarded: [`metric_day_explainer::explain`] hashes facts that INCLUDE the
 //! value (and its prior day + delta), so an unchanged value re-hits the
-//! `insight_copy` cache and makes NO model call, while a changed value misses and
+//! `narration_cache` cache and makes NO model call, while a changed value misses and
 //! regenerates. The value upsert's `ON CONFLICT` overwrites `props` wholesale, so
 //! this MERGE runs after it and is the last writer (numerator/denominator survive).
 //!
@@ -102,8 +102,8 @@ pub(super) async fn enrich_day(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::insight_copy::{InsightKind, facts_hash};
     use crate::analysis::metric_day_explainer::MetricDayFacts;
+    use crate::analysis::narration_cache::{InsightKind, facts_hash};
     use crate::tasks::test_support::{make_ctx, seed_metrics_project_folder};
     use crate::tasks::{Task, TaskKind};
     use serde_json::json;
@@ -127,7 +127,7 @@ mod tests {
     }
 
     /// Build the SAME facts the enrichment builds (by calling the same store
-    /// helpers), so a seeded `insight_copy` row lands on the identical `facts_hash`
+    /// helpers), so a seeded `narration_cache` row lands on the identical `facts_hash`
     /// — a deterministic cache HIT independent of any live model.
     async fn seed_cached_explainer(
         pg: &crate::db::pg_store::PgStore,
@@ -154,7 +154,7 @@ mod tests {
             first_try,
         };
         let fh = facts_hash(InsightKind::MetricDayExplainer, &facts.to_facts_json());
-        pg.upsert_insight_copy("metric_day_explainer", &fh, "a quiet climb", detail, None, None)
+        pg.upsert_narration_cache("metric_day_explainer", &fh, "a quiet climb", detail, None, None)
             .await;
     }
 

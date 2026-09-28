@@ -10,12 +10,163 @@
 //! with other work (scans, etc.) and one huge/bad file can't block the rest.
 
 pub mod claude;
+pub mod copilot_cli;
+pub mod cursor;
 pub mod opencode;
+pub mod vscode;
 pub mod zed;
 
 use crate::tasks::executor::TaskContext;
 use crate::tasks::{Task, TaskKind};
 use std::path::PathBuf;
+
+// ── Shared constants (used by multiple adapters) ────────────────────────
+
+/// Cap stored assistant prose per turn (safety net for pathological turns).
+pub(crate) const MAX_TURN_CHARS: usize = 50_000;
+
+/// Skip transcript files larger than this (logged). A multi-hundred-MB file
+/// would spike memory on read and block the executor on parse; rare outlier.
+pub(crate) const MAX_TRANSCRIPT_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Skip any single transcript line larger than this — a line this big is a
+/// base64 attachment / blob, not prose, and parsing it stalls the executor.
+pub(crate) const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
+
+/// Leading markers that mark an injected (non-human) "user" message — harness
+/// notifications, hook context, slash-command echoes. These are not turn
+/// boundaries.
+pub(crate) const INJECTED_MARKERS: &[&str] = &[
+    "<task-notification",
+    "<system-reminder",
+    "<command-name",
+    "<command-message",
+    "<local-command",
+    "Caveat:",
+    "## Security Guidance",
+];
+
+/// The human prompt text of a `user` record, or `None` if it's a tool result,
+/// a meta/injected message, or empty.
+pub(crate) fn human_prompt_text(v: &serde_json::Value) -> Option<String> {
+    if v.get("isMeta").and_then(|m| m.as_bool()) == Some(true) {
+        return None;
+    }
+    let content = v.get("message").and_then(|m| m.get("content"))?;
+    let text = match content {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(blocks) => {
+            if blocks.iter().any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"))
+            {
+                return None;
+            }
+            let mut s = String::new();
+            for b in blocks {
+                if b.get("type").and_then(|t| t.as_str()) == Some("text")
+                    && let Some(t) = b.get("text").and_then(|t| t.as_str())
+                {
+                    if !s.is_empty() {
+                        s.push('\n');
+                    }
+                    s.push_str(t);
+                }
+            }
+            s
+        }
+        _ => return None,
+    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() || is_injected_noise(trimmed) {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+/// Check whether a prompt string is injected noise (not a genuine human turn).
+fn is_injected_noise(text: &str) -> bool {
+    INJECTED_MARKERS.iter().any(|m| text.starts_with(m))
+}
+
+/// Parse a timestamp from a JSON record's `timestamp` field (RFC 3339).
+pub(crate) fn parse_timestamp(v: &serde_json::Value) -> Option<chrono::DateTime<chrono::Utc>> {
+    let ts = v.get("timestamp").and_then(|t| t.as_str())?;
+    chrono::DateTime::parse_from_rfc3339(ts).ok().map(|d| d.with_timezone(&chrono::Utc))
+}
+
+/// Parse a timestamp from a JSON record's `timestamp` field as epoch milliseconds.
+pub(crate) fn parse_timestamp_ms(v: &serde_json::Value) -> Option<i64> {
+    let ts = v.get("timestamp").and_then(|t| t.as_str())?;
+    let dt = chrono::DateTime::parse_from_rfc3339(ts).ok()?;
+    Some(dt.timestamp_millis())
+}
+
+/// Promote per-record signals into `TurnFacts`. Shared across adapters that use
+/// the Claude-style JSON structure (`message.usage`, `gitBranch`, etc.).
+/// Sum across the turn's records; LAST `stop_reason` wins.
+pub(crate) fn merge_facts(facts: &mut TurnFacts, v: &serde_json::Value) {
+    let str_of = |x: Option<&serde_json::Value>| {
+        x.and_then(|t| t.as_str()).filter(|t| !t.is_empty()).map(str::to_string)
+    };
+    if facts.git_branch.is_none() {
+        facts.git_branch = str_of(v.get("gitBranch"));
+    }
+    if facts.effort.is_none() {
+        facts.effort = str_of(v.get("effort"));
+    }
+    if facts.skill.is_none() {
+        facts.skill = str_of(v.get("attributionSkill"));
+    }
+    if facts.plugin.is_none() {
+        facts.plugin = str_of(v.get("attributionPlugin"));
+    }
+    if facts.is_sidechain.is_none() {
+        facts.is_sidechain = v.get("isSidechain").and_then(|b| b.as_bool());
+    }
+    let Some(m) = v.get("message") else { return };
+    if facts.stop_reason.is_none() {
+        facts.stop_reason = str_of(m.get("stop_reason"));
+    }
+    let Some(u) = m.get("usage") else { return };
+    if facts.service_tier.is_none() {
+        facts.service_tier = str_of(u.get("service_tier"));
+    }
+    let add = |slot: &mut Option<i64>, n: Option<i64>| {
+        if let Some(n) = n {
+            *slot = Some(slot.unwrap_or(0) + n);
+        }
+    };
+    add(&mut facts.tokens_in, u.get("input_tokens").and_then(|x| x.as_i64()));
+    add(&mut facts.tokens_out, u.get("output_tokens").and_then(|x| x.as_i64()));
+    add(&mut facts.cache_read, u.get("cache_read_input_tokens").and_then(|x| x.as_i64()));
+    add(&mut facts.cache_write, u.get("cache_creation_input_tokens").and_then(|x| x.as_i64()));
+}
+
+/// Strip bulky prose/content from a record, keep metadata verbatim.
+/// `drop_keys` are top-level keys to exclude (e.g. `["message"]`).
+/// Small high-signal sub-keys of `message` (model, stop_reason, usage) are kept.
+pub(crate) fn turn_attrs(v: &serde_json::Value, drop_keys: &[&str]) -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    if let Some(obj) = v.as_object() {
+        for (k, val) in obj {
+            if drop_keys.contains(&k.as_str()) {
+                continue;
+            }
+            out.insert(k.clone(), val.clone());
+        }
+    }
+    if let Some(m) = v.get("message").and_then(|m| m.as_object()) {
+        let mut mm = serde_json::Map::new();
+        for k in ["id", "model", "stop_reason", "stop_sequence", "usage", "container"] {
+            if let Some(val) = m.get(k) {
+                mm.insert(k.to_string(), val.clone());
+            }
+        }
+        if !mm.is_empty() {
+            out.insert("message".into(), serde_json::Value::Object(mm));
+        }
+    }
+    serde_json::Value::Object(out)
+}
 
 /// One user-prompt -> assistant-response turn parsed from a transcript.
 #[derive(Debug, Clone, PartialEq)]
@@ -235,12 +386,41 @@ fn opencode_db_path() -> PathBuf {
     crate::paths::home().join(".local/share/opencode/opencode.db")
 }
 
+fn cursor_transcript_root() -> PathBuf {
+    crate::paths::home().join(".cursor/projects")
+}
+
+fn vscode_user_root(variant: &str) -> Option<PathBuf> {
+    // variant = "Code" | "Code - Insiders" | "VSCodium" | "Code - OSS"
+    #[cfg(target_os = "macos")]
+    {
+        Some(crate::paths::home().join(format!("Library/Application Support/{variant}/User")))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Some(crate::paths::home().join(format!(".config/{variant}/User")))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        dirs::data_dir().map(|d| d.join(format!("{variant}/User")))
+    }
+}
+
+fn copilot_home() -> PathBuf {
+    std::env::var("COPILOT_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| crate::paths::home().join(".copilot"))
+}
+
 /// All configured transcript adapters.
 fn adapters() -> Vec<Box<dyn TranscriptAdapter>> {
     vec![
         Box::new(claude::ClaudeAdapter::new(claude_root())),
         Box::new(zed::ZedAdapter::new(zed_db_path())),
         Box::new(opencode::OpenCodeAdapter::new(opencode_db_path())),
+        Box::new(cursor::CursorAdapter::new(cursor_transcript_root())),
+        Box::new(vscode::VscodeAdapter::new(vscode_user_root("Code").unwrap_or_else(claude_root))),
+        Box::new(copilot_cli::CopilotCliAdapter::new(copilot_home())),
     ]
 }
 
@@ -251,6 +431,11 @@ fn adapter_for_source(source: &str) -> Option<Box<dyn TranscriptAdapter>> {
         "claude_code" => Some(Box::new(claude::ClaudeAdapter::new(claude_root()))),
         "zed" => Some(Box::new(zed::ZedAdapter::new(zed_db_path()))),
         "opencode" => Some(Box::new(opencode::OpenCodeAdapter::new(opencode_db_path()))),
+        "cursor" => Some(Box::new(cursor::CursorAdapter::new(cursor_transcript_root()))),
+        "vscode" => Some(Box::new(vscode::VscodeAdapter::new(
+            vscode_user_root("Code").unwrap_or_else(claude_root),
+        ))),
+        "copilot_cli" => Some(Box::new(copilot_cli::CopilotCliAdapter::new(copilot_home()))),
         _ => None,
     }
 }
@@ -311,14 +496,13 @@ async fn ingest_one(
                 &parsed.turns,
             )
             .await?;
-        pg.set_capture_watermark(
-            adapter.source(),
-            key,
-            Some(&session_id),
-            stamp,
-            parsed.turns.len() as i32,
-        )
-        .await?;
+        // The count recorded is what was WRITTEN, not what was parsed. Recording
+        // `parsed.turns.len()` made the stored number incapable of disagreeing
+        // with reality, so a watermark claiming turns that no longer exist was
+        // undetectable — 1,986 Zed turns were claimed against an empty table for
+        // two days (#125). With the real count, that mismatch is queryable.
+        pg.set_capture_watermark(adapter.source(), key, Some(&session_id), stamp, turns as i32)
+            .await?;
     }
     // 2. historical-bootstrap: synthesize the session + events if not already
     // captured (#75), so the existing enricher can derive its metrics.
@@ -879,5 +1063,204 @@ mod tests {
             .await
             .ok();
         std::fs::remove_dir_all(&root_dir).ok();
+    }
+
+    #[test]
+    fn adapter_for_source_dispatches_all_new_sources() {
+        assert!(adapter_for_source("cursor").is_some(), "cursor");
+        assert!(adapter_for_source("vscode").is_some(), "vscode");
+        assert!(adapter_for_source("copilot_cli").is_some(), "copilot_cli");
+        assert!(adapter_for_source("claude_code").is_some(), "claude_code");
+        assert!(adapter_for_source("zed").is_some(), "zed");
+        assert!(adapter_for_source("opencode").is_some(), "opencode");
+        assert!(adapter_for_source("unknown_source").is_none(), "unknown returns None");
+    }
+
+    #[test]
+    fn backfill_all_includes_new_adapters() {
+        let ads = adapters();
+        let sources: Vec<&str> = ads.iter().map(|a| a.source()).collect();
+        assert!(sources.contains(&"cursor"), "cursor in adapters(): {sources:?}");
+        assert!(sources.contains(&"vscode"), "vscode in adapters(): {sources:?}");
+        assert!(sources.contains(&"copilot_cli"), "copilot_cli in adapters(): {sources:?}");
+        assert_eq!(ads.len(), 6, "all 6 adapters registered");
+    }
+
+    /// Every adapter's `family()` must be a value `sensei.assistant_family` can
+    /// store.
+    ///
+    /// It could not, for two of them. `copilot_cli` returns `"copilot"` and
+    /// `vscode` returns `"vscode"`, and the enum held neither — so
+    /// `insert_assistant_event`, which casts to it, would fail outright for
+    /// either adapter. It stayed hidden because the two halves disagree:
+    /// `transcript_turns.family` is plain `text` and would have accepted them,
+    /// and neither adapter had ever ingested a row, so nothing exercised the
+    /// path that casts.
+    ///
+    /// Read from the DDL rather than from a list repeated here. A hardcoded copy
+    /// is a second thing to keep in step, and it would pass while the database
+    /// rejected the value — which is the exact failure being guarded against.
+    #[test]
+    fn every_adapter_family_is_a_value_the_enum_can_store() {
+        let ddl = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../database/ddl/enum/sensei/assistant_family.ddl");
+        let text =
+            std::fs::read_to_string(&ddl).unwrap_or_else(|e| panic!("read {}: {e}", ddl.display()));
+        // Strip `--` comments BEFORE looking for quoted values. Without it an
+        // apostrophe in ordinary prose — "a value's ordinal" — reads as the start
+        // of a literal and shifts every value after it by one, so the parse
+        // returns nonsense while still looking like a list. Found by writing
+        // exactly that sentence into the DDL.
+        let sql: String =
+            text.lines().map(|l| l.split("--").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
+        let allowed: Vec<String> = sql.split('\'').skip(1).step_by(2).map(str::to_string).collect();
+        assert!(
+            allowed.len() >= 8,
+            "parsed only {} values from assistant_family.ddl — the parse is wrong, \
+             not the enum: {allowed:?}",
+            allowed.len()
+        );
+        for a in adapters() {
+            assert!(
+                allowed.iter().any(|v| v == a.family()),
+                "adapter {:?} returns family {:?}, which sensei.assistant_family \
+                 cannot store — assistant_events.family casts to that enum, so \
+                 ingesting this source would fail. Allowed: {allowed:?}",
+                a.source(),
+                a.family()
+            );
+        }
+    }
+
+    // ── the anonymised fixture corpus (Tier 2) ───────────────────────────────
+    //
+    // The tests above build their input from inline literals, which is safe but
+    // is a HAND-WRITTEN GUESS at a format that changes without notice: a tool
+    // ships a schema tweak and every one of them stays green while ingestion
+    // breaks. These two cover what a literal cannot — a real capture's shape.
+    //
+    // The fixtures are machine-generated by `scripts/anonymize-transcript.py`
+    // and must never be hand-written, because a hand-copied session is exactly
+    // what put a contributor's username and their employer's project path into
+    // a public repo. `check-no-leaks.sh` carves this directory out of its
+    // transcript-path rule, so THESE TESTS ARE THAT CARVE-OUT'S OTHER HALF.
+
+    fn fixture_root() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/transcripts")
+    }
+
+    fn fixtures() -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        let Ok(families) = std::fs::read_dir(fixture_root()) else {
+            return out;
+        };
+        for fam in families.flatten() {
+            let Ok(cases) = std::fs::read_dir(fam.path()) else { continue };
+            for c in cases.flatten() {
+                if c.path().extension().is_some_and(|e| e == "jsonl") {
+                    out.push(c.path());
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// Every fixture states where it came from, and still matches that statement.
+    ///
+    /// The `fixture_sha256` check is the load-bearing one: it makes a hand-edit
+    /// fail. Without it the meta is a comment, and a comment cannot stop someone
+    /// pasting a real session over a generated file — which is the single move
+    /// this whole arrangement exists to prevent. The tool version is required
+    /// for a duller reason: a fixture that does not say which version of which
+    /// tool produced it cannot be told apart from a stale one.
+    #[test]
+    fn transcript_fixtures_carry_provenance() {
+        use sha2::{Digest, Sha256};
+        let all = fixtures();
+        for f in &all {
+            let meta_path = f.with_extension("meta.json");
+            assert!(
+                meta_path.is_file(),
+                "{} has no sibling .meta.json — regenerate it with \
+                 scripts/anonymize-transcript.py rather than adding one by hand",
+                f.display()
+            );
+            let meta: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&meta_path).unwrap())
+                    .unwrap_or_else(|e| panic!("{} is not valid JSON: {e}", meta_path.display()));
+            for key in ["family", "case", "tool_version", "anonymiser_version", "fixture_sha256"] {
+                assert!(
+                    meta.get(key).and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty()),
+                    "{} is missing '{key}'",
+                    meta_path.display()
+                );
+            }
+            let family_dir = f.parent().unwrap().file_name().unwrap().to_string_lossy();
+            assert_eq!(
+                meta["family"].as_str().unwrap(),
+                family_dir,
+                "{} claims a family its directory contradicts",
+                meta_path.display()
+            );
+            let body = std::fs::read_to_string(f).unwrap();
+            let got = format!("{:x}", Sha256::digest(body.as_bytes()));
+            assert_eq!(
+                meta["fixture_sha256"].as_str().unwrap(),
+                got,
+                "{} was edited after it was generated — regenerate it instead",
+                f.display()
+            );
+        }
+    }
+
+    /// The Claude adapter reads a real capture's shape, and the capture carries
+    /// no real identity.
+    ///
+    /// Both halves matter and they pull in opposite directions: an anonymiser
+    /// that removed enough would also destroy the structure, and one that kept
+    /// the structure might keep a home directory with it. Asserting them
+    /// together is what makes the fixture trustworthy AND useful.
+    #[test]
+    fn the_anonymised_claude_fixture_parses_and_carries_no_identity() {
+        let path = fixture_root().join("claude/session-with-tools.jsonl");
+        if !path.is_file() {
+            println!("no claude fixture present — nothing to check");
+            return;
+        }
+        let content = std::fs::read_to_string(&path).unwrap();
+        let parsed = crate::transcript::claude::ClaudeAdapter::new(fixture_root()).parse(&content);
+
+        assert!(!parsed.turns.is_empty(), "the fixture parsed to zero turns");
+        assert!(!parsed.cwds.is_empty(), "the fixture parsed to zero cwds");
+
+        for cwd in &parsed.cwds {
+            assert!(
+                cwd.starts_with("/Users/dev/") || cwd.starts_with("/home/user/"),
+                "cwd {cwd:?} is not a synthetic path — the anonymiser missed it"
+            );
+        }
+        // The JSON-KEY case. Claude Code keys `trackedFileBackups` BY FILE PATH,
+        // and the first version of the anonymiser preserved every key verbatim —
+        // which wrote a real home directory, and a client name inside it, into
+        // the first fixture it produced. Nothing above would have caught that,
+        // because those keys never reach `cwds`.
+        // Checked per OCCURRENCE, not per line. A line-level "contains a
+        // synthetic path" test passes a line that holds a synthetic path AND a
+        // real one, which is the exact shape of the bug: `trackedFileBackups`
+        // sits on a line already full of legitimate paths.
+        for (i, line) in content.lines().enumerate() {
+            for (at, _) in line.match_indices("/Users/") {
+                let user: String = line[at + "/Users/".len()..]
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '.' || *c == '_' || *c == '-')
+                    .collect();
+                assert_eq!(
+                    user, "dev",
+                    "line {i} carries the home directory of '{user}' — the \
+                     anonymiser let a real identity through"
+                );
+            }
+        }
     }
 }

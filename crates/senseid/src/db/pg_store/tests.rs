@@ -1,4 +1,7 @@
+use super::graph_seed::SeedGraph;
 use super::*;
+use crate::languages::fqn::ReceiverHint;
+use crate::tasks::test_support::{SCHEDULE_EDIT_GATE, TEST_SCHEDULE_PREFIX, test_schedule_name};
 use sqlx_core::query_as::query_as;
 
 // Every test here connects via `PgStore::connect_test()` — the tiny floorless
@@ -97,6 +100,80 @@ async fn config_get_all() {
     assert_eq!(all[&k2], "2");
     s.delete_config(&k1).await.unwrap();
     s.delete_config(&k2).await.unwrap();
+}
+
+// ── activity.task_failures — the restart list ─────────────────────
+
+/// The restart list must carry what is STILL broken, not what has ever broken.
+///
+/// A job that failed and later succeeded is fixed; listing it would put finished
+/// work back on the queue. So the view keeps a job only when its most recent
+/// execution is the failure — and it reports `attempts` (failures accumulated)
+/// beside `max_retry` (the runner's counter), because the gap between them is
+/// the poison-pill signal: a job re-discovered and re-failed each pass climbs
+/// `attempts` while `max_retry` stays flat. That shape produced 17,577,049 rows
+/// over 43,312 paths before the stage-3 barrier reached production.
+#[tokio::test]
+async fn task_failures_lists_only_jobs_whose_latest_run_failed_and_counts_their_attempts() {
+    let s = pg_store().await;
+    let fp = format!("/_test/failures/{}", uuid::Uuid::new_v4());
+    let kind = crate::tasks::TaskKind::ProcessFile.to_string();
+
+    // "stuck" — failed twice and never recovered. Belongs on the restart list,
+    // with both failures counted.
+    for attempt in 0..2 {
+        let id =
+            s.start_task_execution(1, None, &kind, &fp, "src/stuck.rs", attempt).await.unwrap();
+        s.fail_task_execution(&id, 5, "boom: no files row for src/stuck.rs, metric churn")
+            .await
+            .unwrap();
+    }
+
+    // "recovered" — failed once, then succeeded. Must NOT appear.
+    let failed = s.start_task_execution(2, None, &kind, &fp, "recovered.rs", 0).await.unwrap();
+    s.fail_task_execution(&failed, 5, "boom: transient").await.unwrap();
+    let ok = s.start_task_execution(2, None, &kind, &fp, "recovered.rs", 1).await.unwrap();
+    s.complete_task_execution(&ok, 1, 5).await.unwrap();
+
+    let rows: Vec<(String, i64, i32)> = sqlx_core::query_as::query_as(
+        "SELECT path, attempts, max_retry FROM activity.task_failures \
+          WHERE folder_path = $1 ORDER BY path",
+    )
+    .bind(&fp)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+
+    assert_eq!(
+        rows.iter().map(|(p, _, _)| p.as_str()).collect::<Vec<_>>(),
+        vec!["src/stuck.rs"],
+        "only the job whose latest run failed — a recovered job is finished work, not a restart"
+    );
+    assert_eq!(rows[0].1, 2, "both failures counted, so a poison pill is visible as one number");
+    assert_eq!(rows[0].2, 1, "beside the runner's own retry counter");
+
+    // The signature collapses the path out, so many files failing one way group
+    // as one cause rather than one cause per file.
+    let (sig,): (String,) = sqlx_core::query_as::query_as(
+        "SELECT error_signature FROM activity.task_failures WHERE folder_path = $1 LIMIT 1",
+    )
+    .bind(&fp)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert!(!sig.contains("src/stuck.rs"), "path collapsed out of the signature, got {sig:?}");
+    // And the NON-path subject survives, deliberately. `path` is overloaded the
+    // way `folder_path` is — 32 of the live failing jobs carry a metric name
+    // (`churn`, `duplication`, `quality`) rather than a file. Those are the
+    // subject, like an fqn or a language, and collapsing them would merge
+    // genuinely different failures into one unreadable group.
+    assert!(sig.contains("metric churn"), "a non-path subject is kept, got {sig:?}");
+
+    sqlx_core::query::query("DELETE FROM activity.task_executions WHERE folder_path = $1")
+        .bind(&fp)
+        .execute(s.pool())
+        .await
+        .unwrap();
 }
 
 // ── Task executions — boot reconcile (D6b) ────────────────────────
@@ -434,26 +511,56 @@ async fn tag_file_nodes_by_framework_kind_aggregates_symbol_kinds() {
 
     // A .svelte file that defines a component and uses a hook.
     let widget = s
-        .upsert_node(&fid, "file", "Widget.svelte", "src/Widget.svelte", None, None, None, None)
+        .seed_node(&fid, "file", "Widget.svelte", "src/Widget.svelte", None, None, None, None)
         .await
         .unwrap();
-    s.upsert_node(&fid, "component", "Widget", "src/Widget.svelte", None, None, None, None)
-        .await
-        .unwrap();
-    s.upsert_node(&fid, "hook", "effect", "src/Widget.svelte", None, None, None, None)
-        .await
-        .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "component",
+        "Widget",
+        "src/Widget.svelte",
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "hook",
+        "effect",
+        "src/Widget.svelte",
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     // A plain file with only a function → no framework tag.
-    let util = s
-        .upsert_node(&fid, "file", "util.rs", "src/util.rs", None, None, None, None)
-        .await
-        .unwrap();
-    s.upsert_node(&fid, "function", "helper", "src/util.rs", None, None, None, None).await.unwrap();
+    let util =
+        s.seed_node(&fid, "file", "util.rs", "src/util.rs", None, None, None, None).await.unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "helper",
+        "src/util.rs",
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
 
     // File-role by path convention (no symbols needed): SvelteKit routes +
     // middleware, and a Next-style middleware file.
     let page = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "file",
             "+page.svelte",
@@ -466,24 +573,15 @@ async fn tag_file_nodes_by_framework_kind_aggregates_symbol_kinds() {
         .await
         .unwrap();
     let endpoint = s
-        .upsert_node(
-            &fid,
-            "file",
-            "+server.ts",
-            "src/routes/api/+server.ts",
-            None,
-            None,
-            None,
-            None,
-        )
+        .seed_node(&fid, "file", "+server.ts", "src/routes/api/+server.ts", None, None, None, None)
         .await
         .unwrap();
     let hooks = s
-        .upsert_node(&fid, "file", "hooks.server.ts", "src/hooks.server.ts", None, None, None, None)
+        .seed_node(&fid, "file", "hooks.server.ts", "src/hooks.server.ts", None, None, None, None)
         .await
         .unwrap();
     let mw = s
-        .upsert_node(&fid, "file", "middleware.ts", "middleware.ts", None, None, None, None)
+        .seed_node(&fid, "file", "middleware.ts", "middleware.ts", None, None, None, None)
         .await
         .unwrap();
 
@@ -552,7 +650,7 @@ async fn tag_file_nodes_by_framework_kind_aggregates_symbol_kinds() {
 }
 
 /// Create a unique test folder for FK tests. Uses suffix for isolation.
-async fn create_test_folder(s: &PgStore, suffix: &str) -> uuid::Uuid {
+pub(crate) async fn create_test_folder(s: &PgStore, suffix: &str) -> uuid::Uuid {
     use sqlx_core::query_as::query_as;
     s.execute_raw(
             "INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING"
@@ -728,7 +826,8 @@ async fn project_identifiers_gathers_names_paths_repos_and_sessions() {
 async fn rank_bm25_returns_results() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("bm25_{}", uuid::Uuid::new_v4())).await;
-    s.upsert_node(
+    crate::tasks::test_support::seed_node(
+        &s,
         &fid,
         "function",
         "authenticate_user",
@@ -740,7 +839,8 @@ async fn rank_bm25_returns_results() {
     )
     .await
     .unwrap();
-    s.upsert_node(
+    crate::tasks::test_support::seed_node(
+        &s,
         &fid,
         "function",
         "validate_email",
@@ -772,12 +872,10 @@ async fn rank_bm25_empty_folder() {
 async fn node_upsert_and_query() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("node_{}", uuid::Uuid::new_v4())).await;
-    let file_id = s
-        .upsert_node(&fid, "file", "main.rs", "src/main.rs", None, None, None, None)
-        .await
-        .unwrap();
+    let file_id =
+        s.seed_node(&fid, "file", "main.rs", "src/main.rs", None, None, None, None).await.unwrap();
     let fn_id = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "function",
             "main",
@@ -810,9 +908,19 @@ async fn upsert_persists_doc_and_symbol_kinds() {
         ("hook", "useState", "src/Button.svelte"),
         ("extension", "review", "marketplace/commands/review.md"),
     ] {
-        s.upsert_node(&fid, kind, name, path, None, None, Some(1), Some(2))
-            .await
-            .unwrap_or_else(|e| panic!("upsert {kind} failed: {e}"));
+        crate::tasks::test_support::seed_node(
+            &s,
+            &fid,
+            kind,
+            name,
+            path,
+            None,
+            None,
+            Some(1),
+            Some(2),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("upsert {kind} failed: {e}"));
     }
     let kinds = s.count_nodes_by_kind(&fid).await.unwrap();
     for kind in ["doc", "struct", "component", "hook", "extension"] {
@@ -825,7 +933,19 @@ async fn upsert_persists_doc_and_symbol_kinds() {
 async fn doc_nodes_are_embeddable() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("embed_{}", uuid::Uuid::new_v4())).await;
-    s.upsert_node(&fid, "doc", "README", "README.md", None, None, Some(1), Some(2)).await.unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "doc",
+        "README",
+        "README.md",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
     let pending = s.nodes_without_embeddings(&fid, 100).await.unwrap();
     assert!(
         pending.iter().any(|(_, kind, name, _, _)| kind == "doc" && name == "README"),
@@ -849,14 +969,10 @@ async fn semantic_search_nodes_ranks_by_cosine() {
     let mut e_beta = vec![0.0f32; dim];
     e_beta[1] = 1.0;
 
-    let id_alpha = s
-        .upsert_node(&fid, "function", "alpha", "a.rs", None, None, Some(1), Some(9))
-        .await
-        .unwrap();
-    let id_beta = s
-        .upsert_node(&fid, "function", "beta", "b.rs", None, None, Some(1), Some(9))
-        .await
-        .unwrap();
+    let id_alpha =
+        s.seed_node(&fid, "function", "alpha", "a.rs", None, None, Some(1), Some(9)).await.unwrap();
+    let id_beta =
+        s.seed_node(&fid, "function", "beta", "b.rs", None, None, Some(1), Some(9)).await.unwrap();
     s.set_node_embedding(&id_alpha, &e_alpha).await.unwrap();
     s.set_node_embedding(&id_beta, &e_beta).await.unwrap();
 
@@ -865,7 +981,11 @@ async fn semantic_search_nodes_ranks_by_cosine() {
     query[0] = 0.9;
     query[1] = 0.1;
 
-    let hits = s.semantic_search_nodes(&[fid], &query, &["function", "method"], 10).await.unwrap();
+    // Permissive bound (1.0 admits everything): this test is about ORDER, and
+    // `beta` is deliberately orthogonal, so a production-strength cutoff would
+    // correctly drop it. The bound itself is exercised by the test below.
+    let hits =
+        s.semantic_search_nodes(&[fid], &query, &["function", "method"], 10, 1.0).await.unwrap();
 
     let names: Vec<&str> = hits.iter().map(|(_, name, ..)| name.as_str()).collect();
     assert!(
@@ -879,12 +999,762 @@ async fn semantic_search_nodes_ranks_by_cosine() {
     );
 
     // A kind filter that matches neither node returns nothing.
-    let none = s.semantic_search_nodes(&[fid], &query, &["class"], 10).await.unwrap();
+    let none = s.semantic_search_nodes(&[fid], &query, &["class"], 10, 1.0).await.unwrap();
     assert!(none.is_empty(), "kind filter should exclude functions, got {none:?}");
 
     // Empty inputs are cheap no-ops, never a query.
-    assert!(s.semantic_search_nodes(&[], &query, &["function"], 10).await.unwrap().is_empty());
-    assert!(s.semantic_search_nodes(&[fid], &[], &["function"], 10).await.unwrap().is_empty());
+    assert!(s.semantic_search_nodes(&[], &query, &["function"], 10, 1.0).await.unwrap().is_empty());
+    assert!(s.semantic_search_nodes(&[fid], &[], &["function"], 10, 1.0).await.unwrap().is_empty());
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_lib_node_records_the_language_that_minted_it() {
+    // Every one of the 21,937 lib nodes in the live graph has `language = NULL`,
+    // because `upsert_lib_node_by_fqn` never set the column. That absence is not
+    // cosmetic: it is what blocks the last wrong-merge guard on the receiver
+    // resolver. A bare return type (`use reqwest::Client; fn f() -> Client`)
+    // could be refused when a lib symbol of that name is in scope — but with no
+    // language on the lib node the guard is unavoidably cross-language and would
+    // refuse a Rust `Session` because a PYTHON package exports that name.
+    // Measured: 23 first-party rust type names collide this way project-wide
+    // (Action, Column, Config, Gateway, Message, Node, Plan, Request, Session,
+    // Table, Transport, ...).
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("liblang_{}", uuid::Uuid::new_v4())).await;
+
+    let rust_id = s
+        .upsert_lib_node_by_fqn(
+            &fid,
+            "lib·serde_json·serde_json·Value",
+            "Value",
+            "serde_json",
+            Some("rust"),
+        )
+        .await
+        .unwrap();
+    let py_id = s
+        .upsert_lib_node_by_fqn(
+            &fid,
+            "lib·pydantic·pydantic·Value",
+            "Value",
+            "pydantic",
+            Some("python"),
+        )
+        .await
+        .unwrap();
+
+    macro_rules! lang {
+        ($id:expr) => {{
+            let r: (Option<String>,) =
+                sqlx_core::query_as::query_as("SELECT language FROM sensei.nodes WHERE id = $1")
+                    .bind($id)
+                    .fetch_one(s.pool())
+                    .await
+                    .unwrap();
+            r.0
+        }};
+    }
+    assert_eq!(lang!(rust_id).as_deref(), Some("rust"));
+    assert_eq!(
+        lang!(py_id).as_deref(),
+        Some("python"),
+        "two libs exporting the SAME symbol name must be distinguishable by \
+         language — that is the whole point of recording it"
+    );
+
+    // The package CONTAINER is language-scoped too. Without it, a `lib·serde_json`
+    // container minted from rust and one minted from a TS file of the same name
+    // would be one row with no way to tell which language's dependency it is.
+    let container: (Option<String>,) = sqlx_core::query_as::query_as(
+        "SELECT language FROM sensei.nodes WHERE folder_id = $1 AND fqn = 'lib·serde_json'",
+    )
+    .bind(fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(container.0.as_deref(), Some("rust"), "the package container carries it too");
+
+    s.delete_nodes_by_folder(&fid).await.ok();
+}
+
+#[tokio::test]
+async fn docs_are_served_for_the_version_a_folder_pins_and_labelled_when_they_cannot_be() {
+    // 02b S9 end to end through the store. A project on 1.2 handed 3.0's docs
+    // gets a confident answer about an API it does not have; the label is what
+    // makes that answer usable instead of wrong (R4).
+    let s = pg_store().await;
+    let rid = s
+        .add_watch_root(&format!("/tmp/s9_{}", uuid::Uuid::new_v4()), "s9", &serde_json::json!([]))
+        .await
+        .unwrap();
+    let abs = format!("/_test/s9-app-{}", uuid::Uuid::new_v4());
+    let folder =
+        s.upsert_folder(&rid, "git", "s9-app", &abs, &abs, None, None, None).await.unwrap();
+
+    // Unique per run, like the watch root and the folder above. It was the one
+    // FIXED identifier in the test, and `delete_library` at the bottom only
+    // runs on the happy path — so a single run that died partway left
+    // `library_content` rows that made every later run fail on
+    // `library_content_identity_uq`, permanently, with an error naming the
+    // constraint rather than the abandoned cleanup.
+    let lib_name = format!("_test:s9lib:{}", uuid::Uuid::new_v4());
+    let lib = s.upsert_library(&lib_name, "npm", Some("1.2.0"), None, None, None).await.unwrap();
+    // Two held versions: the one this folder pins, and a newer one.
+    for (v, page) in [("1.2.0", "list @ 1.2"), ("3.0.0", "list @ 3.0")] {
+        let vid = s.ensure_library_version(&lib, Some(v)).await.unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.library_content(library_version_id, kind, name, body, component, source_type)
+             VALUES($1, 'page'::sensei.library_content_kind, 'List', $2, 'list', 'local'::sensei.library_source_type)",
+        )
+        .bind(vid)
+        .bind(page)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    }
+    s.upsert_referenced_library(&folder, &lib, Some("1.2.0"), None).await.unwrap();
+
+    // The folder pins 1.2 → it gets 1.2's docs, and NO caveat.
+    let d = s.get_library_docs(&lib_name, Some("list"), Some(&abs)).await.unwrap();
+    assert_eq!(d.served_version.as_deref(), Some("1.2.0"));
+    assert_eq!(d.version_note, None, "an exact answer needs no caveat");
+    assert_eq!(d.pages[0]["content"], "list @ 1.2");
+
+    // Re-pin to a version nothing serves → closest, LABELLED.
+    s.upsert_referenced_library(&folder, &lib, Some("2.0.0"), None).await.unwrap();
+    let d2 = s.get_library_docs(&lib_name, Some("list"), Some(&abs)).await.unwrap();
+    assert!(d2.version_note.is_some(), "a wrong-version answer must say so");
+    assert!(
+        d2.version_note.as_deref().unwrap().contains("you are on 2.0.0"),
+        "the label names both versions: {:?}",
+        d2.version_note
+    );
+
+    // No folder stated → latest, and no caveat INVENTED. There is no pin to miss.
+    let d3 = s.get_library_docs(&lib_name, Some("list"), None).await.unwrap();
+    assert_eq!(d3.version_note, None, "absent context is not a mismatch");
+    assert!(d3.pinned_version.is_none());
+
+    s.delete_library(&lib).await.unwrap();
+    s.remove_watch_root(&rid).await.ok();
+}
+
+#[tokio::test]
+async fn registry_urls_land_on_the_right_level_and_a_later_silence_does_not_wipe_them() {
+    // 02b S8. repository/homepage are identity-level; docs_url describes where
+    // a RELEASE's documentation lives. And registries disagree about what they
+    // expose — npm has no documentation field — so a response that omits a URL
+    // means "this one did not say", never "there is none".
+    use crate::libraries::registry::RegistryUrls;
+    let s = pg_store().await;
+    let lib =
+        s.upsert_library("_test:urls", "cargo", Some("1.0.0"), None, None, None).await.unwrap();
+
+    s.set_library_urls(
+        &lib,
+        &RegistryUrls {
+            repository: Some("https://github.com/serde-rs/serde".into()),
+            homepage: Some("https://serde.rs".into()),
+            docs: Some("https://docs.rs/serde".into()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let row: (Option<String>, Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT l.repository_url, l.homepage_url, v.docs_url
+           FROM sensei.libraries l
+           JOIN sensei.library_versions v ON v.library_id = l.id AND v.is_latest
+          WHERE l.id = $1",
+    )
+    .bind(lib)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(row.0.as_deref(), Some("https://github.com/serde-rs/serde"));
+    assert_eq!(row.1.as_deref(), Some("https://serde.rs"));
+    assert_eq!(row.2.as_deref(), Some("https://docs.rs/serde"), "docs live on the VERSION");
+
+    // A second lookup from a registry that states none of them.
+    s.set_library_urls(&lib, &RegistryUrls::default()).await.unwrap();
+    let row2: (Option<String>, Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT l.repository_url, l.homepage_url, v.docs_url
+           FROM sensei.libraries l
+           JOIN sensei.library_versions v ON v.library_id = l.id AND v.is_latest
+          WHERE l.id = $1",
+    )
+    .bind(lib)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(row2, row, "silence does not wipe what an earlier response established");
+
+    s.delete_library(&lib).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_docs_read_failure_is_recorded_as_a_gap_and_never_deletes_the_pages() {
+    // 02b S7b.2/S7b.3. dbd served 36 pages for two months pointing at a
+    // directory that had been deleted, and nothing registered it as a gap —
+    // the failure only ever reached a task log. Two properties here:
+    //   1. the error is RECORDED against the version, so it is queryable;
+    //   2. the pages SURVIVE it. Stale content is the last known-true content,
+    //      and dropping it on a read error trades a stale answer for no answer.
+    let s = pg_store().await;
+    let lib =
+        s.upsert_library("_test:stale", "npm", Some("1.0.0"), None, None, None).await.unwrap();
+    s.upsert_library_page(
+        &lib,
+        "Overview",
+        None,
+        Some("/gone/llms/overview.txt"),
+        None,
+        Some("body"),
+        "local",
+        Some("overview"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    const COUNT_PAGES: &str = "SELECT count(*) FROM sensei.library_content c
+           JOIN sensei.library_versions v ON v.id = c.library_version_id
+          WHERE v.library_id = $1 AND c.kind = 'page'::sensei.library_content_kind";
+    let n: (i64,) =
+        sqlx_core::query_as::query_as(COUNT_PAGES).bind(lib).fetch_one(s.pool()).await.unwrap();
+    assert_eq!(n.0, 1);
+
+    // The source vanishes.
+    s.record_library_docs_error(&lib, Some("llms root not a directory: /gone/llms")).await.unwrap();
+
+    let (err, checked): (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT props->>'docs_error', props->>'docs_checked_at'
+           FROM sensei.library_versions WHERE library_id = $1 AND is_latest",
+    )
+    .bind(lib)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(err.as_deref(), Some("llms root not a directory: /gone/llms"));
+    assert!(checked.is_some(), "checked-and-fine differs from never-checked");
+    let n: (i64,) =
+        sqlx_core::query_as::query_as(COUNT_PAGES).bind(lib).fetch_one(s.pool()).await.unwrap();
+    assert_eq!(n.0, 1, "the last known-true content survives the failure");
+
+    // The docs come back. The gap clears itself — nobody has to intervene.
+    s.record_library_docs_error(&lib, None).await.unwrap();
+    let err2: (Option<String>,) = sqlx_core::query_as::query_as(
+        "SELECT props->>'docs_error' FROM sensei.library_versions
+          WHERE library_id = $1 AND is_latest",
+    )
+    .bind(lib)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(err2.0, None, "a recovered library stops reporting stale");
+
+    s.delete_library(&lib).await.unwrap();
+}
+
+#[tokio::test]
+async fn two_packages_of_one_library_can_each_document_the_same_component() {
+    // A library publishes several packages, and docs are PACKAGE-level while
+    // skills and agents are library-level. `rokkit` ships both `@rokkit/ui`
+    // and `@rokkit/chart`, and each can have a `List` page. Keyed without the
+    // package, the second upserts over the first and one is simply lost.
+    let s = pg_store().await;
+    let lib =
+        s.upsert_library("_test:pagekey", "npm", Some("1.0.0"), None, None, None).await.unwrap();
+
+    let ui = s
+        .upsert_library_page(
+            &lib,
+            "List",
+            None,
+            None,
+            None,
+            Some("ui list docs"),
+            "local",
+            Some("List"),
+            Some("@_test/ui"),
+            None,
+        )
+        .await
+        .unwrap();
+    let chart = s
+        .upsert_library_page(
+            &lib,
+            "List",
+            None,
+            None,
+            None,
+            Some("chart list docs"),
+            "local",
+            Some("List"),
+            Some("@_test/chart"),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_ne!(ui, chart, "two packages, two rows — not one evicting the other");
+
+    // A LIBRARY-LEVEL page (no package) is a third, distinct row.
+    let overview = s
+        .upsert_library_page(
+            &lib,
+            "List",
+            None,
+            None,
+            None,
+            Some("overview"),
+            "local",
+            Some("List"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_ne!(overview, ui);
+    assert_ne!(overview, chart);
+
+    // ...but NULLS NOT DISTINCT means re-ingesting it UPDATES rather than
+    // inserting a duplicate. Postgres treats NULLs as distinct by default, so
+    // without that clause every re-ingest would add another overview row.
+    let overview_again = s
+        .upsert_library_page(
+            &lib,
+            "List",
+            None,
+            None,
+            None,
+            Some("overview v2"),
+            "local",
+            Some("List"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(overview, overview_again, "library-level pages are still constrained");
+
+    let n: (i64,) = sqlx_core::query_as::query_as(
+        "SELECT count(*) FROM sensei.library_content c
+           JOIN sensei.library_versions v ON v.id = c.library_version_id
+          WHERE v.library_id = $1 AND c.kind = 'page'::sensei.library_content_kind",
+    )
+    .bind(lib)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(n.0, 3, "two package pages plus one library-level page");
+
+    s.delete_library(&lib).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_repo_relative_path_resolves_to_a_file_in_a_module_folder() {
+    // 06 S6 / R13. v1 callers hold the REPO folder and a repo-relative path;
+    // the file belongs to a MODULE folder under a folder-relative one. Matching
+    // `(folder_id, file_path)` directly misses every file in a module — 17 of
+    // this repo's 18 folders — and the miss is indistinguishable from "not
+    // indexed". Anchoring both sides to the absolute path is what makes the two
+    // grains meet.
+    let s = pg_store().await;
+    let base = format!("/tmp/fidfor_{}", uuid::Uuid::new_v4());
+    let rid = s.add_watch_root(&base, "fidfor", &serde_json::json!([])).await.unwrap();
+
+    let repo = s.upsert_folder(&rid, "git", "repo", &base, &base, None, None, None).await.unwrap();
+    let mod_abs = format!("{base}/crates/senseid");
+    let module = s
+        .upsert_folder(
+            &rid,
+            "module",
+            "senseid",
+            "crates/senseid",
+            &mod_abs,
+            Some(&repo),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    // The file is FOLDER-relative to the module.
+    let fid = s.upsert_file_row(&module, "src/lib.rs", 1, "h", None).await.unwrap();
+
+    // Asked for from the REPO folder, repo-relative — the v1 caller's shape.
+    assert_eq!(
+        s.file_id_for(&repo, "crates/senseid/src/lib.rs").await.unwrap(),
+        Some(fid),
+        "the repo-relative path must reach the module's file"
+    );
+    // Asked for from the module itself, folder-relative.
+    assert_eq!(s.file_id_for(&module, "src/lib.rs").await.unwrap(), Some(fid));
+    // An absolute path resolves from either anchor.
+    assert_eq!(s.file_id_for(&repo, &format!("{mod_abs}/src/lib.rs")).await.unwrap(), Some(fid));
+
+    // FAILS CLOSED. A miss is None — never a licence to create a phantom row.
+    assert_eq!(s.file_id_for(&repo, "crates/senseid/src/nope.rs").await.unwrap(), None);
+    let n: (i64,) =
+        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.files WHERE folder_id = $1")
+            .bind(module)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(n.0, 1, "a miss created nothing");
+
+    s.remove_watch_root(&rid).await.ok();
+}
+
+/// When two folders hold a row for the SAME file, the caller's own folder wins.
+///
+/// A nested duplicate checkout is a real, deliberate state — it is what
+/// `contained_duplicate_folders` reports on — and both folders legitimately
+/// carry a `files` row for the same file on disk. Resolving purely by absolute
+/// path matches both and picks whichever the planner returns first, so a node in
+/// the inner folder can end up keyed to the OUTER folder's row.
+///
+/// Nothing errors when that happens. The node reads back with a path assembled
+/// from the wrong folder's prefix — `crates/member/crates/member/src/lib.rs`,
+/// which is how this was found — and a plausible-looking wrong path is exactly
+/// the wrong answer R4 ranks below no answer at all.
+///
+/// Asserted from BOTH anchors, because a rule that resolves an ambiguity has to
+/// resolve it the same way for each side or it has only moved the ambiguity.
+#[tokio::test]
+async fn a_file_two_folders_both_track_resolves_to_the_callers_own_folder() {
+    let s = pg_store().await;
+    let base = format!("/tmp/fidtwo_{}", uuid::Uuid::new_v4());
+    let rid = s.add_watch_root(&base, "fidtwo", &serde_json::json!([])).await.unwrap();
+
+    let outer =
+        s.upsert_folder(&rid, "git", "outer", &base, &base, None, None, None).await.unwrap();
+    let inner_abs = format!("{base}/vendored");
+    let inner = s
+        .upsert_folder(&rid, "git", "vendored", "vendored", &inner_abs, Some(&outer), None, None)
+        .await
+        .unwrap();
+
+    // One file on disk, tracked by both folders at their own grains.
+    let outer_row = s.upsert_file_row(&outer, "vendored/src/lib.rs", 1, "h", None).await.unwrap();
+    let inner_row = s.upsert_file_row(&inner, "src/lib.rs", 1, "h", None).await.unwrap();
+    assert_ne!(outer_row, inner_row, "the fixture must really create two rows");
+
+    assert_eq!(
+        s.file_id_for(&inner, "src/lib.rs").await.unwrap(),
+        Some(inner_row),
+        "the inner folder's own row wins for the inner folder"
+    );
+    assert_eq!(
+        s.file_id_for(&outer, "vendored/src/lib.rs").await.unwrap(),
+        Some(outer_row),
+        "the outer folder's own row wins for the outer folder"
+    );
+
+    s.remove_watch_root(&rid).await.ok();
+}
+
+#[tokio::test]
+async fn folder_completeness_propagates_incompleteness_up_the_tree() {
+    // The whole point of the view: a folder is complete only when everything
+    // BENEATH it is too. One unfinished file deep in a subtree must keep every
+    // ancestor incomplete, or a link phase fires against a partial graph.
+    //
+    // The recursion is over TREE STRUCTURE (parent_id), never over folder
+    // status — a view that read `folders.status` to decide `folders.status`
+    // would be self-referential and need a fixpoint loop to converge. This test
+    // pins that one pass suffices.
+    let s = pg_store().await;
+    let root_path = format!("/tmp/fc_{}", uuid::Uuid::new_v4());
+    let root_id = s.add_watch_root(&root_path, "fc", &serde_json::json!([])).await.unwrap();
+
+    // root ── child ── grandchild
+    let root = s.upsert_repo(&root_id, "fc-root", &root_path).await.unwrap();
+    let child = s.upsert_repo(&root_id, "fc-child", &format!("{root_path}/child")).await.unwrap();
+    let grand =
+        s.upsert_repo(&root_id, "fc-grand", &format!("{root_path}/child/grand")).await.unwrap();
+    for (c, p) in [(child, root), (grand, child)] {
+        sqlx_core::query::query("UPDATE sensei.folders SET parent_id = $2 WHERE id = $1")
+            .bind(c)
+            .bind(p)
+            .execute(s.pool())
+            .await
+            .unwrap();
+    }
+
+    macro_rules! complete {
+        ($id:expr) => {{
+            let r: (bool,) = sqlx_core::query_as::query_as(
+                "SELECT subtree_complete FROM sensei.folder_completeness WHERE id = $1",
+            )
+            .bind($id)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+            r.0
+        }};
+    }
+
+    // Nothing walked yet: expected IS NULL everywhere ⇒ all incomplete.
+    // Never-walked must NOT read as complete — that is the fail-safe direction.
+    assert!(!complete!(root), "a never-walked root is not complete");
+    assert!(!complete!(grand), "a never-walked leaf is not complete");
+
+    // Walk them all. root and child hold no files of their own; grand holds one.
+    s.set_folder_expected_files(&root, 0).await.unwrap();
+    s.set_folder_expected_files(&child, 0).await.unwrap();
+    s.set_folder_expected_files(&grand, 1).await.unwrap();
+
+    // grand's single file is still undecided (no `files` row at all) — which
+    // is exactly the case a bare "no undecided rows" check gets wrong.
+    assert!(!complete!(grand), "a folder short of its denominator is incomplete");
+    assert!(!complete!(child), "incompleteness propagates to the parent");
+    assert!(!complete!(root), "...and all the way to the root");
+
+    // WALKING the file is not deciding it. The row now exists, but no parse
+    // has run — the file is `discovered`, and the folder is still short of its
+    // denominator. This assertion is the one that catches a `decided`
+    // predicate keyed on `indexed_at`, which is NOT NULL DEFAULT now() and so
+    // counts every walked file the instant its row appears.
+    s.upsert_scan_state(&grand, "a.rs", 1, "h").await.unwrap();
+    assert!(!complete!(grand), "a walked-but-unparsed file is discovered, not decided");
+
+    // NOW decide it.
+    assert_eq!(s.mark_file_parsed(&grand, "a.rs").await.unwrap(), 1);
+    assert!(complete!(grand), "denominator met");
+    assert!(complete!(child), "an empty folder whose subtree is done is done");
+    assert!(complete!(root), "completeness reaches the root in ONE pass, no loop");
+
+    // A CONTENT CHANGE un-decides it. The recorded parse described bytes that
+    // no longer exist, so the file returns to `discovered` and the whole tree
+    // is incomplete again — otherwise a stale parse counts as current work.
+    s.upsert_scan_state(&grand, "a.rs", 2, "DIFFERENT").await.unwrap();
+    assert!(!complete!(grand), "a changed file needs re-parsing");
+    assert!(!complete!(root), "...and that reaches the root too");
+
+    s.remove_watch_root(&root_id).await.ok();
+}
+
+#[tokio::test]
+async fn folder_completeness_counts_a_deliberate_skip_as_decided() {
+    // A binary or non-UTF-8 file can never be indexed, and it is fingerprinted
+    // with a `skip_reason` precisely so it stops being re-enqueued. If the view
+    // treated a skip as undecided, any folder holding one would never complete
+    // and the whole subtree above it would be stuck forever.
+    let s = pg_store().await;
+    let root_path = format!("/tmp/fcskip_{}", uuid::Uuid::new_v4());
+    let root_id = s.add_watch_root(&root_path, "fcs", &serde_json::json!([])).await.unwrap();
+    let f = s.upsert_repo(&root_id, "fcs-f", &root_path).await.unwrap();
+
+    s.set_folder_expected_files(&f, 1).await.unwrap();
+    sqlx_core::query::query(
+        "INSERT INTO sensei.files (folder_id, file_path, mtime, content_hash, skip_reason)
+         VALUES ($1, 'logo.png', 1, 'h', 'binary_content')",
+    )
+    .bind(f)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let r: (bool,) = sqlx_core::query_as::query_as(
+        "SELECT subtree_complete FROM sensei.folder_completeness WHERE id = $1",
+    )
+    .bind(f)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert!(r.0, "a skip is a verdict — the folder is decided, not stuck");
+
+    s.remove_watch_root(&root_id).await.ok();
+}
+
+/// `decided` is a SUM of two different outcomes, and progress must be able to
+/// tell them apart (08 S3).
+///
+/// "40 of 100 decided" reads as work done. If 35 of those 40 are files that can
+/// never be indexed, the folder is not 40% understood — it is 5% understood and
+/// 35% skipped, and only the breakdown says so. A single total is the shape of
+/// count that has produced real defects in this design's history: correct over
+/// the wrong population, with nothing to disagree with.
+///
+/// The two are kept as separate columns rather than one ratio, because a
+/// consumer that wants the ratio can divide and a consumer that wants the counts
+/// cannot un-divide.
+#[tokio::test]
+async fn folder_completeness_separates_a_parse_from_a_skip() {
+    let s = pg_store().await;
+    let root_path = format!("/tmp/fcsplit_{}", uuid::Uuid::new_v4());
+    let root_id = s.add_watch_root(&root_path, "fcsplit", &serde_json::json!([])).await.unwrap();
+    let f = s.upsert_repo(&root_id, "fcsplit-f", &root_path).await.unwrap();
+
+    // Three files, one of each state — so a column that reported the wrong one
+    // cannot coincide with the right answer.
+    s.set_folder_expected_files(&f, 3).await.unwrap();
+    sqlx_core::query::query(
+        "INSERT INTO sensei.files (folder_id, file_path, mtime, content_hash, skip_reason, parsed_at)
+         VALUES ($1, 'a.rs',    1, 'h', NULL,             now())
+              , ($1, 'logo.png',1, 'h', 'binary_content', NULL)
+              , ($1, 'b.rs',    1, 'h', NULL,             NULL)",
+    )
+    .bind(f)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let (expected, decided, parsed, skipped, complete): (i64, i64, i64, i64, bool) =
+        sqlx_core::query_as::query_as(
+            "SELECT expected, decided, parsed, skipped, subtree_complete
+               FROM sensei.folder_completeness WHERE id = $1",
+        )
+        .bind(f)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(expected, 3, "the denominator is the barrier's count");
+    assert_eq!(parsed, 1, "one file actually reached a parse");
+    assert_eq!(skipped, 1, "one can never be parsed and said so");
+    assert_eq!(decided, 2, "a verdict is either of those");
+    assert_eq!(decided, parsed + skipped, "and is exactly their sum — no third way to decide");
+    assert!(!complete, "the third file has no verdict at all, so the folder is not done");
+
+    s.remove_watch_root(&root_id).await.ok();
+}
+
+#[tokio::test]
+async fn folder_expected_files_round_trips_and_is_the_completeness_denominator() {
+    // The denominator for folder completeness, persisted at walk time.
+    //
+    // Counting only the `files` rows that EXIST cannot decide completeness: a
+    // walk that dies at file 40 of 100 leaves 40 rows all marked decided and 60
+    // with no row at all, so "no undecided rows" is vacuously true. The walk is
+    // the only place that knows how many files there should be, so it records it.
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("expfiles_{}", uuid::Uuid::new_v4())).await;
+
+    assert_eq!(
+        s.folder_expected_files(&fid).await.unwrap(),
+        None,
+        "a folder never walked has no denominator — that is None, NOT zero, because \
+         zero would mean 'complete' for a folder nothing has looked at yet"
+    );
+
+    s.set_folder_expected_files(&fid, 42).await.unwrap();
+    assert_eq!(s.folder_expected_files(&fid).await.unwrap(), Some(42));
+
+    // A re-walk that finds fewer files must LOWER it — otherwise deleting files
+    // would leave the folder permanently short of a denominator it can never meet.
+    s.set_folder_expected_files(&fid, 7).await.unwrap();
+    assert_eq!(s.folder_expected_files(&fid).await.unwrap(), Some(7));
+
+    // An empty folder is complete once walked, so zero must be storable and
+    // distinguishable from "never walked".
+    s.set_folder_expected_files(&fid, 0).await.unwrap();
+    assert_eq!(s.folder_expected_files(&fid).await.unwrap(), Some(0));
+
+    s.delete_nodes_by_folder(&fid).await.ok();
+}
+
+#[tokio::test]
+async fn set_folder_expected_files_preserves_other_props() {
+    // It writes ONE key into a shared jsonb blob. Clobbering the folder's
+    // identity (label/role/summary) to record a file count would be a bad trade.
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("expprops_{}", uuid::Uuid::new_v4())).await;
+
+    s.set_folder_props(&fid, &serde_json::json!({"label": "keep me", "role": "app"}))
+        .await
+        .unwrap();
+    s.set_folder_expected_files(&fid, 9).await.unwrap();
+
+    let row: (serde_json::Value,) =
+        sqlx_core::query_as::query_as("SELECT props FROM sensei.folders WHERE id = $1")
+            .bind(fid)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(row.0.get("label").and_then(|v| v.as_str()), Some("keep me"));
+    assert_eq!(row.0.get("role").and_then(|v| v.as_str()), Some("app"));
+    assert_eq!(s.folder_expected_files(&fid).await.unwrap(), Some(9));
+
+    s.delete_nodes_by_folder(&fid).await.ok();
+}
+
+#[tokio::test]
+async fn semantic_search_nodes_drops_neighbours_beyond_the_distance_bound() {
+    // An ANN query returns its k nearest neighbours HOWEVER FAR AWAY they are.
+    // Unbounded, a query naming a symbol that does not exist still comes back
+    // with a confident list of whatever happened to be closest — indistinguishable
+    // from a real match, which is the fabricate-on-miss shape this repo forbids.
+    //
+    // The bound is measured, not guessed. Over all 108,420 embedded function
+    // nodes in the live corpus, distance from one symbol to its genuine
+    // relatives runs 0.12–0.26, while the corpus p01 is 0.4865 and the median
+    // 0.8892. Related and unrelated are separated by a wide empty band, so a
+    // cutoff anywhere in it — 0.45 — keeps every real hit and admits under 1%
+    // of the corpus as candidates.
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("semcut_{}", uuid::Uuid::new_v4())).await;
+
+    let dim = 384usize;
+    let mut e_near = vec![0.0f32; dim];
+    e_near[0] = 1.0;
+    // Orthogonal to the query direction → cosine distance ~1.0, far outside
+    // any plausible bound. This is the "nearest neighbour that is not a match".
+    let mut e_far = vec![0.0f32; dim];
+    e_far[1] = 1.0;
+
+    let id_near =
+        s.seed_node(&fid, "function", "near", "n.rs", None, None, Some(1), Some(9)).await.unwrap();
+    let id_far = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "far",
+        "f.rs",
+        None,
+        None,
+        Some(1),
+        Some(9),
+    )
+    .await
+    .unwrap();
+    s.set_node_embedding(&id_near, &e_near).await.unwrap();
+    s.set_node_embedding(&id_far, &e_far).await.unwrap();
+
+    let mut query = vec![0.0f32; dim];
+    query[0] = 1.0;
+
+    let hits =
+        s.semantic_search_nodes(&[fid], &query, &["function", "method"], 10, 0.45).await.unwrap();
+    let names: Vec<&str> = hits.iter().map(|(_, name, ..)| name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["near"],
+        "the orthogonal node is beyond the bound and must be dropped, not returned as a hit"
+    );
+
+    // The distance is REPORTED, not discarded. Ranking alone cannot tell a
+    // caller whether hit #1 is an exact match or the least-bad of a bad set;
+    // only the score can, so it has to survive the query.
+    assert!(
+        hits[0].5 < 0.01,
+        "an exact-direction match reports a near-zero distance, got {}",
+        hits[0].5
+    );
+
+    // A query pointing at nothing in the corpus returns NOTHING — the honest
+    // empty. Before the bound this returned both nodes.
+    let mut orthogonal = vec![0.0f32; dim];
+    orthogonal[2] = 1.0;
+    let none = s
+        .semantic_search_nodes(&[fid], &orthogonal, &["function", "method"], 10, 0.45)
+        .await
+        .unwrap();
+    assert!(none.is_empty(), "no node is within the bound — must return empty, got {none:?}");
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
@@ -893,10 +1763,32 @@ async fn semantic_search_nodes_ranks_by_cosine() {
 async fn edge_insert_and_query() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("edge_{}", uuid::Uuid::new_v4())).await;
-    let fn_a =
-        s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
-    let fn_b =
-        s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let fn_a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "a",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
+    let fn_b = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "b",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
     s.insert_edge(&fid, &fn_a, Some(&fn_b), None, None, "calls").await.unwrap();
     let callers = s.get_callers(&fn_b).await.unwrap();
     assert_eq!(callers.len(), 1);
@@ -914,10 +1806,32 @@ async fn insert_edge_is_idempotent() {
     // SAME id and adds no second row, for both resolved and unresolved edges.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("edgeidem_{}", uuid::Uuid::new_v4())).await;
-    let a =
-        s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
-    let b =
-        s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "a",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
+    let b = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "b",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
 
     // Resolved edge: a repeated identical insert upserts to the same row.
     let e1 = s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
@@ -950,10 +1864,32 @@ async fn resolve_edge_merges_into_existing_resolved_edge() {
     // throw a unique violation against edges_unique_resolved.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("resolvemerge_{}", uuid::Uuid::new_v4())).await;
-    let a =
-        s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
-    let b =
-        s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "a",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
+    let b = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "b",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
 
     s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap(); // resolved a→b
     let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap(); // unresolved a→"b"
@@ -991,15 +1927,15 @@ async fn replace_communities_for_folder_kills_stale_and_orphans() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("comm_{}", uuid::Uuid::new_v4())).await;
     let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
     let b = s
-        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
+        .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
     let c = s
-        .upsert_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(5), Some(6))
+        .seed_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(5), Some(6))
         .await
         .unwrap();
 
@@ -1067,11 +2003,11 @@ async fn replace_communities_reruns_change_zero_rows() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("comm_norerun_{}", uuid::Uuid::new_v4())).await;
     let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
     let b = s
-        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
+        .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
     let assignment = vec![CommunityAssignment {
@@ -1125,16 +2061,7 @@ async fn detect_communities_assigns_deterministic_ids_by_natural_key() {
     let mut n = std::collections::HashMap::new();
     for (name, line) in [("a", 10), ("b", 20), ("c", 30), ("d", 40), ("e", 50), ("f", 60)] {
         let id = s
-            .upsert_node(
-                &fid,
-                "function",
-                name,
-                "a.rs",
-                None,
-                Some("()"),
-                Some(line),
-                Some(line + 1),
-            )
+            .seed_node(&fid, "function", name, "a.rs", None, Some("()"), Some(line), Some(line + 1))
             .await
             .unwrap();
         n.insert(name, id);
@@ -1225,13 +2152,24 @@ async fn community_coverage_full_singletons_inherit_file_community() {
     let fid = create_test_folder(&s, &format!("commcov_{}", uuid::Uuid::new_v4())).await;
     // A file with a struct + two methods, and NO edges between any of them.
     let file = s
-        .upsert_node(&fid, "file", "widget.rs", "src/widget.rs", None, None, Some(1), Some(99))
+        .seed_node(&fid, "file", "widget.rs", "src/widget.rs", None, None, Some(1), Some(99))
         .await
         .unwrap();
-    s.upsert_node(&fid, "struct", "Widget", "src/widget.rs", Some(&file), None, Some(2), Some(2))
-        .await
-        .unwrap();
-    s.upsert_node(
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "struct",
+        "Widget",
+        "src/widget.rs",
+        Some(&file),
+        None,
+        Some(2),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
         &fid,
         "method",
         "new",
@@ -1243,7 +2181,8 @@ async fn community_coverage_full_singletons_inherit_file_community() {
     )
     .await
     .unwrap();
-    s.upsert_node(
+    crate::tasks::test_support::seed_node(
+        &s,
         &fid,
         "method",
         "render",
@@ -1299,20 +2238,11 @@ async fn community_adjacency_includes_extends() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("commext_{}", uuid::Uuid::new_v4())).await;
     let base = s
-        .upsert_node(
-            &fid,
-            "class",
-            "Base",
-            "src/base.rs",
-            None,
-            Some("class Base"),
-            Some(1),
-            Some(5),
-        )
+        .seed_node(&fid, "class", "Base", "src/base.rs", None, Some("class Base"), Some(1), Some(5))
         .await
         .unwrap();
     let derived = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "class",
             "Derived",
@@ -1349,121 +2279,51 @@ async fn community_adjacency_includes_extends() {
 }
 
 #[tokio::test]
-async fn recompute_degrees_counts_incident_edges() {
-    // D4.5: nodes.degree = in+out count of edges incident to the node (source,
-    // plus resolved target). An edgeless node is set to 0, not left NULL.
-    let s = pg_store().await;
-    let fid = create_test_folder(&s, &format!("degree_{}", uuid::Uuid::new_v4())).await;
-    let hub = s
-        .upsert_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(1), Some(2))
-        .await
-        .unwrap();
-    let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(3), Some(4))
-        .await
-        .unwrap();
-    let b = s
-        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(5), Some(6))
-        .await
-        .unwrap();
-    let lonely = s
-        .upsert_node(&fid, "function", "lonely", "a.rs", None, Some("()"), Some(7), Some(8))
-        .await
-        .unwrap();
-    s.insert_edge(&fid, &a, Some(&hub), None, None, "calls").await.unwrap(); // a→hub
-    s.insert_edge(&fid, &b, Some(&hub), None, None, "calls").await.unwrap(); // b→hub
-
-    s.recompute_degrees_for_folder(&fid).await.unwrap();
-
-    let deg = |id: uuid::Uuid| {
-        let pool = s.pool().clone();
-        async move {
-            let (d,): (Option<i32>,) = query_as("SELECT degree FROM sensei.nodes WHERE id=$1")
-                .bind(id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-            d
-        }
-    };
-    assert_eq!(deg(hub).await, Some(2), "hub is the resolved target of 2 calls");
-    assert_eq!(deg(a).await, Some(1), "a is the source of 1 call");
-    assert_eq!(deg(b).await, Some(1), "b is the source of 1 call");
-    assert_eq!(deg(lonely).await, Some(0), "an edgeless node has degree 0, not NULL");
-
-    s.delete_nodes_by_folder(&fid).await.unwrap();
-}
-
-#[tokio::test]
-async fn recompute_degrees_reruns_change_zero_rows() {
-    // Regression (bloat incident): the degree barrier runs on EVERY indexing
-    // pass (build_connections). Without the `IS DISTINCT FROM` guard it rewrote
-    // every node in the folder each time, so a steady-state re-scan produced a
-    // full table's worth of dead tuples. Concurrent same-folder passes then
-    // blocked on each other's row locks, held hours-long transactions that
-    // pinned the xmin horizon, and autovacuum could never reclaim them —
-    // sensei.nodes reached 99% dead / 155 GB. A re-scan with no graph change
-    // MUST touch 0 rows.
-    let s = pg_store().await;
-    let fid = create_test_folder(&s, &format!("degree_norerun_{}", uuid::Uuid::new_v4())).await;
-    let hub = s
-        .upsert_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(1), Some(2))
-        .await
-        .unwrap();
-    let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(3), Some(4))
-        .await
-        .unwrap();
-    s.insert_edge(&fid, &a, Some(&hub), None, None, "calls").await.unwrap();
-
-    // First pass sets degree on the nodes whose degree changed (NULL → value).
-    let first = s.recompute_degrees_for_folder(&fid).await.unwrap();
-    assert_eq!(first, 2, "first pass sets degree on the 2 incident nodes");
-
-    // Steady state: nothing changed → the guarded UPDATE must rewrite 0 rows.
-    let second = s.recompute_degrees_for_folder(&fid).await.unwrap();
-    assert_eq!(second, 0, "a re-scan with no graph change rewrites 0 nodes (no dead tuples)");
-
-    s.delete_nodes_by_folder(&fid).await.unwrap();
-}
-
-#[tokio::test]
-async fn god_node_ids_are_top_by_degree() {
-    // D4.5: a community's god_node_ids are its highest-degree members (top-5),
-    // read from nodes.degree; the hub ranks first.
+async fn god_node_ids_rank_by_adjacency_not_by_a_stored_column() {
+    // A community's god_node_ids are its top-5 members by degree. Degree is
+    // counted from the adjacency `detect_communities_for_folder` has already
+    // built from the edges — NOT read back from a `nodes.degree` cache that a
+    // separate barrier had to populate first (56 of 430,988 rows were measurably
+    // stale, and that drift produced wrong god nodes in 4 live communities).
+    //
+    // Two things give this test teeth:
+    // The hub is LAST in natural-key order, so a ranking that fell back to the
+    // tie-break alone — which is what a missing degree signal degrades to — would
+    // put it last instead of first.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("godnode_{}", uuid::Uuid::new_v4())).await;
-    let hub = s
-        .upsert_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(1), Some(2))
-        .await
-        .unwrap();
     let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(3), Some(4))
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
     let b = s
-        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(5), Some(6))
+        .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
     let c = s
-        .upsert_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(7), Some(8))
+        .seed_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(5), Some(6))
         .await
         .unwrap();
-    // a→hub, b→hub, c→hub, a→b (calls). Degrees: hub=3, a=2, b=2, c=1 → one
-    // community {hub,a,b,c}; hub is the clear hub.
+    let hub = s
+        .seed_node(&fid, "function", "hub", "a.rs", None, Some("()"), Some(9), Some(10))
+        .await
+        .unwrap();
+    // a→hub, b→hub, c→hub, a→b. Adjacency degrees: hub=3, a=2, b=2, c=1.
     s.insert_edge(&fid, &a, Some(&hub), None, None, "calls").await.unwrap();
     s.insert_edge(&fid, &b, Some(&hub), None, None, "calls").await.unwrap();
     s.insert_edge(&fid, &c, Some(&hub), None, None, "calls").await.unwrap();
     s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
 
-    s.recompute_degrees_for_folder(&fid).await.unwrap();
     crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
 
     let (god,): (Vec<uuid::Uuid>,) = query_as(
             "SELECT god_node_ids FROM inference.communities WHERE folder_id=$1 ORDER BY community_id LIMIT 1")
             .bind(fid).fetch_one(s.pool()).await.unwrap();
-    assert_eq!(god.first(), Some(&hub), "the highest-degree node is the first god node");
-    assert!(god.contains(&hub), "hub is a god node");
+    assert_eq!(
+        god.first(),
+        Some(&hub),
+        "the hub ranks first from the adjacency, despite being last by natural key"
+    );
     assert!(god.len() <= 5, "at most 5 god nodes per community");
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
@@ -1475,15 +2335,15 @@ async fn community_description_authoritative_write_is_honest_null() {
     // community's description NULL with props.source='null' — honest-empty,
     // NEVER a static template. (Model prose is stamped later, off-barrier, by
     // enrich_community_descriptions.) The Done-gate keys on
-    // props.source ∈ {'insight-copy','null'}.
+    // props.source ∈ {'narration-cache','null'}.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("commdesc_{}", uuid::Uuid::new_v4())).await;
     let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
     let b = s
-        .upsert_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
+        .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
     s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
@@ -1515,13 +2375,11 @@ async fn graph_nodes_returns_community_and_structural_edges() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("gscope_{}", uuid::Uuid::new_v4())).await;
     let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
-    let b = s
-        .upsert_node(&fid, "class", "B", "a.rs", None, Some("()"), Some(3), Some(4))
-        .await
-        .unwrap();
+    let b =
+        s.seed_node(&fid, "class", "B", "a.rs", None, Some("()"), Some(3), Some(4)).await.unwrap();
     sqlx_core::query::query("UPDATE sensei.nodes SET community_id=5 WHERE id=$1")
         .bind(a)
         .execute(s.pool())
@@ -1557,15 +2415,15 @@ async fn communities_info_uses_live_membership() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("livecomm_{}", uuid::Uuid::new_v4())).await;
     let n1 = s
-        .upsert_node(&fid, "function", "n1", "a.rs", None, Some("()"), Some(1), Some(2))
+        .seed_node(&fid, "function", "n1", "a.rs", None, Some("()"), Some(1), Some(2))
         .await
         .unwrap();
     let n2 = s
-        .upsert_node(&fid, "function", "n2", "a.rs", None, Some("()"), Some(3), Some(4))
+        .seed_node(&fid, "function", "n2", "a.rs", None, Some("()"), Some(3), Some(4))
         .await
         .unwrap();
     let n3 = s
-        .upsert_node(&fid, "function", "n3", "a.rs", None, Some("()"), Some(5), Some(6))
+        .seed_node(&fid, "function", "n3", "a.rs", None, Some("()"), Some(5), Some(6))
         .await
         .unwrap();
     // Community 1 has 2 live members, community 2 has 1 — but seed a STALE count.
@@ -1604,7 +2462,7 @@ async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change()
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("nodeid_{}", uuid::Uuid::new_v4())).await;
     let id1 = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "function",
             "foo",
@@ -1619,12 +2477,18 @@ async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change()
 
     // Simulate a prior enrich + embed pass on this node.
     let zeros = format!("[{}]", vec!["0"; 384].join(","));
-    sqlx_core::query::query("UPDATE sensei.nodes SET community_id = 7, degree = 3, embedding = $2::vector WHERE id = $1")
-            .bind(id1).bind(&zeros).execute(s.pool()).await.unwrap();
+    sqlx_core::query::query(
+        "UPDATE sensei.nodes SET community_id = 7, embedding = $2::vector WHERE id = $1",
+    )
+    .bind(id1)
+    .bind(&zeros)
+    .execute(s.pool())
+    .await
+    .unwrap();
 
     // Re-upsert SAME line, SAME signature, only line_end grew → id kept, all preserved.
     let id2 = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "function",
             "foo",
@@ -1637,22 +2501,21 @@ async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change()
         .await
         .unwrap();
     assert_eq!(id1, id2, "a re-upsert at the same identity keeps its id");
-    let (community, degree, has_emb): (Option<i32>, Option<i32>, bool) = query_as(
-        "SELECT community_id, degree, embedding IS NOT NULL FROM sensei.nodes WHERE id = $1",
-    )
-    .bind(id1)
-    .fetch_one(s.pool())
-    .await
-    .unwrap();
+    let (community, has_emb): (Option<i32>, bool) =
+        query_as("SELECT community_id, embedding IS NOT NULL FROM sensei.nodes WHERE id = $1")
+            .bind(id1)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
     assert_eq!(
-        (community, degree, has_emb),
-        (Some(7), Some(3), true),
+        (community, has_emb),
+        (Some(7), true),
         "community_id/degree/embedding preserved when signature is unchanged"
     );
 
     // Re-upsert SAME line, CHANGED signature → id kept, community kept, embedding RE-NULLED.
     let id3 = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "function",
             "foo",
@@ -1676,7 +2539,7 @@ async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change()
 
     // A DIFFERENT line is a new identity ⇒ a new node (a moved symbol churns).
     let id4 = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "function",
             "foo",
@@ -1704,7 +2567,7 @@ async fn upsert_node_at_same_line_keeps_id_and_renulls_embedding_on_sig_change()
 /// language segment changed. `ON CONFLICT (folder_id, fqn)` cannot see the old
 /// row, so the statement fell through to a raw INSERT and hit
 /// `nodes_unique_identity` — the same file/kind/name/parent/line. That made
-/// process_file fail, which withheld scan_state, which made the reconcile
+/// process_file fail, which withheld the `files` row, which made the reconcile
 /// re-drive the folder every 5 minutes forever with the folder stuck `failed`.
 #[tokio::test]
 async fn upsert_node_by_fqn_adopts_row_when_only_the_fqn_changed() {
@@ -1727,7 +2590,7 @@ async fn upsert_node_by_fqn_adopts_row_when_only_the_fqn_changed() {
 
     // Indexed once under the original fqn.
     let first = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             "typescript·@sensei/desktop·lib/components/MetricSparkline",
             "module",
@@ -1740,7 +2603,7 @@ async fn upsert_node_by_fqn_adopts_row_when_only_the_fqn_changed() {
 
     // Same structural identity, DIFFERENT fqn — this used to be a hard error.
     let second = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             "svelte·@sensei/desktop·lib/components/MetricSparkline",
             "module",
@@ -1758,8 +2621,9 @@ async fn upsert_node_by_fqn_adopts_row_when_only_the_fqn_changed() {
 
     // Exactly one row, now carrying the new fqn.
     let (count, fqn): (i64, Option<String>) = query_as(
-        "SELECT count(*) OVER (), fqn FROM sensei.nodes
-             WHERE folder_id=$1 AND file_path=$2 AND kind='module'::sensei.node_kind",
+        "SELECT count(*) OVER (), n.fqn FROM sensei.nodes n
+             JOIN sensei.node_paths np ON np.node_id = n.id
+             WHERE n.folder_id=$1 AND np.file_path=$2 AND n.kind='module'::sensei.node_kind",
     )
     .bind(fid)
     .bind(file_path)
@@ -1772,6 +2636,205 @@ async fn upsert_node_by_fqn_adopts_row_when_only_the_fqn_changed() {
         Some("svelte·@sensei/desktop·lib/components/MetricSparkline"),
         "the adopted row is re-pointed at the new fqn"
     );
+}
+
+/// TWO FILES declaring ONE fqn must resolve to one node, not fail the folder.
+///
+/// An fqn is a LOOKUP KEY: a reference mints it from what the call site can see
+/// — for kotlin, the package and the name — with no knowledge of which file
+/// holds the definition. So the definition side cannot add file or path
+/// information to disambiguate, or the two sides would never produce the same
+/// string and every reference would miss. It follows that N files legitimately
+/// map to one fqn, and one fqn must mean one node.
+///
+/// An Android project makes this concrete: `app/src/panama/java/…/Color.kt` and
+/// `app/src/ecuador/java/…/Color.kt` each declare `val colorPrimary` in one
+/// package. MEASURED over that 245-file repo: 423 distinct top-level
+/// declarations, 26 colliding, all 26 `val`.
+///
+/// The failure needed three rows, which is why it survived: row A holds the fqn
+/// for file A; file B already has a row under a DIFFERENT fqn (its state from an
+/// earlier index); upserting B with A's fqn matches `ON CONFLICT (folder_id,
+/// fqn)`, re-points row A's file_path to B, collides with row B on
+/// `nodes_unique_identity`, and the `adopt_node_by_identity` recovery then tries
+/// to give row B the fqn row A already owns — violating `nodes_unique_fqn`.
+/// `process_file` returned Err, `fail_folder` withheld the `files` row, the reconcile
+/// re-drove the folder every tick, and the repo never finished indexing: 112
+/// retries per 200KB of daemon log, folder stuck `failed`.
+///
+/// Breaking mutation: drop the fqn-conflict fallback in `upsert_node_by_fqn` —
+/// the third upsert returns Err and the poison pill is back.
+#[tokio::test]
+async fn upsert_node_by_fqn_resolves_two_files_declaring_one_fqn() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("variant_{}", uuid::Uuid::new_v4())).await;
+
+    let shared = "kotlin·com.acme.theme·colorPrimary";
+    let panama = "app/src/panama/java/com/acme/theme/Color.kt";
+    let ecuador = "app/src/ecuador/java/com/acme/theme/Color.kt";
+    let def = |file_path: &'static str| FqnDef {
+        file_path,
+        signature: None,
+        line_start: Some(3),
+        line_end: Some(3),
+        is_exported: true,
+        parent_id: None,
+    };
+
+    // Variant A claims the fqn.
+    let a = s
+        .seed_node_by_fqn(&fid, shared, "const", "colorPrimary", Some("kotlin"), Some(def(panama)))
+        .await
+        .unwrap();
+
+    // Variant B already exists under its own (earlier) fqn — the state that
+    // turns the collision into a hard error rather than a plain ON CONFLICT.
+    s.seed_node_by_fqn(
+        &fid,
+        "kotlin·com.acme.theme·colorPrimary·ecuador",
+        "const",
+        "colorPrimary",
+        Some("kotlin"),
+        Some(def(ecuador)),
+    )
+    .await
+    .unwrap();
+
+    // Now B is re-derived onto the SHARED fqn. This used to be Err.
+    let b = s
+        .seed_node_by_fqn(&fid, shared, "const", "colorPrimary", Some("kotlin"), Some(def(ecuador)))
+        .await
+        .expect("a second file declaring one fqn must resolve, not fail the folder");
+
+    assert_eq!(
+        a, b,
+        "one fqn is one node — that is what makes it a key the caller can mint from (package, name)"
+    );
+
+    // And exactly one row holds it, so a reference cannot resolve ambiguously.
+    let holders: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND fqn=$2",
+    )
+    .bind(fid)
+    .bind(shared)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(holders, 1, "an fqn must name exactly one node");
+}
+
+/// **THE ROW MOVES ON ONE RULE AND THE RECOVERY SEARCHES BY ANOTHER.**
+///
+/// MEASURED on the live daemon, 44 files in one day, every one failing WHOLE
+/// rather than losing a single edge:
+///
+/// ```text
+/// adopt node by identity (generatePrescriptionSchedule): no rows returned…  14
+/// adopt node by identity (uploadPrescriptionImage): no rows returned…        9
+/// ```
+///
+/// `upsert_node_ex`'s `ON CONFLICT (folder_id, fqn) DO UPDATE` sets
+///
+/// ```sql
+/// parent_id = COALESCE(EXCLUDED.parent_id, nodes.parent_id)
+/// ```
+///
+/// — KEEP THE OLD PARENT when the incoming one is NULL. `parent_id` is part of
+/// `nodes_unique_identity`, so the row the update becomes, and therefore the
+/// row it collides with, carries the OLD parent. `adopt_node_by_identity` then
+/// searches with the INCOMING parent (NULL), matches nothing, and `fetch_one`
+/// turns that into `RowNotFound` → the file fails → `fail_folder` withholds the
+/// `files` row → the reconcile re-drives the folder forever.
+///
+/// It is the poison pill the arm directly above already names, on a path that
+/// did not get the same treatment. Deterministic — no concurrency, which is
+/// what I assumed twice before reading the two update rules side by side.
+///
+/// The fix does not depend on which column disagrees: the `ON CONFLICT` already
+/// matched a row BY FQN, so when the identity search comes back empty that row
+/// is the answer. Breaking mutation: restore `fetch_one` and this returns Err.
+#[tokio::test]
+async fn an_upsert_whose_identity_moved_does_not_fail_the_file() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("adopt_miss_{}", uuid::Uuid::new_v4())).await;
+    let file = "src/svc.ts";
+
+    // A parent to hang the first revision off.
+    let parent = s
+        .seed_node(&fid, "class", "PrescriptionService", file, None, None, Some(1), Some(99))
+        .await
+        .unwrap();
+
+    let held = "ts·app·svc·generatePrescriptionSchedule";
+
+    // X holds the fqn, nested under the parent at line 10.
+    let x = s
+        .seed_node_by_fqn(
+            &fid,
+            held,
+            "function",
+            "generatePrescriptionSchedule",
+            Some("typescript"),
+            Some(FqnDef {
+                file_path: file,
+                signature: None,
+                line_start: Some(10),
+                line_end: Some(10),
+                is_exported: true,
+                parent_id: Some(&parent),
+            }),
+        )
+        .await
+        .unwrap();
+
+    // Y already occupies the identity X MOVES INTO when re-declared at line 20
+    // with no parent: the COALESCE keeps X's old parent, so the collision is at
+    // (file, function, name, PARENT, 20) — while the recovery will look for
+    // that same row with parent NULL.
+    s.seed_node(
+        &fid,
+        "function",
+        "generatePrescriptionSchedule",
+        file,
+        Some(&parent),
+        None,
+        Some(20),
+        Some(20),
+    )
+    .await
+    .unwrap();
+
+    // The upsert that used to fail: same fqn, now top-level (no parent), line 20.
+    let got = s
+        .upsert_node_by_fqn(
+            &fid,
+            held,
+            "function",
+            "generatePrescriptionSchedule",
+            Some("typescript"),
+            Some(FqnDef {
+                file_path: file,
+                signature: None,
+                line_start: Some(20),
+                line_end: Some(20),
+                is_exported: true,
+                parent_id: None,
+            }),
+        )
+        .await
+        .expect("an upsert whose identity moved must not fail the whole file");
+
+    assert_eq!(got, x, "the fqn still names the node that held it");
+
+    let holders: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND fqn=$2",
+    )
+    .bind(fid)
+    .bind(held)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(holders, 1, "an fqn must still name exactly one node");
 }
 
 #[tokio::test]
@@ -1787,9 +2850,9 @@ async fn upsert_node_by_fqn_merges_ref_and_def() {
     let fqn = "rust·senseid·widget·Widget·new";
 
     // 1. Reference-first → a stub.
-    let stub = s.upsert_node_by_fqn(&fid, fqn, "method", "new", Some("rust"), None).await.unwrap();
+    let stub = s.seed_node_by_fqn(&fid, fqn, "method", "new", Some("rust"), None).await.unwrap();
     let (resolved, fp): (bool, Option<String>) =
-        query_as("SELECT resolved, file_path FROM sensei.nodes WHERE id=$1")
+        query_as("SELECT n.resolved, np.file_path FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id=$1")
             .bind(stub)
             .fetch_one(s.pool())
             .await
@@ -1799,7 +2862,7 @@ async fn upsert_node_by_fqn_merges_ref_and_def() {
 
     // 2. The definition enriches the SAME node in place.
     let def = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             fqn,
             "method",
@@ -1817,9 +2880,21 @@ async fn upsert_node_by_fqn_merges_ref_and_def() {
         .await
         .unwrap();
     assert_eq!(stub, def, "the definition get-or-creates the SAME node as the reference");
-    let (resolved2, fp2, sig, ls, exported): (bool, Option<String>, Option<String>, Option<i32>, bool) =
-            query_as("SELECT resolved, file_path, signature, line_start, is_exported FROM sensei.nodes WHERE id=$1")
-            .bind(def).fetch_one(s.pool()).await.unwrap();
+    let (resolved2, fp2, sig, ls, exported): (
+        bool,
+        Option<String>,
+        Option<String>,
+        Option<i32>,
+        bool,
+    ) = query_as(
+        "SELECT n.resolved, np.file_path, n.signature, n.line_start, n.is_exported \
+                        FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id \
+                       WHERE n.id=$1",
+    )
+    .bind(def)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     assert!(resolved2, "the node is resolved once its definition is seen");
     assert_eq!(fp2.as_deref(), Some("src/widget.rs"));
     assert_eq!(sig.as_deref(), Some("fn new() -> Self"));
@@ -1827,10 +2902,10 @@ async fn upsert_node_by_fqn_merges_ref_and_def() {
     assert!(exported, "the definition's is_exported is written");
 
     // 3. A second reference shares the one node and does NOT downgrade it.
-    let ref2 = s.upsert_node_by_fqn(&fid, fqn, "method", "new", Some("rust"), None).await.unwrap();
+    let ref2 = s.seed_node_by_fqn(&fid, fqn, "method", "new", Some("rust"), None).await.unwrap();
     assert_eq!(ref2, def, "a later reference resolves to the same node");
     let (still_resolved, still_fp): (bool, Option<String>) =
-        query_as("SELECT resolved, file_path FROM sensei.nodes WHERE id=$1")
+        query_as("SELECT n.resolved, np.file_path FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id=$1")
             .bind(def)
             .fetch_one(s.pool())
             .await
@@ -1854,9 +2929,218 @@ async fn upsert_node_by_fqn_merges_ref_and_def() {
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
 
+/// A definition's RETURN TYPE has to reach the node row, because it is the one
+/// hop of the transitive receiver chain that no call site can see for itself:
+/// `ctx.pg().method()` can only name WHICH `method` once something records that
+/// `pg` returns a `PgStore`. `signature` is not a substitute — it stores the
+/// declaration LINE only, and MEASURED on the live graph 1,092 of 3,841 rust
+/// methods (28%) wrap their signature so the `->` never appears in it.
+///
+/// The ORDERING is the load-bearing part of this test. A call site is routinely
+/// scanned before the file defining its callee, so the row starts life as a
+/// reference-minted stub and the definition merges into it later. The return
+/// type must therefore survive `upsert_node_by_fqn`'s DO UPDATE in both
+/// directions — the definition merging over a stub, and a later reference
+/// re-touching a resolved node — and must sit alongside props another writer
+/// already owns.
+///
+/// Breaking mutation: name `props` in that DO UPDATE set-list. The merge then
+/// replaces the jsonb with EXCLUDED's default `'{}'` and the type is gone.
+#[tokio::test]
+async fn node_return_type_survives_the_stub_then_definition_merge() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("rettype_{}", uuid::Uuid::new_v4())).await;
+    let fqn = "rust·senseid·tasks::executor·TaskContext·pg";
+    let def = || FqnDef {
+        file_path: "src/tasks/executor.rs",
+        signature: Some("    pub fn pg("),
+        line_start: Some(19),
+        line_end: Some(21),
+        is_exported: true,
+        parent_id: None,
+    };
+
+    // 1. The CALL SITE is scanned first → an unresolved stub carrying nothing.
+    let stub = s.seed_node_by_fqn(&fid, fqn, "method", "pg", Some("rust"), None).await.unwrap();
+    assert_eq!(
+        s.node_return_type(&stub).await.unwrap(),
+        None,
+        "a node nobody wrote a return type onto reports None — never a placeholder"
+    );
+
+    // 2. Another writer already owns a props key on this row (the section and
+    //    rationale paths both do exactly this through `set_node_props`).
+    s.set_node_props(&stub, &serde_json::json!({"marker": "pre-existing"})).await.unwrap();
+
+    // 3. The return type is stamped, VERBATIM — the module path is what says
+    //    which `PgStore` is meant, so normalising here would throw it away.
+    s.set_node_return_type(&stub, "&crate::db::pg_store::PgStore").await.unwrap();
+    assert_eq!(
+        s.node_return_type(&stub).await.unwrap().as_deref(),
+        Some("&crate::db::pg_store::PgStore"),
+        "the return type round-trips verbatim"
+    );
+
+    // 4. THE MERGE: the defining file is scanned and enriches the same row.
+    let node =
+        s.seed_node_by_fqn(&fid, fqn, "method", "pg", Some("rust"), Some(def())).await.unwrap();
+    assert_eq!(stub, node, "the definition enriches the SAME node the reference stubbed");
+    let (resolved, marker): (bool, Option<String>) =
+        query_as("SELECT resolved, props->>'marker' FROM sensei.nodes WHERE id=$1")
+            .bind(node)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert!(resolved, "the definition still resolves the node");
+    assert_eq!(marker.as_deref(), Some("pre-existing"), "the merge must not drop other props");
+    assert_eq!(
+        s.node_return_type(&node).await.unwrap().as_deref(),
+        Some("&crate::db::pg_store::PgStore"),
+        "the definition merge must not clobber the return type"
+    );
+
+    // 5. A LATER reference (another caller file) must not erase it either.
+    s.seed_node_by_fqn(&fid, fqn, "method", "pg", Some("rust"), None).await.unwrap();
+    assert_eq!(
+        s.node_return_type(&node).await.unwrap().as_deref(),
+        Some("&crate::db::pg_store::PgStore"),
+        "a reference must not clear the definition's return type"
+    );
+
+    // 6. A re-scan where the signature CHANGED overwrites rather than
+    //    accumulating — a stale type is a fact the resolver would chase.
+    s.set_node_return_type(&node, "Arc<PgStore>").await.unwrap();
+    assert_eq!(
+        s.node_return_type(&node).await.unwrap().as_deref(),
+        Some("Arc<PgStore>"),
+        "a re-scan replaces the previous type"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// A function that returns NOTHING must leave no return type behind.
+///
+/// Absence already means "returns nothing / not extracted", so storing `()` or a
+/// blank would add a second encoding of the same fact that no resolver can turn
+/// into a type. The write REMOVES the key rather than skipping, because skipping
+/// is the fabrication case: a function that used to return `-> PgStore` and now
+/// returns unit would keep the previous scan's type, and the receiver chain
+/// would go on resolving calls against a type the function no longer returns.
+///
+/// Breaking mutation: make the no-type branch return `Ok(())` without touching
+/// the row — the stale `PgStore` survives the re-scan.
+#[tokio::test]
+async fn set_node_return_type_clears_the_key_when_the_function_returns_nothing() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("rettype_unit_{}", uuid::Uuid::new_v4())).await;
+    let fqn = "rust·senseid·tasks::executor·TaskContext·reset";
+
+    let node = s.seed_node_by_fqn(&fid, fqn, "method", "reset", Some("rust"), None).await.unwrap();
+    s.set_node_props(&node, &serde_json::json!({"marker": "pre-existing"})).await.unwrap();
+    s.set_node_return_type(&node, "&crate::db::pg_store::PgStore").await.unwrap();
+
+    for gone in ["()", "", "   "] {
+        s.set_node_return_type(&node, gone).await.unwrap();
+        assert_eq!(
+            s.node_return_type(&node).await.unwrap(),
+            None,
+            "{gone:?} names no type, so the node must carry no return type"
+        );
+        // Absent, not a stored jsonb null: `props->>'k'` reads both as NULL, so
+        // only the key's existence distinguishes "no return type" from
+        // "we looked and recorded nothing".
+        let (present, marker): (bool, Option<String>) = query_as(
+            "SELECT jsonb_exists(props, 'return_type'), props->>'marker' FROM sensei.nodes WHERE id=$1",
+        )
+        .bind(node)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
+        assert!(!present, "{gone:?} must remove the key, not store a null under it");
+        assert_eq!(marker.as_deref(), Some("pre-existing"), "clearing must not drop other props");
+    }
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// Writing a return type onto a node id that names no row is a lost write, and a
+/// lost write on the emit path is indistinguishable from a function the parser
+/// found no return type for. An UPDATE matching zero rows reports success, so the
+/// row count has to be checked explicitly.
+///
+/// Breaking mutation: drop the `rows_affected` check — the call reports Ok and
+/// the fact vanishes.
+#[tokio::test]
+async fn set_node_return_type_errors_when_the_node_does_not_exist() {
+    let s = pg_store().await;
+    let ghost = uuid::Uuid::new_v4();
+    let err = s
+        .set_node_return_type(&ghost, "PgStore")
+        .await
+        .expect_err("writing to a node that does not exist must not report success");
+    assert!(err.contains(&ghost.to_string()), "the error names the node it could not write: {err}");
+}
+
+/// The fqn-shape adoption path (`adopt_node_by_identity`) is a SECOND write path
+/// that fires on re-index whenever a file's fqn shape changes. It re-points an
+/// existing row's fqn, and it must carry the return type across with everything
+/// else — losing it there would be invisible in a fresh database and show up
+/// only as receiver calls that resolve on the first index and stop resolving
+/// after the second.
+///
+/// Breaking mutation: add `props = '{}'::jsonb` to that UPDATE's set-list.
+#[tokio::test]
+async fn node_return_type_survives_the_fqn_shape_adoption() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("rettype_adopt_{}", uuid::Uuid::new_v4())).await;
+    let def = || FqnDef {
+        file_path: "src/db/pg_store/graph.rs",
+        signature: Some("    pub fn pool(&self) -> &PgPool {"),
+        line_start: Some(7),
+        line_end: Some(9),
+        is_exported: true,
+        parent_id: None,
+    };
+
+    let first = s
+        .seed_node_by_fqn(
+            &fid,
+            "rust·senseid·db::pg_store·PgStore·pool",
+            "method",
+            "pool",
+            Some("rust"),
+            Some(def()),
+        )
+        .await
+        .unwrap();
+    s.set_node_return_type(&first, "&PgPool").await.unwrap();
+
+    // Same structural identity, DIFFERENT fqn — the adoption path.
+    let second = s
+        .seed_node_by_fqn(
+            &fid,
+            "rust·senseid·db::pg_store::graph·PgStore·pool",
+            "method",
+            "pool",
+            Some("rust"),
+            Some(def()),
+        )
+        .await
+        .expect("an fqn change on an existing identity must adopt the row, not fail");
+    assert_eq!(first, second, "the adoption keeps the row id");
+    assert_eq!(
+        s.node_return_type(&second).await.unwrap().as_deref(),
+        Some("&PgPool"),
+        "adoption must carry the return type across with the rest of the row"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
 #[tokio::test]
 async fn lib_node_by_fqn() {
-    // An external reference get-or-creates a first-class `lib_symbol` node:
+    // An external reference get-or-creates a first-class external node:
     // resolved=true (the external symbol IS its own definition — nothing to
     // enrich), NULL file_path (no local file), grouped by package in props.
     // Stable id across repeated references.
@@ -1864,25 +3148,35 @@ async fn lib_node_by_fqn() {
     let fid = create_test_folder(&s, &format!("lib_{}", uuid::Uuid::new_v4())).await;
     let fqn = "lib·serde_json·serde_json·from_str";
 
-    let a = s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json").await.unwrap();
+    let a =
+        s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json", Some("rust")).await.unwrap();
     let (kind, resolved, fp, pkg): (String, bool, Option<String>, Option<String>) = query_as(
-        "SELECT kind::text, resolved, file_path, props->>'package' FROM sensei.nodes WHERE id=$1",
+        "SELECT n.kind::text, n.resolved, np.file_path, n.props->>'package' FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id WHERE n.id=$1",
     )
     .bind(a)
     .fetch_one(s.pool())
     .await
     .unwrap();
-    assert_eq!(kind, "lib_symbol");
+    // D12: the kind says WHAT, and an import names a thing without saying what
+    // KIND of thing — so `unknown`. The `lib·` fqn prefix is what says external.
+    assert_eq!(kind, "unknown");
     assert!(resolved, "a lib symbol is its own definition — resolved");
     assert_eq!(fp, None, "a lib symbol has no local file");
     assert_eq!(pkg.as_deref(), Some("serde_json"), "grouped by package in props");
 
     // A second reference to the same external fqn shares the one node.
-    let b = s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json").await.unwrap();
+    let b =
+        s.upsert_lib_node_by_fqn(&fid, fqn, "from_str", "serde_json", Some("rust")).await.unwrap();
     assert_eq!(a, b, "repeated external references share one lib node");
-    let (n,): (i64,) = query_as(
-            "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 AND kind='lib_symbol'::sensei.node_kind")
-            .bind(fid).fetch_one(s.pool()).await.unwrap();
+    let (n,): (i64,) = query_as(&format!(
+        "SELECT count(*) FROM sensei.nodes WHERE folder_id=$1 \
+              AND {ext} AND kind <> 'package'::sensei.node_kind",
+        ext = crate::languages::fqn::sql_is_external("fqn")
+    ))
+    .bind(fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     assert_eq!(n, 1);
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
@@ -1899,11 +3193,11 @@ async fn graph_nodes_and_tree_expose_fqn_and_containers() {
 
     // file → struct container → method(fqn), nested by parent_id (Phase 5 shape).
     let file_id = s
-        .upsert_node(&fid, "file", "lib.rs", "src/lib.rs", None, None, Some(1), Some(9))
+        .seed_node(&fid, "file", "lib.rs", "src/lib.rs", None, None, Some(1), Some(9))
         .await
         .unwrap();
     let type_id = s
-        .upsert_node(
+        .seed_node(
             &fid,
             "struct",
             "Widget",
@@ -1917,7 +3211,7 @@ async fn graph_nodes_and_tree_expose_fqn_and_containers() {
         .unwrap();
     let method_fqn = "rust·pkg·lib·Widget·render";
     let method_id = s
-        .upsert_node_by_fqn(
+        .seed_node_by_fqn(
             &fid,
             method_fqn,
             "method",
@@ -1985,11 +3279,11 @@ async fn two_same_name_stubs_do_not_merge() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("stubmerge_{}", uuid::Uuid::new_v4())).await;
     let a = s
-        .upsert_node_by_fqn(&fid, "rust·pkg·a·A·foo", "method", "foo", Some("rust"), None)
+        .seed_node_by_fqn(&fid, "rust·pkg·a·A·foo", "method", "foo", Some("rust"), None)
         .await
         .unwrap();
     let b = s
-        .upsert_node_by_fqn(&fid, "rust·pkg·b·B·foo", "method", "foo", Some("rust"), None)
+        .seed_node_by_fqn(&fid, "rust·pkg·b·B·foo", "method", "foo", Some("rust"), None)
         .await
         .unwrap();
     assert_ne!(a, b, "same simple name, different fqn → two distinct stub nodes");
@@ -2019,7 +3313,19 @@ async fn legacy_upsert_sets_language_from_extension() {
         ("docs/e.md", "doc", None, "markdown"),
     ];
     for (path, kind, sig, want) in cases {
-        let id = s.upsert_node(&fid, kind, "n", path, None, sig, Some(1), Some(2)).await.unwrap();
+        let id = crate::tasks::test_support::seed_node(
+            &s,
+            &fid,
+            kind,
+            "n",
+            path,
+            None,
+            sig,
+            Some(1),
+            Some(2),
+        )
+        .await
+        .unwrap();
         let (lang,): (Option<String>,) = query_as("SELECT language FROM sensei.nodes WHERE id=$1")
             .bind(id)
             .fetch_one(s.pool())
@@ -2033,18 +3339,18 @@ async fn legacy_upsert_sets_language_from_extension() {
 
 #[tokio::test]
 async fn node_locations_tolerates_stub_rows() {
-    // file_path is now nullable (reference stubs + lib_symbol nodes have none).
+    // file_id is nullable (reference stubs + external `lib·` nodes have none).
     // node_locations decodes file_path as a required String, so a stub id among
     // the requested ids must NOT error the whole fetch — the stub (no location)
     // is simply omitted while the real node still resolves.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("nodeloc_{}", uuid::Uuid::new_v4())).await;
     let real = s
-        .upsert_node(&fid, "function", "real", "a.rs", None, Some("fn real()"), Some(3), Some(9))
+        .seed_node(&fid, "function", "real", "a.rs", None, Some("fn real()"), Some(3), Some(9))
         .await
         .unwrap();
     let stub = s
-        .upsert_node_by_fqn(&fid, "rust·pkg·m·Missing·gone", "method", "gone", Some("rust"), None)
+        .seed_node_by_fqn(&fid, "rust·pkg·m·Missing·gone", "method", "gone", Some("rust"), None)
         .await
         .unwrap();
 
@@ -2064,15 +3370,15 @@ async fn prune_file_nodes_deletes_vanished_and_unresolves_inbound() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("prune_{}", uuid::Uuid::new_v4())).await;
     let keep = s
-        .upsert_node(&fid, "function", "keep", "a.rs", None, Some("()"), Some(1), Some(5))
+        .seed_node(&fid, "function", "keep", "a.rs", None, Some("()"), Some(1), Some(5))
         .await
         .unwrap();
     let gone = s
-        .upsert_node(&fid, "function", "gone", "a.rs", None, Some("()"), Some(6), Some(9))
+        .seed_node(&fid, "function", "gone", "a.rs", None, Some("()"), Some(6), Some(9))
         .await
         .unwrap();
     let caller = s
-        .upsert_node(&fid, "function", "caller", "b.rs", None, Some("()"), Some(1), Some(3))
+        .seed_node(&fid, "function", "caller", "b.rs", None, Some("()"), Some(1), Some(3))
         .await
         .unwrap();
     // A resolved inbound edge b.rs::caller → a.rs::gone, carrying target_name.
@@ -2116,11 +3422,11 @@ async fn delete_edges_from_sources_clears_a_files_out_edges() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("outedge_{}", uuid::Uuid::new_v4())).await;
     let a = s
-        .upsert_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(5))
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(5))
         .await
         .unwrap();
     let b = s
-        .upsert_node(&fid, "function", "b", "b.rs", None, Some("()"), Some(1), Some(5))
+        .seed_node(&fid, "function", "b", "b.rs", None, Some("()"), Some(1), Some(5))
         .await
         .unwrap();
     s.insert_edge(&fid, &a, None, Some("x"), None, "calls").await.unwrap(); // a's out-edge
@@ -2142,9 +3448,20 @@ async fn replace_edges_of_kind_swaps_the_full_set() {
     // makes a derived kind (covers) a pure function of the current tree.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("replkind_{}", uuid::Uuid::new_v4())).await;
-    let doc = s.upsert_node(&fid, "doc", "d", "d.md", None, None, None, None).await.unwrap();
-    let f1 = s.upsert_node(&fid, "file", "f1", "f1.rs", None, None, None, None).await.unwrap();
-    let f2 = s.upsert_node(&fid, "file", "f2", "f2.rs", None, None, None, None).await.unwrap();
+    let doc =
+        crate::tasks::test_support::seed_node(&s, &fid, "doc", "d", "d.md", None, None, None, None)
+            .await
+            .unwrap();
+    let f1 = crate::tasks::test_support::seed_node(
+        &s, &fid, "file", "f1", "f1.rs", None, None, None, None,
+    )
+    .await
+    .unwrap();
+    let f2 = crate::tasks::test_support::seed_node(
+        &s, &fid, "file", "f2", "f2.rs", None, None, None, None,
+    )
+    .await
+    .unwrap();
 
     // A STALE covers edge doc→f1 (as if f1 was the covered file last scan).
     s.insert_edge(&fid, &doc, Some(&f1), None, None, "covers").await.unwrap();
@@ -2189,8 +3506,19 @@ async fn replace_edges_of_kind_handles_unresolved_edges() {
     // (D3) will use. Replaces by (target_name, target_file).
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("replun_{}", uuid::Uuid::new_v4())).await;
-    let a =
-        s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "a",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
     s.insert_edge(&fid, &a, None, Some("old"), None, "calls").await.unwrap(); // stale unresolved a→"old"
 
     s.replace_edges_of_kind(
@@ -2229,8 +3557,15 @@ async fn replace_edges_of_kind_is_atomic_and_rolls_back_on_failure() {
     // intact, never half-deleted (no zero-covers window).
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("replatomic_{}", uuid::Uuid::new_v4())).await;
-    let doc = s.upsert_node(&fid, "doc", "d", "d.md", None, None, None, None).await.unwrap();
-    let f1 = s.upsert_node(&fid, "file", "f1", "f1.rs", None, None, None, None).await.unwrap();
+    let doc =
+        crate::tasks::test_support::seed_node(&s, &fid, "doc", "d", "d.md", None, None, None, None)
+            .await
+            .unwrap();
+    let f1 = crate::tasks::test_support::seed_node(
+        &s, &fid, "file", "f1", "f1.rs", None, None, None, None,
+    )
+    .await
+    .unwrap();
     s.insert_edge(&fid, &doc, Some(&f1), None, None, "covers").await.unwrap();
 
     // A batch whose second edge has a bogus source_id (no such node) → the
@@ -2283,8 +3618,19 @@ async fn insert_edge_unresolved_dedups_by_target_file() {
     // files must not collapse to one edge.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("edgetf_{}", uuid::Uuid::new_v4())).await;
-    let a =
-        s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "a",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
 
     let e1 = s.insert_edge(&fid, &a, None, Some("helper"), Some("x.rs"), "calls").await.unwrap();
     let e2 = s.insert_edge(&fid, &a, None, Some("helper"), Some("y.rs"), "calls").await.unwrap();
@@ -2308,10 +3654,32 @@ async fn resolve_edge_second_call_is_safe() {
     // twice must be a safe no-op (one edge), not a unique-violation throw.
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("resolve2x_{}", uuid::Uuid::new_v4())).await;
-    let a =
-        s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
-    let b =
-        s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "a",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
+    let b = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "b",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
     let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap();
 
     s.resolve_edge(&u, &b).await.unwrap();
@@ -2331,10 +3699,32 @@ async fn resolve_edge_updates_in_place_when_no_conflict() {
     // updated in place to the resolved target (not deleted).
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("resolveok_{}", uuid::Uuid::new_v4())).await;
-    let a =
-        s.upsert_node(&fid, "function", "a", "a.rs", None, None, Some(1), Some(5)).await.unwrap();
-    let b =
-        s.upsert_node(&fid, "function", "b", "b.rs", None, None, Some(1), Some(5)).await.unwrap();
+    let a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "a",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
+    let b = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "b",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
     let u = s.insert_edge(&fid, &a, None, Some("b"), None, "calls").await.unwrap();
 
     s.resolve_edge(&u, &b).await.unwrap();
@@ -2382,7 +3772,16 @@ async fn folder_upsert_and_list() {
     let path = format!("/_test/folder_root_{}", uuid::Uuid::new_v4());
     let rid = s.add_watch_root(&path, "test_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "myrepo", "myrepo", &format!("{}/myrepo", path), None, None)
+        .upsert_folder(
+            &rid,
+            "git",
+            "myrepo",
+            "myrepo",
+            &format!("{}/myrepo", path),
+            None,
+            None,
+            None,
+        )
         .await
         .unwrap();
     let folders = s.list_folders_by_root(&rid).await.unwrap();
@@ -2406,12 +3805,12 @@ async fn list_pending_folders_returns_only_non_terminal_status() {
         ("indexing", "c"),
         ("indexed", "d"),
         ("failed", "e"),
-        ("deferred", "f"),
         ("archived", "g"),
     ] {
         let name = format!("repo_{}", suffix);
         let abs_path = format!("{}/{}", root_path, name);
-        let fid = s.upsert_folder(&rid, "git", &name, &name, &abs_path, None, None).await.unwrap();
+        let fid =
+            s.upsert_folder(&rid, "git", &name, &name, &abs_path, None, None, None).await.unwrap();
         s.update_folder_status(&fid, status).await.unwrap();
     }
 
@@ -2424,8 +3823,9 @@ async fn list_pending_folders_returns_only_non_terminal_status() {
     // Recoverable = non-terminal. `discovered`/`queued` never started;
     // `indexing`/`failed` are a scan interrupted mid-flight or errored —
     // its in-memory task was lost on restart (D6a marks `indexing` at scan
-    // start), so resume MUST re-enqueue them. `indexed`/`deferred`/`archived`
-    // are terminal and never resumed.
+    // start), so resume MUST re-enqueue them. `indexed`/`archived` are
+    // terminal and never resumed. (`deferred` was removed: v2 stores no
+    // folder it does not index.)
     let statuses: std::collections::BTreeSet<&str> =
         ours.iter().map(|r| r["status"].as_str().unwrap()).collect();
     assert_eq!(
@@ -2455,7 +3855,7 @@ async fn update_folder_status_round_trips() {
     let root_path = format!("/_test/status_{}", uuid::Uuid::new_v4().simple());
     let rid = s.add_watch_root(&root_path, "status_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None)
+        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None, None)
         .await
         .unwrap();
 
@@ -2481,7 +3881,7 @@ async fn get_folder_status_reads_back_status_and_is_none_for_missing() {
     let root_path = format!("/_test/getstatus_{}", uuid::Uuid::new_v4().simple());
     let rid = s.add_watch_root(&root_path, "getstatus_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None)
+        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None, None)
         .await
         .unwrap();
 
@@ -4189,9 +5589,16 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
         .await
         .unwrap();
     let node_id = s
-        .upsert_node(&crate_fid, "struct", "DojoStore", "src/store.rs", None, None, None, None)
+        .seed_node(&crate_fid, "struct", "DojoStore", "src/store.rs", None, None, None, None)
         .await
         .unwrap();
+    // Its `files` rows too. The heal dropped nodes and re-classified the folder but
+    // left these rows behind, so a folder healed long ago still looked fully
+    // indexed by content while holding no content nodes. Measured live:
+    // `cluster/server` 1 node against 1,970 stale rows, `cluster/scheduler`
+    // 1/1,816, `sensei/marketplace` 1/77 — enough to make a content-based
+    // duplicate check report six false positives out of seven.
+    s.upsert_scan_state(&crate_fid, "src/store.rs", 1, &format!("hash-{uniq}")).await.unwrap();
 
     // Heal.
     let healed = s.heal_nested_standalone_roots().await.unwrap();
@@ -4218,6 +5625,18 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
             .await
             .unwrap();
     assert!(!node_exists, "the mis-scoped root's own nodes should be pruned");
+
+    // AND its `files` rows, which describe an indexing unit that no longer
+    // exists. Leaving it made the folder look fully indexed by content while
+    // holding no content nodes — the residue that produced six false positives
+    // in the contained-duplicate check.
+    let (stale_rows,): (i64,) =
+        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.files WHERE folder_id = $1")
+            .bind(crate_fid)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(stale_rows, 0, "the mis-scoped root's `files` rows must go with its nodes");
 
     // The phantom project (lived entirely inside the repo) is gone.
     let (phantom_exists,): (bool,) =
@@ -4262,13 +5681,17 @@ async fn list_indexed_files_excludes_modules_and_empties() {
     let repo_abs = format!("{root_path}/repo");
     let fid = s.upsert_repo_kind(&root_id, "git", "repo", &repo_abs).await.unwrap();
 
-    s.upsert_node(&fid, "file", "a.rs", "a.rs", None, None, None, None).await.unwrap();
-    s.upsert_node(&fid, "struct", "B", "b.rs", None, None, None, None).await.unwrap();
-    // A module node records an ABSOLUTE dir path — must be excluded so it never
-    // pollutes the rel-path comparison in prune_vanished.
-    s.upsert_node(&fid, "module", "src", &format!("{repo_abs}/src"), None, None, None, None)
+    crate::tasks::test_support::seed_node(&s, &fid, "file", "a.rs", "a.rs", None, None, None, None)
         .await
         .unwrap();
+    crate::tasks::test_support::seed_node(&s, &fid, "struct", "B", "b.rs", None, None, None, None)
+        .await
+        .unwrap();
+    // A module node records an ABSOLUTE dir path — must be excluded so it never
+    // pollutes the rel-path comparison in prune_vanished. It names a DIRECTORY,
+    // which has no `files` row and never will (R13), so it takes the directory
+    // writer rather than the file one.
+    s.upsert_dir_node(&fid, "module", "src", &format!("{repo_abs}/src")).await.unwrap();
 
     let mut files = s.list_indexed_files(&fid).await.unwrap();
     files.sort();
@@ -4284,8 +5707,13 @@ async fn list_indexed_files_excludes_modules_and_empties() {
 
 // ── Activity pruner tests (#74) ────────────────────────────────────
 
+#[allow(clippy::await_holding_lock)] // TestGate is a blocking mutex — see test_support
 #[tokio::test]
 async fn prune_activity_keeps_unanalyzed_sessions_even_when_old() {
+    // DATABASE-WIDE: `prune_activity` deletes every eligible session's children,
+    // and this test makes its own session eligible on purpose. See
+    // `ACTIVITY_PRUNE_GATE` for what interleaving two of these destroys.
+    let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
     let s = pg_store().await;
     let suffix = format!("prune_keep_unanalyzed_{}", uuid::Uuid::new_v4());
     let (_pid, fid) = create_test_project_and_folder(&s, &suffix).await;
@@ -4306,6 +5734,18 @@ async fn prune_activity_keeps_unanalyzed_sessions_even_when_old() {
     // (backstop=60 here), so this assertion is unaffected by that guard.
     s.prune_activity(30, 60).await.unwrap();
 
+    // The watermark must go with the turns. Leaving it behind is what made the
+    // prune unrecoverable: the session re-appears without its transcript and
+    // reports as fully ingested, forever (#125).
+    let wm_left: (i64,) = sqlx_core::query_as::query_as(
+        "SELECT COUNT(*) FROM activity.capture_watermarks WHERE session_id = $1",
+    )
+    .bind(&csid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(wm_left.0, 0, "prune left a watermark claiming turns it deleted");
+
     let exists: (bool,) = sqlx_core::query_as::query_as(
         "SELECT EXISTS(SELECT 1 FROM activity.sessions WHERE id = $1)",
     )
@@ -4322,8 +5762,13 @@ async fn prune_activity_keeps_unanalyzed_sessions_even_when_old() {
         .ok();
 }
 
+#[allow(clippy::await_holding_lock)] // TestGate is a blocking mutex — see test_support
 #[tokio::test]
 async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
+    // DATABASE-WIDE: `prune_activity` deletes every eligible session's children,
+    // and this test makes its own session eligible on purpose. See
+    // `ACTIVITY_PRUNE_GATE` for what interleaving two of these destroys.
+    let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
     let s = pg_store().await;
     let suffix = format!("prune_del_{}", uuid::Uuid::new_v4());
     let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
@@ -4396,6 +5841,23 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
             "INSERT INTO activity.transcript_turns(session_id, source, family, turn_index, assistant_text)
              VALUES ($1, 'claude_code', 'claude', 0, 'hello')"
         ).bind(&csid).execute(s.pool()).await.unwrap();
+    // Seed the capture watermark the ingest would have written for those turns.
+    // Its survival is what made the prune self-sealing (#125): `ingest_one`
+    // gates the turn re-import on it, so a pruned session never re-imported
+    // while `synthesize_session` kept re-creating the session row.
+    s.set_capture_watermark("claude_code", &csid, Some(&csid), 1, 1).await.unwrap();
+
+    // Prove the fixture landed — an assertion that the row is GONE passes
+    // trivially if it was never there.
+    let wm_before: (i64,) = sqlx_core::query_as::query_as(
+        "SELECT COUNT(*) FROM activity.capture_watermarks WHERE session_id = $1",
+    )
+    .bind(&csid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(wm_before.0, 1, "watermark fixture did not land");
+
     // Seed a hook event under the same client_session_id.
     s.insert_hook_event(
         &csid,
@@ -4467,8 +5929,13 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
 ///      → KEPT (fails if the guard keys on cadence='day' instead of
 ///      `capture_source`, or drops the `scope='user'` filter).
 ///  (d) 90d, past the backstop, uncaptured → PRUNED via the backstop arm.
+#[allow(clippy::await_holding_lock)] // TestGate is a blocking mutex — see test_support
 #[tokio::test]
 async fn prune_activity_captures_before_reclaim_repo_grain() {
+    // DATABASE-WIDE: `prune_activity` deletes every eligible session's children,
+    // and this test makes its own session eligible on purpose. See
+    // `ACTIVITY_PRUNE_GATE` for what interleaving two of these destroys.
+    let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
     let s = pg_store().await;
     let suffix = format!("prune_cbr_repo_{}", uuid::Uuid::new_v4());
     let (pid, fid) = create_test_project_and_folder(&s, &suffix).await;
@@ -4678,8 +6145,13 @@ async fn vacuum_activity_runs_via_simple_protocol() {
     s.vacuum_activity().await.expect("VACUUM (ANALYZE) on activity tables succeeds");
 }
 
+#[allow(clippy::await_holding_lock)] // TestGate is a blocking mutex — see test_support
 #[tokio::test]
 async fn prune_activity_prunes_orphan_events_by_ts() {
+    // DATABASE-WIDE: `prune_activity` deletes every eligible session's children,
+    // and this test makes its own session eligible on purpose. See
+    // `ACTIVITY_PRUNE_GATE` for what interleaving two of these destroys.
+    let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
     let s = pg_store().await;
     // Insert an assistant_event with no matching session and old ts.
     let old_ts: i64 = (chrono::Utc::now() - chrono::Duration::days(90)).timestamp() * 1000;
@@ -4715,8 +6187,13 @@ async fn prune_activity_prunes_orphan_events_by_ts() {
     assert_eq!(orphaned.0, 0);
 }
 
+#[allow(clippy::await_holding_lock)] // TestGate is a blocking mutex — see test_support
 #[tokio::test]
 async fn prune_activity_prunes_orphans_despite_a_null_client_session_id() {
+    // DATABASE-WIDE: `prune_activity` deletes every eligible session's children,
+    // and this test makes its own session eligible on purpose. See
+    // `ACTIVITY_PRUNE_GATE` for what interleaving two of these destroys.
+    let _serialised = crate::tasks::test_support::ACTIVITY_PRUNE_GATE.enter();
     // Regression: step (6) of prune_activity used `session_id NOT IN (SELECT
     // client_session_id FROM activity.sessions)`. `client_session_id` is
     // NULLABLE, and under three-valued logic ONE NULL in the subquery makes
@@ -4881,33 +6358,23 @@ async fn library_upsert_and_get() {
 }
 
 #[tokio::test]
-async fn upsert_project_dependency_is_idempotent_and_stores_all_columns() {
-    // 1a Step 5: project → project edges must be idempotent on the
-    // composite PK (from_project, to_project, from_folder, source_manifest)
-    // and must preserve source_protocol and resolved_target across upserts.
+async fn upsert_folder_dependency_is_idempotent_and_stores_all_columns() {
+    // D11: folder → folder edges must be idempotent on the composite PK
+    // (from_folder, to_folder, source_manifest) and must preserve
+    // source_protocol and resolved_target across upserts.
     let s = pg_store().await;
-    let from_pid =
-        s.ensure_test_project(&format!("dep-from-{}", uuid::Uuid::new_v4())).await.unwrap();
-    let to_pid = s.ensure_test_project(&format!("dep-to-{}", uuid::Uuid::new_v4())).await.unwrap();
-    let from_fid = create_test_folder(&s, &format!("pd-{}", uuid::Uuid::new_v4())).await;
+    let from_fid = create_test_folder(&s, &format!("fd-from-{}", uuid::Uuid::new_v4())).await;
+    let to_fid = create_test_folder(&s, &format!("fd-to-{}", uuid::Uuid::new_v4())).await;
 
     // First upsert
-    s.upsert_project_dependency(
-        &from_pid,
-        &to_pid,
-        &from_fid,
-        "link",
-        "package.json",
-        Some("../actions"),
-    )
-    .await
-    .unwrap();
+    s.upsert_folder_dependency(&from_fid, &to_fid, "link", "package.json", Some("../actions"))
+        .await
+        .unwrap();
     // Repeat with a different resolved_target — same PK, so this must
     // update in place (last-writer wins on non-key columns).
-    s.upsert_project_dependency(
-        &from_pid,
-        &to_pid,
+    s.upsert_folder_dependency(
         &from_fid,
+        &to_fid,
         "link",
         "package.json",
         Some("../actions-renamed"),
@@ -4918,12 +6385,11 @@ async fn upsert_project_dependency_is_idempotent_and_stores_all_columns() {
     use sqlx_core::query_as::query_as;
     let rows: Vec<(String, Option<String>)> = query_as(
         "SELECT source_protocol, resolved_target
-               FROM sensei.project_dependencies
-              WHERE from_project_id = $1 AND to_project_id = $2 AND from_folder_id = $3",
+               FROM sensei.folder_dependencies
+              WHERE from_folder_id = $1 AND to_folder_id = $2",
     )
-    .bind(from_pid)
-    .bind(to_pid)
     .bind(from_fid)
+    .bind(to_fid)
     .fetch_all(s.pool())
     .await
     .unwrap();
@@ -4933,13 +6399,11 @@ async fn upsert_project_dependency_is_idempotent_and_stores_all_columns() {
     assert_eq!(rows[0].1.as_deref(), Some("../actions-renamed"), "target updated in place");
 
     // Cleanup
-    sqlx_core::query::query("DELETE FROM sensei.project_dependencies WHERE from_folder_id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.folder_dependencies WHERE from_folder_id = $1")
         .bind(from_fid)
         .execute(s.pool())
         .await
         .unwrap();
-    s.delete_project(&from_pid).await.ok();
-    s.delete_project(&to_pid).await.ok();
 }
 
 #[tokio::test]
@@ -5008,24 +6472,18 @@ async fn version_conflicts_view_flags_multi_version_pins_and_excludes_local() {
 
 #[tokio::test]
 async fn list_project_dependencies_joins_target_name_and_folder() {
-    // 1a Step 6: the list endpoint returns each outgoing edge with the
-    // TARGET project's name and the source folder's name joined in.
+    // D11: the stored edge is folder -> folder; the project-level answer is
+    // DERIVED by joining both folders to their projects. This test proves the
+    // derivation, which is why both folders must be wired to a project.
     let s = pg_store().await;
     let suffix = uuid::Uuid::new_v4();
-    let from_pid = s.ensure_test_project(&format!("lpd-from-{suffix}")).await.unwrap();
-    let to_pid = s.ensure_test_project(&format!("lpd-to-{suffix}")).await.unwrap();
-    let from_fid = create_test_folder(&s, &format!("lpd-fid-{suffix}")).await;
+    let (from_pid, from_fid) =
+        create_test_project_and_folder(&s, &format!("lpd-from-{suffix}")).await;
+    let (to_pid, to_fid) = create_test_project_and_folder(&s, &format!("lpd-to-{suffix}")).await;
 
-    s.upsert_project_dependency(
-        &from_pid,
-        &to_pid,
-        &from_fid,
-        "link",
-        "package.json",
-        Some("../actions"),
-    )
-    .await
-    .unwrap();
+    s.upsert_folder_dependency(&from_fid, &to_fid, "link", "package.json", Some("../actions"))
+        .await
+        .unwrap();
 
     let deps = s.list_project_dependencies(&from_pid).await.unwrap();
 
@@ -5037,7 +6495,7 @@ async fn list_project_dependencies_joins_target_name_and_folder() {
         "target project name must be joined in"
     );
     assert!(
-        d["from_folder"].as_str().unwrap().starts_with("lpd-fid-"),
+        d["from_folder"].as_str().unwrap().starts_with("lpd-from-"),
         "source folder name must be joined in"
     );
     assert_eq!(d["source_protocol"], "link");
@@ -5048,7 +6506,7 @@ async fn list_project_dependencies_joins_target_name_and_folder() {
     let none = s.list_project_dependencies(&to_pid).await.unwrap();
     assert!(none.is_empty(), "target project has no outgoing edges");
 
-    sqlx_core::query::query("DELETE FROM sensei.project_dependencies WHERE from_folder_id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.folder_dependencies WHERE from_folder_id = $1")
         .bind(from_fid)
         .execute(s.pool())
         .await
@@ -5058,19 +6516,50 @@ async fn list_project_dependencies_joins_target_name_and_folder() {
 }
 
 #[tokio::test]
-async fn upsert_project_dependency_rejects_self_edges() {
-    // 1a Step 5: DDL check constraint (from_project_id <> to_project_id)
-    // must reject self-edges at the write path.
+async fn folder_dependency_records_an_intra_project_edge() {
+    // THE REGRAIN'S REASON (D11). The old project-grained writer skipped an
+    // edge whenever both folders sat in ONE project, which silently dropped
+    // every monorepo workspace dependency — measured, all 384 folders of this
+    // repo share one project, so the table held 0 rows while the feature was
+    // live and tested. Folder-graining must record it.
     let s = pg_store().await;
-    let pid = s.ensure_test_project(&format!("self-{}", uuid::Uuid::new_v4())).await.unwrap();
+    let suffix = uuid::Uuid::new_v4();
+    let (pid, from_fid) = create_test_project_and_folder(&s, &format!("intra-a-{suffix}")).await;
+    let to_fid = create_test_folder(&s, &format!("intra-b-{suffix}")).await;
+    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
+        .bind(pid)
+        .bind(to_fid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    s.upsert_folder_dependency(&from_fid, &to_fid, "path", "Cargo.toml", Some("../b"))
+        .await
+        .unwrap();
+
+    let deps = s.list_project_dependencies(&pid).await.unwrap();
+    assert_eq!(deps.len(), 1, "an intra-project folder edge MUST be recorded, not skipped");
+    assert_eq!(deps[0]["to_project_id"].as_str().unwrap(), pid.to_string());
+
+    sqlx_core::query::query("DELETE FROM sensei.folder_dependencies WHERE from_folder_id = $1")
+        .bind(from_fid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    s.delete_project(&pid).await.ok();
+}
+
+#[tokio::test]
+async fn upsert_folder_dependency_rejects_self_edges() {
+    // D11: the CHECK (from_folder_id <> to_folder_id) must reject a self-edge
+    // at the write path.
+    let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("self-fid-{}", uuid::Uuid::new_v4())).await;
 
-    let err = s.upsert_project_dependency(&pid, &pid, &fid, "path", "Cargo.toml", Some(".")).await;
+    let err = s.upsert_folder_dependency(&fid, &fid, "path", "Cargo.toml", Some(".")).await;
 
     assert!(err.is_err(), "self-edge must be rejected");
     assert!(err.unwrap_err().contains("check"), "err message must reference the check constraint");
-
-    s.delete_project(&pid).await.ok();
 }
 
 #[tokio::test]
@@ -5126,7 +6615,7 @@ async fn upsert_referenced_library_merges_props() {
 #[tokio::test]
 async fn project_library_promotion_shows_in_resolved_and_is_idempotent() {
     // #30: referenced_libraries (folder-grained) must roll up to
-    // project_libraries so detected libs — incl. scoped @rokkit/* — show in
+    // library_enablement so detected libs — incl. scoped @rokkit/* — show in
     // project_libraries_resolved (the Projects screen). Was never populated.
     let s = pg_store().await;
     let pid = s.ensure_test_project("proj-lib-promo").await.unwrap();
@@ -5135,13 +6624,13 @@ async fn project_library_promotion_shows_in_resolved_and_is_idempotent() {
     // Promote twice — must be idempotent (no error, no duplicate row).
     s.upsert_project_library(&lib, &pid).await.unwrap();
     s.upsert_project_library(&lib, &pid).await.unwrap();
-    let libs = s.get_project_libraries(&pid).await.unwrap();
+    let libs = s.get_library_enablement(&pid).await.unwrap();
     let hits = libs.iter().filter(|l| l["name"] == "_test:@rokkit/core").count();
     assert_eq!(
         hits, 1,
         "promoted scoped lib should appear exactly once in resolved view; got {libs:?}"
     );
-    s.delete_library(&lib).await.unwrap(); // FK CASCADE removes the project_libraries row
+    s.delete_library(&lib).await.unwrap(); // FK CASCADE removes the library_enablement row
 }
 
 #[tokio::test]
@@ -5510,7 +6999,7 @@ async fn repo_anchor_rolls_monorepo_member_to_git_root() {
     let s = pg_store().await;
     let b = "/_test/anchor_mono";
     let root = mk_anchor_folder(&s, &format!("{b}/mono"), "git", None).await;
-    mk_anchor_folder(&s, &format!("{b}/mono/packages/pkg"), "workspace_member", None).await;
+    mk_anchor_folder(&s, &format!("{b}/mono/packages/pkg"), "module", None).await;
     let a = s.resolve_repo_anchor(&format!("{b}/mono/packages/pkg/lib.ts")).await.unwrap().unwrap();
     assert_eq!(a.repo_folder_id, root, "monorepo member rolls up to the git root, not the member");
 }
@@ -5782,6 +7271,70 @@ async fn update_folder_remotes_populates_and_is_matchable() {
 }
 
 #[tokio::test]
+async fn a_declared_package_resolves_to_its_parent_library() {
+    // Two identities for one library never met. Detection reads package.json and
+    // makes a row per PACKAGE (measured: 11 `@rokkit/*`, 7 `@devuser/dbd-*`),
+    // while the manifest calls itself `rokkit` and the skills hang off THAT row.
+    // So a project depending on `@rokkit/ui` could not reach rokkit's four curated
+    // skills — nothing connected the name it knows to the name they live under.
+    use crate::libraries::manifest::ProvidedSkill;
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let parent = format!("_testlib_parent_{uniq}");
+    let pkg = format!("@{parent}/ui");
+    let lid = s.upsert_library(&parent, "npm", Some(">=1.0"), None, None, None).await.unwrap();
+    s.replace_library_capabilities(
+        &lid,
+        "manifest",
+        Some(">=1.0"),
+        &[ProvidedSkill {
+            name: "styling".into(),
+            focus: "styling".into(),
+            path: Some("p/s.md".into()),
+            body: Some("# styling".into()),
+        }],
+        &[],
+    )
+    .await
+    .unwrap();
+
+    // Before the link, the package name resolves to nothing — which is the bug.
+    assert_eq!(
+        s.library_id_for(&pkg).await.unwrap(),
+        None,
+        "an unlinked package name is not a library",
+    );
+
+    let n = s.replace_library_packages(&lid, "manifest", std::slice::from_ref(&pkg)).await.unwrap();
+    assert_eq!(n, 1);
+
+    // The parent's own name still resolves — the link is an addition, not a
+    // replacement of how libraries are addressed.
+    assert_eq!(s.library_id_for(&parent).await.unwrap(), Some(lid));
+    assert_eq!(s.library_id_for(&pkg).await.unwrap(), Some(lid), "the package resolves to it");
+
+    // And the payoff: the package name reaches the parent's skills.
+    let skills = s.list_library_skills(&pkg).await.unwrap();
+    assert_eq!(skills.len(), 1, "asking by package name returns the library's skills");
+    assert_eq!(skills[0]["focus"], "styling");
+
+    // Manifest-authoritative, like the capabilities: a package dropped from the
+    // manifest stops resolving instead of lingering.
+    s.replace_library_packages(&lid, "manifest", &[]).await.unwrap();
+    assert_eq!(
+        s.library_id_for(&pkg).await.unwrap(),
+        None,
+        "a package removed from the manifest stops resolving",
+    );
+
+    sqlx_core::query::query("DELETE FROM sensei.libraries WHERE id = $1")
+        .bind(lid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn replace_library_capabilities_is_manifest_authoritative() {
     use crate::libraries::manifest::{ProvidedAgent, ProvidedSkill};
     let s = pg_store().await;
@@ -5877,7 +7430,7 @@ async fn list_project_library_capabilities_suggests_from_a_projects_deps() {
     .unwrap();
     // The project depends on the library.
     s.execute_raw(&format!(
-            "INSERT INTO sensei.project_libraries(library_id, project_id, enabled) VALUES('{lid}','{pid}',true) ON CONFLICT DO NOTHING"
+            "INSERT INTO sensei.library_enablement(library_id, project_id, enabled) VALUES('{lid}','{pid}',true) ON CONFLICT DO NOTHING"
         )).await.unwrap();
 
     let caps = s.list_project_library_capabilities(&pid).await.unwrap();
@@ -6031,8 +7584,19 @@ async fn record_symbol_names_is_monotonic_history() {
     let fid = create_test_folder(&s, &format!("symhist_{}", uuid::Uuid::new_v4())).await;
     let uniq = format!("SymHist_{}", uuid::Uuid::new_v4().simple());
 
-    let nid =
-        s.upsert_node(&fid, "function", &uniq, "x.rs", None, None, Some(1), Some(2)).await.unwrap();
+    let nid = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        &uniq,
+        "x.rs",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
     s.record_symbol_names().await.unwrap();
     let present: Option<(String,)> =
         sqlx_core::query_as::query_as("SELECT name FROM sensei.symbol_names WHERE name = $1")
@@ -6070,7 +7634,7 @@ async fn record_symbol_names_is_monotonic_history() {
 }
 
 #[tokio::test]
-async fn get_project_commands_marks_and_ranks_the_preferred_tool() {
+async fn get_folder_commands_marks_and_ranks_the_preferred_tool() {
     // G10: when several commands share a category, the user's dojo_preference
     // marks one preferred and ranks it first.
     let s = pg_store().await;
@@ -6080,7 +7644,7 @@ async fn get_project_commands_marks_and_ranks_the_preferred_tool() {
     s.set_folder_project(&fid, &pid, "primary", None).await.unwrap();
     // Two `test` commands; alphabetical order is jest, then vitest.
     sqlx_core::query::query(
-            "INSERT INTO sensei.project_commands (folder_id, raw_name, command_line, category, ecosystem)
+            "INSERT INTO sensei.folder_commands (folder_id, raw_name, command_line, category, ecosystem)
              VALUES ($1, 'jest', 'jest', 'test', 'npm'), ($1, 'vitest', 'vitest run', 'test', 'npm')",
         ).bind(fid).execute(s.pool()).await.unwrap();
     // Clean slate for the shared preference row.
@@ -6092,7 +7656,7 @@ async fn get_project_commands_marks_and_ranks_the_preferred_tool() {
     .ok();
 
     // No preference → alphabetical, nothing marked preferred.
-    let before = s.get_project_commands(&pid, Some("test")).await.unwrap();
+    let before = s.get_folder_commands(&pid, Some("test")).await.unwrap();
     assert_eq!(before.len(), 2);
     assert_eq!(before[0]["raw_name"], "jest");
     assert!(
@@ -6102,7 +7666,7 @@ async fn get_project_commands_marks_and_ranks_the_preferred_tool() {
 
     // Prefer vitest → it is marked and ranked first (ahead of the alphabetically-first jest).
     s.upsert_command_preference("user", "test", "vitest", None).await.unwrap();
-    let after = s.get_project_commands(&pid, Some("test")).await.unwrap();
+    let after = s.get_folder_commands(&pid, Some("test")).await.unwrap();
     assert_eq!(after[0]["raw_name"], "vitest", "preferred ranked first");
     assert_eq!(after[0]["preferred"], serde_json::json!(true));
     assert_eq!(after[1]["raw_name"], "jest");
@@ -6113,7 +7677,7 @@ async fn get_project_commands_marks_and_ranks_the_preferred_tool() {
     );
 
     let pool = s.pool();
-    sqlx_core::query::query("DELETE FROM sensei.project_commands WHERE folder_id=$1")
+    sqlx_core::query::query("DELETE FROM sensei.folder_commands WHERE folder_id=$1")
         .bind(fid)
         .execute(pool)
         .await
@@ -6383,7 +7947,7 @@ async fn get_project_repos_excludes_subfolder_tree() {
             "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) VALUES
                ('00000000-0000-0000-0000-000000000001','git'::sensei.folder_kind,'the-repo','the-repo',$1,$3),
                ('00000000-0000-0000-0000-000000000001','folder'::sensei.folder_kind,'subdir','subdir',$2,$3),
-               ('00000000-0000-0000-0000-000000000001','workspace_member'::sensei.folder_kind,'member','member',$4,$3)"
+               ('00000000-0000-0000-0000-000000000001','module'::sensei.folder_kind,'member','member',$4,$3)"
         ).bind(&git_abs).bind(&sub_abs).bind(pid).bind(&mem_abs).execute(s.pool()).await.unwrap();
 
     let repos = s.get_project_repos(&pid).await.unwrap();
@@ -6393,10 +7957,7 @@ async fn get_project_repos_excludes_subfolder_tree() {
     assert!(!kinds.iter().any(|k| k == "folder"), "kind=folder subfolders excluded: {kinds:?}");
     // D5a: monorepo members are the structural tree, NOT separate repos — else
     // a monorepo with N members regresses to an N+1-repo project (#62).
-    assert!(
-        !kinds.iter().any(|k| k == "workspace_member"),
-        "kind=workspace_member excluded from repos: {kinds:?}"
-    );
+    assert!(!kinds.iter().any(|k| k == "module"), "kind=module excluded from repos: {kinds:?}");
 
     sqlx_core::query::query("DELETE FROM sensei.folders WHERE project_id = $1")
         .bind(pid)
@@ -6437,17 +7998,13 @@ async fn upsert_subfolder_kind_relabels_structural_but_preserves_root() {
     let a = format!("/_test/sfk-a-{}", uuid::Uuid::new_v4());
     s.upsert_subfolder(&rid, "a", "a", &a, None, None).await.unwrap();
     assert_eq!(kind_at(&s, a.clone()).await, "folder", "first upsert is a plain folder");
-    s.upsert_subfolder_kind(&rid, "workspace_member", "a", "a", &a, None, None).await.unwrap();
-    assert_eq!(
-        kind_at(&s, a.clone()).await,
-        "workspace_member",
-        "relabelled folder → workspace_member"
-    );
+    s.upsert_subfolder_kind(&rid, "module", "a", "a", &a, None, None).await.unwrap();
+    assert_eq!(kind_at(&s, a.clone()).await, "module", "relabelled folder → workspace_member");
 
     // A nested project root (subtree) must NOT be reclassified by a member upsert.
     let b = format!("/_test/sfk-b-{}", uuid::Uuid::new_v4());
     s.upsert_repo_kind(&rid, "subtree", "b", &b).await.unwrap();
-    s.upsert_subfolder_kind(&rid, "workspace_member", "b", "b", &b, None, None).await.unwrap();
+    s.upsert_subfolder_kind(&rid, "module", "b", "b", &b, None, None).await.unwrap();
     assert_eq!(
         kind_at(&s, b.clone()).await,
         "subtree",
@@ -6864,20 +8421,40 @@ async fn list_projects_under_filters_by_folder_path_boundary() {
 
     // A: folder strictly beneath `under`.
     let a = s.ensure_test_project(&format!("fpu-a-{short}")).await.unwrap();
-    s.upsert_folder(&root, "git", "a", "x/a", &format!("{under}/a"), None, Some(&a)).await.unwrap();
+    s.upsert_folder(&root, "git", "a", "x/a", &format!("{under}/a"), None, Some(&a), None)
+        .await
+        .unwrap();
     // B: folder exactly equal to `under` (boundary: abs_path == under).
     let b = s.ensure_test_project(&format!("fpu-b-{short}")).await.unwrap();
-    s.upsert_folder(&root, "git", "b", "x", &under, None, Some(&b)).await.unwrap();
+    s.upsert_folder(&root, "git", "b", "x", &under, None, Some(&b), None).await.unwrap();
     // C: folder elsewhere under base but outside `under`.
     let c = s.ensure_test_project(&format!("fpu-c-{short}")).await.unwrap();
-    s.upsert_folder(&root, "git", "c", "elsewhere", &format!("{base}/elsewhere"), None, Some(&c))
-        .await
-        .unwrap();
+    s.upsert_folder(
+        &root,
+        "git",
+        "c",
+        "elsewhere",
+        &format!("{base}/elsewhere"),
+        None,
+        Some(&c),
+        None,
+    )
+    .await
+    .unwrap();
     // D: sibling sharing the `under` prefix textually but across a path boundary.
     let d = s.ensure_test_project(&format!("fpu-d-{short}")).await.unwrap();
-    s.upsert_folder(&root, "git", "d", "x-other", &format!("{under}-other/z"), None, Some(&d))
-        .await
-        .unwrap();
+    s.upsert_folder(
+        &root,
+        "git",
+        "d",
+        "x-other",
+        &format!("{under}-other/z"),
+        None,
+        Some(&d),
+        None,
+    )
+    .await
+    .unwrap();
 
     let scoped: Vec<String> = s
         .list_projects_under(Some(&under))
@@ -6935,13 +8512,22 @@ async fn list_root_folders_excludes_nested_folder_descendants() {
     let p = s.ensure_test_project(&format!("rootf-{short}")).await.unwrap();
 
     // One git repo root …
-    s.upsert_folder(&root, "git", "repo", "repo", &format!("{base}/repo"), None, Some(&p))
+    s.upsert_folder(&root, "git", "repo", "repo", &format!("{base}/repo"), None, Some(&p), None)
         .await
         .unwrap();
     // … plus one standalone root …
-    s.upsert_folder(&root, "standalone", "lib", "lib", &format!("{base}/lib"), None, Some(&p))
-        .await
-        .unwrap();
+    s.upsert_folder(
+        &root,
+        "standalone",
+        "lib",
+        "lib",
+        &format!("{base}/lib"),
+        None,
+        Some(&p),
+        None,
+    )
+    .await
+    .unwrap();
     // … plus many nested `kind:'folder'` descendants (the bloat).
     for i in 0..30 {
         s.upsert_folder(
@@ -6952,6 +8538,7 @@ async fn list_root_folders_excludes_nested_folder_descendants() {
             &format!("{base}/repo/src/d{i}"),
             None,
             Some(&p),
+            None,
         )
         .await
         .unwrap();
@@ -7791,13 +9378,25 @@ async fn dojo_outbox_and_batch_items_roundtrip() {
     let batch = pg.create_memory_share_batch(&proj, &[mem], None).await.unwrap();
     pg.set_memory_share_batch_status(&batch, "approved", None).await.unwrap();
 
-    // batch_share_items: approved batch, one member, body = content.
+    // batch_share_items: approved batch, one member. The body is
+    // `generalised_content` ONLY — this memory has none, so the body is EMPTY
+    // rather than the raw `content`.
+    //
+    // It used to COALESCE to `m.content` and this assertion read
+    // `body.contains("migration tool")` — i.e. it asserted that an
+    // UN-GENERALISED memory ships its raw text. The row still comes through
+    // (an absent row is indistinguishable from an empty batch); the caller
+    // refuses it as `held_not_generalised`.
     let (bp, status, items) = pg.batch_share_items(&batch).await.unwrap().expect("batch loads");
     assert_eq!(bp, proj);
     assert_eq!(status, "approved");
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].memory_id, mem);
-    assert!(items[0].body.contains("migration tool"));
+    assert!(
+        items[0].body.is_empty(),
+        "no generalised_content means NOTHING shareable — the raw memory must not leak in as a fallback, got {:?}",
+        items[0].body
+    );
     assert_eq!(items[0].memory_type, "convention");
 
     // An unbound project → no routing anchor.
@@ -7841,6 +9440,73 @@ async fn dojo_outbox_and_batch_items_roundtrip() {
 
     // Cleanup: membership delete cascades its outbox rows; then batch/memory/project.
     assert!(pg.delete_dojo_membership(&mid).await.unwrap());
+    pg.delete_project(&proj).await.unwrap();
+}
+
+#[tokio::test]
+async fn generalisation_persists_the_example_and_the_share_path_carries_it() {
+    let Ok(pg) = PgStore::connect_test().await else {
+        return;
+    };
+
+    let proj = pg.create_project("_test:memories:example", None, None).await.unwrap();
+    let mem = pg
+        .insert_memory(&InsertMemory {
+            project_id: Some(proj),
+            scope: "project".into(),
+            scope_filter: None,
+            mtype: "convention".into(),
+            title: "green ci before merge".into(),
+            // The RAW memory — local reference only. It names a real repo path
+            // on purpose: nothing on the share path may ever echo it.
+            content: "Never merge acme-api from /Users/dev/work/acme-api on red CI.".into(),
+            impact: None,
+            tags: vec![],
+            triage_signal: None,
+            status: "active".into(),
+            namespace_id: None,
+            enforcement: None,
+            origin: Some("learned".into()),
+            source_id: None,
+            spine_slot: None,
+            feature: None,
+        })
+        .await
+        .unwrap();
+
+    // The generalisation writes BOTH the portable rule and its synthetic example.
+    pg.set_memory_generalisation(
+        mem,
+        "Gate merges on a green pipeline.",
+        Some("A team merges on a red build before a long weekend and loses Monday to a bisect."),
+    )
+    .await
+    .unwrap()
+    .expect("the memory exists");
+
+    let batch = pg.create_memory_share_batch(&proj, &[mem], None).await.unwrap();
+    pg.set_memory_share_batch_status(&batch, "approved", None).await.unwrap();
+    let (_p, _s, items) = pg.batch_share_items(&batch).await.unwrap().expect("batch loads");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].body, "Gate merges on a green pipeline.");
+    assert_eq!(
+        items[0].example.as_deref(),
+        Some("A team merges on a red build before a long weekend and loses Monday to a bisect."),
+        "the synthetic example travels with the shareable body",
+    );
+    // The raw memory is NOT on this path — neither as the body nor as the example.
+    for text in [Some(items[0].body.as_str()), items[0].example.as_deref()].into_iter().flatten() {
+        assert!(!text.contains("acme-api"), "raw repo name reached the share path: {text:?}");
+        assert!(!text.contains("/Users/dev"), "raw path reached the share path: {text:?}");
+    }
+
+    // Re-generalising with NO example clears the stale one rather than pairing a
+    // new rule with an old illustration.
+    pg.set_memory_generalisation(mem, "Do not merge on red.", None).await.unwrap().unwrap();
+    let (_p, _s, items) = pg.batch_share_items(&batch).await.unwrap().expect("batch loads");
+    assert_eq!(items[0].body, "Do not merge on red.");
+    assert_eq!(items[0].example, None, "an example never outlives the rewrite it illustrates");
+
     pg.delete_project(&proj).await.unwrap();
 }
 
@@ -8057,7 +9723,7 @@ async fn scoped_search_and_count_across_child_folder() {
 
     // Insert a function node in the CHILD folder.
     let fn_id = s
-        .upsert_node(
+        .seed_node(
             &child_id,
             "function",
             "widget_builder",
@@ -8071,7 +9737,7 @@ async fn scoped_search_and_count_across_child_folder() {
         .unwrap();
     // Insert a callee node (target) in child folder.
     let tgt_id = s
-        .upsert_node(
+        .seed_node(
             &child_id,
             "function",
             "render_widget",
@@ -8615,6 +10281,137 @@ async fn get_project_metrics_reads_views() {
     assert!(row.unit.is_none(), "seed leaves unit null");
 
     // cleanup — project_metrics rows cascade from the metric + project.
+    sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
+        .bind(mid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
+/// The deactivation set is REPLACED whole, so a re-enabled metric stops being
+/// skipped.
+///
+/// An incremental upsert would leave the old row behind and keep skipping a
+/// metric the tenant had switched back on — silently, and forever, because
+/// nothing else would ever delete it.
+#[tokio::test]
+async fn replacing_deactivations_forgets_the_ones_no_longer_listed() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let pid = s.create_project(&format!("_test:deact:{uniq}"), None, None).await.unwrap();
+    let rid =
+        crate::tasks::test_support::seed_bare_repository(&s, &pid, &uuid::Uuid::new_v4()).await;
+    // The gate compares repo_key, so the row needs one.
+    let key = format!("github.com/_test/deact-{uniq}");
+    sqlx_core::query::query("UPDATE sensei.repositories SET repo_key = $2 WHERE id = $1")
+        .bind(rid)
+        .bind(&key)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    let two = std::collections::HashMap::from([(
+        key.clone(),
+        vec!["churn_rate".to_string(), "churn_concentration".to_string()],
+    )]);
+    s.replace_metric_deactivations(&two).await.unwrap();
+    let back = s.metric_deactivations().await.unwrap();
+    let mut got = back.get(&key).cloned().unwrap_or_default();
+    got.sort();
+    assert_eq!(got, vec!["churn_concentration".to_string(), "churn_rate".to_string()]);
+
+    // One re-enabled: the plan now lists only churn_rate.
+    let one = std::collections::HashMap::from([(key.clone(), vec!["churn_rate".to_string()])]);
+    s.replace_metric_deactivations(&one).await.unwrap();
+    assert_eq!(
+        s.metric_deactivations().await.unwrap().get(&key),
+        Some(&vec!["churn_rate".to_string()]),
+        "churn_concentration must be forgotten, not left behind"
+    );
+
+    // All re-enabled: an EMPTY map must clear the table, not be treated as "no
+    // news". This is the case an incremental writer gets wrong.
+    s.replace_metric_deactivations(&std::collections::HashMap::new()).await.unwrap();
+    assert!(
+        !s.metric_deactivations().await.unwrap().contains_key(&key),
+        "an empty plan clears every deactivation"
+    );
+
+    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
+/// A repo_key the daemon has never registered names no repository, so it inserts
+/// nothing rather than failing the whole replace.
+#[tokio::test]
+async fn a_deactivation_for_an_unknown_repository_is_dropped_not_fatal() {
+    let s = pg_store().await;
+    let unknown = std::collections::HashMap::from([(
+        format!("github.com/_test/never-registered-{}", uuid::Uuid::new_v4()),
+        vec!["churn_rate".to_string()],
+    )]);
+    // The dōjō may legitimately name a repository this install has not seen —
+    // another machine registered it. Failing here would take down the whole
+    // ruling for every repository that IS known.
+    let written = s.replace_metric_deactivations(&unknown).await.expect("must not fail");
+    assert_eq!(written, 0, "nothing local matched, so nothing was written");
+}
+
+/// A ratio/pct metric whose props carry NO numerator/denominator must still
+/// produce a value, not NULL.
+///
+/// `sensei.project_metric_daily` recomputes ratio/pct metrics as
+/// `sum(numerator) / sum(denominator)` across a day's repositories. `cache_reuse`
+/// does not supply those: it is deliberately the MEAN OF PER-SESSION RATIOS,
+/// because pooling is dominated by the longest session and hides the very signal
+/// the metric exists to surface (see `tasks/handlers/metrics/usage.rs`).
+///
+/// So the view produced `NULL / NULLIF(NULL, 0)` = NULL, and
+/// `get_project_metrics` — which decodes `value` as a non-nullable `f64` — failed
+/// the whole read. Measured on the live DB: 68 NULL rows, all `cache_reuse`, and
+/// `/api/projects/{id}/metrics` answered 500 for exactly the 10 projects that had
+/// them. Every project WITHOUT cache-reuse data returned 200 with an empty grid,
+/// which is why this hid for so long.
+#[tokio::test]
+async fn a_pct_metric_without_numerator_props_still_yields_a_value() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let pid = s.create_project(&format!("_test:pctprops:{uniq}"), None, None).await.unwrap();
+    let rid =
+        crate::tasks::test_support::seed_bare_repository(&s, &pid, &uuid::Uuid::new_v4()).await;
+    let key = format!("_test:pctprops:{uniq}:reuse");
+    let mid = seed_metric(&s, &key, "CacheReuseLike", 0, None).await;
+    let day = chrono::NaiveDate::from_ymd_opt(2020, 3, 4).unwrap();
+
+    // Exactly the shape `usage.rs` writes: no numerator, no denominator.
+    s.upsert_project_metric(
+        &mid,
+        &rid,
+        day,
+        "daily",
+        0.957,
+        &serde_json::json!({
+            "sessions": 12, "pooled_ratio": 0.981, "mean_of_session_ratios": 0.957
+        }),
+        "measured",
+    )
+    .await
+    .unwrap();
+
+    let rows = s.get_project_metrics(&pid).await.unwrap();
+    let row = rows.iter().find(|r| r.metric == key).expect("the metric is present, not dropped");
+    // The stored value survives. Re-pooling it would be wrong even if props
+    // allowed: the mean-of-ratios IS the metric.
+    assert!((row.value - 0.957).abs() < 1e-9, "value must survive the view, got {}", row.value);
+
     sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
         .bind(mid)
         .execute(s.pool())
@@ -9262,6 +11059,198 @@ async fn repositories_schema_invariants() {
 /// A git checkout with a remote is linked to a canonical `sensei.repositories`
 /// row keyed on the NORMALIZED remote; a remote-less checkout stays NULL
 /// (local-only, never federated); re-running is a no-op (idempotent).
+/// A folder registered INSIDE another, where BOTH hold nodes for the same files,
+/// is reported — and a nested folder whose nodes were already healed away is NOT.
+///
+/// Keyed on NODES, not `files`, and that is the whole accuracy of the check.
+/// A first version compared `files.content_hash` and reported seven cases on
+/// the live index; SIX were false. `heal_nested_standalone_roots` deletes a
+/// mis-scoped root's nodes and re-classifies the folder but leaves its
+/// `files` rows, so a folder healed long ago still looks fully duplicated by
+/// content while holding one module-container node — `cluster/server` measured 1
+/// node against 1,970 stale `files` rows. Only `acme-corp/documentation`
+/// (its own git checkout, 4,311 nodes inside the `acme-corp` repo) was real.
+///
+/// Breaking mutation: key the query on `files` again, or drop the
+/// `file_path` correspondence between outer and inner — the healed folder is
+/// reported and the check goes back to being six-sevenths noise.
+#[tokio::test]
+async fn a_nested_folder_whose_files_are_indexed_twice_is_reported_but_a_healed_one_is_not() {
+    let s = PgStore::connect_test().await.unwrap();
+    let tag = uuid::Uuid::new_v4();
+    let base = format!("/tmp/contain-{tag}");
+    let root_id = s.add_watch_root(&base, "ct", &serde_json::json!([])).await.unwrap();
+
+    let outer =
+        s.upsert_repo_kind(&root_id, "git", "outer", &format!("{base}/outer")).await.unwrap();
+    // Nested, and BOTH folders hold nodes for its files → genuinely indexed twice.
+    let dup =
+        s.upsert_repo_kind(&root_id, "git", "dup", &format!("{base}/outer/dup")).await.unwrap();
+    // Nested, but HEALED: its content nodes were deleted, leaving only a module
+    // container. Stale `files` rows alone must not resurrect it as a duplicate.
+    let healed = s
+        .upsert_repo_kind(&root_id, "git", "healed", &format!("{base}/outer/healed"))
+        .await
+        .unwrap();
+
+    for i in 0..6 {
+        // The outer repo indexes both subtrees, repo-relative.
+        crate::tasks::test_support::seed_node(
+            &s,
+            &outer,
+            "function",
+            &format!("d{i}"),
+            &format!("dup/f{i}.rs"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        crate::tasks::test_support::seed_node(
+            &s,
+            &outer,
+            "function",
+            &format!("h{i}"),
+            &format!("healed/f{i}.rs"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        // The duplicate ALSO holds them, folder-relative.
+        crate::tasks::test_support::seed_node(
+            &s,
+            &dup,
+            "function",
+            &format!("d{i}"),
+            &format!("f{i}.rs"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        // The healed one holds stale `files` rows but NO content nodes.
+        s.upsert_scan_state(&healed, &format!("f{i}.rs"), 1, &format!("hash-{tag}-{i}"))
+            .await
+            .unwrap();
+    }
+    // ...only the module container the heal leaves behind.
+    s.upsert_dir_node(&healed, "module", "healed", "").await.unwrap();
+
+    let dups = s.contained_duplicate_folders().await.unwrap();
+    let mine: Vec<_> = dups.iter().filter(|(o, _, _, _)| o.contains(&tag.to_string())).collect();
+
+    assert_eq!(mine.len(), 1, "exactly one genuine duplicate expected, got {mine:?}");
+    let (outer_path, inner_path, both, inner_files) = mine[0];
+    assert!(outer_path.ends_with("/outer"), "{outer_path}");
+    assert!(inner_path.ends_with("/outer/dup"), "{inner_path}");
+    assert_eq!(
+        (*both, *inner_files),
+        (6, 6),
+        "all six of the inner's files are in the graph twice"
+    );
+
+    assert!(
+        !dups.iter().any(|(_, i, _, _)| i.ends_with("/outer/healed")),
+        "a healed folder carries stale `files` rows but no duplicate nodes: {dups:?}"
+    );
+}
+
+/// A symlinked checkout is grouped onto the real directory's repository, and the
+/// result is then REPORTABLE as one repository at two paths.
+///
+/// `assign_repositories` keys on a git remote, and a symlinked twin has no
+/// `.git` of its own — it is classified `standalone` and was skipped, left
+/// `repository_id = NULL`, so no query could relate the two. Measured:
+/// `~/Developer/sensei-hq/gateway` symlinks to `~/Developer/gateway`, one inode
+/// tree indexed under two paths, sharing 4,543 fqns — the largest duplicate pair
+/// in the graph and the entire rust duplicate population.
+///
+/// Covers the three pieces the handler composes: `folder_identities_for_root`
+/// must return the standalone twin (not just git/subtree kinds),
+/// `link_folders_to_repositories` must point it at the real folder's repository
+/// and be idempotent, and `duplicate_repository_paths` must then report both
+/// paths so the doctor can recommend removing one.
+#[tokio::test]
+async fn a_symlinked_checkout_is_grouped_and_then_reported_as_one_repository() {
+    let s = PgStore::connect_test().await.unwrap();
+    let tag = uuid::Uuid::new_v4();
+    let root_id = s
+        .add_watch_root(&format!("/tmp/symrepo-{tag}"), "sr", &serde_json::json!([]))
+        .await
+        .unwrap();
+
+    // The real checkout, with a remote → gets a repository.
+    let real = s
+        .upsert_repo_kind(&root_id, "git", "gateway", &format!("/tmp/symrepo-{tag}/gateway"))
+        .await
+        .unwrap();
+    let url = format!("git@github.com:Org/Gateway-{tag}.git");
+    s.update_folder_remotes(&real, &serde_json::json!([{"name": "origin", "url": url}]))
+        .await
+        .unwrap();
+    // The symlinked twin: STANDALONE, no remote — exactly what was skipped.
+    let link = s
+        .upsert_repo_kind(
+            &root_id,
+            "standalone",
+            "gateway",
+            &format!("/tmp/symrepo-{tag}/org/gateway"),
+        )
+        .await
+        .unwrap();
+    s.assign_repositories(&root_id).await.unwrap();
+
+    // The twin must be VISIBLE to the identity read despite being standalone.
+    let ids = s.folder_identities_for_root(&root_id).await.unwrap();
+    assert!(
+        ids.iter().any(|(id, _, repo)| *id == link && repo.is_none()),
+        "the standalone symlink must be offered for grouping: {ids:?}"
+    );
+    let repo_id = ids
+        .iter()
+        .find(|(id, _, _)| *id == real)
+        .and_then(|(_, _, r)| *r)
+        .expect("the real checkout is linked to a repository");
+
+    // Both paths canonicalise to the same real directory, so they group.
+    let identities: Vec<crate::tasks::handlers::scan_logic::FolderPathIdentity> = ids
+        .into_iter()
+        .map(|(id, abs_path, repository_id)| {
+            crate::tasks::handlers::scan_logic::FolderPathIdentity {
+                id,
+                real_path: format!("/tmp/symrepo-{tag}/gateway"),
+                abs_path,
+                repository_id,
+            }
+        })
+        .collect();
+    let links = crate::tasks::handlers::scan_logic::symlink_repository_links(&identities);
+    assert_eq!(links, vec![(link, repo_id)], "the symlink adopts the real dir's repository");
+
+    assert_eq!(s.link_folders_to_repositories(&links).await.unwrap(), 1, "one row changed");
+    assert_eq!(
+        s.link_folders_to_repositories(&links).await.unwrap(),
+        0,
+        "idempotent — a settled registry writes nothing"
+    );
+
+    // And now it is reportable: one repository, two paths.
+    let dups = s.duplicate_repository_paths().await.unwrap();
+    let mine = dups
+        .iter()
+        .find(|(_, url, _)| url.as_deref().is_some_and(|u| u.contains(&tag.to_string())))
+        .expect("the grouped repository is reported as duplicated");
+    assert_eq!(mine.2.len(), 2, "both paths are named so the user can pick one: {:?}", mine.2);
+    assert!(mine.2.iter().any(|p| p.ends_with("/org/gateway")), "{:?}", mine.2);
+}
+
 #[tokio::test]
 async fn assign_repositories_links_folders_to_canonical_repo_key() {
     let s = PgStore::connect_test().await.unwrap();
@@ -9631,6 +11620,373 @@ async fn two_personas_cannot_share_one_dojo_login() {
 }
 
 #[tokio::test]
+async fn a_held_back_scope_cannot_crowd_the_push_window() {
+    // Live bug #4, and the fix had NO test: every call site passed both values of
+    // `metric_scope`, so the filter was a tautology. Held-back user-scoped rows
+    // once filled the window and a pass pushed 66 of 132; had they filled it
+    // entirely it would have pushed NOTHING while reporting success.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let key = format!("test/bare-{uniq}");
+    let mid = seed_metric(&s, &format!("_test:crowd:{uniq}"), "ComputeFtr", 0, None).await;
+
+    // The pushable row is OLDER, so a limit applied before the scope filter would
+    // hand every slot to the newer user-scoped rows and miss it entirely.
+    s.upsert_project_metric_repo(
+        &mid,
+        &rid,
+        "repo",
+        None,
+        None,
+        chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+        "daily",
+        1.0,
+        &serde_json::json!({}),
+        "measured",
+    )
+    .await
+    .unwrap();
+    for d in 10..14 {
+        s.upsert_project_metric_repo(
+            &mid,
+            &rid,
+            "user",
+            Some("crowd@example.com"),
+            None,
+            chrono::NaiveDate::from_ymd_opt(2026, 8, d).unwrap(),
+            "daily",
+            9.0,
+            &serde_json::json!({}),
+            "measured",
+        )
+        .await
+        .unwrap();
+    }
+
+    let got = s.unpushed_metric_rows(&["repo"], &[&key], 2).await.unwrap();
+    let repo_rows = got.iter().filter(|r| r.repo_key == key && r.scope == "repo").count();
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+    assert!(repo_rows >= 1, "the pushable row must survive a window full of held-back rows");
+    assert!(got.iter().all(|r| r.scope == "repo"), "no held-back scope may enter the batch");
+}
+
+#[tokio::test]
+async fn the_allow_list_cannot_be_crowded_out_either() {
+    // Same defect one axis over: the plan's allow-list was filtered in Rust AFTER
+    // the LIMIT, so 218 of 500 slots went to repositories that can never be in any
+    // plan — rows that never drain and so hold the window forever.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let allowed_key = format!("test/bare-{uniq}");
+    let mid = seed_metric(&s, &format!("_test:allow:{uniq}"), "ComputeFtr", 0, None).await;
+    s.upsert_project_metric_repo(
+        &mid,
+        &rid,
+        "repo",
+        None,
+        None,
+        chrono::NaiveDate::from_ymd_opt(2019, 1, 1).unwrap(),
+        "daily",
+        1.0,
+        &serde_json::json!({}),
+        "measured",
+    )
+    .await
+    .unwrap();
+
+    // A second shared repository with NEWER rows that the plan does not allow.
+    let other_pid =
+        s.create_project(&format!("_test:allow:other:{uniq}"), None, None).await.unwrap();
+    let other_uniq = uuid::Uuid::new_v4();
+    let other_rid =
+        crate::tasks::test_support::seed_bare_repository(&s, &other_pid, &other_uniq).await;
+    sqlx_core::query::query("UPDATE sensei.repositories SET visibility = 'shared' WHERE id = $1")
+        .bind(other_rid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    for d in 20..24 {
+        s.upsert_project_metric_repo(
+            &mid,
+            &other_rid,
+            "repo",
+            None,
+            None,
+            chrono::NaiveDate::from_ymd_opt(2026, 8, d).unwrap(),
+            "daily",
+            5.0,
+            &serde_json::json!({}),
+            "measured",
+        )
+        .await
+        .unwrap();
+    }
+
+    let got = s.unpushed_metric_rows(&["repo"], &[&allowed_key], 2).await.unwrap();
+    let mine = got.iter().filter(|r| r.repo_key == allowed_key).count();
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &other_pid, None, &[]).await;
+    assert!(mine >= 1, "an allowed repo's row must survive a window full of unallowed ones");
+    assert!(got.iter().all(|r| r.repo_key == allowed_key), "only allowed keys may be batched");
+}
+
+#[tokio::test]
+async fn two_rows_that_differ_in_every_key_field_arrive_different() {
+    // The C4-remediation test asserted each field against a fixture whose value
+    // WAS the constant a broken projection emits — `assert_eq!(commit_sha, None)`
+    // under a fixture seeding NULL proves nothing. A second, contrasting row makes
+    // the projection track the ROW instead of a literal.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let key = format!("test/bare-{uniq}");
+    let mid = seed_metric(&s, &format!("_test:contrast:{uniq}"), "ComputeFtr", 0, None).await;
+    s.upsert_project_metric_repo(
+        &mid,
+        &rid,
+        "repo",
+        None,
+        Some("deadbeef"),
+        chrono::NaiveDate::from_ymd_opt(2021, 3, 4).unwrap(),
+        "session",
+        7.5,
+        &serde_json::json!({ "n": 7 }),
+        "estimated",
+    )
+    .await
+    .unwrap();
+
+    let rows = s.unpushed_metric_rows(&["repo", "user"], &[&key], 500).await.unwrap();
+    let got = rows.iter().find(|r| r.commit_sha.as_deref() == Some("deadbeef")).cloned();
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+
+    let m = got.expect("the contrasting row is queued");
+    assert_eq!(m.scope, "repo", "scope tracks the row, not a literal 'user'");
+    assert_eq!(m.grain, "session", "grain tracks the row, not a literal 'daily'");
+    assert_eq!(m.source, "estimated", "an estimate must not arrive as 'measured'");
+    assert_eq!(m.commit_sha.as_deref(), Some("deadbeef"), "a sha must not be nulled out");
+    assert_eq!(m.props["n"], 7, "props travels, not an empty object");
+}
+
+#[tokio::test]
+async fn a_pushable_row_carries_every_field_the_dojo_needs() {
+    // Claim C4 was FALSE: the push query selected only
+    // (id, repo_key, metric, computed_on, value), but the ingest endpoint keys on
+    // (metric, repository, scope, principal, commit_sha, computed_on, grain) and
+    // stores props + source. Missing any of them and the receiving side either
+    // rejects the row or, worse, defaults it — filing a `user` row as a `repo`
+    // one, or `measured` over an `imputed` value.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, _rid) = seed_sync_fixture(&s, &uniq).await;
+
+    let rows = s
+        .unpushed_metric_rows(&["repo", "user"], &[&format!("test/bare-{uniq}")], 500)
+        .await
+        .unwrap();
+    let mine = rows.iter().find(|r| r.repo_key == format!("test/bare-{uniq}"));
+
+    let got = mine.cloned();
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+
+    let m = got.expect("the seeded shared repository's row is queued for push");
+    assert_eq!(m.scope, "user", "scope round-trips — the fixture seeds a user-scoped row");
+    assert_eq!(m.grain, "daily", "grain is part of the dōjō's unique key");
+    assert_eq!(m.value, 0.5);
+    assert_eq!(m.source, "measured", "source distinguishes measured from imputed");
+    assert!(m.props.is_object(), "props travels as an object, not a string");
+    assert_eq!(m.commit_sha, None, "absent stays absent — never defaulted to a placeholder");
+    assert!(!m.id.is_nil(), "the local row id comes back so shared_at can be marked");
+}
+
+#[tokio::test]
+async fn setting_a_repository_shared_is_what_opens_gate_1() {
+    // The surface that did not exist. `visibility` is private-by-default on
+    // purpose — signing in must not start sharing — so SOMETHING has to set it,
+    // and until this there was no API, CLI flag or toggle that could. Gate 1 was
+    // unreachable: 0 of 67 repositories were shared (daemon-sync.md C3), and the
+    // whole push would have moved nothing while reporting success.
+    let s = pg_store().await;
+    let key = format!("ztest-host/acme/{}", uuid::Uuid::new_v4());
+    sqlx_core::query::query(
+        "INSERT INTO sensei.repositories(repo_key, name) VALUES($1, 'ztest-repo')",
+    )
+    .bind(&key)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    // Before: private by default, and gate 1 does not yield it.
+    let shared_before = s.shared_repositories(500).await.unwrap();
+    let updated = s.set_repository_visibility(&key, "shared").await.unwrap();
+    let shared_after = s.shared_repositories(500).await.unwrap();
+    // Turning it back off must also work — sharing is revocable, or the "you may
+    // change it" half of D8 is a lie.
+    let revoked = s.set_repository_visibility(&key, "private").await.unwrap();
+    let shared_revoked = s.shared_repositories(500).await.unwrap();
+    // A value the enum does not have is an error, not a silent no-op that leaves
+    // the user believing they shared something.
+    let bogus = s.set_repository_visibility(&key, "public").await;
+    // An unknown repo_key writes nothing and does not error — the caller can
+    // tell "set" from "no such repository" by the row count.
+    let unknown = s.set_repository_visibility("ztest-host/never/seen", "shared").await.unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.repositories WHERE repo_key = $1")
+        .bind(&key)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(updated, 1, "the visibility is set");
+    assert!(!shared_before.iter().any(|r| r.repo_key == key), "private by default");
+    assert!(shared_after.iter().any(|r| r.repo_key == key), "gate 1 now yields it");
+    assert_eq!(revoked, 1, "and it can be turned back off");
+    assert!(!shared_revoked.iter().any(|r| r.repo_key == key), "gate 1 stops yielding it");
+    assert!(bogus.is_err(), "a value outside sensei.repo_visibility is refused");
+    assert_eq!(unknown, 0, "an unknown repo_key writes nothing and does not error");
+}
+
+#[tokio::test]
+async fn a_repository_records_the_tenant_it_was_mapped_to() {
+    // D2's payoff. The daemon learns the tenant from the dōjō's registration
+    // response and has to keep it; without this the mapping is recomputed every
+    // cycle and `sensei.repositories.tenant_id` stays permanently NULL.
+    let s = pg_store().await;
+    let key = format!("ztest-host/acme/{}", uuid::Uuid::new_v4());
+    let tenant = uuid::Uuid::new_v4();
+    sqlx_core::query::query(
+        "INSERT INTO sensei.repositories(repo_key, name) VALUES($1, 'ztest-repo')",
+    )
+    .bind(&key)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let wrote = s.set_repository_tenant(&key, tenant).await.unwrap();
+    let stored: (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+        "SELECT tenant_id FROM sensei.repositories WHERE repo_key = $1",
+    )
+    .bind(&key)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    // Re-running a cycle must not churn `modified_at` on an unchanged mapping.
+    let again = s.set_repository_tenant(&key, tenant).await.unwrap();
+    // A repo_key this database has never seen is 0 rows, not an error and not a
+    // fabricated insert — the dōjō may map repositories another machine shared.
+    let unknown = s.set_repository_tenant("ztest-host/never/seen", tenant).await.unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.repositories WHERE repo_key = $1")
+        .bind(&key)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert_eq!(wrote, 1, "the mapping is stored");
+    assert_eq!(stored.0, Some(tenant), "and it is the tenant the dōjō named");
+    assert_eq!(again, 0, "re-storing the same tenant writes nothing");
+    assert_eq!(unknown, 0, "an unknown repo_key writes nothing and does not error");
+}
+
+#[tokio::test]
+async fn signed_in_personas_lists_only_the_ones_that_completed_a_sign_in() {
+    // The registry that replaced the withdrawn `sensei.dojo_personas` table
+    // (docs/spec/dojo/daemon-sync.md §3).
+    //
+    // This test USED to seed only `verified_at`, because the spec claimed the
+    // label was the Keychain slot. It is not, and the sign-in that proved it also
+    // broke this test — correctly. Both fields are now seeded because both are
+    // required: `session_slot` names a real Keychain entry, `verified_at` says the
+    // OAuth callback completed.
+    //
+    // A row proves a sign-in HAPPENED, not that its token is still good; the
+    // caller still probes the Keychain.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let signed = format!("ztest-signed-{uniq}");
+    let never = format!("ztest-never-{uniq}");
+    let a = s.upsert_persona(&signed, true).await.unwrap();
+    let b = s.upsert_persona(&never, true).await.unwrap();
+    sqlx_core::query::query(
+        "UPDATE sensei.personas SET verified_at = now(), session_slot = $2 WHERE id = $1",
+    )
+    .bind(a)
+    .bind(&signed)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let listed = s.signed_in_personas().await.unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = ANY($1)")
+        .bind(vec![a, b])
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    // Containment, not equality: this database holds the developer's real
+    // personas too, and a test that pins the whole set fails for reasons that
+    // have nothing to do with the code.
+    assert!(listed.contains(&signed), "a persona that completed a sign-in is listed");
+    assert!(!listed.contains(&never), "one that never signed in is not — it has no Keychain slot");
+}
+
+#[tokio::test]
+async fn the_registry_returns_the_keychain_slot_not_the_relabelled_persona() {
+    // THE bug this column exists for, and it was live: a sign-in as `default`
+    // leaves the session at `refresh_token.default` but RELABELS the row to the
+    // verified GitHub login. Returning the label sent `live_access_token` looking
+    // for `refresh_token.sensei-hq-org`, which does not exist — so it reported
+    // SignedOut, skipped the persona, and the cycle claimed success having pushed
+    // nothing. 0 plan rows, 0 rows shared, `last_ok = true`.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let slot = format!("ztest-slot-{uniq}");
+    // The relabelling is the point: label and slot must differ, exactly as they
+    // do after a real sign-in.
+    let label = format!("ztest-relabelled-{uniq}");
+    let id = s.upsert_persona(&label, true).await.unwrap();
+    sqlx_core::query::query(
+        "UPDATE sensei.personas SET verified_at = now(), session_slot = $2 WHERE id = $1",
+    )
+    .bind(id)
+    .bind(&slot)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let listed = s.signed_in_personas().await.unwrap();
+
+    // A second persona may not claim the same slot — one stored session serving
+    // two identities would push one person's metrics under the other's token.
+    let other = s.upsert_persona(&format!("ztest-other-{uniq}"), true).await.unwrap();
+    let clash = sqlx_core::query::query(
+        "UPDATE sensei.personas SET verified_at = now(), session_slot = $2 WHERE id = $1",
+    )
+    .bind(other)
+    .bind(&slot)
+    .execute(s.pool())
+    .await;
+
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = ANY($1)")
+        .bind(vec![id, other])
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert!(listed.contains(&slot), "the registry yields the KEYCHAIN SLOT");
+    assert!(
+        !listed.contains(&label),
+        "and never the label — that is the lookup that found no session and silently skipped"
+    );
+    assert!(clash.is_err(), "two personas cannot share one Keychain slot");
+}
+
+#[tokio::test]
 async fn all_task_kinds_match_the_database_enum() {
     // Ties the three places a kind must exist into one assertion: the Rust
     // enum, `TaskKind::ALL`, and `sensei.task_execution_kind`.
@@ -9658,6 +12014,10 @@ async fn all_task_kinds_match_the_database_enum() {
     // outright and has no successor at all).
     let retired = [
         "resolve_edges",
+        // Retired outright: its `covers` set is now the sensei.doc_coverage view,
+        // and its degree refresh is counted from the adjacency detect_communities
+        // already builds. No successor kind — the work does not exist any more.
+        "build_connections",
         "plan_metric_days",
         "compute_metrics",
         "reconcile_identity",
@@ -9689,13 +12049,26 @@ async fn all_task_kinds_match_the_database_enum() {
 
 /// A shared repository with one locally-computed metric row.
 async fn seed_sync_fixture(s: &PgStore, uniq: &uuid::Uuid) -> (uuid::Uuid, uuid::Uuid) {
+    seed_sync_fixture_at(s, uniq, "shared").await
+}
+
+/// The same, at a chosen local `sensei.repositories.visibility`. `'private'` is the
+/// org-mandate shape: nothing elected locally, and the dōjō's plan deciding anyway.
+async fn seed_sync_fixture_at(
+    s: &PgStore,
+    uniq: &uuid::Uuid,
+    visibility: &str,
+) -> (uuid::Uuid, uuid::Uuid) {
     let pid = s.create_project(&format!("_test:sync:{uniq}"), None, None).await.unwrap();
     let rid = crate::tasks::test_support::seed_bare_repository(s, &pid, uniq).await;
-    sqlx_core::query::query("UPDATE sensei.repositories SET visibility = 'shared' WHERE id = $1")
-        .bind(rid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    sqlx_core::query::query(
+        "UPDATE sensei.repositories SET visibility = $2::sensei.repo_visibility WHERE id = $1",
+    )
+    .bind(rid)
+    .bind(visibility)
+    .execute(s.pool())
+    .await
+    .unwrap();
     let mid = seed_metric(s, &format!("_test:sync:{uniq}:ftr"), "ComputeFtr", 0, None).await;
     s.upsert_project_metric_repo(
         &mid,
@@ -9715,6 +12088,52 @@ async fn seed_sync_fixture(s: &PgStore, uniq: &uuid::Uuid) -> (uuid::Uuid, uuid:
 }
 
 #[tokio::test]
+async fn the_held_back_count_carries_the_same_predicates_as_the_push_window() {
+    // The count exists so "pushed 66" is never printed without the reason 596 were
+    // not — which is only a true statement if it counts the population the window
+    // draws from, differing in `scopes` alone.
+    //
+    // B2 changed both together: `visibility = 'shared'` came out of each, and
+    // `allowed_keys` — which the count had never carried — went in. Without that
+    // second half an unfiltered count would sweep in every cloned repository on the
+    // machine, reporting a hold-back no pass could ever have sent. That misleads in
+    // the opposite direction to the bug the counter was added for, which is still
+    // misleading.
+    let s = pg_store().await;
+    let mine_uniq = uuid::Uuid::new_v4();
+    let other_uniq = uuid::Uuid::new_v4();
+    // Locally PRIVATE, so the count also proves the visibility term is gone.
+    let (mine_pid, _) = seed_sync_fixture_at(&s, &mine_uniq, "private").await;
+    let (other_pid, _) = seed_sync_fixture_at(&s, &other_uniq, "private").await;
+    let mine_key = format!("test/bare-{mine_uniq}");
+    let other_key = format!("test/bare-{other_uniq}");
+
+    let window = s.unpushed_metric_rows(&["user"], &[&mine_key], 500).await.unwrap();
+    let held_mine = s.unpushed_metric_count(&["user"], &[&mine_key]).await.unwrap();
+    let held_other = s.unpushed_metric_count(&["user"], &[&other_key]).await.unwrap();
+    let held_none = s.unpushed_metric_count(&["user"], &[]).await.unwrap();
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &mine_pid, None, &[]).await;
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &other_pid, None, &[]).await;
+
+    assert_eq!(
+        held_mine,
+        window.len() as i64,
+        "the count and the window see the same rows for the same allow-list"
+    );
+    assert_eq!(held_mine, 1, "including a row whose repository is locally PRIVATE");
+    assert_eq!(
+        held_other, 1,
+        "a different allow-list counts that repository's rows, not this one's"
+    );
+    assert_eq!(
+        held_none, 0,
+        "and an EMPTY allow-list holds back nothing — the count must not report rows \
+         no pass could have sent"
+    );
+}
+
+#[tokio::test]
 async fn a_pulled_row_is_never_pushed_back() {
     // The loop-breaker. Without `computed_by`, a value dojo handed down is
     // indistinguishable from one this machine produced — so it gets pushed
@@ -9723,9 +12142,11 @@ async fn a_pulled_row_is_never_pushed_back() {
     let uniq = uuid::Uuid::new_v4();
     let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
 
-    let mine = s.unpushed_metric_rows(100).await.unwrap();
-    let before =
-        mine.iter().filter(|r| r["repoKey"].as_str() == Some(&format!("test/bare-{uniq}"))).count();
+    let mine = s
+        .unpushed_metric_rows(&["repo", "user"], &[&format!("test/bare-{uniq}")], 100)
+        .await
+        .unwrap();
+    let before = mine.iter().filter(|r| r.repo_key == format!("test/bare-{uniq}")).count();
 
     // Same row, but marked as dojo's.
     sqlx_core::query::query(
@@ -9735,11 +12156,11 @@ async fn a_pulled_row_is_never_pushed_back() {
     .execute(s.pool())
     .await
     .unwrap();
-    let after = s.unpushed_metric_rows(100).await.unwrap();
-    let after_n = after
-        .iter()
-        .filter(|r| r["repoKey"].as_str() == Some(&format!("test/bare-{uniq}")))
-        .count();
+    let after = s
+        .unpushed_metric_rows(&["repo", "user"], &[&format!("test/bare-{uniq}")], 100)
+        .await
+        .unwrap();
+    let after_n = after.iter().filter(|r| r.repo_key == format!("test/bare-{uniq}")).count();
 
     crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
 
@@ -9748,24 +12169,38 @@ async fn a_pulled_row_is_never_pushed_back() {
 }
 
 #[tokio::test]
-async fn a_private_repository_is_skipped_not_queued() {
-    // Private is a choice, not a backlog item: its rows must never enter the
-    // push queue at all, or every private repo looks like a pending sync.
+async fn a_locally_private_repository_is_queued_only_when_the_plan_names_it() {
+    // Was `a_private_repository_is_skipped_not_queued`, which asserted that the
+    // LOCAL flag did the excluding. §8a's B2 moved that, and the assertion is
+    // rescoped rather than dropped because its concern survives: private is a
+    // choice, not a backlog item, and a repository nobody elected still never
+    // enters the queue — it is simply not in the dōjō's allow-list that keeps it
+    // out now, rather than a column the mandate cannot see.
+    //
+    // Both directions on the SAME private fixture, so it cannot pass by the local
+    // flag quietly doing the work again.
     let s = pg_store().await;
     let uniq = uuid::Uuid::new_v4();
     let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
+    let key = format!("test/bare-{uniq}");
     sqlx_core::query::query("UPDATE sensei.repositories SET visibility = 'private' WHERE id = $1")
         .bind(rid)
         .execute(s.pool())
         .await
         .unwrap();
 
-    let rows = s.unpushed_metric_rows(100).await.unwrap();
-    let n =
-        rows.iter().filter(|r| r["repoKey"].as_str() == Some(&format!("test/bare-{uniq}"))).count();
+    let omitted = s.unpushed_metric_rows(&["repo", "user"], &[], 100).await.unwrap();
+    let named = s.unpushed_metric_rows(&["repo", "user"], &[&key], 100).await.unwrap();
+    let omitted_n = omitted.iter().filter(|r| r.repo_key == key).count();
+    let named_n = named.iter().filter(|r| r.repo_key == key).count();
 
     crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
-    assert_eq!(n, 0, "a private repository's rows are never queued for push");
+    assert_eq!(omitted_n, 0, "a repository the plan does not name is never queued for push");
+    assert_eq!(
+        named_n, 1,
+        "and one the plan DOES name is queued despite `visibility = 'private'` — the org \
+         mandate is a dōjō decision with no local column to read"
+    );
 }
 
 #[tokio::test]
@@ -9779,20 +12214,20 @@ async fn a_recomputed_row_is_pushed_again() {
     let key = format!("test/bare-{uniq}");
 
     let ids: Vec<uuid::Uuid> = s
-        .unpushed_metric_rows(100)
+        .unpushed_metric_rows(&["repo", "user"], &[&format!("test/bare-{uniq}")], 100)
         .await
         .unwrap()
         .iter()
-        .filter(|r| r["repoKey"].as_str() == Some(&key))
-        .filter_map(|r| r["id"].as_str().and_then(|v| uuid::Uuid::parse_str(v).ok()))
+        .filter(|r| r.repo_key == key)
+        .map(|r| r.id)
         .collect();
     s.mark_metric_rows_shared(&ids).await.unwrap();
     let after_push = s
-        .unpushed_metric_rows(100)
+        .unpushed_metric_rows(&["repo", "user"], &[&format!("test/bare-{uniq}")], 100)
         .await
         .unwrap()
         .iter()
-        .filter(|r| r["repoKey"].as_str() == Some(&key))
+        .filter(|r| r.repo_key == key)
         .count();
 
     // The day recomputes — modified_at moves past shared_at.
@@ -9800,11 +12235,11 @@ async fn a_recomputed_row_is_pushed_again() {
             "UPDATE sensei.repository_metrics SET modified_at = now() + interval '1 second'               WHERE repository_id = $1")
             .bind(rid).execute(s.pool()).await.unwrap();
     let after_recompute = s
-        .unpushed_metric_rows(100)
+        .unpushed_metric_rows(&["repo", "user"], &[&format!("test/bare-{uniq}")], 100)
         .await
         .unwrap()
         .iter()
-        .filter(|r| r["repoKey"].as_str() == Some(&key))
+        .filter(|r| r.repo_key == key)
         .count();
 
     crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
@@ -9914,4 +12349,3701 @@ async fn a_renamed_github_login_still_matches_the_same_persona() {
 
     assert_eq!(first, second, "the same GitHub id resolves to one persona");
     assert_eq!(login.as_deref(), Some("new-login"), "and the login is updated in place");
+}
+
+// ── The OFFER set, and gate 1 · intent ──────────────────────────────────────
+//
+// Two different questions, and they stopped having the same answer in
+// docs/spec/dojo/daemon-sync.md §8a:
+//
+// * `offerable_repositories` — WHAT THIS MACHINE DISCLOSES. Every locally-scanned
+//   repository with a `repo_key`, i.e. every repository the user CLONED. Never a
+//   forge listing: membership of an org whose code you have not cloned discloses
+//   nothing, because there is nothing on the machine to measure.
+// * `shared_repositories` — GATE 1, user intent. `sensei.repositories.visibility`,
+//   the FIRST of the three gates (docs/spec/dojo/dojo-auth-provisioning.md §V.3)
+//   and the only one the daemon owns.
+//
+// Gate 1 used to filter the OFFER, which made an organization's mandate over its
+// own private code structurally unreachable — the daemon has no local fact that
+// says "this one is mandated", so filtering before asking meant never asking. It
+// now filters the PUSH, and only for repositories where the USER holds authority.
+// Cost (forge visibility) and entitlement (claim/billing/seat) are the dōjō's and
+// are never mirrored here.
+
+#[tokio::test]
+async fn every_cloned_repository_is_offered_even_when_the_user_has_not_elected_it() {
+    // B1. A new employee whose only repository is the org-mandated private one has
+    // nothing locally elected. Filtering the offer on gate 1 meant the cycle
+    // returned before `register_repositories`, before `sync_plan`, before any push
+    // — the feature defeated for exactly the population it exists to serve.
+    //
+    // The bound that makes disclosing an unelected repository acceptable is the
+    // CLONE, not the forge: `sensei.repositories` is populated by the scanner, so
+    // this set is what the user actually works on, never an inventory of what they
+    // can reach.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let pid = s.create_project(&format!("_test:offer:{uniq}"), None, None).await.unwrap();
+
+    // elected locally
+    let elected = crate::tasks::test_support::seed_bare_repository(&s, &pid, &uniq).await;
+    sqlx_core::query::query("UPDATE sensei.repositories SET visibility = 'shared' WHERE id = $1")
+        .bind(elected)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    // cloned, NOT elected — the org-mandate candidate. Only the dōjō can know.
+    let unelected_uniq = uuid::Uuid::new_v4();
+    let unelected =
+        crate::tasks::test_support::seed_bare_repository(&s, &pid, &unelected_uniq).await;
+
+    // cloned but LOCAL-ONLY (no remote → no repo_key). Still withheld: it has no
+    // cross-install identity, so the dōjō would have nothing to map it to.
+    let (localonly,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.repositories(repo_key, name, visibility) \
+         VALUES(NULL, $1, 'shared') RETURNING id",
+    )
+    .bind(format!("offer-localonly-{uniq}"))
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+
+    // A limit past the whole table: the shared test database carries thousands of
+    // leftover fixtures, and a 500-row window would answer "absent" for a reason
+    // that has nothing to do with the predicate under test.
+    const ALL: i64 = 1_000_000;
+    let offered = s.offerable_repositories(ALL).await.unwrap();
+    let offered_keys: std::collections::HashSet<String> =
+        offered.iter().map(|r| r.repo_key.clone()).collect();
+    let offered_localonly =
+        offered.iter().any(|r| r.name.starts_with(&format!("offer-localonly-{uniq}")));
+    let elected_keys: std::collections::HashSet<String> =
+        s.shared_repositories(ALL).await.unwrap().into_iter().map(|r| r.repo_key).collect();
+
+    sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)")
+        .bind(vec![elected, unelected, localonly])
+        .execute(s.pool())
+        .await
+        .ok();
+    sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .ok();
+
+    assert!(
+        offered_keys.contains(&format!("test/bare-{uniq}")),
+        "an elected repository is offered"
+    );
+    assert!(
+        offered_keys.contains(&format!("test/bare-{unelected_uniq}")),
+        "a CLONED but unelected repository must still be OFFERED — the daemon cannot \
+         tell whether the org mandated it, so refusing to ask is refusing the mandate"
+    );
+    assert!(
+        !offered_localonly,
+        "a local-only repository (NULL repo_key) has no cross-install identity and \
+         is offered by neither set"
+    );
+    // And the two sets are genuinely different — gate 1 did not simply move.
+    assert!(
+        elected_keys.contains(&format!("test/bare-{uniq}")),
+        "gate 1 still yields what the user elected"
+    );
+    assert!(
+        !elected_keys.contains(&format!("test/bare-{unelected_uniq}")),
+        "gate 1 still withholds the unelected repository from the ELECTED set"
+    );
+}
+
+#[tokio::test]
+async fn the_offer_window_is_a_throughput_bound_not_an_alphabetical_ceiling() {
+    // Widening the offer set from "what the user elected" to "every clone" makes the
+    // caller's LIMIT ~40x more load-bearing. Ordered by `repo_key`, an install with
+    // more repositories than the limit offers the alphabetically-first N forever —
+    // so a freshly cloned org-mandated repository sorting after them is never
+    // registered, never in the dōjō's plan, and never pushed. That is B1 again, one
+    // layer down, and invisible on the 67-repository install it was measured on.
+    //
+    // The ordering is asserted RELATIVELY (both fixtures dated into the future) so
+    // the test does not depend on how many rows the shared test database carries.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let last_key = format!("zzz-sorts-last/{uniq}");
+    let first_key = format!("aaa-sorts-first/{uniq}");
+
+    // Cloned, never registered, sorts LAST alphabetically.
+    let (unmapped,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.repositories(repo_key, name, modified_at) \
+         VALUES($1, 'ztest-unmapped', now() + interval '10 years') RETURNING id",
+    )
+    .bind(&last_key)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    // Already mapped to a tenant, sorts FIRST alphabetically. It is already in the
+    // dōjō's answer whether or not it is re-offered, so it must yield the slot.
+    let (mapped,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.repositories(repo_key, name, tenant_id, modified_at) \
+         VALUES($1, 'ztest-mapped', gen_random_uuid(), now() + interval '9 years') RETURNING id",
+    )
+    .bind(&first_key)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+
+    let window = s.offerable_repositories(1).await.unwrap();
+
+    sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)")
+        .bind(vec![unmapped, mapped])
+        .execute(s.pool())
+        .await
+        .ok();
+
+    assert_eq!(
+        window.first().map(|r| r.repo_key.as_str()),
+        Some(last_key.as_str()),
+        "the unregistered repository takes the single slot even though it sorts last — \
+         registration is what creates the dōjō row the plan is computed from"
+    );
+}
+
+#[tokio::test]
+async fn shared_repositories_returns_only_opted_in_repos_with_a_remote() {
+    // GATE 1, and only gate 1. This test used to assert that an unelected repository
+    // "must NEVER be offered"; §8a narrowed that, so the claim is now scoped to what
+    // survives: gate 1 governs the PUSH for repositories where the USER holds
+    // authority. What this machine DISCLOSES is the wider clone-bounded set —
+    // asserted next door in
+    // `every_cloned_repository_is_offered_even_when_the_user_has_not_elected_it`.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let pid = s.create_project(&format!("_test:shared:{uniq}"), None, None).await.unwrap();
+
+    // opted in, has a remote → in the elected set
+    let shared = crate::tasks::test_support::seed_bare_repository(&s, &pid, &uniq).await;
+    sqlx_core::query::query("UPDATE sensei.repositories SET visibility = 'shared' WHERE id = $1")
+        .bind(shared)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    // NOT opted in → not elected. Private is a choice, not a failure: signing in
+    // must never start sharing a repo the user did not choose to share.
+    let private_uniq = uuid::Uuid::new_v4();
+    let private = crate::tasks::test_support::seed_bare_repository(&s, &pid, &private_uniq).await;
+
+    // opted in but LOCAL-ONLY (no remote → no repo_key) → withheld by BOTH sets. A
+    // NULL repo_key is the DDL's marker for "never federated"; it has no
+    // cross-install identity, so the dōjō would have nothing to map it to.
+    let (localonly,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.repositories(repo_key, name, visibility) \
+         VALUES(NULL, $1, 'shared') RETURNING id",
+    )
+    .bind(format!("localonly-{uniq}"))
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+
+    let elected = s.shared_repositories(1_000_000).await.unwrap();
+    let keys: std::collections::HashSet<&str> =
+        elected.iter().map(|r| r.repo_key.as_str()).collect();
+
+    assert!(
+        keys.contains(&format!("test/bare-{uniq}").as_str()),
+        "an opted-in repository with a remote is elected"
+    );
+    assert!(
+        !keys.contains(&format!("test/bare-{private_uniq}").as_str()),
+        "a repository the user did not share is NOT ELECTED, so gate 1 still stops its \
+         rows being pushed on the user's own authority. It IS still disclosed — the \
+         dōjō is the only party that can tell a mandate from a private repository"
+    );
+    assert!(
+        elected.iter().all(|r| !r.name.starts_with(&format!("localonly-{uniq}"))),
+        "a local-only repository (NULL repo_key) has no cross-install identity and \
+         is in neither set"
+    );
+
+    // cleanup
+    sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = ANY($1)")
+        .bind(vec![shared, private, localonly])
+        .execute(s.pool())
+        .await
+        .ok();
+}
+
+// ── Schedules · the code↔table agreement ────────────────────────────────────
+//
+// `sensei.schedules` is user-editable, and `tasks::schedule::SCHEDULABLE` is the
+// code-side list of workers that actually exist. They must agree in BOTH
+// directions, and this is the test `api/handlers/scheduled_tasks.rs` asks for in
+// its own comment — "Registry, not reflection — keep in step when a worker is
+// added" — turned from a hope into a build failure.
+//
+// Mirrors the existing TaskKind::ALL ↔ sensei.task_execution_kind test.
+
+#[tokio::test]
+async fn every_schedulable_worker_has_a_schedule_row() {
+    // A worker with no row never runs, and nothing would say so.
+    let s = pg_store().await;
+    let rows: Vec<(String,)> =
+        query_as("SELECT name FROM sensei.schedules").fetch_all(s.pool()).await.unwrap();
+    let seeded: Vec<String> = rows.into_iter().map(|(n,)| n).collect();
+    for name in crate::tasks::schedule::SCHEDULABLE {
+        assert!(
+            seeded.iter().any(|n| n == name),
+            "{name} is schedulable in code but has no sensei.schedules row — it would \
+             never run. Add it to database/import/staging/schedules.jsonl."
+        );
+    }
+}
+
+#[tokio::test]
+async fn every_schedule_row_names_a_real_worker() {
+    // A row naming no worker is a typo that silently does nothing.
+    let s = pg_store().await;
+    // The scan is table-wide, so it also sees the throwaway rows of any test
+    // running beside it. Those are skipped by prefix — and a worker may not take
+    // the prefix, or the skip would hide the very drift this test exists for.
+    for name in crate::tasks::schedule::SCHEDULABLE {
+        assert!(
+            !name.starts_with(crate::tasks::test_support::TEST_SCHEDULE_PREFIX),
+            "{name} may not start with the test-row prefix — the scan below would skip it"
+        );
+    }
+    let rows: Vec<(String,)> =
+        query_as("SELECT name FROM sensei.schedules").fetch_all(s.pool()).await.unwrap();
+    for (name,) in rows {
+        if name.starts_with(crate::tasks::test_support::TEST_SCHEDULE_PREFIX) {
+            continue;
+        }
+        assert!(
+            crate::tasks::schedule::SCHEDULABLE.contains(&name.as_str()),
+            "sensei.schedules has a row for {name:?}, but no such worker exists in \
+             tasks::schedule::SCHEDULABLE — either add the worker or remove the row."
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_zero_interval_is_rejected_by_the_database() {
+    // Not by a runtime fallback: a zero interval busy-loops a core, so it must be
+    // unrepresentable rather than quietly corrected.
+    let s = pg_store().await;
+    let err = sqlx_core::query::query(
+        "INSERT INTO sensei.schedules(name, interval_secs) VALUES('_test:zero', 0)",
+    )
+    .execute(s.pool())
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("interval_secs"),
+        "a zero interval must violate the CHECK, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn a_day_outside_monday_to_sunday_is_rejected() {
+    // ISO 1..7. An 8 would match no weekday and the task would silently never run.
+    let s = pg_store().await;
+    let err = sqlx_core::query::query(
+        "INSERT INTO sensei.schedules(name, interval_secs, days) \
+         VALUES('_test:day8', 60, ARRAY[8]::smallint[])",
+    )
+    .execute(s.pool())
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("days"), "day 8 must violate the CHECK, got: {err}");
+}
+
+// ── Schedules · load + record a run ─────────────────────────────────────────
+
+#[tokio::test]
+async fn load_schedule_reads_the_row_a_worker_runs_on() {
+    let s = pg_store().await;
+    // `metrics` is seeded, so this is the real path a worker takes on boot.
+    let sched = s.load_schedule("metrics").await.unwrap().expect("metrics is seeded");
+    assert_eq!(sched.name, "metrics");
+    assert!(sched.enabled);
+    assert!(sched.interval_secs > 0, "the CHECK guarantees this; the loader must not zero it");
+}
+
+#[tokio::test]
+async fn load_schedule_is_none_for_an_unknown_worker() {
+    // None, not a fabricated default: a worker with no row must be visibly
+    // unscheduled rather than silently running on an invented cadence.
+    let s = pg_store().await;
+    assert!(s.load_schedule("_test:no-such-worker").await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn marking_a_run_records_the_outcome_and_clears_a_stale_error() {
+    let s = pg_store().await;
+    let name = test_schedule_name();
+    sqlx_core::query::query("INSERT INTO sensei.schedules(name, interval_secs) VALUES($1, 60)")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    // A failure is recorded with its reason.
+    s.mark_schedule_run(&name, Err("boom".into())).await.unwrap();
+    let after_fail = s.load_schedule(&name).await.unwrap().unwrap();
+    assert_eq!(after_fail.last_ok, Some(false));
+    assert_eq!(after_fail.last_error.as_deref(), Some("boom"));
+    assert!(after_fail.last_run_at.is_some(), "an attempt is a run, even a failed one");
+
+    // A later success CLEARS it — a stale error sitting beside a healthy run
+    // reads as "still broken" to anyone scanning the table.
+    s.mark_schedule_run(&name, Ok(())).await.unwrap();
+    let after_ok = s.load_schedule(&name).await.unwrap().unwrap();
+    assert_eq!(after_ok.last_ok, Some(true));
+    assert_eq!(after_ok.last_error, None, "success must clear the previous error");
+
+    sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .ok();
+}
+
+// ── Schedules · reading them all, and editing one ───────────────────────────
+
+/// `(interval_secs, modified_at)` for a schedule, straight from SQL — the two
+/// values the seed guard compares. `table` selects the live row or the staged
+/// datafile row, so a test can assert against what the deploy will actually
+/// bring rather than against a hard-coded copy of the datafile.
+async fn schedule_state(
+    s: &PgStore,
+    table: &str,
+    name: &str,
+) -> (i32, chrono::DateTime<chrono::Utc>) {
+    query_as(&format!("SELECT interval_secs, modified_at FROM {table} WHERE name = $1"))
+        .bind(name)
+        .fetch_one(s.pool())
+        .await
+        .unwrap()
+}
+
+/// Force a schedule's `(interval_secs, modified_at)` — the two halves of the
+/// seed guard — without going through the patch path that bumps the timestamp.
+async fn set_schedule_row(s: &PgStore, name: &str, state: (i32, chrono::DateTime<chrono::Utc>)) {
+    sqlx_core::query::query(
+        "UPDATE sensei.schedules SET interval_secs = $2, modified_at = $3 WHERE name = $1",
+    )
+    .bind(name)
+    .bind(state.0)
+    .bind(state.1)
+    .execute(s.pool())
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn list_schedules_returns_every_worker_with_its_state() {
+    // The read behind GET /api/tasks/scheduled. It must return the TABLE, not a
+    // code-side list — that static registry is what this slice retires.
+    let s = pg_store().await;
+    // Two probes, inserted in REVERSE name order. Without them the ordering
+    // claim below only bites while this heap happens to be out of order: a
+    // freshly deployed table is written in the datafile's own alphabetical
+    // order, so an unsorted seq scan would return exactly the sorted list and
+    // the assertion would pass against a query that had lost its ORDER BY. They
+    // share a stem, so their relative order is the same under every collation.
+    let stem = test_schedule_name();
+    let (early, late) = (format!("{stem}:a"), format!("{stem}:b"));
+    for name in [&late, &early] {
+        sqlx_core::query::query("INSERT INTO sensei.schedules(name, interval_secs) VALUES($1, 60)")
+            .bind(name)
+            .execute(s.pool())
+            .await
+            .unwrap();
+    }
+
+    let all = s.list_schedules().await.unwrap();
+    for name in crate::tasks::schedule::SCHEDULABLE {
+        let row = all
+            .iter()
+            .find(|r| r.name == *name)
+            .unwrap_or_else(|| panic!("{name} is schedulable but missing from list_schedules"));
+        assert!(row.interval_secs > 0, "{name} must carry the cadence the CHECK guarantees");
+    }
+    let names: Vec<&str> = all.iter().map(|r| r.name.as_str()).collect();
+    let pos = |n: &str| names.iter().position(|x| *x == n).unwrap_or_else(|| panic!("{n} missing"));
+    assert!(
+        pos(&early) < pos(&late),
+        "the row written LAST but sorting first must come back first"
+    );
+    // Workers only for the whole-list claim: a throwaway row belongs to whatever
+    // test is running beside this one, and the database's collation need not
+    // agree with Rust's byte order on a punctuated name.
+    let workers: Vec<&str> =
+        names.iter().copied().filter(|n| !n.starts_with(TEST_SCHEDULE_PREFIX)).collect();
+    let sorted = {
+        let mut n = workers.clone();
+        n.sort_unstable();
+        n
+    };
+    assert_eq!(workers, sorted, "rows come back in name order so the UI needs no sort");
+
+    for name in [&early, &late] {
+        sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
+            .bind(name)
+            .execute(s.pool())
+            .await
+            .ok();
+    }
+}
+
+#[tokio::test]
+async fn update_schedule_writes_only_the_fields_it_was_given() {
+    // PATCH semantics: an absent field is "leave alone", not "clear".
+    let s = pg_store().await;
+    let name = test_schedule_name();
+    sqlx_core::query::query(
+        "INSERT INTO sensei.schedules(name, interval_secs, days) \
+         VALUES($1, 60, ARRAY[1,2]::smallint[])",
+    )
+    .bind(&name)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let patch = SchedulePatch { interval_secs: Some(900), ..Default::default() };
+    let after = s.update_schedule(&name, &patch).await.unwrap().expect("the row exists");
+    assert_eq!(after.interval_secs, 900);
+    assert!(after.enabled, "enabled was not in the patch, so it must be untouched");
+    assert_eq!(after.days, vec![1, 2], "days were not in the patch either");
+
+    // A window set as a PAIR, then cleared back to "any time".
+    let hm = |h, m| chrono::NaiveTime::from_hms_opt(h, m, 0).unwrap();
+    let window = (hm(22, 0), hm(5, 0));
+    let patch = SchedulePatch { window: Some(Some(window)), ..Default::default() };
+    let after = s.update_schedule(&name, &patch).await.unwrap().unwrap();
+    assert_eq!((after.window_start.unwrap(), after.window_end.unwrap()), window);
+    assert_eq!(after.interval_secs, 900, "the earlier edit survives the next patch");
+
+    let patch = SchedulePatch { window: Some(None), days: Some(None), ..Default::default() };
+    let after = s.update_schedule(&name, &patch).await.unwrap().unwrap();
+    assert_eq!(after.window_start, None, "an explicit clear means any time");
+    assert_eq!(after.window_end, None);
+    assert!(after.days.is_empty(), "and every day");
+
+    sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .ok();
+}
+
+#[tokio::test]
+async fn update_schedule_is_none_for_a_worker_with_no_row() {
+    // None, not a fabricated insert: the legal names are code-side, and a row
+    // conjured by a PATCH would name a worker nobody validated.
+    let s = pg_store().await;
+    let patch = SchedulePatch { enabled: Some(false), ..Default::default() };
+    assert!(s.update_schedule("_test:no-such-worker", &patch).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn update_schedule_does_not_disturb_the_runtime_state() {
+    // last_run_at / last_ok / last_error belong to the daemon. Editing a cadence
+    // must not read as "it just ran", nor erase a recorded failure.
+    let s = pg_store().await;
+    let name = test_schedule_name();
+    sqlx_core::query::query("INSERT INTO sensei.schedules(name, interval_secs) VALUES($1, 60)")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    s.mark_schedule_run(&name, Err("boom".into())).await.unwrap();
+    let before = s.load_schedule(&name).await.unwrap().unwrap();
+
+    let patch = SchedulePatch { enabled: Some(false), ..Default::default() };
+    let after = s.update_schedule(&name, &patch).await.unwrap().unwrap();
+    assert!(!after.enabled);
+    assert_eq!(after.last_run_at, before.last_run_at);
+    assert_eq!(after.last_ok, Some(false));
+    assert_eq!(after.last_error.as_deref(), Some("boom"));
+
+    sqlx_core::query::query("DELETE FROM sensei.schedules WHERE name = $1")
+        .bind(&name)
+        .execute(s.pool())
+        .await
+        .ok();
+}
+
+#[tokio::test]
+async fn a_user_edit_survives_the_seed_import() {
+    // THE behaviour of this endpoint. Deploy order is apply → import, so the seed
+    // otherwise has the last word: an edit that does not bump `modified_at` is
+    // silently reverted by the next `dbd deploy` and the user never learns why.
+    // Asserted through the REAL procedure, because the guard lives in SQL.
+    let _gate = SCHEDULE_EDIT_GATE.enter();
+    let s = pg_store().await;
+    // The datafile's own claim, read from staging rather than hard-coded, so this
+    // still tests the guard after someone edits schedules.jsonl.
+    let seed = schedule_state(&s, "staging.schedules", "contribute").await;
+    // Start from the state a fresh deploy leaves: an earlier run's leftover edit
+    // would otherwise make the control below pass for the wrong reason.
+    crate::tasks::test_support::restore_seeded_schedule(&s, "contribute").await;
+
+    let patch = SchedulePatch { interval_secs: Some(4242), ..Default::default() };
+    s.update_schedule("contribute", &patch).await.unwrap().expect("contribute is seeded");
+    let (_, edited_modified) = schedule_state(&s, "sensei.schedules", "contribute").await;
+    assert!(
+        edited_modified > seed.1,
+        "the edit must bump modified_at past the datafile's — that is the whole guard"
+    );
+
+    s.execute_raw("CALL staging.import_schedules()").await.unwrap();
+    assert_eq!(
+        schedule_state(&s, "sensei.schedules", "contribute").await.0,
+        4242,
+        "the seed must not revert a user's cadence"
+    );
+
+    // The control: a row OLDER than the datafile is overwritten, which is what
+    // an un-bumped edit would have been. Without it the assertion above would
+    // also pass against an import that quietly does nothing. It restores the row
+    // too — the import writes the seed's own values back.
+    set_schedule_row(&s, "contribute", (4242, seed.1 - chrono::Duration::days(1))).await;
+    s.execute_raw("CALL staging.import_schedules()").await.unwrap();
+    assert_eq!(
+        schedule_state(&s, "sensei.schedules", "contribute").await,
+        seed,
+        "a stale row is exactly what the datafile is allowed to overwrite"
+    );
+}
+
+#[tokio::test]
+async fn signing_out_stops_the_persona_being_enumerated_for_sync() {
+    // Sign-out took no `State` and touched no database, so `session_slot` and
+    // `verified_at` both survived it. `signed_in_personas` keys on exactly those
+    // two columns, so the cycle kept listing a persona whose Keychain slot had
+    // just been emptied: every 60s `live_access_token` returned SignedOut, and on
+    // a single-persona install `failures.len() == total` made `tick` return Err.
+    // A deliberate, clean sign-out red-lighted `schedules.dojo_sync` FOREVER,
+    // surfaced in the app as "failing".
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let slot = format!("ztest-signout-{uniq}");
+    let id = s.upsert_persona(&slot, true).await.unwrap();
+    sqlx_core::query::query(
+        "UPDATE sensei.personas SET verified_at = now(), session_slot = $2, \
+                                    github_login = 'ztest-login' WHERE id = $1",
+    )
+    .bind(id)
+    .bind(&slot)
+    .execute(s.pool())
+    .await
+    .unwrap();
+    assert!(
+        s.signed_in_personas().await.unwrap().contains(&slot),
+        "precondition: a signed-in persona is enumerated"
+    );
+
+    let cleared = s.clear_persona_session(&slot).await.unwrap();
+
+    let listed = s.signed_in_personas().await.unwrap();
+    let after: (Option<String>, Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx_core::query_as::query_as(
+            "SELECT session_slot, github_login, verified_at FROM sensei.personas WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+        .bind(id)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert!(cleared, "the row was found and cleared");
+    assert!(!listed.contains(&slot), "a signed-out persona must not be swept up by the cycle");
+    assert_eq!(after.0, None, "the Keychain slot no longer names anything");
+    // The VERIFIED IDENTITY is not destroyed. Which GitHub account this persona
+    // is remains true after a sign-out, and re-deriving it would mean a second
+    // OAuth round trip to learn something already proved. Both columns are
+    // asserted: a mutation probe that nulled `verified_at` passed while only
+    // `github_login` was checked, so half the claim was unguarded.
+    assert_eq!(after.1.as_deref(), Some("ztest-login"), "signing out is not un-verifying");
+    assert!(after.2.is_some(), "the proof of verification survives a sign-out too");
+}
+
+#[tokio::test]
+async fn signing_out_a_slot_nobody_holds_is_reported_as_such() {
+    // The daemon must be able to tell "I forgot your session" from "there was
+    // nothing to forget" — a sign-out that reports success for an unknown slot
+    // would hide a persona/slot mismatch, which is exactly the class of bug the
+    // `session_slot` column was added to fix.
+    let s = pg_store().await;
+    let missing = format!("ztest-absent-{}", uuid::Uuid::new_v4());
+    assert!(!s.clear_persona_session(&missing).await.unwrap());
+}
+
+#[tokio::test]
+async fn signing_out_matches_the_slot_however_the_caller_cased_the_persona() {
+    // The persona reaches `POST /api/auth/signout` from a QUERY STRING, and the
+    // two halves of sign-out disagreed about case. The Keychain half lowercases
+    // (`account_for`, with a test saying "Sensei-HQ" and "sensei-hq" must not
+    // become two half-signed-in states); `link_persona_identity` also stores
+    // `session_slot` lowercased. But the registry half compared the RAW
+    // parameter, so `?persona=Sensei-HQ` deleted the credentials and matched no
+    // row — leaving `session_slot` set.
+    //
+    // That is the precise failure the sign-out fix exists to prevent, restored
+    // by a capital letter: `signed_in_personas` keys on that column, so the cycle
+    // keeps selecting a persona whose Keychain slot is now empty, resolves
+    // SignedOut every 60s, and on a single-persona install pins
+    // `schedules.dojo_sync.last_ok = false` forever. And it is silent —
+    // `clear_persona_session` returns `Ok(false)`, not an error, so the handler
+    // reports `ok: true` over a sign-out that half happened.
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let gh_id: i64 = (uniq.as_u128() % 1_000_000) as i64 + 700_000;
+    // Mixed case throughout, exactly as it would arrive on the query string.
+    let hint = format!("Ztest-SignOut-{uniq}");
+
+    s.upsert_persona(&hint, true).await.unwrap();
+    let id = s.link_persona_identity(&hint, "ztest-cased-login", gh_id, None, &[]).await.unwrap();
+
+    let slot: Option<String> =
+        query_as::<_, (Option<String>,)>("SELECT session_slot FROM sensei.personas WHERE id = $1")
+            .bind(id)
+            .fetch_one(s.pool())
+            .await
+            .unwrap()
+            .0;
+    // Not an assumption about the writer — read back, so this test fails loudly
+    // if `link_persona_identity` ever stops normalising and the mismatch moves.
+    assert_eq!(
+        slot.as_deref(),
+        Some(hint.to_lowercase().as_str()),
+        "precondition: the sign-in stores the slot lowercased"
+    );
+    assert!(
+        s.signed_in_personas().await.unwrap().contains(&hint.to_lowercase()),
+        "precondition: the persona is enumerated for sync"
+    );
+
+    // What the handler passes: the query parameter, uncased.
+    let cleared = s.clear_persona_session(&hint).await.unwrap();
+
+    let listed = s.signed_in_personas().await.unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+        .bind(id)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    assert!(cleared, "signing out must find the row the sign-in wrote, whatever the caller's case");
+    assert!(
+        !listed.contains(&hint.to_lowercase()),
+        "and the cycle must stop enumerating a persona whose credentials are gone"
+    );
+}
+
+// ── sensei.graph_nodes — locality + hierarchy ────────────────────────────────
+//
+// The view a dependency count, a stub count, and the patterns-vs-graph split all
+// read from. It exists because the ONLY previous way to ask "is this external?"
+// was to ask "did the edge fail to resolve?" — a proxy that was wrong in both
+// directions (`resolve.rs:102` reported 791 of sensei's 1,040 "dependencies" as
+// this repo's own code, and would have lost every genuine one the moment
+// resolution started working, since target_id and target_name are mutually
+// exclusive).
+//
+// Locality is a property of the NODE, so the view reads what the WRITER already
+// decided (`kind`, `file_path`) rather than re-deriving it. That is the line
+// between this and `classify_import`: that function parses a specifier string and
+// exercises judgment, so it stays in Rust with one owner; this projects columns
+// the writer already set.
+
+/// Three-valued on purpose. A boolean would bin the 85,530 nodes that have
+/// neither a file nor an external fqn as external and reproduce exactly
+/// the false positives this view exists to kill. `unknown` makes them countable,
+/// which is what turns "stub count → 0" into a query.
+#[tokio::test]
+async fn graph_nodes_locality_is_three_valued_not_boolean() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("loc_{}", uuid::Uuid::new_v4())).await;
+
+    // A definition in a local file.
+    let internal = s
+        .seed_node(&fid, "function", "compute", "src/lib.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    // A dependency's symbol: the writer records this with the `lib·` prefix.
+    let external = s
+        .seed_node_by_fqn(
+            &fid,
+            "lib·axum·axum::response·Json",
+            "unknown",
+            "Json",
+            Some("rust"),
+            None,
+        )
+        .await
+        .unwrap();
+    // A reference the parser could not resolve: no file, not a lib_symbol.
+    let stub = s
+        .seed_node_by_fqn(
+            &fid,
+            "rust·senseid·codebase·HashMap·get",
+            "function",
+            "get",
+            Some("rust"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
+        "SELECT id, locality FROM sensei.graph_nodes WHERE folder_id = $1 ORDER BY locality",
+    )
+    .bind(fid)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    let by_id: std::collections::HashMap<uuid::Uuid, String> = rows.into_iter().collect();
+
+    assert_eq!(by_id.get(&internal).map(String::as_str), Some("internal"), "has a local file");
+    assert_eq!(by_id.get(&external).map(String::as_str), Some("external"), "lib_symbol kind");
+    assert_eq!(
+        by_id.get(&stub).map(String::as_str),
+        Some("unknown"),
+        "no file and not a lib_symbol — neither internal nor external, and saying \
+         'external' here is the bug this view replaces"
+    );
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// Locality must NOT read `nodes.resolved`. Measured live: 140,051 `section`
+/// rows are `resolved=false` yet sit in real files, so `resolved` answers "did
+/// FQN enrichment run", not "where does this live". Both fixtures below are
+/// `resolved=false` and must still classify differently.
+#[tokio::test]
+async fn graph_nodes_locality_does_not_depend_on_resolved() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("locres_{}", uuid::Uuid::new_v4())).await;
+    let unresolved_but_local = s
+        .seed_node(&fid, "section", "Overview", "docs/design.md", None, None, Some(1), Some(3))
+        .await
+        .unwrap();
+    let unresolved_lib = s
+        .seed_node_by_fqn(
+            &fid,
+            "lib·serde·serde·Serialize",
+            "unknown",
+            "Serialize",
+            Some("rust"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let rows: Vec<(uuid::Uuid, String, bool)> = sqlx_core::query_as::query_as(
+        "SELECT id, locality, resolved FROM sensei.graph_nodes WHERE folder_id = $1",
+    )
+    .bind(fid)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    let map: std::collections::HashMap<uuid::Uuid, (String, bool)> =
+        rows.into_iter().map(|(i, l, r)| (i, (l, r))).collect();
+
+    let (loc_local, res_local) = map.get(&unresolved_but_local).cloned().unwrap();
+    let (loc_lib, res_lib) = map.get(&unresolved_lib).cloned().unwrap();
+    assert!(!res_local && !res_lib, "both fixtures are resolved=false — that is the point");
+    assert_eq!(loc_local, "internal", "a doc section in a real file is internal");
+    assert_eq!(loc_lib, "external", "a lib_symbol is external regardless of enrichment");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// The hierarchy half: `parent_id` already carries containment (296,744 rows
+/// populated), so grouping does not need a `contains` edge kind. The view
+/// surfaces the parent's name and kind so a caller can group without a
+/// self-join.
+#[tokio::test]
+async fn graph_nodes_exposes_the_parent_for_grouping() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("locpar_{}", uuid::Uuid::new_v4())).await;
+    let class = s
+        .seed_node(&fid, "class", "Widget", "src/widget.rs", None, None, Some(1), Some(40))
+        .await
+        .unwrap();
+    let method = s
+        .seed_node(&fid, "method", "render", "src/widget.rs", Some(&class), None, Some(5), Some(9))
+        .await
+        .unwrap();
+
+    let row: (Option<String>, Option<String>, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
+        "SELECT parent_name, parent_kind, parent_id FROM sensei.graph_nodes WHERE id = $1",
+    )
+    .bind(method)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(row.0.as_deref(), Some("Widget"));
+    assert_eq!(row.1.as_deref(), Some("class"));
+    assert_eq!(row.2, Some(class));
+
+    let top: (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT parent_name, parent_kind FROM sensei.graph_nodes WHERE id = $1",
+    )
+    .bind(class)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(top, (None, None), "a top-level node has no parent — null, not a placeholder");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// The dependency count the `libs` computation got wrong. Counting distinct
+/// external targets of `calls` edges is now a one-line query that cannot mistake
+/// an unresolved internal reference for a dependency.
+#[tokio::test]
+async fn graph_nodes_makes_dependency_counting_a_query() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("locdep_{}", uuid::Uuid::new_v4())).await;
+    let caller = s
+        .seed_node(&fid, "function", "handler", "src/api.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    let lib_a = s
+        .seed_node_by_fqn(
+            &fid,
+            "lib·axum·axum::response·Json",
+            "unknown",
+            "Json",
+            Some("rust"),
+            None,
+        )
+        .await
+        .unwrap();
+    let lib_b = s
+        .seed_node_by_fqn(
+            &fid,
+            "lib·serde·serde·to_string",
+            "unknown",
+            "to_string",
+            Some("rust"),
+            None,
+        )
+        .await
+        .unwrap();
+    // A stub — an internal reference the parser failed to resolve. The OLD rule
+    // counted this as a dependency; the new one must not.
+    let stub = s
+        .seed_node_by_fqn(
+            &fid,
+            "rust·senseid·api·HashMap·get",
+            "function",
+            "get",
+            Some("rust"),
+            None,
+        )
+        .await
+        .unwrap();
+    for t in [lib_a, lib_b, stub] {
+        s.insert_edge(&fid, &caller, Some(&t), None, None, "calls").await.unwrap();
+    }
+
+    let (deps, stubs): (i64, i64) = sqlx_core::query_as::query_as(
+        "SELECT count(*) FILTER (WHERE n.locality = 'external')
+              , count(*) FILTER (WHERE n.locality = 'unknown')
+           FROM sensei.edges e
+           JOIN sensei.graph_nodes n ON n.id = e.target_id
+          WHERE e.folder_id = $1 AND e.kind = 'calls'",
+    )
+    .bind(fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(deps, 2, "two real dependencies");
+    assert_eq!(stubs, 1, "the stub is counted as a stub, NOT as a dependency");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+// ── sensei.doc_coverage — the pairing is computed, not stored ─────────────────
+
+/// `covers` edges are gone: the pairing is a pure function of the current
+/// (docs, files), so `build_connections` no longer writes 601 rows into
+/// `sensei.edges` for a view to read back off the very nodes they came from.
+///
+/// This test writes NO edge at all and still expects the pair.
+#[tokio::test]
+async fn doc_coverage_pairs_without_any_stored_edge() {
+    let s = pg_store().await;
+    let suffix = format!("doccov_{}", uuid::Uuid::new_v4().simple());
+    let fid = create_test_folder(&s, &suffix).await;
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "doc",
+        "design",
+        "docs/design.md",
+        None,
+        None,
+        Some(1),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "file",
+        "design.rs",
+        "src/design.rs",
+        None,
+        None,
+        Some(1),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    // A file whose stem does NOT match must not pair.
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "file",
+        "other.rs",
+        "src/other.rs",
+        None,
+        None,
+        Some(1),
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let drift = s.get_doc_drift(&suffix).await.unwrap();
+    assert_eq!(drift.len(), 1, "exactly the stem-matched pair, got {drift:?}");
+    assert_eq!(drift[0]["docFile"], "docs/design.md");
+    assert_eq!(drift[0]["codeFile"], "src/design.rs");
+
+    let covers = s.get_edges_by_kind(&fid, "covers").await.unwrap();
+    assert!(covers.is_empty(), "no covers edge was written, and none is needed");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// The stem expression in the view reproduces Rust `Path::file_stem()`. Verified
+/// against all 45,186 distinct `file_path` values in the live DB when the view
+/// was written; these are the cases that expression could plausibly get wrong.
+#[tokio::test]
+async fn doc_coverage_stem_matches_rust_file_stem() {
+    let s = pg_store().await;
+    let cases = [
+        "docs/api/auth.md",
+        "src/appstate.svelte.ts",
+        ".gitignore",
+        "Makefile",
+        "a/b/.env.local",
+        "x.tar.gz",
+        "no_ext",
+        "dir.with.dots/file.rs",
+    ];
+    for path in cases {
+        let want = std::path::Path::new(path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        let got: (String,) = sqlx_core::query_as::query_as(
+            "select case
+                      when position('.' in substring(regexp_replace($1, '^.*/', '') from 2)) = 0
+                      then regexp_replace($1, '^.*/', '')
+                      else substring(regexp_replace($1, '^.*/', '') from 1
+                             for length(regexp_replace($1, '^.*/', ''))
+                               - position('.' in reverse(regexp_replace($1, '^.*/', ''))))
+                    end",
+        )
+        .bind(path)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
+        assert_eq!(got.0, want, "stem of {path:?}");
+    }
+}
+
+/// The D2 concern the old `covers` replace guarded — "a covers edge whose covered
+/// file no longer matches is stale and must be removed" — is now structurally
+/// impossible rather than maintained. Nothing is stored, so nothing can go stale:
+/// rename the file and the pairing simply is not there on the next read. There is
+/// no replace pass and therefore no window in which a stale row is visible.
+#[tokio::test]
+async fn doc_coverage_cannot_hold_a_stale_pairing() {
+    let s = pg_store().await;
+    let suffix = format!("staleprs_{}", uuid::Uuid::new_v4().simple());
+    let fid = create_test_folder(&s, &suffix).await;
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "doc",
+        "auth",
+        "docs/auth.md",
+        None,
+        None,
+        Some(1),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let code = s
+        .seed_node(&fid, "file", "auth", "src/auth.rs", None, None, Some(1), Some(1))
+        .await
+        .unwrap();
+
+    let drift = s.get_doc_drift(&suffix).await.unwrap();
+    assert_eq!(drift.len(), 1, "the stem match pairs, got {drift:?}");
+    assert_eq!(drift[0]["codeFile"], "src/auth.rs");
+
+    // Rename the file out from under the doc. No task runs; no edge is rewritten.
+    // Renaming is a `files` edit now, not a node edit (R13): the node keys on
+    // the file's id, so the path it reports changes when the FILE's does.
+    sqlx_core::query::query(
+        "UPDATE sensei.files SET file_path = 'src/renamed.rs'
+          WHERE id = (SELECT file_id FROM sensei.nodes WHERE id = $1)",
+    )
+    .bind(code)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    let drift = s.get_doc_drift(&suffix).await.unwrap();
+    assert!(drift.is_empty(), "the pairing is gone the instant the stem stops matching: {drift:?}");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// A re-detect must not destroy the model-authored `description`.
+///
+/// `replace_communities_for_folder` DELETEs the folder's rows and re-INSERTs with
+/// `description = NULL`, so every DetectCommunities pass discards prose that cost
+/// a model call to produce — and `enrich_community_descriptions` is capped at 25
+/// communities per folder, so what it wipes it cannot fully replace.
+#[tokio::test]
+async fn re_detect_preserves_the_model_authored_description() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("desckeep_{}", uuid::Uuid::new_v4())).await;
+    let n1 = s
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .await
+        .unwrap();
+    let n2 = s
+        .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
+        .await
+        .unwrap();
+    s.insert_edge(&fid, &n1, Some(&n2), None, None, "calls").await.unwrap();
+
+    crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+    // What enrich_community_descriptions writes, off-barrier, after a model call.
+    sqlx_core::query::query(
+        "UPDATE inference.communities
+            SET description = 'the auth module', props = '{\"source\":\"narration-cache\"}'::jsonb
+          WHERE folder_id = $1",
+    )
+    .bind(fid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    // An unchanged graph re-detected — the common case on any re-scan.
+    crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+    let rows: Vec<(Option<String>, serde_json::Value)> = sqlx_core::query_as::query_as(
+        "SELECT description, props FROM inference.communities WHERE folder_id = $1",
+    )
+    .bind(fid)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    assert!(!rows.is_empty(), "the folder still has communities");
+    assert!(
+        rows.iter().any(|(d, _)| d.as_deref() == Some("the auth module")),
+        "the model-authored description survives a re-detect of an unchanged graph; got {rows:?}"
+    );
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// The other half of preserving a description: it must be DISCARDED when the
+/// community is no longer the same cluster.
+///
+/// `community_id` is positional (rank+1), so on a changed graph id 3 can be an
+/// entirely different set of symbols. Keeping the old prose would caption the
+/// wrong thing — a fabricated-looking summary nobody could distinguish from a
+/// real one. The hub set is the evidence; when it differs the text goes.
+#[tokio::test]
+async fn re_detect_discards_a_description_whose_cluster_changed() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("descdrop_{}", uuid::Uuid::new_v4())).await;
+    let a = s
+        .seed_node(&fid, "function", "a", "a.rs", None, Some("()"), Some(1), Some(2))
+        .await
+        .unwrap();
+    let b = s
+        .seed_node(&fid, "function", "b", "a.rs", None, Some("()"), Some(3), Some(4))
+        .await
+        .unwrap();
+    s.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+    crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+    sqlx_core::query::query(
+        "UPDATE inference.communities
+            SET description = 'describes the OLD cluster',
+                props = '{\"source\":\"narration-cache\"}'::jsonb
+          WHERE folder_id = $1",
+    )
+    .bind(fid)
+    .execute(s.pool())
+    .await
+    .unwrap();
+
+    // Grow the graph so the hubs change: c becomes the hub of that community.
+    let c = s
+        .seed_node(&fid, "function", "c", "a.rs", None, Some("()"), Some(5), Some(6))
+        .await
+        .unwrap();
+    let d = s
+        .seed_node(&fid, "function", "d", "a.rs", None, Some("()"), Some(7), Some(8))
+        .await
+        .unwrap();
+    for src in [a, b, d] {
+        s.insert_edge(&fid, &src, Some(&c), None, None, "calls").await.unwrap();
+    }
+    crate::indexer::community::detect_communities_for_folder(&s, &fid).await.unwrap();
+
+    let stale: (i64,) = sqlx_core::query_as::query_as(
+        "SELECT count(*) FROM inference.communities
+          WHERE folder_id = $1 AND description = 'describes the OLD cluster'",
+    )
+    .bind(fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        stale.0, 0,
+        "a description must not survive onto a community whose hubs changed — \
+         captioning the wrong cluster is worse than having no caption"
+    );
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+// ── stub GC ──────────────────────────────────────────────────────────────────
+
+/// An unresolved reference stub that nothing points at is garbage, and until now
+/// nothing could collect it: `prune_file_nodes` filters `file_path = $2` and
+/// every stub has `file_path IS NULL`, so 84,446 accumulated with no GC path.
+/// That is also why the invariant `count(*) where locality='unknown'` could not
+/// be driven to zero by fixing the parsers alone.
+#[tokio::test]
+async fn prune_orphan_stubs_collects_unreferenced_stubs_only() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("gc_{}", uuid::Uuid::new_v4())).await;
+
+    // Garbage: a stub nothing references.
+    let orphan = s
+        .seed_node_by_fqn(&fid, "rust·p·m·Orphan·gone", "function", "gone", Some("rust"), None)
+        .await
+        .unwrap();
+    // Live: a stub that an edge still points at — a caller has not been reindexed
+    // yet, and dropping it would lose the fact that the reference exists.
+    let referenced = s
+        .seed_node_by_fqn(&fid, "rust·p·m·Kept·held", "function", "held", Some("rust"), None)
+        .await
+        .unwrap();
+    let caller = s
+        .seed_node(&fid, "function", "caller", "src/a.rs", None, None, Some(1), Some(2))
+        .await
+        .unwrap();
+    s.insert_edge(&fid, &caller, Some(&referenced), None, None, "calls").await.unwrap();
+    // Must survive: a real local definition.
+    let real = s
+        .seed_node(&fid, "function", "real", "src/b.rs", None, None, Some(1), Some(2))
+        .await
+        .unwrap();
+    // Must survive: an external symbol is not a stub.
+    let lib = s
+        .seed_node_by_fqn(&fid, "lib·axum·axum·Json", "unknown", "Json", Some("rust"), None)
+        .await
+        .unwrap();
+
+    let removed = s.prune_orphan_stubs(&fid).await.unwrap();
+    assert_eq!(removed, 1, "exactly the unreferenced stub");
+
+    let survivors: Vec<(uuid::Uuid,)> =
+        sqlx_core::query_as::query_as("SELECT id FROM sensei.nodes WHERE id = ANY($1)")
+            .bind(vec![orphan, referenced, real, lib])
+            .fetch_all(s.pool())
+            .await
+            .unwrap();
+    let alive: std::collections::HashSet<uuid::Uuid> =
+        survivors.into_iter().map(|(id,)| id).collect();
+    assert!(!alive.contains(&orphan), "the unreferenced stub is collected");
+    assert!(alive.contains(&referenced), "a stub with an in-edge is still evidence of a reference");
+    assert!(alive.contains(&real), "a real definition is never a stub");
+    assert!(alive.contains(&lib), "a lib_symbol is external, not unresolved");
+
+    // Idempotent: a second pass has nothing left to do.
+    assert_eq!(s.prune_orphan_stubs(&fid).await.unwrap(), 0, "second pass is a no-op");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// A stub with CHILDREN must not be collected. `nodes.parent_id` cascades on
+/// delete, and live there are 42 stub parents carrying 574 real internal method
+/// nodes — an unguarded delete would destroy every one of them. The stub is
+/// wrong, but it is load-bearing until its children are re-parented.
+#[tokio::test]
+async fn prune_orphan_stubs_never_cascades_onto_real_children() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("gckids_{}", uuid::Uuid::new_v4())).await;
+    let stub_parent = s
+        .seed_node_by_fqn(&fid, "java·p·StubClass", "class", "StubClass", Some("java"), None)
+        .await
+        .unwrap();
+    let child = s
+        .seed_node(
+            &fid,
+            "method",
+            "setId",
+            "src/Model.java",
+            Some(&stub_parent),
+            None,
+            Some(3),
+            Some(4),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        s.prune_orphan_stubs(&fid).await.unwrap(),
+        0,
+        "a stub carrying children is not collected"
+    );
+    let (kids,): (i64,) =
+        sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id = $1")
+            .bind(child)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(kids, 1, "the real method survives — 574 of these exist live");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// Branch belongs in the typed column, and `graph_nodes` must expose it.
+///
+/// `folders.branch` was declared but had ZERO writers — NULL in all 7,772 rows —
+/// while `process_git_folder` wrote `props->>'branch'` instead. Two stores for
+/// one fact, and the dead one was the typed, indexable one.
+///
+/// It is a real partition key: the design is one folder per checkout ("develop
+/// vs main = two folders, one repository"), and that is already live — fitness,
+/// strategos and website each have two folder rows on two branches. So filtering
+/// `graph_nodes` by branch separates the graphs, because folder_id already does.
+#[tokio::test]
+async fn folder_branch_is_a_typed_column_and_a_graph_nodes_dimension() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("br_{}", uuid::Uuid::new_v4())).await;
+    s.set_folder_branch(&fid, "release/v9").await.unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "f",
+        "src/a.rs",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
+
+    let (col,): (Option<String>,) =
+        sqlx_core::query_as::query_as("SELECT branch FROM sensei.folders WHERE id = $1")
+            .bind(fid)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(col.as_deref(), Some("release/v9"), "written to the typed column");
+
+    let (via_view,): (Option<String>,) = sqlx_core::query_as::query_as(
+        "SELECT branch FROM sensei.graph_nodes WHERE folder_id = $1 LIMIT 1",
+    )
+    .bind(fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(via_view.as_deref(), Some("release/v9"), "and filterable from the graph view");
+
+    // Idempotent, and a re-index to the same branch changes nothing.
+    s.set_folder_branch(&fid, "release/v9").await.unwrap();
+    s.set_folder_branch(&fid, "main").await.unwrap();
+    let (after,): (Option<String>,) =
+        sqlx_core::query_as::query_as("SELECT branch FROM sensei.folders WHERE id = $1")
+            .bind(fid)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(after.as_deref(), Some("main"), "a switch updates it in place");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// "How many nodes belong to which repository" has to be answerable from the
+/// view alone, and an unattributed folder has to be DISTINGUISHABLE from an
+/// attributed one rather than silently rolled into some default.
+///
+/// Both clauses matter. Without the first, grouping by repository is a join the
+/// caller has to re-derive every time. Without the second, a NULL would be
+/// indistinguishable from a fabricated fallback — and `folders.repository_id` is
+/// genuinely sparse (183 of 193 git folders on 2026-09-23), so the unattributed
+/// bucket is a real population and is exactly the query that finds what still
+/// needs attributing.
+#[tokio::test]
+async fn graph_nodes_names_the_repository_and_leaves_an_unattributed_folder_null() {
+    let s = pg_store().await;
+    let attributed = create_test_folder(&s, &format!("repoA_{}", uuid::Uuid::new_v4())).await;
+    let orphan = create_test_folder(&s, &format!("repoB_{}", uuid::Uuid::new_v4())).await;
+
+    let repo_key = format!("example.test/{}", uuid::Uuid::new_v4());
+    let (repo_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+        "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'attributed-repo') \
+         RETURNING id",
+    )
+    .bind(&repo_key)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    sqlx_core::query::query("UPDATE sensei.folders SET repository_id = $1 WHERE id = $2")
+        .bind(repo_id)
+        .bind(attributed)
+        .execute(s.pool())
+        .await
+        .unwrap();
+
+    for fid in [attributed, orphan] {
+        s.seed_node(&fid, "function", "compute", "src/lib.rs", None, None, Some(1), Some(9))
+            .await
+            .unwrap();
+    }
+
+    let (named, named_id): (Option<String>, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
+        "SELECT repository, repository_id FROM sensei.graph_nodes WHERE folder_id = $1 LIMIT 1",
+    )
+    .bind(attributed)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        named.as_deref(),
+        Some("attributed-repo"),
+        "a node's repository is readable from the view without a second join"
+    );
+    assert_eq!(named_id, Some(repo_id), "and carries the id, so it groups without a name match");
+
+    let (unattributed, unattributed_id): (Option<String>, Option<uuid::Uuid>) =
+        sqlx_core::query_as::query_as(
+            "SELECT repository, repository_id FROM sensei.graph_nodes WHERE folder_id = $1 LIMIT 1",
+        )
+        .bind(orphan)
+        .fetch_one(s.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        (unattributed, unattributed_id),
+        (None, None),
+        "a folder with no repository reads NULL — never a fabricated stand-in"
+    );
+
+    s.delete_nodes_by_folder(&attributed).await.unwrap();
+    s.delete_nodes_by_folder(&orphan).await.unwrap();
+    sqlx_core::query::query("UPDATE sensei.folders SET repository_id = NULL WHERE id = $1")
+        .bind(attributed)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.repositories WHERE id = $1")
+        .bind(repo_id)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
+/// Collecting stubs must not leave community rows describing zero nodes.
+///
+/// `prune_orphan_stubs` deletes nodes outside the detect transaction, so a
+/// community whose every member was an orphan stub survived as a row with no
+/// members. Measured immediately after the first GC pass: 27,693 such rows, and
+/// `list_communities` / the Atlas `communities/info` endpoint read them — a
+/// phantom community with a label and a node_count that no longer matches
+/// anything. Derived rows with nothing left to describe are garbage by the same
+/// rule as the stubs themselves.
+#[tokio::test]
+async fn prune_orphan_stubs_removes_communities_it_emptied() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("gccom_{}", uuid::Uuid::new_v4())).await;
+    let stub = s
+        .seed_node_by_fqn(&fid, "rust·p·m·Ghost·gone", "function", "gone", Some("rust"), None)
+        .await
+        .unwrap();
+    let real = s
+        .seed_node(&fid, "function", "real", "src/a.rs", None, None, Some(1), Some(2))
+        .await
+        .unwrap();
+    // Community 1 is stub-only (emptied by GC); community 2 keeps a real member.
+    for (id, cid) in [(stub, 1i32), (real, 2i32)] {
+        sqlx_core::query::query("UPDATE sensei.nodes SET community_id = $2 WHERE id = $1")
+            .bind(id)
+            .bind(cid)
+            .execute(s.pool())
+            .await
+            .unwrap();
+    }
+    for cid in [1i32, 2] {
+        sqlx_core::query::query(
+            "INSERT INTO inference.communities(folder_id, community_id, label, node_count)
+             VALUES($1, $2, 'l', 1)",
+        )
+        .bind(fid)
+        .bind(cid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    }
+
+    assert_eq!(s.prune_orphan_stubs(&fid).await.unwrap(), 1, "the orphan stub is collected");
+
+    let rows: Vec<(i32,)> = sqlx_core::query_as::query_as(
+        "SELECT community_id FROM inference.communities WHERE folder_id = $1 ORDER BY 1",
+    )
+    .bind(fid)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    let ids: Vec<i32> = rows.into_iter().map(|(c,)| c).collect();
+    assert_eq!(ids, vec![2], "the emptied community goes; the one with a real member stays");
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// THE REGRESSION: a caller reached through an UNRESOLVED edge must still be
+/// found. `get_callers_by_name` used to filter `call_graph.target_name`, which
+/// is `tgt.name` off the view's LEFT JOIN and therefore NULL for every
+/// unresolved edge — the name lives in `e.target_name`. Live consequence:
+/// 117,201 of 335,756 `calls` edges (34.9%) were unreachable and the tool
+/// returned an empty list for 8,680 symbol names that demonstrably had callers.
+///
+/// Mutation that must break this test: swap `target_symbol` back to
+/// `target_name` in the query.
+#[tokio::test]
+async fn get_callers_by_name_finds_a_caller_through_an_unresolved_edge() {
+    let s = pg_store().await;
+    let folder = format!("callers_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    // The target IS defined locally — this is not a phantom symbol.
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "handleAuth",
+        "src/auth.rs",
+        None,
+        None,
+        Some(10),
+        Some(20),
+    )
+    .await
+    .unwrap();
+    // Two callers: one whose edge RESOLVED, one still unresolved (the caller was
+    // indexed before the definition, which is the normal steady state for 35% of
+    // this graph). Both are real callers and both must be reported.
+    let resolved_caller = s
+        .seed_node(&fid, "function", "login", "src/login.rs", None, None, Some(1), Some(5))
+        .await
+        .unwrap();
+    let unresolved_caller = s
+        .seed_node(&fid, "function", "middleware", "src/mw.rs", None, None, Some(1), Some(5))
+        .await
+        .unwrap();
+    let target_id = s
+        .seed_node(&fid, "function", "handleAuth", "src/auth.rs", None, None, Some(10), Some(20))
+        .await
+        .unwrap();
+    s.insert_edge(&fid, &resolved_caller, Some(&target_id), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &unresolved_caller, None, Some("handleAuth"), None, "calls").await.unwrap();
+
+    let callers = s.get_callers_by_name(&folder, "handleAuth").await.unwrap();
+    let names: std::collections::HashSet<String> =
+        callers.iter().map(|c| c["name"].as_str().unwrap_or_default().to_string()).collect();
+    assert!(names.contains("login"), "the resolved caller was always found");
+    assert!(
+        names.contains("middleware"),
+        "the caller behind an UNRESOLVED edge must be found too — this is the 34.9% \
+         that target_name silently dropped"
+    );
+    // Each row says which it was, so a reader can tell an exact hit from a
+    // name-matched one rather than treating the list as uniformly certain.
+    let unresolved_row = callers.iter().find(|c| c["name"] == "middleware").unwrap();
+    assert_eq!(unresolved_row["resolved"], serde_json::json!(false));
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// The verdict COLUMNS are populated by the writer, and re-derived when the
+/// occurrence set changes in either direction.
+///
+/// `the_rung_and_reason_come_from_the_occurrences_the_indexer_writes` proves the
+/// view can READ the nested shape. This proves the write path fills the columns,
+/// which is what makes the read cheap and the contract explicit in the schema
+/// rather than asserted in a comment.
+///
+/// WHY THE DATABASE DERIVES THEM AND NOT RUST: the reduction is over EVERY file's
+/// occurrences, and the indexing process holds one file's. Merging a second file
+/// can change the winner, so only the database has the value to reduce over. Both
+/// directions are asserted here:
+///
+///   1. one file, a refusal        -> `plumbing`
+///   2. a second file adds a fault -> must become `receiver_type_unknown`
+///   3. drop the second file       -> must fall back to `plumbing`
+///
+/// Step 3 is the one an implementation is most likely to miss: it is easy to
+/// derive on merge and forget on drop, which leaves the column claiming a fault
+/// that left with the file that held it.
+///
+/// Mutation that must break this test: remove the `resolved_via`/
+/// `unresolved_reason` assignment from `drop_edge_occurrences`, or reverse
+/// `edge_verdict`'s `order by rc.precedence`.
+#[tokio::test]
+async fn the_writer_fills_the_verdict_columns_and_redrives_them_on_change() {
+    let s = pg_store().await;
+    let folder = format!("verdict_cols_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    let src = s
+        .seed_node(&fid, "function", "caller", "src/a.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    let edge = s.insert_edge(&fid, &src, None, Some("nowhere"), None, "calls").await.unwrap();
+
+    let refusal = serde_json::json!([
+        { "fact": "use", "kind": "calls", "at": [1, 1, 1, 9], "reason": "plumbing" }
+    ]);
+    let fault = serde_json::json!([
+        { "fact": "use", "kind": "calls", "at": [2, 1, 2, 9], "reason": "receiver_type_unknown" }
+    ]);
+
+    async fn stored(s: &PgStore, id: &uuid::Uuid) -> (Option<String>, Option<String>) {
+        sqlx_core::query_as::query_as(
+            "SELECT resolved_via, unresolved_reason FROM sensei.edges WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(&s.pool)
+        .await
+        .unwrap()
+    }
+
+    s.merge_edge_occurrences(&edge, "src/a.rs", &refusal).await.unwrap();
+    assert_eq!(
+        stored(&s, &edge).await,
+        (None, Some("plumbing".to_string())),
+        "one file, one refusal: the column carries it and no rung is claimed"
+    );
+
+    s.merge_edge_occurrences(&edge, "src/b.rs", &fault).await.unwrap();
+    assert_eq!(
+        stored(&s, &edge).await,
+        (None, Some("receiver_type_unknown".to_string())),
+        "a second file adds a FAULT, which outranks the refusal (lower precedence)"
+    );
+
+    s.drop_edge_occurrences(&edge, "src/b.rs").await.unwrap();
+    assert_eq!(
+        stored(&s, &edge).await,
+        (None, Some("plumbing".to_string())),
+        "dropping the file that held the fault must take the fault with it"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// The rung and the reason must be read from the shape THE INDEXER WRITES.
+///
+/// `graph_resolution_says_which_rung_placed_each_edge` and its boundary sibling
+/// both seed props at the TOP level — `{"rung": "declared_here"}` — via
+/// `insert_edge_with_props`, which bypasses `persist::write`. The real writer
+/// puts the verdict on each OCCURRENCE, nested under the file that made it:
+///
+///     props.occurrences["src/a.rs"][0].rung
+///     props.occurrences["src/a.rs"][0].reason
+///
+/// `persist::with_outcome` is called from `occurrence_prop`, so there is no path
+/// that produces a top-level key. The consequence in production: `resolved_via`
+/// was NULL on all 1,640,215 placed edges and `unresolved_reason` NULL on all
+/// 2,428,016 missed ones — every match and every miss unclassifiable, in every
+/// language — while both existing tests stayed green on a shape nothing emits.
+///
+/// AN EDGE AGGREGATES MANY OCCURRENCES, so the edge-level label is a REDUCTION,
+/// and the rule is the same on both sides: LOWEST PRECEDENCE WINS.
+/// `reason_codes.precedence` is climb order for a rung and severity order for a
+/// reason, so the strongest proof and the most serious fault both sort first. An
+/// edge whose uses are `plumbing` (refusal, 90) and `receiver_type_unknown`
+/// (fault, 30) reports the fault — a real gap must not be hidden by a
+/// deliberate filter that happens to share the edge.
+///
+/// Mutation that must break this test: reverse the `order by rc.precedence`, or
+/// drop the `jsonb_each` over occurrences and read only the top-level key.
+#[tokio::test]
+async fn the_rung_and_reason_come_from_the_occurrences_the_indexer_writes() {
+    let s = pg_store().await;
+    let folder = format!("nested_verdict_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    let caller = s
+        .seed_node(&fid, "function", "caller", "src/a.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    let callee = s
+        .seed_node(&fid, "function", "callee", "src/b.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+
+    // PLACED, with the rung nested exactly as `occurrence_prop` writes it. Two
+    // occurrences with different rungs, so the reduction is exercised rather
+    // than assumed: `declared_here` (10) must win over `in_the_prelude` (60).
+    s.insert_edge_with_props(
+        &fid,
+        &caller,
+        Some(&callee),
+        None,
+        None,
+        "calls",
+        &serde_json::json!({ "occurrences": { "src/a.rs": [
+            { "fact": "use", "kind": "calls", "at": [1, 1, 1, 9], "rung": "in_the_prelude" },
+            { "fact": "use", "kind": "calls", "at": [2, 1, 2, 9], "rung": "declared_here" }
+        ]}}),
+    )
+    .await
+    .unwrap();
+
+    // MISSED, likewise nested. A refusal and a fault share the edge; the fault
+    // must surface, because an edge reported as `plumbing` is an edge nobody
+    // investigates.
+    let stray = s
+        .seed_node(&fid, "function", "stray", "src/c.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    s.insert_edge_with_props(
+        &fid,
+        &stray,
+        None,
+        Some("nowhere"),
+        None,
+        "calls",
+        &serde_json::json!({ "occurrences": { "src/c.rs": [
+            { "fact": "use", "kind": "calls", "at": [1, 1, 1, 9], "reason": "plumbing" },
+            { "fact": "use", "kind": "calls", "at": [2, 1, 2, 9], "reason": "receiver_type_unknown" }
+        ]}}),
+    )
+    .await
+    .unwrap();
+
+    let via: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT resolved_via FROM sensei.graph_resolution WHERE folder_id = $1",
+    )
+    .bind(fid)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        via.as_deref(),
+        Some("declared_here"),
+        "the rung is nested under props.occurrences, and the strongest of the two wins"
+    );
+
+    let reason: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT reason_code FROM sensei.graph_boundary WHERE folder_id = $1",
+    )
+    .bind(fid)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        reason.as_deref(),
+        Some("receiver_type_unknown"),
+        "a fault outranks a refusal sharing the same edge"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// The verdict must land on the COLUMN at insert, not only in the view.
+///
+/// The test above reads `sensei.graph_resolution`, which calls `edge_verdict`
+/// at QUERY time — so it passes whether or not `edges.resolved_via` was ever
+/// written. That is exactly how the column stayed empty without a red test:
+/// every consumer that mattered went through a view, and the materialised
+/// column was verified by nothing.
+///
+/// It matters because the column is not decoration. A view recomputing a
+/// jsonpath reduction over `props.occurrences` cannot be indexed or grouped at
+/// four million rows, which is the whole reason the reduction was promoted to a
+/// column in the first place. MEASURED at the time this was written: of 130,614
+/// edges the indexer had touched in ten minutes, 14,217 carried a verdict —
+/// because only the merge path in `indexer.rs` wrote one, and a first insert
+/// never goes through it.
+///
+/// Mutation that must break this test: drop either `edge_verdict` call from
+/// `insert_edge_with_props`.
+#[tokio::test]
+async fn an_inserted_edge_carries_its_verdict_on_the_column_not_just_the_view() {
+    let s = pg_store().await;
+    let folder = format!("verdict_col_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    let caller =
+        s.seed_node(&fid, "function", "c", "src/a.rs", None, None, Some(1), Some(9)).await.unwrap();
+    let callee =
+        s.seed_node(&fid, "function", "t", "src/b.rs", None, None, Some(1), Some(9)).await.unwrap();
+
+    let placed = s
+        .insert_edge_with_props(
+            &fid,
+            &caller,
+            Some(&callee),
+            None,
+            None,
+            "calls",
+            &serde_json::json!({ "occurrences": { "src/a.rs": [
+                { "fact": "use", "kind": "calls", "at": [1, 1, 1, 9], "rung": "in_the_prelude" },
+                { "fact": "use", "kind": "calls", "at": [2, 1, 2, 9], "rung": "declared_here" }
+            ]}}),
+        )
+        .await
+        .unwrap();
+
+    let (via, reason): (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT resolved_via, unresolved_reason FROM sensei.edges WHERE id = $1",
+    )
+    .bind(placed)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        via.as_deref(),
+        Some("declared_here"),
+        "a placed edge must carry the strongest rung on the column at insert"
+    );
+    assert_eq!(reason, None, "exactly one of the two is set: a placed edge has no reason");
+
+    let missed = s
+        .insert_edge_with_props(
+            &fid,
+            &caller,
+            None,
+            Some("nowhere"),
+            None,
+            "calls",
+            &serde_json::json!({ "occurrences": { "src/a.rs": [
+                { "fact": "use", "kind": "calls", "at": [3, 1, 3, 9], "reason": "plumbing" },
+                { "fact": "use", "kind": "calls", "at": [4, 1, 4, 9], "reason": "receiver_type_unknown" }
+            ]}}),
+        )
+        .await
+        .unwrap();
+
+    let (via2, reason2): (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
+        "SELECT resolved_via, unresolved_reason FROM sensei.edges WHERE id = $1",
+    )
+    .bind(missed)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        reason2.as_deref(),
+        Some("receiver_type_unknown"),
+        "a missed edge must carry the most serious reason on the column at insert"
+    );
+    assert_eq!(via2, None, "exactly one of the two is set: a missed edge has no rung");
+
+    // AND ON RE-INSERT. The upsert merges props, so the verdict has to be
+    // recomputed from the MERGED value — a second occurrence carrying a stronger
+    // rung must move the column, or the materialised value drifts from the props
+    // it claims to summarise.
+    s.insert_edge_with_props(
+        &fid,
+        &caller,
+        None,
+        Some("nowhere"),
+        None,
+        "calls",
+        &serde_json::json!({ "occurrences": { "src/a.rs": [
+            { "fact": "use", "kind": "calls", "at": [5, 1, 5, 9], "reason": "unhandled_form" }
+        ]}}),
+    )
+    .await
+    .unwrap();
+    let reason3: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT unresolved_reason FROM sensei.edges WHERE id = $1",
+    )
+    .bind(missed)
+    .fetch_one(&s.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        reason3.as_deref(),
+        Some("unhandled_form"),
+        "the upsert recomputes from the merged props, so a stronger reason wins"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// `graph_resolution` says how a placed edge was placed.
+///
+/// The sibling of `graph_boundary`. That one is where the graph stops; this is
+/// where it holds and on what evidence. A consumer handed a bare `resolved`
+/// treats `declared_here` — a file pointing at its own declaration — exactly
+/// like `through_a_glob`, a name the source never wrote down.
+///
+/// Mutation that must break this test: make the reason_codes join INNER, or
+/// drop the `target_id is not null` filter so unplaced edges leak in.
+#[tokio::test]
+async fn graph_resolution_says_which_rung_placed_each_edge() {
+    let s = pg_store().await;
+    let folder = format!("rung_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    let target = s
+        .seed_node(&fid, "function", "placed", "src/t.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    for (i, rung) in ["declared_here", "through_a_glob", "not_a_seeded_rung"].iter().enumerate() {
+        let caller = s
+            .seed_node(
+                &fid,
+                "function",
+                &format!("via_{i}"),
+                &format!("src/v{i}.rs"),
+                None,
+                None,
+                Some(1),
+                Some(9),
+            )
+            .await
+            .unwrap();
+        s.insert_edge_with_props(
+            &fid,
+            &caller,
+            Some(&target),
+            None,
+            None,
+            "calls",
+            &serde_json::json!({ "rung": rung }),
+        )
+        .await
+        .unwrap();
+    }
+    // An UNPLACED edge, which this view must not show at all — that one is
+    // graph_boundary's, and a row in both would be counted twice by anyone
+    // adding the two together.
+    let stray = s
+        .seed_node(&fid, "function", "stray", "src/s.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    s.insert_edge_with_props(
+        &fid,
+        &stray,
+        None,
+        Some("placed"),
+        None,
+        "calls",
+        &serde_json::json!({ "reason": "receiver_type_unknown" }),
+    )
+    .await
+    .unwrap();
+
+    let rows: Vec<(Option<String>, Option<String>)> = sqlx_core::query_as::query_as(
+        "SELECT resolved_via, rung_summary FROM sensei.graph_resolution
+          WHERE folder_id = $1 ORDER BY source_name",
+    )
+    .bind(fid)
+    .fetch_all(&s.pool)
+    .await
+    .unwrap();
+
+    assert_eq!(rows.len(), 3, "three placed edges, and the unplaced one is not one of them");
+    assert_eq!(rows[0].0.as_deref(), Some("declared_here"));
+    assert!(
+        rows[0].1.as_deref().is_some_and(|s| s.contains("declares the target itself")),
+        "the prose comes with it: {:?}",
+        rows[0].1
+    );
+    assert_eq!(rows[1].0.as_deref(), Some("through_a_glob"));
+    assert!(
+        rows[1].1.as_deref().is_some_and(|s| s.contains("glob")),
+        "and it is the rung's own prose, not the first row's"
+    );
+    let unknown = &rows[2];
+    assert_eq!(unknown.0.as_deref(), Some("not_a_seeded_rung"), "the raw rung survives");
+    assert_eq!(unknown.1, None, "with no prose, because none is seeded");
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// `coverage` says HOW MUCH of a caller list is missing; this says WHY.
+///
+/// Two integers tell a reader the list is incomplete and nothing else, so the
+/// only available next step is "grep everything". A reason narrows it: eleven
+/// receivers the walk could not type is a different job from eleven names with
+/// no import in scope, and `external_boundary` is not a job at all.
+///
+/// Mutation that must break this test: drop the `ORDER BY reason_precedence`,
+/// or count the whole folder instead of the sites naming this symbol.
+#[tokio::test]
+async fn call_coverage_reasons_says_why_the_missing_callers_are_missing() {
+    let s = pg_store().await;
+    let folder = format!("why_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+    // ONE SOURCE PER SITE. `edges_unique_unresolved` is
+    // (folder_id, source_id, target_name, target_file, kind), so several
+    // unplaced sites naming one symbol from one body collapse to ONE row with
+    // merged props — the schema's edge identity (D1). A fixture that ignored it
+    // measured a single surviving reason and read as a query bug.
+    for (i, (names, reason)) in [
+        ("render", "receiver_type_unknown"),
+        ("render", "receiver_type_unknown"),
+        ("render", "external_boundary"),
+        ("render", "no_import_in_scope"),
+        ("unrelated", "receiver_type_unknown"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let caller = s
+            .seed_node(
+                &fid,
+                "function",
+                &format!("caller_{i}"),
+                &format!("src/c{i}.rs"),
+                None,
+                None,
+                Some(1),
+                Some(9),
+            )
+            .await
+            .unwrap();
+        s.insert_edge_with_props(
+            &fid,
+            &caller,
+            None,
+            Some(names),
+            None,
+            "calls",
+            &serde_json::json!({ "reason": reason }),
+        )
+        .await
+        .unwrap();
+    }
+
+    let why = s
+        .call_coverage_reasons(&[fid], "render", crate::db::pg_store::CallDirection::Incoming)
+        .await
+        .unwrap();
+
+    let codes: Vec<&str> = why.iter().filter_map(|r| r["reason"].as_str()).collect();
+    assert_eq!(
+        codes,
+        ["receiver_type_unknown", "no_import_in_scope", "external_boundary"],
+        "ordered by precedence — the most actionable first, the boundary last"
+    );
+    assert_eq!(why[0]["count"], serde_json::json!(2));
+    assert_eq!(why[0]["kind"], serde_json::json!("fault"));
+    assert!(
+        why[0]["explanation"].as_str().is_some_and(|s| s.contains("called on")),
+        "the prose comes with it: {:?}",
+        why[0]["explanation"]
+    );
+    assert_eq!(
+        why.iter().map(|r| r["count"].as_i64().unwrap_or(0)).sum::<i64>(),
+        4,
+        "the site naming `unrelated` is not this symbol's doubt"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// The n-depth blast radius, over the stored graph.
+///
+/// Breadth-first and deduplicated, so a symbol reachable two ways is reported
+/// once at its SHORTEST distance and a cycle terminates. `truncated` separates
+/// "the graph ended" from "the query did" — a reader told an exact answer might
+/// be partial re-runs a query it did not need to.
+///
+/// Mutation that must break this test: drop the `depth < $3` guard (hangs or
+/// over-reports), or report a symbol at its longest distance.
+#[tokio::test]
+async fn impact_of_symbol_walks_callers_to_depth_and_says_when_it_stopped_early() {
+    let s = pg_store().await;
+    let folder = format!("impact_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    // bottom <- middle <- upper <- top, plus a cycle top <- bottom.
+    let mut id = std::collections::HashMap::new();
+    for (n, f) in
+        [("bottom", "src/b.rs"), ("middle", "src/m.rs"), ("upper", "src/u.rs"), ("top", "src/t.rs")]
+    {
+        id.insert(
+            n,
+            s.seed_node(&fid, "function", n, f, None, None, Some(1), Some(9)).await.unwrap(),
+        );
+    }
+    for (from, to) in
+        [("middle", "bottom"), ("upper", "middle"), ("top", "upper"), ("bottom", "top")]
+    {
+        s.insert_edge(&fid, &id[from], Some(&id[to]), None, None, "calls").await.unwrap();
+    }
+
+    let deep = s.impact_of_symbol(&[fid], "bottom", 3).await.unwrap();
+    let at = |d: i64| -> Vec<String> {
+        let mut v: Vec<String> = deep["reached"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["depth"] == serde_json::json!(d))
+            .map(|r| r["name"].as_str().unwrap_or_default().to_string())
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(at(1), ["middle"]);
+    assert_eq!(at(2), ["upper"]);
+    assert_eq!(at(3), ["top"]);
+    assert_eq!(deep["reached"].as_array().unwrap().len(), 3, "the cycle adds nobody");
+    assert_eq!(deep["truncated"], serde_json::json!(false), "the graph ran out first");
+
+    let shallow = s.impact_of_symbol(&[fid], "bottom", 1).await.unwrap();
+    assert_eq!(shallow["reached"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        shallow["truncated"],
+        serde_json::json!(true),
+        "`middle` has a caller that depth 1 did not reach, and the answer says so"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// `graph_boundary` turns a miss into something a reader can act on.
+///
+/// The reason has been on every unresolved reference since the ladder was built
+/// and written into `edges.props->>'reason'` since persistence landed; nothing
+/// ever read it back. This view joins it to the `code_graph` vocabulary in
+/// `sensei.reason_codes`, so a consumer gets "the type of the thing being
+/// called on is not known here" instead of a bare token — or instead of
+/// nothing, which is what "3 callers" over a graph that missed nine amounts to.
+///
+/// The LEFT join is the load-bearing part. A code with no prose must surface
+/// RAW, never drop the row: losing a boundary site from a boundary report is
+/// the exact failure the report exists to prevent, and it would make an
+/// incomplete answer look complete.
+///
+/// Mutation that must break this test: make the reason_codes join INNER.
+#[tokio::test]
+async fn graph_boundary_explains_a_miss_and_keeps_one_it_cannot_explain() {
+    let s = pg_store().await;
+    let folder = format!("boundary_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    let caller = s
+        .seed_node(&fid, "function", "probe_caller", "src/probe.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+
+    // Three seeded reasons across both kinds, plus one the vocabulary does not
+    // have — a future variant, or a row somebody forgot to seed.
+    for (names, reason) in [
+        ("start", "receiver_type_unknown"),
+        ("pool", "no_import_in_scope"),
+        ("trim", "external_boundary"),
+        ("mystery", "not_a_seeded_code"),
+    ] {
+        s.insert_edge_with_props(
+            &fid,
+            &caller,
+            None,
+            Some(names),
+            None,
+            "calls",
+            &serde_json::json!({ "reason": reason }),
+        )
+        .await
+        .unwrap();
+    }
+
+    /// One boundary row, named so the assertions below read as claims about a
+    /// miss rather than as tuple indices.
+    struct Site {
+        names: String,
+        code: Option<String>,
+        kind: Option<String>,
+        summary: Option<String>,
+    }
+
+    let rows: Vec<Site> = sqlx_core::query_as::query_as(
+        "SELECT names, reason_code, reason_kind::text, reason_summary
+           FROM sensei.graph_boundary
+          WHERE folder_id = $1
+          ORDER BY names",
+    )
+    .bind(fid)
+    .fetch_all(&s.pool)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|(names, code, kind, summary)| Site { names, code, kind, summary })
+    .collect();
+
+    assert_eq!(rows.len(), 4, "every unplaced site is a row, explained or not");
+
+    let by_name: std::collections::HashMap<&str, &Site> =
+        rows.iter().map(|r| (r.names.as_str(), r)).collect();
+
+    let typed = by_name["start"];
+    assert_eq!(typed.code.as_deref(), Some("receiver_type_unknown"));
+    assert_eq!(typed.kind.as_deref(), Some("fault"), "a receiver we failed to type is a fault");
+    assert!(
+        typed.summary.as_deref().is_some_and(|s| s.contains("type of the thing being called on")),
+        "the prose must come through, not just the code: {:?}",
+        typed.summary
+    );
+
+    assert_eq!(
+        by_name["trim"].kind.as_deref(),
+        Some("refusal"),
+        "the world ending is a decision, not a failure — a reader must be able to \
+         exclude it without also excluding real misses"
+    );
+
+    let unknown = by_name["mystery"];
+    assert_eq!(unknown.code.as_deref(), Some("not_a_seeded_code"), "the raw code survives");
+    assert_eq!(unknown.kind, None, "with no prose, because none is seeded");
+    assert_eq!(unknown.summary, None);
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// `symbol_definitions` is what separates "no such symbol" from "symbol with no
+/// callers" — the two answers a bare `[]` used to conflate. A reference STUB
+/// carries the name but is not a definition, so it must NOT count as found;
+/// otherwise a symbol that was only ever mentioned would report `found: true`
+/// and send a reader looking for a definition that does not exist.
+#[tokio::test]
+async fn symbol_definitions_does_not_count_a_stub_as_a_definition() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("symdef_{}", uuid::Uuid::new_v4())).await;
+
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "realThing",
+        "src/real.rs",
+        None,
+        None,
+        Some(7),
+        Some(9),
+    )
+    .await
+    .unwrap();
+    // A stub: named, but no file_path — an unresolved reference, not a definition.
+    s.seed_node_by_fqn(
+        &fid,
+        "rust·p·m·Stub·ghostThing",
+        "function",
+        "ghostThing",
+        Some("rust"),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let defined = s.symbol_definitions(&[fid], "realThing").await.unwrap();
+    assert_eq!(defined.len(), 1, "a local definition is found");
+    assert_eq!(defined[0]["file_path"], "src/real.rs");
+    assert_eq!(defined[0]["line_start"], serde_json::json!(7));
+
+    assert!(
+        s.symbol_definitions(&[fid], "ghostThing").await.unwrap().is_empty(),
+        "a stub is a mention, not a definition — reporting it as found would promise \
+         a definition site that does not exist"
+    );
+    assert!(
+        s.symbol_definitions(&[fid], "neverHeardOfIt").await.unwrap().is_empty(),
+        "an absent name is genuinely empty"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// Coverage must count the UNRESOLVED edges too, because that count is the only
+/// thing that can say "this list is incomplete". Derived from its own query
+/// rather than the returned list, which is `LIMIT 100`.
+#[tokio::test]
+async fn call_coverage_reports_unresolved_separately_per_direction() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("cov_{}", uuid::Uuid::new_v4())).await;
+
+    let target = s
+        .seed_node(&fid, "function", "target", "src/t.rs", None, None, Some(1), Some(2))
+        .await
+        .unwrap();
+    let caller = s
+        .seed_node(&fid, "function", "caller", "src/c.rs", None, None, Some(1), Some(2))
+        .await
+        .unwrap();
+    s.insert_edge(&fid, &caller, Some(&target), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &caller, None, Some("target"), None, "calls").await.unwrap();
+
+    let (resolved, unresolved) =
+        s.call_coverage(&[fid], "target", CallDirection::Incoming).await.unwrap();
+    assert_eq!(resolved, 1, "one edge landed on the target's id");
+    assert_eq!(unresolved, 1, "one names it without landing — the list is incomplete");
+
+    // Outgoing counts the same two edges from the caller's side.
+    let (out_resolved, out_unresolved) =
+        s.call_coverage(&[fid], "caller", CallDirection::Outgoing).await.unwrap();
+    assert_eq!(out_resolved, 1);
+    assert_eq!(out_unresolved, 1);
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// `get_callees_by_name` must label each callee's LOCALITY, and must read it
+/// from `sensei.graph_nodes` rather than re-deriving it. Before this, every
+/// callee came back with `kind`/`file_path`/`line_start` all null and no way to
+/// tell a real internal dependency from an external library symbol from a name
+/// the indexer never placed — live, `dedup_structural_folder_nodes` returned
+/// `map_err`, `bind`, `execute`, `Ok`, `query` as one undifferentiated list.
+#[tokio::test]
+async fn get_callees_by_name_labels_locality_from_graph_nodes() {
+    let s = pg_store().await;
+    let folder = format!("callees_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    let caller = s
+        .seed_node(&fid, "function", "extract_deps", "src/deps.rs", None, None, Some(1), Some(9))
+        .await
+        .unwrap();
+    // internal: a local definition.
+    let local = s
+        .seed_node(&fid, "function", "parse_cargo", "src/cargo.rs", None, None, Some(3), Some(8))
+        .await
+        .unwrap();
+    // external: the writer recorded a dependency's symbol.
+    let lib = s
+        .seed_node_by_fqn(
+            &fid,
+            "lib·serde·serde·from_str",
+            "unknown",
+            "from_str",
+            Some("rust"),
+            None,
+        )
+        .await
+        .unwrap();
+
+    s.insert_edge(&fid, &caller, Some(&local), None, None, "calls").await.unwrap();
+    s.insert_edge(&fid, &caller, Some(&lib), None, None, "calls").await.unwrap();
+    // unknown: an unresolved edge has NO target node to classify at all.
+    s.insert_edge(&fid, &caller, None, Some("map_err"), None, "calls").await.unwrap();
+
+    let callees = s.get_callees_by_name(&folder, "extract_deps").await.unwrap();
+    let by_name: std::collections::HashMap<String, String> = callees
+        .iter()
+        .map(|c| {
+            (
+                c["name"].as_str().unwrap_or_default().to_string(),
+                c["locality"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect();
+
+    assert_eq!(by_name.get("parse_cargo").map(String::as_str), Some("internal"));
+    assert_eq!(by_name.get("from_str").map(String::as_str), Some("external"));
+    assert_eq!(
+        by_name.get("map_err").map(String::as_str),
+        Some("unknown"),
+        "an unresolved callee has no target node, so it is unknown — NOT external, \
+         which is the misclassification the locality view exists to prevent"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// `node_id_by_fqn` must LOOK UP without creating, and must be folder-scoped.
+///
+/// The scope is the load-bearing half: fqns are unique per folder
+/// (`nodes_unique_fqn` is `(folder_id, fqn)`), and 5 repos on this machine have
+/// two checkouts each — an unscoped lookup would resolve an import to the
+/// identically-named module in the OTHER checkout.
+///
+/// Breaking mutation: drop `AND folder_id = $1` from the SELECT — the cross-folder
+/// case below starts returning Some.
+#[tokio::test]
+async fn node_id_by_fqn_looks_up_without_creating_and_is_folder_scoped() {
+    let s = pg_store().await;
+    let a = create_test_folder(&s, &format!("fqnlook_a_{}", uuid::Uuid::new_v4())).await;
+    let b = create_test_folder(&s, &format!("fqnlook_b_{}", uuid::Uuid::new_v4())).await;
+
+    let fqn = "typescript·app·lib/util";
+    let id = s.seed_node_by_fqn(&a, fqn, "module", "util", Some("typescript"), None).await.unwrap();
+
+    assert_eq!(s.node_id_by_fqn(&a, fqn).await.unwrap(), Some(id), "finds the node in its folder");
+    assert_eq!(
+        s.node_id_by_fqn(&b, fqn).await.unwrap(),
+        None,
+        "the SAME fqn in another folder is a different module — two checkouts of one repo \
+         must not resolve into each other"
+    );
+    assert_eq!(
+        s.node_id_by_fqn(&a, "typescript·app·nope/absent").await.unwrap(),
+        None,
+        "an absent fqn is None"
+    );
+
+    // And it must not have CREATED anything while looking.
+    let (created,): (i64,) = sqlx_core::query_as::query_as(
+        "SELECT count(*) FROM sensei.nodes WHERE folder_id = ANY($1) AND fqn LIKE 'typescript·app·nope%'",
+    )
+    .bind(vec![a, b])
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(created, 0, "a lookup miss creates nothing — that is why it is not the upsert");
+
+    s.delete_nodes_by_folder(&a).await.unwrap();
+    s.delete_nodes_by_folder(&b).await.unwrap();
+}
+
+/// A doc's symbol mention resolves ONLY when the name is unambiguous.
+///
+/// A doc writes `` `handleAuth` `` with no signature and no module path. With
+/// two same-named definitions there is nothing to choose on, so picking one
+/// would publish a guess as a fact — the honest answer is `None`, leaving the
+/// edge unresolved with the mention in `target_name`.
+///
+/// Breaking mutation: change `rows.len() == 1` to `!rows.is_empty()` — the
+/// ambiguous case starts returning an arbitrary one of the two.
+#[tokio::test]
+async fn sole_definition_by_name_returns_none_when_ambiguous() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("soledef_{}", uuid::Uuid::new_v4())).await;
+
+    // Unambiguous: exactly one definition.
+    let only = s
+        .seed_node(&fid, "function", "uniqueThing", "src/a.rs", None, None, Some(1), Some(2))
+        .await
+        .unwrap();
+    assert_eq!(s.sole_definition_id_by_name(&fid, "uniqueThing").await.unwrap(), Some(only));
+
+    // Ambiguous: two definitions of the same name in different files.
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "dupThing",
+        "src/b.rs",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "dupThing",
+        "src/c.rs",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        s.sole_definition_id_by_name(&fid, "dupThing").await.unwrap(),
+        None,
+        "two candidates means 'I don't know which' — never a best guess"
+    );
+
+    // Absent.
+    assert_eq!(s.sole_definition_id_by_name(&fid, "neverDefined").await.unwrap(), None);
+
+    // A STUB is not a definition: a doc mention must land on real code, not on
+    // another unresolved reference to the same name.
+    s.seed_node_by_fqn(&fid, "rust·p·m·Ghost·stubbed", "function", "stubbed", Some("rust"), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        s.sole_definition_id_by_name(&fid, "stubbed").await.unwrap(),
+        None,
+        "a stub has no file_path and cannot anchor a doc reference"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// A doc's file reference resolves against the repo-relative path, which is the
+/// form `nodes.file_path` uses. Before this, refs were stored machine-absolute
+/// and could never match.
+#[tokio::test]
+async fn file_node_lookup_matches_the_repo_relative_path() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("fileref_{}", uuid::Uuid::new_v4())).await;
+
+    let f =
+        s.seed_node(&fid, "file", "main.rs", "src/main.rs", None, None, None, None).await.unwrap();
+    assert_eq!(s.file_node_id_by_path(&fid, "src/main.rs").await.unwrap(), Some(f));
+    assert_eq!(
+        s.file_node_id_by_path(&fid, "/abs/root/src/main.rs").await.unwrap(),
+        None,
+        "an absolute target cannot match a repo-relative file_path — the whole reason \
+         doc references resolved at 0%"
+    );
+    assert_eq!(s.file_node_id_by_path(&fid, "src/absent.rs").await.unwrap(), None);
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// `edges.props` needs a write path, and it must MERGE rather than clobber.
+///
+/// Measured before this existed: 0 of 724,926 live edge rows carried non-empty
+/// props, because neither `insert_edge` branch named the column. Inheritance
+/// needs it — `Implements` and `TraitImpl` share the `implements` edge kind and
+/// are told apart only by `props.relation`.
+///
+/// Merge, not overwrite, for the same reason `upsert_node` merges: an edge is
+/// re-inserted on every rescan, and a later caller that knows less about the
+/// edge must not erase what an earlier one recorded.
+///
+/// Breaking mutation: change `props = edges.props || EXCLUDED.props` to
+/// `props = EXCLUDED.props` — the second-write assertion reads `relation` as
+/// NULL and fails.
+#[tokio::test]
+async fn insert_edge_with_props_stamps_and_merges() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("edgeprops_{}", uuid::Uuid::new_v4())).await;
+    let a = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "class",
+        "Sub",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
+    let b = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "class",
+        "Base",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(5),
+    )
+    .await
+    .unwrap();
+
+    let props = serde_json::json!({ "relation": "trait_impl" });
+    let e1 = s
+        .insert_edge_with_props(&fid, &a, Some(&b), None, None, "implements", &props)
+        .await
+        .unwrap();
+
+    let stamped: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT props->>'relation' FROM sensei.edges WHERE id = $1",
+    )
+    .bind(e1)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(stamped.as_deref(), Some("trait_impl"), "the discriminant must persist");
+
+    // A second write with DIFFERENT keys must not erase the first.
+    let e2 = s
+        .insert_edge_with_props(
+            &fid,
+            &a,
+            Some(&b),
+            None,
+            None,
+            "implements",
+            &serde_json::json!({ "other": 1 }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(e1, e2, "same edge identity");
+    let after: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT props->>'relation' FROM sensei.edges WHERE id = $1",
+    )
+    .bind(e1)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(after.as_deref(), Some("trait_impl"), "merge must not clobber the discriminant");
+
+    // The UNRESOLVED branch carries props too — an unresolved supertype is the
+    // common case on a cold index, and it must still say which relation it is.
+    let u = s
+        .insert_edge_with_props(&fid, &a, None, Some("Serializable"), None, "implements", &props)
+        .await
+        .unwrap();
+    let u_rel: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT props->>'relation' FROM sensei.edges WHERE id = $1",
+    )
+    .bind(u)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(u_rel.as_deref(), Some("trait_impl"), "unresolved edges need the discriminant too");
+
+    // The plain wrapper must still work and leave props empty.
+    let plain = s.insert_edge(&fid, &b, Some(&a), None, None, "calls").await.unwrap();
+    let empty: serde_json::Value =
+        sqlx_core::query_scalar::query_scalar("SELECT props FROM sensei.edges WHERE id = $1")
+            .bind(plain)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(empty, serde_json::json!({}), "insert_edge must not invent props");
+}
+
+/// The sweep removes ONLY the mislabelled containment `extends` rows, and
+/// cannot touch a real inheritance edge.
+///
+/// The old emit produced `file -> (unresolved type in that same file)` under
+/// the `extends` kind: 7,916 rows in the live graph, all unresolved, all
+/// duplicating containment that `nodes.parent_id` already carried. Retiring the
+/// emit stops new ones; these are the ones already written.
+///
+/// The discriminant is the whole predicate. Every edge the inheritance path
+/// writes carries `props.relation`; before `insert_edge_with_props` nothing
+/// could write props at all — so "unstamped `extends`" names the legacy rows
+/// exactly.
+///
+/// This test earns that narrowing. The first version also asserted a
+/// file-source and null-target predicate, and mutation-probing showed the test
+/// passed with EITHER clause removed — the fixtures did not isolate them. The
+/// third edge below is the isolating case: file-sourced, unresolved, and
+/// stamped, which the emit genuinely produces when a child fqn is missing. A
+/// predicate keyed on file-source-and-unresolved would delete it.
+///
+/// Breaking mutation: drop `props->>'relation' IS NULL` from the WHERE — two
+/// real inheritance edges are deleted and `removed` is 3.
+#[tokio::test]
+async fn the_sweep_takes_mislabelled_containment_and_spares_real_inheritance() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("sweep_{}", uuid::Uuid::new_v4())).await;
+    let file = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "file",
+        "a.rs",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(9),
+    )
+    .await
+    .unwrap();
+    let sub = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "class",
+        "Sub",
+        "a.rs",
+        None,
+        None,
+        Some(2),
+        Some(3),
+    )
+    .await
+    .unwrap();
+    let base = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "class",
+        "Base",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(3),
+    )
+    .await
+    .unwrap();
+
+    // The mislabelled shape: FILE source, unresolved, no discriminant.
+    s.insert_edge(&fid, &file, None, Some("Sub"), None, "extends").await.unwrap();
+    // Real inheritance, resolved and stamped.
+    s.insert_edge_with_props(
+        &fid,
+        &sub,
+        Some(&base),
+        None,
+        None,
+        "extends",
+        &serde_json::json!({ "relation": "extends" }),
+    )
+    .await
+    .unwrap();
+    // A real UNRESOLVED inheritance edge — stamped but with no target yet. This
+    // is the common cold-index case and must NOT be swept.
+    s.insert_edge_with_props(
+        &fid,
+        &sub,
+        None,
+        Some("Missing"),
+        None,
+        "extends",
+        &serde_json::json!({ "relation": "extends" }),
+    )
+    .await
+    .unwrap();
+
+    // The case that ISOLATES the discriminant clause: file-sourced AND
+    // unresolved AND stamped. The inheritance emit really produces this — it
+    // anchors on the file node when a child fqn is missing — so a predicate
+    // keyed on "file-sourced and unresolved" would delete a real relation.
+    s.insert_edge_with_props(
+        &fid,
+        &file,
+        None,
+        Some("FromFileAnchor"),
+        None,
+        "extends",
+        &serde_json::json!({ "relation": "extends" }),
+    )
+    .await
+    .unwrap();
+
+    let removed = s.prune_mislabelled_containment_extends(&[fid]).await.unwrap();
+    assert_eq!(removed, 1, "exactly the one mislabelled row");
+
+    let left: Vec<(Option<String>,)> = sqlx_core::query_as::query_as(
+        "SELECT props->>'relation' FROM sensei.edges
+          WHERE folder_id = $1 AND kind = 'extends'::sensei.edge_kind",
+    )
+    .bind(fid)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(left.len(), 3, "all three real inheritance edges survive: {left:?}");
+    assert!(
+        left.iter().all(|(r,)| r.as_deref() == Some("extends")),
+        "every survivor is discriminated: {left:?}"
+    );
+}
+
+/// `persist_edge_fact` must reproduce each inheritance arm's OBSERVED
+/// behaviour, not a plausible version of it.
+///
+/// Written against what the arms at process.rs actually do, because a persister
+/// tested against my assumptions would codify the assumptions. Each assertion
+/// below mirrors a named existing test: the Lib arm mirrors the external half
+/// of `trait_impls_become_relations_and_inherent_impls_do_not`, the stub arm
+/// mirrors `a_trait_impl_persists_as_an_implements_edge_before_its_trait_exists`,
+/// and the unresolvable arm mirrors the `parent_fqn = None` branch.
+///
+/// Breaking mutations: (1) consult `known` AFTER the stub instead of before —
+/// the in-file assertion gets a different id; (2) drop `props` from the
+/// insert — the discriminant assertion fails; (3) make `LeaveUnresolved`
+/// create a node — the unresolved assertion finds a target_id.
+#[tokio::test]
+async fn persist_edge_fact_reproduces_every_inheritance_arm() {
+    use crate::graph_facts::{EdgeFact, OnMiss, TargetRef};
+    use std::collections::HashMap;
+
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("facts_{}", uuid::Uuid::new_v4())).await;
+    let sub = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "class",
+        "Sub",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(3),
+    )
+    .await
+    .unwrap();
+    let inflight = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "class",
+        "Known",
+        "a.rs",
+        None,
+        None,
+        Some(5),
+        Some(7),
+    )
+    .await
+    .unwrap();
+    let mut known = HashMap::new();
+    known.insert("rust·demo·a·Known".to_string(), inflight);
+
+    let props = serde_json::json!({ "relation": "trait_impl" });
+    let rel = |id: uuid::Uuid| async move {
+        let row: (Option<uuid::Uuid>, Option<String>, Option<String>) =
+            sqlx_core::query_as::query_as(
+                "SELECT target_id, target_name, props->>'relation' FROM sensei.edges WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(pg_store().await.pool())
+            .await
+            .unwrap();
+        row
+    };
+
+    // ARM: in-file hit. `known` is consulted FIRST, so no upsert happens and
+    // the existing node's id is used — which is what protects it from being
+    // relabelled by `language = COALESCE(EXCLUDED.language, nodes.language)`.
+    let e = s
+        .persist_edge_fact(
+            &fid,
+            &EdgeFact {
+                source_id: sub,
+                target: TargetRef::Internal {
+                    fqn: "rust·demo·a·Known".into(),
+                    name: "Known".into(),
+                    on_miss: OnMiss::CreateStub { kind: "class" },
+                },
+                kind: "implements",
+                props: props.clone(),
+            },
+            &known,
+            Some("rust"),
+        )
+        .await
+        .unwrap();
+    let (tid, tname, r) = rel(e).await;
+    assert_eq!(tid, Some(inflight), "an in-file target must reuse its id, not be re-upserted");
+    assert_eq!(tname, None, "resolving erases target_name");
+    assert_eq!(r.as_deref(), Some("trait_impl"), "props must reach the row");
+
+    // ARM: stub. The target is unknown, so a placeholder is created with the
+    // stated kind and the edge resolves to it — the property that makes
+    // resolution order-independent.
+    let e = s
+        .persist_edge_fact(
+            &fid,
+            &EdgeFact {
+                source_id: sub,
+                target: TargetRef::Internal {
+                    fqn: "rust·demo·b·Later".into(),
+                    name: "Later".into(),
+                    on_miss: OnMiss::CreateStub { kind: "class" },
+                },
+                kind: "implements",
+                props: props.clone(),
+            },
+            &known,
+            Some("rust"),
+        )
+        .await
+        .unwrap();
+    let (tid, _, _) = rel(e).await;
+    assert!(tid.is_some(), "a stub must resolve the edge");
+    let stub_kind: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT kind::text FROM sensei.nodes WHERE folder_id = $1 AND fqn = $2",
+    )
+    .bind(fid)
+    .bind("rust·demo·b·Later")
+    .fetch_optional(s.pool())
+    .await
+    .unwrap()
+    .flatten();
+    assert_eq!(stub_kind.as_deref(), Some("class"), "the stub carries the kind the policy stated");
+
+    // ARM: LeaveUnresolved on a probe miss — no node is invented.
+    let e = s
+        .persist_edge_fact(
+            &fid,
+            &EdgeFact {
+                source_id: sub,
+                target: TargetRef::Internal {
+                    fqn: "rust·demo·c·Absent".into(),
+                    name: "Absent".into(),
+                    on_miss: OnMiss::LeaveUnresolved,
+                },
+                kind: "implements",
+                props: props.clone(),
+            },
+            &known,
+            Some("rust"),
+        )
+        .await
+        .unwrap();
+    let (tid, tname, _) = rel(e).await;
+    assert_eq!(tid, None, "LeaveUnresolved must NOT create a node");
+    assert_eq!(tname.as_deref(), Some("Absent"), "the name is kept so the fact survives");
+    let invented: Option<uuid::Uuid> = s.node_id_by_fqn(&fid, "rust·demo·c·Absent").await.unwrap();
+    assert!(invented.is_none(), "no row may be minted on a probe miss");
+
+    // ARM: external. Mints a lib_symbol under a lib_package, carrying the
+    // EXPLICIT name rather than the fqn's last segment.
+    let e = s
+        .persist_edge_fact(
+            &fid,
+            &EdgeFact {
+                source_id: sub,
+                target: TargetRef::Lib {
+                    fqn: "lib·std·std::fmt·Debug".into(),
+                    name: "Debug".into(),
+                    package: "std".into(),
+                },
+                kind: "implements",
+                props,
+            },
+            &known,
+            Some("rust"),
+        )
+        .await
+        .unwrap();
+    let (tid, _, _) = rel(e).await;
+    assert!(tid.is_some(), "an external supertype resolves to a lib node");
+    let lib_name: Option<String> = sqlx_core::query_scalar::query_scalar(
+        "SELECT name FROM sensei.nodes WHERE folder_id = $1 AND fqn = $2",
+    )
+    .bind(fid)
+    .bind("lib·std·std::fmt·Debug")
+    .fetch_optional(s.pool())
+    .await
+    .unwrap()
+    .flatten();
+    assert_eq!(lib_name.as_deref(), Some("Debug"), "the lib node's name is the one supplied");
+}
+
+/// A RESOLVED import must stay distinguishable from an external one.
+///
+/// `import_target_counts` used `COALESCE(target_name, '')`, justified by a
+/// comment reading "MEASURED non-null on all 136,484 import edges". That was
+/// true when written — imports were 0% resolved. Resolving ERASES `target_name`
+/// (the `target_id` xor `target_name` invariant), so once 25,788 imports
+/// resolved, every one of them collapsed into a single `target = ''` group,
+/// which `classify_import("")` then reported as ONE external package.
+///
+/// Live effect: `/api/graph/imports` reported external 136,329 / local 244 when
+/// the truth is 110,785 / 25,788. That is the instrument any claim about
+/// import resolution would be measured with.
+///
+/// Breaking mutation: restore `COALESCE(target_name, '')` — the resolved row
+/// arrives as `Some("")` instead of `None` and the assertion fails.
+#[tokio::test]
+async fn a_resolved_import_is_not_reported_as_an_empty_external_target() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("impcount_{}", uuid::Uuid::new_v4())).await;
+    let src = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "file",
+        "a.ts",
+        "a.ts",
+        None,
+        None,
+        Some(1),
+        Some(9),
+    )
+    .await
+    .unwrap();
+    let tgt = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "module",
+        "b",
+        "b.ts",
+        None,
+        None,
+        Some(1),
+        Some(9),
+    )
+    .await
+    .unwrap();
+
+    // A resolved import: target_id set, target_name NULL — the shape the
+    // invariant guarantees.
+    s.insert_edge(&fid, &src, Some(&tgt), None, None, "imports").await.unwrap();
+    // An external one, unresolved, carrying its specifier.
+    s.insert_edge(&fid, &src, None, Some("java.util.List"), None, "imports").await.unwrap();
+
+    let rows = s.import_target_counts().await.unwrap();
+    let mine: Vec<_> = rows
+        .iter()
+        .filter(|(t, _, _)| t.is_none() || t.as_deref() == Some("java.util.List"))
+        .collect();
+
+    let resolved = mine
+        .iter()
+        .find(|(t, _, _)| t.is_none())
+        .expect("a resolved import must arrive with target = None, not Some(\"\")");
+    assert!(resolved.2 >= 1, "the resolved row must count as resolved: {resolved:?}");
+
+    let external = mine
+        .iter()
+        .find(|(t, _, _)| t.as_deref() == Some("java.util.List"))
+        .expect("the external specifier must survive as itself");
+    assert_eq!(external.2, 0, "an unresolved external counts 0 resolved: {external:?}");
+}
+
+/// The classes must PARTITION the edges, and each must mean what it is named.
+///
+/// The view answers exactly one question — does any LOCAL node share the target
+/// name — and the classes are named for that, not for a verdict. An earlier
+/// version named them `unambiguous-miss`/`ambiguous`/`absent` and this test
+/// asserted the first was "the defect class". Adversarial review refuted it:
+/// the head of that population is `json` 1,600, `path` 483, `join` 443 —
+/// external accessor methods sharing a name with one local symbol — and the
+/// only mechanism that drives the number down is `sole_definition_id_by_name`,
+/// the bare-name resolver `process.rs` explicitly refuses because "a miss would
+/// resolve confidently WRONG".
+///
+/// So this test now pins the PARTITION and the naming, which are true, and
+/// asserts nothing about defects, which was not.
+///
+/// The solid finding it does protect: `no-local-name` for imports is 109,944 of
+/// 110,785 (99.2%), which is why externals need lib nodes rather than better
+/// local resolution.
+///
+/// Breaking mutation: change the view's `= 1` to `>= 1` — degree-one and
+/// degree-n collapse and the per-class assertions fail.
+#[tokio::test]
+async fn the_resolution_classes_are_distinct_and_only_one_is_a_defect() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("rescls_{}", uuid::Uuid::new_v4())).await;
+    let src = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "file",
+        "a.rs",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(9),
+    )
+    .await
+    .unwrap();
+    // One local definition named `only` → a miss on it is UNAMBIGUOUS.
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "only",
+        "b.rs",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    // Two named `twin` → a miss on it is AMBIGUOUS, and correctly unresolved.
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "twin",
+        "c.rs",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "function",
+        "twin",
+        "d.rs",
+        None,
+        None,
+        Some(1),
+        Some(2),
+    )
+    .await
+    .unwrap();
+
+    for name in ["only", "twin", "nowhere"] {
+        s.insert_edge(&fid, &src, None, Some(name), None, "calls").await.unwrap();
+    }
+
+    let rows: Vec<(Option<String>, i64)> = sqlx_core::query_as::query_as(
+        "SELECT resolution_class, count(*) FROM sensei.edge_resolution_class
+          WHERE folder_id = $1 GROUP BY 1",
+    )
+    .bind(fid)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+    let get =
+        |c: &str| rows.iter().find(|(k, _)| k.as_deref() == Some(c)).map(|(_, n)| *n).unwrap_or(0);
+
+    assert_eq!(get("name-collision-1"), 1, "`only` is borne by exactly one local node: {rows:?}");
+    assert_eq!(get("name-collision-n"), 1, "`twin` is borne by two local nodes: {rows:?}");
+    assert_eq!(get("no-local-name"), 1, "`nowhere` names nothing local: {rows:?}");
+
+    // The classes must be a PARTITION — every edge in exactly one.
+    let total: i64 = rows.iter().map(|(_, n)| *n).sum();
+    let edges: i64 = sqlx_core::query_scalar::query_scalar(
+        "SELECT count(*) FROM sensei.edges WHERE folder_id = $1",
+    )
+    .bind(fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    assert_eq!(total, edges, "every edge must fall in exactly one class");
+}
+
+/// A lib node with no edges must be collectable.
+///
+/// Today it is not: `prune_orphan_stubs_scoped` explicitly EXCLUDES
+/// `lib_symbol`/`lib_package`, and no other path deletes them
+/// (`delete_nodes_by_file` and `prune_file_nodes` both key on `file_path`,
+/// which lib nodes do not have). So a lib node, once minted, is permanent.
+///
+/// That is why this lands BEFORE any minting. Slice 4 proposes creating
+/// ~11,714 lib_symbol rows plus ~3,196 containers from a derivation that has
+/// already been wrong once in review; without a collector, a bad mint could
+/// only be undone by hand-written SQL against the live graph.
+///
+/// Containers are collected too, but only when EMPTY — a `lib_package` whose
+/// symbols are still referenced must survive, or the next scan re-mints it and
+/// the pair churns forever.
+///
+/// Breaking mutations: (1) drop the lib kinds from the DELETE — the orphan
+/// survives; (2) drop the `NOT EXISTS` edge guard — the REFERENCED lib symbol
+/// is deleted, which would break live edges.
+#[tokio::test]
+async fn an_unreferenced_lib_node_is_collected_and_a_referenced_one_survives() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("libgc_{}", uuid::Uuid::new_v4())).await;
+    let src = crate::tasks::test_support::seed_node(
+        &s,
+        &fid,
+        "file",
+        "a.rs",
+        "a.rs",
+        None,
+        None,
+        Some(1),
+        Some(9),
+    )
+    .await
+    .unwrap();
+
+    // Referenced: a lib symbol with an edge pointing at it.
+    let kept = s
+        .upsert_lib_node_by_fqn(
+            &fid,
+            "lib·serde·serde·Serialize",
+            "Serialize",
+            "serde",
+            Some("rust"),
+        )
+        .await
+        .unwrap();
+    s.insert_edge(&fid, &src, Some(&kept), None, None, "calls").await.unwrap();
+
+    // Orphan: minted and never pointed at — the shape a wrong derivation leaves.
+    let orphan = s
+        .upsert_lib_node_by_fqn(&fid, "lib·typo·typo·Nothing", "Nothing", "typo", Some("rust"))
+        .await
+        .unwrap();
+
+    let removed = s.prune_unreferenced_lib_nodes_scoped(&[fid]).await.unwrap();
+    assert!(removed >= 1, "the orphan must be collected, got {removed}");
+
+    assert!(
+        s.node_id_by_fqn(&fid, "lib·typo·typo·Nothing").await.unwrap().is_none(),
+        "the unreferenced lib symbol is gone"
+    );
+    assert_eq!(
+        s.node_id_by_fqn(&fid, "lib·serde·serde·Serialize").await.unwrap(),
+        Some(kept),
+        "a REFERENCED lib symbol must survive — deleting it would break a live edge"
+    );
+    // Its container survives with it.
+    assert!(
+        s.node_id_by_fqn(&fid, "lib·serde").await.unwrap().is_some(),
+        "a container with surviving symbols must not be collected"
+    );
+    // The orphan's now-empty container goes too.
+    assert!(
+        s.node_id_by_fqn(&fid, "lib·typo").await.unwrap().is_none(),
+        "an empty container is collected with its last symbol"
+    );
+    let _ = orphan;
+}
+
+// ── Transitive receiver resolution (hop 2) ──────────────────────────────────
+
+/// Write a real DEFINITION node (has a file_path, so it is not a stub).
+async fn rt_def(
+    s: &PgStore,
+    fid: &uuid::Uuid,
+    fqn: &str,
+    kind: &str,
+    name: &str,
+    parent: Option<&uuid::Uuid>,
+) -> uuid::Uuid {
+    rt_def_at(s, fid, fqn, kind, name, parent, "rust", "src/lib.rs").await
+}
+
+/// [`rt_def`] in a named language and a named FILE.
+///
+/// Both matter. The chain reads a RUST return type, so what a same-named node in
+/// another language does is a rule of its own — and `nodes_unique_identity` is
+/// `(folder, file_path, kind, name, parent_id, line_start)`, so two same-named
+/// types written to the same file are ADOPTED onto one node and a fixture meant
+/// to be ambiguous would quietly stop being.
+#[allow(clippy::too_many_arguments)]
+async fn rt_def_at(
+    s: &PgStore,
+    fid: &uuid::Uuid,
+    fqn: &str,
+    kind: &str,
+    name: &str,
+    parent: Option<&uuid::Uuid>,
+    language: &str,
+    file_path: &str,
+) -> uuid::Uuid {
+    s.seed_node_by_fqn(
+        fid,
+        fqn,
+        kind,
+        name,
+        Some(language),
+        Some(FqnDef {
+            file_path,
+            signature: None,
+            line_start: Some(1),
+            line_end: Some(2),
+            is_exported: true,
+            parent_id: parent,
+        }),
+    )
+    .await
+    .unwrap()
+}
+
+/// `TaskContext` with a `pg` returning a `PgStore`, and a `PgStore` with a
+/// `count_edges` — the exact live chain the slice exists to close.
+async fn rt_fixture(s: &PgStore, fid: &uuid::Uuid) -> (uuid::Uuid, uuid::Uuid) {
+    let store = rt_def(s, fid, "rust·recv·db::pg_store·PgStore", "struct", "PgStore", None).await;
+    let count = rt_def(
+        s,
+        fid,
+        "rust·recv·db::pg_store·PgStore·count_edges",
+        "method",
+        "count_edges",
+        Some(&store),
+    )
+    .await;
+    let tc = rt_def(s, fid, "rust·recv·executor·TaskContext", "struct", "TaskContext", None).await;
+    let pg = rt_def(s, fid, "rust·recv·executor·TaskContext·pg", "method", "pg", Some(&tc)).await;
+    (pg, count)
+}
+
+async fn resolve_one(
+    s: &PgStore,
+    fid: &uuid::Uuid,
+    hint: ReceiverHint,
+    method: &str,
+) -> Option<uuid::Uuid> {
+    s.resolve_receiver_calls(&[*fid], &[(hint, method.to_string())])
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap()
+}
+
+/// THE PAYOFF HOP. `ctx.pg().count_edges()` records `ReturnOf(TaskContext·pg)`;
+/// the resolver reads that node's return type, unwraps it to `PgStore`, and
+/// finds `count_edges` under the type of that name.
+#[tokio::test]
+async fn a_receiver_hint_resolves_through_the_hinted_methods_return_type() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
+    let (pg, count) = rt_fixture(&s, &fid).await;
+
+    assert_eq!(
+        resolve_one(
+            &s,
+            &fid,
+            ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg".into()),
+            "count_edges"
+        )
+        .await,
+        None,
+        "before the return type is known the hop MISSES — a hint is not a licence to guess"
+    );
+
+    s.set_node_return_type(&pg, "&crate::db::pg_store::PgStore").await.unwrap();
+
+    assert_eq!(
+        resolve_one(
+            &s,
+            &fid,
+            ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg".into()),
+            "count_edges"
+        )
+        .await,
+        Some(count),
+        "the chain closes: pg → &crate::db::pg_store::PgStore → PgStore → count_edges"
+    );
+}
+
+/// EVERY hop that cannot be answered yields UNRESOLVED. None of these may
+/// return a node: an almost-right target is indistinguishable from a real one
+/// to every consumer downstream.
+#[tokio::test]
+async fn every_failed_hop_in_the_receiver_chain_yields_unresolved() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
+    let (pg, _) = rt_fixture(&s, &fid).await;
+    let hint = || ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg".into());
+
+    // Hop 1: the hinted node is not in the graph at all.
+    assert_eq!(
+        resolve_one(
+            &s,
+            &fid,
+            ReceiverHint::ReturnOf("rust·recv·nope·Ghost·m".into()),
+            "count_edges"
+        )
+        .await,
+        None,
+        "a hint naming no node is a miss"
+    );
+
+    // Hop 2: the return type names no concrete type.
+    for opaque in ["impl Store", "Box<dyn Store>", "T"] {
+        s.set_node_return_type(&pg, opaque).await.unwrap();
+        assert_eq!(
+            resolve_one(&s, &fid, hint(), "count_edges").await,
+            None,
+            "`-> {opaque}` names no receiver type, so the call stays unresolved"
+        );
+    }
+
+    // Hop 3: the type resolves but carries no such member. This is the guard
+    // that keeps a `Result`/`Option` unwrap from wrong-merging — the member has
+    // to actually exist on the success type.
+    s.set_node_return_type(&pg, "Result<PgStore, Error>").await.unwrap();
+    assert_eq!(
+        resolve_one(&s, &fid, hint(), "no_such_method").await,
+        None,
+        "the unwrap only lands if the member really is on the concrete type"
+    );
+    assert!(
+        resolve_one(&s, &fid, hint(), "count_edges").await.is_some(),
+        "…and when it is, `Result<PgStore, E>` does reach it"
+    );
+}
+
+/// A STUB is never the answer. It carries the right name under the right type
+/// and no definition behind it, so resolving onto one would launder an
+/// unresolved call into a resolved one — the caller could not tell the
+/// difference, which is precisely what makes it a fabrication.
+///
+/// The adversarial row is written with raw SQL because no emit path produces it
+/// TODAY: `persist_edge_fact`'s `CreateStub` passes no parent, so the 18,408
+/// live fn/method stubs are all parentless and the parent join already skips
+/// them (measured: 0 stubs with a parent). That is a property of the current
+/// writers, not of this lookup. The `file_id IS NOT NULL` filter is what
+/// keeps the property from depending on them — re-parent stubs once (an
+/// index-audit repair, a dedup pass) and without it every ghost becomes a
+/// resolution target.
+#[tokio::test]
+async fn a_stub_is_never_the_answer_to_a_receiver_hop() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
+    let ghost = rt_def(&s, &fid, "rust·recv·other·PgStore", "struct", "PgStore", None).await;
+    let (stub,): (uuid::Uuid,) = query_as(
+        "INSERT INTO sensei.nodes (folder_id, fqn, kind, name, language, parent_id, file_id)
+         VALUES ($1, 'rust·recv·other·PgStore·only_stubbed',
+                 'function'::sensei.node_kind, 'only_stubbed', 'rust', $2, NULL)
+         RETURNING id",
+    )
+    .bind(fid)
+    .bind(ghost)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    let _ = stub;
+
+    // A hop that reaches the ghost type by its own fqn — the strongest form of
+    // hint there is, so what refuses here is the stub rule and nothing weaker.
+    let tc = rt_def(&s, &fid, "rust·recv·other·Ctx", "struct", "Ctx", None).await;
+    let mk = rt_def(&s, &fid, "rust·recv·other·Ctx·mk", "method", "mk", Some(&tc)).await;
+    s.set_node_return_type(&mk, "crate::other::PgStore").await.unwrap();
+
+    assert_eq!(
+        resolve_one(
+            &s,
+            &fid,
+            ReceiverHint::ReturnOf("rust·recv·other·Ctx·mk".into()),
+            "only_stubbed"
+        )
+        .await,
+        None,
+        "a stub carries the name but no definition — resolving onto it would launder \
+         an unresolved call into a resolved one"
+    );
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// Two candidates is not a coin flip. `sole_definition_id_by_name` bare-name
+/// matching is refused everywhere else in this graph for the same reason.
+#[tokio::test]
+async fn an_ambiguous_member_lookup_refuses_rather_than_picking_one() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
+    let (pg, _) = rt_fixture(&s, &fid).await;
+    s.set_node_return_type(&pg, "PgStore").await.unwrap();
+    let hint = || ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg".into());
+
+    assert!(resolve_one(&s, &fid, hint(), "count_edges").await.is_some(), "one candidate resolves");
+
+    // A SECOND type of the same name in the same scope, also carrying the
+    // member — the split-impl / trait-qualified shape the live graph is full of.
+    let other = rt_def(&s, &fid, "rust·recv·shadow·PgStore", "class", "PgStore", None).await;
+    rt_def(&s, &fid, "rust·recv·shadow·PgStore·count_edges", "method", "count_edges", Some(&other))
+        .await;
+
+    assert_eq!(
+        resolve_one(&s, &fid, hint(), "count_edges").await,
+        None,
+        "two definitions of PgStore::count_edges in scope → the graph cannot say which, \
+         and saying one is a fabricated link"
+    );
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// AMBIGUITY IS A PROPERTY OF THE TYPE, NOT OF THE MEMBER. Two same-named types
+/// whose member sets are DISJOINT are the normal case for unrelated types that
+/// happen to share a name, and gating on "exactly one member matched" waves them
+/// through: only one of the two carries the member, so the count is 1 and the
+/// call links to whichever type owns it.
+///
+/// Live shapes this refuses, all real in this repo:
+///   - `verdicts.rs` `enum Verdict` (`as_wire`) vs `tasks/verdict_classifier.rs`
+///     `enum Verdict` (`as_str`) — one crate, two modules, no member in common.
+///   - `languages/import_target.rs` `enum ImportTarget` vs
+///     `languages/typescript.rs` `struct ImportTarget`, member `is_external`.
+///   - `dojo_client::session·Session` vs `session-report·model·Session`, member
+///     `wall_ms` — different CRATES, and `scope_folder_ids` puts every folder of
+///     the project in one scope, so the join spans them.
+#[tokio::test]
+async fn two_same_named_types_with_disjoint_members_resolve_to_nothing() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
+    let ctx = rt_def(&s, &fid, "rust·recv·api·Api", "struct", "Api", None).await;
+    let judge = rt_def(&s, &fid, "rust·recv·api·Api·judge", "method", "judge", Some(&ctx)).await;
+    s.set_node_return_type(&judge, "Verdict").await.unwrap();
+
+    let wire = rt_def_at(
+        &s,
+        &fid,
+        "rust·recv·verdicts·Verdict",
+        "enum",
+        "Verdict",
+        None,
+        "rust",
+        "src/verdicts.rs",
+    )
+    .await;
+    rt_def(&s, &fid, "rust·recv·verdicts·Verdict·as_wire", "method", "as_wire", Some(&wire)).await;
+    let classifier = rt_def_at(
+        &s,
+        &fid,
+        "rust·recv·tasks::verdict_classifier·Verdict",
+        "enum",
+        "Verdict",
+        None,
+        "rust",
+        "src/tasks/verdict_classifier.rs",
+    )
+    .await;
+    rt_def(
+        &s,
+        &fid,
+        "rust·recv·tasks::verdict_classifier·Verdict·as_str",
+        "method",
+        "as_str",
+        Some(&classifier),
+    )
+    .await;
+    assert_ne!(wire, classifier, "the fixture must really hold TWO type nodes");
+
+    let hint = || ReceiverHint::ReturnOf("rust·recv·api·Api·judge".into());
+    assert_eq!(
+        resolve_one(&s, &fid, hint(), "as_wire").await,
+        None,
+        "`-> Verdict` names two different enums in scope; the member sits on one of \
+         them, but WHICH Verdict was returned is unknown — linking is a wrong merge"
+    );
+    assert_eq!(
+        resolve_one(&s, &fid, hint(), "as_str").await,
+        None,
+        "…and the same from the other type's side"
+    );
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// THE MODULE PATH IS THE ANSWER, NOT A TIE-BREAK. The return type is stored
+/// verbatim precisely because the path says WHICH `PgStore` is meant, so a
+/// qualified one resolves even where the bare name is ambiguous — refusing here
+/// would throw away the very fact the verbatim storage exists to keep.
+#[tokio::test]
+async fn a_module_qualified_return_type_picks_its_own_type_out_of_two() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
+    let (pg, count) = rt_fixture(&s, &fid).await;
+    let shadow = rt_def_at(
+        &s,
+        &fid,
+        "rust·recv·shadow·PgStore",
+        "struct",
+        "PgStore",
+        None,
+        "rust",
+        "src/shadow.rs",
+    )
+    .await;
+    let shadow_count = rt_def_at(
+        &s,
+        &fid,
+        "rust·recv·shadow·PgStore·count_edges",
+        "method",
+        "count_edges",
+        Some(&shadow),
+        "rust",
+        "src/shadow.rs",
+    )
+    .await;
+    assert_ne!(shadow_count, count, "the fixture must really hold TWO count_edges");
+    let hint = || ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg".into());
+
+    s.set_node_return_type(&pg, "&crate::db::pg_store::PgStore").await.unwrap();
+    assert_eq!(
+        resolve_one(&s, &fid, hint(), "count_edges").await,
+        Some(count),
+        "`crate::db::pg_store::PgStore` names one of the two exactly"
+    );
+
+    s.set_node_return_type(&pg, "crate::shadow::PgStore").await.unwrap();
+    assert_eq!(
+        resolve_one(&s, &fid, hint(), "count_edges").await,
+        Some(shadow_count),
+        "…and the other path names the other one — the module segment decides"
+    );
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// AN EXTERNAL RETURN TYPE RESOLVES TO NOTHING. The producer already refuses to
+/// hint an external RECEIVER (a `lib·` node carries no definition), and reducing
+/// `reqwest::blocking::Client` to the bare leaf `Client` reopened that hole one
+/// level down: the leaf then matches a FIRST-PARTY type of that name and the
+/// call is reported `locality: "internal"` with a real file path — a fabricated
+/// first-party dependency.
+///
+/// Live call sites that emit exactly this hint: `cli/src/main.rs` `client()`
+/// (`-> reqwest::blocking::Client`), `federation/mod.rs` `http_client()` and
+/// `dojo/client.rs` `http()` (`-> &reqwest::Client`).
+#[tokio::test]
+async fn an_external_return_type_never_lands_on_a_same_named_first_party_type() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
+    let app = rt_def(&s, &fid, "rust·recv·cli·App", "struct", "App", None).await;
+    let mk = rt_def(&s, &fid, "rust·recv·cli·App·client", "method", "client", Some(&app)).await;
+
+    // The first-party wrapper that makes the collision bite. It is the ONLY
+    // `Client` in scope, so every count gate passes and only the path can refuse.
+    let wrapper = rt_def(&s, &fid, "rust·recv·http·Client", "struct", "Client", None).await;
+    rt_def(&s, &fid, "rust·recv·http·Client·get", "method", "get", Some(&wrapper)).await;
+
+    for external in ["reqwest::blocking::Client", "&reqwest::Client", "std::sync::mpsc::Client"] {
+        s.set_node_return_type(&mk, external).await.unwrap();
+        assert_eq!(
+            resolve_one(&s, &fid, ReceiverHint::ReturnOf("rust·recv·cli·App·client".into()), "get")
+                .await,
+            None,
+            "`-> {external}` names a dependency's type; the first-party `Client` is a \
+             different type and linking to it invents a dependency"
+        );
+    }
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// The return-type grammar hop 1 reads is RUST's, so a same-named node in
+/// another language cannot be what it named. Hop 1 already gates on
+/// `language = 'rust'`; hop 2 did not, so a TypeScript class of the same name
+/// answered a question asked in Rust.
+#[tokio::test]
+async fn a_non_rust_type_never_answers_a_rust_return_type() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
+    let tc =
+        rt_def(&s, &fid, "rust·recv·executor·TaskContext", "struct", "TaskContext", None).await;
+    let pg = rt_def(&s, &fid, "rust·recv·executor·TaskContext·pg", "method", "pg", Some(&tc)).await;
+    s.set_node_return_type(&pg, "PgStore").await.unwrap();
+
+    let ts = rt_def_at(
+        &s,
+        &fid,
+        "ts·web·store·PgStore",
+        "class",
+        "PgStore",
+        None,
+        "typescript",
+        "web/store.ts",
+    )
+    .await;
+    rt_def_at(
+        &s,
+        &fid,
+        "ts·web·store·PgStore·count_edges",
+        "method",
+        "count_edges",
+        Some(&ts),
+        "typescript",
+        "web/store.ts",
+    )
+    .await;
+
+    assert_eq!(
+        resolve_one(
+            &s,
+            &fid,
+            ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg".into()),
+            "count_edges"
+        )
+        .await,
+        None,
+        "a rust `-> PgStore` cannot mean a TypeScript class, however alike the names"
+    );
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// `-> Arc<Self>` is only meaningful against the impl the method sits in, which
+/// is the hinted node's PARENT — a fact the graph already holds, so nothing has
+/// to be inferred from the caller's file.
+#[tokio::test]
+async fn self_in_a_return_type_resolves_against_the_hinted_methods_own_type() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
+    let store = rt_def(&s, &fid, "rust·recv·db::pg_store·PgStore", "struct", "PgStore", None).await;
+    let clone_ref =
+        rt_def(&s, &fid, "rust·recv·db::pg_store·PgStore·shared", "method", "shared", Some(&store))
+            .await;
+    let count = rt_def(
+        &s,
+        &fid,
+        "rust·recv·db::pg_store·PgStore·count_edges",
+        "method",
+        "count_edges",
+        Some(&store),
+    )
+    .await;
+    s.set_node_return_type(&clone_ref, "Arc<Self>").await.unwrap();
+
+    assert_eq!(
+        resolve_one(
+            &s,
+            &fid,
+            ReceiverHint::ReturnOf("rust·recv·db::pg_store·PgStore·shared".into()),
+            "count_edges"
+        )
+        .await,
+        Some(count),
+        "Arc<Self> on PgStore::shared is a PgStore receiver"
+    );
+}
+
+async fn modified_at(s: &PgStore, id: &uuid::Uuid) -> chrono::DateTime<chrono::Utc> {
+    let (t,): (chrono::DateTime<chrono::Utc>,) =
+        query_as("SELECT modified_at FROM sensei.nodes WHERE id = $1")
+            .bind(id)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    t
+}
+
+/// The return-type write runs on EVERY function and method of EVERY re-scan —
+/// 108,438 of the 136,583 definitions in the live index — so a write that always
+/// touches the row makes `modified_at` say "this function changed" on every scan
+/// of an unchanged file. Identical value in, no write out.
+#[tokio::test]
+async fn rewriting_an_identical_return_type_leaves_the_node_untouched() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, &format!("rtnoop_{}", uuid::Uuid::new_v4())).await;
+    let id = rt_def(&s, &fid, "rust·rtnoop·m·Widget", "struct", "Widget", None).await;
+
+    s.set_node_return_type(&id, "PgStore").await.unwrap();
+    let after_first = modified_at(&s, &id).await;
+
+    s.set_node_return_type(&id, "PgStore").await.unwrap();
+    assert_eq!(
+        modified_at(&s, &id).await,
+        after_first,
+        "an identical return type is not a change, so the row must not be touched"
+    );
+
+    s.set_node_return_type(&id, "OtherStore").await.unwrap();
+    let after_change = modified_at(&s, &id).await;
+    assert!(after_change > after_first, "a DIFFERENT return type is a change and still writes");
+
+    // Clearing is the same rule from the other side: the first clear removes the
+    // key, the second has nothing to remove.
+    s.set_node_return_type(&id, "").await.unwrap();
+    let after_clear = modified_at(&s, &id).await;
+    assert!(after_clear > after_change, "clearing a stored type is a change");
+    s.set_node_return_type(&id, "()").await.unwrap();
+    assert_eq!(
+        modified_at(&s, &id).await,
+        after_clear,
+        "`()` on a function that already returns nothing writes nothing"
+    );
+
+    // The no-op must not swallow the bad-id error: skipping a write and finding
+    // no row are different answers and only one of them is success.
+    assert!(
+        s.set_node_return_type(&uuid::Uuid::new_v4(), "PgStore").await.is_err(),
+        "a node that does not exist is still an error, not a silent no-op"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
 }

@@ -8,6 +8,7 @@ use sensei_bootstrap::{
     MCP_REGISTRY_KEY, SENSEI_BIN, SENSEI_MCP_BIN, SENSEID_BIN, SenseiConfig, SenseiLocalConfig,
 };
 
+mod auth;
 mod doctor;
 mod managed;
 mod scaffold;
@@ -35,6 +36,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Forge credential — show its standing, or renew it in the browser
+    Auth {
+        /// status | renew | renew-if-needed  (default: status)
+        #[arg(default_value = "status")]
+        action: String,
+
+        /// Which persona's credential. Personas keep separate identities, and
+        /// each has its own token with its own expiry.
+        #[arg(long, default_value = "default")]
+        persona: String,
+    },
+
     /// Initialize sensei — sets up MCP, commands, skills, agents, mindsets
     Init {
         /// Scope: user (global ~/.claude/) or project (repo .claude/)
@@ -215,6 +228,18 @@ fn main() -> ExitCode {
             // No subcommand and no --upgrade → show help rather than erroring.
             let _ = <Cli as clap::CommandFactory>::command().print_help();
             println!();
+        }
+        Some(Commands::Auth { action, persona }) => {
+            let act = match action.as_str() {
+                "status" => auth::AuthAction::Status,
+                "renew" => auth::AuthAction::Renew,
+                "renew-if-needed" => auth::AuthAction::RenewIfNeeded,
+                other => {
+                    eprintln!("unknown action `{other}` — use status, renew, or renew-if-needed");
+                    std::process::exit(2);
+                }
+            };
+            std::process::exit(auth::run(act, &persona));
         }
         Some(Commands::Init { scope, acp, recommended }) => {
             init(scope.as_deref(), acp.as_deref(), recommended);
@@ -1106,22 +1131,73 @@ fn print_index_doctor(r: &serde_json::Value) {
         ("duplicate-name projects", "duplicate_name_projects", "duplicate_name_projects"),
     ];
     let total: u64 = classes.iter().map(|(_, count_key, _)| n(count_key)).sum();
-    if total == 0 {
+    // Advisory classes — surfaced separately below because the daemon does NOT
+    // repair them, and saying otherwise would be a lie.
+    let advisory = [
+        ("one repository at several paths", "duplicate_repository_paths"),
+        ("folder indexed twice (nested inside another)", "contained_duplicate_folders"),
+    ];
+    let advisory_total: u64 = advisory.iter().map(|(_, k)| n(k)).sum();
+
+    if total == 0 && advisory_total == 0 {
         println!("index is invariant-clean — no drift detected.");
         return;
     }
 
-    println!("drift detected (repaired automatically by the daemon's periodic audit):");
-    for (label, count_key, sample_key) in classes {
-        let count = n(count_key);
-        println!("  {:<42} {}", label, count);
-        if count > 0
-            && let Some(samples) = r["samples"][sample_key].as_array()
-        {
-            for s in samples.iter().filter_map(|s| s.as_str()) {
-                println!("      - {s}");
+    let samples_for = |key: &str| -> Vec<String> {
+        r["samples"][key]
+            .as_array()
+            .map(|a| a.iter().filter_map(|s| s.as_str()).map(str::to_string).collect())
+            .unwrap_or_default()
+    };
+    // Say when the sample list is SHORTER than the count. The daemon caps samples
+    // per class, so a reader comparing "7" against five printed lines would
+    // otherwise be left to guess whether two are missing or the count is wrong.
+    let print_samples = |key: &str, count: u64| {
+        let samples = samples_for(key);
+        for s in &samples {
+            println!("      - {s}");
+        }
+        if (samples.len() as u64) < count {
+            println!("      … and {} more (sample capped)", count - samples.len() as u64);
+        }
+    };
+
+    if total > 0 {
+        println!("drift detected (repaired automatically by the daemon's periodic audit):");
+        for (label, count_key, sample_key) in classes {
+            let count = n(count_key);
+            println!("  {:<42} {}", label, count);
+            if count > 0 {
+                print_samples(sample_key, count);
             }
         }
+    }
+
+    // Reported separately BECAUSE IT IS NOT REPAIRED. Both paths are real
+    // directories the user may be working in, and the graph cannot know which is
+    // canonical — so this asks rather than acts. Lumping it in above would have
+    // told the user it was already handled.
+    if advisory_total > 0 {
+        if total > 0 {
+            println!();
+        }
+        println!("needs your decision (NOT repaired automatically):");
+        for (label, key) in advisory {
+            let count = n(key);
+            if count == 0 {
+                continue;
+            }
+            println!("  {:<42} {}", label, count);
+            print_samples(key, count);
+        }
+        println!(
+            "\n  The same code is indexed once per path, so its symbols have twins and\n  \
+             counts over it are doubled. Remove the copy you no longer work in, then\n  \
+             re-scan its watch root. Not every case is a mistake: a nested checkout\n  \
+             can be deliberate (a vendored dependency, a docs repo kept inside its\n  \
+             product), which is why nothing here is removed for you."
+        );
     }
 }
 

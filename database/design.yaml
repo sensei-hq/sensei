@@ -51,6 +51,15 @@ scopes:
     # never a hand-rolled INSERT that would drift on the next reset+deploy.
     includes:
       - dojo
+      # Reason codes: the shared "why didn't this happen?" vocabulary. FOUR
+      # entries, not two — the staging pair is what actually seeds the DATA, and
+      # omitting it is how the metric catalogue shipped empty with a warning that
+      # "reads as routine". Same shape as sensei.scopes below.
+      - sensei.reason_kind
+      - sensei.reason_actor
+      - sensei.reason_codes
+      - staging.reason_codes
+      - staging.import_reason_codes
       - sensei.enforcement
       - sensei.namespace_visibility
       - sensei.rule_pack_area
@@ -112,11 +121,23 @@ scopes:
     # import_tenants writes to dojo.tenants, which does not exist here.
     excludes: [dojo, staging.tenants, staging.import_tenants]
     deps: include
+# Runs after the schema is applied, before imports. The realtime publication is
+# schema-adjacent config — which tables are eligible for Realtime — so it belongs
+# with `apply`, not tacked onto the end of the data load.
+apply:
+  # Runs BEFORE the first entity is written, which is the only place it can:
+  # twelve `sensei`/`activity` files grant to Supabase's roles, and a GRANT
+  # resolves its grantee at apply time, so on a Postgres that never hosted
+  # Supabase the first of them aborted the whole deploy. See the file — it is a
+  # no-op wherever the roles already exist.
+  before:
+    - apply/before/roles.sql
+  after:
+    - apply/after/realtime_publication.sql
+
 import:
   staging:
     - staging
-  after:
-    - import/after/realtime_publication.sql
   options:
     truncate: true
     null_value: ""

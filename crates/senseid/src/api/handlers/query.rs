@@ -161,7 +161,8 @@ pub(crate) async fn query_functions(
         let lexical = state.pg.search_functions_scoped(&ids, &term).await
             .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_functions: search_functions_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         let query_vec = embed_query(state, q).await;
-        fuse_semantic(state, query_vec.as_ref(), &ids, lexical, FUNCTION_KINDS, function_hit).await
+        fuse_semantic(state, query_vec.as_ref(), &ids, lexical, FUNCTION_KINDS, function_hit, &term)
+            .await
     } else {
         vec![]
     };
@@ -183,7 +184,7 @@ pub(crate) async fn query_types(
         let lexical = state.pg.search_types_scoped(&ids, &term).await
             .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "query_types: search_types_scoped failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
         let query_vec = embed_query(state, q).await;
-        fuse_semantic(state, query_vec.as_ref(), &ids, lexical, TYPE_KINDS, type_hit).await
+        fuse_semantic(state, query_vec.as_ref(), &ids, lexical, TYPE_KINDS, type_hit, &term).await
     } else {
         vec![]
     };
@@ -316,11 +317,25 @@ pub(crate) async fn query_general(
         // (fuse_semantic/embed_query stay fail-open — a missing embedding degrades
         // to the lexical order, which is additive, not error-masking.)
         let query_vec = embed_query(state, q).await;
-        let fns =
-            fuse_semantic(state, query_vec.as_ref(), &ids, fns_lex, FUNCTION_KINDS, function_hit)
-                .await;
+        let fns = fuse_semantic(
+            state,
+            query_vec.as_ref(),
+            &ids,
+            fns_lex,
+            FUNCTION_KINDS,
+            function_hit,
+            &term,
+        )
+        .await;
         let tys =
-            fuse_semantic(state, query_vec.as_ref(), &ids, tys_lex, TYPE_KINDS, type_hit).await;
+            fuse_semantic(state, query_vec.as_ref(), &ids, tys_lex, TYPE_KINDS, type_hit, &term)
+                .await;
+        // Promoted against `term`, not the raw `q`: `extract_search_term` is what
+        // reduces "where are orphan stubs collected" to the symbol-ish token, so
+        // it is the only form that can equal a symbol name. Applied after fusion
+        // so an exact hit outranks both arms rather than competing inside one.
+        let fns = promote_exact_name_match(&term, fns);
+        let tys = promote_exact_name_match(&term, tys);
         (fns, tys)
     } else {
         (vec![], vec![])
@@ -646,6 +661,22 @@ const TYPE_KINDS: &[&str] = &["class", "struct", "interface", "enum", "type"];
 /// Max semantic NN candidates fused per query — bounds the extra work so the
 /// common path doesn't get materially slower.
 const SEM_CANDIDATES: i64 = 25;
+/// Cosine-distance ceiling for a semantic candidate. Beyond this a neighbour is
+/// not a weak match, it is not a match.
+///
+/// An ANN query has no notion of "far enough to be irrelevant" — it returns its
+/// `LIMIT` nearest rows whatever the distance. Unbounded, a search for a symbol
+/// that does not exist came back with a full list of the closest unrelated
+/// symbols and no way to tell them from real hits: `search("retract_undefined_stubs")`,
+/// a function that exists nowhere in the corpus, returned ten confident results
+/// about *retry*.
+///
+/// Measured over all 108,420 embedded function nodes in the live corpus: the
+/// distance from a symbol to its genuine relatives runs 0.12–0.26, while the
+/// corpus p01 is 0.4865 and the median 0.8892. Related and unrelated are
+/// separated by a wide empty band, so a cutoff inside it keeps every real hit
+/// while admitting under 1% of the corpus as a candidate at all.
+const SEM_MAX_DISTANCE: f64 = 0.45;
 /// Upper bound on fused results returned (mirrors the lexical `LIMIT 50`).
 const HYBRID_MAX: usize = 50;
 /// Query-embed timeout. Semantic ranking is additive, so a slow embed backend
@@ -655,8 +686,64 @@ const EMBED_QUERY_TIMEOUT_SECS: u64 = 10;
 /// it damps low-ranked items so a hit near the top of either list dominates.
 const RRF_K: f64 = 60.0;
 
-/// Row shape returned by `PgStore::semantic_search_nodes`.
-type SemRow = (uuid::Uuid, String, String, Option<String>, Option<i32>);
+/// Row shape returned by `PgStore::semantic_search_nodes` — the trailing `f64`
+/// is the cosine distance from the query vector.
+type SemRow = (uuid::Uuid, String, String, Option<String>, Option<i32>, f64);
+
+/// Convert a cosine distance into the `relevance` a caller sees: 1.0 is an exact
+/// match, 0.0 is unrelated. Reported on every semantic hit because a rank alone
+/// cannot distinguish "this is the answer" from "this was the closest thing in a
+/// corpus that has no answer".
+fn relevance(distance: f64) -> f64 {
+    ((1.0 - distance).clamp(0.0, 1.0) * 1000.0).round() / 1000.0
+}
+
+/// Hold the lexical arm to the same distance bound as the semantic one, and give
+/// every hit a score.
+///
+/// The lexical arm is `ILIKE '%term%'` — a substring test with no notion of how
+/// good a hit is. Unscored, a coincidental collision entered the fused ranking
+/// with the same standing as the real answer: "what parses svelte script blocks"
+/// returned `assistant_text_blocks` twice and `barrier_unblocks_when_deps_complete`,
+/// all on the strength of `%blocks%`. Every searchable node carries an embedding,
+/// so the same bound that governs a semantic candidate can govern these too.
+///
+/// Two rules keep this from throwing away real answers:
+///
+/// - An **exact name match is never dropped** and scores 1.0. The caller named a
+///   symbol; if it exists, it is the answer, and no embedding distance may
+///   overrule that. (This is a statement about an exact match, not an invented
+///   number.)
+/// - A row with **no distance is kept and left unscored**. Dropping it would
+///   turn "cannot judge" into "irrelevant", and a lexical hit is real evidence
+///   the term occurs in that name. Reporting a made-up score would be worse.
+fn score_and_filter_lexical(
+    term: &str,
+    lexical: Vec<serde_json::Value>,
+    distances: &std::collections::HashMap<String, f64>,
+    max_distance: f64,
+) -> Vec<serde_json::Value> {
+    lexical
+        .into_iter()
+        .filter_map(|mut item| {
+            let exact = item["name"]
+                .as_str()
+                .is_some_and(|n| !term.is_empty() && n.eq_ignore_ascii_case(term));
+            if exact {
+                item["relevance"] = serde_json::json!(1.0);
+                return Some(item);
+            }
+            let Some(d) = item["id"].as_str().and_then(|id| distances.get(id)).copied() else {
+                return Some(item);
+            };
+            if d > max_distance {
+                return None;
+            }
+            item["relevance"] = serde_json::json!(relevance(d));
+            Some(item)
+        })
+        .collect()
+}
 
 /// A single ranked search hit: a de-duplication key (`id`) plus the JSON item
 /// returned to the caller unchanged.
@@ -669,13 +756,13 @@ pub(crate) struct Hit {
 /// Project a semantic row into a function hit — identical shape to
 /// `PgStore::search_functions_scoped` so fused results stay homogeneous.
 fn function_hit(r: SemRow) -> serde_json::Value {
-    serde_json::json!({ "id": r.0, "name": r.1, "file_path": r.2, "signature": r.3, "line_start": r.4 })
+    serde_json::json!({ "id": r.0, "name": r.1, "file_path": r.2, "signature": r.3, "line_start": r.4, "relevance": relevance(r.5) })
 }
 
 /// Project a semantic row into a type hit — identical shape to
 /// `PgStore::search_types_scoped` (no `signature`).
 fn type_hit(r: SemRow) -> serde_json::Value {
-    serde_json::json!({ "id": r.0, "name": r.1, "file_path": r.2, "line_start": r.4 })
+    serde_json::json!({ "id": r.0, "name": r.1, "file_path": r.2, "line_start": r.4, "relevance": relevance(r.5) })
 }
 
 /// Fuse a lexical (keyword) and a semantic (embedding NN) ranked list with
@@ -779,11 +866,36 @@ async fn fuse_semantic(
     lexical: Vec<serde_json::Value>,
     kinds: &[&str],
     projector: fn(SemRow) -> serde_json::Value,
+    term: &str,
 ) -> Vec<serde_json::Value> {
     let Some(query_vec) = query_vec else {
         return lexical;
     };
-    let sem_rows = match state.pg.semantic_search_nodes(ids, query_vec, kinds, SEM_CANDIDATES).await
+    // Hold the lexical arm to the same bound as the semantic one. Without this
+    // an `ILIKE '%blocks%'` collision entered the fused ranking unscored and
+    // indistinguishable from the real answer. Fail-open on a scoring error:
+    // an empty distance map leaves every lexical hit kept and unscored, which
+    // is the pre-existing behaviour, never a silent drop.
+    let lex_ids: Vec<uuid::Uuid> = lexical
+        .iter()
+        .filter_map(|h| h["id"].as_str().and_then(|s| s.parse::<uuid::Uuid>().ok()))
+        .collect();
+    let distances: std::collections::HashMap<String, f64> = match state
+        .pg
+        .embedding_distances(&lex_ids, query_vec)
+        .await
+    {
+        Ok(rows) => rows.into_iter().map(|(id, d)| (id.to_string(), d)).collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "fuse_semantic: embedding_distances failed — lexical hits left unscored");
+            std::collections::HashMap::new()
+        }
+    };
+    let lexical = score_and_filter_lexical(term, lexical, &distances, SEM_MAX_DISTANCE);
+    let sem_rows = match state
+        .pg
+        .semantic_search_nodes(ids, query_vec, kinds, SEM_CANDIDATES, SEM_MAX_DISTANCE)
+        .await
     {
         Ok(rows) => rows,
         Err(e) => {
@@ -799,6 +911,27 @@ async fn fuse_semantic(
         fuse_rankings(&to_hits(lexical), &to_hits(semantic)).into_iter().map(|h| h.item).collect();
     fused.truncate(HYBRID_MAX);
     fused
+}
+
+/// Move EXACT name matches to the front of a fused result list.
+///
+/// RRF fuses a lexical ranking with a semantic one, and neither knows that an
+/// exact symbol-name hit is categorically better than a prefix hit or a concept
+/// neighbour. Measured live before this: `search("prune_orphan_stubs")` put the
+/// definition at position 2 behind a test whose name merely starts with it, and
+/// the natural-language form put it at 4 — so the one result the caller asked
+/// for by name was never the first thing they read.
+///
+/// A stable partition, not a re-scoring: exact matches keep their relative order
+/// and so does everything else, which leaves the hybrid ranking in charge of
+/// every case where the caller did NOT name a symbol outright. With no exact
+/// match the list is returned untouched rather than nudged toward the nearest
+/// spelling — a near-miss is not a hit and must not be promoted like one.
+fn promote_exact_name_match(term: &str, items: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    let (exact, rest): (Vec<_>, Vec<_>) = items
+        .into_iter()
+        .partition(|it| it["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(term)));
+    exact.into_iter().chain(rest).collect()
 }
 
 /// Extract the most meaningful search term from a natural language query.
@@ -864,6 +997,112 @@ pub(crate) fn extract_search_term(q: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The lexical arm is a bare `ILIKE '%term%'`: it carries no notion of how
+    /// good a hit is, so every substring collision entered the fused list with
+    /// the same standing as a real match and no score to expose it. Measured
+    /// live: "what parses svelte script blocks" returned 18 results in which
+    /// `assistant_text_blocks` (twice) and `barrier_unblocks_when_deps_complete`
+    /// rode in purely on `%blocks%`.
+    ///
+    /// Every searchable node has an embedding (100% coverage over all 132,142
+    /// function/method/class/struct/interface/enum/type rows), so a lexical hit
+    /// can be held to the same distance bound as a semantic one — with one
+    /// exemption that must never be dropped.
+    #[test]
+    fn a_substring_collision_is_dropped_but_an_exact_name_match_is_never() {
+        let hit = |id: &str, name: &str| serde_json::json!({ "id": id, "name": name, "file_path": "src/x.rs" });
+        let lexical = vec![
+            hit("1", "extract_script_blocks"), // the real answer
+            hit("2", "assistant_text_blocks"), // rode in on `%blocks%`
+            hit("3", "parse_blocks_from_sfc"), // substring, genuinely close
+        ];
+        let distances: std::collections::HashMap<String, f64> =
+            [("1".into(), 0.88), ("2".into(), 0.71), ("3".into(), 0.22)].into_iter().collect();
+
+        let kept = score_and_filter_lexical("extract_script_blocks", lexical, &distances, 0.45);
+        let names: Vec<&str> = kept.iter().filter_map(|h| h["name"].as_str()).collect();
+
+        assert_eq!(
+            names,
+            vec!["extract_script_blocks", "parse_blocks_from_sfc"],
+            "the substring collision is dropped; the close hit survives"
+        );
+        assert_eq!(
+            kept[0]["relevance"].as_f64(),
+            Some(1.0),
+            "an EXACT name match is what the caller asked for by name — it is kept and scored 1.0 \
+             even at distance 0.88, because an embedding must never overrule an exact match"
+        );
+        assert_eq!(
+            kept[1]["relevance"].as_f64(),
+            Some(0.78),
+            "a surviving substring hit reports its real distance-derived score, not a placeholder"
+        );
+    }
+
+    /// Fail-open: with no distance for a row we cannot judge it, and silently
+    /// dropping it would turn "unknown" into "irrelevant" — a lexical hit is
+    /// real evidence the term occurs in that name.
+    #[test]
+    fn an_unscoreable_lexical_hit_is_kept_rather_than_judged() {
+        let lexical = vec![serde_json::json!({ "id": "9", "name": "some_fn" })];
+        let kept =
+            score_and_filter_lexical("other", lexical, &std::collections::HashMap::new(), 0.45);
+        assert_eq!(kept.len(), 1, "no distance available — keep it");
+        assert!(
+            kept[0].get("relevance").is_none_or(|v| v.is_null()),
+            "and report NO score rather than inventing one"
+        );
+    }
+
+    /// Searching a symbol's EXACT name must return its definition first. RRF
+    /// fuses a lexical ranking with a semantic one and neither knows that an
+    /// exact name hit is categorically better than a prefix or a concept
+    /// neighbour: live, `search("prune_orphan_stubs")` returned the definition
+    /// at position 2, behind a TEST whose name merely starts with it, and
+    /// position 4 for the natural-language form.
+    ///
+    /// Promotion is stable — it moves exact matches to the front and disturbs
+    /// nothing else, so the fused ordering still decides the rest.
+    #[test]
+    fn exact_name_match_is_promoted_above_prefix_and_concept_hits() {
+        let hit = |name: &str| serde_json::json!({ "name": name, "file_path": "src/x.rs" });
+        let fused = vec![
+            hit("prune_orphan_stubs_collects_unreferenced_stubs_only"),
+            hit("prune_orphan_stubs"),
+            hit("prune_orphan_stubs_removes_communities_it_emptied"),
+            hit("unrelated_symbol"),
+        ];
+
+        let ranked = promote_exact_name_match("prune_orphan_stubs", fused);
+        assert_eq!(ranked[0]["name"], "prune_orphan_stubs", "the definition ranks first");
+        // Everything else keeps its relative order.
+        assert_eq!(ranked[1]["name"], "prune_orphan_stubs_collects_unreferenced_stubs_only");
+        assert_eq!(ranked[2]["name"], "prune_orphan_stubs_removes_communities_it_emptied");
+        assert_eq!(ranked[3]["name"], "unrelated_symbol");
+
+        // Case-insensitive, because a query rarely matches a symbol's casing.
+        let ranked = promote_exact_name_match(
+            "HandleAuth",
+            vec![hit("handleAuthRequest"), hit("handleAuth")],
+        );
+        assert_eq!(ranked[0]["name"], "handleAuth");
+
+        // No exact match: the fused order is returned untouched, NOT reordered
+        // toward whatever happens to be closest.
+        let ranked = promote_exact_name_match("nothingMatches", vec![hit("alpha"), hit("beta")]);
+        assert_eq!(ranked[0]["name"], "alpha");
+        assert_eq!(ranked[1]["name"], "beta");
+
+        // Several definitions of one name across a monorepo: all promoted, and
+        // their relative order preserved.
+        let ranked =
+            promote_exact_name_match("dup", vec![hit("dup_helper"), hit("dup"), hit("dup")]);
+        assert_eq!(ranked[0]["name"], "dup");
+        assert_eq!(ranked[1]["name"], "dup");
+        assert_eq!(ranked[2]["name"], "dup_helper");
+    }
 
     #[test]
     fn extract_snippet_clamps_range_and_caps() {

@@ -4,12 +4,14 @@ create table if not exists dojo.tenants (
   id            uuid              primary key default gen_random_uuid()
 , key           text              not null
 , origin        dojo.tenant_origin not null
-, org           text              not null
+, slug          text              not null
 , dojo          text
 , scope         dojo.tenant_scope  not null default 'private'
 , name          text              not null
 , dojo_url      text              not null
 , self_hosted   boolean           not null default false
+, claimed_at    timestamptz
+, claimed_by    uuid              references dojo.principals(id) on delete set null
 , settings      jsonb             not null default '{}'
 , created_at    timestamptz       not null default now()
 , updated_at    timestamptz       not null default now()
@@ -24,11 +26,16 @@ the discovery path <origin>/<org>/<dojo?>. The special global-dojo collective is
 just a row here at scope=global (there is no separate "Collective" concept).';
 
 comment on column dojo.tenants.key
-     is 'Canonical discovery path, the unique key: "<origin>/<org>[/<dojo>]" (e.g. "github/sensei-hq", "org/global-dojo").';
+     is 'Canonical discovery path, the unique key: "<origin>/<org>[/<dojo>]" (e.g. "organization/sensei-hq", "personal/dev") — the live shape; "github/…" and "org/…" are the retired pre-47a726fb origins.';
 comment on column dojo.tenants.origin
-     is 'github (backed by a GitHub org identity) or org (custom-registered name).';
-comment on column dojo.tenants.org
-     is 'The GitHub org id (e.g. sensei-hq) or the custom org name.';
+     is 'personal (an individual''s own dōjō) or organization (a shared/org dōjō). The FORGE lives on dojo.tenant_connections, not here — an earlier version of this comment said "github or org" — the enum''s ORIGINAL values, retired in 47a726fb when forge identity moved to dojo.tenant_connections.';
+comment on column dojo.tenants.slug
+     is 'The tenant''s OWN slug — the second segment of its discovery path
+`<origin>/<slug>`. Tenant-owned and forge-independent: the forge''s name for an
+org lives on dojo.tenant_connections.external_slug, and one tenant may connect
+to forges that spell it differently (github "sensei-hq", azure "senseihq").
+Was `org`, which named a GitHub org and stopped being right once a tenant could
+hold several connections.';
 comment on column dojo.tenants.dojo
      is 'Optional sub-path when an org runs multiple Dōjōs (e.g. one per client engagement). Null for the org-level Dōjō.';
 comment on column dojo.tenants.scope
@@ -52,3 +59,7 @@ drop policy if exists tenants_service_only on dojo.tenants;
 create policy tenants_service_only on dojo.tenants
     for all to authenticated, anon
     using (false) with check (false);
+comment on column tenants.claimed_at
+     is 'CLAIM (§II.4). An org tenant is created by whoever signs in first, who may be a plain member — so existence proves nothing about ownership. `claimed_at` is set only once someone whose FORGE role is owner/admin has signed in, and an unclaimed tenant may not hold a subscription and therefore can never sync private data.
+
+NULLABLE and NULL by default on purpose: every tenant that predates this column is unclaimed, which is the truthful answer rather than a flattering one. The forge role is re-read at every sign-in, so the claim is re-verified rather than trusted once.';

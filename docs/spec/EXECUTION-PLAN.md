@@ -57,7 +57,7 @@ five-section contract.
 
 **Why first:**
 - The user's landing surface — highest-visibility.
-- Depends on FTR ([[pipeline/ftr]] ✅ live) + insights ([[pipeline/insights]] partial) + insight-copy ([[pipeline/insight-copy]] deferred: static fallback OK for now) + memory ([[pipeline/memory]] adopted lane).
+- Depends on FTR ([[pipeline/ftr]] ✅ live) + insights ([[pipeline/insights]] partial) + narration-cache ([[pipeline/narration-cache]] deferred: static fallback OK for now) + memory ([[pipeline/memory]] adopted lane).
 - Data plumbing mostly exists; the win is UI + wire-up.
 
 **Data-invariants prep needed:**

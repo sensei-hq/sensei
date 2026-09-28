@@ -1402,9 +1402,14 @@ export interface ShareReviewItem {
   type: DojoUpgradeType | string;
   title: string;
   body: string;
+  /** The synthetic example shipping alongside `body` — invented to illustrate
+   *  the rule, never taken from the raw memory. Absent when the generalisation
+   *  produced none, and always absent on a `held` item. */
+  example?: string;
   attribution: DojoUpgradeAttribution;
   will_dereference: boolean;
-  /** `queued` (ships next batch) or `held` (residual risk — won't ship). */
+  /** `queued` (ships next batch) or `held` (won't ship — residual risk, or
+   *  nothing generalised for this memory yet). */
   state: 'queued' | 'held' | string;
 }
 
@@ -1545,16 +1550,174 @@ export interface LogRow {
 /** One background worker from `GET /api/tasks/scheduled` (#96). Health fields
  *  (last_ok/last_error/next_run_at/interval_secs/avg_ms) are null until the
  *  daemon records run outcomes — render them as "—", not "healthy". */
+/** One row of `GET /api/tasks/scheduled`, which reads `sensei.schedules`.
+ *
+ *  `enabled`, `window` and `days` are the three fields
+ *  `PATCH /api/tasks/scheduled/{name}` can set. Before schedules became data the
+ *  wire carried only a cadence, so a row could say how OFTEN a worker ran but
+ *  not WHEN, or whether it was going to run at all. */
 export interface ScheduledTask {
   name: string;
   description: string;
+  /** False = never run on a schedule. On-demand paths are unaffected:
+   *  disabling a SCHEDULE does not disable a CAPABILITY. */
+  enabled: boolean;
+  interval_secs: number | null;
+  /** The allowed time-of-day window as the daemon labelled it (`22:00-05:00`),
+   *  or null for any time. A window whose start is after its end wraps
+   *  midnight — the daemon formats it, so this end never re-derives it. */
+  window: string | null;
+  /** ISO weekdays the worker may run on (1 = Mon … 7 = Sun). Null or empty
+   *  means EVERY day — never "never". */
+  days: number[] | null;
   /** RFC-3339, or null when the worker persists no last-run watermark. */
   last_run_at: string | null;
   last_ok: boolean | null;
   last_error: string | null;
-  next_run_at: string | null;
-  interval_secs: number | null;
-  avg_ms: number | null;
+  /** Optional because the daemon does not send them. Both were hardcoded null
+   *  by the old static handler and are absent from the schedules-backed one;
+   *  `next_run_at` is derivable from `last_run_at + interval_secs` and `avg_ms`
+   *  has no source at all yet. Kept typed rather than deleted so the columns
+   *  that render them stay compilable, and optional rather than `| null` so
+   *  nothing reads them as a value the wire promises. */
+  next_run_at?: string | null;
+  avg_ms?: number | null;
+}
+
+// ─── Metric computation status (sensei.metric_status) ────────────────────────
+
+/** One `sensei.reason_codes` entry, as served with either metric-status read.
+ *
+ *  `kind` is the axis that lets the UI tell fine from broken WITHOUT a rule of
+ *  its own: `normal` clears itself (plain text), `refusal` is somebody's
+ *  decision (show the remedy), `fault` needs attention. A `normal` code carries
+ *  no `remedy` and no `actor` — the DDL enforces it — so `remedy === null` is
+ *  never a gap to fill in with a guess.
+ *
+ *  `precedence` orders codes WITHIN this domain, lower = fix first. The client
+ *  ranks with it rather than hardcoding an order, because the registry owns it. */
+export interface MetricReason {
+  code: string;
+  kind: 'normal' | 'refusal' | 'fault';
+  precedence: number;
+  summary: string;
+  detail: string;
+  remedy: string | null;
+  actor: string | null;
+}
+
+/** One (repository × metric) row of `GET /api/metrics/status?repo=`.
+ *
+ *  `sealed_through` / `watermark_updated_at` are null for a metric whose group
+ *  has never run — an honest gap (`reason_code` says `never_computed`), never a
+ *  fabricated date. `last_sha` is null everywhere today: the commit cadence the
+ *  watermark table documents is unimplemented, which is why `cadence` is read
+ *  off the column rather than a group name. */
+export interface MetricStatusRow {
+  repository_id: string;
+  /** Null for a local-only repository — see MetricStatusResponse.repo_key. */
+  repo_key: string | null;
+  repository_name: string;
+  metric: string;
+  metric_group: string;
+  /** `snapshot` = the group keeps no cursor: it computes current state only.
+   *  Read off the DATA (which cursor columns are set), never a group list. */
+  cadence: 'day' | 'commit' | 'snapshot';
+  sealed_through: string | null;
+  last_sha: string | null;
+  watermark_updated_at: string | null;
+  effective_from: string;
+  effective_until: string | null;
+  /** True = every consuming dōjō switched this metric off for this repository.
+   *  The daemon MIRRORS the ruling; the write goes to the dōjō that owns it. */
+  deactivated: boolean;
+  deactivated_observed_at: string | null;
+  /** A key into `MetricStatusResponse.reasons`. Never rendered raw. */
+  reason_code: string;
+  /** The last day this pair actually produced a value, independent of any cursor.
+   *  The evidence that separates "never ran" from "runs, but keeps no cursor" —
+   *  keying that on the watermark alone described 12 working pairs as never-run. */
+  last_computed_on: string | null;
+}
+
+/** `GET /api/metrics/status?repo=<repo_key|uuid>` — one repository's metrics.
+ *
+ *  `repo_key` is null for a local-only repository (no remote, so no key). That
+ *  is not missing data: it is the reason no dōjō can rule on its metrics, so the
+ *  activation toggle does not apply. `repository_id` always addresses it. */
+export interface MetricStatusResponse {
+  repository_id: string;
+  repo_key: string | null;
+  name: string | null;
+  metrics: MetricStatusRow[];
+  reasons: Record<string, MetricReason>;
+  count: number;
+}
+
+/** One repository in `GET /api/metrics/status/summary`. `by_reason` is a
+ *  code → count map; `total` is the sum, which equals the registry size. */
+export interface MetricStatusSummaryRow {
+  repository_id: string;
+  repo_key: string | null;
+  name: string;
+  by_reason: Record<string, number>;
+  total: number;
+}
+
+/** `GET /api/metrics/status/summary` — the whole estate, aggregated. Bounded by
+ *  repository count, unlike the per-metric read (`repositories × metrics`). */
+export interface MetricStatusSummary {
+  count: number;
+  repositories: MetricStatusSummaryRow[];
+  reasons: Record<string, MetricReason>;
+}
+
+/** What `PATCH /api/dojo/metric-activation` reports back — the tenant's ruling
+ *  as the dōjō re-read it, never an echo of the request.
+ *
+ *  `enabled: true` means NO stored row, which IS the default: the dōjō deletes
+ *  rather than storing `true`, so a metric catalogued later is on everywhere
+ *  without anyone touching a row. */
+export interface MetricActivationOutcome {
+  repoKey: string;
+  metric: string;
+  enabled: boolean;
+  tenant: string;
+}
+
+// ─── Dōjō sync state (sensei.sync_state) ─────────────────────────────────────
+
+/** One row of `GET /api/dojo/sync-state` — what has been agreed with the dōjō.
+ *
+ *  Both timestamps travel and answer different questions: `synced_at` is when the
+ *  two sides last AGREED, `attempted_at` is when it was last TRIED. A failed row
+ *  KEEPS its `synced_at` (the writer does not clear it), which is what separates
+ *  "broken since Tuesday" from "never synced".
+ *
+ *  `state` is a four-value vocabulary, not a boolean, because `skipped` is
+ *  deliberate (a private repository) and `error` is a fault. Collapsing them
+ *  would either cry wolf about every private repo or hide real failures. */
+export interface SyncStateRow {
+  entity: string;
+  entity_key: string;
+  direction: 'push' | 'pull';
+  state: 'pending' | 'synced' | 'error' | 'skipped';
+  /** The failure message, or on a `skipped` row the REASON — which is not a
+   *  fault. Null on `synced`: the writer clears it, because a stale message
+   *  beside a success reads as "it failed". */
+  last_error: string | null;
+  attempted_at: string | null;
+  synced_at: string | null;
+  updated_at: string;
+}
+
+/** `GET /api/dojo/sync-state`. Rows arrive worst-first (error, pending, skipped,
+ *  synced) so a caller rendering the head of the list sees what needs attention
+ *  without re-ranking. `counts` is the by-state tally for a summary line. */
+export interface SyncStateResponse {
+  count: number;
+  counts: Record<string, number>;
+  entities: SyncStateRow[];
 }
 
 // ─── On-demand local-model provisioning ──────────────────────────────────────

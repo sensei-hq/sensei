@@ -37,7 +37,7 @@ Ordered by frequency of visit:
 5. **Instruments** — MCP surface tuning; per-tool
    enable/disable; third-party MCP config visibility.
 6. **Inference** — gateway defaults; per-chain model selection
-   (embedded gemma4 vs remote); insight-copy on/off with
+   (embedded gemma4 vs remote); narration-cache on/off with
    fallback templates.
 7. **Assignments** — which project → which assistant family
    binding; per-project default persona.

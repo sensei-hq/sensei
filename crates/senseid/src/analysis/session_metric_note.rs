@@ -11,12 +11,12 @@
 //! the prose sentence routes through the model.
 //!
 //! Wire-path producer (mirrors [`metric_narrative`](super::metric_narrative)): the
-//! handler routes each session's facts through [`insight_copy::copy_or_warm`] — a
+//! handler routes each session's facts through [`narration_cache::copy_or_warm`] — a
 //! cache read on the wire that returns the deterministic row-derived fallback
 //! immediately on a miss while warming the model copy off-wire for the next load.
 //! This is INTENDED, not a bug: the first drill-down for a (session, metric) shows
 //! the deterministic line; the next shows the model copy. Inference never blocks
-//! the wire (see [`insight_copy`]).
+//! the wire (see [`narration_cache`]).
 //!
 //! Never fabricates: the fallback is built entirely from the row's own fields, so
 //! a cache miss always shows an honest, row-derived line — never a blank and never
@@ -24,7 +24,7 @@
 
 use serde_json::json;
 
-use super::insight_copy::{self, CopyLimits, FallbackCopy, InsightCopy, InsightKind};
+use super::narration_cache::{self, CopyLimits, FallbackCopy, InsightCopy, InsightKind};
 use crate::db::pg_store::PgStore;
 
 /// The deterministic per-(session, metric) facts one observation is built from.
@@ -84,7 +84,7 @@ impl SessionMetricFacts {
         }
     }
 
-    /// Stable JSON fed to the insight-copy chain (and hashed for the copy cache).
+    /// Stable JSON fed to the narration-cache chain (and hashed for the copy cache).
     /// Carries the metric key + its meaning and the session's own signals; the
     /// display-only `metric_label` is deliberately EXCLUDED so a pure rename of a
     /// metric's label never orphans cached copy. Key order is irrelevant —
@@ -141,7 +141,7 @@ impl SessionMetricFacts {
 }
 
 /// Produce the drill-down observation for one session against one metric.
-/// Wire-path: [`insight_copy::copy_or_warm`] returns the cached model copy on a
+/// Wire-path: [`narration_cache::copy_or_warm`] returns the cached model copy on a
 /// hit, or the deterministic row-derived [`SessionMetricFacts::fallback`]
 /// immediately on a miss (warming the model copy off-wire). Never blocks the
 /// wire, never errors, never fabricates.
@@ -150,7 +150,7 @@ pub async fn session_metric_observation(
     gateway: &std::sync::Arc<gateway::Gateway>,
     facts: &SessionMetricFacts,
 ) -> InsightCopy {
-    insight_copy::copy_or_warm(
+    narration_cache::copy_or_warm(
         store,
         gateway,
         InsightKind::SessionMetricObservation,
@@ -227,8 +227,8 @@ mod tests {
         let b =
             SessionMetricFacts::from_session_row(&base, "duplication", "Dup", "m1").to_facts_json();
         assert_ne!(
-            insight_copy::facts_hash(InsightKind::SessionMetricObservation, &a),
-            insight_copy::facts_hash(InsightKind::SessionMetricObservation, &b),
+            narration_cache::facts_hash(InsightKind::SessionMetricObservation, &a),
+            narration_cache::facts_hash(InsightKind::SessionMetricObservation, &b),
             "different metric key → different cache key for the same session",
         );
     }

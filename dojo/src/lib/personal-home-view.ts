@@ -26,7 +26,7 @@ export interface SoloIdentity {
 }
 
 /** First+last initial of a display name. For an email, derive from the local
- *  part (before @) so `dev.thomas@…` → "JT", not "JC" (dev…com). Mirrors the
+ *  part (before @) so `dev.user@…` → "DU", not "DC" (dev…com). Mirrors the
  *  server-side `initials` helper. */
 function deriveInitials(nameOrEmail: string): string {
 	const base = nameOrEmail.includes('@') ? nameOrEmail.split('@')[0] : nameOrEmail;

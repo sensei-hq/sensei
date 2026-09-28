@@ -32,7 +32,6 @@ pub fn process(
         rel_path.rsplit_once('.').map(|(n, _)| n).unwrap_or(rel_path).replace('\\', "/");
 
     let mut symbols = Vec::new();
-    let mut parent_refs = Vec::new();
 
     for sym in &parsed.symbols {
         let node_kind = NodeKind::from_symbol_kind(&sym.kind);
@@ -64,10 +63,6 @@ pub fn process(
             complexity,
             parent: sym.parent.clone(),
         });
-
-        if let Some(ref parent_name) = sym.parent {
-            parent_refs.push(ParentRef { method_id: sym_id, parent_name: parent_name.clone() });
-        }
     }
 
     let unresolved_imports: Vec<String> =
@@ -85,12 +80,15 @@ pub fn process(
 
     let ir = Some(adapter.parse_to_ir(content, rel_path));
 
-    // Phase 3+: FQN production, dispatched per language via the adapter. A migrated
-    // adapter derives this file's (package, module) context from its own
-    // manifest/layout rules and produces canonical FQNs so process_file can emit
-    // resolved node→node edges; an un-migrated language returns None and stays on the
-    // bare-name path.
-    let fqn = adapter.fqn_output(abs_path, content);
+    // FQN production, dispatched per language via the adapter: each derives this
+    // file's (package, module) context from its own manifest/layout rules and
+    // produces canonical FQNs so process_file can emit resolved node→node edges.
+    //
+    // EVERY adapter now implements this — there is no bare-name fallback left, and
+    // `languages::tests::every_adapter_supports_fqn_with_no_exceptions` is what
+    // keeps it that way. A `None` here means a genuine parse failure, not an
+    // unmigrated language.
+    let fqn = adapter.fqn_output(abs_path, rel_path, content);
 
     Some(FileProcessResult {
         file_id,
@@ -105,7 +103,6 @@ pub fn process(
         symbols,
         unresolved_imports,
         unresolved_calls,
-        parent_refs,
         file_refs: vec![],
         fn_mentions: vec![],
         sections: vec![],
@@ -124,10 +121,6 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap().to_path_buf()
     }
 
-    fn fixtures() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
-    }
-
     fn process_code_file(rel: &str) -> FileProcessResult {
         let root = workspace_root();
         let abs = root.join(rel);
@@ -137,18 +130,9 @@ mod tests {
         process(&abs.to_string_lossy(), rel, ext, &content, "sensei").expect("should process")
     }
 
-    fn process_fixture(rel: &str) -> FileProcessResult {
-        let root = fixtures();
-        let abs = root.join(rel);
-        let content = std::fs::read_to_string(&abs)
-            .unwrap_or_else(|_| panic!("Fixture not found: {}", abs.display()));
-        let ext = abs.extension().and_then(|e| e.to_str()).unwrap_or("");
-        process(&abs.to_string_lossy(), rel, ext, &content, "test").expect("should process")
-    }
-
     #[test]
     fn rust_svelte_adapter() {
-        let r = process_code_file("crates/senseid/src/languages/svelte.rs");
+        let r = process_code_file("crates/senseid/src/indexer/lang/svelte.rs");
         assert_eq!(r.language.as_deref(), Some("rust"));
         assert_eq!(r.tags, "src");
 
@@ -164,44 +148,10 @@ mod tests {
         // Should have imports (use statements)
         assert!(!r.unresolved_imports.is_empty(), "should have imports");
     }
-
-    #[test]
-    fn svelte_component_step_header() {
-        let r = process_fixture("code/StepHeader.svelte");
-        assert_eq!(r.language.as_deref(), Some("svelte"));
-
-        let components: Vec<_> = r.symbols.iter().filter(|s| s.kind == "component").collect();
-        assert_eq!(components.len(), 1, "should find exactly 1 component");
-        assert_eq!(components[0].name, "StepHeader");
-    }
-
-    #[test]
-    fn svelte_ts_appstate() {
-        let r = process_fixture("code/appstate.svelte.ts");
-        assert!(
-            r.language.as_deref() == Some("typescript")
-                || r.language.as_deref() == Some("javascript")
-        );
-
-        let fns: Vec<_> = r.symbols.iter().filter(|s| s.kind == "function").collect();
-        assert!(!fns.is_empty(), "should find functions");
-        let names: Vec<&str> = fns.iter().map(|f| f.name.as_str()).collect();
-        assert!(names.contains(&"resetState"), "should find resetState, got {:?}", names);
-    }
-
-    #[test]
-    fn page_svelte_route() {
-        let r = process_fixture("code/+page.svelte");
-        assert_eq!(r.language.as_deref(), Some("svelte"));
-
-        let components: Vec<_> = r.symbols.iter().filter(|s| s.kind == "component").collect();
-        assert_eq!(components.len(), 1);
-    }
-
     #[test]
     fn rust_file_with_tests_and_src() {
         // Rust files contain both src and test code in the same file
-        let r = process_code_file("crates/senseid/src/languages/svelte.rs");
+        let r = process_code_file("crates/senseid/src/indexer/lang/svelte.rs");
 
         // Should have both regular functions AND test functions
         let all_fns: Vec<&str> = r
@@ -218,7 +168,7 @@ mod tests {
 
     #[test]
     fn rust_methods_have_parent() {
-        let r = process_code_file("crates/senseid/src/languages/svelte.rs");
+        let r = process_code_file("crates/senseid/src/indexer/lang/svelte.rs");
 
         // Methods should have parent refs (from impl blocks)
         let methods_with_parent: Vec<_> =
@@ -233,30 +183,47 @@ mod tests {
             );
         }
 
-        // parent_refs should match
-        assert_eq!(r.parent_refs.len(), methods_with_parent.len());
+        // The parser fact this used to check via the dead `parent_refs` mirror:
+        // every method-like symbol with an enclosing type names it. Containment
+        // is persisted from `parent` (via parent_fqn -> nodes.parent_id), so
+        // that is the field worth asserting.
+        assert!(
+            methods_with_parent.iter().all(|m| m.parent.as_deref().is_some_and(|p| !p.is_empty())),
+            "a method with a parent must name it"
+        );
     }
 
+    /// **THIS REGISTRY NO LONGER ANSWERS FOR `.c`.**
+    ///
+    /// `c_file_with_adapter` stood here and called `process` on a `.c` file
+    /// directly. C cut over to `crate::indexer::lang::c`, `languages/c_lang.rs`
+    /// was deleted with it, and what is left is a `DetectionOnly` entry whose
+    /// `parse` is `unreachable!()` — so the test asserted against a panic.
+    ///
+    /// It is GONE rather than adapted, because the property it pinned ("the
+    /// adapter skips a file over 500K chars") belonged to a line-based scanner
+    /// that no longer exists. `process_file` routes a production language to v2
+    /// before this path is reached, and `no_adapter_claims_a_cpp_extension` in
+    /// `crate::languages` pins the routing that keeps it unreachable.
+    /// RUST IS THE ONE EXCEPTION, and it is a stated one rather than a gap:
+    /// `languages/mod.rs` still registers `rust_lang::RustAdapter` as a
+    /// parsing adapter because this registry also answers "what language is
+    /// this?", and removing the entry made `.rs` stop being recognised as
+    /// source at all. Its parse half has no caller; splitting detection from
+    /// parsing is what would let it go, and until then it is unreachable
+    /// rather than absent.
     #[test]
-    fn c_file_with_adapter() {
-        let root = workspace_root();
-        let abs = root.join("crates/senseid/grammars/kotlin/src/parser.c");
-        if !abs.exists() {
-            return;
+    fn a_cut_over_language_never_reaches_this_registrys_parser() {
+        for ext in
+            [".c", ".h", ".ts", ".tsx", ".js", ".svelte", ".vue", ".java", ".py", ".cs", ".php"]
+        {
+            let Some(adapter) = crate::languages::adapter_for_ext(ext) else {
+                panic!("{ext} must still RESOLVE here — this registry names the language")
+            };
+            assert!(
+                !adapter.parses(),
+                "{ext} is produced by crate::indexer::lang, so v1 must not parse it"
+            );
         }
-        let content = std::fs::read_to_string(&abs).unwrap();
-        let result = process(
-            &abs.to_string_lossy(),
-            "crates/senseid/grammars/kotlin/src/parser.c",
-            "c",
-            &content,
-            "sensei",
-        );
-        // Large generated file — C adapter skips files > 500K chars
-        assert!(result.is_some(), "C adapter should handle .c files");
-        let r = result.unwrap();
-        assert_eq!(r.language.as_deref(), Some("c"));
-        // parser.c is 678K lines — should be skipped by size threshold
-        assert!(r.symbols.is_empty(), "generated parser.c should have no symbols (too large)");
     }
 }

@@ -69,7 +69,9 @@ DB. For iterating on DDL without publishing a release tag, set
 - TDD — always use zero-errors-policy before starting work
 - Commit and push when a logical chunk is complete
 - Work in `develop` branch; merge to `main` when a feature is complete
-- `homebrew/` and `marketplace/` are git subtrees — edit in-repo, sync with `make tap-push` / `make marketplace-push`
+- `homebrew/` and `marketplace/` are edited in-repo and mirrored to their own GitHub repos (not git subtrees despite the name — each target clones and copies)
+  - `marketplace/` → `make marketplace-push`, run by `make bump`
+  - `homebrew/` holds **templates** with `REPLACE_WITH_*_SHA256`, since a checksum needs the release assets. `release.yml`'s `update-tap` is the SOLE writer of the tap's formula and cask: it renders these templates via `scripts/render-homebrew-tap.py`. `make bump` does NOT push the tap, and `make tap-push` refuses while a placeholder remains — pushing an unrendered template is what left `brew install` broken for ~8 releases
 
 ## Hard rules — never break without explicit user approval
 

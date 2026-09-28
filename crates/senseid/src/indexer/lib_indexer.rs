@@ -88,7 +88,7 @@ pub(crate) fn cargo_local_source(dep_value: &toml::Value) -> Option<String> {
 /// Emits one `DepVersion` per (name, section) pair across `dependencies`,
 /// `devDependencies`, and `peerDependencies`. Local-protocol versions
 /// (`link:`, `workspace:`, `file:`) are tagged via `local_source` so the
-/// caller can route them to `project_dependencies` instead of writing them
+/// caller can route them to `folder_dependencies` instead of writing them
 /// as external libraries.
 pub(crate) fn parse_npm_deps(pkg: &serde_json::Value) -> Vec<DepVersion> {
     let mut out = Vec::new();
@@ -187,7 +187,7 @@ pub struct DepVersion {
     /// When the dep resolves to a local sibling (npm `link:`, `workspace:`,
     /// `file:`; Cargo `path=`), the payload after the protocol prefix (or the
     /// path string for Cargo). `None` for registry / git / http deps. The
-    /// writer routes `Some(_)` deps to `project_dependencies` and skips the
+    /// writer routes `Some(_)` deps to `folder_dependencies` and skips the
     /// external-library upsert.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_source: Option<String>,
@@ -213,6 +213,29 @@ pub struct ParsedDoc {
     pub component: Option<String>,
 }
 
+/// Whether a response is an HTML page rather than the text document we asked
+/// for.
+///
+/// A `.txt` URL that answers with HTML is a HOST SAYING NO in a way that looks
+/// like yes — the SPA catch-all. It is not documentation, and accepting it is
+/// how an unrelated application's homepage got stored as a library's
+/// documentation: 200, 1,206 bytes, every layer reported success, and the test
+/// asserting "at least one page" passed.
+///
+/// Permissive except for HTML. A static host may send `text/plain`,
+/// `application/octet-stream`, or no content-type at all, and none of those are
+/// grounds to reject. The body is sniffed too, because a host that mislabels
+/// HTML as `text/plain` is still serving HTML.
+pub fn looks_like_html(content_type: Option<&str>, body: &str) -> bool {
+    if content_type.is_some_and(|ct| ct.to_ascii_lowercase().contains("text/html")) {
+        return true;
+    }
+    // CHARS, not bytes. Slicing at byte 200 panics when that offset lands
+    // inside a multi-byte character — rokkit's index has an em-dash there.
+    let head: String = body.trim_start().chars().take(200).collect::<String>().to_ascii_lowercase();
+    head.starts_with("<!doctype html") || head.starts_with("<html")
+}
+
 /// Fetch a URL. Public so MCP handler can use it.
 pub async fn fetch_lib_url_with_timeout(url: &str, timeout_secs: u64) -> Result<String, String> {
     let client = reqwest::Client::builder()
@@ -224,7 +247,20 @@ pub async fn fetch_lib_url_with_timeout(url: &str, timeout_secs: u64) -> Result<
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
-    resp.text().await.map_err(|e| format!("Read body: {}", e))
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let body = resp.text().await.map_err(|e| format!("Read body: {}", e))?;
+    // A 200 is not agreement about WHAT was returned.
+    if looks_like_html(content_type.as_deref(), &body) {
+        return Err(format!(
+            "{url} returned an HTML page, not a text document — the host answers 200 for \
+             unknown paths, so this is a miss dressed as a hit"
+        ));
+    }
+    Ok(body)
 }
 
 async fn fetch_url(url: &str) -> Result<String, String> {
@@ -342,7 +378,7 @@ fn parse_markdown(content: &str, lib_name: &str, _url: &str) -> Vec<ParsedDoc> {
 
 // ── Component-derivation & multi-source llms ingestion ──────────────────────
 //
-// Populates `library_pages` with PER-COMPONENT pages so `get_lib_docs(name,
+// Populates `library_content` (kind `page`) with PER-COMPONENT pages so `get_lib_docs(name,
 // component)` resolves to the right page. Two layouts are supported:
 //   1. per-file `components/<name>.txt` + top-level `.txt` (e.g. rokkit)
 //   2. single-file `llms-full.txt` with `##`/`### <lib> <cmd>` sections (dbd)
@@ -464,7 +500,42 @@ pub fn parse_single_file(content: &str, lib_name: &str) -> Vec<ParsedDoc> {
         docs.push(make_doc(heading.trim().to_string(), content, component));
     };
 
+    // Inside a fenced block NOTHING is markdown. This is a line scan, not a
+    // parser, so without the guard a `#` shell comment reads as a title and is
+    // dropped, and a `## ` in a fenced markdown sample starts a page.
+    //
+    // MEASURED on dbd's llms-full.txt: 7 such lines. Three code examples lost
+    // the comments labelling them and four lines documenting --no-cache /
+    // --clear-cache disappeared — while the page still looked complete, which
+    // is what made it worth fixing rather than noting (R4).
+    let mut in_fence = false;
+
     for line in content.lines() {
+        // ``` or ~~~, allowing the leading indentation a nested list gives.
+        let t = line.trim_start();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            in_fence = !in_fence;
+            if cur_heading.is_some() {
+                cur_body.push_str(line);
+                cur_body.push('\n');
+            } else {
+                preamble.push_str(line);
+                preamble.push('\n');
+            }
+            continue;
+        }
+        if in_fence {
+            // Verbatim, whatever it looks like.
+            if cur_heading.is_some() {
+                cur_body.push_str(line);
+                cur_body.push('\n');
+            } else {
+                preamble.push_str(line);
+                preamble.push('\n');
+            }
+            continue;
+        }
+
         // Section boundary: `## ` or `### ` (but not `#### `+).
         let is_section = (line.starts_with("## ") && !line.starts_with("### "))
             || (line.starts_with("### ") && !line.starts_with("#### "));
@@ -609,7 +680,7 @@ pub fn extract_doc_links(index: &str) -> Vec<String> {
             }
             if j <= bytes.len() {
                 let href = &index[start..j.min(index.len())];
-                if href.ends_with(".txt") && !href.starts_with("http") {
+                if is_llms_doc_file(href) && !href.starts_with("http") {
                     links.push(href.to_string());
                 }
             }
@@ -676,6 +747,21 @@ pub fn resolve_local_llms_root(path: &str) -> std::path::PathBuf {
     }
     p.join("docs").join("llms")
 }
+/// Whether a discovered file is part of an llms corpus.
+///
+/// ONE rule, three discoverers. Local walks a directory, github calls the
+/// contents API, and the website follows links from an index — but what
+/// COUNTS as a doc must not depend on how it was found, or the same library
+/// yields different pages by route. This was three separate `.txt` checks that
+/// happened to agree; nothing made them.
+///
+/// `.txt` only, deliberately: the llms convention is `docs/llms/*.txt`, and a
+/// library with a rich `docs/` tree and no `docs/llms/` yields nothing — which
+/// is correct and confusing, so 02b S7b.4 asks that it be SAID rather than
+/// silently widened to markdown.
+pub fn is_llms_doc_file(name: &str) -> bool {
+    name.ends_with(".txt")
+}
 
 /// Read `.txt` files from a local llms root (top level + `components/`).
 pub fn read_local_source_files(root: &std::path::Path) -> Result<Vec<SourceFile>, String> {
@@ -707,7 +793,7 @@ fn collect_txt_files(dir: &std::path::Path, is_component: bool, out: &mut Vec<So
         if !path.is_file() {
             continue;
         }
-        if path.extension().and_then(|e| e.to_str()) != Some("txt") {
+        if !path.file_name().and_then(|n| n.to_str()).is_some_and(is_llms_doc_file) {
             continue;
         }
         let stem = path.file_stem().and_then(|s| s.to_str()).map(slug).unwrap_or_default();
@@ -727,6 +813,17 @@ fn collect_txt_files(dir: &std::path::Path, is_component: bool, out: &mut Vec<So
 
 /// Fetch website llms docs: parse the index for `.txt` links; when links exist,
 /// fetch each as a component page; otherwise treat the index as a single file.
+/// The `llms-full.txt` that conventionally sits beside an `llms.txt`.
+///
+/// `None` for any other URL — this is the ONE documented pairing, and deriving
+/// speculative siblings from arbitrary paths would be guessing at URLs to
+/// fetch. Already pointing at the full text yields `None` too: there is
+/// nothing further to reach for.
+pub fn sibling_full_text_url(index_url: &str) -> Option<String> {
+    let (base, _) = index_url.rsplit_once("/llms.txt")?;
+    Some(format!("{base}/llms-full.txt"))
+}
+
 pub async fn fetch_website_source_files(index_url: &str) -> Result<Vec<SourceFile>, String> {
     let index = fetch_lib_url_with_timeout(index_url, 15).await?;
     let links = extract_doc_links(&index);
@@ -734,12 +831,36 @@ pub async fn fetch_website_source_files(index_url: &str) -> Result<Vec<SourceFil
 
     if links.is_empty() {
         // Single-file: index IS the content (llms.txt / llms-full.txt).
-        return Ok(vec![SourceFile {
+        let mut files = vec![SourceFile {
             stem: if index_stem.is_empty() { "index".into() } else { index_stem },
-            content: index,
+            content: index.clone(),
             location: index_url.to_string(),
             is_component_file: false,
-        }]);
+        }];
+        // The llms.txt convention publishes a SUMMARY (`llms.txt`) beside the
+        // full text (`llms-full.txt`), and they are not the same document.
+        // MEASURED on dbd: the summary derives 1 page, the full text 43 — the
+        // same 43 the local walk and the github tag produce. A caller naming
+        // the natural `/llms.txt` would otherwise get the summary and have no
+        // way to tell it was not the content.
+        //
+        // The local route already reads both (`resolve_local_llms_root` looks
+        // for either); this is the website route catching up, not a new
+        // convention. A 404 means the site publishes only the one file, which
+        // is normal — and identical content is deduped, because kavach serves
+        // both from the same source and two copies would be two pages.
+        if let Some(full_url) = sibling_full_text_url(index_url)
+            && let Ok(full) = fetch_lib_url_with_timeout(&full_url, 15).await
+            && full.trim() != index.trim()
+        {
+            files.push(SourceFile {
+                stem: "llms-full".into(),
+                content: full,
+                location: full_url,
+                is_component_file: false,
+            });
+        }
+        return Ok(files);
     }
 
     let mut files = vec![SourceFile {
@@ -820,7 +941,7 @@ async fn fetch_github_dir(
             continue;
         }
         let name = entry["name"].as_str().unwrap_or("");
-        if !name.ends_with(".txt") {
+        if !is_llms_doc_file(name) {
             continue;
         }
         let Some(download_url) = entry["download_url"].as_str() else { continue };
@@ -969,7 +1090,7 @@ mod tests {
     // ── local-source detection (1a Step 2) ─────────────────────────────
     //
     // Local-protocol deps (npm `link:`/`workspace:`/`file:`, Cargo `path=`)
-    // must be tagged so extract_deps routes them to project_dependencies
+    // must be tagged so extract_deps routes them to folder_dependencies
     // instead of writing them as external libraries.
 
     #[test]
@@ -1268,6 +1389,100 @@ Use --dry-run to preview.
     }
 
     // ── GitHub / website URL parsing (pure, no network) ─────────────────────
+
+    #[test]
+    fn an_html_response_to_a_txt_request_is_a_miss_not_content() {
+        // MEASURED: `kavach.vercel.app` is an unrelated application whose SPA
+        // answers 200 text/html for every path. Fetching `/llms.txt` from it
+        // returned 1,206 bytes of that app's homepage, which was stored as
+        // kavach's documentation. Status code alone cannot tell.
+        assert!(looks_like_html(Some("text/html; charset=utf-8"), "<!DOCTYPE html>"));
+        // Mislabelled HTML is still HTML — sniff the body too.
+        assert!(looks_like_html(Some("text/plain"), "<!doctype html>\n<html>"));
+        assert!(looks_like_html(None, "  <html lang=\"en\">"));
+
+        // Permissive otherwise: a static host may omit the header or send
+        // octet-stream, and neither is grounds to reject real content.
+        assert!(!looks_like_html(Some("text/plain; charset=utf-8"), "# dbd\n\nIntro."));
+        assert!(!looks_like_html(None, "# dbd\n\nIntro."));
+        assert!(!looks_like_html(Some("application/octet-stream"), "# dbd"));
+        // A doc that merely MENTIONS html is not html.
+        assert!(!looks_like_html(Some("text/plain"), "# Guide\n\nUse <html> tags like so."));
+        // Multi-byte characters near the sniff boundary must not panic —
+        // rokkit's index has an em-dash at byte 198 and the first cut at this
+        // sliced by BYTE, which panicked mid-character.
+        let wide = format!("{}— tail", "x".repeat(198));
+        assert!(!looks_like_html(Some("text/plain"), &wide));
+        assert!(!looks_like_html(None, "———————"));
+    }
+
+    #[test]
+    fn all_three_routes_agree_on_what_counts_as_a_doc() {
+        // The rule used to be written three times — a filesystem extension
+        // check, a github filename check, a website href check. They agreed by
+        // coincidence, and adding `.md` to any one would have made the same
+        // library yield different pages depending on how it was discovered.
+        assert!(is_llms_doc_file("index.txt"));
+        assert!(is_llms_doc_file("components/list.txt"));
+        assert!(is_llms_doc_file("https://x.dev/docs/llms/llms-full.txt"));
+        // Markdown is NOT part of the corpus (02b S7b.4). rokkit ships
+        // `docs/llms/component-blueprint.md` and no route ingests it —
+        // verified against the live data, all three agree on zero.
+        assert!(!is_llms_doc_file("component-blueprint.md"));
+        assert!(!is_llms_doc_file("README.md"));
+        assert!(!is_llms_doc_file("notes"));
+    }
+
+    #[test]
+    fn a_hash_comment_inside_a_code_fence_survives() {
+        // MEASURED on dbd's llms-full.txt: the splitter scans lines and treats
+        // any `# ` as a markdown title, then CONTINUEs — so every shell comment
+        // inside a ```sh block was silently deleted. Three code examples lost
+        // the labels distinguishing them and four lines documenting
+        // --no-cache/--clear-cache vanished. The page still looked complete.
+        let content = "# dbd\n\nIntro.\n\n## GitHub source\n\n```sh\n# Shorthand\ndbd inspect --source a/b\n\n# With branch/tag\ndbd apply --source a/b@v2.1\n```\n";
+        let docs = parse_single_file(content, "dbd");
+        let sec = docs.iter().find(|d| d.title == "GitHub source").expect("section");
+        assert!(sec.content.contains("# Shorthand"), "comment dropped: {:?}", sec.content);
+        assert!(sec.content.contains("# With branch/tag"), "comment dropped: {:?}", sec.content);
+    }
+
+    #[test]
+    fn a_heading_inside_a_code_fence_does_not_start_a_new_page() {
+        // The same scan would split a document on a `## ` that is sample
+        // markdown inside a fence, inventing a page from an example.
+        let content =
+            "# lib\n\nIntro.\n\n## Usage\n\n```md\n## Not A Real Section\nexample\n```\n\nafter\n";
+        let docs = parse_single_file(content, "lib");
+        assert!(
+            !docs.iter().any(|d| d.title == "Not A Real Section"),
+            "a fenced example became a page: {:?}",
+            docs.iter().map(|d| &d.title).collect::<Vec<_>>()
+        );
+        let usage = docs.iter().find(|d| d.title == "Usage").expect("Usage");
+        assert!(usage.content.contains("## Not A Real Section"), "fenced sample lost");
+    }
+
+    #[test]
+    fn the_full_text_sibling_is_derived_only_for_the_documented_pairing() {
+        // MEASURED on dbd: /llms.txt derives 1 page, /llms-full.txt derives 43
+        // — the same 43 the local walk and the github tag give. Naming the
+        // natural URL must not silently return the summary.
+        assert_eq!(
+            sibling_full_text_url("https://dbd.sensei-hq.com/llms.txt").as_deref(),
+            Some("https://dbd.sensei-hq.com/llms-full.txt")
+        );
+        assert_eq!(
+            sibling_full_text_url("https://x.dev/docs/llms/llms.txt").as_deref(),
+            Some("https://x.dev/docs/llms/llms-full.txt")
+        );
+        // Already the full text — nothing further to reach for.
+        assert_eq!(sibling_full_text_url("https://x.dev/llms-full.txt"), None);
+        // Any other path: no speculative sibling. Guessing URLs to fetch is
+        // how a route starts 404ing its way around a site.
+        assert_eq!(sibling_full_text_url("https://x.dev/docs/index.txt"), None);
+        assert_eq!(sibling_full_text_url("https://x.dev/"), None);
+    }
 
     #[test]
     fn parse_github_tree_url_ok() {

@@ -1,19 +1,25 @@
-// WS-1 · Identity resolution — a shared `user_id → display name` lookup over
-// `dojo.identities`. A membership carries only a `user_id` (uuid); the human name
-// lives on the identity row (one per provider, so a user_id can have several).
-// This resolver is the single place that maps a set of user_ids (within a tenant)
-// to their best display name + email, so every console surface that renders people
-// (members, role-surfaces, the audit actor, my-dojos) shares one honest rule
-// instead of each re-deriving a shortId.
+// WS-1 · Identity resolution — a shared `principal → display name` lookup over
+// `dojo.identities`. A membership carries only a `user_id` (uuid), which holds a
+// PRINCIPAL id (§VIII.2); the human name lives on the identity row (one per
+// provider, so a principal can have several). This resolver is the single place
+// that maps a set of principal ids to their best display name + email, so every
+// console surface that renders people (members, role-surfaces, the audit actor,
+// my-dojos) shares one honest rule instead of each re-deriving a shortId.
+//
+// It used to filter `.eq('tenant_id', …)`. `dojo.identities` has no such column —
+// an identity is tenant-INDEPENDENT — so that filter errored the query outright
+// and, via listMembers, the whole members screen. Scoping now comes from the
+// caller: the principal ids handed in are already the tenant's members.
 //
 // Fail-closed: a query error throws AdminError(500) — never a fabricated name. A
-// user with no identity row (or only nameless ones) resolves to null/null, and the
-// caller falls back to a stable shortId (an honest label, not an invented name).
+// principal with no identity row (or only nameless ones) resolves to null/null,
+// and the caller falls back to a stable shortId (an honest label, not an
+// invented name).
 import { AdminError, type DojoClient } from './admin-data';
 
 /** The columns this resolver needs off `dojo.identities`. */
 export interface IdentityNameRow {
-	user_id: string;
+	principal_id: string;
 	display_name: string | null;
 	email: string | null;
 	last_login_at: string | null;
@@ -25,7 +31,7 @@ export interface ResolvedName {
 	email: string | null;
 }
 
-const IDENTITY_NAME_COLS = 'user_id, display_name, email, last_login_at';
+const IDENTITY_NAME_COLS = 'principal_id, display_name, email, last_login_at';
 
 /** Preference tier for a candidate identity row: a named row beats an email-only
  *  row beats a bare row. Lower is better. */
@@ -62,31 +68,36 @@ export function pickBestIdentity(rows: IdentityNameRow[]): ResolvedName {
 }
 
 /**
- * Resolve a set of user_ids (within a tenant) to their best display name + email,
- * from `dojo.identities`. Returns a Map keyed by user_id — only users that HAVE an
- * identity row appear; the caller treats a missing key (or null name) as "fall back
- * to shortId". A query error throws AdminError(500) (fail-closed, no fabrication).
+ * Resolve a set of PRINCIPAL ids to their best display name + email, from
+ * `dojo.identities`. Returns a Map keyed by principal id — only principals that
+ * HAVE an identity row appear; the caller treats a missing key (or null name) as
+ * "fall back to shortId". A query error throws AdminError(500) (fail-closed, no
+ * fabrication).
+ *
+ * `tenantId` is retained for the audit/log context of callers that have one, and
+ * is deliberately NOT a query filter: identities are tenant-independent, and the
+ * ids passed in are already scoped by the caller's own tenant read.
  */
 export async function resolveDisplayNames(
 	db: DojoClient,
 	tenantId: string,
-	userIds: string[]
+	principalIds: string[]
 ): Promise<Map<string, ResolvedName>> {
-	const unique = [...new Set(userIds.filter((id) => typeof id === 'string' && id.length > 0))];
+	void tenantId;
+	const unique = [...new Set(principalIds.filter((id) => typeof id === 'string' && id.length > 0))];
 	if (unique.length === 0) return new Map();
 	const { data, error } = await db
 		.from('identities')
 		.select(IDENTITY_NAME_COLS)
-		.eq('tenant_id', tenantId)
-		.in('user_id', unique);
+		.in('principal_id', unique);
 	if (error) throw new AdminError(500, error.message);
-	const byUser = new Map<string, IdentityNameRow[]>();
+	const byPrincipal = new Map<string, IdentityNameRow[]>();
 	for (const r of (data ?? []) as unknown as IdentityNameRow[]) {
-		const list = byUser.get(r.user_id);
+		const list = byPrincipal.get(r.principal_id);
 		if (list) list.push(r);
-		else byUser.set(r.user_id, [r]);
+		else byPrincipal.set(r.principal_id, [r]);
 	}
 	const out = new Map<string, ResolvedName>();
-	for (const [uid, rows] of byUser) out.set(uid, pickBestIdentity(rows));
+	for (const [pid, rows] of byPrincipal) out.set(pid, pickBestIdentity(rows));
 	return out;
 }

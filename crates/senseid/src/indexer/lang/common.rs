@@ -1,0 +1,515 @@
+//! What every language module needs and no language module owns.
+//!
+//! A rule that would have to be written twice for two languages does not belong
+//! in either one (R7). What lands here is the shape of a MISS — the thing a walk
+//! says when it read a use site and could not place it — because that shape is a
+//! property of [`Resolution`] being total, not a property of any grammar.
+//!
+//! Deliberately NOT here: anything that reads syntax. `Miss` names a node kind
+//! but never looks at a node, so a tree-sitter walk and an oxc walk both build
+//! one without either parser leaking into the other's module.
+//
+// No caller until cutover — see the note in `indexer/mod.rs`.
+#![allow(dead_code)]
+
+use crate::indexer::facts::{
+    Binding, DeclaredType, Evidence, Fqn, Import, Language, Observation, Reason, RefKind,
+    Reference, Resolution, Span, Symbol, SymbolKind, Visibility,
+};
+use crate::indexer::fqn::{FqnError, Reach};
+
+/// The symbol a FILE declares by existing: its own module.
+///
+/// One owner for all three adapters, because a file is a module in every
+/// language this indexes and the shape of that statement is not a property of
+/// any grammar. The identity is minted by the language (`file_fqn`) and the
+/// NAME is its last segment, which only the language can split — so both arrive
+/// as arguments and nothing here reads syntax.
+///
+/// There is no AST node for it. A file being a module is not something the file
+/// says; it is what the file IS. So it is built here and prepended, and every
+/// independent declaration counter that walks parse nodes is told to expect
+/// exactly one symbol it cannot see.
+///
+/// VISIBILITY IS PRIVATE, and that is a refusal rather than a default: a
+/// module's own visibility is stated by whatever names it from outside — Rust's
+/// `pub mod x;`, sitting in a different file — and this side cannot see it.
+/// Recording `Public` because most modules are would be a fact nobody read.
+pub fn file_module(fqn: Fqn, name: &str, text: &str) -> Symbol {
+    Symbol {
+        fqn,
+        kind: SymbolKind::Module,
+        name: name.to_string(),
+        span: whole_file(text),
+        visibility: Visibility::Private,
+        docstring: None,
+        declared_type: DeclaredType::Unstated,
+        params: Vec::new(),
+    }
+}
+
+/// A span covering the whole file, counted from the TEXT.
+///
+/// From the text rather than from a parse tree, because the three adapters hold
+/// three different trees and a file's extent is the same fact in all of them —
+/// and because a tree's root may stop short of a trailing newline, which would
+/// make one language's file-module span disagree with another's for no reason a
+/// reader could act on.
+pub fn whole_file(text: &str) -> Span {
+    // Counted in one pass, and WITHOUT defaulting the last line: an empty file
+    // has no last line, and substituting an empty one would be a read that
+    // failed wearing the shape of one that succeeded (R4). Zero lines is
+    // spelled as zero, and the floor is applied where it means something — a
+    // span starts at line 1 whether or not there is a line there.
+    let mut lines = 0u32;
+    let mut last_width = 0u32;
+    for line in text.lines() {
+        lines += 1;
+        last_width = line.chars().count() as u32;
+    }
+    Span { start_line: 1, start_col: 1, end_line: lines.max(1), end_col: last_width + 1 }
+}
+
+/// What a walk has to say about a use site it did not place: the bucket, the
+/// name, the node kind that names the bucket in the histogram, and the material
+/// a later pass gets to work with.
+///
+/// Every use-site arm in every language builds one of these and then emits, so
+/// there is no path through any walk on which a use site yields nothing (R2).
+pub(super) struct Miss {
+    pub reason: Reason,
+    pub name: String,
+    /// The kind of the node that DEFEATED the walk, which is the anchor's own
+    /// kind when the walk read it fine and the inner node's kind when it did
+    /// not. This is what a reader sees in the histogram.
+    ///
+    /// A STRING rather than a parser's node type, because two parsers are in
+    /// play: tree-sitter names a Rust node `field_expression`, oxc names the
+    /// JavaScript one `StaticMemberExpression`. Both are the same fact — "this
+    /// is the shape that defeated me" — and the histogram wants the label, not
+    /// the type.
+    pub node_kind: String,
+    /// How this use site reaches its target (spec §2.1). Stated by every arm,
+    /// including the ones that could not read the shape: a call the walk cannot
+    /// parse is still reached the way a call is, and the arm that dispatched on
+    /// the node kind is the only place that knows it.
+    pub reach: Reach,
+    pub saw: Vec<Observation>,
+}
+
+impl Miss {
+    /// The walk read the use site and named it. Placing that name needs the
+    /// shared ladder, which a language module is not (R7).
+    pub fn unplaced(node_kind: &str, name: &str, reach: Reach, saw: Vec<Observation>) -> Self {
+        Self {
+            reason: Reason::Unplaced,
+            name: readable(name, node_kind),
+            node_kind: node_kind.to_string(),
+            reach,
+            saw,
+        }
+    }
+
+    /// The walk has no rule for this shape. Named rather than dropped, so the
+    /// histogram says what was not understood instead of saying nothing.
+    ///
+    /// It still states a reach, and that is not a guess: the arm calling this
+    /// dispatched on the node kind, so it knows a call is reached like a call
+    /// and a field access like a field even when the inside of the node
+    /// defeated it.
+    pub fn unhandled(node_kind: &str, name: &str, reach: Reach) -> Self {
+        Self {
+            reason: Reason::UnhandledForm,
+            name: readable(name, node_kind),
+            node_kind: node_kind.to_string(),
+            reach,
+            saw: Vec::new(),
+        }
+    }
+
+    /// A miss with a cause the walk can NAME — a receiver it could not type, a
+    /// target chosen at run time. Distinct from [`Miss::unhandled`], which says
+    /// only that the shape was not understood.
+    pub fn because(
+        reason: Reason,
+        node_kind: &str,
+        name: &str,
+        reach: Reach,
+        saw: Vec<Observation>,
+    ) -> Self {
+        Self {
+            reason,
+            name: readable(name, node_kind),
+            node_kind: node_kind.to_string(),
+            reach,
+            saw,
+        }
+    }
+
+    /// The unresolved target this miss stands for. One owner, so a reference and
+    /// a relation cannot describe the same failure two different ways — the
+    /// ladder reads both through the same shape.
+    pub fn resolution(self) -> Resolution {
+        Resolution::Unresolved {
+            reason: self.reason,
+            evidence: Evidence {
+                name: self.name,
+                node_kind: self.node_kind,
+                reach: self.reach,
+                saw: self.saw,
+            },
+        }
+    }
+}
+
+/// [`crate::indexer::resolve::Grammar::module_segment`] for a language whose
+/// import specifier is ALREADY a module path: no reduction at all.
+///
+/// Rust's `use a::b` and Java's `import a.b.C` name modules, not files, so
+/// there is no extension in them to drop — and a segment that happens to
+/// contain a dot is a real segment. Shared rather than spelled once per
+/// grammar, so "this language has no file names in its paths" is one statement
+/// and the two languages cannot drift from it.
+pub fn already_a_module_segment(segment: &str) -> &str {
+    segment
+}
+
+/// [`crate::indexer::resolve::Grammar::names_a_type`] for a language that states
+/// the answer in the CASE of the name.
+///
+/// Three languages here decide it the same way and spelled it three times —
+/// Rust as a closure, Java as a private `fn`, and Python would have been a
+/// third. What differs between them is only how load-bearing the convention is,
+/// and that belongs in each grammar's comment rather than in three copies of
+/// one line:
+///
+/// - **Rust** lints it. `CamelCase` types and `snake_case` modules are what
+///   `rustc` itself warns about, so the name is as good as a declaration.
+/// - **Java** does not, but the JLS convention is universal and the whole
+///   ecosystem's tooling assumes it.
+/// - **Python** does not either; PEP 8's CapWords is the same universal
+///   convention, and `snake_case` modules are the import system's own habit.
+///
+/// A misread costs a MISS and never a wrong edge — a lower-case class is filed
+/// as a module segment and resolves to nothing, which R4 ranks above guessing.
+pub fn names_a_type_by_leading_case(segment: &str) -> bool {
+    segment.starts_with(char::is_uppercase)
+}
+
+/// An identity the walk CONSIDERED, as evidence — never as a resolution. One
+/// that could not even be minted leaves no observation behind rather than a
+/// placeholder one.
+///
+/// The weaker of the two grades. Use [`named`] when THIS FILE'S TEXT
+/// established the identity; this one is for a name match, which still needs a
+/// declaration to agree before it can become an edge (R4).
+pub(super) fn considered(minted: Result<Fqn, FqnError>) -> Vec<Observation> {
+    minted.map(Observation::Candidate).into_iter().collect()
+}
+
+/// An identity THIS FILE'S OWN TEXT established (stage 11, S7).
+///
+/// Beside [`considered`] and identical but for the grade, which is the point:
+/// the two are one line apart so a walk choosing between them is choosing
+/// visibly, and a reviewer reading either site can see the other.
+///
+/// The caller must have learned the home from [`Home::Stated`](super::Home) —
+/// the file declaring the type, or importing it by a package-rooted path.
+/// Anything the walk GUESSED is [`considered`], and §9 is explicit that this is
+/// not a licence: it establishes an identity, never an existence.
+pub(super) fn named(minted: Result<Fqn, FqnError>) -> Vec<Observation> {
+    minted.map(Observation::Named).into_iter().collect()
+}
+
+/// The longest a name may be before it is treated as source text.
+///
+/// Chosen against the corpus rather than against the storage limit: the longest
+/// legitimate name measured in the live graph is 134 bytes, a deeply nested
+/// module path, so this leaves roughly fourfold headroom for a name and still
+/// sits an order of magnitude under the 2,704-byte btree limit on
+/// `edges_unique_unresolved` that unbounded text was breaking.
+pub(super) const MAX_NAME_BYTES: usize = 512;
+
+/// Evidence must always name something, and what it names must be a NAME. In a
+/// tree full of ERROR nodes a node's text can be empty, and a walk handed a
+/// shape it cannot name can reach for that shape's source text instead — an
+/// unnameable miss and a miss named by a program are both ones nobody can act
+/// on, so the node kind stands in for either.
+///
+/// The bound belongs here rather than at each call site because every walk in
+/// every language arrives through [`Miss`], and a rule enforced per-adapter is
+/// one each new adapter gets to forget.
+pub(super) fn readable(name: &str, node_kind: &str) -> String {
+    let name = name.trim();
+    if is_a_name(name) { name.to_string() } else { node_kind.to_string() }
+}
+
+/// Whether this text can be a name at all.
+///
+/// Two refusals, and both are about KIND rather than quality. A name occupies
+/// one line — source text spanning lines is a program, whatever else it is —
+/// and a name is bounded, because an identity the graph cannot store is not one
+/// the graph can answer with.
+///
+/// Deliberately NOT a judgement on the characters: a module path carries `/`
+/// and `.`, a generic carries `<`, `,` and spaces, and a rule tight enough to
+/// exclude minified source would exclude those too.
+fn is_a_name(name: &str) -> bool {
+    !name.is_empty() && name.len() <= MAX_NAME_BYTES && !name.contains('\n')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The property the whole design rests on: whatever a walk says about a use
+    /// site it could not place, it says SOMETHING (R2, R4). There is no
+    /// constructor here that produces an unnamed miss, and the one that could —
+    /// a node whose text is empty — falls back to the node kind.
+    #[test]
+    fn no_miss_is_nameless_whichever_door_it_came_through() {
+        let misses = vec![
+            Miss::unplaced("call_expression", "handle", Reach::Item, Vec::new()),
+            Miss::unplaced("CallExpression", "   ", Reach::Item, Vec::new()),
+            Miss::unhandled("field_expression", "", Reach::Field),
+            Miss::because(
+                Reason::ReceiverTypeUnknown,
+                "StaticMemberExpression",
+                "",
+                Reach::Field,
+                vec![Observation::Receiver("ctx.pg()".to_string())],
+            ),
+        ];
+        for miss in misses {
+            let node_kind = miss.node_kind.clone();
+            match miss.resolution() {
+                Resolution::Unresolved { evidence, .. } => {
+                    assert!(!evidence.name.is_empty(), "{node_kind} produced a nameless miss");
+                    assert!(!evidence.node_kind.is_empty(), "{node_kind} produced no node kind");
+                }
+                Resolution::Resolved { fqn, .. } => panic!("a miss resolved to {fqn}"),
+            }
+        }
+    }
+
+    /// The other half of the property above: a miss is never named by a
+    /// PROGRAM. Nothing named here can ever be resolved, and an identity with
+    /// no upper bound on its length is one the graph cannot store — so a name
+    /// that is source text is not a weaker name, it is a different kind of
+    /// thing wearing the name field.
+    ///
+    /// MEASURED in the live graph before this guard existed: 357 edges carried
+    /// a `target_name` that was source text rather than an identifier. Six
+    /// exceeded the 2,704-byte btree limit on `edges_unique_unresolved` and
+    /// four more exceeded the 8,191-byte limit on `edges_occurrences_gin` — and
+    /// because the failing insert aborts the whole `process_file` task, nine
+    /// files lost EVERY symbol and edge they had, then retried forever.
+    ///
+    /// The fallback is the node kind, which is what this function already does
+    /// for an empty name: it says what the shape was and declines to pretend
+    /// the shape had a name.
+    ///
+    /// MUTATION: drop either arm of the `is_a_name` test and the matching row
+    /// below comes back as source text.
+    #[test]
+    fn no_miss_is_named_by_a_program() {
+        let iife = "function () {\n    var x = 1;\n    return x;\n}";
+        let named = Miss::because(
+            Reason::DynamicDispatch,
+            "FunctionExpression",
+            iife,
+            Reach::Item,
+            Vec::new(),
+        );
+        assert_eq!(named.name, "FunctionExpression", "a multi-line body is not a name");
+
+        // Minified source is one line and still a program. The bound is what
+        // catches it, and it sits far above the longest name this corpus has:
+        // 134 characters, a deeply nested module path.
+        let minified = format!("function(){{{}}}", "var a=1;".repeat(80));
+        assert!(minified.len() > MAX_NAME_BYTES, "the fixture has to exceed the bound to test it");
+        let long = Miss::unhandled("FunctionExpression", &minified, Reach::Item);
+        assert_eq!(long.name, "FunctionExpression", "a name has an upper bound");
+
+        // The bound does NOT reject a real name that happens to be long. This
+        // is the regression the guard could most easily cause.
+        let path = "MyEmployeesPortal/employee-portal/src/app/shared/formio-custom-components/participant-details-element/participant-details.constants.ts";
+        assert!(path.len() > 128, "the longest real names measured are around 134 bytes");
+        let module = Miss::unplaced("ImportDeclaration", path, Reach::Mod, Vec::new());
+        assert_eq!(module.name, path, "a long module path is still a name");
+    }
+
+    /// The reason is chosen by the door, not by the caller passing one twice.
+    #[test]
+    fn each_door_states_its_own_reason() {
+        let unplaced = Miss::unplaced("call_expression", "handle", Reach::Item, Vec::new());
+        assert_eq!(unplaced.reason, Reason::Unplaced);
+        let unhandled = Miss::unhandled("call_expression", "handle", Reach::Item);
+        assert_eq!(unhandled.reason, Reason::UnhandledForm);
+        assert!(unhandled.saw.is_empty(), "a shape the walk did not read saw nothing to record");
+        let named = Miss::because(
+            Reason::DynamicDispatch,
+            "call_expression",
+            "handle",
+            Reach::Item,
+            Vec::new(),
+        );
+        assert_eq!(named.reason, Reason::DynamicDispatch);
+    }
+}
+
+/// Whether an import's SPECIFIER names a MODULE — the question that decides
+/// whether it can be emitted as a reference to one.
+///
+/// One owner, because getting it wrong is silent: a specifier that names an
+/// ITEM, emitted at [`Reach::Mod`], mints an identity no declaration carries
+/// and the edge dangles once per import line across the whole corpus.
+///
+/// It turns on the BINDING, not the language, for two of the three shapes:
+///
+/// - [`Binding::Glob`] — `use a::b::*`, `export * from './m'`. The specifier is
+///   the thing being globbed, which is a module in every language that has one.
+/// - [`Binding::MemberOf`] — `import { kindFor } from './buckets'`. The clause
+///   carries the name and the string carries ONLY the module, which is what
+///   this variant exists to record.
+/// - [`Binding::Name`] — the one that differs, because here the specifier
+///   spells the thing bound. In JavaScript that thing is reached THROUGH a
+///   module specifier (`import * as ns from './m'`, `import Foo from './foo'`),
+///   so the string still names a module. In Rust and Java it is a path to the
+///   item itself.
+///
+/// RUST'S `Name` IS REFUSED RATHER THAN GUESSED, and this is the measured
+/// reason the whole rule exists. `use a::b;` imports a MODULE and
+/// `use a::b::C;` imports an ITEM, and both arrive here as `Name` — the last
+/// segment is a module in one and a type in the other, and nothing in the
+/// importing file says which. Emitting either at `Reach::Mod` is right half the
+/// time, and R4 ranks a miss above an edge that is wrong half the time.
+pub fn specifier_names_a_module(language: Language, binding: &Binding) -> bool {
+    match binding {
+        Binding::Glob | Binding::MemberOf { .. } => true,
+        Binding::Name(_) => match language {
+            // Python joins TypeScript rather than Rust, and for a reason the
+            // language states rather than a convention: `import x` REQUIRES x
+            // to be a module. There is no `import os.path.join` — importing an
+            // item is spelled `from os.path import join`, which arrives here as
+            // `MemberOf` with the module in the specifier. So the ambiguity the
+            // Rust arm refuses to guess at does not exist in Python: a `Name`
+            // binding's specifier has nothing in it but a module path.
+            //
+            // C# joins them for the same kind of reason: a plain
+            // `using System.Text;` REQUIRES a namespace — importing a type's
+            // members is spelled `using static System.Math;` and renaming one
+            // is `using Sb = System.Text.StringBuilder;`, and the walk emits
+            // those as their own shapes rather than as a bare `Name`. So a
+            // `Name` binding's specifier has nothing in it but a namespace, and
+            // the ambiguity the Rust arm refuses to guess at does not arise.
+            Language::TypeScript | Language::Python | Language::CSharp => true,
+            // Kotlin joins RUST rather than the three above, and for the reason
+            // the Rust arm gives: `import a.b.C` imports a CLASS and
+            // `import a.b.*` a package, so a `Name` binding's last segment may
+            // be either and nothing in the importing file says which.
+            //
+            // PHP joins them too. `use App\Models\User;` binds a CLASS and
+            // `use App\Models;` binds the namespace as a prefix — both are
+            // legal, both arrive here as `Name`, and the specifier is spelled
+            // identically either way. The `function` and `const` forms name
+            // neither a module nor a type, which is one more reason the last
+            // segment cannot be read as a module.
+            //
+            // C joins them by a different route: an `#include` is TEXTUAL, so
+            // it binds every name the header declares and arrives here as
+            // `Binding::Glob` rather than `Name`. This arm is therefore
+            // unreachable for C, and `false` is what says so — a C specifier is
+            // a FILE PATH, and no reference a C file makes is ever minted at
+            // `Reach::Mod`.
+            //
+            // SQL joins them VACUOUSLY: it has no import statement at all. An
+            // object is named in full or reached through the default schema,
+            // so the SQL walk emits no `Import` and this arm is unreachable
+            // for it. `false` is what says so.
+            Language::Rust
+            | Language::Java
+            | Language::Kotlin
+            | Language::Php
+            | Language::C
+            | Language::Sql => false,
+        },
+    }
+}
+
+#[cfg(test)]
+mod module_specifier_tests {
+    use super::*;
+
+    /// The rule, stated as the three shapes rather than as a list of languages.
+    #[test]
+    fn a_specifier_names_a_module_when_it_carries_only_the_module() {
+        let a_name = Binding::Name("C".to_string());
+        let a_member = Binding::MemberOf { local: "kindFor".into(), member: "kindFor".into() };
+
+        for language in [Language::Rust, Language::TypeScript, Language::Java] {
+            assert!(
+                specifier_names_a_module(language, &Binding::Glob),
+                "a glob globs a MODULE, in every language that has one: {language:?}"
+            );
+            assert!(
+                specifier_names_a_module(language, &a_member),
+                "a member clause carries the name, so the string carries only the module: \
+                 {language:?}"
+            );
+        }
+
+        assert!(
+            specifier_names_a_module(Language::TypeScript, &a_name),
+            "`import Foo from './foo'` reaches Foo THROUGH a module specifier"
+        );
+        assert!(
+            !specifier_names_a_module(Language::Rust, &a_name),
+            "`use a::b;` and `use a::b::C;` are both Name and only one names a module — so \
+             neither is emitted, because guessing is right half the time"
+        );
+        assert!(
+            !specifier_names_a_module(Language::Java, &a_name),
+            "every java import names a TYPE"
+        );
+    }
+}
+
+/// One [`RefKind::Imports`] reference per import whose specifier names a
+/// module — the file ENTERING that module.
+///
+/// Built here and not in either walk, for the same reason [`file_module`] is:
+/// it is derived entirely from facts both walks already produce, and a second
+/// copy would be a second answer to "is this an import of a module".
+///
+/// UNRESOLVED, always. The specifier is a PATH, and turning a path into a
+/// module identity needs the roots, the package boundary and the relative rule
+/// — which live in the resolution ladder and not in a walk that never reaches
+/// outside its own file (R7). So the walk states what it saw and the ladder
+/// places it, exactly as it does for a callee.
+///
+/// The evidence carries the specifier VERBATIM as its name and [`Reach::Mod`]
+/// as its reach. That reach is the discriminator downstream: an import is the
+/// only thing that mints it, so nothing else can be mistaken for one.
+pub fn import_references(language: Language, imports: &[Import], from: &Fqn) -> Vec<Reference> {
+    imports
+        .iter()
+        .filter(|import| specifier_names_a_module(language, &import.binds))
+        .map(|import| Reference {
+            // An import belongs to the FILE, which is the module it enters
+            // things INTO — the same identity the file declares for itself.
+            from: from.clone(),
+            kind: RefKind::Imports,
+            at: import.at,
+            target: Resolution::Unresolved {
+                reason: Reason::Unplaced,
+                evidence: Evidence {
+                    name: import.path.clone(),
+                    node_kind: "import".to_string(),
+                    reach: Reach::Mod,
+                    saw: Vec::new(),
+                },
+            },
+        })
+        .collect()
+}

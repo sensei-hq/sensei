@@ -1,0 +1,1616 @@
+//! The fact vocabulary one walk produces (spec §3).
+//!
+//! Types, and the labels those types spell themselves with. Every rule that
+//! INTERPRETS them lives elsewhere: the fqn grammar in `fqn.rs`, the resolution
+//! ladder in `resolve.rs`, grammar reading in `lang/`. That split is R7 — a
+//! language module owns "how do I read this grammar" and owns nothing else.
+//!
+//! Two shapes here are load-bearing:
+//!
+//! - [`Resolution`] is TOTAL. There is no variant meaning "nothing", so a walk
+//!   that cannot place a target still has to say something, and the only thing
+//!   it can say is [`Resolution::Unresolved`] with a [`Reason`] and the
+//!   [`Evidence`] it had in hand (R2, R4). An `Option` here would let a miss be
+//!   dropped on the floor, which is the defect this rewrite exists to remove.
+//! - Nothing here can be constructed without stating every field. A value that
+//!   filled itself in is indistinguishable from one the walk actually read, and
+//!   that is how fabricated data enters (R4).
+//
+// This module has no caller on purpose: the shipped indexer under
+// `crate::languages` keeps producing the graph until the rust cutover in step 9
+// at stage 10 (`docs/spec/indexer/10-cutover.md`). The allow lets the two coexist
+// without either one carrying warnings.
+#![allow(dead_code)]
+
+use std::fmt;
+
+use super::fqn::Reach;
+
+// ── identity ─────────────────────────────────────────────────────────────────
+
+/// Where a fact was read from, in the file the walk was given. Columns are
+/// carried as well as lines because two references frequently share a line
+/// (`a.b().c()`), and a fact that cannot be told apart from its neighbour
+/// cannot be counted (A2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Span {
+    pub start_line: u32,
+    pub start_col: u32,
+    pub end_line: u32,
+    pub end_col: u32,
+}
+
+/// The identity of a symbol — a lookup key minted independently by a definition
+/// and by a reference (spec §2).
+///
+/// The inner string is private and there is no way to build one from arbitrary
+/// text: `fqn::define` and `fqn::refer` are the only doors. That is the whole
+/// point of the newtype. Two call sites formatting their own string is how the
+/// definition side and the reference side drift apart, and the drift is
+/// invisible in review because each side looks correct alone.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Fqn(String);
+
+impl Fqn {
+    /// Wrap an already-encoded fqn. `pub(super)` and named for what the caller
+    /// must have done first: `fqn.rs` calls this after the grammar has checked
+    /// the segments, and nothing else calls it at all — see the guard test
+    /// `no_fqn_is_built_by_string_formatting_outside_this_file`.
+    pub(super) fn from_encoded(encoded: String) -> Self {
+        Self(encoded)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Fqn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A language the walk can read.
+///
+/// An enum rather than a string so the leading fqn segment cannot be spelled
+/// two ways: `"rust"` on the definition side and `"Rust"` on the reference side
+/// would be two graphs that never meet.
+///
+/// **`.js`, `.ts` and a `.svelte` script block are ONE language here, and that
+/// is a merge decision rather than a taxonomy.** They share a module graph: a
+/// `.ts` file importing from a `.js` file is ordinary, and if the two sides
+/// carried different leading segments the import would mint an identity the
+/// declaration never mints and the two would never meet (spec §2). Three
+/// adapters read them — they claim different extensions and only one of them
+/// has annotations to read — but all three file their symbols under this one
+/// label, which is also the label the legacy producer used, so a differential
+/// over JS compares like with like.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Language {
+    Rust,
+    /// JavaScript, TypeScript, and the script block of a Svelte component.
+    TypeScript,
+    Java,
+    Python,
+    /// C#. Semantically Java's nearest relative — a namespace is its package,
+    /// types nest, methods overload — which is why its walk is Java's shape
+    /// rather than a new one.
+    CSharp,
+    /// Kotlin. A JVM language with Java's namespace model and its own syntax —
+    /// top-level declarations, a declaring primary constructor, `object`.
+    Kotlin,
+    /// PHP. A namespace is its package, written in the file. The one language
+    /// here that states `extends` and `implements` in separate clauses, and the
+    /// one that forbids overloading outright.
+    Php,
+    /// C. The one language here with no namespace at all — LINKAGE is its
+    /// scope, so `static` means the file and everything else means the whole
+    /// link unit.
+    C,
+    /// SQL. The one language here whose DIALECT has to be established before
+    /// anything can be read, and the one whose files are mostly change
+    /// scripts rather than declarations — so `CREATE` declares and `ALTER`
+    /// refers.
+    Sql,
+}
+
+impl Language {
+    /// Every language this build can read. Exhaustively matched below, so a new
+    /// variant does not compile until it is listed here too.
+    pub fn all() -> &'static [Language] {
+        &[
+            Language::Rust,
+            Language::TypeScript,
+            Language::Java,
+            Language::Python,
+            Language::CSharp,
+            Language::Kotlin,
+            Language::Php,
+            Language::C,
+            Language::Sql,
+        ]
+    }
+
+    /// The label this language occupies the leading fqn segment with. Paired
+    /// with [`Language::from_label`] here so the two directions cannot drift.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Rust => "rust",
+            Self::TypeScript => "typescript",
+            Self::Java => "java",
+            Self::Python => "python",
+            Self::CSharp => "csharp",
+            Self::Kotlin => "kotlin",
+            Self::Php => "php",
+            Self::C => "c",
+            Self::Sql => "sql",
+        }
+    }
+
+    /// The inverse of [`Language::as_str`]. `None` means the label names no
+    /// language this build can read — the caller turns that into a typed error
+    /// rather than picking one.
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label {
+            "rust" => Some(Self::Rust),
+            "typescript" => Some(Self::TypeScript),
+            "java" => Some(Self::Java),
+            "python" => Some(Self::Python),
+            "csharp" => Some(Self::CSharp),
+            "kotlin" => Some(Self::Kotlin),
+            "php" => Some(Self::Php),
+            "c" => Some(Self::C),
+            "sql" => Some(Self::Sql),
+            _ => None,
+        }
+    }
+}
+
+// ── declarations (spec §3.1) ─────────────────────────────────────────────────
+
+/// What kind of declaration a [`Symbol`] is.
+///
+/// The set is spec §3.1 verbatim. Fields, properties and enum variants are in
+/// it because "what shape is this data" is a question the graph must answer
+/// (A5), and because pattern detection reads field types (R8).
+///
+/// Ordered so a report can key a map by the kind itself instead of by its
+/// label. The order is the declaration order and ranks nothing — a report that
+/// wants a meaningful order sorts by what it is measuring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum SymbolKind {
+    Function,
+    Method,
+    Class,
+    Struct,
+    Enum,
+    /// A variant of an enum. A member of its enum, not a free item.
+    EnumVariant,
+    Interface,
+    Trait,
+    TypeAlias,
+    Const,
+    /// Distinct from [`SymbolKind::Const`]: a static has an address and a
+    /// lifetime, and singleton detection reads exactly that (R8).
+    Static,
+    Module,
+    /// A `macro_rules!` or proc-macro definition. Its own kind because only a
+    /// `name!` reaches a macro, and "where is X defined" must answer for a
+    /// macro too.
+    Macro,
+    /// A declared storage slot on a type.
+    Field,
+    /// An accessor pair that presents as a slot. Kept apart from
+    /// [`SymbolKind::Field`] because one is storage and the other is code.
+    Property,
+}
+
+/// How a declaration is REACHED — which SHAPE of reference can name it.
+///
+/// THE OWNER of that question. It was a label derived from
+/// [`SymbolKind::can_be_named`], which made the two inseparable: a bool cannot
+/// say "reachable, but not by a call", so a module could only be all-or-nothing
+/// and a report had to choose between counting it as uncalled or not counting
+/// it at all.
+///
+/// The distinction is real in the grammar. A module is entered by an IMPORT and
+/// never by a call — `crate::installer::install(..)` names `install`, not
+/// `installer` — so the two shapes reach different kinds and a reader asking
+/// "did an edge go missing" has to say which shape of edge.
+///
+/// Both sides read this one answer: the report to head its columns and to
+/// decide whether evidence is admissible, and the walks to decide which
+/// [`RefKind`] an import may emit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ReachedBy {
+    /// A CALL-SHAPED reference names it: a call, a read, a write, a `name!`, a
+    /// path. Every kind but one.
+    Call,
+    /// An IMPORT enters it. No call-shaped reference ever names one, which is
+    /// why "nothing called it" is not a statement that can be made about a
+    /// module — and why an import edge it loses is a different measurement
+    /// rather than no measurement.
+    Import,
+}
+
+impl SymbolKind {
+    /// How a declaration of this kind is reached. THE classification; every
+    /// other question about reachability is derived from it.
+    pub fn reached_by(self) -> ReachedBy {
+        match self {
+            Self::Module => ReachedBy::Import,
+            _ => ReachedBy::Call,
+        }
+    }
+
+    /// Whether a CALL-SHAPED reference can name a declaration of this kind.
+    ///
+    /// DERIVED from [`reached_by`](Self::reached_by), which owns the
+    /// classification. Kept as its own function because "can a call name this"
+    /// is what every consumer actually asks, and spelling it out at each call
+    /// site would be the same match written many times.
+    ///
+    /// **It does NOT mean "unreachable".** A module is reached, by an import —
+    /// that is `ReachedBy::Import`, not an absence. The name is about the shape
+    /// of the reference, and a report that reads it as "nothing can reach this"
+    /// will print a module under `not called` and be wrong.
+    ///
+    /// It is a question about identity. A reference's target identity ends in
+    /// the [`Reach`] its use SYNTAX implies, and a declaration's identity ends
+    /// in the reach its own form minted, so an edge can only exist where the
+    /// two spell the same reach. [`SymbolKind::Module`] is the one kind minted
+    /// at [`Reach::Mod`], and the one reach no CALL ever mints: a path
+    /// `a::b::c()` targets `c`, never `a`. An import is the exception and mints
+    /// exactly that reach, which is why the two are told apart by shape rather
+    /// than by a bool.
+    ///
+    /// Every other kind is namable, including the ones that are read rather
+    /// than CALLED. Those are the ones at risk of being lumped in with a
+    /// module, because a report of what nothing calls lists them side by side:
+    /// a const and a static are read, a field and a property are read and
+    /// written, a type alias is named in a signature, an enum variant is read
+    /// and constructed, and a macro is reached by `name!`. Every one of those
+    /// is a reference, so every one of them can lose one.
+    pub fn can_be_named(self) -> bool {
+        matches!(self.reached_by(), ReachedBy::Call)
+    }
+
+    /// Whether a use site that went THROUGH A RECEIVER — `x.name`, `x.name()` —
+    /// can name a declaration of this kind.
+    ///
+    /// A companion to [`can_be_named`](Self::can_be_named) and the same kind of
+    /// question: not "did anything name it" but "could a use site of this SHAPE
+    /// have produced its identity at all". A receiver asks the type of `x` for
+    /// one of its members, so what comes back is a member of that type. A
+    /// `const`, a `let` and a free `function` are members of nothing — they are
+    /// reached by their bare name or through an import, never through a dot.
+    ///
+    /// The one dotted spelling that does reach a module's exports is a
+    /// NAMESPACE import, `api.thing()`. That is not an exception here: the walk
+    /// already refuses to read a namespace as a receiver, because its members
+    /// are the module's exports and not a type's, so such a site never presents
+    /// itself as receiver-carried in the first place.
+    ///
+    /// Everything else answers `true`, and the types answer it for a reason
+    /// rather than by default: `Outer.Inner` is a receiver-shaped way to name a
+    /// nested type, and a TypeScript enum variant really is read as
+    /// `Direction.Up`. Narrowing those would drop evidence that a use site
+    /// genuinely could have produced.
+    pub fn can_be_reached_through_a_receiver(self) -> bool {
+        match self {
+            Self::Function | Self::Const | Self::Static => false,
+            Self::Method
+            | Self::Field
+            | Self::Property
+            | Self::Class
+            | Self::Struct
+            | Self::Enum
+            | Self::EnumVariant
+            | Self::Interface
+            | Self::Trait
+            | Self::TypeAlias
+            | Self::Macro
+            | Self::Module => true,
+        }
+    }
+}
+
+/// How far a declaration is visible. Read by singleton detection (R8) and by
+/// anyone asking what a module's surface is.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Visibility {
+    Public,
+    Crate,
+    /// Visible within a stated scope — Rust's `pub(super)` or `pub(in path)`.
+    /// The scope is kept verbatim because narrowing it to a flag would discard
+    /// which scope was meant.
+    Restricted(String),
+    Private,
+}
+
+/// A type the language STATES, verbatim as written.
+///
+/// Total rather than an `Option` because the difference matters downstream: a
+/// walk that read `-> Arc<PgStore>` and a walk looking at a function with no
+/// return type are two different facts, and only the second one licenses
+/// [`Reason::NoDeclaredType`] on a reference through it. Inferring the type of
+/// an unannotated value is a non-goal (spec §5).
+///
+/// Kept verbatim on purpose: normalising to a bare name here would throw away
+/// the module path that says WHICH `PgStore` is meant.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DeclaredType {
+    Stated(String),
+    Unstated,
+}
+
+/// A parameter, carried as a typed prop on its function rather than as a node
+/// of its own (D2) — a parameter is not something a reader navigates to.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Param {
+    pub name: String,
+    /// Position in the parameter list, from zero. The name alone does not
+    /// identify a parameter: two overloads and a tuple-struct field both need
+    /// the position to stay distinct.
+    pub position: u32,
+    pub declared_type: DeclaredType,
+}
+
+/// One declaration (spec §3.1).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Symbol {
+    pub fqn: Fqn,
+    pub kind: SymbolKind,
+    /// The name as declared, without any qualification. The qualified identity
+    /// is [`Symbol::fqn`].
+    pub name: String,
+    pub span: Span,
+    pub visibility: Visibility,
+    /// The doc comment attached to this declaration. `None` means the source
+    /// carries none — this is never where a failed read is parked.
+    pub docstring: Option<String>,
+    /// The type this declaration STATES: a field's type, a function's return
+    /// type. [`DeclaredType::Unstated`] where the language states none.
+    pub declared_type: DeclaredType,
+    /// Empty for a declaration that takes no parameters and for every kind that
+    /// cannot take any. Both are genuinely empty, not a failure to read.
+    pub params: Vec<Param>,
+}
+
+// ── references (spec §3.2) ───────────────────────────────────────────────────
+
+/// What a use site does with its target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RefKind {
+    Calls,
+    Reads,
+    Writes,
+    /// Builds a value of the target type. Factory detection needs construction
+    /// separated from calling (R8).
+    Constructs,
+    /// Names the target as a type — in a signature, a field, a bound. This is
+    /// what makes field and parameter types edges rather than loose strings.
+    TypeUse,
+    /// Invokes a macro. A distinct kind because what a macro expands to is not
+    /// parsed, so a call INSIDE the expansion is not a fact this walk has.
+    MacroInvokes,
+    /// ENTERS a module. The one reference kind whose target is a
+    /// [`SymbolKind::Module`], and the only one that mints [`Reach::Mod`].
+    ///
+    /// Emitted ONLY where the specifier names a module — see
+    /// `lang::common::specifier_names_a_module`. A `use a::b::C;` names an item
+    /// and gets none, because minting `mod` for it would produce an identity no
+    /// declaration carries.
+    ///
+    /// Distinct from the other kinds rather than folded into `Reads`, because
+    /// what it reaches is categorically different: every other kind names
+    /// something a call could also name, and this one names the container they
+    /// live in.
+    Imports,
+}
+
+/// Why a reference could not be resolved.
+///
+/// A closed enum, one variant per distinct cause, and causes are never
+/// collapsed: telling them apart is how coverage gets measured (A3). A `String`
+/// here would not be exhaustively matchable and the histogram would grow junk
+/// categories that nobody can act on.
+///
+/// The variants carry no payload. What the walk SAW belongs in [`Evidence`]; a
+/// reason is the bucket, evidence is the material.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Reason {
+    /// The walk has no rule for this node kind yet. The fallback arm, so that a
+    /// form nobody thought about is named in the histogram instead of silently
+    /// yielding nothing.
+    UnhandledForm,
+    /// The language states no type at the point resolution needed one — an
+    /// unannotated binding, a closure parameter. Inferring it is a non-goal
+    /// (spec §5).
+    NoDeclaredType,
+    /// A member access whose receiver type this file cannot determine, most
+    /// often a chain deeper than the walk can follow.
+    ReceiverTypeUnknown,
+    /// A bare name with no local declaration and no import that binds it.
+    /// NOT the same as external: externality comes from an import (spec §2).
+    NoImportInScope,
+    /// More than one candidate matched and nothing distinguishes them. Picking
+    /// one would be a wrong edge, which is worse than a missing one (R4).
+    AmbiguousCandidates,
+    /// The target is chosen at run time — a trait object, a function pointer.
+    /// No static answer exists, so this is a permanent miss, not a gap.
+    DynamicDispatch,
+    /// The target would only exist after macro expansion, and expansions are
+    /// not parsed.
+    MacroExpansion,
+    /// Plumbing the grammar deliberately filters — `clone`, `unwrap`,
+    /// `toString`. Filtering, not failure: its own reason so a reader can
+    /// exclude it without also excluding genuine misses.
+    ///
+    /// Named for what it IS rather than for the mechanism that catches it. It
+    /// was `Denylisted`, which described the list in `Grammar::plumbing` and
+    /// left a reader to work out that the list holds plumbing; the field and the
+    /// reason now share a name.
+    Plumbing,
+    /// The target names a member NO first-party type declares anywhere in the
+    /// scan, so it cannot be an edge we could ever draw: it is a method on a
+    /// library type — `.trim()`, `.collect()`, `.toBe()` — at the boundary R5
+    /// says we name and never open.
+    ///
+    /// Its own reason because the alternative was counting it as a failure.
+    /// MEASURED: 23,739 of the 53,224 receivers reported as
+    /// [`Reason::ReceiverTypeUnknown`] were this, and the number read as a gap
+    /// somebody should close. It is not one — no amount of type inference makes
+    /// `.toBe()` a first-party edge — and a bucket that mixes "we dropped
+    /// something" with "this is where our world ends" cannot be acted on.
+    ///
+    /// Decided from the corpus's own declarations, never from a list: a name is
+    /// at the boundary exactly when nothing we index declares it.
+    ExternalBoundary,
+    /// The walk read the use site and minted the candidate identity it names,
+    /// but placing that candidate needs the shared resolution ladder, which the
+    /// walk is not (R7). The walk never reaches outside the file it was handed,
+    /// so this is what a well-understood use site carries between the walk and
+    /// the ladder.
+    ///
+    /// Distinct from every reason above because those state a cause that will
+    /// still hold after the ladder runs; this one states only that the ladder
+    /// has not run. It is the one bucket that must be EMPTY once resolution is
+    /// in place, which is a thing a histogram can check — a reason chosen from
+    /// the list above instead would hide the walk's incompleteness behind a
+    /// cause that is not true of it (R4).
+    Unplaced,
+}
+
+impl Reason {
+    /// The stable label this reason is written and read under.
+    ///
+    /// ONE labeling, because there is more than one consumer: `persist` writes
+    /// it into `edges.props` and reads it back, and `impact` shows it to a
+    /// person. Two matches over the same enum agree on the day they are written
+    /// and drift on the day a variant is added to one of them — and the drift
+    /// surfaces as a reason that round-trips to `None`, which reads as "this
+    /// miss has no reason" rather than as the bug it is.
+    pub fn as_label(self) -> &'static str {
+        match self {
+            Self::UnhandledForm => "unhandled_form",
+            Self::NoDeclaredType => "no_declared_type",
+            Self::ReceiverTypeUnknown => "receiver_type_unknown",
+            Self::NoImportInScope => "no_import_in_scope",
+            Self::AmbiguousCandidates => "ambiguous_candidates",
+            Self::DynamicDispatch => "dynamic_dispatch",
+            Self::MacroExpansion => "macro_expansion",
+            Self::Plumbing => "plumbing",
+            Self::ExternalBoundary => "external_boundary",
+            Self::Unplaced => "unplaced",
+        }
+    }
+
+    /// The inverse of [`Reason::as_label`]. `None` for a label no variant
+    /// claims, which is a corrupt or future row and never a silent default.
+    pub fn from_label(label: &str) -> Option<Self> {
+        Some(match label {
+            "unhandled_form" => Self::UnhandledForm,
+            "no_declared_type" => Self::NoDeclaredType,
+            "receiver_type_unknown" => Self::ReceiverTypeUnknown,
+            "no_import_in_scope" => Self::NoImportInScope,
+            "ambiguous_candidates" => Self::AmbiguousCandidates,
+            "dynamic_dispatch" => Self::DynamicDispatch,
+            "macro_expansion" => Self::MacroExpansion,
+            "plumbing" => Self::Plumbing,
+            "external_boundary" => Self::ExternalBoundary,
+            "unplaced" => Self::Unplaced,
+            _ => return None,
+        })
+    }
+
+    /// Does this miss cast doubt on a first-party edge, or has the ladder
+    /// positively placed the site OUTSIDE?
+    ///
+    /// Two of the ten are verdicts rather than failures. [`Reason::Plumbing`]
+    /// is documented as "filtering, not failure" — `.ok()` on a `Result` is
+    /// plumbing. [`Reason::ExternalBoundary`] is decided by "nothing we index
+    /// declares this name", which is the ladder saying the world ends here —
+    /// `.as_deref()` is not an edge anyone lost. Neither is a gap somebody
+    /// should close, and counting them as uncertainty makes the graph look
+    /// least sure exactly where it is most.
+    ///
+    /// On the enum rather than beside one consumer, because there are now two
+    /// — `impact` excludes them from a blast radius, and the acceptance report
+    /// splits the histogram by them — and a partition of this enum written
+    /// twice would drift the first time a variant is added.
+    ///
+    /// MEASURED over this repo: the two account for 45,320 of 97,681 misses,
+    /// headed by std methods (`map`, `into`, `as_str`, `collect`) that merely
+    /// share a name with something first-party.
+    pub fn casts_doubt(self) -> bool {
+        !matches!(self, Self::Plumbing | Self::ExternalBoundary)
+    }
+
+    /// Every variant, so a test or a report can iterate the whole taxonomy
+    /// rather than restate it and fall behind.
+    pub const ALL: &'static [Reason] = &[
+        Reason::UnhandledForm,
+        Reason::NoDeclaredType,
+        Reason::ReceiverTypeUnknown,
+        Reason::NoImportInScope,
+        Reason::AmbiguousCandidates,
+        Reason::DynamicDispatch,
+        Reason::MacroExpansion,
+        Reason::Plumbing,
+        Reason::ExternalBoundary,
+        Reason::Unplaced,
+    ];
+}
+
+/// Something the walk saw at the use site and could not turn into a target.
+///
+/// This is material for a later pass, never an answer. A [`Observation::Candidate`]
+/// in particular is a key that was CONSIDERED — treating it as the resolution is
+/// exactly the wrong-merge this design refuses.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Observation {
+    /// The receiver expression, verbatim source text (`ctx.pg()`).
+    Receiver(String),
+    /// An import in scope that could have bound this name, verbatim as written.
+    ImportInScope(String),
+    /// A type the walk read but could not place in the graph.
+    UnplacedType(String),
+    /// The receiver is a LOCAL BINDING the source never typed, and this is the
+    /// callee whose result it was bound to, verbatim (`pg_store`).
+    ///
+    /// Not a type, and deliberately not dressed as one: what the walk read is a
+    /// name, and only a completed pass knows what that name returns. It rides
+    /// beside [`Observation::Receiver`] rather than replacing it, because the
+    /// receiver text is what the source WROTE and the histogram counts it.
+    BoundToTheResultOf(String),
+    /// An identity the walk considered and could not prove. A NAME MATCH: it
+    /// still needs a declaration to agree before it can become an edge.
+    Candidate(Fqn),
+    /// An identity THIS FILE'S OWN TEXT establishes (stage 11, S7).
+    ///
+    /// The other grade of the same thing, and the distance between them is the
+    /// whole of what removed the type barrier. A file that declares `Widget`,
+    /// or imports it by a package-rooted path, has STATED where `Widget` lives
+    /// — so `w.wide()` names the member under that module, on the file's own authority
+    /// and may become an edge with nothing else agreeing. MEASURED over this
+    /// repository, of every member reference the barrier once resolved: 41.0%
+    /// were types the file declares, 38.0% types it imports by name, 17.6%
+    /// reachable through a wildcard import, 1.6% spelled inline — 98.1% stated
+    /// by the file itself.
+    ///
+    /// **NOT A LICENCE** (§9). It says the file's text establishes the
+    /// IDENTITY, not that the target exists — existence is persistence's
+    /// question, answered by stub-and-heal. A receiver whose type the source
+    /// never states is still `ReceiverTypeUnknown`, and a bare name that merely
+    /// matches something is still a [`Observation::Candidate`].
+    Named(Fqn),
+}
+
+/// What the walk had in hand at the moment it could not resolve (spec §3.2).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Evidence {
+    /// The bare name at the use site. Always present — a use the walk cannot
+    /// even name is not one it can emit.
+    pub name: String,
+    /// The tree-sitter node kind of the use site. This is what names an
+    /// [`Reason::UnhandledForm`] miss in the histogram.
+    pub node_kind: String,
+    /// HOW this use site reaches its target (spec §2.1) — a function of the use
+    /// SYNTAX, so only the walk that read the syntax can state it.
+    ///
+    /// Here rather than derived downstream from [`RefKind`], and the difference
+    /// is not tidiness. `RefKind::Reads` is a path leaf at `a::B::C` and a field
+    /// at `x.y`, so the kind alone cannot tell them apart and anything deriving
+    /// a reach from it would mint `item` for half this repo's field reads — a
+    /// wrong identity, on the side of the merge contract that has no way to
+    /// notice (R4, R7).
+    pub reach: Reach,
+    /// Everything else the walk saw, in the order it saw it. Empty means it saw
+    /// nothing beyond the name, which is itself a reading worth having.
+    pub saw: Vec<Observation>,
+}
+
+impl Evidence {
+    /// Every IDENTITY this use site minted, at EITHER grade, in the order the
+    /// walk saw them.
+    ///
+    /// One reader for both grades, because "which identity did the use site
+    /// mint" is a different question from "may it become an edge". Every
+    /// MEASUREMENT asks the first: the lost-edge decomposition in `barrier.rs`
+    /// needs to know a use site named a node whatever the ladder then did about
+    /// it, and a harness comparing the two sides of the merge contract is
+    /// comparing strings.
+    ///
+    /// An ITERATOR rather than a per-observation optional identity, and that is
+    /// the rule rather than a preference: an observation carrying source text
+    /// instead of a key contributes nothing here, so there is no `None` for a
+    /// caller to mistake for an answer (R2, and the guard
+    /// `no_option_stands_in_for_a_resolution`).
+    ///
+    /// The LADDER deliberately does not use this. `Ladder::named_by_this_file`
+    /// and `Ladder::first_candidate` walk `saw` separately, because there the
+    /// grade is the whole point and a reader that collapsed the two would let
+    /// the weaker rung's table answer for the stronger grade — which is the
+    /// barrier, reintroduced.
+    pub fn identities(&self) -> impl Iterator<Item = &Fqn> {
+        self.saw.iter().filter_map(|observation| match observation {
+            Observation::Candidate(fqn) | Observation::Named(fqn) => Some(fqn),
+            Observation::Receiver(_)
+            | Observation::ImportInScope(_)
+            | Observation::UnplacedType(_)
+            | Observation::BoundToTheResultOf(_) => None,
+        })
+    }
+}
+
+/// Which rung of the ladder placed an edge.
+///
+/// The rungs are not interchangeable, and a consumer handed a bare "resolved"
+/// treats the weakest claim the ladder makes exactly like the strongest.
+/// [`Rung::DeclaredHere`] is a file pointing at its own declaration — there is
+/// nothing to be wrong about. [`Rung::ThroughAGlob`] is a name bound by
+/// `use x::*`, where the ladder knows the glob covers the module but the source
+/// never wrote the name down. Same `Resolved`, very different evidence.
+///
+/// It is also the one field that maps an edge back to the code that made it. A
+/// rung IS a method on `Ladder`, so a wrong edge tagged `through_a_glob` names
+/// `Ladder::through_a_glob` as the thing to go and read — which is what makes a
+/// defect report actionable instead of a search.
+///
+/// Declaration order is CLIMB order, and [`Rung::ALL`] relies on it: reading the
+/// list is reading the ladder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Rung {
+    /// The file declares the target itself.
+    DeclaredHere,
+    /// An import in scope binds the head of the path.
+    ThroughAnImport,
+    /// **THIS FILE'S OWN TEXT names the target** (stage 11, S7).
+    ///
+    /// The file declares the type, or imports it by a package-rooted path, so
+    /// it has STATED where that type lives — and a member identity minted from
+    /// a stated home is a fact about this file rather than a guess about the
+    /// scan. The walk records it as [`Observation::Named`], and this rung
+    /// places it with nothing else agreeing: the file is the proof.
+    ///
+    /// **This is the rung that removes the type barrier.** The one below needs
+    /// a repo-wide set of every member identity the scan declared, built after
+    /// a completed pass; this one needs the file it is already reading.
+    ///
+    /// ABOVE [`Rung::DeclaredByItsType`] because it is the stronger claim —
+    /// that rung's evidence is a declaration seen in ANOTHER file. BELOW
+    /// [`Rung::ThroughAnImport`] because an import binding the head of a path
+    /// also states which SIDE of the scanned source the target is on, and this
+    /// rung does not.
+    NamedByThisFile,
+    /// A TYPE in this scan declares the target as its member, in another file.
+    ///
+    /// The same proof [`Rung::DeclaredHere`] offers, one file further out: the
+    /// walk minted a member identity from the type's barrier-known home, and
+    /// that exact identity is one some type was read declaring. Rust puts an
+    /// `impl` block anywhere, so a method and the type it hangs off are very
+    /// often in different files.
+    ///
+    /// Below [`Rung::ThroughAnImport`] deliberately. The type table is keyed by
+    /// (package, name) and so answers in the use site's OWN package, which an
+    /// import naming a sibling crate's same-named type would contradict.
+    DeclaredByItsType,
+    /// A glob in scope covers the module the target sits in. The name itself
+    /// was never written down, which is what makes this the weakest first-party
+    /// rung.
+    ThroughAGlob,
+    /// A path rooted at this package, needing no import.
+    RootedInThisPackage,
+    /// A fully-qualified path that leaves the scanned source (R5). Named, never
+    /// opened.
+    FullyQualifiedExternal,
+    /// A name the language puts in scope everywhere. Outranked by a glob, which
+    /// could have shadowed it.
+    InThePrelude,
+}
+
+impl Rung {
+    /// The stable label this rung is written and read under. One labeling, for
+    /// the reason [`Reason::as_label`] gives.
+    pub fn as_label(self) -> &'static str {
+        match self {
+            Self::DeclaredHere => "declared_here",
+            Self::ThroughAnImport => "through_an_import",
+            Self::NamedByThisFile => "named_by_this_file",
+            Self::DeclaredByItsType => "declared_by_its_type",
+            Self::ThroughAGlob => "through_a_glob",
+            Self::RootedInThisPackage => "rooted_in_this_package",
+            Self::FullyQualifiedExternal => "fully_qualified_external",
+            Self::InThePrelude => "in_the_prelude",
+        }
+    }
+
+    /// The inverse of [`Rung::as_label`]. `None` for a label no rung claims.
+    pub fn from_label(label: &str) -> Option<Self> {
+        Some(match label {
+            "declared_here" => Self::DeclaredHere,
+            "through_an_import" => Self::ThroughAnImport,
+            "named_by_this_file" => Self::NamedByThisFile,
+            "declared_by_its_type" => Self::DeclaredByItsType,
+            "through_a_glob" => Self::ThroughAGlob,
+            "rooted_in_this_package" => Self::RootedInThisPackage,
+            "fully_qualified_external" => Self::FullyQualifiedExternal,
+            "in_the_prelude" => Self::InThePrelude,
+            _ => return None,
+        })
+    }
+
+    /// Every rung, in the order `Ladder::climb` tries them.
+    pub const ALL: &'static [Rung] = &[
+        Rung::DeclaredHere,
+        Rung::ThroughAnImport,
+        Rung::NamedByThisFile,
+        Rung::DeclaredByItsType,
+        Rung::ThroughAGlob,
+        Rung::RootedInThisPackage,
+        Rung::FullyQualifiedExternal,
+        Rung::InThePrelude,
+    ];
+}
+
+/// Where a reference points. Total by construction (spec §3.2, R2).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Resolution {
+    Resolved { fqn: Fqn, via: Rung },
+    Unresolved { reason: Reason, evidence: Evidence },
+}
+
+/// One use site (spec §3.2). Exactly one of these per use site in the AST —
+/// a miss is an `Unresolved` target, never an omitted reference (R2, A2).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Reference {
+    /// The symbol the use site sits inside.
+    pub from: Fqn,
+    pub kind: RefKind,
+    pub at: Span,
+    pub target: Resolution,
+}
+
+// ── structure (spec §3.3) ────────────────────────────────────────────────────
+
+/// What one symbol is to another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RelationKind {
+    /// Single inheritance.
+    Extends,
+    /// Interface implementation.
+    Implements,
+    /// `impl Trait for Type`. Same shape as [`RelationKind::Implements`], a
+    /// different fact, and kept apart so a query can ask for either.
+    TraitImpl,
+    Mixin,
+    Decorates,
+    /// One `cfg`-gated ARM of a declaration, pointing at the callable it
+    /// implements.
+    ///
+    /// `#[cfg(feature = "x")] fn f` and `#[cfg(not(feature = "x"))] fn f` are
+    /// two BODIES of one function. Both are in the codebase — which is what
+    /// this indexer describes — and exactly one is in any given binary.
+    ///
+    /// NOT [`RelationKind::Owns`], and the distance matters for the same
+    /// reason it does for [`RelationKind::Contains`]: `Owns` is what
+    /// `resolve::members_declared_by` reads to decide that `x.foo()` can land
+    /// on `Foo::foo`. A variant is not a member of anything and must never be
+    /// reachable as one — a call would resolve onto an arm, which is a
+    /// spelling no use site can mint.
+    ///
+    /// NOT [`RelationKind::Implements`] either, though the shape rhymes. An
+    /// interface has N implementations at RUNTIME and dispatch chooses; a
+    /// `cfg` leaves exactly one in the binary and the others are never
+    /// compiled. The edge says "in some builds", which is a weaker claim than
+    /// any inheritance edge makes.
+    Variant,
+    /// Member ownership: a type owns its fields and methods.
+    ///
+    /// This is what an inherent `impl Foo { }` produces. It is NOT inheritance —
+    /// emitting an `Extends` for an inherent impl would be a false edge that
+    /// pattern detection reads as real.
+    Owns,
+    /// Lexical containment: a module holds the declarations written inside it.
+    ///
+    /// The file-module holds its top-level items; an inline `mod x { }` holds
+    /// its own. It feeds `nodes.parent_id` and NOTHING ELSE — see
+    /// `persist::relation_edge_kind`, which refuses to give it an edge kind.
+    ///
+    /// NOT [`RelationKind::Owns`], and the distance between them is the point.
+    /// `Owns` says a TYPE declares a MEMBER, and it is what
+    /// `resolve::members_declared_by` reads to decide that `x.foo()` can land on
+    /// `Foo::foo`. A module declares no members: widening that lookup to admit
+    /// containment would let a member call resolve onto a module, which is a
+    /// fabricated edge (R4).
+    Contains,
+}
+
+/// One structural fact, emitted by the same walk that emits symbols (D5).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Relation {
+    pub kind: RelationKind,
+    /// The declaring side: the subtype, or the owned member.
+    pub child: Fqn,
+    /// The other side, resolved the same way a call target is. Total, so a
+    /// supertype the walk could not place is an `Unresolved` with a reason —
+    /// never a bare name with nothing said about it.
+    pub parent: Resolution,
+    pub at: Span,
+}
+
+// ── imports (spec §2) ────────────────────────────────────────────────────────
+
+/// What an import brings into scope.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Binding {
+    /// Binds exactly this name, and the SPECIFIER already names the thing bound
+    /// — the last path segment, or the alias. Rust's `use a::b::C`, Java's
+    /// `import a.b.C`, and JavaScript's `import * as ns from './m'`, where the
+    /// bound name IS the module the specifier spells.
+    Name(String),
+    /// Binds a MEMBER of what the specifier names, which the specifier
+    /// therefore does NOT spell: JavaScript's
+    /// `import { kindFor } from './buckets'`, where the clause carries the name
+    /// and the string carries only the module.
+    ///
+    /// Distinct from [`Binding::Name`] because the ladder has to spell the
+    /// target differently for each, and the difference is a property of the
+    /// CLAUSE rather than of the language: both shapes appear in one JavaScript
+    /// file, so a per-language flag cannot tell them apart. MEASURED: without
+    /// the distinction, 3,865 first-party TypeScript import edges named the
+    /// module instead of the member and not one of them reached a declaration.
+    ///
+    /// TWO names, because an alias makes them different questions.
+    /// `import { kindFor as kf }` is looked up in this file as `kf` and reaches
+    /// `kindFor` in the other module; carrying one string would either fail
+    /// every lookup or name a member the other module does not declare. Rust
+    /// keeps its alias in the specifier and splits it off
+    /// ([`crate::indexer::resolve::Grammar::names_the_binding`]); a JavaScript
+    /// specifier has nowhere to put one.
+    MemberOf {
+        /// What this file calls it — the lookup key at a use site here.
+        local: String,
+        /// What the other module declares it as — the segment of the target.
+        member: String,
+    },
+    /// A glob. It binds an unknown set of names, so a name that MIGHT have come
+    /// from here is not proof that it did (R4).
+    Glob,
+}
+
+impl Binding {
+    /// The name brought into scope, for the two variants that bind exactly one.
+    /// Shared so a caller that only needs "which name" cannot come to disagree
+    /// with the ladder about what a binding binds.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Binding::Name(name) | Binding::MemberOf { local: name, .. } => Some(name.as_str()),
+            Binding::Glob => None,
+        }
+    }
+}
+
+/// Whether an import crosses out of the scanned source.
+///
+/// This is the ONLY thing that decides externality (spec §2). A symbol being
+/// absent from what has been scanned so far decides nothing, because what has
+/// been scanned depends on file order and resolution must not (R6).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ImportOrigin {
+    Local,
+    External { package: String },
+}
+
+/// One import (spec §3).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Import {
+    /// The specifier verbatim as written.
+    pub path: String,
+    pub binds: Binding,
+    pub origin: ImportOrigin,
+    pub at: Span,
+}
+
+// ── the product of one walk (spec §3) ────────────────────────────────────────
+
+/// Everything one parse of one file produced. A file is parsed once and no
+/// later stage re-reads its bytes (R1), so whatever is missing from here is
+/// missing from the graph.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FileFacts {
+    pub language: Language,
+    /// The owning crate/package, supplied by the processor from the nearest
+    /// manifest.
+    pub package: String,
+    /// This file's package-relative module path, empty at the package root.
+    pub module: String,
+    /// Where this file is. A fact of the walk and not an argument the writer
+    /// supplies again later, because the identity a file-scope use site is
+    /// filed under and the identity the writer hangs imports off must be one
+    /// string — and at a crate root, where the module path is empty and a
+    /// package may have several, the path is what tells two files apart.
+    pub path: String,
+    pub symbols: Vec<Symbol>,
+    pub references: Vec<Reference>,
+    pub relations: Vec<Relation>,
+    pub imports: Vec<Import>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::indexer::fqn::{self, Form};
+
+    fn a_span() -> Span {
+        Span { start_line: 12, start_col: 4, end_line: 12, end_col: 9 }
+    }
+
+    /// Built through the one door that mints an [`Fqn`], because nothing else
+    /// may — see the guard test in `fqn.rs`.
+    fn an_fqn(name: &str) -> Fqn {
+        fqn::define(&Form::Item {
+            lang: Language::Rust,
+            package: "senseid",
+            module: "indexer::facts",
+            name,
+            reach: fqn::Reach::Item,
+        })
+        .expect("the test's own fqn parts are well formed")
+    }
+
+    fn all_languages() -> Vec<Language> {
+        Language::all().to_vec()
+    }
+
+    fn all_symbol_kinds() -> Vec<SymbolKind> {
+        vec![
+            SymbolKind::Function,
+            SymbolKind::Method,
+            SymbolKind::Class,
+            SymbolKind::Struct,
+            SymbolKind::Enum,
+            SymbolKind::EnumVariant,
+            SymbolKind::Interface,
+            SymbolKind::Trait,
+            SymbolKind::TypeAlias,
+            SymbolKind::Const,
+            SymbolKind::Static,
+            SymbolKind::Module,
+            SymbolKind::Macro,
+            SymbolKind::Field,
+            SymbolKind::Property,
+        ]
+    }
+
+    fn all_visibilities() -> Vec<Visibility> {
+        vec![
+            Visibility::Public,
+            Visibility::Crate,
+            Visibility::Restricted("super".to_string()),
+            Visibility::Private,
+        ]
+    }
+
+    fn all_declared_types() -> Vec<DeclaredType> {
+        vec![DeclaredType::Stated("Arc<PgStore>".to_string()), DeclaredType::Unstated]
+    }
+
+    fn all_ref_kinds() -> Vec<RefKind> {
+        vec![
+            RefKind::Calls,
+            RefKind::Reads,
+            RefKind::Writes,
+            RefKind::Constructs,
+            RefKind::TypeUse,
+            RefKind::MacroInvokes,
+            RefKind::Imports,
+        ]
+    }
+
+    fn all_reasons() -> Vec<Reason> {
+        vec![
+            Reason::UnhandledForm,
+            Reason::NoDeclaredType,
+            Reason::ReceiverTypeUnknown,
+            Reason::NoImportInScope,
+            Reason::AmbiguousCandidates,
+            Reason::DynamicDispatch,
+            Reason::MacroExpansion,
+            Reason::Plumbing,
+            Reason::ExternalBoundary,
+            Reason::Unplaced,
+        ]
+    }
+
+    fn all_observations() -> Vec<Observation> {
+        vec![
+            Observation::Receiver("ctx.pg()".to_string()),
+            Observation::ImportInScope("crate::db::PgStore".to_string()),
+            Observation::UnplacedType("PgStore".to_string()),
+            Observation::BoundToTheResultOf("pg_store".to_string()),
+            Observation::Candidate(an_fqn("candidate")),
+            Observation::Named(an_fqn("named")),
+        ]
+    }
+
+    fn an_evidence() -> Evidence {
+        Evidence {
+            name: "pg".to_string(),
+            node_kind: "field_expression".to_string(),
+            reach: Reach::Field,
+            saw: all_observations(),
+        }
+    }
+
+    fn all_resolutions() -> Vec<Resolution> {
+        vec![
+            Resolution::Resolved { fqn: an_fqn("resolved"), via: Rung::DeclaredHere },
+            Resolution::Unresolved { reason: Reason::ReceiverTypeUnknown, evidence: an_evidence() },
+        ]
+    }
+
+    fn all_relation_kinds() -> Vec<RelationKind> {
+        vec![
+            RelationKind::Extends,
+            RelationKind::Implements,
+            RelationKind::TraitImpl,
+            RelationKind::Mixin,
+            RelationKind::Variant,
+            RelationKind::Decorates,
+            RelationKind::Owns,
+            RelationKind::Contains,
+        ]
+    }
+
+    fn all_bindings() -> Vec<Binding> {
+        vec![
+            Binding::Name("PgStore".to_string()),
+            Binding::MemberOf { local: "kf".to_string(), member: "kindFor".to_string() },
+            Binding::Glob,
+        ]
+    }
+
+    fn all_import_origins() -> Vec<ImportOrigin> {
+        vec![ImportOrigin::Local, ImportOrigin::External { package: "serde_json".to_string() }]
+    }
+
+    /// Every match below is wildcard-free on purpose: a new variant stops
+    /// compiling here until it is also added to the `all_*` list, so the lists
+    /// cannot silently fall behind the enums they claim to enumerate.
+    #[test]
+    fn every_declaration_fact_variant_is_constructible() {
+        for l in all_languages() {
+            match l {
+                Language::Rust
+                | Language::TypeScript
+                | Language::Java
+                | Language::Python
+                | Language::CSharp
+                | Language::Kotlin
+                | Language::Php
+                | Language::C
+                | Language::Sql => {}
+            }
+        }
+        assert_eq!(all_languages().len(), 9);
+
+        for k in all_symbol_kinds() {
+            match k {
+                SymbolKind::Function
+                | SymbolKind::Method
+                | SymbolKind::Class
+                | SymbolKind::Struct
+                | SymbolKind::Enum
+                | SymbolKind::EnumVariant
+                | SymbolKind::Interface
+                | SymbolKind::Trait
+                | SymbolKind::TypeAlias
+                | SymbolKind::Const
+                | SymbolKind::Static
+                | SymbolKind::Module
+                | SymbolKind::Macro
+                | SymbolKind::Field
+                | SymbolKind::Property => {}
+            }
+        }
+        assert_eq!(all_symbol_kinds().len(), 15);
+
+        for v in all_visibilities() {
+            match v {
+                Visibility::Public
+                | Visibility::Crate
+                | Visibility::Restricted(_)
+                | Visibility::Private => {}
+            }
+        }
+        assert_eq!(all_visibilities().len(), 4);
+
+        for t in all_declared_types() {
+            match t {
+                DeclaredType::Stated(_) | DeclaredType::Unstated => {}
+            }
+        }
+        assert_eq!(all_declared_types().len(), 2);
+    }
+
+    /// The one classification, pinned in one place.
+    ///
+    /// Written as "which kinds are NOT namable" rather than arm by arm,
+    /// because arm by arm is a restatement of the match and would pass
+    /// whatever the match said.
+    #[test]
+    fn a_module_is_the_one_declaration_kind_no_reference_can_name() {
+        let unnamable: Vec<SymbolKind> =
+            all_symbol_kinds().into_iter().filter(|k| !k.can_be_named()).collect();
+        assert_eq!(
+            unnamable,
+            vec![SymbolKind::Module],
+            "a module is entered by an import and its CONTENTS are what get named; \
+             every other kind is the target of some reference"
+        );
+
+        // And the same classification under the name a REPORT needs. Asserted
+        // here rather than in its own test because it is not a second fact:
+        // `reached_by` is derived from `can_be_named`, and the reason to pin
+        // both together is that a reader changing one arm should see every
+        // consequence of it in one failure.
+        let imported: Vec<SymbolKind> = all_symbol_kinds()
+            .into_iter()
+            .filter(|k| k.reached_by() == ReachedBy::Import)
+            .collect();
+        assert_eq!(
+            imported, unnamable,
+            "the kinds an import reaches are exactly the kinds no reference can name, so a \
+             report cannot head one of them `not called`"
+        );
+    }
+
+    /// The kinds a reader is most likely to lump in with a module, each with
+    /// the reference kind that reaches it.
+    ///
+    /// These are all things that are DECLARED and then read rather than
+    /// called, so a report of what nothing calls lists them — and the wrong
+    /// lesson to draw from that is that nothing can name them either. A read
+    /// is a reference; an import is not.
+    #[test]
+    fn a_kind_that_is_read_rather_than_called_is_still_one_a_reference_names() {
+        for (kind, reached_by) in [
+            (SymbolKind::Const, RefKind::Reads),
+            (SymbolKind::Static, RefKind::Reads),
+            (SymbolKind::Field, RefKind::Writes),
+            (SymbolKind::Property, RefKind::Reads),
+            (SymbolKind::TypeAlias, RefKind::TypeUse),
+            (SymbolKind::EnumVariant, RefKind::Constructs),
+            (SymbolKind::Macro, RefKind::MacroInvokes),
+        ] {
+            assert!(
+                kind.can_be_named(),
+                "{kind:?} is reached by {reached_by:?}, so an edge to it can be lost and \
+                 the report must keep asking about it"
+            );
+        }
+    }
+
+    #[test]
+    fn every_reference_fact_variant_is_constructible() {
+        for k in all_ref_kinds() {
+            match k {
+                RefKind::Calls
+                | RefKind::Reads
+                | RefKind::Writes
+                | RefKind::Constructs
+                | RefKind::TypeUse
+                | RefKind::MacroInvokes
+                | RefKind::Imports => {}
+            }
+        }
+        assert_eq!(all_ref_kinds().len(), 7);
+
+        for r in all_reasons() {
+            match r {
+                Reason::UnhandledForm
+                | Reason::NoDeclaredType
+                | Reason::ReceiverTypeUnknown
+                | Reason::NoImportInScope
+                | Reason::AmbiguousCandidates
+                | Reason::DynamicDispatch
+                | Reason::MacroExpansion
+                | Reason::Plumbing
+                | Reason::ExternalBoundary
+                | Reason::Unplaced => {}
+            }
+        }
+        assert_eq!(all_reasons().len(), 10);
+
+        for o in all_observations() {
+            match o {
+                Observation::Receiver(_)
+                | Observation::ImportInScope(_)
+                | Observation::UnplacedType(_)
+                | Observation::BoundToTheResultOf(_)
+                | Observation::Candidate(_)
+                | Observation::Named(_) => {}
+            }
+        }
+        assert_eq!(all_observations().len(), 6);
+    }
+
+    #[test]
+    fn every_relation_and_import_variant_is_constructible() {
+        for k in all_relation_kinds() {
+            match k {
+                RelationKind::Extends
+                | RelationKind::Implements
+                | RelationKind::TraitImpl
+                | RelationKind::Mixin
+                | RelationKind::Decorates
+                | RelationKind::Owns
+                | RelationKind::Variant
+                | RelationKind::Contains => {}
+            }
+        }
+        assert_eq!(all_relation_kinds().len(), 8);
+
+        for b in all_bindings() {
+            match b {
+                Binding::Name(_) | Binding::MemberOf { .. } | Binding::Glob => {}
+            }
+        }
+        assert_eq!(all_bindings().len(), 3);
+
+        for o in all_import_origins() {
+            match o {
+                ImportOrigin::Local | ImportOrigin::External { .. } => {}
+            }
+        }
+        assert_eq!(all_import_origins().len(), 2);
+    }
+
+    /// Every label round-trips, and no two languages share one.
+    ///
+    /// The label is the LEADING SEGMENT of every identity the language mints
+    /// (spec §2), so a label that does not survive a round trip files a symbol
+    /// under a language nothing reads back, and two languages sharing a label
+    /// merge two graphs that have no business meeting.
+    #[test]
+    fn every_language_label_round_trips_and_is_unique() {
+        let mut seen: Vec<&str> = Vec::new();
+        for language in Language::all() {
+            let label = language.as_str();
+            assert_eq!(
+                Language::from_label(label),
+                Some(*language),
+                "{label} does not read back as the language that wrote it"
+            );
+            assert!(!seen.contains(&label), "two languages both spell themselves {label}");
+            seen.push(label);
+        }
+        assert_eq!(seen.len(), all_languages().len(), "`all` and the round trip disagree");
+        assert_eq!(Language::from_label("COBOL"), None, "an unknown label names no language");
+    }
+
+    /// R2 in one assertion. `Resolution` is total: the walk has exactly two
+    /// things it may say about a target, and both of them say something. There
+    /// is no third, empty variant a miss could be parked in and no `None` it
+    /// could collapse to, so a reference cannot be dropped on the floor.
+    #[test]
+    fn resolution_has_exactly_two_variants_and_neither_is_empty() {
+        let resolutions = all_resolutions();
+        assert_eq!(resolutions.len(), 2, "Resolution must have exactly two variants");
+
+        for r in resolutions {
+            match r {
+                Resolution::Resolved { fqn, .. } => {
+                    assert!(!fqn.as_str().is_empty(), "a resolved target names a symbol");
+                }
+                Resolution::Unresolved { reason, evidence } => {
+                    assert!(
+                        all_reasons().contains(&reason),
+                        "{reason:?} must be one of the closed set of causes"
+                    );
+                    assert!(
+                        !evidence.name.is_empty(),
+                        "a miss carries what the walk saw, never a bare nothing"
+                    );
+                    assert!(
+                        !evidence.node_kind.is_empty(),
+                        "the node kind is what names the miss in the histogram"
+                    );
+                }
+            }
+        }
+    }
+
+    /// One `FileFacts` holding one of every shape, which is the whole product of
+    /// a single walk (spec §3). Written out longhand because there is no
+    /// constructor to lean on: a defaulted field is indistinguishable from one
+    /// the walk actually read, and that is how fabricated data enters (R4).
+    #[test]
+    fn one_walk_produces_one_value_carrying_every_shape() {
+        let symbol = Symbol {
+            fqn: an_fqn("Widget"),
+            kind: SymbolKind::Struct,
+            name: "Widget".to_string(),
+            span: a_span(),
+            visibility: Visibility::Public,
+            docstring: Some("A widget.".to_string()),
+            declared_type: DeclaredType::Unstated,
+            params: vec![Param {
+                name: "width".to_string(),
+                position: 0,
+                declared_type: DeclaredType::Stated("u32".to_string()),
+            }],
+        };
+        let reference = Reference {
+            from: an_fqn("Widget"),
+            kind: RefKind::Calls,
+            at: a_span(),
+            target: Resolution::Unresolved {
+                reason: Reason::UnhandledForm,
+                evidence: an_evidence(),
+            },
+        };
+        let relation = Relation {
+            kind: RelationKind::TraitImpl,
+            child: an_fqn("Widget"),
+            parent: Resolution::Resolved { fqn: an_fqn("Display"), via: Rung::DeclaredHere },
+            at: a_span(),
+        };
+        let import = Import {
+            path: "crate::db::PgStore".to_string(),
+            binds: Binding::Name("PgStore".to_string()),
+            origin: ImportOrigin::Local,
+            at: a_span(),
+        };
+
+        let facts = FileFacts {
+            language: Language::Rust,
+            package: "senseid".to_string(),
+            module: "indexer::facts".to_string(),
+            path: "src/indexer/facts.rs".to_string(),
+            symbols: vec![symbol],
+            references: vec![reference],
+            relations: vec![relation],
+            imports: vec![import],
+        };
+
+        assert_eq!(facts.symbols.len(), 1);
+        assert_eq!(facts.references.len(), 1);
+        assert_eq!(facts.relations.len(), 1);
+        assert_eq!(facts.imports.len(), 1);
+        assert_eq!(facts.symbols[0].params.len(), 1, "a parameter is a prop, not a node (D2)");
+    }
+
+    /// The needles are assembled rather than written out, because this test
+    /// lives in one of the files it reads and a literal would match itself.
+    #[test]
+    fn no_option_stands_in_for_a_resolution() {
+        let banned = [
+            format!("Option<{}>", "Fqn"),
+            format!("Option<{}>", "Resolution"),
+            format!("Option<&{}>", "Fqn"),
+        ];
+        let mut read = 0;
+        for (path, body) in crate::indexer::guard_sources() {
+            read += 1;
+            for needle in &banned {
+                assert!(
+                    !body.contains(needle.as_str()),
+                    "{path} uses `{needle}`: a miss is Unresolved with a reason, never a None (R2)"
+                );
+            }
+        }
+        assert!(read > 0, "the guard read no files, so it would have passed vacuously");
+    }
+
+    /// A derived or hand-written default hands out a value nothing observed,
+    /// and a caller cannot tell it from one the walk read (R4).
+    ///
+    /// Matched on the two SPELLINGS that do it rather than on the word, and the
+    /// difference is not pedantry: a plain substring search for `Default` also
+    /// matches `ExportDefaultDeclaration`, which is what a JavaScript reader has
+    /// to call `export default`. A guard that a second language cannot satisfy
+    /// without renaming that language's keywords is a guard that will be
+    /// deleted, so it is narrowed to the thing it protects:
+    ///
+    /// - a DERIVED or hand-written `Default`, which hands out a whole value;
+    /// - `unwrap_or_default`, which turns a failed read into a zero nobody can
+    ///   tell from a real one.
+    ///
+    /// Calling `::default()` on a third-party type is neither — an arena
+    /// allocator is not data the walk claims to have read — and is left alone.
+    #[test]
+    fn nothing_defaults_a_value_it_did_not_read() {
+        // Assembled, because this file is one of the ones being read and a
+        // literal would match itself.
+        // BOTH spellings. `unwrap_or_default()` and `unwrap_or("")` are the
+        // same act on a `&str`, and the guard matched only the first — so
+        // `javascript.rs`'s `text_of` turned an unreadable span into an empty
+        // string that went on to NAME a symbol, under a guard written to
+        // forbid exactly that.
+        let swallowed = format!("unwrap_or_def{}", "ault");
+        let empty_string = format!("unwrap_or({}{})", '"', '"');
+        let derived = format!("Def{}", "ault");
+        let mut read = 0;
+        for (path, body) in crate::indexer::guard_sources() {
+            read += 1;
+            let body = crate::indexer::outside_tests(&body);
+            assert!(
+                !body.contains(swallowed.as_str()),
+                "{path} uses `{swallowed}`: a failed read turned into a zero is one a caller \
+                 cannot tell from a real one (R4)"
+            );
+            assert!(
+                !body.contains(empty_string.as_str()),
+                "{path} uses `{empty_string}`: an empty string a failed read produced is one a \
+                 caller cannot tell from a name the source actually carried (R4)"
+            );
+            for line in body.lines() {
+                let trimmed = line.trim_start();
+                let hands_out_a_whole_value = (trimmed.starts_with("#[derive(")
+                    || trimmed.starts_with("impl "))
+                    && line.contains(derived.as_str());
+                assert!(
+                    !hands_out_a_whole_value,
+                    "{path} derives or implements `{derived}`: a value nothing observed is \
+                     fabricated data that a caller cannot tell from one the walk read (R4)\n  {line}"
+                );
+            }
+        }
+        assert!(read > 0, "the guard read no files, so it would have passed vacuously");
+    }
+
+    /// Every rung has prose too, and every piece of rung prose has a rung.
+    ///
+    /// Its own domain rather than sharing `code_graph`, because `precedence` is
+    /// scoped per domain and means different things: for a reason it is "fix
+    /// this first", for a rung it is CLIMB ORDER — which rung outranks which.
+    /// One domain would make that number answer two questions.
+    ///
+    /// Every rung is `normal`: a placed edge is not a fault and not a refusal,
+    /// it is the ladder working. The table's CHECK then forces remedy and actor
+    /// to be null, which is correct — there is nothing to do about a success.
+    #[test]
+    fn every_rung_is_explained_by_a_seeded_reason_code() {
+        const DOMAIN: &str = "code_graph_rung";
+        let seed = include_str!("../../../../database/import/staging/reason_codes.jsonl");
+        let rows: Vec<serde_json::Value> = seed
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("every seed line is JSON"))
+            .filter(|row: &serde_json::Value| row["domain"] == DOMAIN)
+            .collect();
+
+        for rung in Rung::ALL {
+            let code = rung.as_label();
+            let row = rows
+                .iter()
+                .find(|r| r["code"] == code)
+                .unwrap_or_else(|| panic!("{DOMAIN}.{code} has no row in reason_codes.jsonl"));
+            for field in ["summary", "detail"] {
+                assert!(
+                    row[field].as_str().is_some_and(|s| !s.trim().is_empty()),
+                    "{code}.{field} is empty prose"
+                );
+            }
+            assert_eq!(row["kind"], "normal", "{code}: a placed edge is not a fault");
+            assert!(
+                row["remedy"].as_str().unwrap_or("").is_empty()
+                    && row["actor"].as_str().unwrap_or("").is_empty(),
+                "{code} is `normal`, so reason_codes_normal_is_silent rejects a remedy or actor"
+            );
+        }
+        for row in &rows {
+            let code = row["code"].as_str().unwrap_or_default();
+            assert!(Rung::from_label(code).is_some(), "{DOMAIN}.{code} names no rung");
+        }
+        assert_eq!(rows.len(), Rung::ALL.len(), "one row per rung, no more");
+
+        // Precedence IS climb order, so the seeded order must be the enum's.
+        let mut seeded: Vec<(i64, &str)> = rows
+            .iter()
+            .map(|r| (r["precedence"].as_i64().unwrap_or(0), r["code"].as_str().unwrap_or("")))
+            .collect();
+        seeded.sort_unstable();
+        assert_eq!(
+            seeded.iter().map(|(_, c)| *c).collect::<Vec<_>>(),
+            Rung::ALL.iter().map(|r| r.as_label()).collect::<Vec<_>>(),
+            "seeded precedence disagrees with the order Ladder::climb tries the rungs"
+        );
+    }
+
+    /// Every reason a miss can carry has PROSE, and every piece of prose has a
+    /// reason.
+    ///
+    /// `Reason::as_label` gives a consumer a token; `sensei.reason_codes` is
+    /// what turns that token into something a person or a model can act on.
+    /// They are in two files, so the only thing keeping them in step is this
+    /// test. Without it the failure is silent and one-directional: a variant
+    /// added here surfaces to every reader as a bare `unhandled_form` with no
+    /// explanation, which reads as a system that has nothing to say rather than
+    /// as prose somebody forgot to write.
+    ///
+    /// Asserted against the SEED FILE rather than a list restated here, for the
+    /// reason `the_refresh_window_is_wider_than_the_check_interval` gives: a
+    /// copy keeps agreeing with itself.
+    #[test]
+    fn every_reason_is_explained_by_a_seeded_reason_code() {
+        const DOMAIN: &str = "code_graph";
+        let seed = include_str!("../../../../database/import/staging/reason_codes.jsonl");
+
+        let rows: Vec<serde_json::Value> = seed
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("every seed line is JSON"))
+            .filter(|row: &serde_json::Value| row["domain"] == DOMAIN)
+            .collect();
+
+        for reason in Reason::ALL {
+            let code = reason.as_label();
+            let row = rows
+                .iter()
+                .find(|r| r["code"] == code)
+                .unwrap_or_else(|| panic!("{DOMAIN}.{code} has no row in reason_codes.jsonl"));
+            for field in ["summary", "detail"] {
+                let text = row[field].as_str().unwrap_or("");
+                assert!(!text.trim().is_empty(), "{code}.{field} is empty prose");
+            }
+            let kind = row["kind"].as_str().unwrap_or("");
+            assert!(
+                matches!(kind, "normal" | "refusal" | "fault"),
+                "{code} has kind {kind:?}, which sensei.reason_kind does not have"
+            );
+            // The CHECK on the table, asserted here so a bad row fails in the
+            // suite rather than at deploy.
+            if kind == "normal" {
+                assert!(
+                    row["remedy"].as_str().unwrap_or("").is_empty()
+                        && row["actor"].as_str().unwrap_or("").is_empty(),
+                    "{code} is `normal` but names a remedy or an actor — \
+                     reason_codes_normal_is_silent rejects that"
+                );
+            }
+        }
+
+        // And nothing the other way: prose for a reason that no longer exists
+        // is prose no reader will ever see, which is how a vocabulary rots.
+        for row in &rows {
+            let code = row["code"].as_str().unwrap_or_default();
+            assert!(
+                Reason::from_label(code).is_some(),
+                "{DOMAIN}.{code} is seeded but no Reason variant produces it"
+            );
+        }
+
+        let mut precedences: Vec<i64> =
+            rows.iter().filter_map(|r| r["precedence"].as_i64()).collect();
+        precedences.sort_unstable();
+        let before = precedences.len();
+        precedences.dedup();
+        assert_eq!(before, precedences.len(), "reason_codes is UNIQUE (domain, precedence)");
+        assert_eq!(rows.len(), Reason::ALL.len(), "one row per reason, no more");
+    }
+}

@@ -26,17 +26,12 @@ create table if not exists rule_packs (
 , summary            text                          -- one-liner: why this bundle exists
 , enforcement        enforcement    not null default 'recommended'  -- pack DEFAULT tier; a rule keeps its own
 , owner_namespace_id uuid           references sensei.namespaces(id) on delete cascade
-                                                   -- the ORG that authored a PRIVATE pack; NULL = global
-                                                   -- curated library. Never a project — packs are cross-repo.
 , version            integer        not null default 1   -- bumps on any membership/rule change; adoptions pin it
 , status             text           not null default 'active'   -- active | draft | archived
 , published_by       text           not null
 , published_at       timestamptz    not null default now()
 , updated_at         timestamptz    not null default now()
 , constraint rule_packs_owner_slug unique (owner_namespace_id, slug)
-  -- Shared vocabulary (see sensei.entity_scope / sensei.entity_origin).
-  -- scope answers WHO MAY SEE IT and therefore whether it syncs; origin answers
-  -- WHERE IT CAME FROM and therefore what a re-import may safely replace.
 , scope         entity_scope  not null default 'local'
 , origin        entity_origin not null default 'builtin'
 );
@@ -60,7 +55,9 @@ comment on column rule_packs.owner_namespace_id
 comment on column rule_packs.enforcement
      is 'The pack''s DEFAULT enforcement tier. Each rule (rule_pack_rules.enforcement) may set its own; an adoption may override per-namespace (rule_pack_adoptions.enforcement).';
 comment on column rule_packs.version
-     is 'Pack version, bumped on any change to its rules/membership. An adoption pins the version it adopted (rule_pack_adoptions.pinned_version); re-adopt to take an update.';
+     is 'Pack version, bumped on any change to its rules/membership. An adoption pins the version it adopted (rule_pack_adoptions.pinned_version); re-adopt to take an update.
+
+the ORG that authored a PRIVATE pack; NULL = global curated library. Never a project — packs are cross-repo.';
 
 -- ── Dōjō (Supabase) plane: security_invoker read path ───────────────────────────────────
 -- dojo.rule_pack_library runs with security_invoker, so the CALLING role reads this table
@@ -82,3 +79,5 @@ comment on column rule_packs.attribution is
 Named `source` until 2026-08-24, which put a citation in the same column name
 four other tables used for provenance. It is neither a scope nor an origin: those
 are now sensei.entity_scope and sensei.entity_origin.';
+comment on column rule_packs.scope
+     is 'Shared vocabulary (see sensei.entity_scope / sensei.entity_origin). scope answers WHO MAY SEE IT and therefore whether it syncs; origin answers WHERE IT CAME FROM and therefore what a re-import may safely replace.';

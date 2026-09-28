@@ -34,6 +34,14 @@ path is unaffected. A local database brought up with a bare `dbd apply` will
 have the table but not its policy — RLS enabled with no policy denies all rows
 to non-superusers, which is a loud failure rather than a silent leak.
 
+## Scope
+
+Since dbd 0.12.0 `dbd policies` honours `--scope`: a file whose table is outside
+the scope is SKIPPED, not failed (`Skipped ./policies/dojo/… — outside scope
+'default'`). So these files are plain SQL. Before 0.12.0 every file ran against
+every plane, which meant wrapping each statement in a `do $$ … execute … $$`
+block purely to no-op on the daemon, where the `dojo` schema does not exist.
+
 ## Current contents
 
 | file | calls |
@@ -42,3 +50,10 @@ to non-superusers, which is a loud failure rather than a silent leak.
 | `dojo/relay_inbox.sql` | `dojo.owns_membership` |
 | `dojo/relay_segments.sql` | `dojo.owns_membership` |
 | `dojo/repository_metrics.sql` | `dojo.can_read_repository_metric` |
+| `dojo/projects.sql` | `dojo.current_principal_id` |
+
+`dojo/projects.sql` moved here from its table DDL when the policy stopped
+comparing to `auth.uid()` directly: `projects.user_id` holds a **principal** id,
+not a login id, so the old predicate matched nothing — invisibly, since the
+Worker bypasses RLS as `service_role`. See `dojo.current_principal_id` and
+`database/tests/dojo/rls_principal_grain.sql`.

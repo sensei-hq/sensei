@@ -5,14 +5,9 @@ create table if not exists libraries (
 , kind                     library_kind not null default 'detected'
 , name                     text         not null
 , ecosystem                library_ecosystem not null
-, version                  text
 , description              text
-, source_type              library_source_type
-, base_url                 text
-, local_path               text
+, repository_url           text
 , homepage_url             text
-, docs_url                 text
-, page_count               integer      not null default 0
 , embedding                vector(384)
 , icons                    jsonb        not null default '{}'
 , props                    jsonb        not null default '{}'
@@ -34,12 +29,16 @@ create index if not exists libraries_tags_idx
     on libraries using gin(tags);
 
 comment on table libraries is
-'Libraries — known packages and documentation sources.
+'Libraries — the IDENTITY of a known package or documentation source.
+S7b moved every VERSION-SCOPED fact to library_versions: source_type, base_url,
+docs_url, local_path, page_count and version itself. A website documents one
+version, so its docs URL is wrong for an older pin; a repo homepage is not, so
+homepage_url stays here.
 Consolidates the former libraries, lib_meta, and shared_libs tables.
 - kind: detected (from Cargo.toml, package.json) or imported (manual, internal SDKs, llms.txt)
 - ecosystem: npm, pypi, cargo, go, or docs (for pure documentation sources)
 - source_type: how pages are fetched — llms.txt, http, or local
-- page_count: denormalized count of library_pages rows
+- page_count: denormalized count of library_content rows of kind ''page''
 - props: extensible — {llms_txt, llms_txt_fetched_at, skill_path, skill_generated_at, ...}
 - embedding: 384-dim vector on description for similarity search';
 
@@ -51,22 +50,12 @@ comment on column libraries.name
      is 'Package name within the ecosystem (e.g. "react", "tokio", "@lumen/icons").';
 comment on column libraries.ecosystem
      is 'Package registry: npm, pypi, cargo, go, or docs (pure documentation source).';
-comment on column libraries.version
-     is 'Pinned or latest-known version string.';
 comment on column libraries.description
      is 'Human-readable description of the library.';
-comment on column libraries.source_type
-     is 'How documentation pages are sourced: llms.txt, http, or local.';
-comment on column libraries.base_url
-     is 'Root URL for fetching documentation when source_type is http or llms.txt.';
-comment on column libraries.local_path
-     is 'Local filesystem path for reading documentation when source_type is local.';
+comment on column libraries.repository_url
+     is 'Where the library''s source lives, taken from the registry''s own record (npm repository.url, crates.io crate.repository, pypi project_urls Source). Unwrapped of packaging — a leading git+ and a trailing .git are removed — but never rewritten: an ssh:// remote stays ssh://. NULL means the registry stated none; it is never derived from the package name. Identity-level, so it sits here rather than on library_versions, which carries where a given release''s docs were fetched from.';
 comment on column libraries.homepage_url
      is 'URL of the library homepage or repository.';
-comment on column libraries.docs_url
-     is 'URL of the library primary documentation site.';
-comment on column libraries.page_count
-     is 'Denormalized count of library_pages rows for this library.';
 comment on column libraries.embedding
      is '384-dimensional vector embedding on description for similarity search.';
 comment on column libraries.icons

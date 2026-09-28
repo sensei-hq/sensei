@@ -65,6 +65,81 @@ impl TestGate {
 /// anything derived from them.
 pub(crate) static CORRECTIONS_TABLE_LOCK: TestGate = TestGate::new();
 
+/// Serialises the tests that call `prune_activity`, which is DATABASE-WIDE.
+///
+/// It selects every eligible session in `activity.sessions` — analyzed, older
+/// than the cutoff, and either covered by a session-derived daily metric or past
+/// the hard backstop — and deletes their children, including
+/// `activity.capture_watermarks` keyed on `client_session_id`. Being global is the
+/// behaviour under test, so these tests cannot be isolated by scoping their own
+/// rows: each one deliberately AGES and ANALYZES its session and seeds a covering
+/// metric precisely to make it eligible, which also makes it eligible for every
+/// sibling's prune.
+///
+/// Concurrently they delete each other's fixtures. Observed in CI as
+/// `prune_activity_deletes_analyzed_sessions_past_cutoff_and_children` failing its
+/// own `assert_eq!(wm_before.0, 1, "watermark fixture did not land")` with
+/// `left: 0` — the watermark had landed and a sibling's prune removed it before
+/// the count. The assertion exists because "assert the row is GONE" passes
+/// trivially when it was never there; it caught a sibling instead.
+///
+/// Hold it for the whole span between seeding and the last assertion, not just
+/// around the `prune_activity` call — the damage is done to the FIXTURE, before
+/// the call under test.
+pub(crate) static ACTIVITY_PRUNE_GATE: TestGate = TestGate::new();
+
+/// Serialises the tests that edit a SEEDED `sensei.schedules` row, or run the
+/// seed import.
+///
+/// The eleven seeded rows are a fixture every one of those tests shares.
+/// `import_schedules` rewrites every row named in `staging.schedules`, so two
+/// such tests interleaved each see the other's edit reverted; worse, a test
+/// asserting that a REJECTED patch wrote nothing reads a sibling's legitimate
+/// write as a write of its own. Both the store tests and the handler tests edit
+/// the same rows, so the gate lives here rather than in either of them.
+///
+/// Hold it for the whole span between the first read and the restore.
+pub(crate) static SCHEDULE_EDIT_GATE: TestGate = TestGate::new();
+
+/// The prefix every throwaway `sensei.schedules` row carries — see
+/// [`test_schedule_name`].
+pub(crate) const TEST_SCHEDULE_PREFIX: &str = "_test:";
+
+/// A throwaway `sensei.schedules` name for a test that needs a row of its own
+/// rather than an edit to a seeded worker.
+///
+/// The prefix is load-bearing. `every_schedule_row_names_a_real_worker` scans
+/// the whole table and asserts every name is a worker in `SCHEDULABLE`, so a row
+/// belonging to a concurrently-running test fails it — permanently, if that test
+/// panicked before its cleanup. The prefix is how the scan tells "another test
+/// is mid-flight" from "a row that schedules nobody"; no worker may use it,
+/// which that test asserts.
+pub(crate) fn test_schedule_name() -> String {
+    format!("{TEST_SCHEDULE_PREFIX}sched:{}", uuid::Uuid::new_v4())
+}
+
+/// Put a seeded schedule row back exactly as `staging.schedules` holds it,
+/// `modified_at` included.
+///
+/// A test that edits a seeded worker must not leave it looking like a USER edit:
+/// `staging.import_schedules` refuses to overwrite a row whose `modified_at` is
+/// newer than the datafile's, so a leftover test cadence would survive every
+/// future `dbd deploy` with nobody able to explain why.
+pub(crate) async fn restore_seeded_schedule(pg: &PgStore, name: &str) {
+    sqlx_core::query::query(
+        "UPDATE sensei.schedules s \
+            SET enabled = g.enabled, interval_secs = g.interval_secs \
+              , window_start = g.window_start, window_end = g.window_end \
+              , days = g.days, modified_at = g.modified_at \
+           FROM staging.schedules g \
+          WHERE s.name = g.name AND s.name = $1",
+    )
+    .bind(name)
+    .execute(pg.pool())
+    .await
+    .expect("a seeded schedule row must be restorable from staging");
+}
+
 /// A [`TaskContext`](crate::tasks::executor::TaskContext) backed by a fresh
 /// `TaskQueue`, the test `PgStore`, and a noop gateway — the standard fixture for
 /// task-handler unit tests.
@@ -497,18 +572,14 @@ pub(crate) async fn seed_detected_pattern(
 /// Insert one file-kind `sensei.nodes` row — a "project file" for the
 /// `rework_density` denominator (# project files = # `kind = 'file'` nodes in the
 /// project's folders). `file_path` doubles as the node name and must be unique per
-/// folder (governed by `nodes_unique_identity`); `ON CONFLICT DO NOTHING` keeps
-/// re-seeds idempotent.
+/// folder (governed by `nodes_unique_identity`); re-seeds are idempotent.
+///
+/// The `files` row comes first (R13/R14): a node's file is a FOREIGN KEY now, and
+/// stage 3's barrier is what makes it present before any node write. Seeding it
+/// here is that barrier, not a workaround for it.
 pub(crate) async fn seed_file_node(pg: &PgStore, folder_id: &uuid::Uuid, file_path: &str) {
-    sqlx_core::query::query(
-        "INSERT INTO sensei.nodes (folder_id, kind, name, file_path) \
-         VALUES ($1, 'file'::sensei.node_kind, $2, $2) ON CONFLICT DO NOTHING",
-    )
-    .bind(folder_id)
-    .bind(file_path)
-    .execute(pg.pool())
-    .await
-    .unwrap();
+    use crate::db::pg_store::graph_seed::SeedGraph;
+    pg.seed_node(folder_id, "file", file_path, file_path, None, None, None, None).await.unwrap();
 }
 
 /// Insert one `sensei.memories` row for the `memory_promotion` numerator
@@ -854,3 +925,47 @@ pub(crate) async fn daily_project_metric_rows(
 // `module_metric_rows` (per-module folder_id-set rows) was removed with the repo-grain
 // cutover: no computer writes per-module rows anymore (folder_id is not part of the
 // `project_metrics_identity` key), so the helper had no callers.
+
+/// Write a node the way production does: the FILE ROW FIRST, then the node.
+///
+/// Stage 3's barrier creates every `files` row before any parse task exists
+/// (R14), so in production a node always names a file that is already tracked
+/// and `upsert_node` can FAIL CLOSED on a miss (R13, 06 S6). A fixture that
+/// writes a node without its file is not modelling production — it is
+/// modelling the state R13 exists to make impossible.
+///
+/// This exists so ~90 fixtures model the barrier in one place rather than each
+/// remembering to. `upsert_file_row` is idempotent, so repeated calls for the
+/// same path are free.
+// Mirrors `upsert_node`'s column list on purpose, so a fixture reads the same
+// as the call it stands in for. 161 call sites; the arguments are the columns.
+#[allow(clippy::too_many_arguments)]
+pub async fn seed_node(
+    pg: &crate::db::pg_store::PgStore,
+    folder_id: &uuid::Uuid,
+    kind: &str,
+    name: &str,
+    file_path: &str,
+    parent_id: Option<&uuid::Uuid>,
+    signature: Option<&str>,
+    line_start: Option<i32>,
+    line_end: Option<i32>,
+) -> Result<uuid::Uuid, String> {
+    seed_file(pg, folder_id, file_path).await?;
+    pg.upsert_node(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end)
+        .await
+}
+
+/// The barrier half on its own, for fixtures that write nodes by raw SQL.
+///
+/// Resolves against the folder the caller names. A path that belongs to a
+/// DESCENDANT folder is recorded against the caller's folder here, which is
+/// fine for a fixture: `file_id_for` anchors on the absolute path, so the node
+/// finds it either way.
+pub async fn seed_file(
+    pg: &crate::db::pg_store::PgStore,
+    folder_id: &uuid::Uuid,
+    file_path: &str,
+) -> Result<uuid::Uuid, String> {
+    pg.upsert_file_row(folder_id, file_path, 1, "seed", None).await
+}

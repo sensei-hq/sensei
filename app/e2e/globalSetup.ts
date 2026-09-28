@@ -20,7 +20,7 @@
  * tests will exercise stale code — always go through the Makefile.
  */
 import { execFileSync, spawn } from 'child_process';
-import { existsSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { createConnection } from 'net';
 import { resolve, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -32,6 +32,8 @@ const APP_BINARY = join(
   'src-tauri/target/debug/bundle/macos/Sensei.app/Contents/MacOS/sensei-desktop',
 );
 const SOCKET = '/tmp/tauri-playwright.sock';
+/** Where the spawned .app's stdout+stderr go. Truncated per run. */
+const APP_LOG = '/tmp/sensei-e2e-app.log';
 const PID_FILE = '/tmp/sensei-e2e-pid';
 const DAEMON_PORT = 7744;
 const INSTANCE  = 'e2e';
@@ -102,9 +104,15 @@ export default async function globalSetup(): Promise<void> {
   //    bundle — the bundle can lag the code between bumps). Mirrors
   //    globalSetup-cold; without it, tests exercising new columns 500 on a
   //    "column does not exist" from the stale bundled schema.
+  // stdio went to 'ignore', and that is why a failed boot left NOTHING to read.
+  // When the daemon does not bind :7744 the only artifact is the timeout below;
+  // the app's own stdout/stderr — bootstrap's health resolution, the daemon
+  // spawn, any panic — was discarded. Capture it so a startup failure can be
+  // diagnosed from the log rather than re-run with a debugger attached.
+  const appLog = openSync(APP_LOG, 'w');
   const proc = spawn(APP_BINARY, [], {
     detached: true,
-    stdio: 'ignore',
+    stdio: ['ignore', appLog, appLog],
     env: {
       ...process.env,
       SENSEI_DDL_DIR: join(APP_REPO, '..', 'database'),
@@ -130,7 +138,23 @@ export default async function globalSetup(): Promise<void> {
   // The daemon compiles/loads the embedded model before it binds the port; a
   // cold box right after a build can take >2min, so allow generous headroom
   // (a genuine hang is still bounded by Playwright's own run timeout).
-  await waitForPort(DAEMON_PORT, 240_000);
+  //
+  // ON TIMEOUT, SAY WHY. Capturing the app's output is only half the fix — a
+  // log nobody prints is a log nobody reads, and this failure surfaces on CI
+  // and on other machines where nobody will think to `cat /tmp`. Re-throw
+  // after, so the run still fails.
+  try {
+    await waitForPort(DAEMON_PORT, 240_000);
+  } catch (e) {
+    console.error(`[globalSetup] Daemon never bound :${DAEMON_PORT}. Tail of ${APP_LOG}:`);
+    try {
+      const tail = readFileSync(APP_LOG, 'utf8').split('\n').slice(-40).join('\n');
+      console.error(tail.trim() || '(the app wrote nothing at all)');
+    } catch {
+      console.error(`(could not read ${APP_LOG})`);
+    }
+    throw e;
+  }
 
   // 5. Authoritative DB-isolation check — fetch /health from the daemon
   //    actually bound to the port and confirm it's on the expected
@@ -150,5 +174,42 @@ export default async function globalSetup(): Promise<void> {
       `expected "${expectedDb}". Refusing to run tests against the wrong DB.`,
     );
   }
-  console.log(`[globalSetup] Daemon DB verified: ${health.dbName} — tests may begin.`);
+  console.log(`[globalSetup] Daemon DB verified: ${health.dbName}`);
+
+  // 6. WAIT FOR READY, NOT JUST FOR BOUND. A listening port says the daemon
+  //    exists; it says nothing about whether the app can render anything.
+  //    Every gated route reroutes to /health until health reports `ok`, and
+  //    `wizardState.setupComplete` only reconciles on a health TRANSITION
+  //    (see navigateToScreen's comment in helpers.ts) — so until that first
+  //    transition lands, a gated route goes somewhere else and the screen
+  //    selector never appears.
+  //
+  //    MEASURED: that window is ~50s on a cold boot, and the specs that run
+  //    inside it are the ones that fail. They are alphabetically first —
+  //    activity-logs, atlas, boot-flow, configure-assistants, db-setup — while
+  //    everything from `learnings` onward passes, having started after the
+  //    window closed. That is a harness race, not 24 separate defects.
+  //
+  //    So absorb it ONCE here rather than making every spec carry a retry
+  //    budget. Non-fatal on timeout: a daemon that never reaches `ok` is worth
+  //    reporting through the tests that then fail on it, with the component
+  //    statuses named, rather than one opaque globalSetup error.
+  const readyDeadline = Date.now() + 180_000;
+  let last = health;
+  while (Date.now() < readyDeadline) {
+    if (last?.status === 'ok') {
+      console.log('[globalSetup] Daemon health is ok — tests may begin.');
+      return;
+    }
+    await sleep(2_000);
+    last = await fetch(`${DAEMON_URL}/health`).then(r => r.json()).catch(() => null);
+  }
+  const notReady = (last?.components ?? [])
+    .filter((c: { status: string }) => c.status !== 'ready')
+    .map((c: { id: string; status: string }) => `${c.id}=${c.status}`)
+    .join(', ');
+  console.warn(
+    `[globalSetup] Daemon health never reached 'ok' in 180s (last: ${last?.status ?? 'unreachable'}` +
+    `${notReady ? `; not ready: ${notReady}` : ''}). Running anyway — gated routes may reroute.`,
+  );
 }

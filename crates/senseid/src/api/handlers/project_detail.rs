@@ -33,7 +33,7 @@ pub(crate) struct CommandsQuery {
 /// Accepts `{id}` as a project name OR UUID, matching the read-side pattern
 /// the MCP tool `get_commands` uses (repo_id from `resolve_project` is a
 /// name).
-pub(crate) async fn get_project_commands(
+pub(crate) async fn get_folder_commands(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(q): Query<CommandsQuery>,
@@ -57,7 +57,7 @@ pub(crate) async fn get_project_commands(
 
     let rows = state
         .pg
-        .get_project_commands(&uuid, q.category.as_deref())
+        .get_folder_commands(&uuid, q.category.as_deref())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({"commands": rows, "count": rows.len()})))
@@ -185,7 +185,7 @@ pub(crate) async fn get_project_overview(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    use crate::analysis::insight_copy::{CopyLimits, FallbackCopy, InsightKind, copy_or_warm};
+    use crate::analysis::narration_cache::{CopyLimits, FallbackCopy, InsightKind, copy_or_warm};
     use crate::project_overview as po;
 
     let uuid =
@@ -238,7 +238,7 @@ pub(crate) async fn get_project_overview(
         first["primary"] = serde_json::json!(true);
     }
 
-    // Hero headline + body come through insight-copy when a top recommendation
+    // Hero headline + body come through narration-cache when a top recommendation
     // exists — the model owns the sentence; the code owns the evidence /
     // defaultAcp / action fields (left untouched). All-quiet (top == None) stays
     // static: the pane renders the "Sensei is observing…" copy client-side, and
@@ -321,14 +321,14 @@ pub(crate) async fn get_project_patterns(
     Ok(Json(data))
 }
 
-pub(crate) async fn get_project_libraries(
+pub(crate) async fn get_library_enablement(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
     let libs = state
         .pg
-        .get_project_libraries(&uuid)
+        .get_library_enablement(&uuid)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({ "libraries": libs })))
@@ -412,7 +412,7 @@ pub(crate) async fn get_project_recommendations(
     Path(id): Path<String>,
     Query(q): Query<RecoQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    use crate::analysis::insight_copy::{CopyLimits, copy_or_warm};
+    use crate::analysis::narration_cache::{CopyLimits, copy_or_warm};
     use crate::insights;
 
     let uuid = crate::api::util::resolve_existing_project(&state, &id).await?;
@@ -422,9 +422,9 @@ pub(crate) async fn get_project_recommendations(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Mentor-voice copy (insight-copy) — route each rec's user-facing title +
+    // Mentor-voice copy (narration-cache) — route each rec's user-facing title +
     // why through the shared pipeline, exactly as `observatory::get_insights`
-    // does. Wire path only: a `sensei.insight_copy` cache read plus a detached
+    // does. Wire path only: a `sensei.narration_cache` cache read plus a detached
     // background warm on a miss — never a blocking model call, so the endpoint
     // never stalls or errors on the gateway (a miss ships the raw DB prose).
     // `insights::rec_copy_inputs` builds the SAME facts the Learnings board

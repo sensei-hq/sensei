@@ -28,8 +28,11 @@ export function roleKey(label: string | null | undefined): string {
 /** Map a capitalized org kind (Employer · Client · Community · Personal) to the
  *  lowercase kit kind, defaulting unknowns to `community`. */
 export function kindKey(kind: string | null | undefined): string {
-	const k = (kind ?? '').toLowerCase();
-	return k === 'employer' || k === 'client' || k === 'personal' ? k : 'community';
+	// Two buckets, matching `DOJO_GROUPS`. `employer` is still accepted because
+	// `dojo.memberships.kind` remains an enum containing it — but nothing DISPLAYS
+	// it, so a row carrying the old tag groups as an organisation rather than
+	// falling into a bucket that no longer exists.
+	return (kind ?? '').toLowerCase() === 'personal' ? 'personal' : 'organization';
 }
 
 /** Map a `DojoOrg` membership to the kit's `KitDojo` (switcher row). The slug is

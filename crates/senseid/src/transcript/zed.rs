@@ -23,14 +23,11 @@
 //! a database.
 
 use super::{
-    ParsedTranscript, SessionTokens, SynthEvent, SynthSession, TranscriptAdapter, TranscriptTurn,
-    TurnFacts, UnitRef,
+    MAX_TURN_CHARS, ParsedTranscript, SessionTokens, SynthEvent, SynthSession, TranscriptAdapter,
+    TranscriptTurn, TurnFacts, UnitRef,
 };
 use std::io::Read;
 use std::path::PathBuf;
-
-/// Cap stored assistant prose per turn (matches the Claude adapter).
-const MAX_TURN_CHARS: usize = 50_000;
 /// Skip a thread whose decompressed JSON exceeds this (pathological).
 const MAX_THREAD_BYTES: usize = 16 * 1024 * 1024;
 

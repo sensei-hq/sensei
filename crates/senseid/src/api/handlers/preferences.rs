@@ -8,12 +8,9 @@
 
 use axum::{extract::State, http::StatusCode, response::Json};
 
+use crate::api::handlers::err;
 use crate::api::state::AppState;
 use crate::collective::preferences::{self, CollectivePreferences};
-
-fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<serde_json::Value>) {
-    (status, Json(serde_json::json!({ "error": msg })))
-}
 
 /// GET /api/preferences/collective — current preferences, or defaults when unset.
 pub(crate) async fn get_collective(

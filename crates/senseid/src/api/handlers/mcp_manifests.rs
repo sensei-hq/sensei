@@ -141,10 +141,49 @@ pub fn manifests() -> Vec<McpToolManifest> {
         },
         McpToolManifest {
             mcp: "sensei",
+            id: "sensei.get_impact",
+            name: "get_impact",
+            kind: McpToolKind::Query,
+            summary: "Everything that reaches a symbol within N hops — the blast radius of changing it — plus where the graph stops and why.",
+            inputs: vec![
+                McpToolInput {
+                    key: "name",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Symbol",
+                    placeholder: Some("insert_edge_with_props"),
+                    default: None,
+                    options: None,
+                },
+                McpToolInput {
+                    key: "depth",
+                    kind: McpInputKind::Text,
+                    required: false,
+                    label: "Hops",
+                    placeholder: Some("2"),
+                    default: Some("2"),
+                    options: None,
+                },
+                McpToolInput {
+                    key: "repoId",
+                    kind: McpInputKind::Text,
+                    required: true,
+                    label: "Project",
+                    placeholder: Some("sensei"),
+                    default: None,
+                    options: None,
+                },
+            ],
+            example: McpToolExample {
+                response: "insert_edge_with_props — found, defined at pg_store/graph.rs:1522\n7 reached within 2 hops (depth 1: 4, depth 2: 3)\nboundary: 11 sites name it and could not be placed\n  9 receiver_type_unknown — the type of the thing being called on is not known here\n  2 no_import_in_scope — the name is used here but nothing in scope brings it in",
+            },
+        },
+        McpToolManifest {
+            mcp: "sensei",
             id: "sensei.get_callers",
             name: "get_callers",
             kind: McpToolKind::Query,
-            summary: "Return functions that call the given symbol.",
+            summary: "Return functions that call the given symbol, with whether the symbol was found and whether the list is complete.",
             inputs: vec![
                 McpToolInput {
                     key: "name",
@@ -166,7 +205,7 @@ pub fn manifests() -> Vec<McpToolManifest> {
                 },
             ],
             example: McpToolExample {
-                response: "3 callers of upsert_referenced_library:\n  extract_deps  · libraries.rs:249\n  extract_dep_versions · lib_indexer.rs:88\n  seed_library · pg_store.rs:1914",
+                response: "upsert_referenced_library — found, defined at pg_store/library.rs:311\n3 callers (coverage: 3 resolved, 0 unresolved — complete):\n  extract_deps  · libraries.rs:249\n  extract_dep_versions · lib_indexer.rs:88\n  seed_library · pg_store.rs:1914",
             },
         },
         McpToolManifest {
@@ -174,7 +213,7 @@ pub fn manifests() -> Vec<McpToolManifest> {
             id: "sensei.get_callees",
             name: "get_callees",
             kind: McpToolKind::Query,
-            summary: "Return functions the given symbol calls.",
+            summary: "Return functions the given symbol calls, each tagged internal / external / unknown, with whether the list is complete.",
             inputs: vec![
                 McpToolInput {
                     key: "name",
@@ -196,7 +235,7 @@ pub fn manifests() -> Vec<McpToolManifest> {
                 },
             ],
             example: McpToolExample {
-                response: "extract_deps calls:\n  upsert_referenced_library\n  upsert_project_dependency\n  parse_cargo_deps",
+                response: "extract_deps — found, defined at tasks/handlers/libraries.rs:249\ncalls (coverage: 3 resolved, 1 unresolved — INCOMPLETE, grep to confirm):\n  upsert_referenced_library · internal · pg_store/library.rs:311\n  upsert_project_dependency · internal · pg_store/projects.rs:88\n  parse_cargo_deps · internal · adapters/manifest/cargo.rs:41\n  serde_json::from_str · external",
             },
         },
         McpToolManifest {
@@ -668,6 +707,27 @@ mod tests {
         assert_eq!(v["inputs"][0]["placeholder"], "PgStore");
     }
 
+    /// Every advertised tool has a match arm that actually answers it.
+    ///
+    /// Read off `mcp.rs` ITSELF, not off a list maintained beside it. The list
+    /// below still exists — it catches a tool dispatched but never advertised —
+    /// but on its own it compared two hand-written lists and would have stayed
+    /// green through a misspelled arm, which is the failure that matters: the
+    /// tool appears in the catalogue and returns "unknown tool" when called.
+    #[test]
+    fn every_listed_tool_has_a_match_arm_in_the_dispatcher() {
+        const DISPATCHER: &str = include_str!("mcp.rs");
+        for m in manifests() {
+            assert!(
+                DISPATCHER.contains(&format!("\"{}\" =>", m.name)),
+                "{} is advertised but mcp.rs has no `\"{}\" =>` arm — it would answer \
+                 \"unknown tool\" to every caller",
+                m.name,
+                m.name
+            );
+        }
+    }
+
     #[test]
     fn every_listed_tool_has_a_call_dispatch() {
         // Sanity: the list_tools + call_tool sets stay in lockstep. If a new
@@ -678,6 +738,7 @@ mod tests {
             "get_symbol",
             "get_callers",
             "get_callees",
+            "get_impact",
             "get_file_tags",
             "get_communities",
             "get_doc_drift",

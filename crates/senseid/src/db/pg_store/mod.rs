@@ -232,15 +232,32 @@ pub struct FederatedLink {
 }
 
 /// One member memory of a share batch, in the shape the C6 upstream-contribute
-/// path needs to build an artifact. `body` is the portable text that will be
-/// confidentiality-checked before it leaves the machine: the `generalised_content`
-/// rewrite when present, else the raw `content` (the deterministic dereference
-/// runs regardless — a raw content is still gated, never trusted).
+/// path needs to build an artifact. Every field here goes through the
+/// deterministic confidentiality strip again before it leaves the machine.
+///
+/// `body` and `example` are the generalised lane — a rewrite, never the raw
+/// `content`. `title` is NOT: it is `memories.title` verbatim, and the strip is
+/// the only thing standing between it and the wire. See the field.
 #[derive(Debug, Clone)]
 pub struct ShareBatchItem {
     pub memory_id: uuid::Uuid,
+    /// `memories.title` VERBATIM — there is no `generalised_title`. For an
+    /// `origin='learned'` memory the title is a truncated slice of the prompt
+    /// that produced it, so unlike `body` this field has no rewrite behind it:
+    /// only the deterministic strip runs, which removes KNOWN identifiers
+    /// (project/client/repo/folder/session/person) and pattern-matched
+    /// paths/emails/uuids/secrets — ordinary prose passes through unchanged.
+    /// Generalising the title is tracked in `docs/plan/decisions.md`.
     pub title: String,
+    /// The portable text: the `generalised_content` rewrite, or EMPTY when the
+    /// memory has not been generalised. Deliberately never the raw `content` —
+    /// an empty body means "nothing shareable exists yet" and the caller holds
+    /// the item (`HeldNotGeneralised`) instead of shipping the local reference.
     pub body: String,
+    /// The `generalised_example`: a synthetic illustration of `body`, invented by
+    /// the same rewrite and containing nothing from the raw memory. `None` when
+    /// the rewrite produced none — an artifact simply ships without one.
+    pub example: Option<String>,
     /// `sensei.memory_type` string — drives artifact-kind mapping (pattern → the
     /// `pattern` artifact; everything else → `principle`).
     pub memory_type: String,
@@ -395,6 +412,61 @@ pub struct ProjectMetricSeries {
     pub points: Vec<ProjectMetricSeriesPoint>,
 }
 
+/// One row of `sensei.metric_status`: for one repository × one registry metric,
+/// should this compute, how far has it got, and if it is not current, WHY. The
+/// shape [`PgStore::metric_status`] returns.
+///
+/// `reason_code` is a `sensei.reason_codes` key in domain `metric_computation`,
+/// not a message — the human summary/detail/remedy is served ONCE per read (see
+/// [`ReasonCode`]) rather than repeated on all ~1.9k rows. `cadence` is read off
+/// `last_sha` by the view rather than a hardcoded group list, so it reports
+/// `commit` on its own if the engine ever writes one.
+///
+/// `sealed_through` / `watermark_updated_at` are `None` for a metric whose group
+/// has never run for the repository — an honest gap, and the state the view names
+/// `never_computed`. Never a fabricated date.
+/// `repo_key` is `Option`: it is the REMOTE identity, and a local-only repository
+/// has no remote. Such a repository still computes metrics normally (they are keyed
+/// on `repository_id`), but no dōjō can rule on them — activation is decided per
+/// `repo_key`. So a null here is not missing data; it is the reason the activation
+/// control does not apply, and `repository_id` is the identity to address it by.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MetricStatusRow {
+    pub repository_id: uuid::Uuid,
+    pub repo_key: Option<String>,
+    pub repository_name: String,
+    pub metric: String,
+    pub metric_group: String,
+    pub cadence: String,
+    pub sealed_through: Option<chrono::NaiveDate>,
+    pub last_sha: Option<String>,
+    pub watermark_updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub effective_from: chrono::NaiveDate,
+    pub effective_until: Option<chrono::NaiveDate>,
+    pub deactivated: bool,
+    pub deactivated_observed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub reason_code: String,
+}
+
+/// One `sensei.reason_codes` row — the registry that answers "why didn't this
+/// happen?" for one domain (see `docs/architecture/reason-codes.md`). The shape
+/// [`PgStore::reason_codes`] returns.
+///
+/// `kind` is the axis that earns the single table: `normal` clears itself,
+/// `refusal` is somebody's decision, `fault` needs attention. A `normal` code
+/// carries no `remedy` and no `actor` — the DDL enforces it — so a UI can tell
+/// fine from broken without a per-domain rule of its own.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ReasonCode {
+    pub code: String,
+    pub kind: String,
+    pub precedence: i16,
+    pub summary: String,
+    pub detail: String,
+    pub remedy: Option<String>,
+    pub actor: Option<String>,
+}
+
 /// The descriptive facets of ONE metric by registry key — its display `name` and
 /// its `how_to_read` "what this measures" line. The shape
 /// [`PgStore::get_metric_meaning`] returns, read from `sensei.metrics` by key (the
@@ -412,9 +484,18 @@ mod commands;
 mod config;
 mod dojo;
 mod extensions;
-mod folders;
+pub(crate) mod folders;
 mod governance;
 mod graph;
+mod indexer;
+/// Named outside this module because the MCP handler picks the direction and
+/// `graph` consumes it — the caller/callee envelope and `call_coverage` must
+/// agree on which side of the relation is being counted, so the choice is one
+/// shared enum rather than a string each side re-interprets.
+pub(crate) use graph::CallDirection;
+#[cfg(test)]
+pub(crate) use indexer::LibColumns;
+pub(crate) use indexer::{Dropped, EdgeColumns, NodeColumns};
 mod library;
 mod logs;
 mod mcp;
@@ -422,15 +503,24 @@ mod memory;
 mod metrics;
 mod patterns;
 mod personas;
+/// Named outside this module because THREE callers now share it — the scheduled
+/// check, `GET /api/auth/status`, and the sign-in callback — and the two
+/// handlers must not each re-invent what a missing row means.
+pub(crate) use personas::ForgeTokenRow;
 mod playbook;
 mod projects;
+mod reasons;
 mod repo_key;
 mod runs;
+mod schedules;
 mod sessions;
 pub(crate) mod sync;
 mod transcript;
 pub(crate) use repo_key::normalize_repo_key;
+pub(crate) use schedules::{SchedulePatch, StoredSchedule};
 
+#[cfg(test)]
+pub(crate) mod graph_seed;
 #[cfg(test)]
 mod knowledge_tests;
 #[cfg(test)]
@@ -453,7 +543,7 @@ mod run_tests;
 // see `crate::tasks::test_support::TestGate` for why an async mutex loses
 // wakeups across per-test runtimes. One allow per test module, not per site.
 #[allow(clippy::await_holding_lock)]
-mod tests;
+pub(crate) mod tests;
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 // PgStore API surface — methods wired up incrementally; SQLx tuple return types

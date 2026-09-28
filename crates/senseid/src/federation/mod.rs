@@ -301,7 +301,7 @@ async fn apply_pulled_rule(
 pub fn run_pull_loop(pg: PgStore, interval_secs: u64) {
     tokio::spawn(async move {
         let client = http_client();
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+        let mut tick = crate::tasks::ticker::ticker(interval_secs);
         loop {
             tick.tick().await;
             let sources = match pg.list_knowledge_sources().await {
@@ -375,6 +375,12 @@ mod tests {
         assert_eq!(pr.origin_repo.as_deref(), Some("sensei/daemon"));
     }
 
+    /// macOS ONLY, for the same reason as `gateway_keys`' round-trip test: this
+    /// seeds a device token with `gateway_keys::set_key`, which shells out to
+    /// `/usr/bin/security` unconditionally, so on Linux it fails with `NotFound`
+    /// before the pull under test is ever reached. The gate is about the
+    /// credential store's platform coverage, not about this test's subject.
+    #[cfg_attr(not(target_os = "macos"), ignore = "needs the macOS Keychain")]
     #[tokio::test]
     async fn e2e_daemon_pulls_a_rule_published_on_the_dojo() {
         use crate::db::pg_store::{NewKnowledgeSource, PgStore};

@@ -46,7 +46,7 @@ Kanji is 紋 — *pattern / crest*.
 - Reads from `inference.detected_patterns` +
   `sensei.promoted_patterns`.
 - Every pattern's title / why come through
-  [[pipeline/insight-copy]] with `kind = pattern_title` /
+  [[pipeline/narration-cache]] with `kind = pattern_title` /
   `pattern_why`.
 
 ## Signals shown
