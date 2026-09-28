@@ -75,6 +75,24 @@ export function buildNavItems(): NavEntry[] {
         link("想", "Inference", "/settings/inference"),
       ],
     },
+    // Measurement — what sensei measures, and why a metric is not current.
+    // Deliberately not folded into Reasoning: that cluster is models, chains and
+    // providers, i.e. how sensei THINKS. Metric activation is a cost decision
+    // recorded by the dōjō that owns the repository, which is a different
+    // question and would be buried next to Inference.
+    {
+      text: "Measurement",
+      children: [link("測", "Metrics", "/settings/metrics")],
+    },
+    // Dōjō — the credential that reaches it, and what has been agreed. NOT the
+    // connections editor: `/dojo/connections` already owns choosing WHICH dōjōs,
+    // and rebuilding that list here would be a second copy to keep in step. These
+    // two are what had no surface at all — a forge token could only be seen after
+    // it died (the sign-in overlay) or from a terminal.
+    {
+      text: "Dōjō",
+      children: [link("結", "Connection", "/settings/dojo")],
+    },
     { type: "separator" },
     link("拡", "Extensions", "/settings/extensions"),
   ];

@@ -1,6 +1,7 @@
 use super::query::{resolve_folder_id, resolve_scope_ids};
 use crate::api::state::AppState;
 use crate::api::util::json_uuid;
+use crate::db::pg_store::CallDirection;
 use axum::{extract::State, http::StatusCode, response::Json};
 
 // ── MCP Tool Proxy ──────────────────────────────────────────────────────────
@@ -13,6 +14,100 @@ use axum::{extract::State, http::StatusCode, response::Json};
 /// listing stays in lockstep with `mcp_call_tool` (guarded by a unit test).
 pub(crate) async fn mcp_list_tools() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "tools": super::mcp_manifests::manifests() }))
+}
+
+/// Wrap a caller/callee list in an envelope that answers "does this symbol even
+/// exist" and "is this list complete" alongside the list itself.
+///
+/// A bare `{"callers": []}` is three different answers wearing one shape, and an
+/// assistant must act differently on each: the symbol is absent from the graph
+/// (recheck the name/scope, or grep); the symbol exists and truly has no callers
+/// (safe to delete); or the symbol exists and the graph holds `calls` edges it
+/// could not resolve, so the list is INCOMPLETE and a grep is still owed. Only
+/// `symbol.found` plus `coverage.unresolved` can distinguish them — a list
+/// length cannot, which is why an empty list alone was never a usable answer.
+///
+/// `symbol.found = false` is a genuine not-found, never a masked failure: a DB
+/// error on either read propagates as a 500 instead of degrading to "not found".
+/// Split a call list into first-party targets and library targets.
+///
+/// `get_callees` answers "what does this depend on", and a call into a library
+/// is not a dependency in the sense that question means. Interleaved, the
+/// plumbing crowds out the answer: `scan_root`'s list carried `Ok`, `Err`,
+/// `from`, `new`, `map_err`, `filter`, `and_then`, `unwrap_or_else` and `count`
+/// alongside the real in-crate calls, in a list a reader scans by eye.
+///
+/// The split is read from `locality`, which `sensei.graph_nodes` already owns —
+/// no new hardcoded name list, and none would work anyway: `new` is plumbing on
+/// `Vec::new()` and meaningful on `PgStore::new()`, and a denylist keyed on the
+/// bare name cannot tell those apart.
+///
+/// `unknown` stays with the first-party side deliberately. An unknown locality
+/// means the edge had no target node to classify — a dependency that failed to
+/// resolve, not a library call. Filing it under "library" would hide precisely
+/// the gap `coverage.unresolved` exists to report.
+fn partition_by_locality(
+    list: Vec<serde_json::Value>,
+) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    list.into_iter().partition(|h| h["locality"].as_str() != Some("external"))
+}
+
+async fn symbol_relation_envelope(
+    state: &AppState,
+    folder_ids: &[uuid::Uuid],
+    name: &str,
+    list_key: &str,
+    list: Vec<serde_json::Value>,
+) -> Result<serde_json::Value, StatusCode> {
+    let direction =
+        if list_key == "callers" { CallDirection::Incoming } else { CallDirection::Outgoing };
+
+    let definitions = state.pg.symbol_definitions(folder_ids, name).await.map_err(|e| {
+        tracing::warn!(error = %e, name, "mcp symbol_relation_envelope: symbol_definitions failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let (resolved, unresolved) =
+        state.pg.call_coverage(folder_ids, name, direction).await.map_err(|e| {
+            tracing::warn!(error = %e, name, "mcp symbol_relation_envelope: call_coverage failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    // Two integers say the list is incomplete; they cannot say what to do, so
+    // the only next step they leave is "grep everything". The reason narrows
+    // it — and it has been recorded on every unplaced edge all along.
+    let why = state.pg.call_coverage_reasons(folder_ids, name, direction).await.map_err(|e| {
+        tracing::warn!(error = %e, name, "mcp symbol_relation_envelope: call_coverage_reasons failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    // Library calls are reported in full, just not interleaved with the answer.
+    // Nothing is dropped: `library_calls.count` is exact and the symbols are
+    // listed, so a reader who wants them still has them.
+    let (first_party, library) = partition_by_locality(list);
+
+    Ok(serde_json::json!({
+        "symbol": {
+            "name":        name,
+            "found":       !definitions.is_empty(),
+            "defined_at":  definitions,
+        },
+        list_key: first_party,
+        "library_calls": {
+            "count":   library.len(),
+            "symbols": library,
+        },
+        "coverage": {
+            "resolved":   resolved,
+            "unresolved": unresolved,
+            // Spelled out so a reader does not have to infer the rule from two
+            // integers: `complete` means every recorded edge was placed.
+            "complete":   unresolved == 0,
+            // WHY the missing ones are missing, most actionable first, each
+            // with the prose from sensei.reason_codes. A `reason` of null is a
+            // site recorded with no reason at all — reported as null rather
+            // than guessed at.
+            "why":        why,
+        },
+    }))
 }
 
 pub(crate) async fn mcp_call_tool(
@@ -53,15 +148,59 @@ pub(crate) async fn mcp_call_tool(
             };
             serde_json::json!({"results": fns})
         }
+        // `get_callers` / `get_callees` report WHETHER THE SYMBOL EXISTS
+        // alongside the list, because a bare `[]` conflates three different
+        // answers an assistant must act on differently: the symbol is not in
+        // the graph (check the spelling, or the scope, or fall back to grep);
+        // the symbol exists and nothing calls it (safe to delete); the symbol
+        // exists and the graph holds calls it could not resolve (the list is
+        // INCOMPLETE — grep before concluding anything). `coverage.unresolved`
+        // is the only honest way to say that third case; a list length cannot.
         "get_callers" => {
             let name = params["name"].as_str().unwrap_or(query);
+            let ids = resolve_scope_ids(&state, repo_id).await?;
             let callers = state.pg.get_callers_by_name(repo_id, name).await.map_err(|e| { tracing::warn!(error = %e, repo_id, name, "mcp get_callers: get_callers_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-            serde_json::json!({"callers": callers})
+            symbol_relation_envelope(&state, &ids, name, "callers", callers).await?
         }
         "get_callees" => {
             let name = params["name"].as_str().unwrap_or(query);
+            let ids = resolve_scope_ids(&state, repo_id).await?;
             let callees = state.pg.get_callees_by_name(repo_id, name).await.map_err(|e| { tracing::warn!(error = %e, repo_id, name, "mcp get_callees: get_callees_by_name failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
-            serde_json::json!({"callees": callees})
+            symbol_relation_envelope(&state, &ids, name, "callees", callees).await?
+        }
+        // The blast radius, n hops out. `get_callers` answers one hop; a
+        // refactor needs the transitive set, and needs to know where it stops
+        // — `truncated` for the query's limit, `coverage.why` for the graph's.
+        "get_impact" => {
+            let name = params["name"].as_str().unwrap_or(query);
+            let depth = params["depth"].as_i64().unwrap_or(2) as i32;
+            let ids = resolve_scope_ids(&state, repo_id).await?;
+            let radius = state.pg.impact_of_symbol(&ids, name, depth).await.map_err(|e| {
+                tracing::warn!(error = %e, repo_id, name, "mcp get_impact: impact_of_symbol failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+            let definitions = state.pg.symbol_definitions(&ids, name).await.map_err(|e| {
+                tracing::warn!(error = %e, name, "mcp get_impact: symbol_definitions failed");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+            let why = state
+                .pg
+                .call_coverage_reasons(&ids, name, CallDirection::Incoming)
+                .await
+                .map_err(|e| {
+                    tracing::warn!(error = %e, name, "mcp get_impact: call_coverage_reasons failed");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            serde_json::json!({
+                "symbol": { "name": name, "found": !definitions.is_empty(), "defined_at": definitions },
+                "reached":   radius["reached"],
+                "depth":     radius["depth"],
+                "truncated": radius["truncated"],
+                // The second half of the answer. A radius printed without it
+                // reads as exact, and a reader refactors on a number that is
+                // short by however many sites the ladder could not place.
+                "boundary":  why,
+            })
         }
         "get_file_tags" => {
             let tag = params["tag"].as_str().unwrap_or(query);
@@ -89,10 +228,15 @@ pub(crate) async fn mcp_call_tool(
         "get_lib_docs" => {
             let name = params["name"].as_str().filter(|s| !s.is_empty()).unwrap_or(query);
             let component = params["component"].as_str().filter(|s| !s.is_empty());
-            let pages = state.pg.get_library_pages(name, component).await.map_err(|e| {
-                tracing::warn!(error = %e, name, "mcp get_lib_docs: get_library_pages failed");
+            // The asking folder, so the answer can be matched to the version
+            // this project actually pins (02b S9). Absent, the latest is served
+            // and no caveat is invented — there is no pin to miss.
+            let folder = params["folder"].as_str().filter(|s| !s.is_empty());
+            let docs = state.pg.get_library_docs(name, component, folder).await.map_err(|e| {
+                tracing::warn!(error = %e, name, "mcp get_lib_docs: get_library_docs failed");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
+            let pages = docs.pages;
             if pages.is_empty() {
                 serde_json::json!({
                     "library": name,
@@ -105,7 +249,14 @@ pub(crate) async fn mcp_call_tool(
                 })
             } else if component.is_some() {
                 // Specific component → return its page content.
-                serde_json::json!({ "library": name, "component": component, "pages": pages })
+                serde_json::json!({
+                    "library": name, "component": component, "pages": pages,
+                    "version": docs.served_version, "pinned": docs.pinned_version,
+                    // The S9 label. Present ONLY when the served docs describe
+                    // a version this folder does not pin — an unlabelled
+                    // wrong-version answer is the R4 failure.
+                    "version_note": docs.version_note,
+                })
             } else {
                 // No component → the overview (null-component pages) + the list of
                 // available components so the caller can drill in.
@@ -115,7 +266,11 @@ pub(crate) async fn mcp_call_tool(
                     .iter()
                     .filter_map(|p| p["component"].as_str().map(str::to_string))
                     .collect();
-                serde_json::json!({ "library": name, "overview": overview, "components": components })
+                serde_json::json!({
+                    "library": name, "overview": overview, "components": components,
+                    "version": docs.served_version, "pinned": docs.pinned_version,
+                    "version_note": docs.version_note,
+                })
             }
         }
         "list_projects" => {
@@ -274,10 +429,41 @@ pub(crate) async fn mcp_call_tool(
                 None => state.pg.get_repo_by_name(repo_id).await
                     .map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: get_repo_by_name fallback failed"); StatusCode::INTERNAL_SERVER_ERROR })?,
             };
+            // How far to trust the graph tools, stated rather than inferred. A
+            // symbol count says nothing about whether `get_callers` can answer:
+            // an edge kind at 0% resolved means every lookup over it comes back
+            // empty for reasons that have nothing to do with the code.
+            let graph_health = if ids.is_empty() {
+                serde_json::json!([])
+            } else {
+                let by_kind = state.pg.edge_resolution_by_kind(&ids).await.map_err(|e| { tracing::warn!(error = %e, repo_id, "mcp get_project_summary: edge_resolution_by_kind failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+                serde_json::Value::Array(
+                    by_kind
+                        .into_iter()
+                        .map(|(kind, resolved, total)| {
+                            serde_json::json!({
+                                "kind":     kind,
+                                "edges":    total,
+                                "resolved": resolved,
+                                // Integer percent — enough to decide "trust it"
+                                // vs "grep first", without implying precision.
+                                "resolved_pct": if total > 0 { resolved * 100 / total } else { 0 },
+                            })
+                        })
+                        .collect(),
+                )
+            };
             serde_json::json!({
                 "project": project,
                 "functions": fns,
                 "types": types,
+                "graphHealth": graph_health,
+                // What each language CAN do, derived from the adapter impls. Pairs
+                // with graphHealth: that says how much of the graph resolved, this
+                // says which languages are even capable of resolving. A repo that
+                // is mostly Kotlin and a Kotlin adapter with no FQN support explain
+                // a disappointing number far better than the number alone.
+                "languageCapabilities": crate::languages::capability_matrix(),
             })
         }
         "get_metrics" => {
@@ -371,4 +557,49 @@ async fn discover_lib_url(name: &str, explicit_url: &str) -> Option<String> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `get_callees` answers "what does this depend on", and a library call is
+    /// not a dependency in the sense the question means. Measured live on
+    /// `scan_root`, the list interleaved real in-crate calls with `Ok`, `Err`,
+    /// `from`, `new`, `map_err`, `filter`, `and_then`, `unwrap_or_else`,
+    /// `count`, `to_string_lossy` and `as_secs_f64` — plumbing that crowds out
+    /// the answer in a list a reader has to scan by eye.
+    ///
+    /// The graph already knows the difference: `locality` comes from
+    /// `sensei.graph_nodes` and says `internal` for a first-party target and
+    /// `external` for a library symbol. Partitioning on it needs no new
+    /// hardcoded name list — and a denylist could not do this job anyway,
+    /// because `new` is plumbing on `Vec::new()` and meaningful on
+    /// `PgStore::new()`, which share a bare name.
+    #[test]
+    fn library_calls_are_partitioned_out_of_the_dependency_list() {
+        let hit = |name: &str, loc: &str| serde_json::json!({ "name": name, "locality": loc });
+        let list = vec![
+            hit("Ok", "external"),
+            hit("folder_ids_for_root", "internal"),
+            hit("map_err", "external"),
+            hit("assign_repositories", "internal"),
+            hit("some_unplaced_call", "unknown"),
+        ];
+
+        let (first_party, library) = partition_by_locality(list);
+
+        assert_eq!(
+            first_party.iter().filter_map(|h| h["name"].as_str()).collect::<Vec<_>>(),
+            vec!["folder_ids_for_root", "assign_repositories", "some_unplaced_call"],
+            "internal AND unknown stay in the dependency list — an unresolved call is a \
+             dependency we failed to place, not a library call, and dropping it would hide \
+             exactly the gap `coverage.unresolved` exists to report"
+        );
+        assert_eq!(
+            library.iter().filter_map(|h| h["name"].as_str()).collect::<Vec<_>>(),
+            vec!["Ok", "map_err"],
+            "library calls are reported in full, just not interleaved"
+        );
+    }
 }

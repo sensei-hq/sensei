@@ -64,7 +64,19 @@ pub enum PackageManagerId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DaemonDbMode {
+    /// A working pool. Everything is available.
     Full,
+    /// **The database does not exist yet — it is being built.** A first install
+    /// has no database until bootstrap creates it and applies the schema, and
+    /// the daemon stays up through that window on purpose (it binds its port
+    /// before it ever touches Postgres). Without this state that window could
+    /// only be reported as `Degraded`, which means "it was working and
+    /// stopped" — so a perfectly normal first run announced itself as a fault
+    /// and offered recovery advice for a database that was never broken.
+    ///
+    /// This is a WAIT, not a fix: a client seeing it should keep polling.
+    Provisioning,
+    /// The database exists and the daemon cannot use it. Something is wrong.
     Degraded,
 }
 
@@ -320,6 +332,34 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
         assert_eq!(json["daemonDbMode"], "degraded");
+    }
+
+    /// **A DATABASE BEING BUILT IS NOT A DATABASE THAT BROKE.**
+    ///
+    /// `Full | Degraded` was two states for three situations, and the missing
+    /// one is the FIRST RUN: a fresh install has no database yet, so the only
+    /// state left to report it in was the one that means "it was working and
+    /// stopped". That is how a normal install came to be announced as a fault.
+    ///
+    /// MUTATION: delete the `Provisioning` arm and this stops compiling — the
+    /// match below is exhaustive on purpose, so a fourth state cannot be added
+    /// without deciding how it reaches the wire.
+    #[test]
+    fn provisioning_is_its_own_state_on_the_wire() {
+        for (mode, wire) in [
+            (DaemonDbMode::Full, "full"),
+            (DaemonDbMode::Provisioning, "provisioning"),
+            (DaemonDbMode::Degraded, "degraded"),
+        ] {
+            let mut p = mock_ok_payload();
+            p.daemon_db_mode = Some(mode);
+            let json: serde_json::Value =
+                serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+            assert_eq!(json["daemonDbMode"], wire, "{mode:?} serialises as {wire}");
+            // …and round-trips, so a client reading it back gets the same state.
+            let back: HealthPayload = serde_json::from_value(json).unwrap();
+            assert_eq!(back.daemon_db_mode, Some(mode));
+        }
     }
 
     // ── validate() invariants ──

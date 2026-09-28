@@ -1,5 +1,54 @@
 use super::*;
 
+// ── row shapes ───────────────────────────────────────────────────────────────
+//
+// `query_as` decodes into a positional tuple, so a wide projection is a wide
+// tuple and the columns are told apart by POSITION alone. Naming each shape
+// once puts the column order in one place: a `SELECT` and its decode target
+// that drift apart still compile, and the failure is a value read out of the
+// wrong column rather than a type error.
+
+/// `(return_type, parent_fqn)` for a method probe — either half may be absent.
+type ReturnAndParent = (Option<String>, Option<String>);
+
+/// `(fqn, return_type, parent_fqn, language)`.
+type MethodHintRow = (String, Option<String>, Option<String>, Option<String>);
+
+/// `(id, name, file_path, signature, line_start)`.
+type FunctionRow = (uuid::Uuid, String, String, Option<String>, Option<i32>);
+
+/// [`FunctionRow`] plus the cosine distance the search ordered by.
+type SemanticNodeRow = (uuid::Uuid, String, String, Option<String>, Option<i32>, f64);
+
+/// `(id, name, file_path, signature, line_start, locality)`.
+type LocatedNodeRow = (uuid::Uuid, String, String, Option<String>, Option<i32>, String);
+
+/// Two sides of a near-duplicate pair — `(name, file_path, line_start)` each —
+/// and the similarity between them.
+type DuplicatePairRow = (String, String, Option<i32>, String, String, Option<i32>, f64);
+
+/// `(id, source_id, target_id, target_name, kind)`.
+type EdgeRow = (uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>, String);
+
+/// The whole-graph projection the Atlas reads: `(id, kind, name, file_path,
+/// parent_id, line_start, line_end, community_id, folder_id, language, fqn,
+/// resolved, is_test)`.
+type AtlasNodeRow = (
+    uuid::Uuid,
+    String,
+    String,
+    Option<String>,
+    Option<uuid::Uuid>,
+    Option<i32>,
+    Option<i32>,
+    Option<i32>,
+    uuid::Uuid,
+    Option<String>,
+    Option<String>,
+    bool,
+    bool,
+);
+
 /// True only for a unique violation on `nodes_unique_identity` — the structural
 /// identity index `(folder_id, file_path, kind, name, parent_id, line_start)`.
 ///
@@ -13,7 +62,33 @@ fn is_identity_conflict(e: &sqlx_core::error::Error) -> bool {
     )
 }
 
+/// The fqn is already held by a DIFFERENT row in this folder — several files
+/// declaring one symbol, which an fqn is allowed to name. See the recovery in
+/// [`PgStore::upsert_node_by_fqn`] for why that is not an error.
+fn is_fqn_conflict(e: &sqlx_core::error::Error) -> bool {
+    matches!(
+        e,
+        sqlx_core::error::Error::Database(db) if db.constraint() == Some("nodes_unique_fqn")
+    )
+}
+
+/// Which side of a `calls` relation a coverage count is about — incoming edges
+/// (who calls this) or outgoing ones (what this calls). A closed enum rather
+/// than a string so [`PgStore::call_coverage`] picks its filter column at
+/// compile time and no caller input ever reaches the SQL text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallDirection {
+    Incoming,
+    Outgoing,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+use crate::languages::fqn::{sql_is_external, sql_is_not_external};
+
+/// `(id, kind, name, parent_id, line_start)` — one node as
+/// [`PgStore::get_nodes_by_file`] projects it, before it becomes JSON.
+type NodeOutline = (uuid::Uuid, String, String, Option<uuid::Uuid>, Option<i32>);
+
 impl PgStore {
     /// BM25-style keyword ranking: matches nodes by name/signature/docstring.
     pub async fn rank_bm25(
@@ -33,6 +108,11 @@ impl PgStore {
 
     // ── Graph (typed wrappers) ─────────────────────────────────────────
 
+    // The arguments ARE the columns. A struct here would restate the same
+    // names one indirection away without removing a single one; `FqnDef`
+    // above is the case where a struct earned its keep, because that call
+    // has a meaningful default.
+    #[allow(clippy::too_many_arguments)]
     pub async fn merge_function(
         &self,
         folder_id: &uuid::Uuid,
@@ -126,9 +206,15 @@ impl PgStore {
         folder_id: &uuid::Uuid,
         file_path: &str,
     ) -> Result<(), String> {
-        sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2")
+        // An untracked file owns no nodes, so there is nothing to delete and
+        // saying so is not a failure — a caller deleting a file the walk never
+        // recorded has already got what it asked for.
+        let Some(file_id) = self.file_id_for(folder_id, file_path).await? else {
+            return Ok(());
+        };
+        sqlx_core::query::query("DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_id = $2")
             .bind(folder_id)
-            .bind(file_path)
+            .bind(file_id)
             .execute(&self.pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -142,8 +228,9 @@ impl PgStore {
     /// net to find nodes whose file no longer exists on disk.
     pub async fn list_indexed_files(&self, folder_id: &uuid::Uuid) -> Result<Vec<String>, String> {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT DISTINCT file_path FROM sensei.nodes
-              WHERE folder_id = $1 AND kind::text <> 'module' AND file_path <> ''",
+            "SELECT DISTINCT np.file_path FROM sensei.nodes n
+               JOIN sensei.node_paths np ON np.node_id = n.id
+              WHERE n.folder_id = $1 AND n.kind::text <> 'module' AND np.file_path <> ''",
         )
         .bind(folder_id)
         .fetch_all(&self.pool)
@@ -177,9 +264,304 @@ impl PgStore {
         Ok(())
     }
 
+    /// A definition's declared return type, read back off the node.
+    ///
+    /// `None` means the node carries no return type — nothing was ever written,
+    /// or the function returns nothing. A node id that names no row also reads
+    /// as `None`: a lookup miss is an absence, not a value. The write side is
+    /// where a bad node id is surfaced ([`Self::set_node_return_type`] errors
+    /// rather than losing the fact silently).
+    pub async fn node_return_type(&self, node_id: &uuid::Uuid) -> Result<Option<String>, String> {
+        let row: Option<(Option<String>,)> = sqlx_core::query_as::query_as(
+            "SELECT props->>'return_type' FROM sensei.nodes WHERE id = $1",
+        )
+        .bind(node_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("node_return_type: {e}"))?;
+        Ok(row.and_then(|(v,)| v))
+    }
+
+    /// Record a definition's return type on its node, VERBATIM.
+    ///
+    /// This is the one hop of the transitive receiver chain nothing else can
+    /// answer: `ctx.pg().method()` can only name WHICH `method` once the graph
+    /// knows `pg` returns a `PgStore`. `signature` is not a substitute — it
+    /// holds the declaration LINE only, and MEASURED on the live graph 1,092 of
+    /// 3,841 rust methods (28%) wrap their signature so the `->` never appears
+    /// in it.
+    ///
+    /// Verbatim (`&crate::db::pg_store::PgStore`, `Arc<PgStore>`) because the
+    /// module path is what says WHICH `PgStore` is meant. Unwrapping wrappers is
+    /// `base_type_name`'s rule and it already owns it.
+    ///
+    /// Writes the ONE key with `||` — the `set_folder_expected_files` idiom — so
+    /// props another writer owns (a section's `level`/`line_start`, a
+    /// rationale's `marker`) survive. `props` is deliberately absent from
+    /// [`Self::upsert_node_by_fqn`]'s DO UPDATE set-list and from
+    /// `adopt_node_by_identity`, which is what lets this land on a
+    /// reference-minted stub and survive the definition merging into the same
+    /// row.
+    ///
+    /// A `return_type` that names no type (`()`, or blank) REMOVES the key
+    /// rather than storing a placeholder: absence already means "returns
+    /// nothing", and no-op'ing instead would leave the previous scan's type on a
+    /// function that no longer returns it — a fact the receiver chain would go
+    /// on resolving against.
+    ///
+    /// The write is SKIPPED when the stored value already equals the new one.
+    /// The caller runs this on every function and method of every re-scan
+    /// (108,438 of the 136,583 definitions in the live index), and an
+    /// unconditional `SET … modified_at = now()` would make every one of them
+    /// report a modification on a scan that changed nothing. Still one round
+    /// trip: the guard is a CTE, and the row count it returns is what
+    /// distinguishes "already identical" from "no such node" — an UPDATE's
+    /// `rows_affected` alone cannot, once a matched row may go unwritten.
+    pub async fn set_node_return_type(
+        &self,
+        node_id: &uuid::Uuid,
+        return_type: &str,
+    ) -> Result<(), String> {
+        let named = return_type.trim();
+        let named = (!named.is_empty() && named != "()").then_some(named);
+        let (found,): (i64,) = sqlx_core::query_as::query_as(
+            "WITH hit AS (
+                 SELECT id, props->>'return_type' AS stored FROM sensei.nodes WHERE id = $1
+             ), upd AS (
+                 UPDATE sensei.nodes n
+                    SET props = CASE WHEN $2::text IS NULL
+                                     THEN n.props - 'return_type'
+                                     ELSE n.props || jsonb_build_object('return_type', $2::text) END,
+                        modified_at = now()
+                   FROM hit
+                  WHERE n.id = hit.id AND hit.stored IS DISTINCT FROM $2::text
+                 RETURNING 1
+             )
+             SELECT count(*) FROM hit",
+        )
+        .bind(node_id)
+        .bind(named)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("set_node_return_type: {e}"))?;
+        // An UPDATE matching nothing reports success, so a mistyped id would
+        // drop the return type and read back exactly like a function the parser
+        // found none for.
+        if found == 0 {
+            return Err(format!("set_node_return_type: no node {node_id}"));
+        }
+        Ok(())
+    }
+
+    /// Close the transitive receiver chain: turn each `(receiver hint, member
+    /// name)` into the member's node id, or `None` where any hop misses.
+    ///
+    /// This is the hop no import can name. Measured on the live graph, ALL
+    /// 28,069 unresolved rust `calls` edges have a lowercase `target_name` —
+    /// they are member calls, and `imports` is already 3,718 resolved / 0
+    /// unresolved, so the receiver IS the whole remaining gap. `ctx.pg().m()`
+    /// needs `pg`'s return type to know which `m`; the producer records the
+    /// `pg` hop as a [`ReceiverHint`] and this reads the rest out of the graph.
+    ///
+    /// **Two queries regardless of batch size**, because the read path calls it
+    /// with a whole call list: one to read the hinted nodes, one to resolve
+    /// every distinct `(type, member)` pair through `unnest`. Per-row probes
+    /// would put a symbol with a thousand unresolved callers at a thousand
+    /// round trips.
+    ///
+    /// **The TYPE is matched on its FQN whenever the return type carries a
+    /// path**, and only on its bare name when the text carries nothing else.
+    /// The return type is stored verbatim precisely because the module path says
+    /// WHICH `PgStore` is meant, and reducing it to a leaf threw that away twice
+    /// over: two unrelated first-party types of one name became a coin flip, and
+    /// `reqwest::blocking::Client` became a lookup for a FIRST-PARTY `Client` —
+    /// the producer refuses to hint an external receiver for exactly this reason
+    /// (`lib·` nodes hold no definition) and the leaf reopened the hole one level
+    /// down. A dependency's path names a module this crate does not have, so it
+    /// matches nothing, which is the answer.
+    ///
+    /// **The member is found by joining on the PARENT TYPE, never by minting
+    /// `<type_fqn>·<member>`.** Minting looks cheaper (0.12 ms index scan vs
+    /// 0.42 ms join) and is wrong: measured live, `PgStore` is TWENTY nodes in
+    /// one folder — one `struct` plus 19 `impl`-block `class` nodes anchored on
+    /// their own file's module because `use super::*;` defeats the use-map — and
+    /// 1,552 of 3,837 rust method fqns (40%) carry a trait segment a call site
+    /// cannot name. The minted string misses both, and a miss on the EMIT path
+    /// mints a stub: 659 such ghosts with 2,305 inbound edges are already in the
+    /// graph. A lookup that finds nothing is the honest answer here; a lookup
+    /// that invents a node is the bug.
+    ///
+    /// Every hop is uniqueness-gated, and the gate counts TYPES as well as
+    /// members. Counting members alone let two same-named types with DISJOINT
+    /// member sets through — the normal case for unrelated types sharing a name
+    /// (`verdicts::Verdict` has `as_wire`, `verdict_classifier::Verdict` has
+    /// `as_str`) — because only one of them carried the member, so the count was
+    /// 1 and the call linked to whichever type owned it. Ambiguous type ⇒
+    /// unresolved, however unambiguous the member. Two definitions in scope →
+    /// `None`, never a pick: that is `sole_definition_id_by_name` bare-name
+    /// matching, which this graph refuses everywhere else for the same reason.
+    /// Stubs are excluded (`file_path IS NOT NULL`) so an unresolved call cannot
+    /// be laundered into a resolved one by pointing it at a placeholder.
+    ///
+    /// Both hops gate on `language = 'rust'`. The grammar that turns a return
+    /// type into a type name is Rust's, so an answer from a node of any other
+    /// language is an answer to a question that was never asked.
+    pub async fn resolve_receiver_calls(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        calls: &[(crate::languages::fqn::ReceiverHint, String)],
+    ) -> Result<Vec<Option<uuid::Uuid>>, String> {
+        use crate::languages::fqn::{ReceiverHint, SEP};
+        use crate::languages::rust_lang::{ReceiverType, rust_fqn::RUST_LANG};
+        use std::collections::{HashMap, HashSet};
+
+        if calls.is_empty() || folder_ids.is_empty() {
+            return Ok(vec![None; calls.len()]);
+        }
+
+        // ── Hop 1: what type does the receiver have? ────────────────────────
+        // The hint names the method whose declared return type answers it, so
+        // each distinct one needs a node read: the return type itself, and the
+        // method's own type (what `Self` means).
+        let probes: Vec<String> = calls
+            .iter()
+            .map(|(ReceiverHint::ReturnOf(fqn), _)| fqn.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        // `None` = the fqn matched rows that DISAGREE (the same symbol indexed
+        // in two scoped folders with different return types). Refused, not
+        // averaged.
+        //
+        // The PARENT's fqn, not its name: it is what `Self` means, and naming
+        // the type outright is stronger than naming it by a leaf that twenty
+        // nodes in one folder can share.
+        let mut hinted: HashMap<String, Option<ReturnAndParent>> = HashMap::new();
+        if !probes.is_empty() {
+            let rows: Vec<MethodHintRow> = sqlx_core::query_as::query_as(
+                "SELECT m.fqn, m.props->>'return_type', t.fqn, m.language
+                       FROM sensei.nodes m
+                       LEFT JOIN sensei.nodes t ON t.id = m.parent_id
+                      WHERE m.folder_id = ANY($1) AND m.fqn = ANY($2)",
+            )
+            .bind(folder_ids)
+            .bind(&probes)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("resolve_receiver_calls (hint probe): {e}"))?;
+            for (fqn, return_type, self_fqn, language) in rows {
+                // The return-type grammar below is Rust's. Reading a TypeScript
+                // or Java return type with it would apply the wrong unwrapping
+                // rules, so a non-rust node answers nothing.
+                let fact =
+                    (language.as_deref() == Some(RUST_LANG)).then_some((return_type, self_fqn));
+                match hinted.entry(fqn) {
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        e.insert(fact);
+                    }
+                    std::collections::hash_map::Entry::Occupied(mut e) => {
+                        if e.get() != &fact {
+                            e.insert(None);
+                        }
+                    }
+                }
+            }
+        }
+
+        // The type to look under, as an exact FQN where the text gave one and as
+        // a bare name only where it did not. Both are carried per want-row so one
+        // `unnest` serves the batch; exactly one of the two is ever set.
+        type Want = (Option<String>, Option<String>, String);
+        let wanted: Vec<Option<Want>> = calls
+            .iter()
+            .map(|(hint, member)| {
+                let ReceiverHint::ReturnOf(fqn) = hint;
+                let (return_type, self_fqn) = hinted.get(fqn)?.as_ref()?;
+                // `<lang>·<package>·…` — the package of the method whose return
+                // type this is, which is the crate any relative path in it is
+                // relative to.
+                let package = fqn.split(SEP).nth(1).filter(|p| !p.is_empty())?;
+                let (tfqn, tname) = match crate::languages::rust_lang::concrete_receiver_type(
+                    return_type.as_deref()?,
+                    package,
+                )? {
+                    ReceiverType::SelfType => (Some(self_fqn.clone()?), None),
+                    ReceiverType::Qualified { module, name } => (
+                        Some(crate::languages::fqn::item(RUST_LANG, package, &module, &name)),
+                        None,
+                    ),
+                    ReceiverType::Bare(name) => (None, Some(name)),
+                };
+                Some((tfqn, tname, member.clone()))
+            })
+            .collect();
+
+        // ── Hop 2: the member under that type ───────────────────────────────
+        let pairs: Vec<Want> =
+            wanted.iter().flatten().cloned().collect::<HashSet<_>>().into_iter().collect();
+        if pairs.is_empty() {
+            return Ok(vec![None; calls.len()]);
+        }
+        let mut type_fqns: Vec<Option<String>> = Vec::with_capacity(pairs.len());
+        let mut type_names: Vec<Option<String>> = Vec::with_capacity(pairs.len());
+        let mut member_names: Vec<String> = Vec::with_capacity(pairs.len());
+        for (f, n, m) in pairs {
+            type_fqns.push(f);
+            type_names.push(n);
+            member_names.push(m);
+        }
+        // LEFT JOIN, so `n_types` counts every type the want matches whether or
+        // not it carries the member. An inner join counted only the types that
+        // did, which is what let a disjoint-member pair through.
+        type MemberRow = (Option<String>, Option<String>, String, Option<uuid::Uuid>, i64, i64);
+        let rows: Vec<MemberRow> = sqlx_core::query_as::query_as(
+            "WITH want(tfqn, tname, mname) AS (
+                 SELECT * FROM unnest($2::text[], $3::text[], $4::text[])
+             )
+             SELECT w.tfqn, w.tname, w.mname,
+                    (array_agg(m.id) FILTER (WHERE m.id IS NOT NULL))[1],
+                    count(DISTINCT m.id), count(DISTINCT t.id)
+               FROM want w
+               JOIN sensei.nodes t
+                 ON t.folder_id = ANY($1)
+                AND t.language = 'rust'
+                AND t.file_id IS NOT NULL
+                AND t.kind::text IN ('struct', 'enum', 'class', 'interface')
+                AND ((w.tfqn IS NULL AND t.name = w.tname) OR t.fqn = w.tfqn)
+               LEFT JOIN sensei.nodes m
+                 ON m.parent_id = t.id
+                AND m.folder_id = ANY($1)
+                AND m.language = 'rust'
+                AND m.file_id IS NOT NULL
+                AND m.kind::text IN ('method', 'function')
+                AND m.name = w.mname
+              GROUP BY w.tfqn, w.tname, w.mname",
+        )
+        .bind(folder_ids)
+        .bind(&type_fqns)
+        .bind(&type_names)
+        .bind(&member_names)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("resolve_receiver_calls (member probe): {e}"))?;
+
+        let sole: HashMap<Want, uuid::Uuid> = rows
+            .into_iter()
+            .filter(|(_, _, _, _, members, types)| *members == 1 && *types == 1)
+            .filter_map(|(f, n, m, id, _, _)| id.map(|id| ((f, n, m), id)))
+            .collect();
+        Ok(wanted.iter().map(|w| w.as_ref().and_then(|k| sole.get(k).copied())).collect())
+    }
+
     /// Upsert a node (default `is_exported = false`). Thin wrapper over
     /// [`Self::upsert_node_ex`] for the many callers that don't carry visibility
     /// (file/section/rationale/module nodes, tests).
+    // The arguments ARE the columns. A struct here would restate the same
+    // names one indirection away without removing a single one; `FqnDef`
+    // above is the case where a struct earned its keep, because that call
+    // has a meaningful default.
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_node(
         &self,
         folder_id: &uuid::Uuid,
@@ -195,6 +577,46 @@ impl PgStore {
             folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, false,
         )
         .await
+    }
+
+    /// A node that names a DIRECTORY rather than a file — the structural
+    /// `module` node the folder pass writes, one per source directory.
+    ///
+    /// Separate from [`Self::upsert_node`] because the two name different KINDS
+    /// of thing and only the caller knows which. R13 made `nodes.file_id` a
+    /// foreign key into `sensei.files`; a directory has no `files` row and never
+    /// will, so a directory-named node carries `file_id = NULL`. Routing it
+    /// through the file writer would make that writer either fail on a correct
+    /// call or stop failing closed on an incorrect one — and the second is how
+    /// an untracked file gets a node again.
+    ///
+    /// The directory is kept in `props.dir`. It was the `file_path` column
+    /// before, so dropping it would lose the one fact that tells two structural
+    /// module nodes apart when their names collide across a monorepo.
+    pub async fn upsert_dir_node(
+        &self,
+        folder_id: &uuid::Uuid,
+        kind: &str,
+        name: &str,
+        dir: &str,
+    ) -> Result<uuid::Uuid, String> {
+        let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.nodes(folder_id, kind, name, props)
+             VALUES($1, $2::sensei.node_kind, $3, jsonb_build_object('dir', $4::text))
+             ON CONFLICT (folder_id, kind, name) WHERE file_id IS NULL AND fqn IS NULL
+             DO UPDATE
+               SET props = sensei.nodes.props || jsonb_build_object('dir', $4::text),
+                   modified_at = now()
+             RETURNING id",
+        )
+        .bind(folder_id)
+        .bind(kind)
+        .bind(name)
+        .bind(dir)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("upsert_dir_node({name}): {e}"))?;
+        Ok(row.0)
     }
 
     /// Upsert a node carrying `is_exported` (the code-symbol path passes the
@@ -214,12 +636,12 @@ impl PgStore {
         line_end: Option<i32>,
         is_exported: bool,
     ) -> Result<uuid::Uuid, String> {
-        // ON CONFLICT targets nodes_unique_identity (folder_id, file_path, kind, name,
+        // ON CONFLICT targets nodes_unique_identity (folder_id, file_id, kind, name,
         // parent_id, line_start NULLS NOT DISTINCT). DO UPDATE keeps the row STABLE on
         // re-scans — same UUID whether just inserted or pre-existing (D3 upsert-then-
         // prune) — preserving community_id and degree. It refreshes signature/line_end,
         // and re-nulls `embedding` ONLY when the signature changed: `embed_text` is a
-        // function of (kind, name, signature, file_path), and on a same-identity
+        // function of (kind, name, signature, file), and on a same-identity
         // conflict the first three-of-four are fixed by the key, so `signature` is the
         // only embed input that can change — nulling on that (and preserving it
         // otherwise) keeps embeddings fresh without a separate content_hash column.
@@ -229,10 +651,24 @@ impl PgStore {
         // transition — is what gives the same-language bare-name fallback (plan 0.8)
         // something to filter on. COALESCE on conflict backfills pre-existing rows.
         let language = crate::languages::language_for_path(file_path);
+        // R13 / 06 S6: the file row is LOOKED UP and this FAILS CLOSED. A node
+        // naming an untracked file is a pipeline bug — stage 3's barrier creates
+        // every file row before any parse task exists — and get-or-creating here
+        // would mint a `files` row with no mtime, no hash and no parse outcome
+        // that the foreign key then certifies.
+        //
+        // The path stays the parameter because that is what every caller holds;
+        // `file_id_for` handles the repo-relative/folder-relative grain change.
+        let Some(file_id) = self.file_id_for(folder_id, file_path).await? else {
+            return Err(format!(
+                "upsert_node({name}): no files row for {file_path} — the walk never \
+                 recorded it, so a node naming it cannot be written"
+            ));
+        };
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.nodes(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, is_exported, language)
+            "INSERT INTO sensei.nodes(folder_id, kind, name, file_id, parent_id, signature, line_start, line_end, is_exported, language)
              VALUES($1, $2::sensei.node_kind, $3, $4, $5, $6, $7, $8, $9, $10)
-             ON CONFLICT (folder_id, file_path, kind, name, parent_id, line_start) WHERE file_path IS NOT NULL DO UPDATE
+             ON CONFLICT (folder_id, file_id, kind, name, parent_id, line_start) WHERE file_id IS NOT NULL DO UPDATE
                SET signature   = EXCLUDED.signature,
                    line_end    = EXCLUDED.line_end,
                    is_exported = EXCLUDED.is_exported,
@@ -241,17 +677,109 @@ impl PgStore {
                                       THEN NULL ELSE nodes.embedding END,
                    modified_at = now()
              RETURNING id"
-        ).bind(folder_id).bind(kind).bind(name).bind(file_path)
+        ).bind(folder_id).bind(kind).bind(name).bind(file_id)
             .bind(parent_id).bind(signature).bind(line_start).bind(line_end).bind(is_exported).bind(language)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
 
+    /// LOOK UP a node by fqn without creating anything — `None` when absent.
+    ///
+    /// The counterpart [`Self::upsert_node_by_fqn`] get-or-CREATES, which makes it
+    /// unusable for multi-candidate matching: creating a stub on candidate 1 would
+    /// satisfy candidate 1 forever, so the real target sitting at candidate 2
+    /// could never be found. An import specifier has several plausible fqns (a
+    /// `src/`-stripped variant, an unstable language segment), so it needs a
+    /// non-mutating probe first and a create only after every candidate misses.
+    ///
+    /// Folder-scoped, and that scope is load-bearing: fqns are only unique per
+    /// folder (`nodes_unique_fqn` is `(folder_id, fqn)`), so an unscoped lookup
+    /// would resolve an import to an identically-named module in a DIFFERENT
+    /// checkout — and 5 repos here have two checkouts each.
+    pub async fn node_id_by_fqn(
+        &self,
+        folder_id: &uuid::Uuid,
+        fqn: &str,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT id FROM sensei.nodes WHERE folder_id = $1 AND fqn = $2",
+        )
+        .bind(folder_id)
+        .bind(fqn)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("node_id_by_fqn: {e}"))?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// The `file` node for a repo-relative path — what a doc's file reference
+    /// points at. `None` when the path names nothing indexed.
+    ///
+    /// Repo-relative on purpose: a doc reference is written relative to the repo
+    /// and [`sensei.node_paths`] reports the same grain, so the two match
+    /// directly. A path that names nothing indexed simply will not match, which
+    /// is the correct answer rather than a failure.
+    pub async fn file_node_id_by_path(
+        &self,
+        folder_id: &uuid::Uuid,
+        rel_path: &str,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT n.id FROM sensei.nodes n
+               JOIN sensei.node_paths np ON np.node_id = n.id
+              WHERE n.folder_id = $1 AND np.file_path = $2
+                AND n.kind = 'file'::sensei.node_kind
+              LIMIT 1",
+        )
+        .bind(folder_id)
+        .bind(rel_path)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("file_node_id_by_path: {e}"))?;
+        Ok(row.map(|(id,)| id))
+    }
+
+    /// A definition node for `name`, but ONLY when exactly one exists in the
+    /// folder. `None` when the name is absent OR ambiguous.
+    ///
+    /// A doc says `` `handleAuth` `` with no signature and no module path, so an
+    /// ambiguous name cannot be resolved — it can only be GUESSED. Picking the
+    /// first of several would attach the doc to an arbitrary same-named symbol
+    /// and read as a fact; the honest answer is to leave the edge unresolved and
+    /// let `target_name` carry the mention. That is why this returns `None` on
+    /// ambiguity rather than a best match: two rows means "I don't know which",
+    /// which is not the same as an answer.
+    ///
+    /// Stubs are excluded (`file_path IS NOT NULL`): a doc mention must land on a
+    /// definition, not on another unresolved reference to the same name.
+    pub async fn sole_definition_id_by_name(
+        &self,
+        folder_id: &uuid::Uuid,
+        name: &str,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(&format!(
+            "SELECT id FROM sensei.nodes
+              WHERE folder_id = $1 AND name = $2 AND file_id IS NOT NULL
+                AND kind NOT IN ('file'::sensei.node_kind, 'section'::sensei.node_kind)
+                AND {ext}
+              LIMIT 2",
+            ext = sql_is_not_external("fqn"),
+        ))
+        .bind(folder_id)
+        .bind(name)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("sole_definition_id_by_name: {e}"))?;
+        // LIMIT 2 is the whole trick: one row is unambiguous, two means ambiguous
+        // and we stop counting — no full scan just to learn "more than one".
+        Ok(if rows.len() == 1 { Some(rows[0].0) } else { None })
+    }
+
     /// Get-or-create a node by its fully-qualified name (SCIP/LSIF moniker model).
     /// A REFERENCE (`def = None`) creates — or returns — an unresolved STUB
-    /// (`resolved=false`, NULL `file_path`). A DEFINITION (`def = Some`) creates or
+    /// (`resolved=false`, NULL `file_id`). A DEFINITION (`def = Some`) creates or
     /// ENRICHES the same `(folder_id, fqn)` node in place: flips `resolved=true` and
-    /// fills `file_path`/`signature`/`line_start`/`line_end`/`is_exported`/`parent_id`.
+    /// fills `file_id`/`signature`/`line_start`/`line_end`/`is_exported`/`parent_id`.
     ///
     /// Monotone + idempotent: a reference NEVER downgrades an already-resolved node
     /// (`resolved = OLD OR NEW`; def-only columns are kept unless the incoming row is
@@ -269,7 +797,19 @@ impl PgStore {
         def: Option<FqnDef<'_>>,
     ) -> Result<uuid::Uuid, String> {
         let resolved = def.is_some();
-        let file_path = def.as_ref().map(|d| d.file_path);
+        // A DEFINITION must name a tracked file (R13, 06 S6) — resolved here and
+        // FAILING CLOSED. A REFERENCE has no file by construction: it is the
+        // unresolved stub, and `file_id` NULL is what makes it one.
+        let file_id = match def.as_ref() {
+            Some(d) => Some(self.file_id_for(folder_id, d.file_path).await?.ok_or_else(|| {
+                format!(
+                    "upsert_node_by_fqn({fqn}): no files row for {} — a definition cannot \
+                     name an untracked file",
+                    d.file_path
+                )
+            })?),
+            None => None,
+        };
         let signature = def.as_ref().and_then(|d| d.signature);
         let line_start = def.as_ref().and_then(|d| d.line_start);
         let line_end = def.as_ref().and_then(|d| d.line_end);
@@ -279,12 +819,12 @@ impl PgStore {
         let inserted: Result<(uuid::Uuid,), sqlx_core::error::Error> = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes
                  (folder_id, fqn, kind, name, language, resolved,
-                  file_path, signature, line_start, line_end, is_exported, parent_id)
+                  file_id, signature, line_start, line_end, is_exported, parent_id)
              VALUES($1, $2, $3::sensei.node_kind, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
                SET resolved    = nodes.resolved OR EXCLUDED.resolved,
                    kind        = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.kind ELSE nodes.kind END,
-                   file_path   = COALESCE(EXCLUDED.file_path, nodes.file_path),
+                   file_id     = COALESCE(EXCLUDED.file_id, nodes.file_id),
                    signature   = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.signature ELSE nodes.signature END,
                    line_start  = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.line_start ELSE nodes.line_start END,
                    line_end    = CASE WHEN EXCLUDED.resolved THEN EXCLUDED.line_end ELSE nodes.line_end END,
@@ -298,7 +838,7 @@ impl PgStore {
              RETURNING id"
         )
         .bind(folder_id).bind(fqn).bind(kind).bind(name).bind(language).bind(resolved)
-        .bind(file_path).bind(signature).bind(line_start).bind(line_end).bind(is_exported).bind(parent_id)
+        .bind(file_id).bind(signature).bind(line_start).bind(line_end).bind(is_exported).bind(parent_id)
         .fetch_one(&self.pool).await;
 
         let row: (uuid::Uuid,) = match inserted {
@@ -307,34 +847,98 @@ impl PgStore {
                 // The row already exists under a DIFFERENT fqn: `ON CONFLICT
                 // (folder_id, fqn)` above can't see it, so the insert fell through
                 // to a raw INSERT and hit `nodes_unique_identity`
-                // (folder_id, file_path, kind, name, parent_id, line_start).
+                // (folder_id, file_id, kind, name, parent_id, line_start).
                 //
                 // This happens whenever a node's fqn SHAPE changes for a file that
                 // was already indexed — e.g. the module container's fqn language
                 // segment is derived from the parse output, so it flips when a parse
                 // stops yielding top-level defs. Without this branch the write fails
-                // forever: process_file returns Err, fail_folder withholds
-                // scan_state, the reconcile re-drives the folder every tick, and the
+                // forever: process_file returns Err, fail_folder withholds the
+                // `files` row, the reconcile re-drives the folder every tick, and the
                 // folder never leaves `failed`.
                 //
                 // Adopt the existing row by re-pointing its fqn at the new value.
                 // Keyed on the identity columns so we update exactly the row that
                 // blocked us — NULLS NOT DISTINCT mirrors the index semantics.
-                self.adopt_node_by_identity(
-                    folder_id,
-                    fqn,
-                    kind,
-                    name,
-                    language,
-                    resolved,
-                    file_path,
-                    signature,
-                    line_start,
-                    line_end,
-                    is_exported,
-                    parent_id,
-                )
-                .await?
+                match self
+                    .adopt_node_by_identity(
+                        folder_id,
+                        fqn,
+                        kind,
+                        name,
+                        language,
+                        resolved,
+                        file_id,
+                        signature,
+                        line_start,
+                        line_end,
+                        is_exported,
+                        parent_id,
+                    )
+                    .await
+                {
+                    Ok(r) => r,
+                    // ANOTHER FILE IN THIS FOLDER ALREADY OWNS THIS FQN, so the
+                    // adoption cannot re-point this row at it.
+                    //
+                    // That is not a corruption to reject — it is what an fqn
+                    // MEANS. A reference mints its target from what the call site
+                    // can see (for kotlin, the package and the name) with no
+                    // knowledge of which file holds the definition, so the
+                    // definition side cannot add path information to
+                    // disambiguate without making the two sides mint different
+                    // strings and never match. N files therefore legitimately
+                    // map to one fqn, and one fqn must resolve to one node.
+                    //
+                    // Android build variants are the real case: one `Color.kt`
+                    // per variant, each declaring `val colorPrimary` in one
+                    // package. Measured over a 245-file repo: 423 top-level
+                    // declarations, 26 colliding, all 26 `val`.
+                    //
+                    // Erroring here was a POISON PILL, not a safeguard:
+                    // `process_file` returned Err, `fail_folder` withheld the
+                    // `files` row, the reconcile re-drove the folder every tick,
+                    // and the whole repo never finished indexing.
+                    // Reuses the existing `node_id_by_fqn`. A holder that the
+                    // constraint just reported but the SELECT cannot find is a
+                    // genuine inconsistency, so it errors rather than invents an id.
+                    Err(e) if is_fqn_conflict(&e) => {
+                        let id = self.node_id_by_fqn(folder_id, fqn).await?.ok_or_else(|| {
+                            format!("fqn {fqn} reported as taken but no holder found ({name})")
+                        })?;
+                        (id,)
+                    }
+                    // THE IDENTITY SEARCH CAN COME BACK EMPTY, and that is not
+                    // a corruption — it is the two update rules disagreeing.
+                    //
+                    // The `DO UPDATE` above sets
+                    // `parent_id = COALESCE(EXCLUDED.parent_id, nodes.parent_id)`
+                    // and guards `kind`/`line_start` on `resolved`, so the row
+                    // it BECOMES — and therefore the row it collides with on
+                    // `nodes_unique_identity` — can carry old values where the
+                    // adopt below searches with new ones. It then matches
+                    // nothing.
+                    //
+                    // `fetch_one` turned that into `RowNotFound` and failed the
+                    // WHOLE FILE: `fail_folder` withheld the `files` row and the
+                    // reconcile re-drove the folder every tick. MEASURED at 44
+                    // files in one day. Exactly the poison pill the arm above
+                    // describes, on the path that did not get the treatment.
+                    //
+                    // The answer does not need to know WHICH column disagreed:
+                    // `ON CONFLICT (folder_id, fqn)` already matched a row by
+                    // fqn, so that row is the one this upsert is about.
+                    Err(sqlx_core::error::Error::RowNotFound) => {
+                        let id = self.node_id_by_fqn(folder_id, fqn).await?.ok_or_else(|| {
+                            format!(
+                                "adopt node by identity ({name}): no row holds {fqn} either — \
+                                 the conflict and the graph disagree"
+                            )
+                        })?;
+                        (id,)
+                    }
+                    Err(e) => return Err(format!("adopt node by identity ({name}): {e}")),
+                }
             }
             Err(e) => return Err(e.to_string()),
         };
@@ -354,13 +958,13 @@ impl PgStore {
         name: &str,
         language: Option<&str>,
         resolved: bool,
-        file_path: Option<&str>,
+        file_id: Option<uuid::Uuid>,
         signature: Option<&str>,
         line_start: Option<i32>,
         line_end: Option<i32>,
         is_exported: bool,
         parent_id: Option<&uuid::Uuid>,
-    ) -> Result<(uuid::Uuid,), String> {
+    ) -> Result<(uuid::Uuid,), sqlx_core::error::Error> {
         sqlx_core::query_as::query_as(
             "UPDATE sensei.nodes SET
                  fqn         = $2,
@@ -374,7 +978,7 @@ impl PgStore {
                                     THEN NULL ELSE embedding END,
                  modified_at = now()
                WHERE folder_id = $1
-                 AND file_path  IS NOT DISTINCT FROM $7
+                 AND file_id    IS NOT DISTINCT FROM $7
                  AND kind       = $3::sensei.node_kind
                  AND name       = $4
                  AND parent_id  IS NOT DISTINCT FROM $12
@@ -387,7 +991,7 @@ impl PgStore {
         .bind(name)
         .bind(language)
         .bind(resolved)
-        .bind(file_path)
+        .bind(file_id)
         .bind(signature)
         .bind(line_start)
         .bind(line_end)
@@ -395,7 +999,6 @@ impl PgStore {
         .bind(parent_id)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| format!("adopt node by identity ({name}): {e}"))
     }
 
     /// Get-or-create a first-class `lib_symbol` node for an EXTERNAL reference (a
@@ -405,41 +1008,100 @@ impl PgStore {
     /// NULL `file_path` (no local file); the symbol's `parent_id` is its container.
     /// Owned by the referencing repo-root `folder_id` so they cascade with it.
     /// Stable ids across repeated references (arbiter = `nodes_unique_fqn`).
+    /// Distinct import targets with their edge and resolved counts.
+    ///
+    /// DISTINCT on purpose: 136,484 import edges reduce to 15,533 distinct targets,
+    /// so the caller classifies 15k strings instead of 136k rows. The
+    /// classification itself stays in Rust
+    /// ([`crate::languages::import_target::classify_import`]) — one owner. A SQL
+    /// copy of the rule is how the scan exclusion resolver came to gate the watcher
+    /// while pruning nothing.
+    ///
+    /// Propagates a read failure: an empty breakdown would report a codebase with
+    /// no dependencies, which no codebase has.
+    pub async fn import_target_counts(&self) -> Result<Vec<(Option<String>, i64, i64)>, String> {
+        // `target_name` IS NULL for a resolved import, and the count of those is
+        // not small: resolving ERASES the name (the `target_id` xor
+        // `target_name` invariant), so 25,788 of 136,573 import edges carry no
+        // name at all.
+        //
+        // This used to `COALESCE(target_name, '')`, justified by a comment
+        // reading "MEASURED non-null on all 136,484 import edges". That was true
+        // when written — imports were 0% resolved then. As imports began
+        // resolving, every resolved row collapsed into one `target = ''` group,
+        // and `classify_import("")` reported the lot as a single external
+        // package: `/api/graph/imports` said external 136,329 / local 244 when
+        // the truth was 110,785 / 25,788. A measurement that drifts as the thing
+        // it measures improves is worse than none.
+        //
+        // `None` therefore MEANS resolved, and the caller must not classify it
+        // as a string. Grouped by target rather than by class so the
+        // classification stays in Rust (`classify_import`) with one owner.
+        sqlx_core::query_as::query_as(
+            "SELECT target_name AS target,
+                    count(*) AS edges,
+                    count(*) FILTER (WHERE target_id IS NOT NULL) AS resolved
+               FROM sensei.edges
+              WHERE kind = 'imports'
+              GROUP BY 1",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("import_target_counts: {e}"))
+    }
+
     pub async fn upsert_lib_node_by_fqn(
         &self,
         folder_id: &uuid::Uuid,
         fqn: &str,
         name: &str,
         package: &str,
+        language: Option<&str>,
     ) -> Result<uuid::Uuid, String> {
-        // One `lib_package` container per dependency (fqn = `lib·<package>`).
+        // One `package` container per dependency (fqn = `lib·<package>`).
+        //
+        // D12: the kind says WHAT — a package is a package whether it is ours or
+        // a dependency's. The `lib·` fqn prefix is what says it came from
+        // outside, and `fqn::SQL_IS_EXTERNAL` is the one test for that.
         let pkg_fqn = format!("lib{}{}", crate::languages::fqn::SEP, package);
         let container: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes
-                 (folder_id, fqn, kind, name, resolved, props)
-             VALUES($1, $2, 'lib_package'::sensei.node_kind, $3, true,
-                    jsonb_build_object('package', $3::text))
+                 (folder_id, fqn, kind, name, resolved, props, language)
+             VALUES($1, $2, 'package'::sensei.node_kind, $3, true,
+                    jsonb_build_object('package', $3::text), $4)
              ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
-               SET resolved = true, modified_at = now()
+               SET resolved = true,
+                   language = COALESCE(nodes.language, EXCLUDED.language),
+                   modified_at = now()
              RETURNING id",
         )
         .bind(folder_id)
         .bind(&pkg_fqn)
         .bind(package)
+        .bind(language)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
 
         // The symbol, parented under its package container.
+        //
+        // `unknown` and not a guessed kind (D12): this mints a node for an
+        // import target that resolved to nothing first-party, and an import
+        // names a thing without saying what KIND of thing it is. `unknown` is a
+        // value that MEANS not-yet-known; reusing a real kind here would state
+        // something the use site never revealed.
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.nodes
-                 (folder_id, fqn, kind, name, resolved, parent_id, props)
-             VALUES($1, $2, 'lib_symbol'::sensei.node_kind, $3, true, $4,
-                    jsonb_build_object('package', $5::text))
+                 (folder_id, fqn, kind, name, resolved, parent_id, props, language)
+             VALUES($1, $2, 'unknown'::sensei.node_kind, $3, true, $4,
+                    jsonb_build_object('package', $5::text), $6)
              ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
                SET resolved    = true,
                    parent_id   = COALESCE(EXCLUDED.parent_id, nodes.parent_id),
                    props       = nodes.props || jsonb_build_object('package', $5::text),
+                   -- First writer wins: a lib fqn is language-scoped by
+                   -- construction, so a later NULL must not erase it.
+                   language    = COALESCE(nodes.language, EXCLUDED.language),
                    modified_at = now()
              RETURNING id",
         )
@@ -448,6 +1110,7 @@ impl PgStore {
         .bind(name)
         .bind(container.0)
         .bind(package)
+        .bind(language)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -461,17 +1124,20 @@ impl PgStore {
         &self,
         folder_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(
+        let rows: Vec<(String, i64)> = sqlx_core::query_as::query_as(&format!(
             "SELECT p.name, count(s.id)
                FROM sensei.nodes p
                LEFT JOIN sensei.nodes s
                  ON s.folder_id = p.folder_id
                 AND s.parent_id = p.id
-                AND s.kind = 'lib_symbol'::sensei.node_kind
-              WHERE p.folder_id = $1 AND p.kind = 'lib_package'::sensei.node_kind
+                AND {symbol_ext}
+              WHERE p.folder_id = $1 AND {package_ext}
+                AND p.kind = 'package'::sensei.node_kind
               GROUP BY p.name
               ORDER BY count(s.id) DESC, p.name",
-        )
+            symbol_ext = sql_is_external("s.fqn"),
+            package_ext = sql_is_external("p.fqn"),
+        ))
         .bind(folder_id)
         .fetch_all(&self.pool)
         .await
@@ -499,15 +1165,15 @@ impl PgStore {
     ) -> Result<Vec<(uuid::Uuid, String, String, Option<String>, String)>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<String>, String)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, kind::text, name, signature, file_path
-                   FROM sensei.nodes
-                  WHERE folder_id = $1
-                    AND embedding IS NULL
-                    AND file_path IS NOT NULL
-                    AND kind IN ('file','function','method','class','interface',
-                                 'type','const','enum','enum_variant','section',
-                                 'struct','component','hook','doc','extension')
-                  ORDER BY file_path, line_start
+                "SELECT n.id, n.kind::text, n.name, n.signature, np.file_path
+                   FROM sensei.nodes n
+                   JOIN sensei.node_paths np ON np.node_id = n.id
+                  WHERE n.folder_id = $1
+                    AND n.embedding IS NULL
+                    AND n.kind IN ('file','function','method','class','interface',
+                                   'type','const','enum','enum_variant','section',
+                                   'struct','component','hook','doc','extension')
+                  ORDER BY np.file_path, n.line_start
                   LIMIT $2",
             )
             .bind(folder_id)
@@ -544,35 +1210,84 @@ impl PgStore {
     /// materially slows the common query path. Returns
     /// `(id, name, file_path, signature, line_start)` — the fields the query
     /// handler projects into function/type hits for fusion with lexical results.
+    /// Embedding nearest-neighbour search, bounded by cosine distance.
+    ///
+    /// `max_distance` is not optional and not cosmetic. An ANN query returns its
+    /// `limit` nearest neighbours HOWEVER FAR AWAY they are, so without a bound a
+    /// query naming a symbol that does not exist still yields a full, confident
+    /// list of whatever happened to be closest — a fabricated answer the caller
+    /// cannot tell from a real one. The bound is what makes "nothing matched"
+    /// expressible.
+    ///
+    /// The distance is returned alongside each row rather than discarded: rank
+    /// position cannot tell a caller whether hit #1 is an exact match or merely
+    /// the least-bad of a bad set, and only the score can.
     pub async fn semantic_search_nodes(
         &self,
         folder_ids: &[uuid::Uuid],
         query_embedding: &[f32],
         kinds: &[&str],
         limit: i64,
-    ) -> Result<Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)>, String> {
+        max_distance: f64,
+    ) -> Result<Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>, f64)>, String> {
         if folder_ids.is_empty() || query_embedding.is_empty() || kinds.is_empty() {
             return Ok(Vec::new());
         }
         let vec_literal = vector_literal(query_embedding);
         let kind_strs: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, name, file_path, signature, line_start
-                   FROM sensei.nodes
-                  WHERE folder_id = ANY($1::uuid[])
-                    AND kind::text = ANY($3::text[])
-                    AND embedding IS NOT NULL
-                  ORDER BY embedding <=> $2::vector
+        let rows: Vec<SemanticNodeRow> = sqlx_core::query_as::query_as(
+            "SELECT n.id, n.name, np.file_path, n.signature, n.line_start,
+                        (n.embedding <=> $2::vector)::float8 AS distance
+                   FROM sensei.nodes n
+                   LEFT JOIN sensei.node_paths np ON np.node_id = n.id
+                  WHERE n.folder_id = ANY($1::uuid[])
+                    AND n.kind::text = ANY($3::text[])
+                    AND n.embedding IS NOT NULL
+                    AND (n.embedding <=> $2::vector) <= $5
+                  ORDER BY n.embedding <=> $2::vector
                   LIMIT $4",
-            )
-            .bind(folder_ids)
-            .bind(vec_literal)
-            .bind(kind_strs)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        )
+        .bind(folder_ids)
+        .bind(vec_literal)
+        .bind(kind_strs)
+        .bind(limit)
+        .bind(max_distance)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
+    }
+
+    /// Cosine distance from `query_embedding` to each of `node_ids`.
+    ///
+    /// The lexical search arm matches by substring, so it returns rows carrying
+    /// no notion of how good a hit is. Every searchable node has an embedding,
+    /// which means the same measure that ranks a semantic candidate can score a
+    /// lexical one — and that is what lets a coincidental substring collision be
+    /// told apart from the real answer.
+    ///
+    /// A row with no embedding is simply absent from the result rather than
+    /// defaulted: the caller keeps such a hit unscored, because "cannot judge"
+    /// and "scored badly" are different answers.
+    pub async fn embedding_distances(
+        &self,
+        node_ids: &[uuid::Uuid],
+        query_embedding: &[f32],
+    ) -> Result<Vec<(uuid::Uuid, f64)>, String> {
+        if node_ids.is_empty() || query_embedding.is_empty() {
+            return Ok(Vec::new());
+        }
+        let vec_literal = vector_literal(query_embedding);
+        let rows: Vec<(uuid::Uuid, f64)> = sqlx_core::query_as::query_as(
+            "SELECT id, (embedding <=> $2::vector)::float8 AS distance
+               FROM sensei.nodes
+              WHERE id = ANY($1::uuid[]) AND embedding IS NOT NULL",
+        )
+        .bind(node_ids)
+        .bind(vec_literal)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows)
     }
 
@@ -591,14 +1306,14 @@ impl PgStore {
             return Ok(Vec::new());
         }
         sqlx_core::query_as::query_as(
-            "SELECT n.id, f.abs_path, n.file_path,
+            "SELECT n.id, f.abs_path, np.file_path,
                     COALESCE(n.line_start, 1),
                     COALESCE(n.line_end, n.line_start, 1),
                     n.kind::text, n.name, n.signature
                FROM sensei.nodes n
+               JOIN sensei.node_paths np ON np.node_id = n.id
                JOIN sensei.folders f ON f.id = n.folder_id
-              WHERE n.id = ANY($1::uuid[])
-                AND n.file_path IS NOT NULL",
+              WHERE n.id = ANY($1::uuid[])",
         )
         .bind(ids)
         .fetch_all(&self.pool)
@@ -619,18 +1334,19 @@ impl PgStore {
         limit: i64,
     ) -> Result<Vec<serde_json::Value>, String> {
         let max_distance = 1.0 - min_similarity;
-        let rows: Vec<(String, String, Option<i32>, String, String, Option<i32>, f64)> =
-            sqlx_core::query_as::query_as(
-                "SELECT a.name, a.file_path, a.line_start,
-                        b.name, b.file_path, b.line_start,
+        let rows: Vec<DuplicatePairRow> = sqlx_core::query_as::query_as(
+            "SELECT a.name, pa.file_path, a.line_start,
+                        b.name, pb.file_path, b.line_start,
                         1 - (a.embedding <=> b.embedding) AS similarity
                    FROM sensei.nodes a
+                   JOIN sensei.node_paths pa ON pa.node_id = a.id
                    JOIN sensei.nodes b
                      ON b.folder_id = a.folder_id
                     AND a.id < b.id
                     AND b.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
                     AND b.embedding IS NOT NULL
                     AND (b.line_end - b.line_start) >= 3
+                   JOIN sensei.node_paths pb ON pb.node_id = b.id
                   WHERE a.folder_id = $1
                     AND a.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
                     AND a.embedding IS NOT NULL
@@ -638,13 +1354,13 @@ impl PgStore {
                     AND (a.embedding <=> b.embedding) <= $2
                   ORDER BY similarity DESC
                   LIMIT $3",
-            )
-            .bind(folder_id)
-            .bind(max_distance)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        )
+        .bind(folder_id)
+        .bind(max_distance)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
             .map(|(na, fa, la, nb, fb, lb, sim)| {
@@ -679,18 +1395,19 @@ impl PgStore {
             return Ok(Vec::new());
         }
         let max_distance = 1.0 - min_similarity;
-        let rows: Vec<(String, String, Option<i32>, String, String, Option<i32>, f64)> =
-            sqlx_core::query_as::query_as(
-                "SELECT a.name, a.file_path, a.line_start,
-                        b.name, b.file_path, b.line_start,
+        let rows: Vec<DuplicatePairRow> = sqlx_core::query_as::query_as(
+            "SELECT a.name, pa.file_path, a.line_start,
+                        b.name, pb.file_path, b.line_start,
                         1 - (a.embedding <=> b.embedding) AS similarity
                    FROM sensei.nodes a
+                   JOIN sensei.node_paths pa ON pa.node_id = a.id
                    JOIN sensei.nodes b
                      ON a.id < b.id
                     AND b.folder_id = ANY($1::uuid[])
                     AND b.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
                     AND b.embedding IS NOT NULL
                     AND (b.line_end - b.line_start) >= 3
+                   JOIN sensei.node_paths pb ON pb.node_id = b.id
                   WHERE a.folder_id = ANY($1::uuid[])
                     AND a.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
                     AND a.embedding IS NOT NULL
@@ -698,13 +1415,13 @@ impl PgStore {
                     AND (a.embedding <=> b.embedding) <= $2
                   ORDER BY similarity DESC
                   LIMIT $3",
-            )
-            .bind(folder_ids)
-            .bind(max_distance)
-            .bind(limit)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        )
+        .bind(folder_ids)
+        .bind(max_distance)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
             .map(|(na, fa, la, nb, fb, lb, sim)| {
@@ -726,7 +1443,7 @@ impl PgStore {
                FROM sensei.nodes n
                JOIN sensei.folders f ON f.id = n.folder_id
               WHERE n.embedding IS NULL
-                AND n.file_path IS NOT NULL
+                AND n.file_id IS NOT NULL
                 AND n.kind IN ('file','function','method','class','interface',
                                'type','const','enum','enum_variant','section',
                                'struct','component','hook','doc','extension')",
@@ -742,9 +1459,18 @@ impl PgStore {
         folder_id: &uuid::Uuid,
         file_path: &str,
     ) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, Option<uuid::Uuid>, Option<i32>)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, parent_id, line_start FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2 ORDER BY line_start"
-        ).bind(folder_id).bind(file_path).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+        let rows: Vec<NodeOutline> = sqlx_core::query_as::query_as(
+            "SELECT n.id, n.kind::text, n.name, n.parent_id, n.line_start
+               FROM sensei.nodes n
+               JOIN sensei.node_paths np ON np.node_id = n.id
+              WHERE n.folder_id = $1 AND np.file_path = $2
+              ORDER BY n.line_start",
+        )
+        .bind(folder_id)
+        .bind(file_path)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, kind, name, pid, ls)| {
             serde_json::json!({ "id": id, "kind": kind, "name": name, "parent_id": pid, "line_start": ls })
         }).collect())
@@ -783,6 +1509,9 @@ impl PgStore {
     /// by its target node; an unresolved edge by `(target_name, target_file)`.
     /// `DO UPDATE SET modified_at = now()` (not `DO NOTHING`) so `RETURNING id`
     /// is always the surviving row's id.
+    /// Insert an edge with no props. Thin wrapper over
+    /// [`Self::insert_edge_with_props`] so there is exactly ONE pair of
+    /// edge-INSERT statements in the tree.
     pub async fn insert_edge(
         &self,
         folder_id: &uuid::Uuid,
@@ -792,29 +1521,103 @@ impl PgStore {
         target_file: Option<&str>,
         kind: &str,
     ) -> Result<uuid::Uuid, String> {
+        self.insert_edge_with_props(
+            folder_id,
+            source_id,
+            target_id,
+            target_name,
+            target_file,
+            kind,
+            &serde_json::json!({}),
+        )
+        .await
+    }
+
+    /// Insert an edge carrying `props`.
+    ///
+    /// `props` MERGES (`edges.props || EXCLUDED.props`) rather than replacing,
+    /// the same idiom `set_node_props` uses. An edge is re-inserted on every
+    /// rescan, so a later caller that knows less about it must not erase what an
+    /// earlier one recorded.
+    ///
+    /// Needed because `implements` carries two distinct facts — Java-style
+    /// interface implementation and a Rust trait impl — told apart only by
+    /// `props.relation`. Before this, no code path named the column at all.
+    // The arguments ARE the columns. A struct here would restate the same
+    // names one indirection away without removing a single one; `FqnDef`
+    // above is the case where a struct earned its keep, because that call
+    // has a meaningful default.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_edge_with_props(
+        &self,
+        folder_id: &uuid::Uuid,
+        source_id: &uuid::Uuid,
+        target_id: Option<&uuid::Uuid>,
+        target_name: Option<&str>,
+        target_file: Option<&str>,
+        kind: &str,
+        props: &serde_json::Value,
+    ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = if let Some(tid) = target_id {
             sqlx_core::query_as::query_as(
-                "INSERT INTO sensei.edges(folder_id, source_id, target_id, kind)
-                 VALUES($1, $2, $3, $4::sensei.edge_kind)
+                // The verdict is DERIVED HERE, not left to the merge path. A
+                // first insert never goes through `merge_occurrences`, so the
+                // column stayed NULL on every edge the indexer created and only
+                // filled in if something later merged into it. Measured while
+                // fixing this: of 130,614 edges touched in ten minutes, 14,217
+                // carried a verdict.
+                //
+                // On conflict it recomputes from `edges.props || EXCLUDED.props`
+                // — the SAME expression the props column is set to, spelled once
+                // per statement — because a verdict derived from only the new
+                // half would contradict the props it claims to summarise.
+                "INSERT INTO sensei.edges(folder_id, source_id, target_id, kind, props,
+                                          resolved_via, unresolved_reason)
+                 VALUES($1, $2, $3, $4::sensei.edge_kind, $5,
+                        sensei.edge_verdict($5 -> 'occurrences', 'code_graph_rung', 'rung'),
+                        sensei.edge_verdict($5 -> 'occurrences', 'code_graph', 'reason'))
                  ON CONFLICT (folder_id, source_id, target_id, kind) WHERE target_id IS NOT NULL
                    DO UPDATE SET modified_at = now()
+                               , props = edges.props || EXCLUDED.props
+                               , resolved_via = sensei.edge_verdict(
+                                     (edges.props || EXCLUDED.props) -> 'occurrences',
+                                     'code_graph_rung', 'rung')
+                               , unresolved_reason = sensei.edge_verdict(
+                                     (edges.props || EXCLUDED.props) -> 'occurrences',
+                                     'code_graph', 'reason')
                  RETURNING id",
             )
             .bind(folder_id)
             .bind(source_id)
             .bind(tid)
             .bind(kind)
+            .bind(props)
             .fetch_one(&self.pool)
             .await
             .map_err(|e| e.to_string())?
         } else {
             sqlx_core::query_as::query_as(
-                "INSERT INTO sensei.edges(folder_id, source_id, target_name, target_file, kind)
-                 VALUES($1, $2, $3, $4, $5::sensei.edge_kind)
+                // Same derivation as the resolved branch above; the two must stay
+                // in step. An UNRESOLVED edge is the one that most needs its
+                // reason on the column — it is the population every gap report
+                // groups by, and grouping four million rows through a jsonpath
+                // reduction in a view is what promoting it to a column avoided.
+                "INSERT INTO sensei.edges(folder_id, source_id, target_name, target_file, kind, props,
+                                          resolved_via, unresolved_reason)
+                 VALUES($1, $2, $3, $4, $5::sensei.edge_kind, $6,
+                        sensei.edge_verdict($6 -> 'occurrences', 'code_graph_rung', 'rung'),
+                        sensei.edge_verdict($6 -> 'occurrences', 'code_graph', 'reason'))
                  ON CONFLICT (folder_id, source_id, target_name, target_file, kind) WHERE target_id IS NULL
                    DO UPDATE SET modified_at = now()
+                               , props = edges.props || EXCLUDED.props
+                               , resolved_via = sensei.edge_verdict(
+                                     (edges.props || EXCLUDED.props) -> 'occurrences',
+                                     'code_graph_rung', 'rung')
+                               , unresolved_reason = sensei.edge_verdict(
+                                     (edges.props || EXCLUDED.props) -> 'occurrences',
+                                     'code_graph', 'reason')
                  RETURNING id"
-            ).bind(folder_id).bind(source_id).bind(target_name).bind(target_file).bind(kind)
+            ).bind(folder_id).bind(source_id).bind(target_name).bind(target_file).bind(kind).bind(props)
                 .fetch_one(&self.pool).await.map_err(|e| e.to_string())?
         };
         Ok(row.0)
@@ -943,6 +1746,291 @@ impl PgStore {
         Ok(())
     }
 
+    /// Collect unresolved reference stubs that nothing points at any more.
+    ///
+    /// A stub is a node with NO `file_path` and a kind other than
+    /// `lib_symbol`/`lib_package` — the `unknown` locality in
+    /// `sensei.graph_nodes`. It is minted by `upsert_node_by_fqn` when a reference
+    /// resolves to a name no definition backs, and until now nothing could remove
+    /// one: `prune_file_nodes` filters `file_path = $2`, which no stub can match.
+    /// 84,446 accumulated. That absence is also why "stub count → 0" could not be
+    /// driven by fixing the parsers alone — they stopped CREATING stubs, but the
+    /// existing rows had no exit.
+    ///
+    /// TWO GUARDS, both load-bearing:
+    ///
+    /// * **Still referenced.** A stub with any edge is evidence that a reference
+    ///   exists, even though its target is unknown. Dropping it would silently
+    ///   lose the reference; it becomes collectable once the referencing file is
+    ///   reindexed (`delete_edges_from_sources` drops the old edge, and the fixed
+    ///   resolvers do not create a replacement). Measured 2026-09-01: 27,740 of
+    ///   84,446 are already edge-free, the rest convert as their callers reindex.
+    ///
+    /// * **Has children.** `nodes.parent_id` cascades on delete, and live there are
+    ///   42 stub parents carrying 574 REAL internal method nodes with file paths.
+    ///   An unguarded delete would destroy all 574. The stub parent is wrong, but
+    ///   it is load-bearing until its children are re-parented.
+    ///
+    /// Folder-scoped and idempotent — 84ms on this repo's largest folder (141,186
+    /// nodes). Returns rows deleted.
+    pub async fn prune_orphan_stubs(&self, folder_id: &uuid::Uuid) -> Result<u64, String> {
+        self.prune_orphan_stubs_scoped(std::slice::from_ref(folder_id)).await
+    }
+
+    /// [`Self::prune_orphan_stubs`] across several folders in one statement — the
+    /// form the scan_root reconcile needs.
+    ///
+    /// It exists because the reconcile's `dedup_structural_folder_nodes` CREATES
+    /// this garbage: deleting a structural duplicate cascades its edges away, and
+    /// an edge pointing at a stub is exactly what made that stub ineligible. The
+    /// per-folder pass already ran at the community barrier by then, so nothing
+    /// collected the newly-orphaned rows — measured 9,863 of them, every one in a
+    /// `kind='folder'` folder, the dedup's exact target set.
+    ///
+    /// One statement rather than a loop over folders: the reconcile is
+    /// root-scoped and a watch root here holds 7,642 folders, so per-folder round
+    /// trips would dominate a pass that is otherwise a single indexed delete.
+    /// Write ONE edge fact, applying its miss policy.
+    ///
+    /// Per-fact rather than batched, deliberately. No `.begin()` exists anywhere
+    /// under `tasks/` and no graph method is executor-generic, so a batching
+    /// variant would need either transaction-taking copies of every helper or a
+    /// second copy of the merge SQL. More importantly the import arm probes
+    /// against whatever stubs exist AT THAT INSTANT, so batching would change
+    /// resolution — a behaviour change wearing a performance costume.
+    ///
+    /// Zero new SQL: this composes `upsert_lib_node_by_fqn`,
+    /// `upsert_node_by_fqn` and `insert_edge_with_props`. It is a policy
+    /// executor, not a second write path.
+    ///
+    /// `known` is the caller's already-resolved fqn→id map (today `fqn_ids`, the
+    /// current file's own defs). Consulting it FIRST is load-bearing: an
+    /// in-file target must not be re-upserted, because
+    /// `language = COALESCE(EXCLUDED.language, nodes.language)` is
+    /// last-writer-wins and a reference from another language would relabel it.
+    #[allow(dead_code)]
+    pub async fn persist_edge_fact(
+        &self,
+        folder_id: &uuid::Uuid,
+        fact: &crate::graph_facts::EdgeFact,
+        known: &std::collections::HashMap<String, uuid::Uuid>,
+        language: Option<&str>,
+    ) -> Result<uuid::Uuid, String> {
+        use crate::graph_facts::{OnMiss, TargetRef};
+
+        let (target_id, target_name) = match &fact.target {
+            TargetRef::Lib { fqn, name, package } => {
+                #[cfg(test)]
+                crate::graph_facts::arm_tally::bump(fact.kind, "lib");
+                let id =
+                    self.upsert_lib_node_by_fqn(folder_id, fqn, name, package, language).await?;
+                (Some(id), None)
+            }
+            TargetRef::Internal { fqn, name, on_miss } => match known.get(fqn) {
+                Some(id) => {
+                    // The in-file fast path. Instrumented because it is
+                    // INDISTINGUISHABLE from the stub path in final state —
+                    // demonstrated by probe, both end as a resolved edge to an
+                    // enriched node — so nothing else can prove it still runs.
+                    #[cfg(test)]
+                    crate::graph_facts::arm_tally::bump(fact.kind, "in-file");
+                    (Some(*id), None)
+                }
+                None => match on_miss {
+                    OnMiss::CreateStub { kind } => {
+                        #[cfg(test)]
+                        crate::graph_facts::arm_tally::bump(fact.kind, "stub");
+                        let id = self
+                            .upsert_node_by_fqn(folder_id, fqn, kind, name, language, None)
+                            .await?;
+                        (Some(id), None)
+                    }
+                    // A probe that misses leaves the NAME, never an invented row.
+                    // A probe that misses leaves the NAME, never an invented row.
+                    OnMiss::LeaveUnresolved => match self.node_id_by_fqn(folder_id, fqn).await? {
+                        Some(id) => (Some(id), None),
+                        None => (None, Some(name.clone())),
+                    },
+                },
+            },
+            TargetRef::Unresolvable { name } => {
+                #[cfg(test)]
+                crate::graph_facts::arm_tally::bump(fact.kind, "unresolvable");
+                (None, Some(name.clone()))
+            }
+        };
+
+        self.insert_edge_with_props(
+            folder_id,
+            &fact.source_id,
+            target_id.as_ref(),
+            target_name.as_deref(),
+            None,
+            fact.kind,
+            &fact.props,
+        )
+        .await
+    }
+
+    /// Remove the mislabelled containment rows that the retired `parent_refs`
+    /// emit wrote under the `extends` kind.
+    ///
+    /// That emit produced `file -> (unresolved type declared in that same
+    /// file)`: 7,916 rows in the live graph, every one unresolved, all
+    /// duplicating containment that `nodes.parent_id` already carries at
+    /// 60,201/60,201 method nodes. The emit is gone, so nothing creates more;
+    /// this collects what was already written.
+    ///
+    /// The discriminant is the WHOLE predicate, deliberately. Every edge the
+    /// inheritance path writes carries `props.relation`, and before
+    /// `insert_edge_with_props` no code path could write props at all — so
+    /// "unstamped `extends`" identifies the legacy rows exactly.
+    ///
+    /// An earlier version also required a file source and a null target. Both
+    /// were dropped: mutation-probing showed each was redundant given the
+    /// others, so no test could isolate them, and an unpinned clause in a
+    /// DELETE is a liability rather than safety. In particular a file source
+    /// would have been WRONG — the inheritance emit anchors on the file node
+    /// when a child fqn is missing, so a real relation can legitimately be
+    /// file-sourced and unresolved.
+    ///
+    /// Returns the number removed, for the reconcile summary.
+    pub async fn prune_mislabelled_containment_extends(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<u64, String> {
+        if folder_ids.is_empty() {
+            return Ok(0); // genuine: no folders in scope
+        }
+        let res = sqlx_core::query::query(
+            "DELETE FROM sensei.edges e
+              WHERE e.folder_id = ANY($1)
+                AND e.kind = 'extends'::sensei.edge_kind
+                AND e.props->>'relation' IS NULL",
+        )
+        .bind(folder_ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("prune_mislabelled_containment_extends: {e}"))?;
+        Ok(res.rows_affected())
+    }
+
+    /// Collect lib nodes nothing points at.
+    ///
+    /// `prune_orphan_stubs_scoped` deliberately EXCLUDES the lib kinds, and no
+    /// other path deletes them — `delete_nodes_by_file` and `prune_file_nodes`
+    /// both key on `file_path`, which a lib node does not have. So until this
+    /// existed, a lib node once minted was permanent, and a wrong derivation
+    /// could only be undone by hand-written SQL against the live graph.
+    ///
+    /// That is why this lands BEFORE externals-as-lib_symbol mints anything:
+    /// the mint is reversible only if the collector exists first.
+    ///
+    /// TWO STATEMENTS, in this order and not combinable. Symbols go first;
+    /// containers go second, and only once empty. A `lib_package` whose symbols
+    /// are still referenced must survive, or the next scan re-mints it and the
+    /// pair churns every pass. Doing containers first would delete a parent
+    /// whose children are about to be judged.
+    ///
+    /// Returns the total removed, for the reconcile summary.
+    pub async fn prune_unreferenced_lib_nodes_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<u64, String> {
+        if folder_ids.is_empty() {
+            return Ok(0); // genuine: no folders in scope
+        }
+        // Symbols with no edge in either direction and no children.
+        let symbols = sqlx_core::query::query(&format!(
+            "DELETE FROM sensei.nodes n
+              WHERE n.folder_id = ANY($1)
+                AND {ext}
+                AND n.kind <> 'package'::sensei.node_kind
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.edges e
+                     WHERE e.target_id = n.id OR e.source_id = n.id)
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.nodes c WHERE c.parent_id = n.id)",
+            ext = sql_is_external("n.fqn"),
+        ))
+        .bind(folder_ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("prune_unreferenced_lib_nodes (symbols): {e}"))?;
+
+        // Containers left with no children and no edges of their own.
+        let containers = sqlx_core::query::query(&format!(
+            "DELETE FROM sensei.nodes n
+              WHERE n.folder_id = ANY($1)
+                AND {ext}
+                AND n.kind = 'package'::sensei.node_kind
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.nodes c WHERE c.parent_id = n.id)
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.edges e
+                     WHERE e.target_id = n.id OR e.source_id = n.id)",
+            ext = sql_is_external("n.fqn"),
+        ))
+        .bind(folder_ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("prune_unreferenced_lib_nodes (containers): {e}"))?;
+
+        Ok(symbols.rows_affected() + containers.rows_affected())
+    }
+
+    pub async fn prune_orphan_stubs_scoped(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<u64, String> {
+        if folder_ids.is_empty() {
+            return Ok(0); // genuine: no folders in scope, nothing to collect
+        }
+        let res = sqlx_core::query::query(&format!(
+            "DELETE FROM sensei.nodes n
+              WHERE n.folder_id = ANY($1)
+                AND n.file_id IS NULL
+                AND {ext}
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.edges e
+                     WHERE e.target_id = n.id OR e.source_id = n.id)
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.nodes c WHERE c.parent_id = n.id)",
+            ext = sql_is_not_external("n.fqn"),
+        ))
+        .bind(folder_ids)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("prune_orphan_stubs: {e}"))?;
+
+        // Clean up after ourselves. Deleting nodes here happens OUTSIDE the detect
+        // transaction, so a community whose every member was an orphan stub is left
+        // as a row describing nothing — measured 27,693 of them immediately after
+        // the first GC pass, and `list_communities` / the Atlas communities/info
+        // endpoint read them as phantom communities with a stale node_count. A
+        // derived row with nothing left to describe is garbage by the same rule as
+        // the stubs. `description` is not at risk: an emptied community has no
+        // cluster left to caption.
+        if res.rows_affected() > 0
+            && let Err(e) = sqlx_core::query::query(
+                "DELETE FROM inference.communities c
+                  WHERE c.folder_id = ANY($1)
+                    AND NOT EXISTS (
+                        SELECT 1 FROM sensei.nodes n
+                         WHERE n.folder_id = c.folder_id
+                           AND n.community_id = c.community_id)",
+            )
+            .bind(folder_ids)
+            .execute(&self.pool)
+            .await
+        {
+            // Non-fatal: the next detect replaces the folder's community set
+            // anyway. Reclaiming garbage must not fail the caller.
+            tracing::warn!(error = %e, "prune_orphan_stubs: emptied-community cleanup failed");
+        }
+        Ok(res.rows_affected())
+    }
+
     /// Prune a file's nodes that vanished from the latest parse (D3 upsert-then-
     /// prune): every node for `(folder, file_path)` whose id is NOT in `kept_ids`.
     /// First unresolve inbound edges pointing at them (clear `target_id`, KEEP
@@ -957,6 +2045,15 @@ impl PgStore {
         file_path: &str,
         kept_ids: &[uuid::Uuid],
     ) -> Result<u64, String> {
+        // Resolved ONCE, outside the transaction, and the id keys both
+        // statements — so the unresolve and the delete cannot disagree about
+        // which file they are pruning (R13).
+        //
+        // A file the walk never recorded owns no nodes: nothing to prune, and 0
+        // is the true count rather than a swallowed failure.
+        let Some(file_id) = self.file_id_for(folder_id, file_path).await? else {
+            return Ok(0);
+        };
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
         sqlx_core::query::query(
             "UPDATE sensei.edges SET target_id = NULL, modified_at = now()
@@ -964,19 +2061,19 @@ impl PgStore {
                 AND target_name IS NOT NULL
                 AND target_id IN (
                     SELECT id FROM sensei.nodes
-                     WHERE folder_id = $1 AND file_path = $2 AND id <> ALL($3))",
+                     WHERE folder_id = $1 AND file_id = $2 AND id <> ALL($3))",
         )
         .bind(folder_id)
-        .bind(file_path)
+        .bind(file_id)
         .bind(kept_ids)
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
         let res = sqlx_core::query::query(
-            "DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2 AND id <> ALL($3)",
+            "DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_id = $2 AND id <> ALL($3)",
         )
         .bind(folder_id)
-        .bind(file_path)
+        .bind(file_id)
         .bind(kept_ids)
         .execute(&mut *tx)
         .await
@@ -1020,12 +2117,23 @@ impl PgStore {
         folder_id: &uuid::Uuid,
         file_path: &str,
     ) -> Result<u64, String> {
+        // No `files` row means no nodes for that file, so no edge can point at
+        // one — 0 unresolved is the true count (R13).
+        let Some(file_id) = self.file_id_for(folder_id, file_path).await? else {
+            return Ok(0);
+        };
         let res = sqlx_core::query::query(
             "UPDATE sensei.edges SET target_id = NULL, modified_at = now()
               WHERE folder_id = $1
-                AND target_id IN (SELECT id FROM sensei.nodes WHERE folder_id = $1 AND file_path = $2)
-                AND target_name IS NOT NULL"
-        ).bind(folder_id).bind(file_path).execute(&self.pool).await.map_err(|e| e.to_string())?;
+                AND target_id IN (SELECT id FROM sensei.nodes
+                                   WHERE folder_id = $1 AND file_id = $2)
+                AND target_name IS NOT NULL",
+        )
+        .bind(folder_id)
+        .bind(file_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(res.rows_affected())
     }
 
@@ -1039,10 +2147,299 @@ impl PgStore {
 
     // ── View-based graph queries ────────────────────────────────────
 
+    /// Where a symbol is DEFINED within a scope — the lookup that separates
+    /// "no such symbol" from "symbol with no callers". Returns one entry per
+    /// definition site (a name can be defined in several folders of a
+    /// monorepo), empty only when the name genuinely is not in the graph.
+    ///
+    /// Stubs are excluded (`file_path IS NOT NULL`): an unresolved reference
+    /// stub carries the name but is not a definition, so counting it as one
+    /// would report `found` for a symbol that was only ever mentioned.
+    pub async fn symbol_definitions(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        name: &str,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let rows: Vec<(String, String, Option<i32>)> = sqlx_core::query_as::query_as(
+            "SELECT n.kind::text, np.file_path, n.line_start
+               FROM sensei.nodes n
+               JOIN sensei.node_paths np ON np.node_id = n.id
+              WHERE n.folder_id = ANY($1) AND n.name = $2
+              ORDER BY np.file_path, n.line_start LIMIT 20",
+        )
+        .bind(folder_ids)
+        .bind(name)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(kind, file, line)| {
+                serde_json::json!({ "kind": kind, "file_path": file, "line_start": line })
+            })
+            .collect())
+    }
+
+    /// Resolution coverage as `(resolved, unresolved)` for one symbol's `calls`
+    /// edges. This is the number that tells a caller how much to trust a
+    /// caller/callee list: an unresolved count above zero means the graph knows
+    /// a call happened but could not place both ends, so the list is incomplete
+    /// and grep is still worth running.
+    ///
+    /// Counted with its own query rather than tallied from the returned list,
+    /// because those lists are `LIMIT 100` — deriving coverage from a truncated
+    /// list would under-report exactly when completeness matters most.
+    /// WHY the unresolved half of [`Self::call_coverage`] is unresolved, with
+    /// the prose that makes it actionable.
+    ///
+    /// Coverage says a caller list is incomplete; it cannot say what to do
+    /// about it, so the only next step it leaves a reader is "grep everything".
+    /// A reason narrows that: receivers the walk could not type is a different
+    /// job from names with no import in scope, and `external_boundary` is not a
+    /// job at all — it is the graph correctly declining to follow a call into a
+    /// library.
+    ///
+    /// Ordered by `reason_precedence`, which is the registry's own answer to
+    /// "which of these should a reader deal with first". A code with no seeded
+    /// prose sorts LAST and keeps its row: the reason is reported as `null`
+    /// rather than invented, because a producer that records no reason is a
+    /// different state from one that records `unplaced`, and collapsing them
+    /// would put a specific claim where there is no information.
+    pub async fn call_coverage_reasons(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        name: &str,
+        direction: CallDirection,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        // The filter column comes from a closed enum, never from caller input,
+        // so this stays static SQL with the name passed as a bind parameter.
+        let sql = match direction {
+            CallDirection::Incoming => {
+                "SELECT reason_code, reason_kind::text, reason_summary, reason_remedy,
+                        min(reason_precedence), count(*)
+                   FROM sensei.graph_boundary
+                  WHERE folder_id = ANY($1) AND names = $2 AND edge_kind = 'calls'
+                  GROUP BY 1, 2, 3, 4
+                  ORDER BY 5 NULLS LAST, 6 DESC"
+            }
+            CallDirection::Outgoing => {
+                "SELECT reason_code, reason_kind::text, reason_summary, reason_remedy,
+                        min(reason_precedence), count(*)
+                   FROM sensei.graph_boundary
+                  WHERE folder_id = ANY($1) AND source_name = $2 AND edge_kind = 'calls'
+                  GROUP BY 1, 2, 3, 4
+                  ORDER BY 5 NULLS LAST, 6 DESC"
+            }
+        };
+        type ReasonRow =
+            (Option<String>, Option<String>, Option<String>, Option<String>, Option<i16>, i64);
+        let rows: Vec<ReasonRow> = sqlx_core::query_as::query_as(sql)
+            .bind(folder_ids)
+            .bind(name)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(code, kind, summary, remedy, _, count)| {
+                serde_json::json!({
+                    "reason":      code,
+                    "kind":        kind,
+                    "explanation": summary,
+                    "remedy":      remedy,
+                    "count":       count,
+                })
+            })
+            .collect())
+    }
+
+    /// Every symbol that reaches `name` within `depth` hops — the blast radius
+    /// of changing it.
+    ///
+    /// Breadth-first over `calls` edges in reverse. `union` in the recursive
+    /// term deduplicates, which is both what reports a symbol once at its
+    /// SHORTEST distance and what makes a cycle terminate instead of running to
+    /// the recursion limit.
+    ///
+    /// `truncated` distinguishes "the graph ended" from "the query ended", and
+    /// the distinction is not cosmetic: a reader told a complete answer might be
+    /// partial will re-run a deeper query it did not need, and one told nothing
+    /// will trust a partial answer. It is true only when a symbol AT the limit
+    /// has a caller of its own — the limit being reached is not by itself
+    /// evidence that anything lies beyond it.
+    ///
+    /// This is the PLACED half of the answer. The other half is
+    /// [`Self::call_coverage_reasons`]: sites that name something in the radius
+    /// and could not be placed. A radius without it reads as exact.
+    pub async fn impact_of_symbol(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        name: &str,
+        depth: i32,
+    ) -> Result<serde_json::Value, String> {
+        // Clamped rather than trusted. `depth` reaches this from an MCP
+        // argument, and the recursive term is bounded by nothing else.
+        let depth = depth.clamp(1, 10);
+        /// One symbol in the radius: name, kind, where, how far out, and
+        /// whether anything beyond it reaches in.
+        type RadiusRow = (String, String, Option<String>, Option<i32>, i32, bool);
+        let rows: Vec<RadiusRow> = sqlx_core::query_as::query_as(
+            "WITH RECURSIVE seed AS (
+                     SELECT n.id FROM sensei.nodes n
+                      WHERE n.folder_id = ANY($1) AND n.name = $2
+                 ), radius AS (
+                     SELECT e.source_id AS node_id, 1 AS depth
+                       FROM sensei.edges e JOIN seed s ON e.target_id = s.id
+                      WHERE e.folder_id = ANY($1) AND e.kind = 'calls'
+                        AND e.source_id <> s.id
+                     UNION
+                     SELECT e.source_id, r.depth + 1
+                       FROM sensei.edges e JOIN radius r ON e.target_id = r.node_id
+                      WHERE e.folder_id = ANY($1) AND e.kind = 'calls' AND r.depth < $3
+                        AND e.source_id NOT IN (SELECT id FROM seed)
+                 ), nearest AS (
+                     SELECT node_id, min(depth) AS depth FROM radius GROUP BY node_id
+                 )
+                 SELECT n.name, n.kind::text, f.file_path, n.line_start, x.depth
+                      -- A caller ALREADY IN the radius cannot extend it. Without
+                      -- the two NOT INs a cycle back to the seed makes every
+                      -- limit-depth symbol look like it has more beyond it, and
+                      -- a complete answer reports itself truncated.
+                      , EXISTS (SELECT 1 FROM sensei.edges e2
+                                 WHERE e2.folder_id = ANY($1) AND e2.kind = 'calls'
+                                   AND e2.target_id = x.node_id
+                                   AND e2.source_id NOT IN (SELECT node_id FROM nearest)
+                                   AND e2.source_id NOT IN (SELECT id FROM seed)
+                               ) AS has_unseen_callers
+                   FROM nearest x
+                   JOIN sensei.nodes n ON n.id = x.node_id
+                   LEFT JOIN sensei.files f ON f.id = n.file_id
+                  ORDER BY x.depth, f.file_path, n.line_start
+                  LIMIT 500",
+        )
+        .bind(folder_ids)
+        .bind(name)
+        .bind(depth)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let truncated = rows.iter().any(|(_, _, _, _, d, has_unseen)| *d == depth && *has_unseen);
+        let reached: Vec<serde_json::Value> = rows
+            .into_iter()
+            .map(|(name, kind, file, line, depth, _)| {
+                serde_json::json!({
+                    "name": name, "kind": kind, "file_path": file,
+                    "line_start": line, "depth": depth,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "reached": reached, "truncated": truncated, "depth": depth }))
+    }
+
+    pub async fn call_coverage(
+        &self,
+        folder_ids: &[uuid::Uuid],
+        name: &str,
+        direction: CallDirection,
+    ) -> Result<(i64, i64), String> {
+        // The filter column comes from a closed enum, never from caller input,
+        // so this stays static SQL with the name passed as a bind parameter.
+        let sql = match direction {
+            CallDirection::Incoming => {
+                "SELECT count(target_id), count(*) - count(target_id)
+                   FROM sensei.call_graph
+                  WHERE folder_id = ANY($1) AND target_symbol = $2 AND edge_kind = 'calls'"
+            }
+            CallDirection::Outgoing => {
+                "SELECT count(target_id), count(*) - count(target_id)
+                   FROM sensei.call_graph
+                  WHERE folder_id = ANY($1) AND source_name = $2 AND edge_kind = 'calls'"
+            }
+        };
+        let (resolved, unresolved): (i64, i64) = sqlx_core::query_as::query_as(sql)
+            .bind(folder_ids)
+            .bind(name)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // A member call the receiver chain CAN place is a placed call, and the
+        // OUTGOING list this number qualifies now shows it as one. Counting it
+        // unresolved here would tell a caller the list is incomplete while it is
+        // not — exactly the misreport `coverage` exists to prevent, inverted.
+        //
+        // INCOMING is deliberately NOT healed: `get_callers_by_name` reports
+        // `resolved` straight off `target_id` and does no chasing, so healing
+        // this side would put "complete: true" in the same MCP payload as a
+        // caller row flagged `resolved: false` — the two describing one edge and
+        // disagreeing. Coverage's whole job is to say how far the list beside it
+        // can be trusted, so it answers about THAT list or it answers nothing.
+        // The caller side heals when `get_callers_by_name` learns to, not before.
+        let healed = match direction {
+            CallDirection::Outgoing => self.heal_count(folder_ids, name).await?,
+            CallDirection::Incoming => 0,
+        };
+        Ok((resolved + healed, unresolved - healed))
+    }
+
+    /// How many of a symbol's UNRESOLVED outgoing `calls` edges the receiver
+    /// chain can place — the same chase `get_callees_by_name` runs, over the
+    /// same rows and by the same rules, so a row cannot be placed in one and
+    /// unresolved in the other. Only hint-bearing rows are fetched, so a symbol
+    /// with a thousand hintless unresolved callees costs one indexed count, not
+    /// a thousand.
+    ///
+    /// Counted over the WHOLE population while the list is `LIMIT 100`, which is
+    /// what coverage is for — the two numbers describe every recorded edge, and
+    /// the list is a page of them. What must not happen is the list being unable
+    /// to show a healed row at all, which is why hint-bearing rows sort first
+    /// there.
+    async fn heal_count(&self, folder_ids: &[uuid::Uuid], name: &str) -> Result<i64, String> {
+        let rows: Vec<(Option<String>, serde_json::Value)> = sqlx_core::query_as::query_as(
+            "SELECT target_symbol, props FROM sensei.call_graph
+              WHERE folder_id = ANY($1) AND source_name = $2 AND edge_kind = 'calls'
+                AND target_id IS NULL AND props ? 'receiver_return_of'",
+        )
+        .bind(folder_ids)
+        .bind(name)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let (_, calls) = Self::hinted_calls(&rows);
+        Ok(self.resolve_receiver_calls(folder_ids, &calls).await?.iter().flatten().count() as i64)
+    }
+
+    /// The chase-able calls among a batch of rows: their positions in `rows`,
+    /// and the `(hint, member name)` pairs [`Self::resolve_receiver_calls`]
+    /// takes. A row missing either half carries no chain to follow and is
+    /// dropped — it stays exactly as unresolved as it already was.
+    ///
+    /// Returns the positions rather than filtering in place because the caller
+    /// has to put each answer back on the row it came from, and re-deriving
+    /// "which rows had hints" on the way back is where the two would drift.
+    #[allow(clippy::type_complexity)]
+    fn hinted_calls(
+        rows: &[(Option<String>, serde_json::Value)],
+    ) -> (Vec<usize>, Vec<(crate::languages::fqn::ReceiverHint, String)>) {
+        rows.iter()
+            .enumerate()
+            .filter_map(|(i, (name, props))| {
+                Some((i, (crate::languages::fqn::ReceiverHint::from_props(props)?, name.clone()?)))
+            })
+            .unzip()
+    }
+
     /// Find callers of a function by name via the call_graph view.
     /// `scope` is resolved via [`scope_folder_ids`]: a project name/UUID expands
     /// to all of that project's folders; a bare folder name falls back to just
     /// that folder.
+    ///
+    /// Filters `target_symbol`, NOT `target_name`. `target_name` is `tgt.name`
+    /// off the view's LEFT JOIN and is therefore NULL for every unresolved
+    /// edge, so the old filter silently dropped 117,201 of 335,756 `calls`
+    /// edges and returned an empty list for 8,680 symbol names that had
+    /// callers. See the `target_symbol` column comment.
     pub async fn get_callers_by_name(
         &self,
         scope: &str,
@@ -1052,10 +2449,10 @@ impl PgStore {
         if folder_ids.is_empty() {
             return Ok(vec![]);
         }
-        let rows: Vec<(String, String, String, Option<i32>)> = sqlx_core::query_as::query_as(
-            "SELECT source_name, source_kind::text, source_file, source_line
+        let rows: Vec<(String, String, String, Option<i32>, bool)> = sqlx_core::query_as::query_as(
+            "SELECT source_name, source_kind::text, source_file, source_line, target_id IS NOT NULL
                FROM sensei.call_graph
-              WHERE folder_id = ANY($1) AND target_name = $2 AND edge_kind = 'calls'
+              WHERE folder_id = ANY($1) AND target_symbol = $2 AND edge_kind = 'calls'
               ORDER BY source_file, source_line LIMIT 100",
         )
         .bind(&folder_ids[..])
@@ -1063,8 +2460,8 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(name, kind, file, line)| {
-            serde_json::json!({ "name": name, "kind": kind, "file_path": file, "line_start": line })
+        Ok(rows.into_iter().map(|(name, kind, file, line, resolved)| {
+            serde_json::json!({ "name": name, "kind": kind, "file_path": file, "line_start": line, "resolved": resolved })
         }).collect())
     }
 
@@ -1081,27 +2478,106 @@ impl PgStore {
         if folder_ids.is_empty() {
             return Ok(vec![]);
         }
-        let rows: Vec<(
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<i32>,
-            Option<String>,
-        )> = sqlx_core::query_as::query_as(
-            "SELECT target_name, target_kind::text, target_file, target_line, unresolved_target
-               FROM sensei.call_graph
-              WHERE folder_id = ANY($1) AND source_name = $2 AND edge_kind = 'calls'
-              ORDER BY target_file, target_line LIMIT 100",
+        // `target_symbol` is the view's coalesce of the resolved and unresolved
+        // name, so the display name is no longer stitched together here — one
+        // owner for that rule.
+        //
+        // `locality` is READ FROM `sensei.graph_nodes`, never recomputed here. A
+        // second SQL copy of that three-branch judgement is precisely what the
+        // graph_nodes comment warns about, so internal/external come from the
+        // owning view and the only thing this query decides is the edge-level
+        // fact the owner cannot know: an unresolved edge has NO target node, so
+        // there is no row to classify and it is `unknown`. That is what the
+        // COALESCE means — "no target node", not a reimplementation of the rule.
+        //
+        // `props` comes along because an unresolved MEMBER call carries the one
+        // thing that can still place it: what the call site saw of its receiver.
+        // The chain is completed HERE, on the read path, not at emit — a
+        // definition indexed after its caller would otherwise never link, and
+        // the scan pipeline deliberately has no second pass to catch up.
+        //
+        // HINT-BEARING ROWS SORT FIRST, ahead of `target_file`. An unresolved
+        // edge has `target_file IS NULL`, which sorts LAST in Postgres ascending
+        // — so under a plain file sort the only rows the heal below can improve
+        // are exactly the ones `LIMIT 100` throws away. Measured on the live
+        // graph, 240 of 44,946 calling symbols have more than 100 `calls` edges
+        // (the largest has 3,742), and for every one of them the chain would
+        // have been dead code.
+        type CalleeRow =
+            (String, Option<String>, Option<String>, Option<i32>, String, serde_json::Value);
+        let rows: Vec<CalleeRow> = sqlx_core::query_as::query_as(
+            "SELECT cg.target_symbol, cg.target_kind::text, cg.target_file, cg.target_line,
+                        coalesce(gn.locality, 'unknown'), cg.props
+                   FROM sensei.call_graph        cg
+                   LEFT JOIN sensei.graph_nodes  gn ON gn.id = cg.target_id
+                  WHERE cg.folder_id = ANY($1) AND cg.source_name = $2
+                    AND cg.edge_kind = 'calls' AND cg.target_symbol IS NOT NULL
+                  ORDER BY (cg.target_id IS NULL AND cg.props ? 'receiver_return_of') DESC,
+                           cg.target_file, cg.target_line LIMIT 100",
         )
         .bind(&folder_ids[..])
         .bind(source)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(name, kind, file, line, unresolved)| {
-            let display_name = name.or(unresolved).unwrap_or_default();
-            serde_json::json!({ "name": display_name, "kind": kind, "file_path": file, "line_start": line })
-        }).collect())
+
+        // Index-aligned with `rows`: an already-placed row offers no member
+        // name, so it is not a candidate. `unknown` locality is the view's way
+        // of saying there was no target node to classify.
+        let candidates: Vec<(Option<String>, serde_json::Value)> =
+            rows.iter().map(|r| ((r.4 == "unknown").then(|| r.0.clone()), r.5.clone())).collect();
+        let (at, calls) = Self::hinted_calls(&candidates);
+        let placed = self.resolve_receiver_calls(&folder_ids, &calls).await?;
+        let healed: std::collections::HashMap<usize, uuid::Uuid> =
+            at.into_iter().zip(placed).filter_map(|(i, p)| p.map(|id| (i, id))).collect();
+
+        let found = self.nodes_display(&healed.values().copied().collect::<Vec<_>>()).await?;
+        Ok(rows
+            .into_iter()
+            .enumerate()
+            .map(|(i, (name, kind, file, line, locality, _))| {
+                match healed.get(&i).and_then(|id| found.get(id)) {
+                    Some(node) => node.clone(),
+                    None => serde_json::json!({
+                        "name": name, "kind": kind, "file_path": file,
+                        "line_start": line, "locality": locality,
+                    }),
+                }
+            })
+            .collect())
+    }
+
+    /// The display shape `get_callees_by_name` reports, for nodes named by id.
+    ///
+    /// Reads `locality` off `sensei.graph_nodes` like the list query does, so a
+    /// call placed by the receiver chain is described by the SAME owner as one
+    /// placed at emit — a second copy of that judgement here is how
+    /// `library_calls` would start mis-partitioning.
+    async fn nodes_display(
+        &self,
+        ids: &[uuid::Uuid],
+    ) -> Result<std::collections::HashMap<uuid::Uuid, serde_json::Value>, String> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+        let rows: Vec<LocatedNodeRow> = sqlx_core::query_as::query_as(
+            "SELECT id, name, kind, file_path, line_start, locality
+                   FROM sensei.graph_nodes WHERE id = ANY($1)",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, name, kind, file, line, locality)| {
+                (
+                    id,
+                    serde_json::json!({ "name": name, "kind": kind, "file_path": file,
+                                        "line_start": line, "locality": locality }),
+                )
+            })
+            .collect())
     }
 
     /// Get files matching a tag via the file_tags view.
@@ -1160,14 +2636,17 @@ impl PgStore {
         self.count_edges_scoped(&[*folder_id]).await
     }
 
-    /// Delete nodes whose file_path starts with a given prefix (for folder deletion).
+    /// Delete nodes whose repo-relative path starts with a prefix (folder deletion).
     pub async fn delete_nodes_by_path_prefix(
         &self,
         folder_id: &uuid::Uuid,
         prefix: &str,
     ) -> Result<u64, String> {
         let result = sqlx_core::query::query(
-            "DELETE FROM sensei.nodes WHERE folder_id = $1 AND file_path LIKE $2 || '%'",
+            "DELETE FROM sensei.nodes n
+              WHERE n.folder_id = $1
+                AND EXISTS (SELECT 1 FROM sensei.node_paths np
+                             WHERE np.node_id = n.id AND np.file_path LIKE $2 || '%')",
         )
         .bind(folder_id)
         .bind(prefix)
@@ -1194,63 +2673,67 @@ impl PgStore {
         Ok(row.0)
     }
 
-    /// Recompute `nodes.degree` for every node in a folder (D4.5) — the in+out
-    /// count of edges incident to the node (source, plus resolved target). Run at
-    /// the start of the `DetectCommunities` terminal barrier (Phase 7.1 moved it
-    /// there from the retired `ResolveEdges` pass) so degree is fresh before it
-    /// ranks each community's god nodes. Edgeless nodes are set to 0 (not left
-    /// stale/NULL), so a symbol that lost its last edge on a re-scan reflects it.
-    ///
-    /// Guarded by `degree IS DISTINCT FROM` the freshly-counted value (same shape
-    /// as `set_nodes_is_test_for_file` and `tag_file_nodes_by_framework_kind`) so
-    /// a steady-state re-scan changes 0 rows: it locks no rows and creates no dead
-    /// tuples. Without this guard the barrier rewrote every node in the folder on
-    /// EVERY indexing pass, so re-scans piled up full-table rewrites; concurrent
-    /// same-folder passes then blocked on each other's row locks, held hours-long
-    /// transactions that pinned the xmin horizon, and autovacuum could never
-    /// reclaim the dead tuples → `sensei.nodes` bloated unboundedly. Returns rows
-    /// changed.
-    pub async fn recompute_degrees_for_folder(
-        &self,
-        folder_id: &uuid::Uuid,
-    ) -> Result<u64, String> {
-        let res = sqlx_core::query::query(
-            "UPDATE sensei.nodes n
-                SET degree = COALESCE(d.deg, 0), modified_at = now()
-               FROM (SELECT id FROM sensei.nodes WHERE folder_id = $1) an
-               LEFT JOIN (
-                   SELECT node_id, count(*)::int AS deg FROM (
-                       SELECT source_id AS node_id FROM sensei.edges WHERE folder_id = $1
-                       UNION ALL
-                       SELECT target_id AS node_id FROM sensei.edges WHERE folder_id = $1 AND target_id IS NOT NULL
-                   ) inc GROUP BY node_id
-               ) d ON d.node_id = an.id
-              WHERE n.id = an.id
-                AND n.degree IS DISTINCT FROM COALESCE(d.deg, 0)"
-        ).bind(folder_id).execute(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(res.rows_affected())
-    }
-
     /// Set `is_test` for every node of a file (folder-scoped) to the file's
     /// test-ness (`languages::is_test_path`). `is_test` is a FILE-level property —
     /// all of a file's nodes (file/symbol/section/rationale/fqn-def) share it — so
     /// this runs once per file after emit rather than threading a param through
     /// every upsert. Guarded by `IS DISTINCT FROM` so a steady-state re-scan
-    /// changes 0 rows (cheap) while a test↔prod rename flips them. `lib_symbol`/
-    /// `lib_package` nodes (file_path NULL) are never matched (external deps aren't
-    /// test). Returns rows changed.
+    /// changes 0 rows (cheap) while a test↔prod rename flips them. External
+    /// (`lib·`) nodes carry no `file_id`, so they are never matched — a
+    /// dependency is not test code. Returns rows changed.
+    /// Correct the language stamp for one file's nodes.
+    ///
+    /// `upsert_node_ex` derives `language` from the file EXTENSION at write time,
+    /// which is right for code and cannot work for `.txt`: `docs/llms/index.txt` is
+    /// markdown (rokkit's corpus — headings, tables, fenced code) while
+    /// `docs/License.txt` is prose, and only the CONTENT distinguishes them.
+    ///
+    /// A post-write correction rather than a new parameter on every node write,
+    /// mirroring [`Self::set_nodes_is_test_for_file`]: the extension remains the
+    /// default and the doc path, which has the content, overrides it. Threading a
+    /// language through `upsert_node_ex` would touch every caller for one file type.
+    ///
+    /// Returns rows changed. The `IS DISTINCT FROM` guard makes a re-index a no-op
+    /// rather than a write, so this does not churn `modified_at`.
+    pub async fn set_nodes_language_for_file(
+        &self,
+        folder_id: &uuid::Uuid,
+        file_path: &str,
+        language: &str,
+    ) -> Result<u64, String> {
+        // An untracked file has no nodes to correct — 0 changed, which is true.
+        let Some(file_id) = self.file_id_for(folder_id, file_path).await? else {
+            return Ok(0);
+        };
+        let res = sqlx_core::query::query(
+            "UPDATE sensei.nodes SET language = $3, modified_at = now()
+              WHERE folder_id = $1 AND file_id = $2 AND language IS DISTINCT FROM $3",
+        )
+        .bind(folder_id)
+        .bind(file_id)
+        .bind(language)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_nodes_language_for_file: {e}"))?;
+        Ok(res.rows_affected())
+    }
+
     pub async fn set_nodes_is_test_for_file(
         &self,
         folder_id: &uuid::Uuid,
         file_path: &str,
         is_test: bool,
     ) -> Result<u64, String> {
+        // An untracked file has no nodes to stamp — 0 changed, which is true.
+        let Some(file_id) = self.file_id_for(folder_id, file_path).await? else {
+            return Ok(0);
+        };
         let res = sqlx_core::query::query(
             "UPDATE sensei.nodes SET is_test = $3, modified_at = now()
-              WHERE folder_id = $1 AND file_path = $2 AND is_test IS DISTINCT FROM $3",
+              WHERE folder_id = $1 AND file_id = $2 AND is_test IS DISTINCT FROM $3",
         )
         .bind(folder_id)
-        .bind(file_path)
+        .bind(file_id)
         .bind(is_test)
         .execute(&self.pool)
         .await
@@ -1271,11 +2754,21 @@ impl PgStore {
         communities: &[CommunityAssignment],
     ) -> Result<u64, String> {
         let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
-        sqlx_core::query::query("DELETE FROM inference.communities WHERE folder_id = $1")
-            .bind(folder_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
+        // Drop only the communities that VANISHED. This used to delete every row for
+        // the folder and re-insert with `description = NULL`, so each re-detect
+        // discarded model-authored prose — and `enrich_community_descriptions` is
+        // capped at 25 communities per folder, so it could not replace what the
+        // refresh wiped. A steady-state re-scan therefore burned model calls
+        // regenerating text it had just thrown away.
+        let surviving: Vec<i32> = communities.iter().map(|c| c.community_id).collect();
+        sqlx_core::query::query(
+            "DELETE FROM inference.communities WHERE folder_id = $1 AND community_id <> ALL($2)",
+        )
+        .bind(folder_id)
+        .bind(&surviving)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
         // Assign members FIRST, each guarded by `IS DISTINCT FROM`, THEN NULL only
         // the leftovers (nodes that had a community but are in none of the new ones)
         // — instead of null-all-then-reset. `community_id` is deterministic for an
@@ -1289,11 +2782,30 @@ impl PgStore {
         let mut changed: u64 = 0;
         let mut all_members: Vec<uuid::Uuid> = Vec::new();
         for c in communities {
-            // Authoritative write: description honest-empty (`props.source='null'`);
-            // enrich_community_descriptions fills real prose later, off-barrier.
+            // Authoritative write for the DERIVED columns. `description` is not
+            // derived — it costs a model call — so it is written once by
+            // `enrich_community_descriptions` (off-barrier) and preserved here.
+            //
+            // Preserved only when this is demonstrably the SAME cluster, evidenced by
+            // an identical hub set. `community_id` is positional (rank+1), so on a
+            // changed graph id 3 can be an entirely different cluster; keeping its old
+            // prose would caption the wrong thing. Differing hubs → the description is
+            // discarded and enrichment regenerates it. Fails closed on doubt rather
+            // than mislabelling.
             sqlx_core::query::query(
                 "INSERT INTO inference.communities(folder_id, community_id, label, node_count, god_node_ids, description, props)
-                 VALUES($1, $2, $3, $4, $5, NULL, '{\"source\":\"null\"}'::jsonb)"
+                 VALUES($1, $2, $3, $4, $5, NULL, '{\"source\":\"null\"}'::jsonb)
+                 ON CONFLICT (folder_id, community_id) DO UPDATE
+                   SET label        = EXCLUDED.label,
+                       node_count   = EXCLUDED.node_count,
+                       god_node_ids = EXCLUDED.god_node_ids,
+                       description  = CASE WHEN communities.god_node_ids = EXCLUDED.god_node_ids
+                                           THEN communities.description END,
+                       props        = CASE WHEN communities.god_node_ids = EXCLUDED.god_node_ids
+                                           THEN communities.props
+                                           ELSE '{\"source\":\"null\"}'::jsonb END,
+                       computed_at  = now(),
+                       modified_at  = now()"
             ).bind(folder_id).bind(c.community_id).bind(&c.label).bind(c.member_node_ids.len() as i32)
                 .bind(&c.god_node_ids)
                 .execute(&mut *tx).await.map_err(|e| e.to_string())?;
@@ -1441,7 +2953,7 @@ impl PgStore {
 
     /// Stamp a community's model-authored `description` + its provenance
     /// (`props.source`), replacing the honest-empty placeholder from the
-    /// authoritative write (D4.5). Only called on a successful insight-copy
+    /// authoritative write (D4.5). Only called on a successful narration-cache
     /// generation — a failure leaves the honest-empty NULL/`'null'` as written.
     pub async fn set_community_description(
         &self,
@@ -1503,8 +3015,9 @@ impl PgStore {
         #[allow(clippy::type_complexity)]
         let doc_rows: Vec<(uuid::Uuid, uuid::Uuid, String, String)> =
             sqlx_core::query_as::query_as(
-                "SELECT n.id, n.folder_id, f.abs_path, n.file_path
+                "SELECT n.id, n.folder_id, f.abs_path, np.file_path
                FROM sensei.nodes n
+               JOIN sensei.node_paths np ON np.node_id = n.id
                JOIN sensei.folders f ON f.id = n.folder_id
               WHERE f.project_id = $1
                 AND n.kind = 'doc'
@@ -1700,7 +3213,7 @@ impl PgStore {
             "DELETE FROM sensei.nodes s
                USING sensei.folders sf
               WHERE s.folder_id = sf.id
-                AND sf.kind IN ('folder'::sensei.folder_kind, 'workspace_member'::sensei.folder_kind)
+                AND sf.kind IN ('folder'::sensei.folder_kind, 'module'::sensei.folder_kind)
                 AND sf.root_id = $1
                 AND EXISTS (
                   SELECT 1
@@ -1714,9 +3227,25 @@ impl PgStore {
                      AND (g.name = s.name
                           OR right(g.name, char_length(s.name) + 1)
                              = ('/' || s.name))
-                     AND (g.file_path = s.file_path
-                          OR right(g.file_path, char_length(s.file_path) + 1)
-                             = ('/' || s.file_path)))",
+                     -- Where each node LIVES, whichever way it records that.
+                     -- A file-backed node reports it through `node_paths`; a
+                     -- structural `module` node names a DIRECTORY and keeps it
+                     -- in `props.dir`, because a directory has no `files` row to
+                     -- key on (R13). Both are compared the same way: equal, or
+                     -- the member's path is a suffix of the root's.
+                     AND EXISTS (
+                       SELECT 1 FROM (
+                         SELECT COALESCE((SELECT gp.file_path FROM sensei.node_paths gp
+                                           WHERE gp.node_id = g.id),
+                                         g.props ->> 'dir') AS root_at
+                              , COALESCE((SELECT sp.file_path FROM sensei.node_paths sp
+                                           WHERE sp.node_id = s.id),
+                                         s.props ->> 'dir') AS member_at
+                       ) at
+                        WHERE at.root_at IS NOT NULL AND at.member_at IS NOT NULL
+                          AND (at.root_at = at.member_at
+                               OR right(at.root_at, char_length(at.member_at) + 1)
+                                  = ('/' || at.member_at))))",
         )
         .bind(root_id)
         .execute(&self.pool)
@@ -1761,20 +3290,21 @@ impl PgStore {
                            SELECT s.kind::text AS tag
                              FROM sensei.nodes s
                             WHERE s.folder_id = fn.folder_id
-                              AND s.file_path = fn.file_path
+                              AND s.file_id = fn.file_id
                               AND s.kind IN ('hook','component')
                            UNION ALL
                            SELECT 'route'
-                            WHERE fn.file_path ~ '(^|/)\+(page|layout|server|error)\.'
-                               OR fn.file_path ~ '(^|/)(page|route)\.(tsx?|jsx?)$'
+                            WHERE fp.file_path ~ '(^|/)\+(page|layout|server|error)\.'
+                               OR fp.file_path ~ '(^|/)(page|route)\.(tsx?|jsx?)$'
                            UNION ALL
                            SELECT 'middleware'
-                            WHERE fn.file_path ~ '(^|/)hooks\.(server|client)\.(tsx?|jsx?)$'
-                               OR fn.file_path ~ '(^|/)hooks\.(tsx?|jsx?)$'
-                               OR fn.file_path ~ '(^|/)middleware\.(tsx?|jsx?)$'
+                            WHERE fp.file_path ~ '(^|/)hooks\.(server|client)\.(tsx?|jsx?)$'
+                               OR fp.file_path ~ '(^|/)hooks\.(tsx?|jsx?)$'
+                               OR fp.file_path ~ '(^|/)middleware\.(tsx?|jsx?)$'
                          ) src
                        ), '{}') AS tags
                   FROM sensei.nodes fn
+                  JOIN sensei.node_paths fp ON fp.node_id = fn.id
                   JOIN sensei.folders f ON f.id = fn.folder_id
                  WHERE f.root_id = $1
                    AND fn.kind = 'file'
@@ -1798,12 +3328,12 @@ impl PgStore {
         folder_ids: &[uuid::Uuid],
         query: &str,
     ) -> Result<Vec<serde_json::Value>, String> {
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<i32>)> = sqlx_core::query_as::query_as(
-            "SELECT id, name, file_path, signature, line_start FROM sensei.nodes
-             WHERE folder_id = ANY($1) AND kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
-             AND file_path IS NOT NULL
-             AND (name ILIKE '%' || $2 || '%' OR signature ILIKE '%' || $2 || '%')
-             ORDER BY name LIMIT 50"
+        let rows: Vec<FunctionRow> = sqlx_core::query_as::query_as(
+            "SELECT n.id, n.name, np.file_path, n.signature, n.line_start FROM sensei.nodes n
+             JOIN sensei.node_paths np ON np.node_id = n.id
+             WHERE n.folder_id = ANY($1) AND n.kind IN ('function'::sensei.node_kind, 'method'::sensei.node_kind)
+             AND (n.name ILIKE '%' || $2 || '%' OR n.signature ILIKE '%' || $2 || '%')
+             ORDER BY n.name LIMIT 50"
         ).bind(folder_ids).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, name, fp, sig, line)| {
             serde_json::json!({ "id": id, "name": name, "file_path": fp, "signature": sig, "line_start": line })
@@ -1817,15 +3347,42 @@ impl PgStore {
         query: &str,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, Option<i32>)> = sqlx_core::query_as::query_as(
-            "SELECT id, name, file_path, line_start FROM sensei.nodes
-             WHERE folder_id = ANY($1) AND kind IN ('class'::sensei.node_kind, 'struct'::sensei.node_kind, 'interface'::sensei.node_kind, 'enum'::sensei.node_kind, 'type'::sensei.node_kind)
-             AND file_path IS NOT NULL
-             AND name ILIKE '%' || $2 || '%'
-             ORDER BY name LIMIT 50"
+            "SELECT n.id, n.name, np.file_path, n.line_start FROM sensei.nodes n
+             JOIN sensei.node_paths np ON np.node_id = n.id
+             WHERE n.folder_id = ANY($1) AND n.kind IN ('class'::sensei.node_kind, 'struct'::sensei.node_kind, 'interface'::sensei.node_kind, 'enum'::sensei.node_kind, 'type'::sensei.node_kind)
+             AND n.name ILIKE '%' || $2 || '%'
+             ORDER BY n.name LIMIT 50"
         ).bind(folder_ids).bind(query).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, name, fp, line)| {
             serde_json::json!({ "id": id, "name": name, "file_path": fp, "line_start": line })
         }).collect())
+    }
+
+    /// Per-edge-kind resolution coverage for a scope: `(kind, resolved, total)`.
+    ///
+    /// This is how much the graph-navigation tools can actually be trusted, and
+    /// until now nothing reported it — `get_project_summary` answered "10,614
+    /// functions" while 43% of this project's `calls` edges were unresolved and
+    /// `imports`/`extends`/`references` were at 0%, so a caller had no way to
+    /// know a caller list might be partial or that a whole edge kind was empty.
+    /// Surfacing it lets a reader decide to grep BEFORE trusting a lookup,
+    /// instead of inferring it from a suspiciously short answer.
+    pub async fn edge_resolution_by_kind(
+        &self,
+        folder_ids: &[uuid::Uuid],
+    ) -> Result<Vec<(String, i64, i64)>, String> {
+        let rows: Vec<(String, i64, i64)> = sqlx_core::query_as::query_as(
+            "SELECT kind::text, count(target_id), count(*)
+               FROM sensei.edges
+              WHERE folder_id = ANY($1)
+              GROUP BY kind
+              ORDER BY count(*) DESC",
+        )
+        .bind(folder_ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows)
     }
 
     /// Count nodes by kind across multiple folders (project-scoped variant).
@@ -1854,11 +3411,13 @@ impl PgStore {
         // `fqn`/`resolved` are projected (7.2) so the Atlas can key symbols by
         // moniker and distinguish enriched defs from reference stubs. `fqn` is NULL
         // for pre-FQN/legacy rows; `resolved` is NOT NULL (defaults false).
-        let rows: Vec<(uuid::Uuid, String, String, Option<String>, Option<uuid::Uuid>, Option<i32>, Option<i32>, Option<i32>, Option<i32>, uuid::Uuid, Option<String>, Option<String>, bool, bool)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, file_path, parent_id, line_start, line_end, degree, community_id, folder_id, language, fqn, resolved, is_test FROM sensei.nodes WHERE folder_id = ANY($1) ORDER BY file_path, line_start, parent_id, id"
+        let rows: Vec<AtlasNodeRow> = sqlx_core::query_as::query_as(
+            "SELECT n.id, n.kind::text, n.name, np.file_path, n.parent_id, n.line_start, n.line_end, n.community_id, n.folder_id, n.language, n.fqn, n.resolved, n.is_test \
+               FROM sensei.nodes n LEFT JOIN sensei.node_paths np ON np.node_id = n.id \
+              WHERE n.folder_id = ANY($1) ORDER BY np.file_path, n.line_start, n.parent_id, n.id"
         ).bind(folder_ids).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, degree, community_id, folder_id, language, fqn, resolved, is_test)| {
-            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "degree": degree, "community_id": community_id, "folder_id": folder_id, "language": language, "fqn": fqn, "resolved": resolved, "is_test": is_test })
+        Ok(rows.into_iter().map(|(id, kind, name, fp, pid, ls, le, community_id, folder_id, language, fqn, resolved, is_test)| {
+            serde_json::json!({ "id": id, "kind": kind, "name": name, "file_path": fp, "parent_id": pid, "line_start": ls, "line_end": le, "community_id": community_id, "folder_id": folder_id, "language": language, "fqn": fqn, "resolved": resolved, "is_test": is_test })
         }).collect())
     }
 
@@ -1881,16 +3440,15 @@ impl PgStore {
         kinds: &[&str],
     ) -> Result<Vec<serde_json::Value>, String> {
         let kinds_owned: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
-        let rows: Vec<(uuid::Uuid, uuid::Uuid, Option<uuid::Uuid>, Option<String>, String)> =
-            sqlx_core::query_as::query_as(
-                "SELECT id, source_id, target_id, target_name, kind::text FROM sensei.edges
+        let rows: Vec<EdgeRow> = sqlx_core::query_as::query_as(
+            "SELECT id, source_id, target_id, target_name, kind::text FROM sensei.edges
               WHERE folder_id = ANY($1) AND kind::text = ANY($2)",
-            )
-            .bind(folder_ids)
-            .bind(&kinds_owned)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        )
+        .bind(folder_ids)
+        .bind(&kinds_owned)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, src, tgt, name, kind)| {
             serde_json::json!({ "id": id, "source_id": src, "target_id": tgt, "target_name": name, "kind": kind })
         }).collect())

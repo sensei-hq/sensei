@@ -32,7 +32,6 @@
 //! + attempt count) — never stdout/stderr, diffs, or code.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use dojo_protocol::relay::RelayRunStatus;
@@ -42,11 +41,6 @@ use crate::run_watchdog::{WatchdogAction, WatchdogConfig, assess_run};
 use crate::runs::RunEventKind;
 use crate::tasks::advance_run_scheduler::enqueue_advance;
 use crate::tasks::queue::TaskQueue;
-
-/// How often to sweep for stalled/crashed runs. Slow relative to the 15s
-/// `AdvanceRun` cadence — staleness is a 20-minute signal, so a 60s watchdog
-/// tick is a tight-enough net without churn.
-const INTERVAL_SECS: u64 = 60;
 
 /// Parse an RFC-3339 timestamp (as produced by `to_json(col)#>>'{}'`) into a
 /// UTC instant. `None` on a malformed value so the caller can warn+skip rather
@@ -181,12 +175,16 @@ pub fn spawn(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
 }
 
 async fn run(queue: Arc<TaskQueue>, pg: Arc<PgStore>) {
-    let cfg = WatchdogConfig::default();
-    let mut ticker = tokio::time::interval(Duration::from_secs(INTERVAL_SECS));
-    loop {
-        ticker.tick().await;
-        tick(&queue, &pg, Utc::now(), &cfg).await;
-    }
+    // Cadence lives in `sensei.schedules` (name `watchdog`); the tick is unchanged.
+    let store = pg.clone();
+    crate::tasks::ticker::run_scheduled(pg, "watchdog", move || {
+        let (queue, pg) = (queue.clone(), store.clone());
+        async move {
+            tick(&queue, &pg, Utc::now(), &WatchdogConfig::default()).await;
+            Ok(())
+        }
+    })
+    .await;
 }
 
 #[cfg(test)]

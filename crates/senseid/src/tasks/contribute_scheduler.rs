@@ -32,7 +32,6 @@
 //!   even a watermark miss can't double-stage or clobber a manual publish.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::collective::anonymize::{
     ContributorIdentity, GatewayGeneralizer, Generalizer, current_rotation_bucket,
@@ -40,11 +39,7 @@ use crate::collective::anonymize::{
 use crate::collective::preferences;
 use crate::db::pg_store::PgStore;
 use crate::dojo::contribute::{PgOutbox, StageOutcome, load_batch, stage_contribution};
-
-/// How often the scheduler WAKES to check whether a batch is due. The cadence
-/// (`daily` / `weekly`) is enforced by [`contribute_due`]; this is only the poll
-/// granularity, so an hourly check still fires a due batch promptly.
-const CHECK_INTERVAL_SECS: u64 = 3600;
+use crate::tasks::ticker;
 
 /// `sensei.config` key holding the ms-epoch of the last cadence batch we PREPARED
 /// into the outbox. Gates re-preparing within a cadence window (mirrors the
@@ -179,15 +174,22 @@ pub async fn maybe_prepare_contribution_batch<G: Generalizer>(
 /// it never publishes / egresses.
 pub fn spawn(pg: Arc<PgStore>, gateway: Arc<gateway::Gateway>) {
     tokio::spawn(async move {
-        let generalizer = GatewayGeneralizer::new(gateway);
-        let mut ticker = tokio::time::interval(Duration::from_secs(CHECK_INTERVAL_SECS));
-        loop {
-            ticker.tick().await;
-            let now_ms = chrono::Utc::now().timestamp_millis();
-            // Non-fatal: maybe_prepare logs its own failures and returns an
-            // outcome; the loop keeps ticking regardless.
-            let _ = maybe_prepare_contribution_batch(&pg, &generalizer, now_ms).await;
-        }
+        // Cadence lives in `sensei.schedules` (name `contribute`). The
+        // generalizer is built once and shared across ticks — it is stateless
+        // per pass, so it does not need rebuilding each time.
+        let generalizer = Arc::new(GatewayGeneralizer::new(gateway));
+        let store = pg.clone();
+        ticker::run_scheduled(pg, "contribute", move || {
+            let (pg, generalizer) = (store.clone(), generalizer.clone());
+            async move {
+                let now_ms = chrono::Utc::now().timestamp_millis();
+                // Non-fatal: maybe_prepare logs its own failures and returns an
+                // outcome; a staged-nothing pass is a success, not an error.
+                let _ = maybe_prepare_contribution_batch(&pg, generalizer.as_ref(), now_ms).await;
+                Ok(())
+            }
+        })
+        .await;
     });
 }
 
@@ -238,9 +240,28 @@ mod tests {
         };
         let _guard = preferences::test_lock().enter();
 
+        // Clean slate for the FIXTURE, not just for the watermark below. Step 3
+        // of the prepare picks the OLDEST approved batch IN THE DATABASE, so
+        // this run's own leftovers from a previous run are what a later run
+        // stages: `staged` is 1, the row lands on the earlier run's membership,
+        // and the count against THIS one reads 0. Deleting first makes the test
+        // independent of how many times it has run before.
+        let (project, tenant) = ("_test:dojo:contribute_sched", "github/acme-corp");
+        sqlx_core::query::query("DELETE FROM sensei.projects WHERE name = $1")
+            .bind(project)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        // Cascades to the outbox rows those memberships own.
+        sqlx_core::query::query("DELETE FROM sensei.dojo_memberships WHERE tenant_key = $1")
+            .bind(tenant)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+
         // A project + memory + APPROVED batch, a destination membership, and the
         // project bound to it so routing yields exactly one target.
-        let proj = pg.create_project("_test:dojo:contribute_sched", None, None).await.unwrap();
+        let proj = pg.create_project(project, None, None).await.unwrap();
         let mem = pg
             .insert_memory(&InsertMemory {
                 project_id: Some(proj),
@@ -262,6 +283,18 @@ mod tests {
             })
             .await
             .unwrap();
+        // A generalised form MUST exist for anything to be shareable: the share
+        // query reads `generalised_content` only, with no fallback to the raw
+        // memory. Without this the item is held as `not_generalised` and this
+        // test — which is about STAGING — would be asserting the wrong thing.
+        pg.set_memory_generalisation(
+            mem,
+            "Prefer an explicit gate over an implicit default.",
+            Some("A team writes the gate down as a comment; the next release skips it."),
+        )
+        .await
+        .unwrap()
+        .expect("the fixture memory exists");
         let batch = pg.create_memory_share_batch(&proj, &[mem], None).await.unwrap();
         pg.set_memory_share_batch_status(&batch, "approved", None).await.unwrap();
 
@@ -269,8 +302,8 @@ mod tests {
         pg.create_dojo_membership(&NewDojoMembership {
             id: mid,
             registry_url: "http://localhost:7755".into(),
-            tenant_key: "github/acme-corp".into(),
-            dojo_url: "http://localhost:7755/github/acme-corp".into(),
+            tenant_key: tenant.into(),
+            dojo_url: format!("http://localhost:7755/{tenant}"),
             kind: "employer".into(),
             org_slugs: vec![],
             role: "contributor".into(),
@@ -286,6 +319,24 @@ mod tests {
         // Clean slate for the watermark this test drives.
         pg.delete_config(LAST_PREPARED_KEY).await.unwrap();
 
+        // ...and for the BATCH it drives. `maybe_prepare_contribution_batch`
+        // selects an approved batch GLOBALLY, not the one this test just made,
+        // so approved batches left by earlier runs win — the test DB had three,
+        // against 4468 memories of which exactly one was generalised.
+        //
+        // This was latent while `batch_share_items` fell back to raw content: a
+        // stale batch still had a body, so it staged and the test passed on data
+        // it never created. With the fallback gone it holds as
+        // `not_generalised`, which is the same isolation bug finally visible.
+        sqlx_core::query::query(
+            "UPDATE sensei.memory_share_batches SET status = 'rejected'
+              WHERE status = 'approved' AND id <> $1",
+        )
+        .bind(batch)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+
         // 1. PAUSED (default manual cadence) → no-op, nothing staged.
         set_prefs(&pg, "both", "manual").await;
         let paused = maybe_prepare_contribution_batch(&pg, &NoLlm, 1_000_000).await;
@@ -297,7 +348,7 @@ mod tests {
         let prepared = maybe_prepare_contribution_batch(&pg, &NoLlm, 2_000_000).await;
         match prepared {
             PrepareOutcome::Prepared(o) => {
-                assert_eq!(o.staged, 1, "one item staged");
+                assert_eq!(o.staged, 1, "one item staged; outcome={o:?}");
                 assert_eq!(o.held, 0);
             }
             other => panic!("expected Prepared, got {other:?}"),

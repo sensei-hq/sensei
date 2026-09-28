@@ -2,7 +2,7 @@ use axum::{
     Router,
     http::StatusCode,
     response::Json,
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
 };
 
 use crate::api::state::AppState;
@@ -131,7 +131,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/correlations", get(project_detail::get_metric_correlations))
         .route("/api/metrics/correlations", get(project_detail::get_portfolio_correlations))
         .route("/api/projects/{id}/patterns", get(project_detail::get_project_patterns))
-        .route("/api/projects/{id}/libraries", get(project_detail::get_project_libraries))
+        .route("/api/projects/{id}/libraries", get(project_detail::get_library_enablement))
         .route("/api/projects/{id}/instruments", get(project_detail::get_project_instruments))
         .route("/api/projects/{id}/mcp-tool-stats", get(project_detail::get_project_mcp_tool_stats))
         .route("/api/projects/{id}/services", get(project_detail::list_project_services))
@@ -181,7 +181,7 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/projects/{id}/sessions", get(project_detail::get_project_sessions))
         .route("/api/projects/{id}/project-deps", get(project_detail::get_project_project_deps))
-        .route("/api/projects/{id}/commands", get(project_detail::get_project_commands))
+        .route("/api/projects/{id}/commands", get(project_detail::get_folder_commands))
         // Metrics (Phase 7): latest-per-metric + trend + health for a project, and
         // one metric's series at a grain (?grain=daily|weekly|monthly|quarterly).
         .route("/api/projects/{id}/metrics", get(metrics::get_project_metrics))
@@ -245,16 +245,33 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/callback", get(crate::api::handlers::auth::callback))
         .route("/api/auth/signout", post(crate::api::handlers::auth::signout))
         .route("/api/auth/status", get(crate::api::handlers::auth::status))
+        .route("/api/auth/personas", get(crate::api::handlers::auth::personas))
         .route("/api/auth/orgs", get(crate::api::handlers::auth::orgs))
         .route("/api/tasks/kinds", get(crate::api::handlers::tasks::list_kinds))
         .route("/api/tasks/{id}", get(crate::api::handlers::tasks::get_task))
         .route("/api/tasks/{id}/events", get(crate::api::handlers::tasks::task_events))
-        // Background-task visibility (#96): scheduler registry + last-run times
+        // Background-task visibility (#96): the sensei.schedules table — what each
+        // worker is, when it runs, and how its last pass went — plus editing it.
         .route("/api/tasks/scheduled", get(crate::api::handlers::scheduled_tasks::scheduled))
+        .route(
+            "/api/tasks/scheduled/{name}",
+            axum::routing::patch(crate::api::handlers::scheduled_tasks::patch_scheduled),
+        )
+        // Repository sharing (gate 1) — the surface that turns it on/off. Until
+        // this existed nothing could set `visibility`, so gate 1 was unreachable.
+        // `{*repo_key}` is a WILDCARD: a repo_key is `host/org/repo`, which a
+        // single dynamic segment cannot match.
+        .route(
+            "/api/repositories/{*repo_key}",
+            axum::routing::patch(crate::api::handlers::repositories::patch_repository),
+        )
         // Graph
         .route("/api/graph/nodes", get(codebase::graph_nodes))
         .route("/api/graph/functions", get(codebase::search_functions))
         .route("/api/graph/types", get(codebase::search_types))
+        // What import edges ARE, by class — 81% of them point outside the codebase
+        // and were being reported as unresolved.
+        .route("/api/graph/imports", get(codebase::graph_imports))
         .route("/api/graph/callers", get(codebase::fn_callers))
         .route("/api/graph/callees", get(codebase::fn_callees))
         .route("/api/graph/files", get(codebase::files_by_tag))
@@ -280,6 +297,10 @@ pub fn create_router(state: AppState) -> Router {
         // Libraries
         .route("/api/libs", get(libraries::list_libs))
         .route("/api/libs/index", post(libraries::index_lib))
+        // Register every sensei.library.json under a root — skills, agents,
+        // declared packages, and the path it was read from. Decoupled from doc
+        // indexing, which is what made manifests un-re-readable.
+        .route("/api/libs/manifests/scan", post(libraries::scan_manifests))
         .route("/api/libs/docs", get(libraries::search_lib_docs))
         .route("/api/libs/{name}/docs", get(libraries::get_lib_docs))
         // Library-provided capabilities (workstream D)
@@ -378,6 +399,11 @@ pub fn create_router(state: AppState) -> Router {
         // Phase 7 registry catalog — static `registry` wins over the `{project}`
         // param below (matchit precedence, same as /api/runs/plan vs /{id}).
         .route("/api/metrics/registry", get(metrics::get_metrics_registry))
+        // Per-(repository × metric) computation state + the reason vocabulary that
+        // explains it. `?repo=` is required — the view cross-joins the catalogue, so
+        // the whole estate is unbounded; `/summary` is the aggregated shape.
+        .route("/api/metrics/status", get(metrics::get_metric_status))
+        .route("/api/metrics/status/summary", get(metrics::get_metric_status_summary))
         .route("/api/metrics/{project}", get(observatory::get_metrics))
         // Workflow state
         .route(
@@ -440,6 +466,10 @@ pub fn create_router(state: AppState) -> Router {
         // Dōjō connections (memberships)
         .route("/api/dojo/memberships", get(dojo::list_memberships).post(dojo::create_membership))
         .route("/api/dojo/memberships/{id}/orgs", put(dojo::set_membership_orgs))
+        .route("/api/dojo/metric-activation", patch(dojo::set_metric_activation))
+        // When each entity last AGREED with the dōjō, and what went wrong where it
+        // has not. `sensei.sync_state` had three writers and no reader.
+        .route("/api/dojo/sync-state", get(dojo::sync_state))
         // R3 infer-at-detect auto-bind: suggestion (read-only) + confirm-bind
         .route("/api/projects/{id}/dojo-suggestion", get(dojo::project_binding_suggestion))
         .route("/api/projects/{id}/dojo-binding", post(dojo::bind_project_to_membership))
@@ -504,6 +534,7 @@ pub fn create_degraded_router(db_url: String, error: String) -> Router {
 mod tests {
     use super::*;
     use crate::api::state::SharedState;
+    use crate::db::pg_store::graph_seed::SeedGraph;
     use crate::tasks::queue::TaskQueue;
     use crate::tasks::{Task, TaskKind};
     use axum::body::Body;
@@ -627,6 +658,580 @@ mod tests {
 
         sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
             .bind(mid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+    }
+
+    /// `GET /api/metrics/status?repo=` — one repository's per-metric computation
+    /// state, which answers "why is there no row for today?" in one read (it
+    /// previously needed three tables and the planner's source).
+    ///
+    /// Five properties, each one a way the endpoint could lie:
+    ///
+    /// 1. **The reason vocabulary travels once, and every row's code resolves in
+    ///    it.** A `reason_code` with no entry in `reasons` renders as a bare slug,
+    ///    which is the failure this registry exists to prevent.
+    /// 2. **A known repository has a row for EVERY registry metric.** The view
+    ///    cross-joins on purpose: a metric that never ran still needs a row, or its
+    ///    absence is the one thing you cannot explain.
+    /// 3. **A deactivation is OBSERVABLE.** This is the gap #140 recorded — the
+    ///    repo-scope skip had never been seen live, because with no row appearing
+    ///    either way, "the gate works" and "the gate does nothing" looked identical.
+    ///    Here the ruling changes `reason_code` to `deactivated` and carries the
+    ///    remedy, so the two are finally distinguishable.
+    /// 4. **An unknown repository is a 404, not an empty success.** Because of the
+    ///    cross join, a known repository ALWAYS has rows — so `[]` can only mean the
+    ///    key names nothing, and reporting that as a 200 would read as "this
+    ///    repository has no metrics".
+    /// 5. **`repo` is required, and its absence is a 400 — never "all of them".**
+    ///    The unbounded read is the defect this asserts against: `repositories ×
+    ///    metrics` is 1,943 rows on the dev install but 10,928,780 in `sensei_test`
+    ///    (3,619 repositories × 3,019 accumulated synthetic metrics), where it
+    ///    exhausted the request. A silent default to "all" would be a latent
+    ///    outage on any large install.
+    ///
+    /// The registry-coverage check is BRACKETED rather than equal to one count:
+    /// sibling tests in this binary seed and drop `sensei.metrics` rows
+    /// concurrently, so a single `count(*)` compared for equality is off by however
+    /// many landed mid-read. Bracketing is what is actually knowable under
+    /// concurrency, and still fails loudly if the cross join drops metrics.
+    #[tokio::test]
+    async fn get_metric_status_endpoint() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+        let rid = crate::tasks::test_support::seed_bare_repository(&state.pg, &pid, &uniq).await;
+        let repo_key = format!("test/bare-{uniq}");
+        let key = format!("_test:status:{}", uuid::Uuid::new_v4());
+        let mid = seed_metric(&state.pg, &key, "pct", "higher_better").await;
+
+        // ── 5: no `repo` is a 400, not a whole-estate read ──────────────────
+        let (st, _) = req(app.clone(), "GET", "/api/metrics/status", None).await;
+        assert_eq!(
+            st,
+            StatusCode::BAD_REQUEST,
+            "a missing repo is a 400 — defaulting to every repository is an \
+             unbounded cross join (10.9M rows in sensei_test)"
+        );
+
+        // ── 1 + 2: the read, then the two structural properties ─────────────
+        let (st, body) =
+            req(app.clone(), "GET", &format!("/api/metrics/status?repo={repo_key}"), None).await;
+        assert_eq!(st, StatusCode::OK);
+        let reasons = body["reasons"].as_object().expect("the reason vocabulary is an object");
+        assert!(!reasons.is_empty(), "the reason registry is served, not omitted");
+        for (code, r) in reasons {
+            assert!(
+                r["summary"].as_str().is_some_and(|s| !s.is_empty()),
+                "reason `{code}` carries a summary line: {r}"
+            );
+            assert!(
+                r["kind"].as_str().is_some_and(|s| !s.is_empty()),
+                "reason `{code}` carries a kind, so the UI can tell fine from broken: {r}"
+            );
+        }
+
+        assert_eq!(body["repo_key"], repo_key.as_str(), "the read names the repository it is for");
+        let rows = body["metrics"].as_array().expect("metrics is an array");
+
+        // ONE row per registry metric, asserted as DISTINCTNESS rather than a count.
+        // A count cannot be checked here: sibling tests seed and drop registry rows
+        // throughout, so the number oscillates and even a before/after bracket is
+        // unsound (observed: 3,096 rows against a 3,093..=3,094 bracket).
+        //
+        // Distinctness is also the property most at risk — the `computed` join added
+        // for #128 fans out and duplicates every row if its grouping is wrong, which
+        // a count would only catch by accident.
+        let mut seen = std::collections::HashSet::new();
+        for row in rows {
+            let m = row["metric"].as_str().expect("every row names its metric");
+            assert!(seen.insert(m), "metric `{m}` appears twice — the join fanned out");
+        }
+
+        for row in rows {
+            let code = row["reason_code"].as_str().unwrap_or_default();
+            assert!(
+                reasons.contains_key(code),
+                "row's reason_code `{code}` resolves in the served vocabulary: {row}"
+            );
+        }
+
+        // The seeded metric has never computed for this fresh repository, and that
+        // is a real state with its own code — not a blank.
+        let seeded = rows
+            .iter()
+            .find(|r| r["metric"].as_str() == Some(key.as_str()))
+            .expect("the seeded metric has a row for this repository");
+        assert_eq!(
+            seeded["reason_code"], "never_computed",
+            "a metric with no watermark reports never_computed, never an empty reason"
+        );
+        assert_eq!(seeded["deactivated"], false, "nothing has been switched off yet");
+        assert!(
+            seeded["sealed_through"].is_null(),
+            "a never-computed metric has no watermark — honest-null, never a fabricated date"
+        );
+
+        // ── 3: the deactivation the daemon mirrors from the dōjō is visible ──
+        sqlx_core::query::query(
+            "INSERT INTO sensei.metric_deactivations (repository_id, metric_key) VALUES ($1, $2)",
+        )
+        .bind(rid)
+        .bind(&key)
+        .execute(state.pg.pool())
+        .await
+        .unwrap();
+
+        let (st, body) =
+            req(app.clone(), "GET", &format!("/api/metrics/status?repo={repo_key}"), None).await;
+        assert_eq!(st, StatusCode::OK);
+        let after = body["metrics"]
+            .as_array()
+            .expect("the read carries the repository's rows")
+            .iter()
+            .find(|r| r["metric"].as_str() == Some(key.as_str()))
+            .cloned()
+            .expect("the seeded metric still has a row");
+        assert_eq!(after["deactivated"], true, "the mirrored ruling is reported");
+        assert_eq!(
+            after["reason_code"], "deactivated",
+            "a choice outranks progress: the row says deactivated, not never_computed"
+        );
+        assert!(
+            body["reasons"]["deactivated"]["remedy"].as_str().is_some_and(|s| !s.is_empty()),
+            "the deactivated reason carries what to DO — it is a refusal, not a fault"
+        );
+
+        // ── 5: VALUES but no watermark is not "never computed" ──────────────
+        // Measured on the live install: 201 pairs read `never_computed`, and 12 of
+        // them had metric values as recent as that day. The cause is cadence — a
+        // SNAPSHOT group (`cost`, `coverage`, `knowledge`) computes today-only and
+        // writes NO watermark by design (`planner::snapshot_active`), so keying the
+        // reason on the watermark alone calls a working group "never run".
+        //
+        // Asserted on the OBSERVATION, not on a classification: this seeded metric
+        // has a value and no watermark, which is all the view can see. Naming the
+        // state after the observation is what keeps it honest for the other way to
+        // reach it too — a day-keyed group that wrote days and then failed to seal.
+        //
+        // The step-3 deactivation is lifted first: a tenant's ruling outranks
+        // progress by design, so leaving it would mask the state under test rather
+        // than testing it.
+        sqlx_core::query::query("DELETE FROM sensei.metric_deactivations WHERE repository_id = $1")
+            .bind(rid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        state
+            .pg
+            .upsert_project_metric_repo(
+                &mid,
+                &rid,
+                "repo",
+                None,
+                None,
+                chrono::Utc::now().date_naive(),
+                "daily",
+                0.5,
+                &serde_json::json!({}),
+                "measured",
+            )
+            .await
+            .unwrap();
+
+        let (st, body) =
+            req(app.clone(), "GET", &format!("/api/metrics/status?repo={repo_key}"), None).await;
+        assert_eq!(st, StatusCode::OK);
+        let valued = body["metrics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["metric"].as_str() == Some(key.as_str()))
+            .cloned()
+            .expect("the seeded metric still has a row");
+        assert_ne!(
+            valued["reason_code"], "never_computed",
+            "this pair HAS a value, so 'never computed' is a false statement about it"
+        );
+        assert_eq!(
+            valued["reason_code"], "no_day_cursor",
+            "values with no watermark is its own state: computed, but this group \
+             keeps no day cursor"
+        );
+        assert_eq!(
+            valued["cadence"], "snapshot",
+            "cadence follows the same observation — no cursor to advance"
+        );
+        assert!(
+            body["reasons"]["no_day_cursor"]["summary"].as_str().is_some_and(|s| !s.is_empty()),
+            "the new code resolves in the served vocabulary rather than rendering \
+             as a bare slug"
+        );
+
+        // ── 6: a SEALED pair with no values is current, not "never computed" ──
+        // The regression the first fix introduced, caught only against live data:
+        // deciding "never" from the values alone moved 1,126 pairs out of `sealed`,
+        // because a day group SEALS AN EMPTY DAY. A repository whose days are all
+        // settled and which simply had nothing to measure is fully covered.
+        //
+        // This seals the group's cursor WITHOUT writing a value, which is exactly
+        // that shape.
+        let bare_key = format!("_test:bare:{}", uuid::Uuid::new_v4());
+        let bare_mid = seed_metric(&state.pg, &bare_key, "pct", "higher_better").await;
+        let group: (String,) =
+            sqlx_core::query_as::query_as("SELECT task_name FROM sensei.metrics WHERE id = $1")
+                .bind(bare_mid)
+                .fetch_one(state.pg.pool())
+                .await
+                .unwrap();
+        state
+            .pg
+            .advance_metric_watermark(&rid, &group.0, chrono::Utc::now().date_naive())
+            .await
+            .unwrap();
+
+        let (st, body) =
+            req(app.clone(), "GET", &format!("/api/metrics/status?repo={repo_key}"), None).await;
+        assert_eq!(st, StatusCode::OK);
+        let bare = body["metrics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["metric"].as_str() == Some(bare_key.as_str()))
+            .cloned()
+            .expect("the cursor-only metric has a row");
+        assert!(
+            bare["last_computed_on"].is_null(),
+            "fixture check: this pair has no values, which is the case under test"
+        );
+        assert_eq!(
+            bare["reason_code"], "sealed",
+            "a settled cursor means covered — an empty day still seals, so having \
+             no values is not 'never computed'"
+        );
+        assert_eq!(bare["cadence"], "day", "a cursor exists, so the cadence is day");
+
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
+            .bind(bare_mid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+
+        // ── 4: unknown repository is a 404, never an empty 200 ──────────────
+        let (st, _) =
+            req(app, "GET", &format!("/api/metrics/status?repo=test/does-not-exist-{uniq}"), None)
+                .await;
+        assert_eq!(
+            st,
+            StatusCode::NOT_FOUND,
+            "an unknown repo_key is a 404 — an empty 200 would read as \
+             'this repository has no metrics'"
+        );
+
+        sqlx_core::query::query("DELETE FROM sensei.metric_deactivations WHERE repository_id = $1")
+            .bind(rid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
+            .bind(mid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        // Drops the project, its folders, and the repositories seeded onto them —
+        // including `rid`, so there is no separate repository delete here.
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &pid, Some(&fid), &[]).await;
+    }
+
+    /// `GET /api/metrics/status/summary` — the whole estate, aggregated. The
+    /// bounded companion to the per-repository read, and the reason the latter can
+    /// require `?repo=`.
+    ///
+    /// Three properties:
+    ///
+    /// 1. **Each repository appears EXACTLY ONCE, with its reasons merged.** The
+    ///    seeded repository is given TWO distinct reason codes on purpose — one
+    ///    metric deactivated, the rest never computed — because with a single code
+    ///    a repository is one row and no grouping bug can show. That is not
+    ///    hypothetical: the first version of this test seeded one code, and a probe
+    ///    that removed the store's `ORDER BY` (which the handler's run-length
+    ///    grouping then depended on) did NOT fail it. The handler now accumulates
+    ///    into a map keyed on `repository_id`, and this asserts the merge.
+    /// 2. **`total` equals the sum of its own counts**, and lands in the registry
+    ///    bracket. A tally that does not equal the thing it names is the defect.
+    /// 3. **Every counted code resolves in `reasons`** — same contract as the
+    ///    per-repository read, so a client can rank by `precedence` without
+    ///    inventing a fallback for a code it does not recognise.
+    #[tokio::test]
+    async fn get_metric_status_summary_endpoint() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+        let rid = crate::tasks::test_support::seed_bare_repository(&state.pg, &pid, &uniq).await;
+        let repo_key = format!("test/bare-{uniq}");
+
+        // A SECOND reason code for this repository, so grouping has something to
+        // merge. Without it the repository is a single row and property 1 is
+        // vacuous — it passes whether the handler groups correctly or not.
+        let key = format!("_test:summary:{}", uuid::Uuid::new_v4());
+        let mid = seed_metric(&state.pg, &key, "pct", "higher_better").await;
+        sqlx_core::query::query(
+            "INSERT INTO sensei.metric_deactivations (repository_id, metric_key) VALUES ($1, $2)",
+        )
+        .bind(rid)
+        .bind(&key)
+        .execute(state.pg.pool())
+        .await
+        .unwrap();
+
+        let (st, body) = req(app, "GET", "/api/metrics/status/summary", None).await;
+        assert_eq!(st, StatusCode::OK);
+        let reasons = body["reasons"].as_object().expect("the reason vocabulary travels here too");
+        let repos = body["repositories"].as_array().expect("repositories is an array");
+
+        // 1: exactly once, with BOTH of its reason codes merged into one entry.
+        let ours: Vec<_> =
+            repos.iter().filter(|r| r["repo_key"].as_str() == Some(repo_key.as_str())).collect();
+        assert_eq!(
+            ours.len(),
+            1,
+            "the seeded repository appears exactly once — a second entry means its \
+             reasons were split across entries with partial counts"
+        );
+        let ours = ours[0];
+
+        // 2: the tally equals what it names, twice over.
+        let by_reason = ours["by_reason"].as_object().expect("by_reason is a code → count map");
+        assert!(
+            by_reason.contains_key("deactivated") && by_reason.contains_key("never_computed"),
+            "both of the repository's reason codes landed in ONE entry — this is the \
+             merge property, and it is only testable because the fixture seeds two: {ours}"
+        );
+        let summed: i64 = by_reason.values().filter_map(serde_json::Value::as_i64).sum();
+        assert_eq!(
+            ours["total"].as_i64(),
+            Some(summed),
+            "total equals the sum of its own per-reason counts: {ours}"
+        );
+        // No count bracket: the registry oscillates under concurrent tests, so the
+        // only sound statement is that the repository is counted at all and its
+        // tally is self-consistent (asserted just above).
+        assert!(summed > 0, "the seeded repository is counted, not omitted");
+
+        // 3: no unresolvable code.
+        for code in by_reason.keys() {
+            assert!(
+                reasons.contains_key(code),
+                "counted reason `{code}` resolves in the served vocabulary"
+            );
+        }
+
+        sqlx_core::query::query("DELETE FROM sensei.metric_deactivations WHERE repository_id = $1")
+            .bind(rid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        sqlx_core::query::query("DELETE FROM sensei.metrics WHERE id = $1")
+            .bind(mid)
+            .execute(state.pg.pool())
+            .await
+            .unwrap();
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &pid, Some(&fid), &[]).await;
+    }
+
+    /// `GET /api/graph/imports` — what import edges ARE, not merely that they are
+    /// unresolved.
+    ///
+    /// MEASURED: 136,484 import edges, 0% resolved — which reads as total failure
+    /// and is not. 81% (110,501) point outside the indexed codebase: `node:fs`,
+    /// `java.util.List`, `lombok.Getter`. Those are complete facts about a file's
+    /// dependencies, not resolutions that failed. Only ~19% could ever point at a
+    /// local node.
+    ///
+    /// Same misattribution `sensei.metric_status` carried before #128, and the same
+    /// remedy: name the state instead of implying one.
+    ///
+    /// Three properties:
+    ///
+    /// 1. **Every class in the served breakdown is a known label**, so a caller
+    ///    never renders a bare slug.
+    /// 2. **The per-class edge counts sum to the total.** A breakdown that does not
+    ///    add up is worse than no breakdown — it invites the reader to trust a
+    ///    number that is missing rows.
+    /// 3. **External and local are reported separately**, because conflating them
+    ///    is the entire defect. An install with any import at all must report a
+    ///    non-zero external share, since every codebase imports something it does
+    ///    not contain.
+    #[tokio::test]
+    async fn get_graph_imports_breakdown_endpoint() {
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) =
+            crate::tasks::test_support::seed_metrics_project_folder(&state.pg, &uniq).await;
+
+        // One of each shape, so the breakdown has something known to report.
+        let src = state
+            .pg
+            .seed_node(&fid, "file", "src/probe.ts", "src/probe.ts", None, None, None, None)
+            .await
+            .unwrap();
+        for target in ["node:fs", "java.util.List", "./sibling", "$lib/x", "crate::db", "@/alias"] {
+            state.pg.insert_edge(&fid, &src, None, Some(target), None, "imports").await.unwrap();
+        }
+
+        let (st, body) = req(app, "GET", "/api/graph/imports", None).await;
+        assert_eq!(st, StatusCode::OK);
+
+        let classes = body["classes"].as_object().expect("classes is a code → counts map");
+        const KNOWN: [&str; 5] =
+            ["external", "relative", "sveltekit-alias", "ts-alias", "internal"];
+        for name in classes.keys() {
+            assert!(
+                KNOWN.contains(&name.as_str()),
+                "class `{name}` is a known label, not a bare slug"
+            );
+        }
+
+        // 2: the breakdown adds up.
+        let summed: i64 = classes.values().filter_map(|v| v["edges"].as_i64()).sum();
+        assert_eq!(
+            body["total_edges"].as_i64(),
+            Some(summed),
+            "the per-class counts sum to the total: {body}"
+        );
+
+        // 3: external is reported, and separately from local.
+        let external = classes["external"]["edges"].as_i64().unwrap_or(0);
+        assert!(
+            external > 0,
+            "every codebase imports something it does not contain — reporting zero \
+             external means the two are still conflated"
+        );
+        assert!(
+            classes.contains_key("relative"),
+            "the local classes are reported alongside, not folded into external"
+        );
+        assert!(
+            body["external_edges"].as_i64().unwrap_or(0) >= external,
+            "the headline external count agrees with the per-class figure"
+        );
+
+        // The seeded shapes each landed in their own class.
+        for expected in ["external", "relative", "sveltekit-alias", "ts-alias", "internal"] {
+            assert!(
+                classes.contains_key(expected),
+                "seeded a `{expected}` import, so the breakdown reports it: {body}"
+            );
+        }
+
+        crate::tasks::test_support::cleanup_metrics_fixture(&state.pg, &pid, Some(&fid), &[]).await;
+    }
+
+    /// `GET /api/dojo/sync-state` — when each entity last agreed with the dōjō,
+    /// and what went wrong if it is not agreeing now.
+    ///
+    /// The store has three WRITERS (`mark_synced` / `mark_sync_error` /
+    /// `mark_sync_skipped`) and had no reader at all, so nothing could show this.
+    ///
+    /// Four properties:
+    ///
+    /// 1. **A failure keeps `synced_at`.** `mark_sync_error` deliberately does not
+    ///    clear it, because it still says when the two sides last agreed — the
+    ///    first thing worth knowing when a sync starts failing. If the read drops
+    ///    it, a broken-since-Tuesday entity is indistinguishable from one that has
+    ///    never synced.
+    /// 2. **`last_error` travels.** A row that says `error` with no message sends
+    ///    the reader to the logs for something the table already knows.
+    /// 3. **`skipped` is not `error`.** Deliberate and faulty must stay
+    ///    distinguishable — the distinction `sensei.sync_state` was built for.
+    /// 4. **A success CLEARS the error.** A stale message beside a `synced` state
+    ///    reads as "it failed".
+    #[tokio::test]
+    async fn get_dojo_sync_state_endpoint() {
+        use crate::db::pg_store::sync::SyncMark;
+        let (app, state) = test_app().await;
+        let uniq = uuid::Uuid::new_v4();
+        let ok_key = format!("test/sync-ok-{uniq}");
+        let err_key = format!("test/sync-err-{uniq}");
+        let skip_key = format!("test/sync-skip-{uniq}");
+
+        let ok = SyncMark { entity: "repository", key: &ok_key, direction: "push" };
+        let err = SyncMark { entity: "repository", key: &err_key, direction: "push" };
+        let skip = SyncMark { entity: "repository", key: &skip_key, direction: "push" };
+
+        state.pg.mark_synced(&ok, Some(7)).await.unwrap();
+        // Synced FIRST, then failed — so this row carries both a `synced_at` and
+        // an error, which is property 1.
+        state.pg.mark_synced(&err, None).await.unwrap();
+        state.pg.mark_sync_error(&err, "the dojo refused: 402").await.unwrap();
+        state.pg.mark_sync_skipped(&skip, "repository is private").await.unwrap();
+
+        let (st, body) = req(app, "GET", "/api/dojo/sync-state", None).await;
+        assert_eq!(st, StatusCode::OK);
+        let rows = body["entities"].as_array().expect("entities is an array");
+        let find = |key: &str| {
+            rows.iter()
+                .find(|r| r["entity_key"].as_str() == Some(key))
+                .unwrap_or_else(|| panic!("row for {key} is served"))
+                .clone()
+        };
+
+        let ok_row = find(&ok_key);
+        assert_eq!(ok_row["state"], "synced");
+        assert!(ok_row["synced_at"].is_string(), "a synced row carries when it agreed");
+        assert!(ok_row["last_error"].is_null(), "nothing failed, so no message");
+
+        // ── 1 + 2: a failure keeps the last agreement AND carries the reason ──
+        let err_row = find(&err_key);
+        assert_eq!(err_row["state"], "error");
+        assert_eq!(
+            err_row["last_error"], "the dojo refused: 402",
+            "the error travels — otherwise the reader goes to the logs for \
+             something this table already knows"
+        );
+        assert!(
+            err_row["synced_at"].is_string(),
+            "a FAILED row keeps synced_at: it still says when the two sides last \
+             agreed, and losing it makes broken-since-Tuesday look never-synced"
+        );
+
+        // ── 3: deliberate is not faulty ─────────────────────────────────────
+        let skip_row = find(&skip_key);
+        assert_eq!(
+            skip_row["state"], "skipped",
+            "a deliberate skip stays distinguishable from a fault — the whole \
+             reason sync_state has four states rather than a boolean"
+        );
+        assert_eq!(skip_row["last_error"], "repository is private");
+
+        // ── 4: recovering clears the message ────────────────────────────────
+        state.pg.mark_synced(&err, Some(9)).await.unwrap();
+        let (st, body) = req(
+            crate::api::routes::create_router(state.clone()),
+            "GET",
+            "/api/dojo/sync-state",
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK);
+        let recovered = body["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["entity_key"].as_str() == Some(err_key.as_str()))
+            .cloned()
+            .expect("the recovered row is still served");
+        assert_eq!(recovered["state"], "synced");
+        assert!(
+            recovered["last_error"].is_null(),
+            "a stale error beside a synced state reads as 'it failed'"
+        );
+
+        sqlx_core::query::query("DELETE FROM sensei.sync_state WHERE entity_key = ANY($1)")
+            .bind(vec![ok_key, err_key, skip_key])
             .execute(state.pg.pool())
             .await
             .unwrap();
@@ -1133,11 +1738,11 @@ mod tests {
     /// this session moved this metric" line). On a CACHE HIT it serves the stored
     /// model copy; on a MISS it serves the deterministic, row-derived fallback
     /// (title = metric label, detail = a structural line) — never blank, never
-    /// fabricated. Seeds one `insight_copy` row for one session's exact
+    /// fabricated. Seeds one `narration_cache` row for one session's exact
     /// `facts_hash` and leaves a second session uncached to pin both paths.
     #[tokio::test]
     async fn get_project_metric_day_sessions_attaches_observation() {
-        use crate::analysis::insight_copy::{InsightKind, facts_hash};
+        use crate::analysis::narration_cache::{InsightKind, facts_hash};
         use crate::analysis::session_metric_note::SessionMetricFacts;
 
         let (app, state) = test_app().await;
@@ -1196,7 +1801,7 @@ mod tests {
             facts_hash(InsightKind::SessionMetricObservation, &hit_facts.to_facts_json());
         state
             .pg
-            .upsert_insight_copy(
+            .upsert_narration_cache(
                 "session_metric_observation",
                 &hit_hash,
                 "first-try win",
@@ -1246,7 +1851,7 @@ mod tests {
         );
 
         sqlx_core::query::query(
-            "DELETE FROM sensei.insight_copy WHERE kind = 'session_metric_observation' AND facts_hash = $1")
+            "DELETE FROM sensei.narration_cache WHERE kind = 'session_metric_observation' AND facts_hash = $1")
             .bind(&hit_hash).execute(state.pg.pool()).await.unwrap();
         sqlx_core::query::query("DELETE FROM activity.sessions WHERE folder_id = $1")
             .bind(fid)
@@ -1870,7 +2475,7 @@ mod tests {
         // Insert a function only in the child folder.
         state
             .pg
-            .upsert_node(
+            .seed_node(
                 &child_fid,
                 "function",
                 &fn_name,
@@ -2304,42 +2909,51 @@ mod tests {
         let (app, state) = test_app().await;
         let pid = state.pg.ensure_test_project("route-slot-context").await.unwrap();
 
-        let m_unanchored = state
-            .pg
-            .create_memory(
-                Some(&pid),
-                "project",
-                None,
-                "decision",
-                "_test:route_slot_unanchored",
-                "c",
-                None,
-                None,
-                None,
-                None,
-            )
-            .await
-            .unwrap();
+        // Both fixtures carry a run-unique tag and both queries below are scoped
+        // to it. `assemble_context` blends project + stack + global scopes and
+        // keeps the top N by strength, so the shared test DB's accumulated global
+        // memories eventually crowd freshly-seeded fixtures out of the window and
+        // this fails only in a full run. Scoping does not weaken what is asserted
+        // here — slot-led ORDERING is still compared within the returned bundle.
+        // Both fixtures carry a run-unique tag and both queries below are scoped
+        // to it. `assemble_context` blends project + stack + global scopes and
+        // keeps the top N by strength, so the shared test DB's accumulated global
+        // memories eventually crowd freshly-seeded fixtures out of the window and
+        // this fails only in a full run. Scoping does not weaken what is asserted
+        // here — slot-led ORDERING is still compared within the returned bundle.
+        let tag = format!("route-slot-{}", uuid::Uuid::new_v4());
+        let fixture = |title: &str, slot: Option<&str>| crate::db::pg_store::InsertMemory {
+            project_id: Some(pid),
+            scope: "project".into(),
+            scope_filter: None,
+            mtype: "decision".into(),
+            title: title.into(),
+            content: "c".into(),
+            impact: None,
+            tags: vec![tag.clone()],
+            triage_signal: None,
+            status: "active".into(),
+            namespace_id: None,
+            enforcement: None,
+            origin: None,
+            source_id: None,
+            spine_slot: slot.map(str::to_string),
+            feature: None,
+        };
+        let m_unanchored =
+            state.pg.insert_memory(&fixture("_test:route_slot_unanchored", None)).await.unwrap();
         let m_design = state
             .pg
-            .create_memory(
-                Some(&pid),
-                "project",
-                None,
-                "decision",
-                "_test:route_slot_design",
-                "c",
-                None,
-                None,
-                Some("design"),
-                None,
-            )
+            .insert_memory(&fixture("_test:route_slot_design", Some("design")))
             .await
             .unwrap();
 
         // With ?slot=design: the slot-anchored memory leads.
-        let (status, blob) =
-            get_json(&app, &format!("/api/knowledge/context?project_id={pid}&slot=design")).await;
+        let (status, blob) = get_json(
+            &app,
+            &format!("/api/knowledge/context?project_id={pid}&slot=design&tags={tag}"),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         let ids: Vec<String> = blob["memories"]
             .as_array()
@@ -2356,7 +2970,7 @@ mod tests {
 
         // Without ?slot=: unchanged general blend (order not slot-led).
         let (status_plain, blob_plain) =
-            get_json(&app, &format!("/api/knowledge/context?project_id={pid}")).await;
+            get_json(&app, &format!("/api/knowledge/context?project_id={pid}&tags={tag}")).await;
         assert_eq!(status_plain, StatusCode::OK);
         let plain_ids: Vec<String> = blob_plain["memories"]
             .as_array()
@@ -2418,25 +3032,40 @@ mod tests {
             state.pg.add_watch_root(&abs_path, "mcp-seam", &serde_json::json!([])).await.unwrap();
         state
             .pg
-            .upsert_folder(&root_id, "git", "repo", "repo", &abs_path, None, Some(&pid))
+            .upsert_folder(&root_id, "git", "repo", "repo", &abs_path, None, Some(&pid), None)
             .await
             .unwrap();
 
-        let mem_title = format!("_test:mcp-seam-memory-{}", std::process::id());
+        // Tagged, and both context queries below are scoped to that tag, for the
+        // same reason as `mcp_proxy_knowledge_and_project_tools_contract`:
+        // `assemble_context` blends project + stack + global scopes and keeps the
+        // top N by strength, so the shared test DB's accumulated global memories
+        // eventually crowd a freshly-seeded fixture out of the window. The
+        // name↔uuid equivalence this test proves is unaffected — both queries are
+        // scoped identically, so a resolver that landed on the wrong project
+        // still fails.
+        let mem_tag = format!("seam-fixture-{}", uuid::Uuid::new_v4());
+        let mem_title = format!("_test:mcp-seam-memory-{mem_tag}");
         state
             .pg
-            .create_memory(
-                Some(&pid),
-                "project",
-                None,
-                "convention",
-                &mem_title,
-                "seam memory",
-                None,
-                None,
-                None,
-                None,
-            )
+            .insert_memory(&crate::db::pg_store::InsertMemory {
+                project_id: Some(pid),
+                scope: "project".into(),
+                scope_filter: None,
+                mtype: "convention".into(),
+                title: mem_title.clone(),
+                content: "seam memory".into(),
+                impact: None,
+                tags: vec![mem_tag.clone()],
+                triage_signal: None,
+                status: "active".into(),
+                namespace_id: None,
+                enforcement: None,
+                origin: None,
+                source_id: None,
+                spine_slot: None,
+                feature: None,
+            })
             .await
             .unwrap();
         // A general-scoped rule (namespace_id NULL, active) so the resolved
@@ -2460,7 +3089,7 @@ mod tests {
 
         // ── get_layered_context: proxy sends ?project=<name> ──
         let (st_name, ctx_by_name) =
-            get_json(&app, &format!("/api/knowledge/context?project={name}")).await;
+            get_json(&app, &format!("/api/knowledge/context?project={name}&tags={mem_tag}")).await;
         assert_eq!(
             st_name,
             StatusCode::OK,
@@ -2480,7 +3109,8 @@ mod tests {
 
         // Old contract still works AND resolves to the SAME project's memories.
         let (st_uuid, ctx_by_uuid) =
-            get_json(&app, &format!("/api/knowledge/context?project_id={pid}")).await;
+            get_json(&app, &format!("/api/knowledge/context?project_id={pid}&tags={mem_tag}"))
+                .await;
         assert_eq!(st_uuid, StatusCode::OK, "explicit project_id=<uuid> must keep working");
         assert!(
             has_title(&ctx_by_uuid),
@@ -2606,25 +3236,44 @@ mod tests {
         // Folder name == project name: get_file_tags looks up folders.name.
         let folder_id = state
             .pg
-            .upsert_folder(&root_id, "git", &name, "repo", &abs_path, None, Some(&pid))
+            .upsert_folder(&root_id, "git", &name, "repo", &abs_path, None, Some(&pid), None)
             .await
             .unwrap();
 
         let mem_title = format!("_test:contract-mem-{short}");
+        // Tagged, and every context query below is scoped to that tag.
+        //
+        // `assemble_context` matches `project_id = $2 OR scope='stack' OR
+        // scope='global'` and then takes the top N by strength. The shared test
+        // DB accumulates hundreds of global memories from other suites, so a
+        // freshly-seeded project memory at default strength eventually falls
+        // outside the window and this test fails — but only in a full run, and
+        // only once the DB has grown enough. That is the same crowding-out
+        // documented in `knowledge_tests::assemble_context_blends_three_scopes`,
+        // and the same fix: the tags filter is part of the real contract, so
+        // the project↔uuid equivalence this test exists to prove is still
+        // exercised.
+        let mem_tag = format!("contract-fixture-{short}");
         state
             .pg
-            .create_memory(
-                Some(&pid),
-                "project",
-                None,
-                "convention",
-                &mem_title,
-                "seam memory",
-                None,
-                None,
-                None,
-                None,
-            )
+            .insert_memory(&crate::db::pg_store::InsertMemory {
+                project_id: Some(pid),
+                scope: "project".into(),
+                scope_filter: None,
+                mtype: "convention".into(),
+                title: mem_title.clone(),
+                content: "seam memory".into(),
+                impact: None,
+                tags: vec![mem_tag.clone()],
+                triage_signal: None,
+                status: "active".into(),
+                namespace_id: None,
+                enforcement: None,
+                origin: None,
+                source_id: None,
+                spine_slot: None,
+                feature: None,
+            })
             .await
             .unwrap();
         let rule_title = format!("_test:contract-rule-{short}");
@@ -2648,7 +3297,7 @@ mod tests {
         let fn_name = format!("contract_fn_{short}");
         state
             .pg
-            .upsert_node(
+            .seed_node(
                 &folder_id,
                 "function",
                 &fn_name,
@@ -2663,7 +3312,7 @@ mod tests {
         let struct_name = format!("ContractType{short}");
         state
             .pg
-            .upsert_node(
+            .seed_node(
                 &folder_id,
                 "struct",
                 &struct_name,
@@ -2680,7 +3329,7 @@ mod tests {
         let file_path = "src/widget.rs".to_string();
         let file_id = state
             .pg
-            .upsert_node(&folder_id, "file", "widget.rs", &file_path, None, None, None, None)
+            .seed_node(&folder_id, "file", "widget.rs", &file_path, None, None, None, None)
             .await
             .unwrap();
         let tag = "route";
@@ -2742,7 +3391,7 @@ mod tests {
         let cases: Vec<(&str, serde_json::Value, Check)> = vec![
             (
                 "get_layered_context",
-                serde_json::json!({}),
+                serde_json::json!({ "tags": mem_tag.clone() }),
                 Box::new({
                     let t = mem_title.clone();
                     move |b| {
@@ -2901,7 +3550,7 @@ mod tests {
         // project → the same seeded memory. Proves name and uuid are interchangeable.
         let by_uuid = daemon_request_for(
             "get_layered_context",
-            &serde_json::json!({ "project_id": pid.to_string() }),
+            &serde_json::json!({ "project_id": pid.to_string(), "tags": mem_tag.clone() }),
             cwd,
             Some(&name),
         )
@@ -2951,7 +3600,7 @@ mod tests {
             .unwrap();
         state
             .pg
-            .upsert_folder(&root, "git", &name, "repo", &under, None, Some(&pid))
+            .upsert_folder(&root, "git", &name, "repo", &under, None, Some(&pid), None)
             .await
             .unwrap();
 
@@ -3088,7 +3737,16 @@ mod tests {
         // One git repo root + many nested `kind:'folder'` descendants.
         state
             .pg
-            .upsert_folder(&root, "git", &pname, "repo", &format!("{base}/repo"), None, Some(&pid))
+            .upsert_folder(
+                &root,
+                "git",
+                &pname,
+                "repo",
+                &format!("{base}/repo"),
+                None,
+                Some(&pid),
+                None,
+            )
             .await
             .unwrap();
         for i in 0..40 {
@@ -3102,6 +3760,7 @@ mod tests {
                     &format!("{base}/repo/src/d{i}"),
                     None,
                     Some(&pid),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -3353,14 +4012,43 @@ mod tests {
 
         spawn_workers(ctx.clone(), 2);
 
-        // Poll until the whole graph drains through the real executor (bounded — a
-        // stuck barrier or a failing handler fails loud instead of hanging forever).
+        // Poll until the whole graph drains through the real executor.
+        //
+        // BOUNDED ON PROGRESS, NOT ON WALL CLOCK. The bound exists to make a stuck
+        // barrier or a failing handler fail loud rather than hang — and "stuck" is
+        // precisely "`completed` stopped moving", which is what is asserted here.
+        //
+        // A fixed 800×25ms = 20s cap answered a different question: "did this
+        // finish fast enough". It drains in well under a second idle, but this
+        // suite shares a machine with cargo, psql and a dev server, and under that
+        // contention it FAILED at `pending=7 blocked=1 running=2 completed=88` —
+        // still advancing, two tasks from done. That is a slow machine, not a bug,
+        // and a test that calls it one is a test that cries wolf in CI.
+        //
+        // Progress RESETS the budget, so a slow machine finishes and a stuck one
+        // still fails loudly. The threshold is deliberately the same magnitude as
+        // the old TOTAL cap — but 20s of NO MOVEMENT is a far weaker claim than
+        // 20s overall, and it is the claim the assertion actually wants to make.
+        //
+        // Measured, not guessed: at 16-way CPU saturation the workers are starved
+        // hard enough to go quiet for seconds at a time, so a 5s threshold called
+        // a healthy graph stuck. The original failure was nothing like that —
+        // `completed` had reached 88 of ~90 and was still climbing.
+        const STALL_POLLS: u32 = 800; // 20s with no forward movement at all
         let mut drained = false;
-        for _ in 0..800 {
+        let mut best_completed = 0usize;
+        let mut stalled_for = 0u32;
+        while stalled_for < STALL_POLLS {
             let s = ctx.queue.status().await;
             if s.pending == 0 && s.blocked == 0 && s.running == 0 && s.completed >= expected_tasks {
                 drained = true;
                 break;
+            }
+            if s.completed > best_completed {
+                best_completed = s.completed;
+                stalled_for = 0;
+            } else {
+                stalled_for += 1;
             }
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         }

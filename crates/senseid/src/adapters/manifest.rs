@@ -14,7 +14,9 @@ use crate::types::PackageInfo;
 use std::path::Path;
 
 mod cargo;
+mod cmake;
 mod composer;
+mod dbd;
 mod dotnet;
 mod go;
 mod gradle;
@@ -25,6 +27,22 @@ mod ruby;
 mod swiftpm;
 pub(crate) mod workspace;
 mod xml;
+
+/// One resolved pin read out of a LOCKFILE (02 S6b).
+///
+/// The distinction from [`DepVersion`] is the whole point. A manifest states a
+/// RANGE — `^2.8.0` — and `clean_version` strips the operator, so the stored
+/// `2.8.0` is a range FLOOR indistinguishable from a pin. Only the lockfile
+/// holds what is actually installed, and that is what this carries.
+// Built ahead of its caller: cutover (`docs/spec/indexer/10-cutover.md`) is
+// what gives this one, and the shipped indexer under `crate::languages` owns
+// the graph until then. Not a licence for genuinely dead code.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedVersion {
+    pub name: String,
+    pub version: String,
+}
 
 /// Adapter for a specific ecosystem's manifest format.
 pub trait ManifestAdapter: Send + Sync {
@@ -51,6 +69,43 @@ pub trait ManifestAdapter: Send + Sync {
         let Some(dot) = filename.rfind('.') else { return false };
         let ext = &filename[dot + 1..];
         self.manifest_extensions().iter().any(|e| e.eq_ignore_ascii_case(ext))
+    }
+
+    /// Lockfile names this adapter can read (02 S6b). Default: none, so no
+    /// existing adapter breaks by not implementing it.
+    ///
+    /// Deliberately SEPARATE from [`Self::manifest_filenames`], and
+    /// [`Self::accepts`] must keep answering for manifests only: a lockfile is
+    /// a different grammar, and routing one into [`Self::parse_dependencies`]
+    /// would parse the wrong thing and quietly return nothing.
+    #[allow(dead_code)]
+    fn lockfile_filenames(&self) -> &[&'static str] {
+        &[]
+    }
+
+    /// True when `filename` is a lockfile this adapter reads.
+    #[allow(dead_code)]
+    fn accepts_lockfile(&self, filename: &str) -> bool {
+        self.lockfile_filenames().contains(&filename)
+    }
+
+    /// The resolved pins in a lockfile. Default: none.
+    ///
+    /// Takes the FILENAME as well as the content because one ecosystem has
+    /// several lockfile formats that share no grammar — npm alone has
+    /// `package-lock.json`, `bun.lock`, `yarn.lock` and `pnpm-lock.yaml`, and
+    /// an adapter handed only the bytes would have to sniff which it was
+    /// given. (02 S6b writes this without the filename; that spec predates
+    /// noticing the one-adapter-many-formats case.)
+    ///
+    /// Returns pins for EVERY package in the file, including transitive ones.
+    /// That is not a transitive-dependency leak: the caller looks its already
+    /// chosen direct deps up BY NAME and never enumerates the result — the
+    /// manifest selects which packages, the lockfile supplies which version
+    /// (02b S11).
+    #[allow(dead_code)]
+    fn parse_lockfile(&self, _filename: &str, _content: &str) -> Vec<PinnedVersion> {
+        Vec::new()
     }
 
     /// Ecosystem slug matching the `sensei.library_ecosystem` DDL enum.
@@ -100,8 +155,24 @@ pub trait ManifestAdapter: Send + Sync {
         Vec::new()
     }
 
+    /// The workspace ROOT's own package, when the root manifest declares one.
+    /// Default: none.
+    ///
+    /// A workspace root is often a package in its own right and is NOT in its
+    /// own member list, so [`Self::detect_workspace_members`] never returns it.
+    /// Measured: `dbd`'s root is `dbd-cli`, publishable, named differently from
+    /// the library — so a dependency on `dbd-cli` reached no library at all.
+    ///
+    /// Returns the same `PackageInfo` shape as a member, `private` included,
+    /// which is what keeps the answer right for the other two roots on this
+    /// machine: rokkit's root is `rokkit` with `"private": true` and kavach's
+    /// is `kavach-workspace`, also private — container names, never published.
+    fn root_package(&self, _repo_root: &Path) -> Option<PackageInfo> {
+        None
+    }
+
     /// Discoverable named commands the ecosystem exposes for this manifest
-    /// (#83 T1 commands surface). Feeds `sensei.project_commands` so the
+    /// (#83 T1 commands surface). Feeds `sensei.folder_commands` so the
     /// project window's action buttons + the future `get_commands` MCP
     /// tool + AI-assistant "how do I run tests here?" queries all read from
     /// one authoritative source.
@@ -121,7 +192,7 @@ pub trait ManifestAdapter: Send + Sync {
 }
 
 /// One command discovered from a manifest. Persisted into
-/// `sensei.project_commands`.
+/// `sensei.folder_commands`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredCommand {
     /// Raw name as it appears in the manifest (e.g. `test:unit`, `build-fast`).
@@ -136,6 +207,30 @@ pub struct DiscoveredCommand {
 }
 
 /// Build a batch of [`DiscoveredCommand`]s from a conventional list —
+/// Whether a manifest-supplied name may be embedded in a command line.
+///
+/// A script key is an ARBITRARY string chosen by whoever wrote the manifest,
+/// and `command_line` is later whitespace-split into argv by
+/// [`crate::checker`]. So a key containing a space smuggles extra ARGUMENTS
+/// into the process we spawn, and a key starting with `-` smuggles a FLAG.
+///
+/// That is not theoretical. A `package.json` script named
+/// `test --script-shell=./evil.sh` yields `npm run test --script-shell=./evil.sh`;
+/// npm accepts `--script-shell` anywhere in its argv and uses that path as the
+/// interpreter for every script it then runs — arbitrary code execution in the
+/// daemon, from a file the indexer walked. Verified against npm 11.11.0.
+///
+/// Rejected rather than escaped: a name we cannot safely spell is not a command
+/// anyone asked us to offer, and dropping it loses nothing but the button.
+/// Quoting would need the whole pipeline to agree on a quoting dialect, and the
+/// sink splits on whitespace precisely because it assumes there is none.
+pub fn is_safe_command_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('-')
+        && !name.contains(char::is_whitespace)
+        && !name.contains(['"', '\'', '`', '$', ';', '&', '|', '<', '>', '(', ')', '\n', '\r'])
+}
+
 /// `(subcommand, canonical_category)` pairs — for ecosystems whose commands
 /// are not manifest-derived (Cargo, Go, Maven, Gradle, .NET, SwiftPM). The
 /// `cli` is prepended verbatim to each subcommand to form `command_line`
@@ -367,6 +462,8 @@ pub fn registered_adapters() -> &'static [&'static dyn ManifestAdapter] {
         &ruby::RubyManifestAdapter,
         &composer::ComposerManifestAdapter,
         &swiftpm::SwiftPmManifestAdapter,
+        &cmake::CMakeManifestAdapter,
+        &dbd::DbdManifestAdapter,
     ]
 }
 
@@ -377,6 +474,27 @@ pub fn registered_adapters() -> &'static [&'static dyn ManifestAdapter] {
 pub fn all_manifest_filenames() -> Vec<&'static str> {
     let mut out: Vec<&'static str> =
         registered_adapters().iter().flat_map(|a| a.manifest_filenames().iter().copied()).collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Every distinct lockfile name any registered adapter can READ.
+///
+/// The mirror of [`all_manifest_filenames`], and derived the same way so that
+/// registering an adapter is the ONE line that teaches the whole system about
+/// its ecosystem. This replaced a hand-written constant that had drifted in
+/// both directions: it named nine lockfiles no adapter has a parser for
+/// (`pnpm-lock.yaml`, `yarn.lock`, `poetry.lock`, `go.sum`, …) and omitted one
+/// that npm reads (`npm-shrinkwrap.json`).
+///
+/// CAPABILITY, NOT VOCABULARY — an adapter lists only formats it can parse, so
+/// a name here is a promise the pins will actually arrive. `bun.lockb` is
+/// absent on purpose: it is binary, and npm's adapter says listing it "would
+/// claim a reader this adapter does not have".
+pub fn all_lockfile_filenames() -> Vec<&'static str> {
+    let mut out: Vec<&'static str> =
+        registered_adapters().iter().flat_map(|a| a.lockfile_filenames().iter().copied()).collect();
     out.sort();
     out.dedup();
     out
@@ -482,6 +600,58 @@ mod tests {
     }
 
     // ── conventional_commands helper ─────────────────────────────────
+
+    /// THE ARGUMENT-INJECTION PAYLOAD IS REJECTED.
+    ///
+    /// `command_line` is whitespace-split into argv by `crate::checker`, so a
+    /// script key containing a space contributes extra ARGUMENTS to the process
+    /// we spawn. Verified against npm 11.11.0: a key named
+    /// `test --script-shell=./evil.sh` makes npm use that path as the
+    /// interpreter for every script it runs — arbitrary code execution in the
+    /// daemon, planted by a file the indexer merely walked.
+    #[test]
+    fn a_script_name_cannot_smuggle_arguments_into_the_command_line() {
+        // The live PoC payload.
+        assert!(!is_safe_command_name("test --script-shell=./evil.sh"));
+        // Any whitespace is enough — the sink splits on it.
+        assert!(!is_safe_command_name("build --prefix /etc"));
+        assert!(!is_safe_command_name("a\tb"));
+        // A leading dash IS a flag, with no space needed.
+        assert!(!is_safe_command_name("--script-shell=./evil.sh"));
+        // Shell metacharacters, in case a sink ever gains a shell.
+        for bad in ["a;b", "a|b", "a&b", "a$(b)", "a`b`", "a>b", "a\nb"] {
+            assert!(!is_safe_command_name(bad), "{bad} must be rejected");
+        }
+        // Ordinary script names still work — the guard must not empty the UI.
+        for good in ["test", "test:unit", "build-fast", "lint_all", "e2e.ci"] {
+            assert!(is_safe_command_name(good), "{good} must be allowed");
+        }
+    }
+
+    /// The guard is applied by EVERY adapter that interpolates a name, not just
+    /// the one the PoC used.
+    #[test]
+    fn no_adapter_emits_a_command_line_with_an_injected_argument() {
+        let payload = "test --script-shell=./evil.sh";
+        let cases: Vec<(&str, String)> = vec![
+            ("npm", format!(r#"{{"scripts":{{"{payload}":"x"}}}}"#)),
+            ("composer", format!(r#"{{"scripts":{{"{payload}":"x"}}}}"#)),
+            ("pypi", format!("[tool.poetry.scripts]\n\"{payload}\" = \"x\"\n")),
+        ];
+        for (eco, content) in cases {
+            let adapter = registered_adapters()
+                .iter()
+                .find(|a| a.ecosystem() == eco)
+                .unwrap_or_else(|| panic!("no adapter for {eco}"));
+            for cmd in adapter.parse_commands(&content) {
+                assert!(
+                    !cmd.command_line.contains("--script-shell"),
+                    "{eco} emitted an injected command line: {}",
+                    cmd.command_line
+                );
+            }
+        }
+    }
 
     #[test]
     fn conventional_commands_prefixes_cli_and_categorises() {

@@ -24,6 +24,20 @@ async fn repo_folder_id(state: &AppState, name: &str) -> Result<Option<uuid::Uui
 
 // ── Graph Queries ───────────────────────────────────────────────────────────
 
+/// The edge kinds the Atlas graph lays out.
+///
+/// A named constant rather than a literal at the call site, because the literal
+/// could not be pinned by a test: `get_edges_scoped_kinds` takes `kinds` as a
+/// PARAMETER and matches it generically, so a store-level test passes whatever
+/// it is handed and can never notice a kind going missing here.
+///
+/// `extends` earns its place only once real inheritance is persisted. It was
+/// added to this set to cure a sparse layout ("scattered circles"), but every
+/// one of the 7,905 `extends` edges in the live graph is unresolved
+/// (`target_id IS NULL`), so it contributed exactly ZERO layout edges — the
+/// widening that actually helped was `imports`, at 25,785 usable.
+pub(crate) const GRAPH_LAYOUT_KINDS: &[&str] = &["calls", "imports", "extends", "implements"];
+
 #[derive(Deserialize)]
 pub(crate) struct GraphQuery {
     #[serde(rename = "repoId")]
@@ -45,14 +59,16 @@ pub(crate) async fn graph_nodes(
     if ids.is_empty() {
         return Ok(Json(serde_json::json!({"nodes": [], "edges": []})));
     }
-    // 7.1: nodes now carry `community_id` (via get_nodes_scoped), and the edge
-    // set is the full graph-layout set `calls,imports,extends` — not just `calls`,
-    // which was too sparse to lay out a nested map (the "scattered circles").
+    // 7.1: nodes carry `community_id` (via get_nodes_scoped), and the edge set is
+    // the layout set rather than `calls` alone, which was too sparse to lay out a
+    // nested map (the "scattered circles"). See GRAPH_LAYOUT_KINDS for which
+    // widening actually did that work — it was not the one this comment used to
+    // credit.
     let nodes = state.pg.get_nodes_scoped(&ids).await.map_err(|e| {
         tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_nodes_scoped failed");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let edges = state.pg.get_edges_scoped_kinds(&ids, &["calls", "imports", "extends"]).await
+    let edges = state.pg.get_edges_scoped_kinds(&ids, GRAPH_LAYOUT_KINDS).await
         .map_err(|e| { tracing::warn!(error = %e, repo_id = %repo_id, "graph_nodes: get_edges_scoped_kinds failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
     Ok(Json(serde_json::json!({"nodes": nodes, "edges": edges})))
 }
@@ -100,6 +116,86 @@ pub(crate) struct TraceQuery {
     #[serde(rename = "repoId")]
     pub repo_id: String,
     pub name: String,
+}
+
+/// `GET /api/graph/imports` — what import edges ARE, broken down by class.
+///
+/// MEASURED NOW: 136,573 import edges, 25,788 resolved (18.9%). 110,785 point
+/// OUTSIDE the indexed codebase — `node:fs`, `java.util.List`, `lombok.Getter` —
+/// and those are complete facts about a file's dependencies, not resolutions that
+/// failed. Reporting one "% resolved" over both conflates them, which is the same
+/// misattribution `sensei.metric_status` carried before #128.
+///
+/// THIS DOC USED TO SAY "0% resolved … nothing has ever tried to resolve one".
+/// That was true when written and became false as imports began resolving —
+/// and the endpoint's own numbers drifted with it, because
+/// `import_target_counts` collapsed every resolved row into a single
+/// `target = ''` group that `classify_import` then called external. It reported
+/// external 136,329 / local 244 against a truth of 110,785 / 25,788. A
+/// measurement that degrades as the thing it measures improves is worse than
+/// none, so both the query and this comment are now stated as of a date.
+///
+/// A `None` target from the store MEANS resolved. It is counted as `internal`
+/// rather than classified as a string.
+pub(crate) async fn graph_imports(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::languages::import_target::classify_import;
+
+    let rows =
+        state.pg.import_target_counts().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Aggregated per class. `BTreeMap` so the response order is stable — a
+    // breakdown that reorders between calls is hard to diff by eye.
+    let mut classes: std::collections::BTreeMap<&'static str, (i64, i64, i64)> =
+        std::collections::BTreeMap::new();
+    let mut total_edges = 0i64;
+    let mut total_resolved = 0i64;
+    let mut external_edges = 0i64;
+
+    for (target, edges, resolved) in rows {
+        // A NULL target means RESOLVED — resolving erases `target_name`. There is
+        // no string to classify, and classifying the empty string reported every
+        // resolved import as one external package (the defect this replaces).
+        // A resolved import points at a node in the indexed tree, so it IS the
+        // existing `Internal` class — not a new label. Taken from the enum so
+        // the vocabulary keeps one owner.
+        let label = match &target {
+            Some(t) => classify_import(t).label(),
+            None => crate::languages::import_target::ImportTarget::Internal.label(),
+        };
+        let is_external = target.as_deref().is_some_and(|t| classify_import(t).is_external());
+
+        let entry = classes.entry(label).or_insert((0, 0, 0));
+        entry.0 += edges;
+        entry.1 += resolved;
+        entry.2 += 1; // distinct targets in this class
+        total_edges += edges;
+        total_resolved += resolved;
+        if is_external {
+            external_edges += edges;
+        }
+    }
+
+    let by_class: serde_json::Map<String, serde_json::Value> = classes
+        .into_iter()
+        .map(|(label, (edges, resolved, targets))| {
+            (
+                label.to_string(),
+                serde_json::json!({ "edges": edges, "resolved": resolved, "targets": targets }),
+            )
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "total_edges": total_edges,
+        "total_resolved": total_resolved,
+        // The headline the old single number hid: how much of the "unresolved"
+        // majority is simply outside the codebase.
+        "external_edges": external_edges,
+        "local_edges": total_edges - external_edges,
+        "classes": by_class,
+    })))
 }
 
 pub(crate) async fn fn_callers(
@@ -749,7 +845,7 @@ mod tests {
         // the file/doc nodes; a class has a method child; a doc has a section child.
         let folders = vec![
             json!({"id":"fol_root","name":"repo","kind":"git","role":null,"parent_id":null}),
-            json!({"id":"fol_pkg","name":"pkg","kind":"workspace_member","role":"library","parent_id":"fol_root"}),
+            json!({"id":"fol_pkg","name":"pkg","kind":"module","role":"library","parent_id":"fol_root"}),
         ];
         let nodes = vec![
             // A code file with a class → method (parent_id chain).
@@ -768,7 +864,7 @@ mod tests {
         // subfolder nested by parent_id, carrying kind + role.
         let subs = root["folders"].as_array().unwrap();
         assert_eq!(subs.len(), 1);
-        assert_eq!(subs[0]["kind"], "workspace_member");
+        assert_eq!(subs[0]["kind"], "module");
         assert_eq!(subs[0]["role"], "library");
         // the file + doc are root-level nodes of fol_root.
         let fnodes = root["nodes"].as_array().unwrap();
@@ -877,7 +973,20 @@ mod tests {
         assert_eq!(language_for_ext("swift"), "swift");
         assert_eq!(language_for_ext("c"), "c");
         assert_eq!(language_for_ext("h"), "c");
-        assert_eq!(language_for_ext("cpp"), "c");
+        assert_eq!(language_for_ext("php"), "php");
+        assert_eq!(language_for_ext("cs"), "csharp");
+        // **C++ IS NOT C**, and this used to say it was. v1's C adapter claimed
+        // `.cpp`/`.hpp`/`.cc` and read them with a line-based scanner, so every
+        // C++ file in the graph carried `language = 'c'`.
+        //
+        // `tree-sitter-c` parses C, so v2's adapter claims `.c`/`.h` and the C++
+        // extensions are claimed by no adapter at all. They are still SOURCE —
+        // `DEFAULT_SOURCE_EXTS` lists them — and they are labelled `cpp`, which
+        // is a file node with no symbols rather than symbols read out of a
+        // recovered parse.
+        assert_eq!(language_for_ext("cpp"), "cpp");
+        assert_eq!(language_for_ext("hpp"), "cpp");
+        assert_eq!(language_for_ext("cc"), "cpp");
     }
 
     #[test]
@@ -966,5 +1075,42 @@ mod tests {
         assert_eq!(p[0]["name"], "Adapter");
         assert_eq!(p[0]["family"], "structural");
         assert_eq!(p[0]["instance_count"], 4);
+    }
+}
+
+#[cfg(test)]
+mod graph_layout_kinds_tests {
+    use super::GRAPH_LAYOUT_KINDS;
+
+    /// Every layout kind must be a declared `edge_kind` label.
+    ///
+    /// `get_edges_scoped_kinds` binds these as `kind::text = ANY($2)`, so a typo
+    /// does not error — it silently matches nothing, and the Atlas quietly loses
+    /// a whole edge class. Nothing could catch that before: the store takes
+    /// `kinds` as a parameter and matches it generically, so a store-level test
+    /// passes whatever it is handed.
+    ///
+    /// Uses the same DDL-reading idiom as
+    /// `types::tests::every_node_kind_is_a_valid_enum_value` rather than a second
+    /// copy of the parse.
+    ///
+    /// Breaking mutation: add `"extend"` (or any non-label) to
+    /// GRAPH_LAYOUT_KINDS.
+    #[test]
+    fn every_graph_layout_kind_is_a_declared_edge_kind() {
+        let enum_values = crate::types::declared_edge_kinds();
+        for k in GRAPH_LAYOUT_KINDS {
+            assert!(
+                enum_values.contains(k),
+                "GRAPH_LAYOUT_KINDS contains {k:?}, absent from edge_kind.ddl: {enum_values:?}"
+            );
+        }
+        assert!(!GRAPH_LAYOUT_KINDS.is_empty(), "an empty layout set renders no edges at all");
+        // Inheritance must reach the Atlas, or persisting it changes nothing a
+        // user can see. This is the only thing pinning that widening.
+        assert!(
+            GRAPH_LAYOUT_KINDS.contains(&"implements"),
+            "inheritance edges must be laid out: {GRAPH_LAYOUT_KINDS:?}"
+        );
     }
 }

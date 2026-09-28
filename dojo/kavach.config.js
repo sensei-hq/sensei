@@ -22,8 +22,31 @@ export default {
 	//    GitHub token can read the user's org memberships — `read:org` covers
 	//    PRIVATE orgs — for the F3c GitHub-org auto-join (GET /user/orgs);
 	//    `user:email` keeps the email Supabase resolves the profile from.
+	//
+	//    `repo` is what lets `refreshForgeVisibility` SEE a private repository.
+	//    GitHub answers 404 (not 403) for a repo a token cannot reach, so without
+	//    it every private repo stays permanently uncaptured and — failing closed —
+	//    never syncs. That is the exact case the authority/mandate model exists
+	//    for, so capture without it works only where it is not needed.
+	//
+	//    It is a BIG grant for a small answer: classic `repo` is full read AND
+	//    WRITE over all private code, and there is no metadata-only classic scope.
+	//    The right-sized permission (`metadata: read`) exists only for a GitHub
+	//    App, which is the migration this should become — tracked in
+	//    docs/backlog.md.
+	//
+	//    Where the token then LIVES differs by path, and the difference matters
+	//    now that the grant is this broad:
+	//      web  — `provider_token` exists only in the payload handed to
+	//             `onSessionSync`; the session cookie keeps access/refresh only,
+	//             so it is unreachable from every later request (hooks.server.ts).
+	//      CLI  — `/v1/auth/cli/token` returns the session byte-for-byte and the
+	//             daemon PERSISTS it, in the OS keychain rather than Postgres
+	//             (`dojo_client/session.rs`). So on a developer machine this is a
+	//             stored, refreshable, full-private-code credential — which is the
+	//             strongest argument for the GitHub App migration above.
 	providers: [
-		{ mode: 'oauth', name: 'github', label: 'Continue with GitHub', scopes: ['read:org', 'user:email'] },
+		{ mode: 'oauth', name: 'github', label: 'Continue with GitHub', scopes: ['read:org', 'user:email', 'repo'] },
 		{ mode: 'otp', name: 'magic', label: 'Email me a magic link' },
 		// Email + password. `name: 'email'` is the field key AuthProvider passes to
 		// signIn ({ email, password }) → the adapter's signInWithPassword.

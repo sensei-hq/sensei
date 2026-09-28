@@ -20,6 +20,8 @@ use serde::Deserialize;
 use std::sync::Mutex;
 
 use crate::api::state::AppState;
+use crate::db::pg_store::ForgeTokenRow;
+use crate::dojo_client::forge_token::{ForgeTokenAction, forge_token_action, token_state_of};
 use crate::dojo_client::{dojo_auth, pkce, session};
 
 /// The in-flight verifier, between the two legs.
@@ -102,6 +104,136 @@ pub(crate) async fn signin(Query(p): Query<PersonaQuery>) -> Json<serde_json::Va
     }))
 }
 
+/// What the browser should be told at the end of the redirect.
+pub(crate) enum SignInPage {
+    Success {
+        login: String,
+    },
+    /// The credential stored and nothing will sync — see [`sign_in_will_sync`].
+    /// Neither other page is honest about this.
+    Partial {
+        detail: String,
+    },
+    Failure {
+        detail: String,
+    },
+}
+
+/// Escape text destined for HTML body content.
+///
+/// Both interpolated values are external: the login comes from GitHub and the
+/// detail from the dōjō's error body. Interpolating either raw would make this
+/// page an injection sink reachable by anyone able to influence an OAuth error
+/// message — and it renders in a browser on the user's own machine, same origin
+/// as the daemon on localhost.
+fn escape_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Whether this request came from a browser.
+///
+/// Content-negotiated rather than switched outright: the browser is the only
+/// caller today, but a client that asked for JSON and received a document would
+/// break with nothing explaining why. `*/*` — what curl sends — keeps the JSON.
+fn wants_html(accept: Option<&str>) -> bool {
+    accept.is_some_and(|a| a.contains("text/html"))
+}
+
+/// The page a human sees when the redirect lands.
+///
+/// This used to render the raw JSON body, which tells a person nothing and reads
+/// as a crash at the end of a flow that actually succeeded.
+///
+/// Self-contained: no external stylesheet, font or script. The window may be an
+/// incognito webview with no network beyond localhost by the time it renders.
+fn sign_in_html(page: &SignInPage) -> String {
+    let (heading, body, tone) = match page {
+        SignInPage::Success { login } if login.is_empty() => (
+            "Signed in".to_string(),
+            "sensei has what it needs. You can close this window.".to_string(),
+            "ok",
+        ),
+        SignInPage::Success { login } => (
+            format!("Signed in as {}", escape_html(login)),
+            "sensei has what it needs. You can close this window.".to_string(),
+            "ok",
+        ),
+        SignInPage::Partial { detail } => (
+            "Signed in, but not linked".to_string(),
+            format!(
+                "{} — sensei will not sync until that is resolved. You can close this window.",
+                escape_html(detail)
+            ),
+            "warn",
+        ),
+        SignInPage::Failure { detail } => (
+            "Sign-in did not complete".to_string(),
+            format!("{} — you can close this window and try again.", escape_html(detail)),
+            "bad",
+        ),
+    };
+    // Colours as literals because this document is served by the daemon and has
+    // no access to the app's token pipeline. Kept to the same sumi palette.
+    let accent = match tone {
+        "ok" => "#3f6f5b",
+        "warn" => "#8a6d3b",
+        _ => "#8c4a4a",
+    };
+    format!(
+        "<!doctype html>\n\
+         <html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+         <title>sensei</title><style>\
+         :root{{color-scheme:light dark}}\
+         body{{margin:0;min-height:100vh;display:grid;place-items:center;\
+         font:14px/1.6 ui-sans-serif,system-ui,-apple-system,sans-serif;\
+         background:#faf9f7;color:#2b2a28}}\
+         @media(prefers-color-scheme:dark){{body{{background:#1c1b1a;color:#e8e6e3}}}}\
+         main{{max-width:26rem;padding:2rem;text-align:center}}\
+         h1{{margin:0 0 .5rem;font-size:1.125rem;font-weight:600;color:{accent}}}\
+         p{{margin:0;opacity:.8}}\
+         </style></head><body><main><h1>{heading}</h1><p>{body}</p></main></body></html>"
+    )
+}
+
+/// Which page a callback body calls for.
+///
+/// Reads the SAME body the JSON callers receive, so the page and the payload
+/// cannot disagree — a page built from separate reasoning could congratulate a
+/// user whose JSON said the sign-in did not link.
+fn page_of(body: &serde_json::Value) -> SignInPage {
+    let stored = body["signedIn"].as_bool() == Some(true);
+    let will_sync = body["ok"].as_bool() == Some(true);
+    let detail = || {
+        body["error"]
+            .as_str()
+            .or_else(|| body["detail"].as_str())
+            .unwrap_or("the sign-in could not be completed")
+            .to_string()
+    };
+    match (stored, will_sync) {
+        // The login is absent on a dōjō that returns no identity block. Reported
+        // as an empty name, which the template drops — a placeholder would be a
+        // fabricated identity on the one screen whose job is to name it.
+        (true, true) => SignInPage::Success {
+            login: body["identity"]["githubLogin"].as_str().unwrap_or_default().to_string(),
+        },
+        (true, false) => SignInPage::Partial { detail: detail() },
+        _ => SignInPage::Failure { detail: detail() },
+    }
+}
+
 #[derive(Deserialize)]
 pub(crate) struct CallbackQuery {
     code: Option<String>,
@@ -116,28 +248,41 @@ pub(crate) struct CallbackQuery {
 /// exchange.
 pub(crate) async fn callback(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Query(q): Query<CallbackQuery>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::response::IntoResponse as _;
+    let body = callback_body(state, q).await;
+    // A browser lands here at the end of the redirect and gets a page. Anything
+    // else keeps the JSON it has always received.
+    match wants_html(headers.get(axum::http::header::ACCEPT).and_then(|v| v.to_str().ok())) {
+        true => axum::response::Html(sign_in_html(&page_of(&body))).into_response(),
+        false => Json(body).into_response(),
+    }
+}
+
+/// The callback's outcome as data, shared by both representations.
+async fn callback_body(state: AppState, q: CallbackQuery) -> serde_json::Value {
     // The provider can redirect back with a refusal — a declined consent screen
     // is not an error to swallow, it is the answer.
     if let Some(err) = q.error {
-        return Json(serde_json::json!({
+        return serde_json::json!({
             "ok": false,
             "error": err,
             "detail": q.error_description,
-        }));
+        });
     }
 
     let Some(code) = q.code else {
-        return Json(serde_json::json!({ "ok": false, "error": "no code in callback" }));
+        return serde_json::json!({ "ok": false, "error": "no code in callback" });
     };
     let Some((persona, verifier)) =
         PENDING_VERIFIER.lock().unwrap_or_else(|e| e.into_inner()).take()
     else {
-        return Json(serde_json::json!({
+        return serde_json::json!({
             "ok": false,
             "error": "no sign-in in progress — start with POST /api/auth/signin",
-        }));
+        });
     };
 
     match dojo_auth::exchange(&dojo_url(), &code, &verifier).await {
@@ -152,7 +297,6 @@ pub(crate) async fn callback(
             // read:org exists for — provisioning cannot list organisations
             // without it, and would report "none" rather than "never asked".
             let provider = tokens.provider_token.clone();
-            let provider_refresh = tokens.provider_refresh_token.clone();
             let stored = tokio::task::spawn_blocking(move || {
                 if let Some(pt) = provider.as_deref() {
                     // Non-fatal: a failed provider-token write costs
@@ -161,8 +305,14 @@ pub(crate) async fn callback(
                         tracing::warn!(error = %e, "could not store the GitHub token");
                     }
                 }
-                if let Some(pr) = provider_refresh.as_deref() {
-                    let _ = session::store_provider_refresh_token(&who, pr);
+                // GitHub's refresh token is deliberately NOT kept. Spending it
+                // needs the App's client secret, which stays in Supabase alone
+                // — so this credential has no consumer here, and a 182-day
+                // grant at rest with no upside is exactly what the Keychain
+                // rules already exclude access tokens for. The delete also
+                // clears what earlier builds stored.
+                if let Err(e) = session::discard_provider_refresh_token(&who) {
+                    tracing::warn!(error = %e, "could not discard the GitHub refresh token");
                 }
                 session::store_refresh_token(&who, &refresh)
             })
@@ -183,48 +333,373 @@ pub(crate) async fn callback(
             };
 
             match stored {
-                Ok(Ok(())) => Json(serde_json::json!({
-                    "ok": true,
-                    "signedIn": true,
-                    "persona": persona,
-                    "identity": linked,
-                    // Whether org provisioning will be possible for this
-                    // persona — surfaced so a missing token is visible now
-                    // rather than as an empty org list later.
-                    "canReadOrgs": tokens.provider_token.is_some(),
-                })),
-                Ok(Err(e)) => Json(serde_json::json!({
+                Ok(Ok(())) => {
+                    let will_sync = sign_in_will_sync(&linked);
+                    if !will_sync {
+                        tracing::error!(persona, identity = %linked,
+                                        "sign-in stored a session the sync cycle cannot use — the persona was not linked");
+                    }
+                    // What we currently believe about the FORGE token — a
+                    // different credential from the session above, with its own
+                    // lifetime. Usually `unknown` at this instant: the sign-in
+                    // that just completed is what `observe` learns from, and the
+                    // org read that carries the expiry header has not happened
+                    // yet. Reported anyway so the shape matches `status`.
+                    let row = forge_row(&state, &persona).await;
+                    let forge = forge_report(
+                        row.as_ref().map(Option::as_ref).map_err(Clone::clone),
+                        chrono::Utc::now().timestamp(),
+                    );
+                    serde_json::json!({
+                        // NOT unconditionally true. The credential stored, but if
+                        // the persona did not link there is no `session_slot`, so
+                        // nothing will ever sync — see `sign_in_will_sync`.
+                        "ok": will_sync,
+                        // Still true, and deliberately separate: the session
+                        // itself IS usable, which is why one boolean could not
+                        // carry both facts.
+                        "signedIn": true,
+                        "willSync": will_sync,
+                        "persona": persona,
+                        "identity": linked,
+                        // Whether org provisioning will be possible for this
+                        // persona — surfaced so a missing token is visible now
+                        // rather than as an empty org list later.
+                        // A token is STORED. Deliberately NOT the same as one
+                        // that WORKS: a dead credential is still `Some`, which is
+                        // how this endpoint reported `signedIn: true` for a whole
+                        // morning while every forge call 401'd. `forgeToken`
+                        // below is the field that answers whether it works.
+                        "canReadOrgs": tokens.provider_token.is_some(),
+                        // The forge token's actual standing, recorded by the
+                        // scheduled check and by any call that happened to learn
+                        // something. `unknown` is real — see the column comment.
+                        "forgeToken": forge.report,
+                        // The one remedy that fixes a dead forge token. Surfaced
+                        // as its own flag so the UI does not have to know that
+                        // "dead" is unrecoverable without a sign-in.
+                        "needsSignIn": forge.needs_sign_in,
+                        "error": (!will_sync).then_some(
+                            "signed in, but this persona is not linked — the sync cycle will not \
+                             pick the session up until it is"),
+                    })
+                }
+                Ok(Err(e)) => serde_json::json!({
                     "ok": false,
                     "error": format!("signed in, but the refresh token could not be stored: {e}"),
-                })),
-                Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+                }),
+                Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
             }
         }
         // Surface dōjō's own message rather than a generic failure. "invalid
         // grant" with no context is the most confusing outcome in this flow, and
         // the body usually says which half is wrong.
-        Err(e) => Json(serde_json::json!({ "ok": false, "error": e })),
+        Err(e) => serde_json::json!({ "ok": false, "error": e }),
     }
+}
+
+/// What `status` says about the forge token.
+pub(crate) struct ForgeReport {
+    /// The `forgeToken` field: `{ state, expiresAt }`, plus `error` when the
+    /// registry could not be read.
+    pub report: serde_json::Value,
+    /// Only a sign-in can fix this. The daemon cannot mint a forge token.
+    pub needs_sign_in: bool,
+    /// The token is alive but near expiry, and the app should re-authorize
+    /// through the dōjō while it still can.
+    ///
+    /// The daemon cannot do this itself. Redeeming a refresh token requires the
+    /// GitHub App's client secret, which lives in ONE place — Supabase's auth
+    /// provider config — and stays there: a second copy in the dōjō would mean
+    /// recreating the App credential in two dashboards, and the copy that got
+    /// missed would fail silently, months later, as an unrenewable token.
+    ///
+    /// So renewal runs the authorize flow Supabase already owns. That needs a
+    /// browser, which is why this is REPORTED rather than performed.
+    pub renewal_due: bool,
+}
+
+/// The forge token's standing, as a status field.
+///
+/// Shared by [`status`] and the sign-in callback. They ask the same question and
+/// must not answer it differently — the first version of this lived inline in
+/// the callback ONLY, so `/api/auth/status` (the endpoint the UI actually polls)
+/// never learned the token was dead.
+///
+/// Three inputs, three distinct answers, because they call for different things:
+///
+/// - **A row** — report it. `dead` is the only state that asks for a sign-in;
+///   the daemon cannot mint a GitHub token, so nothing else it can do will fix
+///   one. `active`, `absent` and `unknown` must not nag.
+/// - **No row** — `unknown`, with no error. The check has not reached this
+///   persona yet. Reporting `active` would fabricate a standing; reporting
+///   `dead` would demand a sign-in nothing has established is needed.
+/// - **A failed read** — `unknown` WITH the error. Both are genuinely unknown,
+///   but "never checked" and "could not ask" call for different responses, and
+///   collapsing them makes a broken registry look like a fresh persona. Never
+///   `needsSignIn`: the remedy is to fix the daemon's database, not to make the
+///   user re-authenticate a credential that is probably fine.
+///
+/// `renewal_due` is decided by [`forge_token_action`] — the SAME function the
+/// scheduled check runs — so the UI and the worker cannot disagree about when a
+/// token is near enough to expiry to act on.
+fn forge_report(row: Result<Option<&ForgeTokenRow>, String>, now: i64) -> ForgeReport {
+    match row {
+        Ok(Some(r)) => ForgeReport {
+            report: serde_json::json!({ "state": r.state, "expiresAt": r.expires_at }),
+            needs_sign_in: r.state == "dead",
+            renewal_due: matches!(
+                forge_token_action(r.expires_at, now, token_state_of(&r.state)),
+                ForgeTokenAction::Refresh
+            ),
+        },
+        Ok(None) => ForgeReport {
+            report: serde_json::json!({ "state": "unknown", "expiresAt": null }),
+            needs_sign_in: false,
+            renewal_due: false,
+        },
+        Err(e) => ForgeReport {
+            report: serde_json::json!({ "state": "unknown", "expiresAt": null, "error": e }),
+            needs_sign_in: false,
+            renewal_due: false,
+        },
+    }
+}
+
+/// This persona's forge-token row, or why we could not read it.
+///
+/// Read-only: this lookup adds no forge call of its own.
+///
+/// That is a claim about THIS function, not about `status`. An earlier version
+/// of this comment said opening the status page "cannot cost a GitHub call",
+/// which was never true — `status` backfills the verified identity, and that
+/// path has always read `/user/emails`. The honest statement is that the
+/// standing is kept current by the scheduled check and by
+/// [`crate::dojo_client::forge_token::observe`] riding on calls made for other
+/// reasons, and that reading the row costs nothing extra.
+async fn forge_row(state: &AppState, persona: &str) -> Result<Option<ForgeTokenRow>, String> {
+    state
+        .pg
+        .forge_token_rows()
+        .await
+        .map(|rows| rows.into_iter().find(|r| r.session_slot == persona))
+        .map_err(|e| e.to_string())
+}
+
+/// Whether a completed sign-in leaves a session the SYNC CYCLE will actually use.
+///
+/// A stored refresh token is not enough. `link_verified_identity` is what writes
+/// `personas.session_slot`, and `signed_in_personas` enumerates on exactly that
+/// column — so a sign-in whose identity did not link produces a usable
+/// credential that no cycle will ever pick up. `tick` then returns `Ok(())` on
+/// an empty persona list, `schedules.dojo_sync.last_ok` stays true, and nothing
+/// syncs, forever, over a sign-in reported as successful.
+///
+/// Absence is NOT treated as success: this decides what the user is told.
+fn sign_in_will_sync(linked: &serde_json::Value) -> bool {
+    linked["verified"].as_bool() == Some(true)
 }
 
 /// `POST /api/auth/signout` — forget the stored session.
 ///
-/// Clearing a rejected token matters: a permanently-invalid one otherwise makes
-/// every refresh fail identically and the daemon retries forever instead of
-/// surfacing "sign in again".
-pub(crate) async fn signout(Query(p): Query<PersonaQuery>) -> Json<serde_json::Value> {
+/// Sign-out has TWO halves, and having only the first is what made it a lie:
+///
+/// 1. **The Keychain.** [`session::clear_session`] removes every slot the
+///    sign-in wrote. This used to clear one of three, leaving
+///    `provider_token.<slot>` — a GitHub credential with `repo` and `read:org`,
+///    verified live still able to read a private repository — at rest with no
+///    code path anywhere that could remove it.
+/// 2. **The registry.** `personas.session_slot` is what
+///    [`crate::db::pg_store::PgStore::signed_in_personas`] enumerates. Leaving it
+///    set meant the sync cycle kept selecting a persona with no credential:
+///    every 60s it resolved `SignedOut`, and on a single-persona install that
+///    made `tick` fail and pinned `schedules.dojo_sync.last_ok = false` forever.
+///
+/// Both are attempted even if the first fails, and both outcomes are reported.
+/// A partial sign-out that answered `ok: true` would be the same class of lie.
+pub(crate) async fn signout(
+    State(state): State<AppState>,
+    Query(p): Query<PersonaQuery>,
+) -> Json<serde_json::Value> {
     let who = p.persona.clone();
-    match tokio::task::spawn_blocking(move || session::clear_refresh_token(&who)).await {
-        Ok(Ok(())) => {
-            Json(serde_json::json!({ "ok": true, "signedIn": false, "persona": p.persona }))
-        }
-        Ok(Err(e)) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
-        Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+    let keychain = match tokio::task::spawn_blocking(move || session::clear_session(&who)).await {
+        Ok(r) => r.map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+    // Not short-circuited on a Keychain failure: a credential we could not delete
+    // is all the more reason to stop the cycle from presenting it every cadence.
+    let registry = state.pg.clear_persona_session(&p.persona).await;
+
+    let errors: Vec<String> = [keychain.as_ref().err().cloned(), registry.as_ref().err().cloned()]
+        .into_iter()
+        .flatten()
+        .collect();
+    if !errors.is_empty() {
+        tracing::error!(persona = %p.persona, errors = ?errors,
+                        "sign-out did not complete — credentials may remain at rest");
     }
+
+    Json(serde_json::json!({
+        "ok": errors.is_empty(),
+        // Only claimable when the Keychain actually gave the credentials up.
+        "signedIn": keychain.is_err(),
+        "persona": p.persona,
+        // Which halves happened, rather than one boolean covering both. `false`
+        // here means the registry held no such slot — not that it failed.
+        "credentialsCleared": keychain.is_ok(),
+        // `false` here is honest-empty ONLY because a failure is reported beside
+        // it: `ok` is false and `errors` names it. Read alone it would be
+        // indistinguishable from "no row held that slot".
+        "registryReleased": registry.unwrap_or(false),
+        "errors": errors,
+    }))
 }
 
 /// `GET /api/auth/status` — is there a USABLE session?
 ///
+/// Why a persona has no usable access token right now.
+///
+/// Three variants rather than one error string because they call for three
+/// different responses: re-authenticate, wait, or nothing at all. An unattended
+/// sync that cannot tell them apart either nags about a network blip or stays
+/// quiet about a session that will never work again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AuthError {
+    /// No stored session — never signed in, or signed out.
+    SignedOut,
+    /// The dōjō REJECTED the refresh token (401/403). Terminal, and the stored
+    /// session has already been cleared.
+    Rejected(String),
+    /// The dōjō could not be reached, or failed. Transient — the stored session
+    /// was deliberately left alone.
+    Unreachable(String),
+}
+
+/// The detail, so callers can report the cause without destructuring.
+///
+/// Added because three call sites had each written the same match to pull the
+/// String out — `dojo_sync`, the CLI, and the activation proxy.
+impl std::fmt::Display for AuthError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SignedOut => write!(f, "no stored session"),
+            Self::Rejected(d) | Self::Unreachable(d) => write!(f, "{d}"),
+        }
+    }
+}
+
+impl AuthError {
+    /// Whether the user has to sign in again, as opposed to just waiting.
+    pub(crate) fn needs_sign_in(&self) -> bool {
+        matches!(self, Self::SignedOut | Self::Rejected(_))
+    }
+}
+
+/// Classify a failed refresh: does it destroy the stored session or not?
+///
+/// Split out from the I/O so the decision can be tested without a dōjō. Only a
+/// 401/403 is terminal; everything else — a 5xx, a DNS failure, a timeout —
+/// leaves the credential in place, because clearing on those signs the user out
+/// for an outage they did not cause.
+fn refresh_failure(e: &str) -> AuthError {
+    match dojo_auth::status_of(e).is_some_and(dojo_auth::is_rejection) {
+        true => AuthError::Rejected(e.to_string()),
+        false => AuthError::Unreachable(e.to_string()),
+    }
+}
+
+/// A persona's session, refreshed and re-stored.
+pub(crate) struct LiveSession {
+    pub tokens: session::TokenResponse,
+    pub session: session::Session,
+}
+
+/// Refresh one persona's stored session and hand back a usable one.
+///
+/// The single implementation of "get me a working credential for this persona".
+/// [`status`] renders it for a human and the dōjō sync cycle uses it unattended;
+/// before this existed only `status` had it, so the sync path would have grown a
+/// second copy that drifted — starting with the rotation below, which is easy to
+/// leave out and fails a whole session later.
+///
+/// Three obligations, all of which have bitten:
+/// - **Rotate.** The dōjō issues a new refresh token on every use. Keeping the
+///   old one invalidates the session on the NEXT call, which reads as a random
+///   sign-out.
+/// - **Clear only on rejection.** See [`refresh_failure`].
+/// - **Never fabricate.** A persona that cannot be refreshed returns `Err`; it
+///   never yields an empty or stale token that a caller would send as a bearer.
+pub(crate) async fn live_session(persona: &str) -> Result<LiveSession, AuthError> {
+    let who = persona.to_string();
+    let stored = tokio::task::spawn_blocking(move || session::load_refresh_token(&who)).await;
+    let Ok(Ok(refresh)) = stored else {
+        return Err(AuthError::SignedOut);
+    };
+
+    let tokens = match dojo_auth::refresh(&dojo_url(), &refresh).await {
+        Ok(t) => t,
+        Err(e) => {
+            let verdict = refresh_failure(&e);
+            if matches!(verdict, AuthError::Rejected(_)) {
+                let who = persona.to_string();
+                let cleared =
+                    tokio::task::spawn_blocking(move || session::clear_refresh_token(&who)).await;
+                // `Rejected`'s own contract says "the stored session has already
+                // been cleared". If the clear FAILED that is untrue: the dead token
+                // stays in the Keychain, every cadence hits the same 401 forever, and
+                // `signout`'s stated purpose is silently defeated. Report what
+                // actually happened rather than asserting a cleanup that did not.
+                let clear_err = match cleared {
+                    Err(join) => Some(join.to_string()),
+                    Ok(Err(e)) => Some(e.to_string()),
+                    Ok(Ok(())) => None,
+                };
+                if let Some(why) = clear_err {
+                    tracing::error!(persona, error = %why,
+                                    "a REJECTED session could not be cleared — it will keep failing");
+                    return Err(AuthError::Unreachable(format!(
+                        "session was rejected but could not be cleared: {why}"
+                    )));
+                }
+            }
+            return Err(verdict);
+        }
+    };
+
+    let now = chrono::Utc::now().timestamp();
+    let sess = session::Session::from_response(&tokens, now);
+    let rotated = tokens.refresh_token.clone();
+    let who = persona.to_string();
+    let stored =
+        tokio::task::spawn_blocking(move || session::store_refresh_token(&who, &rotated)).await;
+    // NOT discarded. The dōjō has ALREADY rotated, so the token still sitting in the
+    // Keychain is dead: if this write failed, the next cadence gets a 401, clears the
+    // session, and the user is signed out — with nothing anywhere explaining that a
+    // healthy session was destroyed by a silent write failure. A session whose
+    // rotation was not persisted must not be handed out as live.
+    match stored {
+        Err(e) => {
+            tracing::error!(persona, error = %e, "rotated refresh token could not be stored — this session is now dead");
+            return Err(AuthError::Unreachable(format!("could not store the rotated token: {e}")));
+        }
+        Ok(Err(e)) => {
+            tracing::error!(persona, error = %e, "rotated refresh token could not be stored — this session is now dead");
+            return Err(AuthError::Unreachable(format!("could not store the rotated token: {e}")));
+        }
+        Ok(Ok(())) => {}
+    }
+
+    Ok(LiveSession { tokens, session: sess })
+}
+
+/// A bearer token for `persona`, for callers that need only that.
+///
+/// Thin wrapper over [`live_session`], so the refresh, the rotation and the
+/// clear-on-rejection rule cannot drift from what [`status`] reports.
+pub(crate) async fn live_access_token(persona: &str) -> Result<String, AuthError> {
+    live_session(persona).await.map(|s| s.tokens.access_token)
+}
+
 /// Reports whether the stored token still works, not merely that one exists. A
 /// revoked or expired refresh token sits in the Keychain looking healthy, so
 /// "signedIn: true" based on presence alone would be a lie the caller only
@@ -235,51 +710,48 @@ pub(crate) async fn status(
     State(state): State<AppState>,
     Query(p): Query<PersonaQuery>,
 ) -> Json<serde_json::Value> {
-    let who = p.persona.clone();
-    let stored = tokio::task::spawn_blocking(move || session::load_refresh_token(&who)).await;
-    let Ok(Ok(refresh)) = stored else {
-        return Json(
-            serde_json::json!({ "signedIn": false, "persona": p.persona, "dojo": dojo_url() }),
-        );
-    };
-
-    let tokens = match dojo_auth::refresh(&dojo_url(), &refresh).await {
-        Ok(t) => t,
-        Err(e) => {
-            // A REJECTED refresh token is terminal, so clear it: otherwise the
-            // daemon retries a credential the server will never accept and the
-            // user is never told to sign in again. A transport failure is NOT
-            // terminal and must not clear anything — dōjō being briefly
-            // unreachable would otherwise sign the user out for nothing.
-            let rejected = dojo_auth::status_of(&e).is_some_and(dojo_auth::is_rejection);
-            if rejected {
-                let who3 = p.persona.clone();
-                let _ =
-                    tokio::task::spawn_blocking(move || session::clear_refresh_token(&who3)).await;
-            }
+    // The refresh, the rotation and the clear-on-rejection rule all live in
+    // `live_session` now, so the sync cycle runs exactly what this reports.
+    let (tokens, sess) = match live_session(&p.persona).await {
+        Ok(live) => (live.tokens, live.session),
+        Err(AuthError::SignedOut) => {
             return Json(serde_json::json!({
                 "signedIn": false,
                 "persona": p.persona,
-                "error": if rejected {
+                // No credential at all, so signing in is both necessary and
+                // sufficient. Stated as a field for the same reason the forge
+                // token states it: a caller must not infer the remedy from the
+                // ABSENCE of a session, because an unreachable dōjō produces
+                // the same `signedIn: false`.
+                "needsSignIn": true,
+                "dojo": dojo_url(),
+            }));
+        }
+        Err(e @ (AuthError::Rejected(_) | AuthError::Unreachable(_))) => {
+            let detail = match &e {
+                AuthError::Rejected(d) | AuthError::Unreachable(d) => d.clone(),
+                AuthError::SignedOut => unreachable!("handled above"),
+            };
+            return Json(serde_json::json!({
+                "signedIn": false,
+                "persona": p.persona,
+                // The distinction `AuthError` has drawn since it was written,
+                // finally on the wire. Without it every `signedIn: false` looks
+                // alike, and `sensei auth renew-if-needed` opened a browser for
+                // a GoTrue 504 — telling a signed-in user to re-authenticate
+                // over an outage that had nothing to do with their credential.
+                "needsSignIn": e.needs_sign_in(),
+                "error": if e.needs_sign_in() {
                     "stored session was rejected — sign in again"
                 } else {
                     "could not reach dōjō — the stored session was left alone"
                 },
-                "detail": e,
+                "detail": detail,
                 "dojo": dojo_url(),
             }));
         }
     };
-
     let now = chrono::Utc::now().timestamp();
-    let sess = session::Session::from_response(&tokens, now);
-    // dōjō rotates the refresh token on use; storing the new one is not optional
-    // — keeping the old would invalidate the session on the NEXT call, which
-    // looks like a random sign-out.
-    let rotated = tokens.refresh_token.clone();
-    let who2 = p.persona.clone();
-    let _ =
-        tokio::task::spawn_blocking(move || session::store_refresh_token(&who2, &rotated)).await;
 
     // Prove the ACCESS token authenticates, not merely that the refresh did.
     // "signedIn" on the strength of a refresh alone is the lie this endpoint
@@ -304,19 +776,92 @@ pub(crate) async fn status(
         None => None,
     };
 
+    // The FORGE token — a second credential with its own lifetime, and the one
+    // this endpoint was silent about. Everything above concerns the dōjō session:
+    // it can refresh cleanly and report `signedIn: true` while every GitHub call
+    // 401s, which is exactly what happened for a whole morning.
+    let row = forge_row(&state, &p.persona).await;
+    let forge = forge_report(row.as_ref().map(Option::as_ref).map_err(Clone::clone), now);
+
     Json(serde_json::json!({
         "signedIn": auth_user_id.is_some(),
         "persona": p.persona,
         "authUserId": auth_user_id,
         "email": email,
         "identity": linked,
+        // The DŌJŌ session's expiry and refresh need. Named without a prefix for
+        // compatibility; `forgeToken.expiresAt` is the other credential's.
         "expiresAt": sess.expires_at,
         "needsRefresh": sess.needs_refresh(now),
+        // Whether forge-backed work — org provisioning, repository capture,
+        // visibility — will actually succeed right now.
+        "forgeToken": forge.report,
+        // The one remedy that fixes a dead forge token. Its own flag so the UI
+        // need not know that `dead` is the state no daemon action can recover.
+        "needsSignIn": forge.needs_sign_in,
+        // Alive, but near enough to expiry that the app should re-authorize now
+        // — through `POST /api/auth/signin`, whose authorize flow Supabase
+        // performs with the client secret it already holds. The daemon reports
+        // this rather than acting because the flow needs a browser.
+        "renewalDue": forge.renewal_due,
         "dojo": dojo_url(),
         // Present only when the token could NOT be used — an unusable session is
         // reported as such rather than as a bare signedIn:false.
         "error": usable.as_ref().err(),
     }))
+}
+
+/// `GET /api/auth/personas` — every identity, and what each one needs.
+///
+/// The sign-in surface reads this. It lists personas that have NEVER been
+/// connected as well as connected ones: sensei infers identities from commit
+/// authorship, so a fresh install has several, and those are exactly the rows a
+/// "connect an identity" list exists to offer.
+///
+/// READ-ONLY, and it does not probe the forge. The standing comes from what the
+/// scheduled check and `observe` have already recorded, so opening the list
+/// costs nothing.
+///
+/// A failed read is a 500, not an empty list. `[]` would read as "you have no
+/// identities" — and the remedy a user would reach for is to connect one, which
+/// is the wrong action against a database that is merely unreachable.
+pub(crate) async fn personas(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    use crate::dojo_client::forge_token::{PersonaAction, persona_action};
+
+    let rows = state.pg.persona_rows().await.map_err(|e| {
+        tracing::error!(error = %e, "personas: could not read the registry");
+        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let now = chrono::Utc::now().timestamp();
+    let list: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            let action =
+                persona_action(r.session_slot.as_deref(), r.verified, &r.state, r.expires_at, now);
+            serde_json::json!({
+                "label": r.label,
+                // The DISPLAY label is rewritten to the verified login on
+                // sign-in, so for a connected persona these usually match. For
+                // an inferred one the login is null — it has never been asked.
+                "githubLogin": r.github_login,
+                // What the Keychain slot is called. Carried so the caller can
+                // address the right credential: the label is NOT the slot, and
+                // signing in against the label silently skips the persona.
+                "sessionSlot": r.session_slot,
+                "connected": r.session_slot.is_some() && r.verified,
+                "forgeToken": { "state": r.state, "expiresAt": r.expires_at },
+                "action": match action {
+                    PersonaAction::Connect => "connect",
+                    PersonaAction::SignIn => "signIn",
+                    PersonaAction::Renew => "renew",
+                    PersonaAction::None => "none",
+                },
+            })
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "personas": list })))
 }
 
 /// `GET /api/auth/orgs?persona=…` — the GitHub organisations this persona can see.
@@ -330,7 +875,10 @@ pub(crate) async fn status(
 /// bare `[]` is indistinguishable from "this user belongs to no organisations",
 /// which is the wrong conclusion to hand a provisioning step that would then
 /// create nothing and report success.
-pub(crate) async fn orgs(Query(p): Query<PersonaQuery>) -> Json<serde_json::Value> {
+pub(crate) async fn orgs(
+    State(state): State<AppState>,
+    Query(p): Query<PersonaQuery>,
+) -> Json<serde_json::Value> {
     let who = p.persona.clone();
     let token = match tokio::task::spawn_blocking(move || session::load_provider_token(&who)).await
     {
@@ -353,6 +901,25 @@ pub(crate) async fn orgs(Query(p): Query<PersonaQuery>) -> Json<serde_json::Valu
         .header("User-Agent", "sensei")
         .send()
         .await;
+
+    // Learn what this call implies about the token, before consuming the body.
+    // The response is here anyway; not reading it would mean waiting up to a
+    // scheduling interval to discover a deadline GitHub just told us.
+    if let Ok(r) = resp.as_ref() {
+        let status = r.status().as_u16();
+        let exp = r
+            .headers()
+            .get(crate::dojo_client::forge_token::EXPIRY_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        crate::dojo_client::forge_token::observe(
+            &state.pg,
+            &p.persona,
+            Some(status),
+            exp.as_deref(),
+        )
+        .await;
+    }
 
     match resp {
         Ok(r) if r.status().is_success() => {
@@ -421,7 +988,23 @@ async fn link_verified_identity(
     // one human commits under several, and only GitHub knows the full set.
     let mut emails: Vec<String> = primary.map(|e| vec![e.to_string()]).unwrap_or_default();
     if let Some(pt) = provider_token {
-        emails.extend(github_verified_emails(pt).await);
+        let seen = github_verified_emails(pt).await;
+        // The first forge call after a sign-in, so it is also the first chance
+        // to learn the NEW token's deadline. Without this a renewal recorded
+        // the previous token's expiry and kept reporting `renewalDue`, which
+        // makes `renew-if-needed` authorize on every run — verified by watching
+        // it stay "expires soon" seconds after a renewal that worked.
+        //
+        // Best-effort by construction: `observe` writes nothing when the call
+        // did not reach the forge, and never changes this function's outcome.
+        crate::dojo_client::forge_token::observe(
+            &state.pg,
+            persona,
+            seen.status,
+            seen.expiry_header.as_deref(),
+        )
+        .await;
+        emails.extend(seen.emails);
     }
     emails.sort();
     emails.dedup();
@@ -465,7 +1048,23 @@ fn github_identity(user: &serde_json::Value) -> Option<(&str, i64)> {
 /// An empty result on failure is correct here and not a masked error — the
 /// caller treats these as ADDITIONS to the primary address, so "none found"
 /// simply links fewer aliases rather than fabricating any.
-async fn github_verified_emails(provider_token: &str) -> Vec<String> {
+/// Verified emails, and what the call revealed about the token.
+///
+/// The second half exists because this is the FIRST forge call after a sign-in.
+/// Its response carries the expiry header, and discarding it left a freshly
+/// minted token recorded with whatever deadline the previous one had — so a
+/// renewal that WORKED still read as `renewalDue`, and `renew-if-needed` would
+/// authorize again on every invocation. Observed exactly that.
+struct VerifiedEmails {
+    emails: Vec<String>,
+    /// `None` when no response arrived — which says nothing, and must not be
+    /// recorded as anything.
+    status: Option<u16>,
+    expiry_header: Option<String>,
+}
+
+async fn github_verified_emails(provider_token: &str) -> VerifiedEmails {
+    let none = |status| VerifiedEmails { emails: Vec::new(), status, expiry_header: None };
     let Ok(r) = crate::federation::http_client()
         .get("https://api.github.com/user/emails")
         .header("Authorization", format!("Bearer {provider_token}"))
@@ -474,25 +1073,331 @@ async fn github_verified_emails(provider_token: &str) -> Vec<String> {
         .send()
         .await
     else {
-        return Vec::new();
+        return none(None);
     };
+    let status = r.status().as_u16();
+    let expiry_header = r
+        .headers()
+        .get(crate::dojo_client::forge_token::EXPIRY_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
     if !r.status().is_success() {
-        return Vec::new();
+        // A 401 here is exactly how a dead token announces itself, and the
+        // caller records it — so the status is carried out even on failure.
+        return VerifiedEmails { emails: Vec::new(), status: Some(status), expiry_header };
     }
     let list: serde_json::Value = r.json().await.unwrap_or_default();
-    list.as_array()
+    let emails = list
+        .as_array()
         .map(|a| {
             a.iter()
                 .filter(|e| e["verified"].as_bool() == Some(true))
                 .filter_map(|e| e["email"].as_str().map(String::from))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    VerifiedEmails { emails, status: Some(status), expiry_header }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sign_in_whose_identity_did_not_link_is_not_reported_as_a_success() {
+        // The callback answered `ok:true, signedIn:true` whenever the refresh
+        // token stored, regardless of whether the persona was LINKED. But
+        // `link_persona_identity` is what writes `personas.session_slot`, and
+        // `signed_in_personas` enumerates on exactly that column — so an
+        // unlinked sign-in leaves the cycle with nothing to iterate.
+        //
+        // The result was the quietest possible failure: `tick` returns Ok on an
+        // empty persona list, `schedules.dojo_sync.last_ok` stays true, no
+        // `sync_state` row is ever written, and not one row ever syncs — over a
+        // sign-in the user was told had worked.
+        for unlinked in [
+            serde_json::json!({ "verified": false, "reason": "the exchange returned no user" }),
+            serde_json::json!({ "verified": false, "reason": "no github identity on this account" }),
+            serde_json::json!({ "verified": false, "reason": "some database error" }),
+        ] {
+            assert!(!sign_in_will_sync(&unlinked), "unlinked: {unlinked}");
+        }
+    }
+
+    #[test]
+    fn a_linked_sign_in_is_reported_as_one() {
+        // The other half — a working sign-in must not be reported as broken, or
+        // the field is noise and gets ignored.
+        assert!(sign_in_will_sync(&serde_json::json!({
+            "verified": true, "personaId": "abc", "githubLogin": "sensei-hq-org"
+        })));
+        // A shape with no `verified` key at all is NOT assumed good: this decides
+        // whether the user is told their sign-in works.
+        assert!(!sign_in_will_sync(&serde_json::json!({})));
+    }
+
+    /// A fixed "now" so margin arithmetic in these tests is readable.
+    const NOW: i64 = 1_788_120_000;
+
+    fn row(state: &str, expires_at: Option<i64>) -> ForgeTokenRow {
+        ForgeTokenRow { session_slot: "default".into(), state: state.into(), expires_at }
+    }
+
+    #[test]
+    fn a_dead_forge_token_is_the_one_state_that_asks_for_a_sign_in() {
+        // The whole point of the field. `dead` is unrecoverable without the user
+        // — the daemon cannot mint a GitHub token — and every other state is
+        // either fine or merely not-yet-known, neither of which should nag.
+        let r = forge_report(Ok(Some(&row("dead", Some(1_788_091_200)))), NOW);
+        assert!(r.needs_sign_in);
+        assert_eq!(r.report["state"], "dead");
+        assert_eq!(r.report["expiresAt"], 1_788_091_200_i64);
+
+        for alive in ["active", "unknown", "absent"] {
+            assert!(
+                !forge_report(Ok(Some(&row(alive, None))), NOW).needs_sign_in,
+                "{alive} must not ask for a sign-in"
+            );
+        }
+    }
+
+    /// The text a person actually reads — everything inside `<main>`, tags
+    /// stripped. Voice assertions belong here, not against the document.
+    fn visible_text(html: &str) -> String {
+        let inner = html
+            .split_once("<main>")
+            .and_then(|(_, rest)| rest.split_once("</main>"))
+            .map(|(inner, _)| inner)
+            .unwrap_or("");
+        let mut out = String::new();
+        let mut in_tag = false;
+        for c in inner.chars() {
+            match c {
+                '<' => in_tag = true,
+                '>' => in_tag = false,
+                _ if !in_tag => out.push(c),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn the_sign_in_page_names_who_signed_in_and_says_the_window_can_close() {
+        // The browser lands here at the end of the OAuth redirect. It used to
+        // render the raw JSON body, which tells a person nothing and looks like
+        // a crash — Dev hit exactly that.
+        let html = sign_in_html(&SignInPage::Success { login: "sensei-hq-org".into() });
+        assert!(html.contains("sensei-hq-org"), "names the account: {html}");
+        assert!(html.to_lowercase().contains("close"), "says the window can close");
+        assert!(html.starts_with("<!doctype html>"), "a real document, not a fragment");
+        // Voice rules apply to the PROSE, not the markup — `<!doctype>` and the
+        // CSS are not sentences. Checked against the visible text only.
+        let prose = visible_text(&html);
+        assert!(!prose.contains('!'), "no exclamations: {prose}");
+        assert!(!prose.contains("Sensei"), "lowercase sensei in prose: {prose}");
+    }
+
+    #[test]
+    fn a_failed_sign_in_says_what_went_wrong_rather_than_congratulating() {
+        // The redirect lands here on refusal too — a declined consent screen, a
+        // bad code. Showing a success page would be a lie the user only
+        // discovers when nothing syncs.
+        let html = sign_in_html(&SignInPage::Failure { detail: "invalid grant".into() });
+        assert!(html.contains("invalid grant"));
+        assert!(!html.to_lowercase().contains("signed in as"), "not a success page: {html}");
+    }
+
+    #[test]
+    fn a_stored_but_unlinked_sign_in_is_neither_success_nor_failure() {
+        // The credential works and nothing will sync — `sign_in_will_sync`. The
+        // page has to say so, because both other pages would mislead.
+        let html =
+            sign_in_html(&SignInPage::Partial { detail: "this persona is not linked".into() });
+        assert!(html.contains("this persona is not linked"));
+        assert!(html.to_lowercase().contains("close"));
+    }
+
+    #[test]
+    fn untrusted_text_is_escaped_before_it_reaches_the_page() {
+        // The login comes from GitHub and the detail from the dōjō's error body.
+        // Interpolating either raw makes this page an injection sink reachable
+        // by anyone who can influence an OAuth error message.
+        let html = sign_in_html(&SignInPage::Failure {
+            detail: "<img src=x onerror=alert(1)>&\"'".into(),
+        });
+        assert!(!html.contains("<img"), "tag not escaped: {html}");
+        assert!(html.contains("&lt;img"), "escaped form missing: {html}");
+        assert!(html.contains("&amp;"), "ampersand not escaped");
+        assert!(html.contains("&quot;"), "quote not escaped");
+
+        let html = sign_in_html(&SignInPage::Success { login: "<script>x</script>".into() });
+        assert!(!html.contains("<script>x"), "login not escaped: {html}");
+    }
+
+    #[test]
+    fn the_page_is_chosen_from_the_same_body_the_json_callers_get() {
+        // One source of truth. If the page were built from separate reasoning it
+        // could congratulate a user whose JSON said the sign-in did not link.
+        let success = serde_json::json!({
+            "ok": true, "signedIn": true,
+            "identity": { "verified": true, "githubLogin": "sensei-hq-org" }
+        });
+        assert!(
+            matches!(page_of(&success), SignInPage::Success { login } if login == "sensei-hq-org")
+        );
+
+        // Stored, but the persona did not link — `willSync` false. Neither a
+        // success nor a failure, and the page has to say which.
+        let partial = serde_json::json!({
+            "ok": false, "signedIn": true,
+            "error": "signed in, but this persona is not linked"
+        });
+        assert!(matches!(page_of(&partial), SignInPage::Partial { .. }));
+
+        // The exchange itself failed: no credential stored at all.
+        let failed = serde_json::json!({ "ok": false, "error": "invalid grant" });
+        assert!(
+            matches!(page_of(&failed), SignInPage::Failure { detail } if detail == "invalid grant")
+        );
+    }
+
+    #[test]
+    fn a_success_with_no_login_still_reports_success_without_inventing_a_name() {
+        // The identity block can be absent on an older dōjō. Saying "signed in"
+        // without a name is honest; printing a placeholder name is not.
+        let body = serde_json::json!({ "ok": true, "signedIn": true });
+        let page = page_of(&body);
+        assert!(matches!(&page, SignInPage::Success { login } if login.is_empty()));
+        // And the rendered heading must not read "Signed in as " with nothing.
+        let html = sign_in_html(&page);
+        assert!(!visible_text(&html).contains("as  "), "dangling name: {html}");
+        assert!(!visible_text(&html).trim_end().ends_with("as"), "dangling name: {html}");
+    }
+
+    #[test]
+    fn a_browser_gets_html_and_anything_else_gets_json() {
+        // Content negotiation rather than a hard switch: the browser is the only
+        // caller today, but a caller that asked for JSON and got a document
+        // would break with no way to tell why.
+        assert!(wants_html(Some("text/html,application/xhtml+xml,*/*;q=0.8")));
+        assert!(wants_html(Some("text/html")));
+        assert!(!wants_html(Some("application/json")));
+        // curl sends `*/*`. It is not a browser, so it keeps the JSON.
+        assert!(!wants_html(Some("*/*")));
+        assert!(!wants_html(None));
+    }
+
+    #[test]
+    fn the_two_signed_out_reasons_carry_different_remedies() {
+        // `AuthError` has always known the difference; `status` did not report
+        // it, so every caller saw one undifferentiated `signedIn: false`.
+        // Rejected means the credential is GONE (already cleared) and a sign-in
+        // fixes it. Unreachable means it was deliberately left alone and a
+        // sign-in fixes nothing — it just destroys a working session.
+        assert!(AuthError::SignedOut.needs_sign_in());
+        assert!(AuthError::Rejected("401".into()).needs_sign_in());
+        assert!(!AuthError::Unreachable("504 request_timeout".into()).needs_sign_in());
+    }
+
+    #[test]
+    fn renewal_becomes_due_inside_the_margin_and_not_before() {
+        // The signal that replaced the refresh endpoint. The daemon cannot renew
+        // a forge token unattended — redeeming needs the App's client secret,
+        // which lives in Supabase and stays there — so it REPORTS that renewal
+        // is due and the app runs the authorize flow Supabase already owns.
+        let due = forge_report(Ok(Some(&row("active", Some(NOW + 600)))), NOW);
+        assert!(due.renewal_due, "10 minutes from expiry is inside the margin");
+
+        let not_yet = forge_report(Ok(Some(&row("active", Some(NOW + 6 * 3600)))), NOW);
+        assert!(!not_yet.renewal_due, "6 hours out is not due");
+    }
+
+    #[test]
+    fn a_dead_token_asks_for_a_sign_in_rather_than_a_renewal() {
+        // Renewing a dead token cannot work: the authorize flow still needs the
+        // user, and `needsSignIn` is already the field that says so. Reporting
+        // both would have the UI offer two remedies for one problem.
+        let r = forge_report(Ok(Some(&row("dead", Some(NOW - 60)))), NOW);
+        assert!(r.needs_sign_in);
+        assert!(!r.renewal_due, "a dead token needs a sign-in, not a renewal");
+    }
+
+    #[test]
+    fn an_unknown_expiry_is_not_treated_as_due() {
+        // No deadline recorded means we cannot tell. Claiming renewal is due
+        // would make the app re-authorize on every poll forever.
+        assert!(!forge_report(Ok(Some(&row("active", None))), NOW).renewal_due);
+        assert!(!forge_report(Ok(None), NOW).renewal_due);
+        assert!(!forge_report(Err("db down".into()), NOW).renewal_due);
+    }
+
+    #[test]
+    fn no_row_reports_unknown_rather_than_inventing_a_standing() {
+        // A persona the check has never reached has no recorded state. Reporting
+        // `active` would be a fabricated standing; reporting `dead` would nag for
+        // a sign-in nothing has established is needed.
+        let ForgeReport { report, needs_sign_in, .. } = forge_report(Ok(None), NOW);
+        assert_eq!(report["state"], "unknown");
+        assert!(report["expiresAt"].is_null());
+        assert!(!needs_sign_in);
+        assert!(report.get("error").is_none(), "no row is not an error");
+    }
+
+    #[test]
+    fn a_failed_read_is_distinguishable_from_a_missing_row() {
+        // Both answer `unknown`, because both genuinely are. But "we have never
+        // checked" and "we could not ask" call for different responses, and
+        // collapsing them makes a broken registry look like a fresh persona.
+        let ForgeReport { report, needs_sign_in, .. } =
+            forge_report(Err("connection refused".into()), NOW);
+        assert_eq!(report["state"], "unknown");
+        assert_eq!(report["error"], "connection refused");
+        // Never on a read failure: the remedy is to fix the daemon's database,
+        // not to make the user re-authenticate a token that is probably fine.
+        assert!(!needs_sign_in);
+    }
+
+    #[test]
+    fn only_a_401_or_403_is_terminal_enough_to_destroy_the_stored_session() {
+        // This classification decides whether a refresh token is DELETED. Get it
+        // backwards and a dōjō that is briefly unreachable signs the user out of
+        // every persona — recoverable only by a fresh browser sign-in.
+        //
+        // A 5xx is the case that matters: it comes back from the same code path
+        // as a 401, looks equally like "the server said no", and is precisely the
+        // failure a retry fixes.
+        for terminal in ["dōjō returned 401: bad refresh", "dōjō returned 403"] {
+            assert!(
+                matches!(refresh_failure(terminal), AuthError::Rejected(_)),
+                "{terminal} must clear the session"
+            );
+        }
+        for transient in [
+            "dōjō returned 500: boom",
+            "dōjō returned 502",
+            "error sending request: connection refused",
+            "operation timed out",
+        ] {
+            assert!(
+                matches!(refresh_failure(transient), AuthError::Unreachable(_)),
+                "{transient} must LEAVE the session alone"
+            );
+        }
+    }
+
+    #[test]
+    fn every_auth_error_says_whether_signing_in_again_is_required() {
+        // The cycle skips a persona on any of these; only one of them is worth
+        // telling the user about, so the variants must stay distinguishable
+        // rather than collapsing into one "auth failed".
+        assert!(AuthError::SignedOut.needs_sign_in());
+        assert!(AuthError::Rejected("401".into()).needs_sign_in());
+        assert!(
+            !AuthError::Unreachable("timeout".into()).needs_sign_in(),
+            "a network blip is not a sign-out"
+        );
+    }
 
     /// The shape GoTrue actually returned for the two live sign-ins.
     fn user_with(identities: serde_json::Value) -> serde_json::Value {

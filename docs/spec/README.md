@@ -99,7 +99,7 @@ Every spec must honour these. If a spec pushes against one, call it out.
 6. **Insight copy comes from the model, not the template.** Every
    human-readable string on an insight card, koan, adopted-blurb,
    drift note, or FTR sentence goes through
-   [[pipeline/insight-copy]] — embedded gemma4 first, static template
+   [[pipeline/narration-cache]] — embedded gemma4 first, static template
    as fallback. Templated copy hits its ceiling immediately (the same
    "N tools dormant" reads as noise the second time). The mentor
    voice needs a mentor writer. Actions and route labels stay
@@ -245,7 +245,7 @@ not yet built (verify against the code before relying on it — see
 | [pipeline/libraries.md](pipeline/libraries.md) | **draft** | Detect → wrap → query → watch + lib-docs ingestion |
 | [pipeline/insights.md](pipeline/insights.md) | **draft** | Generator + apply/review/dismiss + follow-up to impact |
 | [pipeline/signals.md](pipeline/signals.md) | **draft** | Health-tab signal derivation (rewritten today) |
-| [pipeline/insight-copy.md](pipeline/insight-copy.md) | **draft** | LLM-generated human-readable insight text — gemma4 primary, static fallback. **All insight copy reaches for this.** |
+| [pipeline/narration-cache.md](pipeline/narration-cache.md) | **draft** | LLM-generated human-readable insight text — gemma4 primary, static fallback. **All insight copy reaches for this.** |
 | [pipeline/project-icon.md](pipeline/project-icon.md) | **draft** | README/logo/favicon → project icon inference chain with kanji + letter fallback. |
 | [pipeline/memory.md](pipeline/memory.md) | **draft** | Memory pipeline — LLM-primary consumer via MCP `get_memories`; formation, scope, promotion ladder, feedback. |
 | [pipeline/mcp-surface.md](pipeline/mcp-surface.md) | **draft** | Tool declarations + defaults contract + third-party discovery |

@@ -123,14 +123,17 @@ describe('ScrRulePacks — adopt/drop rule bundles', () => {
 describe('ScrMyDojos — memberships grouped + empty state', () => {
 	afterEach(cleanup);
 
-	it('groups memberships into employer · clients · communities', () => {
-		const { getByText } = render(ScrMyDojos, { props: { dojos } });
+	it('groups memberships under Organizations, with no relationship buckets', () => {
+		const { getByText, queryByText } = render(ScrMyDojos, { props: { dojos } });
 		expect(getByText('My dōjōs')).toBeTruthy();
-		expect(getByText('Employer')).toBeTruthy();
-		expect(getByText('Clients')).toBeTruthy();
-		expect(getByText('Communities')).toBeTruthy();
+		expect(getByText('Organizations')).toBeTruthy();
 		// a membership renders by name.
 		expect(getByText('Acme Corp')).toBeTruthy();
+		// The buckets that asserted a relationship nobody stated are gone from the
+		// screen, not merely relabelled.
+		for (const gone of ['Employer', 'Clients', 'Communities']) {
+			expect(queryByText(gone)).toBeNull();
+		}
 	});
 
 	it('fires onOpen when a membership row is clicked', async () => {
@@ -146,7 +149,7 @@ describe('ScrMyDojos — memberships grouped + empty state', () => {
 			props: { dojos: [], onCreateOrJoin }
 		});
 		expect(getByText('No memberships yet — create or join a Dōjō.')).toBeTruthy();
-		expect(queryByText('Employer')).toBeNull();
+		expect(queryByText('Organization')).toBeNull();
 	});
 
 	it('fires onCreateOrJoin from the empty-state affordance', async () => {

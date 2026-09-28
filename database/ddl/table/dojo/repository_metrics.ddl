@@ -10,23 +10,9 @@ create table if not exists repository_metrics (
   id            uuid        primary key default gen_random_uuid()
 , tenant_id     uuid        not null references dojo.tenants(id)       on delete cascade
 , repository_id uuid        not null references dojo.repositories(id)  on delete cascade
--- References sensei.metrics — the ONE metric catalogue, not a dōjō-side copy.
---
--- Product-owned reference data follows the sensei.rule_packs pattern: a single
--- table in the `sensei` schema, deployed to BOTH planes (the daemon through the
--- default scope, Supabase through the `dojo` scope's includes). These are
--- separate databases, so each gets its own rows from the same staging file.
---
--- A dojo.metrics mirror existed briefly. Two tables for one thing diverge, and
--- these two already had: different columns, and text where the catalogue uses
--- enums. Deleted rather than kept in sync by hand.
 , metric_id     uuid        not null references sensei.metrics(id)     on delete cascade
   -- repo = the whole repository, all authors. user = one principal's own work.
 , scope         text        not null check (scope in ('repo', 'user'))
-  -- WHO a scope='user' row belongs to. A principal, never a git email: a commit
-  -- trailer is an unverified assertion — anyone can set user.email to a
-  -- colleague's address — so attributing shared numbers by it would be an
-  -- attribution attack. The email may travel in props; it must not be the key.
 , principal_id  uuid        references dojo.principals(id) on delete set null
 , commit_sha    text
 , computed_on   date        not null
@@ -35,7 +21,7 @@ create table if not exists repository_metrics (
 , props         jsonb       not null default '{}'
 , source        text        not null default 'measured'
 , pushed_at     timestamptz not null default now()
-, unique (metric_id, repository_id, scope, principal_id, commit_sha, computed_on, grain)
+, unique nulls not distinct (metric_id, repository_id, scope, principal_id, commit_sha, computed_on, grain)
 );
 
 create index if not exists repository_metrics_lookup
@@ -48,3 +34,9 @@ activity behind them being shared at all.';
 
 comment on column repository_metrics.principal_id
      is 'The person a scope=user row belongs to. A principal, NOT a git email: commit trailers are unverified and would let anyone attribute work to a colleague.';
+comment on column repository_metrics.metric_id
+     is 'References sensei.metrics — the ONE metric catalogue, not a dōjō-side copy.
+
+Product-owned reference data follows the sensei.rule_packs pattern: a single table in the `sensei` schema, deployed to BOTH planes (the daemon through the default scope, Supabase through the `dojo` scope''s includes). These are separate databases, so each gets its own rows from the same staging file.
+
+A dojo.metrics mirror existed briefly. Two tables for one thing diverge, and these two already had: different columns, and text where the catalogue uses enums. Deleted rather than kept in sync by hand.';

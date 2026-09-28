@@ -556,7 +556,7 @@ mod tests {
         // completed → unknown) all resolve as expected.
         let state = state_with(
             vec![task_with(11, TaskKind::ProcessFile)],
-            vec![task_with(22, TaskKind::BuildConnections)],
+            vec![task_with(22, TaskKind::DetectCommunities)],
             vec![task_with(33, TaskKind::ProcessGitFolder)],
         );
         let summary = blocker_summary(&state, &[11, 22, 33, 99]);
@@ -564,7 +564,7 @@ mod tests {
             summary,
             vec![
                 "11:process_file".to_string(),
-                "22:build_connections".to_string(),
+                "22:detect_communities".to_string(),
                 "33:process_git_folder".to_string(),
                 "99:?".to_string(),
             ],
@@ -599,7 +599,7 @@ mod tests {
 
         // Enqueue barrier that depends on both
         let barrier = q
-            .enqueue(Task::new(TaskKind::BuildConnections, "repo", "").blocked_by(vec![f1, f2]))
+            .enqueue(Task::new(TaskKind::DetectCommunities, "repo", "").blocked_by(vec![f1, f2]))
             .await;
 
         // Barrier should be blocked
@@ -627,7 +627,7 @@ mod tests {
         // Can dequeue barrier
         let bt = q.next_task().await;
         assert_eq!(bt.id, barrier);
-        assert_eq!(bt.kind, TaskKind::BuildConnections);
+        assert_eq!(bt.kind, TaskKind::DetectCommunities);
     }
 
     #[tokio::test]
@@ -636,7 +636,7 @@ mod tests {
 
         // Create barrier first with no deps
         let barrier =
-            q.enqueue(Task::new(TaskKind::BuildConnections, "repo", "").blocked_by(vec![])).await;
+            q.enqueue(Task::new(TaskKind::DetectCommunities, "repo", "").blocked_by(vec![])).await;
 
         // Barrier starts as Pending (no deps)
         // Now add file tasks and wire them as deps
@@ -652,8 +652,9 @@ mod tests {
     async fn failed_task_unblocks_dependents() {
         let q = TaskQueue::new();
         let f1 = q.enqueue(Task::new(TaskKind::ProcessFile, "repo", "a.ts")).await;
-        let _barrier =
-            q.enqueue(Task::new(TaskKind::BuildConnections, "repo", "").blocked_by(vec![f1])).await;
+        let _barrier = q
+            .enqueue(Task::new(TaskKind::DetectCommunities, "repo", "").blocked_by(vec![f1]))
+            .await;
 
         let t = q.next_task().await;
         q.fail(t.id, "parse error".into()).await;
@@ -850,7 +851,7 @@ mod tests {
             TaskKind::ScanRoot,
             TaskKind::ProcessGitFolder,
             TaskKind::ProcessFile,
-            TaskKind::BuildConnections,
+            TaskKind::DetectCommunities,
             TaskKind::DetectCommunities,
             TaskKind::EmbedNodes,
             TaskKind::AggregateCorrections,

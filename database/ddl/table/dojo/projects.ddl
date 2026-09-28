@@ -50,19 +50,6 @@ resolution (dedup + mandatory locks + discards); the dōjō only displays it, ne
 re-resolves. Null until the daemon federates it → the dōjō shows its "resolves in
 your editor" state (honest-empty, never a fabricated ladder).';
 
--- Row-level security — the client-direct read path connects as `authenticated`;
--- RLS narrows to the user's own projects. A table-level GRANT is still required
--- for the role to touch the table at all (without it RLS never even evaluates).
--- SELECT only — the daemon upserts via the service_role path. Mirrors the
--- relay_sessions own-rows pattern, but keyed on user_id directly (projects have
--- no membership indirection). `(select auth.uid())` is evaluated once per query.
-alter table dojo.projects enable row level security;
-
-grant select on dojo.projects to authenticated;
-
-drop policy if exists projects_select_own on dojo.projects;
-create policy projects_select_own
-    on dojo.projects
-    for select
-    to authenticated
-    using (user_id = (select auth.uid()));
+-- Row-level security lives in policies/dojo/projects.sql, not here: the policy
+-- calls dojo.current_principal_id(), and `dbd apply` creates every table before
+-- any function, so inline it would fail the deploy. See policies/README.md.

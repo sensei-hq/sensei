@@ -2,7 +2,7 @@
 //!
 //! A rule with `verification = 'checker'` names a canonical command verb in
 //! `checker_ref` (lint | test | build). For a given repo the daemon maps that
-//! verb to the repo's manifest-discovered command (`sensei.project_commands`),
+//! verb to the repo's manifest-discovered command (`sensei.folder_commands`),
 //! runs it in the repo directory, and records the outcome in
 //! `sensei.rule_check_runs`. This turns an otherwise advisory rule into an
 //! enforceable signal.

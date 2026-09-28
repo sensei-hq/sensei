@@ -17,10 +17,10 @@ items deliberately deferred (each evaluated, none block the screen — done+wron
 ## Deferred to existing tracks
 - **Insight cards are monotone** — all live insights render kanji `繰` + label
   "Recommendation". The mockup differentiated pattern-recurring / teaching-adopted /
-  drift-detected. Needs recs to carry a category discriminator → **insight-copy pipeline
+  drift-detected. Needs recs to carry a category discriminator → **narration-cache pipeline
   (#65)**. Spec permits fallback copy until wired.
 - **Adopted `what` is raw prose** — memory titles are captured verbatim (conversation
-  fragments), not distilled teachings. Same insight-copy distillation pass. `adopted_row()`
+  fragments), not distilled teachings. Same narration-cache distillation pass. `adopted_row()`
   trims whitespace but doesn't cap length; `AdoptedCard.svelte` wraps rather than truncates.
 
 ## Small, self-contained (any future session)

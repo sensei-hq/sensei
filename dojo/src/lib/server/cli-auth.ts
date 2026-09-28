@@ -17,8 +17,17 @@
 /** Where a daemon's loopback callback lives. Fixed path; only the port varies. */
 const DAEMON_CALLBACK_PATH = '/api/auth/callback';
 
-/** Scopes beyond the provider default, matching kavach.config.js's github provider. */
-const EXTRA_SCOPES = ['read:org'];
+/** Scopes beyond the provider default, matching kavach.config.js's github provider.
+ *
+ *  Kept in step with that file deliberately — a CLI sign-in and a browser sign-in
+ *  must yield a token that can see the SAME repositories, or forge capture
+ *  succeeds on one path and fails closed on the other, which is indistinguishable
+ *  from the repository genuinely being unreachable. A test pins the two together.
+ *
+ *  `user:email` is omitted because it IS the provider default; repeating it only
+ *  duplicates it on the consent screen. See kavach.config.js for why `repo` is
+ *  here and what it costs. */
+const EXTRA_SCOPES = ['read:org', 'repo'];
 
 /**
  * Ports a daemon may be forwarded to.

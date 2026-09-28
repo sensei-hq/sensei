@@ -19,14 +19,8 @@ const mount = (pathname = "/") => {
   return m;
 };
 
-// The All|Focus control is a rokkit Toggle — its options are [data-toggle-option].
-const segButton = (container: HTMLElement, label: string) =>
-  [...container.querySelectorAll("[data-toggle-option]")].find(
-    (b) => b.textContent?.trim() === label,
-  ) as HTMLElement | undefined;
-
 describe("ObservatorySidebar", () => {
-  it("renders every rail entry and both cluster labels in All mode", () => {
+  it("renders every rail entry and both cluster labels", () => {
     const { container } = mount("/");
     const t = container.textContent ?? "";
     for (const label of [
@@ -62,20 +56,23 @@ describe("ObservatorySidebar", () => {
     ).toBe("/projects");
   });
 
-  it("hides the Review group and Settings when Focus is selected", () => {
+  it("has no All|Focus control, and always shows the whole rail", () => {
+    // The toggle is gone. It hid Review and Settings, which bought little on a
+    // rail this short, and the rokkit Toggle it used has a dark-mode contrast
+    // bug in the `zen-sumi` style: the hover/focus rule is not guarded against
+    // `[data-selected]` and is MORE specific than the selected rule, so
+    // focusing the chosen segment replaced its `primary`/`on-primary` pair with
+    // `paper-mute`/`ink-mute` — muted on muted, invisible in dark mode.
+    //
+    // Asserted rather than merely deleted, so the control cannot creep back
+    // without this failing.
     const { container } = mount("/");
-    expect(container).toMatchSnapshot();
-    const focusBtn = segButton(container, "Focus");
-    expect(focusBtn).toBeTruthy();
-    focusBtn!.click();
-    flushSync();
+    expect(container.querySelectorAll("[data-toggle-option]")).toHaveLength(0);
+
     const t = container.textContent ?? "";
-    expect(t).not.toContain("Review");
-    expect(t).not.toContain("Settings");
-    expect(t).not.toContain("Sessions");
-    // Anchors + "Needs you" remain.
-    expect(t).toContain("Insights");
-    expect(t).toContain("Projects");
+    for (const label of ["Review", "Settings", "Sessions", "Insights", "Projects"]) {
+      expect(t, label).toContain(label);
+    }
   });
 
   it("shows the project count badge when provided", () => {

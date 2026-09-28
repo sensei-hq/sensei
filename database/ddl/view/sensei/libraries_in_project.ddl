@@ -8,7 +8,11 @@ select distinct
      , l.ecosystem
      , l.kind          as library_kind
      , l.description
-     , l.page_count
+       -- page_count is per VERSION now (S7b), so it is DERIVED here rather
+       -- than stored on `libraries`. The latest version is what a project
+       -- without a matching pin would be served, so that is the count shown.
+     , coalesce((select v.page_count from library_versions v
+                  where v.library_id = l.id and v.is_latest), 0) as page_count
      , l.icons
      , l.tags
   from referenced_libraries rl

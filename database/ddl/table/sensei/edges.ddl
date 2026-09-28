@@ -11,6 +11,8 @@ create table if not exists edges (
 , confidence               edge_confidence not null default 'extracted'
 , confidence_score         numeric(3,2)
 , props                    jsonb           not null default '{}'
+, resolved_via             text
+, unresolved_reason        text
 , modified_at              timestamptz     not null default now()
 );
 
@@ -29,6 +31,28 @@ create index if not exists edges_kind_idx
 
 create index if not exists edges_confidence_idx
     on edges(confidence);
+
+-- Stage 0 S7 (R10.1). The ATTRIBUTION index: answers "which edges did file F
+-- contribute to" via `props->'occurrences' ? F`, which is the ONLY unit of
+-- edge attribution reconcile may use. Without it that question needs an
+-- fqn-based approximation, and every such approximation measured so far has
+-- been a narrowing that silently strands stale occurrences.
+--
+-- THE OPERATOR CLASS IS LOAD-BEARING. props.occurrences is an OBJECT keyed by
+-- file, so the test is `?` (key existence), which only the DEFAULT jsonb_ops
+-- supports. jsonb_path_ops is smaller and looks like the better choice; it
+-- CANNOT serve `?` and degrades silently to a seq scan. Proven both ways on
+-- this table before this index was written. Do not "optimise" it.
+create index if not exists edges_occurrences_gin
+    on edges using gin ((props -> 'occurrences'));
+
+comment on index sensei.edges_occurrences_gin is
+'Attribution index for reconcile (R10.1): "which edges did file F contribute
+to", via props->''occurrences'' ? F. Opclass MUST be the default jsonb_ops —
+jsonb_path_ops does not support `?` and falls back to a seq scan without
+error. Measured at creation: 128ms build, 888kB, against a column that is
+100% NULL today because the v2 writer has no caller yet — that is a FLOOR,
+not a steady-state size.';
 
 -- Edge identity (D1): two partial unique indexes give an edge an identity so
 -- insert_edge can upsert instead of duplicating. The nullable target_id forces
@@ -82,6 +106,10 @@ comment on column edges.confidence
 comment on column edges.confidence_score
      is 'Numeric confidence 0.00-1.00. Used for similarity/duplicate edges.';
 comment on column edges.props
-     is 'Extensible metadata. For imports: {names:["a","b"]}. For duplicates: {similarity:0.86}.';
+     is 'Extensible metadata, MERGED on re-insert (props || EXCLUDED.props) so a later writer cannot erase an earlier one. For imports: {names:["a","b"]}. For duplicates: {similarity:0.86}. For extends/implements: {relation:"extends"|"implements"|"trait_impl"} — the discriminant that separates a Rust trait impl from Java-style interface implementation, which share the implements kind.';
 comment on column edges.modified_at
      is 'Timestamp of the last modification to this row.';
+comment on column edges.resolved_via
+     is 'Which resolution rung placed this edge — the reduction over the per-use rungs in props.occurrences. NULL on an edge that was not placed. Exactly one of resolved_via / unresolved_reason is set; both NULL means the writer recorded no verdict, which is the pre-v2 shape. See docs/database/sensei.md.';
+comment on column edges.unresolved_reason
+     is 'Why this edge could not be placed — the reduction over the per-use reasons in props.occurrences. NULL on a placed edge. NOT an error list: external_boundary and dynamic_dispatch are correct outcomes, not defects. See docs/database/sensei.md.';

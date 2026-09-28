@@ -1,5 +1,13 @@
 set search_path to sensei, extensions;
 
+-- REPO-RELATIVE, reconstructed. `files.file_path` is FOLDER-relative and a
+-- module folder's `folders.path` is repo-relative, so a node in
+-- `crates/senseid/src/lib.rs` stores `src/lib.rs` against the `crates/senseid`
+-- folder. Exposing that raw would rename the column's meaning without changing
+-- its name — v1's `nodes.file_path` was repo-relative, and 17 of this repo's 18
+-- folders are modules, so almost every path would have been silently truncated.
+-- The repo-root folder is the exception: its `path` is ABSOLUTE, and its files
+-- are already repo-relative, so it passes through.
 create or replace view file_tags as
 select n.id
      , n.folder_id
@@ -7,11 +15,12 @@ select n.id
      , f.project_id
      , p.name            as project
      , p.maturity        as project_maturity
-     , n.file_path
+     , np.file_path
      , n.tags
      , n.props
      , n.modified_at
   from nodes n
+  left join node_paths np on np.node_id = n.id
   join folders  f on f.id = n.folder_id
   left join projects p on p.id = f.project_id
  where n.kind = 'file';

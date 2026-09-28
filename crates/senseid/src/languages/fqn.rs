@@ -21,6 +21,46 @@ use crate::types::SymbolKind;
 /// FQN segment separator — U+00B7 MIDDLE DOT.
 pub const SEP: char = '·';
 
+/// What every external node's FQN starts with: the `lib` segment plus the
+/// separator.
+///
+/// D12 removed `lib_symbol` and `lib_package` from `sensei.node_kind`. Kind says
+/// WHAT a node is; this prefix says WHERE it came from. Collapsing the two
+/// destroyed the real kind on 18,240 rows to re-state a fact the FQN already
+/// carried, so the marker moved here and the kind went back to meaning itself.
+///
+/// One definition because the alternative is a hand-copied `lib·` literal in
+/// every query that asks the question, and a marker with eight copies is a
+/// marker that drifts.
+pub const LIB_PREFIX: &str = "lib·";
+
+/// The SQL test for "this node came from outside the repo", for the queries
+/// that used to ask `kind IN ('lib_symbol','lib_package')`.
+///
+/// A function rather than a constant because every call site qualifies the
+/// column differently (`n.fqn`, `s.fqn`, `p.fqn`) — a bare constant would have
+/// been unusable at most of them, which is how nine hand-written copies of the
+/// pattern appeared while the constant meant to prevent them sat unused.
+pub fn sql_is_external(column: &str) -> String {
+    format!("{column} LIKE '{LIB_PREFIX}%'")
+}
+
+/// The negation, NULL-safe.
+///
+/// Its own function because `NOT LIKE` on a NULL yields NULL, not true, so the
+/// naive negation silently drops every legacy node that carries no fqn at all.
+/// Two call sites had to spell the `IS NULL OR` guard by hand to get this right;
+/// one that forgot would filter out rows nobody meant to exclude and report a
+/// smaller answer with no error.
+pub fn sql_is_not_external(column: &str) -> String {
+    format!("({column} IS NULL OR {column} NOT LIKE '{LIB_PREFIX}%')")
+}
+
+/// Does this FQN name something outside the repo?
+pub fn is_external(fqn: &str) -> bool {
+    fqn.starts_with(LIB_PREFIX)
+}
+
 /// A definition carrying its canonical FQN — the language-agnostic shape every
 /// per-language producer emits. Phase 3 turns each into an `upsert_node_by_fqn`
 /// definition (enrich) call.
@@ -40,6 +80,103 @@ pub struct FqnDefinition {
     /// the emit path nests it under the type node (not the flat file node). `None`
     /// for a top-level item, which nests under the file's module container.
     pub parent_fqn: Option<String>,
+    /// The declared return type, verbatim as written (`&crate::db::PgStore`,
+    /// `Arc<PgStore>`, `Result<T, E>`). `None` for a function returning unit, or
+    /// a language/kind where the notion does not apply.
+    ///
+    /// Carried here because THIS is the pass that mints the node. The type was
+    /// already being extracted in a different pass over the same file and then
+    /// dropped, so the graph knew every function's name, signature and parent
+    /// but not what it returned — and that one absent field is what blocks
+    /// transitive receiver resolution: `ctx.pg().method()` needs the type of
+    /// `pg`'s return value to know which `method` is being called. Every other
+    /// hop in that chain is already a key we can mint.
+    ///
+    /// Kept VERBATIM on purpose. Normalising to a bare type name here would
+    /// discard the module path that says which `PgStore` is meant; unwrapping
+    /// `Arc`/`Result`/`Option` is the resolver's job, and `base_type_name`
+    /// already owns that rule.
+    pub return_type: Option<String>,
+}
+
+/// What a call site SAW of its receiver, expressed as a graph KEY.
+///
+/// A method call is the one reference shape whose target no import can name:
+/// measured on the live graph, all 28,069 unresolved rust `calls` edges have a
+/// lowercase `target_name`. The producer had the receiver in hand at the moment
+/// it gave up and threw it away, so nothing downstream could finish the job.
+/// This carries it instead.
+///
+/// The payload is an FQN on purpose: a later resolver needs the node table and
+/// nothing else — no file path, no re-parse, no second pass over source.
+///
+/// There is deliberately no "probably" variant. A receiver whose type the file
+/// cannot name carries NO hint and the reference stays unresolved, because a
+/// plausible key the resolver cannot tell apart from a real one is exactly how
+/// ghost nodes get minted.
+///
+/// ONE variant, because only one shape is ever storable. Props are stamped only
+/// on an UNRESOLVED call (see `process.rs`), and the two producer arms that know
+/// the receiver's type outright — `self` inside an `impl`, a receiver bound to a
+/// first-party type — are the same two arms that already mint a target. A
+/// "receiver type" hint therefore attached only to calls that carried an fqn,
+/// and every one was computed and dropped on the floor.
+///
+/// Deleted rather than wired up. What it would buy is real — 2,142 rust `calls`
+/// edges in the live `sensei` folder point at a STUB (a target node with no
+/// file path), and the receiver's type is a second way to reach the definition
+/// those stubs stand in for. What it would cost is re-pointing calls that are
+/// ALREADY correctly resolved, which is a strictly worse failure than a stub:
+/// the edge would move only when the second lookup disagreed with the first,
+/// and nothing here can say which of the two was right. Reaching those 2,142
+/// wants a lookup that cannot wrong-merge, not a hint that can.
+///
+/// Reach, measured by replaying the rust producer over this repo's own 364 rust
+/// files with each file's real package and module (30,051 references emitted,
+/// 17,067 resolved / 12,984 not): 599 references gain a hint, and every one of
+/// them is unresolved — that is the new reach, references that had nothing but a
+/// bare method name. 12,385 unresolved references still carry none.
+///
+/// Every unresolved rust reference is a member call — the `field_expression`
+/// arm is the only one that yields an unresolved target — so that last bucket
+/// is entirely receivers this file cannot name: a chain deeper than one link
+/// (`a.b().c().d()`, where the inner hop is itself unresolved and so has no key
+/// to hand on) or an identifier the binding map never learned a type for
+/// (`let x = ctx.pg();`). Both are the same defect one level down and they
+/// unlock together: once a resolver can turn a hint into a concrete type,
+/// feeding that type back into the binding map is what reaches them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReceiverHint {
+    /// The receiver is the value another call returned — this is THAT call's
+    /// target FQN (`rust·senseid·tasks::executor·TaskContext·pg`). The resolver
+    /// reads the declared return type off that node ([`FqnDefinition::return_type`])
+    /// to learn the receiver's type, then finds the member under it.
+    ReturnOf(String),
+}
+
+impl ReceiverHint {
+    /// The `edges.props` key this variant is stored under.
+    ///
+    /// A call is emitted in one place and completed in another — the producer
+    /// has the receiver, the resolver has the graph — so the key name lives
+    /// HERE, next to the variant, rather than as string literals that can drift
+    /// apart across `process.rs` and `pg_store::graph`.
+    const PROPS_KEY: &'static str = "receiver_return_of";
+
+    /// Encode for `edges.props`. Only ever stamped on an UNRESOLVED call — a
+    /// resolved edge already names its target, and recording the receiver
+    /// alongside it would be a second answer to a question already answered.
+    pub fn to_props(&self) -> serde_json::Value {
+        let Self::ReturnOf(fqn) = self;
+        serde_json::json!({ Self::PROPS_KEY: fqn })
+    }
+
+    /// Decode from `edges.props`. `None` when the edge carries no hint, which
+    /// is every call emitted before this existed and every receiver the
+    /// producer could not name — both stay unresolved, as they are.
+    pub fn from_props(props: &serde_json::Value) -> Option<Self> {
+        props.get(Self::PROPS_KEY).and_then(|v| v.as_str()).map(|f| Self::ReturnOf(f.to_string()))
+    }
 }
 
 /// A reference (call-site) resolved to a target FQN. `target_fqn = None` means the
@@ -56,6 +193,36 @@ pub struct FqnReference {
     pub target_name: String,
     /// True when the target resolves to an external dependency (`lib·…`).
     pub is_lib: bool,
+    /// What the call site saw of the receiver, when it saw something nameable.
+    /// `None` for every non-member call, for an external receiver type (no
+    /// definition in this graph to read a return type from), and for a receiver
+    /// the file genuinely cannot place. Inert to target matching — the emit path
+    /// still branches on `target_fqn`/`is_lib` alone.
+    pub receiver: Option<ReceiverHint>,
+}
+
+/// One type's relation to a supertype, resolved the same way a call target is.
+///
+/// `parent_fqn = None` means the producer could not resolve the supertype and
+/// deliberately did NOT guess — the emit path stores `target_name` only, which
+/// is the truthful unresolved shape. Guessing here is how a bare name gets
+/// matched to a same-named type in another language or of another kind: a
+/// confident wrong answer, which is worse than an unresolved one.
+///
+/// `is_lib` splits the emit path exactly as it does for [`FqnReference`]: an
+/// external supertype becomes a `lib·` node (so "which of our models extend
+/// `pydantic.BaseModel`" is answerable), an internal one a graph node.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeRelation {
+    /// FQN of the subtype — the type that declares the relation.
+    pub child_fqn: String,
+    /// FQN of the supertype, or `None` when unresolvable.
+    pub parent_fqn: Option<String>,
+    /// Bare last segment of the supertype, always present.
+    pub parent_name: String,
+    /// True when the supertype resolves to an external dependency (`lib·…`).
+    pub is_lib: bool,
+    pub relation: crate::types::RelationKind,
 }
 
 /// Output of a per-language FQN producer over one file.
@@ -68,6 +235,11 @@ pub struct FqnFileOutput {
     /// This file's crate-relative module path (empty at the crate root). The emit
     /// path materialises a `module` container node for it, nested under the file.
     pub module: String,
+    /// Inheritance facts declared in this file. Empty for a language with no
+    /// inheritance producer yet — distinct from a language that HAS one and
+    /// found none, which is why the capability is declared separately rather
+    /// than inferred from this being empty.
+    pub relations: Vec<TypeRelation>,
 }
 
 /// Per-file context a producer needs: the owning crate/package name (from the
@@ -132,6 +304,34 @@ pub fn lib(package: &str, path: &str, member: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The prefix and the builder must not be able to disagree.
+    ///
+    /// `LIB_PREFIX` is a literal because SQL needs one, and a literal that
+    /// restates `SEP` is exactly the kind of copy that drifts when the
+    /// separator moves. This is what makes moving it a compile-and-test
+    /// failure rather than a silent mismatch in which every external node
+    /// stops being recognised as external.
+    #[test]
+    fn the_external_marker_agrees_with_the_builder() {
+        assert_eq!(LIB_PREFIX, format!("lib{SEP}"), "the prefix must be `lib` + SEP");
+        assert!(is_external(&lib("serde", "de", "Deserialize")));
+        assert!(is_external(&lib("node:fs", "", "")));
+        assert!(sql_is_external("n.fqn").contains(LIB_PREFIX), "the SQL test uses the same prefix");
+        assert_eq!(sql_is_external("n.fqn"), format!("n.fqn LIKE '{LIB_PREFIX}%'"));
+        // NULL-safe: `NOT LIKE` on a NULL is NULL, not true, so the guard has to
+        // be part of the expression rather than remembered at each call site.
+        assert!(sql_is_not_external("n.fqn").contains("IS NULL OR"));
+    }
+
+    /// A first-party FQN whose package merely BEGINS with `lib` is not external
+    /// — `rust·libc·…` is a dependency named libc, matched on the separator.
+    #[test]
+    fn a_package_named_lib_something_is_not_external() {
+        assert!(!is_external("rust·libc·ffi·open"));
+        assert!(!is_external("rust·library·mod·f"));
+        assert!(!is_external("libfoo·bar"));
+    }
+
     #[test]
     fn sep_is_middot() {
         assert_eq!(SEP, '\u{00B7}');
@@ -143,6 +343,30 @@ mod tests {
     #[test]
     fn item_free_fn() {
         assert_eq!(item("rust", "senseid", "widget", "make"), "rust·senseid·widget·make");
+    }
+
+    /// The hint is written by the emit path and read by the resolver, in
+    /// different modules, days apart in the pipeline. What it carries is a
+    /// METHOD fqn to read a return type from, and the key name is the contract
+    /// that keeps the two ends agreeing across that gap.
+    #[test]
+    fn a_receiver_hint_round_trips_through_edge_props() {
+        let hint = ReceiverHint::ReturnOf("rust·senseid·tasks::executor·TaskContext·pg".into());
+        assert_eq!(
+            ReceiverHint::from_props(&hint.to_props()),
+            Some(hint.clone()),
+            "{hint:?} must survive the round trip through edges.props"
+        );
+        assert_eq!(
+            ReceiverHint::from_props(&serde_json::json!({})),
+            None,
+            "an edge with no hint yields no hint — never a defaulted one"
+        );
+        assert_eq!(
+            ReceiverHint::from_props(&serde_json::json!({ "relation": "trait_impl" })),
+            None,
+            "another writer's props key is not a receiver hint"
+        );
     }
 
     #[test]
@@ -187,5 +411,54 @@ mod tests {
             lib("serde_json", "serde_json", "from_str"),
             "lib·serde_json·serde_json·from_str"
         );
+    }
+}
+
+/// Finders every language's producer tests need over an [`FqnFileOutput`].
+///
+/// One definition, because there were FIVE byte-identical copies of `def_fqn`
+/// and `ref_to` — typescript, java, python, rust_lang, sql — and kotlin had
+/// NEITHER, which is the gap a kotlin producer test hits first. There was no
+/// relation finder at all: the same
+/// `out.relations.iter().find(|r| r.parent_name == n)` closure was hand-written
+/// three times, in java twice and python once.
+///
+/// `#[cfg(test)]`, so none of this is reachable from a shipped path.
+#[cfg(test)]
+pub(crate) mod finders {
+    use super::{FqnDefinition, FqnFileOutput, FqnReference, TypeRelation};
+
+    /// The whole definition by name, for asserting on fields other than the fqn.
+    /// Panics with the def list, because a missing def usually means the producer
+    /// emitted nothing and the list is what tells you what it did emit.
+    pub(crate) fn def_of<'a>(out: &'a FqnFileOutput, name: &str) -> &'a FqnDefinition {
+        out.defs
+            .iter()
+            .find(|d| d.name == name)
+            .unwrap_or_else(|| panic!("no def named `{name}` in {:?}", out.defs))
+    }
+
+    /// A definition's fqn by name, or `"<no-def>"` — a sentinel rather than a
+    /// panic, so a test can assert a definition is ABSENT without catching.
+    pub(crate) fn def_fqn<'a>(out: &'a FqnFileOutput, name: &str) -> &'a str {
+        out.defs.iter().find(|d| d.name == name).map(|d| d.fqn.as_str()).unwrap_or("<no-def>")
+    }
+
+    /// A reference by target name. Panics with the whole ref list, because a
+    /// missing ref is almost always a producer that emitted nothing and the list
+    /// is what tells you which.
+    pub(crate) fn ref_to<'a>(out: &'a FqnFileOutput, target_name: &str) -> &'a FqnReference {
+        out.refs
+            .iter()
+            .find(|r| r.target_name == target_name)
+            .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
+    }
+
+    /// A relation by SUPERTYPE name — the missing third finder.
+    pub(crate) fn rel_to<'a>(out: &'a FqnFileOutput, parent_name: &str) -> &'a TypeRelation {
+        out.relations
+            .iter()
+            .find(|r| r.parent_name == parent_name)
+            .unwrap_or_else(|| panic!("no relation to `{parent_name}` in {:?}", out.relations))
     }
 }

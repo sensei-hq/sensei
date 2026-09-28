@@ -1,0 +1,168 @@
+set search_path to sensei, extensions;
+
+-- Every node with its locality and its parent — the dimension `call_graph` lacks.
+--
+-- ## Why this exists
+--
+-- Until now the only way to ask "is this external?" was to ask "did the edge fail
+-- to resolve?" — the proxy in the since-deleted `build_connections`. It was wrong in BOTH
+-- directions. Measured 2026-09-01 on the live DB: of the 1,040 entries it wrote
+-- into `folders.props.libs` for the `sensei` folder, **791 were this repo's own
+-- code** — `crate::log_collector::LogCollector`, `./WizardRail.svelte`, `$lib/nav`.
+-- rokkit read 807 of 890 (91%), OmniRoute 4,085 of 5,468. And it would have lost
+-- every genuine dependency the moment resolution started working, because
+-- `target_id` and `target_name` are mutually exclusive across all 715,757 edges —
+-- resolving an edge ERASES the name the count was reading.
+--
+-- Java folders read 0 false positives purely by accident: Java has no relative
+-- import form, so every Java import is an absolute FQN.
+--
+-- Locality is a property of the NODE, not of an edge's resolution state. Asking
+-- the node makes both failure modes structurally impossible.
+--
+-- ## This is a projection, not a second copy of a rule
+--
+-- `languages::import_target::classify_import` parses a specifier string (`./x`,
+-- `$lib/x`, `node:fs`, `java.util.List`) and exercises judgment; it stays in Rust
+-- with ONE owner, because a SQL copy of a judgement rule is how the scan exclusion
+-- resolver came to gate the watcher while pruning nothing (see
+-- `import_target_counts`).
+--
+-- This view exercises no judgement. It reports the decision the WRITER already
+-- recorded: an external symbol is minted with a `lib·` fqn, and a definition
+-- gets a `file_id`. Reading those two cannot drift from the rule that set them,
+-- because it IS the rule's output.
+--
+-- D12: externality was read off `kind in ('lib_symbol','lib_package')` until the
+-- fqn prefix replaced it. Kind says WHAT a node is; the fqn prefix says WHERE it
+-- came from, and collapsing the two destroyed the real kind on 18,240 rows.
+-- Verified equivalent on the pre-wipe graph — internal 354,653 / external 21,928
+-- / unknown 18,450 under BOTH rules, no off-diagonal cell.
+--
+-- ## Three-valued, deliberately
+--
+-- A boolean would bin every node with neither a `file_id` nor a `lib·` fqn as
+-- external, reproducing exactly the false positives above.
+-- Those are the unresolved reference stubs (84,396 of them `kind='function'`), and
+-- `unknown` makes them countable — which is what turns the invariant "stub count
+-- → 0" into a one-line query instead of a research project.
+--
+-- `nodes.resolved` is deliberately NOT the locality signal: 140,051 `section` rows
+-- are `resolved=false` while sitting in real files, so that column answers "did
+-- FQN enrichment run", not "where does this live". It is projected for filtering,
+-- never for classification.
+--
+-- ## Hierarchy
+--
+-- `parent_id` already carries containment (296,744 of 430,977 rows), so a grouping
+-- view needs no `contains` edge kind — parent for the bubbles, edges for the
+-- lines. `parent_name`/`parent_kind` are surfaced so callers group without a
+-- self-join, and are NULL for a top-level node rather than a placeholder.
+-- REPO-RELATIVE, reconstructed. `files.file_path` is FOLDER-relative and a
+-- module folder's `folders.path` is repo-relative, so a node in
+-- `crates/senseid/src/lib.rs` stores `src/lib.rs` against the `crates/senseid`
+-- folder. Exposing that raw would rename the column's meaning without changing
+-- its name — v1's `nodes.file_path` was repo-relative, and 17 of this repo's 18
+-- folders are modules, so almost every path would have been silently truncated.
+-- The repo-root folder is the exception: its `path` is ABSOLUTE, and its files
+-- are already repo-relative, so it passes through.
+--
+-- ## Repository
+--
+-- `repository_id`/`repository` come from a DIRECT join on `folders.repository_id`
+-- — no second resolver. `sensei.repo_anchor_for(path)` exists and is the
+-- canonical resolver for an arbitrary PATH, but a node already carries a
+-- `folder_id`, so walking a path back to an anchor here would be a second way to
+-- answer a question the column already answers, and the two could disagree.
+--
+-- A node whose folder carries no `repository_id` reads NULL. That is honest-empty,
+-- not a gap being masked: it means the folder genuinely has no repository, and the
+-- NULL bucket is the query that finds folders needing attribution. Measured
+-- 2026-09-23: 444,658 of 467,707 nodes (95.1%) resolve to a repository. The
+-- 1.4% figure that folder-grain counting produces is the WRONG DENOMINATOR —
+-- 12,371 of the 13,035 folders are plain `folder` kind holding no nodes at all,
+-- while 183 of 193 `git` folders (which is where nodes live) are attributed.
+--
+-- Dropped before create: `repository_id`/`repository` sit BESIDE `project`, not
+-- appended at the end, and `create or replace view` can only add columns to the
+-- tail. Grouping the identity columns together is worth a drop — nothing depends
+-- on this view (checked 2026-09-23 via pg_depend), so there is no cascade.
+drop view if exists graph_nodes;
+
+create or replace view graph_nodes as
+select n.id
+     , n.folder_id
+     , f.name         as folder
+     , f.branch       as branch
+     , f.project_id
+     , p.name         as project
+     , f.repository_id
+     , r.name         as repository
+     , n.kind::text   as kind
+     , n.name
+     , n.fqn
+     , n.language
+     , np.file_path
+     , n.line_start
+     , n.resolved
+     , n.is_exported
+     , n.is_test
+     , n.community_id
+     , case
+         -- An external symbol is minted under a `lib·` fqn (R10.7d). This is
+         -- the ONE discriminator — see D12.
+         when n.fqn like 'lib·%'      then 'external'
+         -- A local file is the definition of internal.
+         when n.file_id is not null   then 'internal'
+         -- Neither: an unresolved reference stub. Saying "external" here is the
+         -- bug this view replaces.
+         else                                              'unknown'
+       end            as locality
+     , n.parent_id
+     , par.name       as parent_name
+     , par.kind::text as parent_kind
+  from nodes         n
+  left join node_paths np on np.node_id = n.id
+  join folders       f
+    on f.id          = n.folder_id
+  left join projects p
+    on p.id          = f.project_id
+  left join repositories r
+    on r.id          = f.repository_id
+  left join nodes    par
+    on par.id        = n.parent_id;
+
+comment on view graph_nodes is
+'Every node with its LOCALITY (internal | external | unknown) and its parent.
+
+locality is read from what the writer recorded — a `lib·` fqn => external; a
+non-null file_id => internal; neither => unknown (an unresolved reference stub). It is NOT derived from an edge failing to resolve, which is the
+proxy that reported 791 of 1,040 of this repo''s own modules as dependencies.
+It is NOT derived from nodes.resolved either: 140,051 section rows are
+resolved=false while sitting in real files.
+
+Three-valued on purpose: a boolean bins the 85,530 stubs as external. `unknown`
+makes them countable, so "stub count -> 0" is a query.
+
+parent_id/parent_name/parent_kind carry containment, so grouping needs no
+`contains` edge kind: parent for the nesting, edges for the connections.
+
+Common queries:
+  -- dependency count, correct where folders.props.libs was not
+  SELECT count(DISTINCT n.name) FROM sensei.edges e
+    JOIN sensei.graph_nodes n ON n.id = e.target_id
+   WHERE e.folder_id = ''...'' AND n.locality = ''external''
+
+  -- the invariant the identity fix has to drive to zero
+  SELECT folder, count(*) FROM sensei.graph_nodes
+   WHERE locality = ''unknown'' GROUP BY folder ORDER BY 2 DESC
+
+  -- patterns vs graph: pick the relation kinds, group by the hierarchy
+  SELECT n.parent_name, n.kind, count(*) FROM sensei.graph_nodes n
+   WHERE n.project = ''sensei'' AND n.locality = ''internal'' GROUP BY 1, 2';
+
+comment on column graph_nodes.repository is 'The repository this node belongs to, via folders.repository_id — a direct column read, never a second path-walking resolver that could disagree with it. NULL means the folder carries no repository (honest-empty, and the query that finds what needs attributing), never a failed lookup. 95.1% of nodes resolve; count at NODE grain, not folder grain — plain folders hold no nodes and drag a folder-grain percentage to a meaningless 1.4%.';
+comment on column graph_nodes.branch is 'The checked-out branch of this node''s folder. A real partition key, not a label: the design is one folder per checkout (develop vs main = two folders, one repository), already live for fitness/strategos/website — so filtering by branch separates genuine graphs without branch appearing in node identity.';
+comment on column graph_nodes.locality is 'internal (has a file_id) | external (a `lib·` fqn — the writer said so) | unknown (unresolved reference stub). Never inferred from an edge''s resolution state, and never collapsed to a boolean: that bins every stub as external.';
+comment on column graph_nodes.parent_name is 'Containing node''s name — NULL at top level, not a placeholder. Lets a caller group by container without a self-join.';
+comment on column graph_nodes.resolved is 'Whether FQN enrichment ran. Projected for filtering; NOT a locality signal — 140,051 section rows are resolved=false inside real files.';

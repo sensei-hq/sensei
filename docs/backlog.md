@@ -15,73 +15,691 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
-## dbd: `policies` ignores `--scope`
+## Indexer — RETIRE v1 AND MAKE v2 FINAL (decided with the user 2026-09-22)
 
-**Found 2026-08-25.** dbd 0.10.12. `dbd policies --scope default` applies every
-file under `policies/`, including `policies/dojo/*.sql`, on a plane whose scope
-EXCLUDES `dojo`. Each one then fails with `schema "dojo" does not exist` and the
-run reports `Policies: 0 applied, 4 failed`.
+**Agreed: v1 (`crate::languages`) is retired and v2 (`crate::indexer`) becomes
+the only indexer.** The flow was wired with rust first, then one language at a
+time, each v1 parser deleted as its language landed. `PRODUCTION_LANGUAGES` in
+`indexer/lang/mod.rs` is the single frontier: adding a language there IS its
+cutover.
 
-Not fatal — the daemon's install path calls dbd's `apply` and `import_data`
-directly and never runs the policies phase — but a manual `dbd deploy --scope
-default` printed four FAILED lines that were an expected condition, which is how
-real failures stop being read.
+**STATE — 7 of 10 cut over, ~5,600 lines of v1 deleted.**
 
-**Worked around** by wrapping each policy file's statements in a `do $$` block
-that returns early when `to_regclass('dojo.<table>')` is null. Verified both
-directions: the dōjō plane applies 4/4 with every policy, grant and RLS flag
-present; the daemon plane reports 4 applied, 0 failed and creates nothing.
+| | languages |
+|---|---|
+| cut over | rust · typescript (+js/svelte/vue) · java · python · c# · php · c |
+| built, not flipped | **sql** — both halves exist (`tsql` is this crate's own lexer; Postgres rides dbd 0.14.0's `parse_sql`). They cover 86% of 7,435 files; flipping today takes the other ~1,013 (`Unstated` dialect 961, MySQL/SQLite 52) out of the graph |
+| not built | **kotlin** (245 files, A7 39 — blocked on anonymous object expressions and Android product flavours) · **swift** (2 files) |
 
-**Upstream:** `policies` should honour `--scope` the way `apply` and `import` do.
+C# and PHP were ADDITIVE — 19,404 + 2,251 files that had no graph at all now
+have one.
 
+**What still has to happen, in order:** finish SQL/Kotlin/Swift → deploy →
+`TRUNCATE sensei.nodes, sensei.edges CASCADE` → full re-index → acceptance
+against the live graph → wire `Stated::Gone` → delete `languages/` and break
+the two helper couplings (`is_test_path` in `indexer/barrier.rs` ×2,
+`fqn::is_external` in `indexer/community.rs`).
 
-## Seeding: two mechanisms, one broken — migrated to staging + import_ (2026-08-25)
+**The wipe is REQUIRED, not hygiene.** `reconcile` reads `props->'claims'`, a
+v2-only marker that 0 of 467,707 live nodes carry.
 
-Found by asking why some procedures were named `seed_*` when every other seed
-goes through `staging.<table>` + `import_<table>`. Three defects, each invisible.
+**THE DIFFERENTIAL HARNESS WAS WAIVED, and that is a deliberate deviation from
+stage 10.** `10-cutover.md` makes it the gate: S1 classifies every difference
+IMPROVEMENT / REGRESSION / EXPLAINED with a regression BLOCKING cutover, and S2
+requires v2's resolved set to be a superset of v1's "or each exception
+justified in writing". The user waived it 2026-09-22 — *"I don't need to
+compare v1 vs v2"* — so neither will be produced. **The cost, stated plainly:**
+we cut over without evidence that v2 is not a regression against v1 on any
+specific edge. If v2 silently loses a class of edge v1 found, nothing in the
+plan catches it. What stands in for it is v2's own barriers, which measure v2
+against ITSELF and the corpus — the resolved-reference gate, A7 identity
+collisions, A8, the dangling ceiling, corpus conservation, order-independence.
+Those catch "v2 is internally inconsistent" and "v2 lost ground against its own
+previous run". They do NOT catch "v1 knew something v2 does not". **Consequence:
+acceptance after re-index is the only empirical check on the cutover, so it is
+not optional and must run before `languages/` is deleted.**
 
-**1. `seed_ponytail_pack()` had been failing since a column rename.** It writes
-`rule_packs.source`; the column is `attribution`. `import_rule_packs` maps
-`stg.source → attribution` correctly — the staging path was updated for the
-rename and the hardcoded procedure was not. A plpgsql body is not validated until
-it is CALLED, so nothing flagged it.
+**AND THERE IS NO v1 FALLBACK — NOT ANYWHERE.** An earlier note of mine
+proposed "ask v2, fall back to v1", calling the registry the switch. That was
+wrong, and the first reason is decisive: **the two mint DIFFERENT
+identities** (`languages/fqn.rs` against `indexer/fqn.rs`, each with its own
+grammar), so a fallback would put two identity schemes in ONE graph and an edge
+minted by one could never meet a node minted by the other — the "two
+half-symbols" failure v2's fqn module exists to prevent, reintroduced at the
+seam. Second, the models do not compose: v2 is single-file-independent with no
+cross-file table (the whole of stage 11) while v1 is multi-pass with shared
+state, so a row's meaning would depend on which engine produced it and nothing
+downstream could tell.
 
-**2. That took the default constitution down with it.** The daemon ran
-`psql -c "CALL seed_default_constitution(); CALL seed_ponytail_pack();"` — one
-implicit transaction, `ON_ERROR_STOP=1` — so ponytail's error rolled BOTH back.
-The caller was fail-open (`tracing::warn!(… "non-fatal")`). Net effect: every
-fresh install since the rename shipped with ZERO bundled governance packs,
-including the constitution, and said nothing. Existing installs were fine, which
-is why it stayed hidden.
+For a language v2 does not claim, the file is **not indexed** — an honest,
+visible gap. Coverage during the transition is a SCHEDULING question, never a
+dispatch question.
 
-**3. dbd never called the `seed_*` procedures at all.** It creates them; only
-`import_*` procedures run during a deploy. So the dōjō plane never had the 5
-seeded packs — 36 of the 76 shipped library rules.
+**Only the PARSERS are being retired.** `languages/` also holds
+`language_for_path`, `is_test_path` and `import_target`, which serve
+non-indexing callers (`classifiers.rs`, `graph_facts.rs`,
+`api/handlers/codebase.rs`, `db/pg_store/graph.rs`,
+`tasks/processors/code.rs`). Detection is not parsing; what remains needs a
+home rather than deletion.
 
-**4. Rule-pack RULES never landed on a fresh install either.** dbd does not order
-imports, and `import_rule_pack_rules` sorts before `import_rule_packs` (`_` <
-`s`). It joined an empty `rule_packs`, inserted nothing, and reported success.
-`import_rule_packs` now drives its dependents in SQL, so order does not matter.
-An explicit list under `import.staging:` in design.yaml does NOT affect order —
-verified.
+**The v2 → v1 coupling is trivial**, which is the one piece of good news: two
+helpers, `languages::is_test_path` (twice, in `indexer/barrier.rs`) and
+`languages::fqn::is_external` (once, in `indexer/community.rs`). An earlier
+count of eleven files was wrong — the rest were doc-comment mentions, not
+imports.
 
-**Fixed by migrating all seeds to the staging model**, so there is one mechanism:
-5 packs / 36 rules / 3 adoptions / 1 tenant moved to jsonl datafiles, and
-`seed_default_constitution`, `seed_ponytail_pack` and `seed_global_dojo` deleted
-along with the `seed_bundled_packs` shell-out.
+## Indexer — TypeScript's table cannot be deleted the way rust's was (stage 11 §11, measured 2026-09-21)
 
-Seeded ids are FIXED, not generated: `dojo.tenants.id` and the `general/global-dojo`
-namespace id default to `gen_random_uuid()`, so an imported row got a different
-uuid on every plane and every reset — divergence for a row that is global by
-definition. Both now carry a uuid5 derived from their natural key.
+**§11 says each adapter is "the same three changes — drop the table parameter,
+read the type's home from the file, tag `Named` vs `Candidate`". For
+TypeScript the first two are right and THE THIRD IS NOT, and the corpus says
+so 1:1.**
 
-**Still open — upstream in dbd:** imports are not dependency-ordered, and a
-staging table whose import inserts nothing reports success. Both are silent.
+The import rung landed: `Walk::home_of` had only `declared_here` then the
+table, with no import rung at all, so every type a file imported went to the
+barrier. A relative specifier states the home as completely as the table does,
+resolved with `resolve::rooted_against` against the importing file's own
+directory. Worth **+109 resolved references with ZERO new dangling**, and it
+took `AmbiguousCandidates` down 70 — a file's own word beats an ambiguous
+global row.
 
+**THE GRADE IS WHERE IT STOPS, and the two were measured apart rather than
+shipped together:**
+
+| | resolved | new dangling |
+|---|---|---|
+| import rung, `Candidate` | +111 | **0** |
+| import rung, `Named` | +489 | **+378** |
+
+Exactly 378 either way. **Every extra reference the strong grade resolves
+names an identity no declaration mints** — for TypeScript the strong grade
+buys no real edges at all, only ghosts, and a node nothing declares answers
+"who calls this" for ever (§9, and the no-fabrication rule). Rust's S7 bought
++713 real references for its dangling; TypeScript's buys none. So the grade
+stays weak until stage 12, and one line moves it.
+
+**Three causes, all genuinely cross-file**, which is why no one-file rung
+reaches them:
+
+| cause | count | why one file cannot see it |
+|---|---|---|
+| a TYPE ALIAS | 78 | `dojo/lib/server/admin-data.ts` says `export type DojoClient = ReturnType<typeof dojoDb>`, so `db.from(..)` names a member of the ALIAS while `from` is declared on what it aliases. The rust twin of this is `AppState` at 423 |
+| a member INHERITED from a supertype | ~100 | `class ScanProjectState extends ReactiveStageContext<ScanProject>` — `items` and `add` are the BASE's, declared in another module. Following the `Extends` edge is cross-file |
+| the re-export barrel | 523 | `export { expect } from '@playwright/test'` — already ratcheted and already deferred by §7 |
+
+**And the table cannot go even with the grade settled**, for a reason that is
+not about grading at all: **about half of this repo's TypeScript imports are
+`$lib`-aliased** (1,008 relative against 891 `$lib` plus 46 `$app`), and
+`import_origin` files an alias as EXTERNAL because *"`$lib` and its neighbours
+are aliases a bundler config states, and this walk is never handed that
+config"*. On top of that, 275 resolved TypeScript members name a type the file
+never mentions — an imported factory's RETURN type, which §7 already rules
+becomes unlinked-with-evidence. Rust's equivalent gap is **13**.
+
+**DECIDED with the user 2026-09-22 — THE MANIFEST SCAN DETECTS THE ALIASES AND
+PASSES THEM TO THE FILE SCAN.** The pipeline is already this shape: repo scan →
+manifest scan → file scan, and `load_repo` already reads each manifest ONCE
+("one read per manifest, not one per file") to derive the package name. The
+alias map rides the same seam and arrives as a fact on `Source`, beside
+`package` and `module`:
+
+    Source { package, module, path, aliases: { "$lib" -> "lib" }, text }
+
+That keeps R7 intact — the walk is TOLD, it never looks or climbs. `home_of`
+then gains one rung before the table: `$lib/widget` resolves to `lib/widget`,
+while `$app/...` stays a framework package and answers `NotOurs`.
+
+**AND MY FRAMING OF THE COST WAS WRONG, which `languages/import_target.rs`
+already measured.** I wrote that resolving `$lib` "needs the bundler config".
+For the DEFAULT mapping it does not: module paths are already `src/`-relative,
+so `$lib/x` → `lib/x` is a prefix strip. That module's own measurement —
+`aliases_map_to_local_modules_but_framework_modules_do_not` — puts `@/` and
+`~/` at **6,413 of 7,032 edges recovered by prefix strip alone** and the `$lib`
+rewrite at **1,836 edges**. A config read is needed only for a NON-conventional
+remap.
+
+Two separable pieces, then:
+
+1. the conventional prefix strip, no config, already measured in v1;
+2. the custom alias map from the manifest, for projects that remap.
+
+**A wrong module here is worse than none, and that decides the grade.** v1 gets
+away with the prefix strip because `local_import_candidates` returns a LIST of
+candidates; a `Home::Stated` is a single answer, so a remapped `$lib` would
+mint a wrong identity (R4). So piece 1 is safe only at `Candidate` grade —
+which is where TypeScript already sits — and piece 2 is what a `Stated` home
+requires.
+
+**AND `import_target.rs` IS NOT REACHED FROM `indexer/` AT ALL** (checked: zero
+references from the v2 tree; its callers are `languages/`, `api/handlers/
+codebase.rs`, `db/pg_store/graph.rs`, `tasks/handlers/`). So v2's
+`javascript.rs::import_origin` is a second import classifier, and v1's is the
+one with the measurements. Reconciling them is the DRY question to settle
+before writing a third — the same mistake `9ad53f43` had just cleaned up for
+rooted paths.
+
+Rejected, and why, so neither is re-proposed: hardcoding `$lib =
+<package>/src/lib` at `Stated` grade mis-resolves silently for any project that
+remaps it; leaving the table to stage 12 keeps TypeScript's barrier standing
+longer than it needs to, since an alias is a per-package FACT and not a
+cross-file lookup.
+
+**Still gated on stage 12 even after the aliases land**, and this is the part
+the alias work does NOT fix: the 275 factory-return-type members and the type
+alias / inherited-member causes above are cross-file by construction, so the
+`Named` grade stays weak until stage 12's lookup exists. Aliases buy the
+remaining ~891 specifiers a Stated home; they buy no grade change.
+
+**Sequencing decided with it:** Java is next (measurable against the external
+`SENSEI_CORPUS` corpus), then this, then python — see the §11 note in
+`docs/CHECKPOINT.md` for why the spec's stated order is wrong on evidence.
+
+## Indexer — a target no first-party declaration mints must resolve or be marked EXTERNAL (stage 11 S7, measured 2026-09-21)
+
+**Decided 2026-09-21, and it is an obligation on stage 12, not a defect in
+stage 11.** S7 (`docs/spec/indexer/11-file-index.md` §3) lets an identity a
+file's OWN TEXT established become an edge with no repo-wide set agreeing —
+which is what removes the type barrier, and is worth +713 resolved references
+over this repository. The cost is that references the old existence gate
+refused as MISSING are now present and DANGLING: 1,260 over 358 identities, up
+from ~320 — since brought down to **1,151 over 235** by `a57dd050`, which gave
+the split-`impl` cause below its real home. Ratcheted in
+`resolve::tests::the_references_that_name_no_declaration_are_a_measured_and_split_set`,
+which carries the full reasoning.
+
+The file is right about where the type lives in all three causes. What it
+cannot know from ONE file is that the name it was handed does not DECLARE the
+member:
+
+| cause | count | why one file cannot see it |
+|---|---|---|
+| a type ALIAS | 423 on one identity | `api/state.rs` says `pub type AppState = Arc<SharedState>`, so `state.pg` names `api::state·AppState·pg` while the field is declared on `SharedState`. Following the alias is cross-file knowledge |
+| an impl a `derive` GENERATED | `MemOutbox::default`, `NewRun::default`, clap's `Cli::parse_from` | spec §5 — the impl exists in no source file, so no walk can declare it |
+| the split-`impl` mis-anchoring | **655/5,474 → 30/5,519, fixed by `a57dd050`** | the DECLARATION was the mis-filed side. Not because `use super::*` states no home — it does — but because these files use `use super::{PgStore}`, a by-name import whose root `imported_from` refused to read, so `impl PgStore` in `db/pg_store/folders.rs` anchored one module too deep |
+
+**What stage 12 owes.** A target no first-party declaration mints must be
+resolved to its real home or marked EXTERNAL. It must NOT be left as a
+first-party node nothing declares — that is a ghost, and "who calls this"
+answers for it forever. S9 already keeps it harmless rather than correct: a
+`referenced` node is inserted only if ABSENT, so it can never overwrite a real
+declaration. §4.3 makes FINDING them a query (`lost_exact`: a node with no
+inbound edge whose exact identity appears in some unlinked edge) rather than
+an indexer output.
+
+Not fixable inside stage 11: each cause needs knowledge of another file, which
+is the barrier this stage exists to delete. The ceiling at 1,300 is what stops
+the population growing until stage 12 discharges it.
+
+## Indexer — TypeScript's 561 first-party edges resolve onto nothing (A8, measured 2026-09-15)
+
+Found by the barrier `every_first_party_edge_names_a_declaration_this_scan_holds`.
+It asks the one question `report` never did: a rung answered — does the identity
+it minted exist? Ratcheted at rust 1,200 / typescript 700.
+
+The rust half (652 of the original 1,213) was **fixed 2026-09-21 by `a57dd050`**
+and now sits at 30 of 5,519 ownership edges. What is left is TypeScript's:
+
+1. **typescript, 561 — a re-export barrel is not followed.**
+   `export { expect } from '@playwright/test'` in `e2e/fixtures.ts` means an
+   importer's `expect` is minted at `e2e/fixtures·expect`, which that file does
+   not declare — it passes it through. 523 of the 561 are that one barrel
+   (`expect` 377, `test` 146); the other 38 are `lib/components/kit/index`.
+   Needs a cross-file re-export table, which is the same lookup deferred for
+   JavaScript's `index` resolution.
+
+Remaining and separate: rust 298 `through_an_import` and 37 `rooted_in_this_package`,
+which include the 73 edition-2018 uniform-path imports already noted below.
+
+## Indexer — the two coverage barriers over Java (measured 2026-09-15)
+
+The measurement now lives in `indexer/barrier.rs` and is run over BOTH corpora —
+`acceptance` supplies this repository's Rust and TypeScript,
+`lang::java::corpus` supplies `SENSEI_CORPUS`. Java's first numbers, over 5,088
+hand-written files and 887 test files:
+
+| | nodes | no test edge | exercised | no source edge | reached by NOTHING |
+|---|---:|---:|---:|---:|---:|
+| rust | 4,374 | 3,408 (78%) | 2,598 (59%) | 1,275 (29%) | 1,131 (26%) |
+| typescript | 2,186 | 1,543 (71%) | 821 (38%) | 811 (37%) | 508 (23%) |
+| **java** | **23,593** | **14,854 (63%)** | **9,478 (40%)** | **14,561 (62%)** | **11,395 (48%)** |
+
+Java clears barrier 1 better than either of ours and barrier 2 far worse. The
+11,395 split, printed by the test: 4,064 named but nothing binds the name, 3,924
+named with the receiver untyped, 3,109 named by no use site at all, 298
+plumbing. 11,347 of them are Methods.
+
+Two causes of the barrier-2 figure are known and neither is the graph being
+right about dead code:
+
+1. **A same-package reference needs no import, and no rung places one.** Maven
+   puts a JUnit test in the SAME package as its subject, and Java requires no
+   import within a package — so `new Greeter()` in `GreeterTest` is a bare name
+   the ladder cannot place. 33,597 `no_import_in_scope` misses, headed by
+   `List`, `ArrayList`, `Patient`, `UserDetails`. A rung that places a bare name
+   against the other files of one Java package would take most of it.
+2. **A local's type does not survive to the next statement.** `walk.rs` puts a
+   `local_variable_declaration`'s binding into a scope it passes only to that
+   node's own children, so `Greeter g = new Greeter(); g.greet();` types `g` for
+   the first statement and not the second. 41,969 `receiver_type_unknown`.
+
+Both are the Java shape of Rust's cause B and want their own slice.
+
+## Indexer — Java's 26,995 edges at members nothing declares (measured 2026-09-15)
+
+`SENSEI_CORPUS=~/Work/Northwind … indexer::lang::java::corpus::the_first_party_edges`
+prints this every run. 26,995 first-party edges across 2,981 identities name a
+member that is in no source file.
+
+**The "chiefly Lombok and Spring Data" reading was two thirds wrong, and the
+split says so.** Measured over 5,088 hand-written files, first match wins:
+
+| edges | share | cause |
+|------:|------:|-------|
+| 10,403 | 38.5% | Lombok synthesises it (`@Getter`/`@Data` on the type, `get*`/`set*`/`is*`/`builder`/…) |
+|  9,932 | 36.8% | **the declaration IS here, at the field reach** — an indexer defect |
+|  2,529 |  9.4% | Spring Data's repository declares it (`interface X extends JpaRepository`) |
+|  2,356 |  8.7% | the owning type declares no member at all — the walk's gap |
+|  1,044 |  3.9% | names a TYPE this scan does not declare |
+|    345 |  1.3% | the owning type is not declared by this scan |
+|    170 |  0.6% | inherited from a supertype this scan never opened (`java.sql.ResultSet`) |
+|    102 |  0.4% | javac synthesises it on every enum (`values`, `valueOf`, …) |
+|     98 |  0.4% | unexplained |
+|     16 |  0.1% | a first-party SUPERTYPE declares it |
+
+Head verified against the source, not assumed: `ApplicationConstants.SUCCESS`
+(456) is `public static final String SUCCESS = "success";` on line 176 of
+`util/ApplicationConstants.java` — neither Lombok nor Spring Data.
+`Patient.getUserDetails` (379) is a `@Getter` on line 27 of `entity/Patient.java`
+with no such method in the file. `UserDetailsRepository.findById` (283) is
+`interface UserDetailsRepository extends JpaRepository<UserDetails, Long>`.
+
+### 1. The field reach — 9,932, and NOT a one-line fix
+
+`field_declaration` mints a declaration at `Reach::Field` (`java/walk.rs`) and
+`refer_to_member` mints EVERY member use site at `Reach::Item`, so a first-party
+field READ can never meet its own declaration. Passing the use site's reach
+through would land all 9,932.
+
+**What stops it being a one-liner, measured:** an `enum_constant` is declared at
+`Reach::Item`, so `Status.ACTIVE` is a `field_access` whose declaration is an
+ITEM. The test prints `field READS that land today, by the reach they land on:
+{"item": 2856}` — every field read that lands today lands on an `item`, so
+minting `Field` for every field access would land 9,932 and unland 2,856:
+dangling edges traded for dangling edges. The real fix is both sides at once —
+the use site carries its reach AND an enum constant is declared at the reach it
+is actually reached by — and that is a reach-grammar decision, not a patch.
+
+### 2. The interface-constant gap — 2,356
+
+An interface body holds `constant_declaration` nodes (confirmed against
+tree-sitter-java's `node-types.json`); the walk's dispatch reads only
+`field_declaration`. So `interface APIErrorFields { String FILE_UPLOAD = "file"; }`
+declares nothing, owns nothing, and is reached by nothing — it shows up in the
+coverage barrier as an unreached node as well as here. Teaching the walk needs
+A2's independent counter taught FIRST (its `TYPED` list has no
+`constant_declaration` either, so the two holes currently cancel and read as
+agreement — the same shape as the JavaScript `PrivateFieldExpression` hole).
+Fixing it alone moves 2,356 edges from this bucket into the field-reach bucket
+rather than landing them, so it is worth doing only WITH the reach fix.
+
+### 3. Lombok and Spring Data — 12,932 together, and deliberately not attempted
+
+Both are targets that exist only after something else runs — what
+`Reason::MacroExpansion` names — and the walk mints a first-party identity
+instead, which is a wrong edge (R4). Synthesising the declarations is the only
+way to land them, and synthesising declarations no source carries is exactly
+what R4 is about; it needs its own design, not a patch inside a measurement
+slice.
+
+### FIXED on the way here: an interface's supertypes were invisible
+
+`class_declaration` states its parents in the NAMED fields `superclass` and
+`interfaces`; `interface_declaration` states its in an `extends_interfaces`
+child the grammar gives NO field name, so `child_by_field_name` found nothing
+and every Java interface read as having no parents. 2,756 dangling edges were
+labelled "unexplained" purely because of it. Fixed, red-first, in
+`java/walk.rs::type_declaration`. The same change stopped a supertype clause's
+type ARGUMENTS being recorded as supertypes — `extends JpaRepository<User, Long>`
+was emitting `UserRepository extends Long`, a wrong edge R4 ranks below no edge.
+
+### The path in: the walk PLACES instead of stating
+
+`java/walk.rs::refer_to_member` returns `Resolution::Resolved { via: DeclaredHere }`
+whenever the TYPE is first-party, bypassing the ladder — so nothing ever asks
+whether the MEMBER exists. That is the R7 violation, and fixing it is right.
+
+### Two attempts, both measured, both shelved (`git stash@{0}`)
+
+1. **Walk states the path, ladder places it.** Correct by R7, but Java's
+   `declared_here` rung goes to ZERO — the ladder matches `evidence.name`
+   against the file's declarations, and for a member path the bare name is not
+   enough. Net: dangling 26,995 -> 21,018, RESOLVED 64.3% -> 60.3%. Roughly
+   15,000 resolutions lost to remove 6,000 wrong edges, and the split between
+   correct and incorrect inside those 15,000 was not measured.
+
+2. **Ladder refuses a member `World::first_party_members` does not hold.**
+   REGRESSES RUST by 2,112 edges. That table is built from
+   Method/Field/Property, so an associated function like `PgStore::connect` is a
+   `Function` and is absent. It exists for the ExternalBoundary
+   reclassification, not as a member inventory, and using it as one is a
+   narrowing.
+
+### What the fix actually needs
+
+A member inventory the ladder can consult — `(package, type, member)`, built at
+the same barrier `TypeHomes` is. Then the walk states the path (fix 1) and a
+ladder rung places a member on a first-party type only when that type declares
+it. Without the inventory, fix 1 alone trades wrong edges for missing ones at a
+ratio nobody has measured.
+
+Lombok specifically may deserve its own answer: a class carrying `@Getter` has
+`getX()` for every field `x`, which is derivable from facts the walk already
+emits (the Decorates relation and the field list). That would turn ~380 of the
+head into real edges rather than refusing them.
+
+## Indexer — `unwrap_or` fallbacks that hide a cause (adversarial review, 2026-09-15)
+
+**Finding: 6,109 misses carry a first-party home the walk fabricated for a type
+the scan does not declare.** 5,671 of them are `no_import_in_scope` — 47% of that
+whole bucket. Head: `Vec` 1138, `Record` 644, `String` 280, `Node` 267,
+`Value` 221, `Path` 195, `HashMap` 188, `Option` 185. All std, DOM or
+third-party. Measured over the 1,332-file corpus.
+
+### The three call sites
+
+| site | shape | verdict |
+|---|---|---|
+| `lang/rust/walk.rs:784` | `home_of(..).unwrap_or_else(\|\| scope.module)` on an `impl` block | **Defensible.** A declaration site; members declared in that block are ours even when the type is external. |
+| `lang/rust/walk.rs:967` | same, on `receiver.member` | **Defect.** |
+| `lang/rust/walk.rs:1101` | same, on a `Type::member` path (`Vec::new()`) | **Defect, and the larger of the two** — `Vec` heads the list. |
+
+### Two causes under one fallback
+
+`TypeHomes::home_of` returns `None` for two unrelated reasons — its own doc says
+"does not know **or knows two**". So the fallback fires on AMBIGUITY as well as
+on externality, silently picking the use site's module where the honest answer is
+`AmbiguousCandidates`. That is the 125 `ambiguous_candidates` in the population.
+
+### The fix is architectural, and the mechanism already exists
+
+`Observation::UnplacedType(path)` lets a walk hand the ladder the raw path
+instead of a minted identity, and `Ladder::wanted` already reads it. So:
+
+- on a `home_of` miss, emit `UnplacedType("Path::join")` rather than
+  `Candidate(rust·pkg·module·Path·join·item)`;
+- `Ladder::through_an_import` then finds `Path` bound by `use std::path::Path`
+  and mints `lib·std·path::Path::join`.
+
+These stop being misses at all and become RESOLVED external edges. This is R7
+working as designed: the walk states what it SAW, the ladder places it. The
+current code has the walk placing, which is why it can place wrongly.
+
+`TypeHomes::home_of` should return a total answer rather than an `Option` — the
+same rule `Resolution` already follows:
+
+```rust
+pub enum Home<'a> {
+    Ours { module: &'a str },  // declared in this scan
+    Ambiguous,                 // two first-party declarations share the name
+    NotOurs,                   // nothing first-party declares it
+}
+```
+
+`NotOurs` vs `LanguageInternal` vs `Library` is NOT TypeHomes' to answer — it
+needs the grammar's prelude and the file's imports, which live in the ladder.
+That split is also what makes the three-way external classification cheap once
+this lands.
+
+### Assessed and NOT defects
+
+- `split(..).next().unwrap_or(x)` — ~16 sites in `types.rs`, `javascript.rs`,
+  `walk.rs`. `next()` on a split is infallible, the fallback is unreachable, no
+  information is lost. Noise, not risk.
+- `push_owner`'s `symbol.as_ref().ok()` — documented and correct: a declaration
+  with no identity owns nothing, because there is nothing for the edge to point
+  at.
+- `type_segment(..).ok()` in the JS receiver chain — a type the segmenter
+  rejects becomes "no type", so the site reports `ReceiverTypeUnknown` where the
+  truth is `UnhandledForm`. Wrong reason, same class as the above, much smaller.
+
+**Sequence.** Do this BEFORE the Java A2 counter: it moves corpus numbers, and
+they should move once rather than twice with Java half-counted.
+
+## Self-upgrade: health checks the five prereqs, and nothing checks the plugin
+
+**Found 2026-08-28**, publishing four new commands and an agent.
+
+> **Corrected 2026-08-28.** The first draft of this entry claimed *"the pull side does not exist"*.
+> **False** — `sensei upgrade` exists (CLI → `assistants::upgrade()`), pulls the plugin, and
+> already gets the marketplace qualifier right: `claude_code.rs::plugin_update_args()` returns
+> `["plugin","update","sensei@sensei-marketplace"]`, and its comment documents the exact failure I
+> hit independently — *"a bare `sensei` is rejected by Claude Code with 'Plugin not found'
+> (verified live)"*. Found by reading the code rather than reasoning about it, which is the whole
+> point of the claims discipline this project just adopted. The real gap is narrower and is below.
+
+`sensei_bootstrap::health` resolves five components — `postgres`, `ollama`, `sensei`, `database`,
+`daemon` — each with an install/upgrade resolver, so **the binary self-upgrades**. `sensei upgrade`
+covers the plugin, but it is a **manual command, not a health component**: nothing detects that the
+plugin is stale, so nothing prompts you to run it.
+
+**The real defect: `claude plugin update` is gated on VERSION, not content.** Publishing four new
+commands and an agent without bumping the version produced:
+
+```
+$ claude plugin update sensei@sensei-marketplace     # the correct, qualified form
+✔ sensei is already at the latest version (0.9.1)    ← still serving the OLD review.md
+```
+
+So every asset change *between* releases is invisible, whichever path you use — `sensei upgrade`
+shells out to the same version-gated command. There is no `--force`; `uninstall` + `install` was
+the only way through, and that was only safe because the plugin carries no `userConfig` to lose.
+
+**The symptom, restated:**
+
+the marketplace clone updates, the cache does not, and the CLI says you are current — so the
+staleness is discovered when a command behaves like last month's.
+
+`make bump`'s own comment already warns about the sibling of this bug — the `.claude-plugin`
+manifests being what Claude Code reads to decide "is there an update". Same trap, one level up:
+bumping fixes it for a release, and nothing fixes it between releases.
+
+**A SECOND observation, 2026-08-28, and my first diagnosis of it was WRONG — worth recording
+because the wrong answer was very plausible.** `/sensei:review` kept showing its old description
+("Quality check — pattern conformance…") long after the rewrite was published, installed, and
+verified byte-for-byte in the user-scope cache.
+
+I found the plugin installed at **two scopes**, with the project one pinned at **v0.7.6** — no
+`analysis`/`design`/`complete`, no claims-verifier, and the pre-rewrite `review.md` carrying exactly
+the string being displayed. Compelling, and wrong: that entry's `projectPath` points at a DIFFERENT
+repository, so it was never in play here.
+
+**The actual cause is that a running session reads command descriptions at launch.**
+`claude plugin update` says so in its own output — *"Restart to apply changes."* No amount of
+publishing, reinstalling or cache-verifying changes what the current session displays.
+
+Two things worth keeping from the wrong turn:
+- `claude plugin update` defaults to `--scope user`, so it silently updates half of a two-scope
+  install and reports success. `claude plugin list` shows duplicate entries without showing that
+  their versions differ, which is what made the stale 0.7.6 easy to believe in.
+- **sensei is now a USER-scope plugin only** (the redundant project install is removed). Its
+  commands, agents and skills are not project-specific, so a per-project copy buys nothing and can
+  only drift.
+
+**Wanted**
+
+1. A sixth health component (`plugin`?) comparing the installed plugin's `gitCommitSha` against the
+   marketplace `HEAD`, not its version — **per scope**, since they drift independently. The install record already stores the sha —
+   `installed_plugins.json` held `56373b4` while the marketplace was at `8b3f179`, so the drift is
+   detectable today and nothing looks.
+2. A resolver that applies it. With no `--force` that means uninstall+reinstall, so it must first
+   read any `userConfig` and restore it afterwards — a resolver that silently drops a user's plugin
+   config is worse than the drift it fixes.
+3. Decide whether `bump` should bump the plugin version on *any* asset change, which would make the
+   supported path work. Cheap, but it means a version bump for a typo fix in a command.
+4. Surface it in the desktop app's health screen beside the other five, and have `sensei doctor`
+   report it — the command that already exists to answer "is my install healthy?".
+
+## Repository sharing: `visibility` is INTENT, and forge-public is a different gate
+
+**Found 2026-08-28** by the `/sensei:design` claims ledger on the metric-push slice
+(`docs/spec/dojo/daemon-sync.md` §9a, claim C3).
+
+**0 of 67 repositories were `shared`** when this was found (now 1 of 67). All were `private`, so gate 1 had never been set by anything,
+and the whole metric push would have moved zero rows while reporting success.
+
+The proposal on the table: sensei-hq's repos, plus rokkit, dbd and kavach, are public open source —
+so mark them shared automatically.
+
+**The reason to be careful, in our own words.** This project already defines three gates, and two
+of them are the two halves of this question:
+
+| gate | means | owner |
+|---|---|---|
+| 1 — intent | *the user wants these metrics shared* — `sensei.repositories.visibility` | daemon |
+| 2 — cost | *the code is public, so hosting it is cheap* — forge visibility | dōjō |
+
+Deriving gate 1 from gate 2 collapses them. "This repo is public on GitHub" and "the user consents
+to publishing who committed to it, how often, and their churn" are different claims: **public code
+is not public activity data.** The metrics carry per-identity attribution that the repository
+itself does not expose.
+
+`repositories.visibility` is documented private-by-default for exactly this reason — *"signing in
+should not silently start sharing"*. A rule that flips it on forge-public would make signing in do
+precisely that for every public repo on the machine, including ones the user contributes to but
+does not own.
+
+**RESOLVED 2026-08-28, then NARROWED the same day — see `daemon-sync.md` §8a + §8b and
+`docs/requirements/repository-sharing.md`.** An ORG's PRIVATE repo is **mandated by the
+organization**, not defaulted off: local consent does not govern it, and the user can neither
+enable nor disable it. What survives below applies to personal repos and to public repos of any
+owner. Read §8a before acting on this entry — it is the project's mandatory first read
+(CLAUDE.md), so a stale RESOLVED here is how a wrong model gets implemented. The default lives inside an
+explicit configuration step, not at sign-in: once the user opts into sharing, a **public** repo
+defaults to `shared` (changeable, as is the cadence) and a **private** one defaults off and is
+**subscription-gated**. That keeps "signing in must not silently start sharing" true while putting
+the default where it is cheap and useful — the value of the push appears at two or more people on
+one repository, which is where comparison and governance/insight sharing begin.
+
+**Partly shipped.** `PATCH /api/repositories/{*repo_key}` landed in `9468acd0`, and the live count
+is now **1 of 67** shared (`github.com/sensei-hq/dbd`), not 0. Still open: the **CLI flag and the app
+toggle** (`rg set_repository_visibility crates/cli/src app/src` → no hits), and D8's public/private
+default. **Correction (2026-08-28):** I claimed this was "unimplementable until a forge-visibility
+column exists". That was FALSE — `dojo.repositories.visibility` (`private | public`, text+CHECK) has
+been there since phase 1, and the parent spec §V.1 plans its promotion to a `dojo.forge_visibility`
+enum in phase 2. The real gap is that nothing POPULATES it: `registerRepositories` never sets it, so
+every row reads the `private` default — including `github.com/sensei-hq/dbd`, which is public. I
+took a reviewer's `rg forge_visibility` (the ENUM's name) as evidence about the COLUMN and repeated
+it without looking.
+
+## dbd: a `time` column and an unnamed CHECK can never diff clean
+
+**Found 2026-08-28 on dbd 0.12.3**, adding `sensei.schedules`. `dbd diff --scope
+default` reports the same four lines on every run, against a database that
+matches the DDL exactly:
+
+    ALTER TABLE sensei.schedules ALTER COLUMN window_start TYPE time USING window_start::time;
+    ALTER TABLE sensei.schedules ALTER COLUMN window_end   TYPE time USING window_end::time;
+    ALTER TABLE sensei.schedules ADD CHECK (days IS NULL OR (array_length(days, 1) BETWEEN 1 AND 7 …));
+    ALTER TABLE sensei.schedules DROP CONSTRAINT ck:days IS NULL OR (array_length(days, 1) >= 1 …);
+
+**`time` cannot round-trip.** Postgres introspects the column as `time without
+time zone`; dbd normalises the DDL's declaration to `time` and compares the two
+spellings as strings. Declaring it `time without time zone` in the DDL does NOT
+help — dbd normalises that back to `time` too, so **both spellings diff
+identically**. Tried and reverted; there is no DDL-side fix.
+
+**The CHECK is the placeholder bug below**, in its unnamed form: dbd expands
+`BETWEEN` itself, then compares the expanded expression against a `ck:`-prefixed
+rendering of the definition rather than a name.
+
+**Cost:** `dbd diff --scope default --exit-code` is never clean, so the "in sync"
+gate that `--scope dojo` still passes is unavailable for the daemon's scope. Real
+drift is readable only by ignoring those four lines by eye — which is exactly how
+a real change gets missed. Not worked around; both halves are dbd-side.
+
+## dbd: `DROP CONSTRAINT` emits a placeholder, not the constraint's name
+
+**Found 2026-08-26 on dbd 0.12.0**, converting sensei.playbooks/playbook_rules
+`source` from text+CHECK to an enum. `dbd diff` produced:
+
+    ALTER TABLE sensei.playbooks DROP CONSTRAINT ck:source IN ('builtin', 'org', 'learned');
+
+`ck:source IN (…)` is a rendering of the constraint's DEFINITION, not its name.
+The real names are `playbooks_source_chk` and `playbook_rules_source_chk`.
+Executing it fails with `ERROR: syntax error at or near ":"` — verified directly.
+
+Same class as the `uq:tenant_id,provider,subject` placeholder seen earlier in
+0.10.x, so the CHECK path was missed when the unique path was fixed.
+
+**Worked around** by dropping the two constraints by their real names before
+reconciling. A fresh deploy is unaffected — the DDL no longer declares them.
+
+**Also worth knowing:** a type change cannot rewrite a partial index whose stored
+predicate carries an explicit cast. `playbook_rules_learned_uq` was stored as
+`WHERE (source = 'learned'::text)`, so the ALTER failed with `operator does not
+exist: source_kind = text`. Dropping the index first let the change through and
+reconcile recreated it, correctly bound to the enum. dbd does not order this
+itself.
+
+**On the good side**, 0.12.0 DOES emit the `USING` clause for a type change
+(`ALTER COLUMN source TYPE sensei.source_kind USING source::sensei.source_kind`).
+0.10.x omitted it, which would have destroyed the column's data.
+
+## dbd: `deploy` does not apply schema changes, and `inspect` exits 0 on parse errors
+
+**Found 2026-08-26** while wiring the release→deploy job. dbd 0.10.12. Both
+matter because both look like success.
+
+**1. `dbd deploy` against an EXISTING database does not ALTER anything.** Add a
+column to a table's DDL and run `deploy`: it reports
+`Fresh install at v0 — 101 entities applied` and the column is NOT there.
+`reconcile` applies it. A release job built on `deploy` alone would report success
+on every release while silently never applying a schema change.
+
+So the deploy sequence is `reconcile` (schema deltas) THEN `deploy` (imports,
+policies, after-scripts) — neither alone is sufficient.
+
+**2. `dbd inspect` exits 0 even when files fail to parse.** It prints
+`Parse error:` and returns success, so CI cannot gate on the exit code and has to
+grep the output. This is the same silent-drop behaviour that hid
+`dojo.set_pack_adoption` and `dojo.can_read_repository_metric`.
+
+**3. Sequence defaults never converge without `::regclass`.** Postgres normalises
+a column default to `nextval('x'::regclass)`. A design written as `nextval('x')`
+therefore never matches the catalog: `diff` reports the difference forever and
+`reconcile` re-applies the identical ALTER on every run. Three dojo tables were
+affected (relay_inbox, shared_rules, artifacts), which made
+`dbd diff --exit-code` useless as a CI gate — it could never return 0.
+
+Fixed on our side by writing the cast in the DDL, with a comment saying why.
+Upstream, dbd should normalise both sides before comparing.
+
+**4. Imports are not dependency-ordered, and an import that inserts nothing
+reports success.** Found 2026-08-25 migrating the seeds to the staging model.
+`import_rule_pack_rules` sorts before `import_rule_packs` (`_` < `s`), so it
+joined an empty `rule_packs`, inserted nothing, and reported success — rule-pack
+RULES never landed on a fresh install. Worked around by having
+`import_rule_packs` drive its dependents in SQL, so order does not matter. An
+explicit list under `import.staging:` in design.yaml does NOT affect order —
+verified. Both halves are still upstream.
+
+**Upstream asks:** make `inspect` exit non-zero on parse errors; either make
+`deploy` apply deltas or document that it does not; normalise sequence defaults
+in the differ; order imports by dependency, and fail an import that inserts
+nothing into a table something else joins.
 
 ## dbd drops a DDL file it cannot parse — silently, and the deploy still reports success
 
-**Found 2026-08-25** while fixing `dbd deploy --scope dojo`. dbd 0.10.12.
+**Found 2026-08-25** on dbd 0.10.12. **Parse failures fixed in 0.12.0; the silent
+DROP is not.**
+
+0.12.0 parses all three forms we hit — `comment on function …(args)`, a
+comma-separated REVOKE grantee list, and `do $$ … $$` blocks — so the workarounds
+in our DDL were reverted 2026-08-26. But `dbd inspect` STILL exits 0 when a file
+fails to parse (re-verified on 0.12.0), so the underlying hazard stands: any
+future unparseable file is dropped from the entity set with a success exit code.
+The release workflow therefore still greps `dbd inspect` output rather than
+trusting its status.
 
 Two files failed dbd's SQL parser and were removed from the entity set with no
 effect on the deploy's exit status:
@@ -107,55 +725,6 @@ statement. Both carry a comment saying why, so neither gets "tidied" back.
 **Upstream:** dbd should fail a deploy when a file in scope does not parse, or at
 minimum exit non-zero. A schema tool that silently omits an entity gives an
 answer indistinguishable from success.
-
-
-## kavach calls `resolve(event)` twice — every POST body under a public rule arrives empty
-
-**Status:** RESOLVED 2026-08-25 in kavach 1.1.0; dōjō bumped to it.
-
-The fix was already in kavach's source — 1.0.2 resolved once — but 1.0.2 was
-published with no `dist/`, so it had no type declarations and dōjō could not move
-to it (7 svelte-check errors). Cause: the publish workflow builds the tarball
-with `bun pm pack`, which does not run `prepublishOnly`, and then runs `npm
-publish <tarball>`, which does not either — npm runs lifecycle scripts when
-publishing a DIRECTORY, not a prebuilt tarball. So `dist/` was never built in CI.
-
-kavach now builds before packing and FAILS the publish if a tarball lacks the
-types its manifest promises, plus two regression tests pinning the single-resolve
-invariant. Released as 1.1.0.
-
-Original diagnosis, kept for the record:
-
-In `node_modules/kavach/src/kavach.js`, `handleUnauthorizedAccess` returns
-`resolve(event)` when access is ALLOWED — a `Promise`, not a `Response`. The
-caller, `handleRouteProtection`, then tests `protection instanceof Response`,
-which is false for a Promise, so it falls through to its own `return
-resolve(event)` at the end. `resolve` therefore runs twice for every permitted
-route. The first run drains the request body stream; the second sees an empty
-body.
-
-GET is unaffected (no body). Every POST through a permitted route loses its body.
-
-Reproduced 2026-08-25 against dōjō dev: `POST /v1/auth/cli/refresh` with
-`Content-Length: 25` reached the handler with `request.text() === ''`. Replacing
-`hooks.server.ts` with a bare `resolve(event)` made the same request arrive
-intact, and restoring kavach reproduced the empty body immediately.
-
-This is NOT specific to the new CLI-auth endpoints. It affects every existing
-`/v1` POST that reads `request.json()` once the caller is authenticated —
-`/v1/you/dojos`, `/v1/you/contributions/adopt`, `/v1/you/invites/accept`,
-`/v1/you/rule-packs/[slug]/adopt`, `/v1/you/github/sync`. Those all call
-`resolveCaller` first, which reads only headers, so an unauthenticated probe 401s
-before touching the body and hides the fault.
-
-**Fix (upstream):** `handleUnauthorizedAccess` should return the guard Response or
-`null`/`undefined`, and let `handleRouteProtection` own the single `resolve` call.
-
-**Not worked around here.** Buffering the body in `hooks.server.ts` and passing it
-via `locals` would mean every handler reads its body from a non-standard place —
-a workaround for a library bug spread across the whole API surface. Per the
-project rule on silent workarounds, this is recorded rather than hidden.
-
 
 ## Open GitHub issues (12)
 
@@ -191,6 +760,7 @@ project rule on silent workarounds, this is recorded rather than hidden.
 
 ## Open — not yet filed as issues
 
+- **Library capability provisioning + version-aware doc queries** *(2026-09-11, after stage 2b landed)* — the corpus now EXISTS and nothing consumes it end to end. `library_content` holds **16 skills/agents and 152+ pages across rokkit · kavach · dbd**, reachable as `@rokkit/ui → rokkit → its 5 skills / 3 agents / the `list` page`, ingested by all three routes (local · github@tag · website). Three gaps, in dependency order. **(1) Provisioning.** Nothing installs a library's declared skills/agents into a consuming project. The manifests already state how — `install: {skills: "kavach skills add <name>", agents: "…"}` (rokkit + kavach; dbd missing it, → [dbd#13](https://github.com/sensei-hq/dbd/issues/13)) — and the bodies are already stored, fetched at ingest so a read is self-contained. Needs: a `provision_library_capability` verb that writes the body into the project's `.claude/skills|agents/`, an idempotent re-provision, and a record of WHAT was provisioned at WHICH version so an update is detectable. **Skills and agents track LATEST, always** — they describe how to use a library, not a frozen API, and a stale skill is worse than none. **(2) MCP reads from the ingested corpus.** `list_library_skills` / `get_library_skill` / `list_library_agents` exist and already resolve a package name to its library via `library_packages` (`@rokkit/ui` → rokkit), reading the current version — do NOT re-specify those. What is missing is the **provisioning surface** and a `list_provisioned` / drift check. **(3) `get_lib_docs` needs an explicit `version` input.** S9 already picks the source that serves the ASKING FOLDER's pin and labels a mismatch (`"documents 0.12.6, you are on 0.12.0"`), resolved from `referenced_libraries` via the `folder` arg the MCP client defaults to cwd. But a caller asking *about* a version they do not depend on — reviewing an upgrade, reading 2.x docs while on 1.x — has no way to say so. Add an optional `version` param that overrides the folder-derived pin and flows into `choose_docs`; the label machinery is already built. **Docs are version-scoped; skills/agents are not** — that asymmetry is the whole design point and must survive into the API. Prereq for full value: the three libraries declaring `documents` (the concrete release their published docs describe) — all three currently declare only a semver RANGE, so website docs land under `latest` with nothing to match against ([rokkit#155](https://github.com/devuser/rokkit/issues/155) · [kavach#32](https://github.com/devuser/kavach/issues/32) · [dbd#13](https://github.com/sensei-hq/dbd/issues/13); convention: [`spec/library-manifest.md`](spec/library-manifest.md)).
 - **Metrics engine rebuild + Dōjō sync (v1 PRIMARY)** — spec [`spec/2026-08-18-repo-grain-metrics-watermark-engine.md`](spec/2026-08-18-repo-grain-metrics-watermark-engine.md) (DRAFT, **D1–D16 locked, no code yet**). Move metrics to **repo-grain** (global `sensei.repositories` keyed on the normalized remote; `folders`→repository N:1, only the root folder is a checkout; metrics key on `repository_id`; project = aggregation view). A **project-orchestrated watermark engine** (`ComputeProjectMetrics` freezes one `as_of` → cadence-aware group children; per-`(repo×group)` watermark **retires** `covered_days`/`effective_from`/global `metrics.last_run` and the phantom-`covered_days` fix `81c49c2d`). **User-attributed quality/churn** (commit-walk over the local user's own commits ∩ touched files; config-pinned qlty + shared cache; `scope∈{user,repo}`, one scan → two derivations). **Scanner hardening (D15)** — `.git` dir OR file, nested + incremental-safe, so a nested checkout isn't masked as a subdir update. **Views/analytics** (compare · weekly/monthly snapshot · box/violin where D13 applies). **Dōjō me-vs-team** — `member_metrics` (own-RLS) + `repo_metrics` (dedupe by `repository+sha`), private + aggregate default (D9), two-way sync + enrollment reusing `sensei.dojo_memberships` + OS Keychain credential, server-side tenant isolation (D16). **v1 = P-A/P-B (local); P-C (Dōjō sync) rides Phase 2** ([phases.md §2.1](design/phases.md)). Post-metrics follow-up: **branch-awareness program** (indexer no-blind-delete on branch removal, branch-scoped code graph / MCP / UI / lib-docs — currently untracked).
 - **Operating-model reframe — Phase 1 continuation** *(active 2026-07-18 — relay landed, resumed)* — sensei+dōjō vision reframe as the **"OS for AI-assisted work"**; spec [`plan/operating-model.md`](plan/operating-model.md) (all 7 open decisions resolved). Phase 1 (Foundations) **SHIPPED on `develop`**: (1) `sensei scaffold` doc-structure command (plan [`plan/2026-07-17-doc-scaffold-command.md`](plan/2026-07-17-doc-scaffold-command.md); commits `b546db74`·`0b8c91f3`·`5bf594a1`); (2) `sensei scaffold feature <name>` per-feature dossier scaffolder (§3.2; plan [`plan/2026-07-18-feature-dossier-scaffolder.md`](plan/2026-07-18-feature-dossier-scaffolder.md); `0f15480e`·`8723520a`); (3) `sensei scaffold baseline --kind <code|content>` capability-contract scaffold (§3.6 → `docs/baseline.md`; plan [`plan/2026-07-18-baseline-scaffold.md`](plan/2026-07-18-baseline-scaffold.md); `6c05e6ce`·`910e1177`); (4) **memory-anchoring** — `spine_slot`/`feature` on `sensei.memories` + heuristic auto-anchor + slot-scoped retrieval (`list_memories_for_slot`, slot-lead `assemble_context`) + MCP `save/propose`/`get_layered_context` slot plumbing (design+plan `plan/2026-07-18-memory-anchoring-{design,plan}.md`; `ab215a87`→`633a40d8`; subagent-driven TDD + whole-feature review). All 4 TDD + reviewer-clean 2026-07-18. NOT merged to `main`. **Phase 1 (Foundations) COMPLETE.** **NEXT = Phase 2 (front-door intake conversation + playbook catalog).** Open decisions parked in the plans' post-impl notes (esp. `promote_memory` anchor-carry; memory auto-inject-by-cwd hook; LLM slot-classification).
 - **Codebase-wide silent-error audit** — find + fix every discarded error (`.ok()`, `let _ =`, empty catch, masking `unwrap_or_default`); log so it's inspectable. (Directed after the `node_kind` drop; that was one instance.) → plan WS D.
@@ -216,32 +786,16 @@ existing Dōjō line (poll-first → realtime). Traces:
 [`architecture/relay.md`](architecture/relay.md) · [`journeys/relay.md`](journeys/relay.md).
 Building autonomously via `/loop` on `develop`.
 
-- **P0 — contract + schema** ✅ *(done on `develop` 2026-07-16; approach A — batched, not merged to `main` yet)* — `dojo.*` relay tables+enums + daemon-local `activity.runs`/`run_events`+enums (**apply to a real Postgres verified**); `dojo-protocol::relay` wire contract (30 tests); daemon `dojo/client.rs` relay methods (9 tests); reviewer gate + semgrep clean; the `relay_inbox.seq` cursor + payload-default fixes from review applied. Commits `e4bf9ca9`·`a27519ff`·`32770c7a`·`db20d41a`·`f5c0aadd`. **Seed + RLS moved to P1** (only exercised by the round-trip; local-Supabase-gated on Docker).
-- **P1** ✅ *(done on `develop` 2026-07-16)* — vertical slice **proven end-to-end** (round-trip: daemon device-token → Worker `/v1/relay` → phone JWT reply → daemon poll via `seq` trigger; `scripts/relay-roundtrip.sh`). `dojo-protocol::relay` contract, daemon `dojo/client.rs` methods, `resolveApiKeyAccess` (device-token plane) + `resolveTenantAccess` (JWT plane), Worker `session`/`inbox`/`reply` routes + `relay_inbox_seq_bump` trigger, `memberships.device_token_hash`. Reviewer + semgrep clean. Commits `8708ccb8`·`1ce49015`·`8632752f`·`69c4b5bc`. **RLS + prod expose/grant + plane-B → a hardening pass** ([decisions.md](plan/decisions.md)).
-- **P2** ✅ *(done on `develop` 2026-07-16; approach A — batched, not merged to `main` yet)* — real hook triggers + segment feed + PR-review send + running/paused/stuck badge. **Phone UI (C):** Worker `/v1/relay` `segments`/`review`/`gates`/`nudge` routes; `relay-data.ts` client (8 tests) + `relay-view.ts` (13 tests); console run-list + `Relay` nav (`18e4a871`), run-detail segment outline + PR-review Send (`86ff5eea`), "needs you" gate card + band (`0d3b4774`/`9fd600ff`), nudge composer + shared running-pulse status badge (`896de788`/`5dee8a10`); 151 dojo tests + `@testing-library` component tests. **Daemon (Rust):** A2 segment-publish — `TodoWrite` → `relay_project` projection → `upsert_segments`, uuid-guarded, enrolled-membership-gated, fire-and-forget off `ingest_hook_event` (`d0220b08`); B hook-gate — `POST /hook/gate` blocking PreToolUse gate (raise → `await_reply` poll → allow/deny), **fail-open everywhere**, **off by default** (`SENSEI_RELAY_GATE_TOOLS`), zero-knowledge payload (tool name only), hook script **not registered** (`f47fc403`). Each chunk: `bun run check`/`build`/`test` or `cargo build`/`test` + `feature-dev:code-reviewer` (clean). End-of-P2 security gate: `semgrep` 0 findings + `sensei-security-reviewer`. `relay-roundtrip.sh` extended (segments/review/gates/nudge) GREEN. **B activation is a deliberate later step** (per-tool daemon round-trip on live sessions). Follow-ups: multi-membership gating, TodoWrite-enqueue debounce, dojo Playwright harness, RLS, plane-B signing.
-- **P3** ✅ *(done on `develop` 2026-07-17; approach A — batched, not merged to `main` yet)* — daemon-owned run engine, built + reviewer-gated + security-gated chunk by chunk (`f001aab9..04618bc5`). **P3.1** run-state model + CRUD (`activity.runs`/`run_events`); **P3.2** `AdvanceRun` tick + scheduler + run API; **P3.3a/b** agent-spawn primitive (`run_agent`, argv-exec, kill+reap) + OFF-by-default drive (`SENSEI_RUN_DRIVE`); **P3.4** limit→pause→auto-resume (the 5-day-run fix); **P3.5** hard-block classifier + progress-over-asking gating; **P3.6** watchdog + crashed recovery (stall→bounded-recover→crash); **P3.7** `plan-depth-reviewer` agent + skill (the depth bar, dogfooded on a real TDD plan); **P3.8** MCP run-control (`start_run`/`run_status` + `POST /api/runs`). **Drive smoke PASSED** on a scratch repo (tick→drive→FeatureDone, correct cwd, no false hard-blocks, watchdog healthy), then drive restored OFF. **End-of-P3 security gate:** `sensei-security-reviewer` PASS (2 High + 1 Medium classifier gaps fixed — `..`-traversal, obfuscated/indirect-run, WebFetch/NotebookEdit coverage) + `semgrep` 0 findings. **DEFERRED (Dev-gated):** `main`-merge + `make bump`; `SENSEI_RUN_DRIVE` activation on a real run; B hook-gate activation on live sessions. Follow-ups tracked in [decisions.md](plan/decisions.md): `respond_gate` local reply channel, gemma4 classifier backstop, console button migration, fail-open→`public.logs`, RLS, plane-B, limit-parse timezone, multi-membership scoping, daemon `0.0.0.0`-bind, watchdog push-notify.
-- **P4** ✅ *(done on `develop` 2026-07-18; approach A — batched, not merged to `main` yet)* — away-from-keyboard, built + reviewer-gated + security-gated + **browser-verified** chunk by chunk (`2e5bd323..b27774c1`). Plan: [`plan/2026-07-17-relay-p4-away-from-keyboard.md`](plan/2026-07-17-relay-p4-away-from-keyboard.md). **P4.3** Web Push client (SW + PWA + subscribe + `push_subscriptions` store); **P4.4** Worker Web Push send (VAPID/aesgcm via `@block65/webcrypto-web-push`, fire-and-forget/fail-open on gate·stall·crash, prefs-gated + dedup + 410-disable); **P4.6** "what's blocked on me" home (urgency-ordered cross-run gates + empty state); **P4.5** offline/reconnect (draft store + partial-failure-safe action queue + reconnect flush); **P4.1** relay RLS (own-rows SELECT-only, `user_id = auth.uid()`; + `supabase_realtime` publication; JWT harness 14/14); **P4.2** realtime swap (client-direct, JWT-authed, RLS-scoped Supabase Realtime → coalesced refresh). **Browser-verified live** (Playwright, screenshots in `relay-p4-*.png`): blocked-home renders with real data + a seeded gate appeared **live 1→2 with no reload** (proves RLS+realtime end-to-end), notify toggle renders, 0 console errors. **End-of-P4 security gate:** `sensei-security-reviewer` PASS (no Critical/High; 2 low fixed — https-only push endpoint + anon/select-only RLS assertions; rest tracked) + `semgrep` 0. **DEFERRED (Dev-gated):** prod VAPID key (`wrangler secret put VAPID_PRIVATE_KEY`) + prod `PUBLIC_SUPABASE_ANON_KEY`; deploy dojo schema (ships relay RLS+grants); run the `supabase_realtime` publication migration in prod; validate the 4 RLS checks. Realtime transport = **client-direct + RLS** (Dev-confirmed).
+**P0–P4 are done on `develop`** (contract+schema · vertical slice · hook
+triggers+segment feed · daemon-owned run engine · away-from-keyboard), batched
+and **not merged to `main`**. Their per-phase detail is in the commits and in
+[`plan/relay-engine.md`](plan/relay-engine.md); the follow-ups they parked are in
+[`plan/decisions.md`](plan/decisions.md). Still Dev-gated: the `main` merge,
+`SENSEI_RUN_DRIVE` activation, the B hook-gate on live sessions, and the prod
+VAPID / Supabase anon keys + the `supabase_realtime` publication migration.
+
 - **P5** — multi-assistant adapters (ACP + fallback ladder).
 - **P6** — team relay (folds into the Dōjō `/v1` port above).
-
----
-
-## Mockup gaps — ✅ RESOLVED 2026-07-14
-
-The 2026-07-14 mockup-gap pass is closed. Details in [`spec/MOCKUP-INDEX.md`](spec/MOCKUP-INDEX.md).
-
-| Gap | Resolution |
-|---|---|
-| Stale spec component refs | fixed (`Splash`, `ProjAboutPane`) |
-| Duplicate splash | `splash-healthcheck.jsx` retired to `discarded/` |
-| 3 solution-track screens | drawn (`solution-track.jsx`) + specs wired |
-| Relay specs | 13 written (`relay-*.md`) |
-| Dōjō console per-role | split into admin/maintainer/lead + **developer**; all specced |
-| Extensions/skill editors | `extensions-browser`/`skill-editor` retired; `agent-editor`/`persona-editor` specced |
-| Benchmark runner | specced (`benchmark-runner.md`) |
-| Prune orphans + `lib/` reorg | done (folders: shared/setup/observatory/project/dojo/relay/data/discarded) |
-| Empty/loading/error states | `ScreenState` helper added; screens take a `state` prop |
-| _also_ | in-app Dōjō flows → Observatory ⑦; ecosystem architecture board (⑧); `project-atlas` specced |
 
 ---
 
@@ -249,7 +803,6 @@ The 2026-07-14 mockup-gap pass is closed. Details in [`spec/MOCKUP-INDEX.md`](sp
 
 | Item | Summary |
 |------|---------|
-| ✅ **RESOLVED 2026-08-22** | **Duplication / maintainability charts — resolved by fixing the axis, not by plotting the rating.** The plan was to plot the 0–5 rating instead of the raw value (module_quality's range is 0–0.00527, so every `toFixed(2)` tick read "0.00") and to retune `module_quality`'s `rating_scale`. Neither was needed. The complaint ("scale is too small, the chart is not helpful") was caused by the tick formatter, fixed in fbb6f0d0 — `metricTickFormatter` keys off the metric, not just its type, and renders these two per-1,000-lines. Live data: module_quality raw 0–0.00527 (avg 0.00154) → per-kloc 0.0–5.3 (avg 1.5); duplication_ratio raw 0–0.897 (avg 0.0439) → per-kloc 0–897 (avg 43.9). Both readable. **Plotting the rating would regress it**: across 115 periods module_quality's rating takes only 3 distinct values (3:10, 4:49, 5:56) and duplication_ratio 4 (2:8, 3:36, 4:4, 5:67), so a continuous series becomes a 3-step staircase — and it would need a `rating` column threaded from `metric_rating_facts` through `get_project_metric_series` to do it. The rating is already legible as the A–F grade chip: `PER_KLOC_GRADES` [3, 6, 12, 25] is the same ladder as `rating_scale` [0.025, 0.012, 0.006, 0.003, 0.0015] (= per-kloc 25, 12, 6, 3, 1.5) minus its top step, so the two systems agree by construction. The scale was kept as an absolute ladder by decision — it does discriminate (10 periods sit at rating 3), and rebasing it on the observed average would make the bar relative to current quality rather than to a standard. Guard added in `metric-view.spec.ts`: spot values across each metric's real observed range must produce distinct tick labels. |
 | **dojo transport — 2026-08-25** | **Do NOT mass-delete `crates/senseid/src/dojo/`.** An earlier analysis claimed ~7,600 LOC targets the non-existent dōjō service; measured per file, only `client.rs` (1,101) and `crates/dojo-protocol` (1,561) are transport-bound. The other **4,979 LOC is local logic every transport needs** — `attribution.rs` (the confidentiality dereference: client identifiers must never leave the machine), `gate.rs` (the hook-gate control leg, unrelated to dōjō and reached by `/hook/gate`), plus routing/membership/contribution assembly. The transport gets REPLACED in Phase 7, not removed; it costs nothing meanwhile (`dojo_outbox` has never held a row). Build nothing new on `client.rs` until the transport is decided. |
 | **RLS note — 2026-08-25** | **A Supabase row policy runs as the CALLING role, so every table it reads needs its own grant.** Written inline, the repository-metrics policy traverses principals → team_members → teams → team_projects → repositories_in_projects → memberships — which would have meant granting every signed-in user SELECT on the entire organisation graph just to filter their own metrics: the check leaking more than it protects. Correct shape is a `SECURITY DEFINER` function (`dojo.can_read_repository_metric`) with `set search_path = dojo, pg_temp` — the traversal runs as the owner, the caller needs no grant and learns only a boolean. Also: RLS alone is not enough, the role still needs `GRANT SELECT ON <table>` or every read fails "permission denied" rather than returning an authorised subset. |
 | **dbd note — 2026-08-25** | **Two more dbd gaps, found deploying the dōjō scope.** (1) It emits a PLACEHOLDER constraint name for a drop — `ALTER TABLE … DROP CONSTRAINT uq:tenant_id,provider,subject` — which is a syntax error; look the real name up in `pg_constraint` and do it by hand. (2) An enum used as a COLUMN TYPE is not FK-reachable, so a cross-scope table that gains one fails with `type "entity_origin" does not exist` until the enum is listed explicitly in that scope's `includes` (design.yaml documents this for other enums; it applies to every new one). Also re-confirmed: a renamed column needs `ALTER … RENAME` before reconcile, or dbd plans ADD+DROP and destroys the data — it would have dropped 14 rule-pack citations from the Supabase copy exactly as it nearly did locally. |
@@ -263,7 +816,7 @@ A qlty pass ran on 2026-08-10 (commits `2bd4dc2b`..`992c7256`). Landed: excluded
 | Item | Summary |
 |------|---------|
 | _(file issue)_ | **Security: the 28 osv advisories stay tracked in [#120](https://github.com/sensei-hq/sensei/issues/120)** (all `medium`, transitive, none code-fixable). Left un-allowlisted per owner decision — the dashboard keeps showing them as known/accepted rather than suppressed. |
-| _(file issue)_ | **~~sumi-palette → shared design-tokens package~~ DONE (c64a56b6).** `packages/sumi-palette` now holds the canonical Zen/Sumi OKLCH palette, consumed via a build-time relative import from all three `rokkit.config.js` (no workspace/lockfile change). Removed the mass-467 app↔dojo duplication AND unified `website` (which had drifted to a separate hex palette) onto the one brand palette. All three build clean. **Follow-up: a visual QA pass on the website** — its rendered colours change from the old hex values to the canonical OKLCH brand palette (same values app/dojo already ship). |
+| _(file issue)_ | **Visual QA pass on the website, after the sumi-palette unification (`c64a56b6`).** `packages/sumi-palette` is now the canonical Zen/Sumi OKLCH palette for app, dojo and website; `website` had drifted to a separate hex palette and was moved onto it, so its rendered colours change. All three build clean — nobody has looked at the website since. |
 | _(file issue)_ | **Remaining high/medium smells (~388 after the pass).** The `view.ts` "hotspot" was an attribution artifact — its only structural smell is `scopeLabel`'s guard-clause returns (house style, correct as-is). **Partially done:** `project_detail.rs` — extracted `resolve_existing_project` (DRY'd 18 handlers; dup 4→2, commit `6c90110d`). **Assessed as NOT worth forcing:** the remaining api-handler dup pairs (`query` query_functions/query_types, `workspace`, project_detail's `decide_*` pair, `gateway_embedded`, `insight_copy`) are near-identical async handlers wrapping a *differing store call* — Rust extraction needs async closures/generics that trade duplication for indirection (readability wash, against "simplest design"). `many-parameters` on the language `make_sym`/`resolve_call`/`collect_calls` (bundle into a param struct) is still a clean candidate if pursued. The language tree-walkers (`rust_lang` 21 / `python` 20 / `typescript`/`swift`/`kotlin`/`java`) hold most structural smells but are inherently complex + well-tested — low-value/high-risk to refactor for the metric. |
 | _(file issue)_ | **Coverage follow-ups to push past ~80.7%.** (a) The DB-coupled senseid remainder still isn't measured — needs a CI Postgres service (the documented parallel-DB flakiness must be handled first: per-test schema/txn isolation). (b) Longer-term, extracting the pure senseid modules into their own crate would drop the hand-maintained allowlist in `scripts/senseid-pure-coverage.sh`. (c) app coverage is now runnable (~45%) but stays OUT of the aggregate — the CI `--coverage` job still hits a linux-only rolldown `node:module` crash; fixing that would upload app at ~45% and *drop* the aggregate, so improve app coverage first. |
 
@@ -295,7 +848,6 @@ Surfaced while verifying the app intake form end-to-end. The feature itself is f
 | Item | Detail |
 |---|---|
 | **Deployed `sensei` DB behind `develop`** | Live DB (from released v0.6.0 bundle) was missing `sensei.playbook_run` (whole table), `playbook_rules.base_priority`, the learned index, and the catalog/guide/rules seeds → `recommend` 500'd (`column base_priority does not exist`). **Interim fix applied** to the local `sensei` DB (surgical additive DDL + seed of playbooks/intake_guide/playbook_rules) so intake works for manual test. **The durable fix is a proper deploy** — a `dbd reconcile` also wants to apply a ⚠ **`gateway.models.capabilities` type change** (`sensei.model_capability[] → model_capability[]`, flagged for a two-snapshot migration) + `sensei.memories` anchoring cols. Fold into the next `make bump`, or reconcile deliberately with the gateway.models change reviewed. |
-| ~~**`dbd import` jsonb path broken (dbd-rs 0.8.10)**~~ ✅ **RESOLVED** — fixed by the dbd-core `0.8.1→0.10.5` upgrade (`ea163702`, which "unblock[ed] e2e DB setup" — the jsonb import path was the blocker; the staging import path is now used, e.g. `215e72f3`). Live `dbd` is `0.10.4`. [`sensei-hq/dbd#6`](https://github.com/sensei-hq/dbd/issues/6) | ~~**Root-caused → external dbd-rs bug** (`~/Developer/dbd-rs`), not a sensei schema issue. dbd 0.8.10 manages `import_jsonb_to_table` internally ("now managed internally by dbd") and does `CREATE TABLE IF NOT EXISTS _temp(data jsonb)` → `COPY` → `CALL <schema>.import_jsonb_to_table('_temp', <target>)` → `DROP _temp`. The `_temp` table + proc + CALL aren't consistently schema-qualified vs the target table's schema → `relation "_temp" does not exist` (full deploy) / `activity.import_jsonb_to_table does not exist` (explicit `-f`). Hits **every jsonb-column staging table** (assistant_events, **models, routers, models_in_router, libraries, benchmark_reports** — incl. essential gateway config), so it can't be worked around by excluding demo data. Impact: fresh installs + e2e can't self-provision seeds until dbd is fixed (workaround = pre-provision via `dbd apply` + hand-seed, as done for the intake e2e). **Fix in dbd-rs** (qualify `_temp`/proc against the target schema), then repin. The live `sensei` DB is unaffected (already seeded + reconciled). |
 | **e2e standard `globalSetup` lacked `SENSEI_DDL_DIR`** | Unlike `globalSetup-cold`, it applied the *released* bundle → stale schema for new columns. **Fixed** (`SENSEI_DDL_DIR` + boot-wait 120→240s). |
 | **~~Daemon binds `:7744` only after warmup~~ — CORRECTED: non-issue** | Measured a fresh boot: HEALTH 200 in **3.6s**, GUIDE 200 in 3.7s, **0 model-load lines at boot**. The release build's `embedded-llama-cpp` adapter loads models **lazily on first inference** (not at boot); `fastembed`/`ort` (which do block) aren't in the release build + are env-gated. So the service already comes up fast — the earlier "binds after warmup" note was a misread of a stale log. Optional future nicety: a background pre-warm at boot so the *first* inference call isn't slow. |
 | **Classifier under-reads `ux`** | Dogfood: "produce UI mockups/screens…" classified as `intent=feature` (→ `gsd`), not `ux` (→ `mockup_first`). The classifier (LLM + heuristic) doesn't treat design/mockup work as UX. Tighten the `classify_chunk` prompt + `heuristic_axes` (design/mockup/screen/UI/wireframe → `ux`). Good candidate for the §9 learning loop once real runs accrue. |
@@ -340,6 +892,416 @@ Phases 1–7 are **code-complete on `develop`** (not merged to `main`): `resolve
 
 | Deferred item | Detail |
 |---|---|
-| ~~**Full-graph live migration**~~ ✅ **DONE 2026-08-07 (v0.7.0 deploy).** | `develop`→`main` merged (`5e83fcca`), released `0.7.0` (`make bump v=minor`), release binary installed. Live deploy gate applied: graph-cleared (`TRUNCATE sensei.nodes, sensei.edges CASCADE; TRUNCATE inference.communities; TRUNCATE sensei.scan_state;` + all folders → `discovered`) + `dbd reconcile --scope default` (additive-only) → full reindex of all 8,664 folders running on the 0.7.0 daemon (multi-hour; watch roots `~/Developer` + `~/Work`). Verified starting clean: FQN nodes emitting, no schema errors. |
-| ~~**`edges_target_id_idx` missing on live**~~ ✅ **DONE** — added by the v0.7.0 `dbd reconcile`; degree-recompute (in `detect_communities`, 7.1) is index-backed again. |
 | **Unresolved-calls residual vs plan's "tiny"** | On the sensei repo, 43.5% of `calls` stay `target_id IS NULL` — the honest dyn / out-of-0.7-binding residual (trait dispatch, chained/reassigned receivers), NOT false edges. The plan's "unresolved = tiny (dyn only)" was optimistic; 0.7 deliberately stubs out-of-scope receivers. Tightening this (more binding forms / light type inference) is a future increment, not a regression. |
+
+## Forge visibility needs a GitHub App, not the `repo` scope (2026-08-28)
+
+**Shipped:** `repo` added to both sign-in paths (`kavach.config.js`,
+`cli-auth.ts`), because without it forge capture cannot work at all — GitHub
+answers **404, not 403**, for a repository a token cannot see, so every private
+repository stays permanently uncaptured, fails closed, and never syncs. That is
+exactly the case the authority/mandate model exists for, so capture without it
+worked only where it was not needed.
+
+**Why it is still wrong.** Classic `repo` is full read **and write** over all
+private code, and there is no metadata-only classic OAuth scope. We are asking
+for the ability to push to every private repository a user can reach in order to
+learn one boolean per repo.
+
+It is worse on the CLI path than the web one. The web token exists only in the
+`onSessionSync` payload and never reaches the cookie. The daemon's is
+**persisted** — keychain rather than Postgres, which is the right store, but it
+is a stored, refreshable, full-private-code credential on a developer machine.
+
+**The fix:** a **GitHub App** with `metadata: read`, which is precisely and only
+the permission this needs. That changes the install story (per-org
+installation, not per-user consent) and the token model (installation tokens,
+short-lived, no refresh in the keychain), so it is a slice and not an edit.
+
+**Interim mitigation worth doing first, and cheaper:** request `repo`
+**incrementally** — sign in with `read:org`/`user:email`, and ask for `repo`
+only when a user actually elects a private repository or joins an org tenant
+with a mandate. Most users never grant it, and the consent screen then appears
+attached to the thing it is for. This is a change to WHEN we ask, not to what
+we ask for, so it does not need the App migration to land first.
+
+**Do not close this by deleting the scope** — that silently reverts private
+capture to permanently-uncaptured, which reads in the UI as "not shared" rather
+than as "we could not ask".
+
+### What actually changes, OAuth App → GitHub App
+
+**The whole surface is five calls.** That is the blast radius, and it is small:
+
+| call | where | needs |
+|---|---|---|
+| `GET /user` | `forge-github.ts` | any user token |
+| `GET /user/memberships/orgs?state=active` | `forge-github.ts` | `read:org` → App: *Members: read* |
+| `GET /repos/{owner}/{repo}` | `forge-github.ts` | `repo` → App: **`metadata: read`** |
+| `GET /user/orgs` | `senseid auth.rs` | `read:org` → App: *Members: read* |
+| `GET /user/emails` | `senseid auth.rs` | `user:email` → App: *Email addresses: read* |
+
+**Sign-in does NOT change, which is the non-obvious part.** A GitHub App does
+user-to-server OAuth through the *same* `/login/oauth/authorize` +
+`/access_token` endpoints. So `supabase/config.toml`'s `auth.external.github`
+takes the App's client id/secret and kavach's flow is untouched. No new
+callback, no new provider, no change to `cli-auth.ts`'s URL arithmetic.
+
+**Four things do change:**
+
+1. **`scopes` goes inert.** GitHub Apps do not use OAuth scopes — permissions
+   are declared on the App. `kavach.config.js`'s `scopes: [...]` would be
+   *silently ignored*, and our drift test would keep passing while granting
+   nothing. That test becomes false comfort and must be rewritten to assert the
+   App's permissions, or deleted. **This is the migration's main trap.**
+2. **Installation becomes a precondition, and a new refusal.** A user-to-server
+   token only reaches repos where the App is INSTALLED. A member of an org that
+   has not installed sensei sees nothing, which under fail-closed is
+   `forge_visibility_unknown` forever. That wants a new reason code —
+   `app_not_installed`, `kind = refusal`, actor `admin`, remedy "ask an
+   organisation admin to install sensei". Strictly better copy than today's
+   `fault` + "sign in again", which would be a lie in that case.
+3. **Tokens expire (8h, 6-month refresh).** The daemon already stores
+   `provider_refresh.*`, but nothing currently REFRESHES on a 401 — today a dead
+   token just yields `forge_unreachable` (observed live 2026-08-28). That path
+   has to actually run, or capture silently stops after eight hours.
+4. **Org install ≠ user consent.** An org admin installing the App grants
+   metadata for org repos without each member consenting. That suits the
+   org-private MANDATE and does NOT suit personal repos — so personal repos
+   still need the user-to-server token.
+
+**The better shape for THIS need: installation tokens, not user tokens.**
+Visibility is a property of the repository, not of the user. App JWT (signed
+with the App private key) → installation access token → `GET /repos/{o}/{r}`
+with `metadata: read`. Then:
+
+- the daemon holds **no** forge credential for capture at all — the strongest
+  possible answer to the concern that motivated this entry;
+- capture works when the user is signed out, or their token expired;
+- `GET /user/emails` cannot use it (no user context) and keeps the user token,
+  or reads the email Supabase already resolved.
+
+Cost: the dōjō holds the App's private key (a Worker secret, a real one), and
+needs a `tenant → installation_id` mapping.
+
+**Verify before committing to this:** that Supabase GoTrue passes a GitHub App's
+user-to-server token through as `provider_token` unchanged, and the current
+default for token expiration on a new App. Both are assumed above, not tested.
+
+**Not blocked on any of it:** incremental consent (ask for `repo` only when a
+user elects a private repo) is a change to WHEN we ask and needs none of this.
+
+### Repository sharing — remaining after the live verification (2026-08-29)
+
+**A 404 leaves a stale forge visibility standing.** `refreshForgeVisibility`
+skips on a 404 (`continue`), so a repository that was captured `public` and has
+since been deleted, renamed, or moved out of reach keeps that verdict — and
+`public` is the free-to-host path, so it keeps syncing.
+
+BOUNDED, not unbounded: `all_my_repositories` expires a capture at 30 days
+(`forge_visibility_stale`), so the window is 30 days.
+
+**Deliberately not fixed by clearing the capture on 404.** That would make the
+row read `forge_visibility_unknown`, which now triggers the daemon's self-heal
+(`7b0f53ce`) — so a deleted repository would call GitHub every 60 seconds
+forever. That trades a bounded staleness for an unbounded poison pill, which is
+the worse of the two.
+
+The shape that would work: record the 404 as a distinct state
+(`forge_visibility_refused` — the code the `CAPTURE_FIXES` list already
+deliberately excludes), with its own reason row, so it refuses WITHOUT inviting a
+re-ask. Needs a seed row and a view branch; not urgent while the 30-day expiry
+holds.
+
+**`GET /health` takes 13 seconds.** `bootstrap::check` probes every binary
+synchronously on each call, so anything polling health pays 13s per poll.
+Measured, not estimated. Worth a cached-with-TTL layer or a `?quick=1`.
+
+**Settled — not defects:**
+- `configurable_by_me` grants `lead` — FALSE, the DDL grants `admin` alone.
+- `uptimeSeconds` is wrong — FALSE. It reports 1259s for a 1238s-old process.
+  The original claim compared the endpoint against a process found with `ps`
+  that did not hold port 7744.
+
+### `dojo.seats` is keyed on the governance ladder (2026-08-29)
+
+Found while closing phase 2. `dojo.seats.namespace_id` references
+`sensei.namespaces`, which is **not** a projects table — it is the RULES ladder:
+
+```
+general(0) · user(10) · organization(20) · client(30)
+technology(40) · team(50) · project(60) · repository(70)
+```
+
+A namespace is one instantiated rung — `(organization, "Sensei HQ")`,
+`(technology, "rust")`, `(project, "sensei")` — and a repo belongs to a SET of
+them via `folder_namespaces`. Its purpose is deciding **which rules apply to a
+repo and which wins** (more specific scope beats less specific). Three of its
+four referents are `rule_packs`, `rule_pack_adoptions` and `shared_rules`.
+`dojo.seats` is the fourth, and is the odd one out: it bills against a rule
+scope.
+
+`resolveProjectNamespaceId` reaches it by `scope_key = 'project'` plus a **slug
+string match**, i.e. it reads the governance ladder to decide who to charge.
+
+**A `(project, …)` namespace is NOT `dojo.projects`.** Live: 311 project
+namespaces against 146 `sensei.projects` rows. They share a word and nothing
+else. Projects organize repos (one repo, one project; dōjō wins on conflict) and
+have no bearing on sync — sync is repo-scoped and creates neither: 184 metric
+rows exist against **0** projects.
+
+**Why this matters beyond tidiness.** Seats should key on the billable unit,
+almost certainly `(tenant, principal)` — you bill PEOPLE per organisation. Keyed
+on a rules rung, the count moves when governance structure changes, which is
+unrelated to how many humans are using the product.
+
+**Not urgent.** Nothing is broken today: `seats_included` is never compared to
+anything and `openOrRefreshSeat` never refuses at a cap, so seats are counted
+and reported, never enforced. Nothing blocks on them.
+
+**Already done as part of this finding:** the `no_seat` reason code is DELETED
+from the `repository_sharing` domain (seed + live row). A seat is a billing
+quantity, not a permission — entitlement is answered by the subscription terms —
+so a sharing refusal named `no_seat` described a gate that should not exist. If
+a cap ever becomes enforceable it belongs in a `billing` domain, refusing at
+seat-open time rather than at sync time.
+
+**Closes spec F2 and F4 as NOT-APPLICABLE rather than resolved.** F2's "circular
+ordering" (a seat cannot exist before the project, and the project is created by
+the sync the seat gates) was written against a design where sync creates
+projects. Ours does not. F4's "two visibility sources" are not in conflict:
+`dojo.repositories.visibility` decides whether data may be SHARED,
+`sensei.namespaces.visibility` decides whether participation is BILLABLE
+(`billing-data.ts:73` — "public work never consumes a seat"). They are never
+asked the same question.
+
+NOTE FOR WHOEVER RE-KEYS IT: `staging.import_reason_codes` UPSERTS and never
+deletes, so removing a seed line does not remove the live row. The delete was
+issued explicitly.
+
+### The contribution confidentiality gate holds everything (2026-08-29) — BLOCKING
+
+Found by RUNNING the contribution path end-to-end, not by reading it. One batch
+has sat `proposed` since 2026-07-02; approving and publishing it returned:
+
+```
+{"published":0,"held":1,"queued":0,"errored":0,
+ "items":[{"result":"held_residual_risk","tenant_key":"personal/dev"}]}
+```
+
+The gate refused rather than leaked, which is the correct failure direction — but
+it refused text that identifies nothing:
+
+> "Integrating specific environment credential stores simplifies usability, but
+> requires adjustments to component properties and consideration of supporting
+> multiple provider types."
+
+**Why.** `residual_risk` squashes the text (`attribution.rs:102` — strips EVERY
+non-alphanumeric, so no word boundaries survive) and then does a raw
+`haystack.contains(needle)` against `ctx.name_tokens()` with
+`MIN_DISTINCTIVE_SQUASH = 3`.
+
+`name_tokens()` includes all of `repo_names`, and `repo_names` is populated from
+**every folder name in the project**. For `sensei` that is ~300 tokens including
+`api`, `app`, `you`, `org`, `bin`, `src`, `lib`, `mcp`, `code`, `docs`, `state`,
+`token`, `tools`, `rules`, `stores`, `providers`.
+
+So the gate is not a filter, it is a wall. Reproduced as characterisation tests
+in `attribution.rs::residual_risk_false_positives`:
+
+  * a folder named `app` makes the word **"happens"** a leak;
+  * a folder named `api` makes **"a pipeline"** a leak — squashing removed the
+    boundary, so `a pipeline` reads as `api`;
+  * the live text above, held by `stores`.
+
+Essentially any generalised engineering principle will contain one of ~300
+common tokens, so **the contribution pipeline can never publish**. It fails as a
+silent hold, which is the exact shape this codebase keeps fighting.
+
+**ON HOLD — user decision, 2026-08-29.** The checker is the wrong tool for this
+job, not merely a mistuned one: it asks *"does this text mention the project it
+came from?"*, but a memory DERIVED from a transcript should never reference its
+source context in the first place. Checking for a name that should not be there
+by construction buys little, and buys it at the cost of matching ordinary
+English.
+
+The work moved upstream instead — generate text that is clean at the source
+(see the entry below). Return to the checker only as a backstop, and when doing
+so keep the two halves apart:
+
+  * **generic patterns** (absolute paths, emails, UUIDs, session ids, long
+    key-like strings) catch real accidental leakage regardless of project and are
+    worth keeping;
+  * **name matching** is the noisy half. If any of it survives it should be
+    `client_name` and person names — never `docs`, `api` or `stores`.
+
+The options, for whenever that happens:
+
+1. **Filter the token list** (recommended). The defect is that `repo_names`
+   carries ~300 generic folder names, most identifying nothing. A folder called
+   `docs` or `api` is not an identifier. Use git-ROOT repo names only, and drop
+   tokens that are common English or generic dev vocabulary.
+2. **Word-boundary matching** for short tokens, keeping squash-matching for long
+   ones. Squashing exists to defeat `acme-billing` → `acmebilling` evasion, so it
+   must not be removed wholesale.
+3. **Raise `MIN_DISTINCTIVE_SQUASH`** from 3. Cheap but arbitrary, and would
+   still hold on `providers` (9 chars).
+
+The characterisation tests assert the WRONG behaviour deliberately, and every
+assertion must be INVERTED when the fix lands. A green suite there today is a
+recorded defect, not health.
+
+---
+
+## Soft vs hard edges — a distinction dbd has and this indexer does not
+
+**Raised by:** the SQL work (issue #130). **Status:** recorded, not implemented.
+
+`dbd-core`'s `Reference` carries a `ref_type`, and `entity.rs` uses it to grade
+what an UNRESOLVED reference means:
+
+> Function references are *soft*: a view body is full of built-in and aggregate
+> calls (`now()`, `sum()`, `coalesce()`) that look exactly like a call to a
+> project-managed function, and only the resolver knows which is which. Unlike
+> a table reference, one that does not resolve to a known entity is dropped
+> silently instead of warned about.
+
+**The lesson generalises past SQL.** This indexer treats every miss alike: a
+`Resolution::Unresolved` carries a `Reason`, but nothing says whether the miss
+was EXPECTED. A call to a language built-in and a call to a function that should
+have resolved and did not are the same row in the A4 ceiling, so the ceiling
+cannot distinguish "we do not model this" from "we lost an edge".
+
+The raw material is already present — `RefKind` says how it was reached and
+`Evidence.reach` says at what grain — so this is a grading question rather than
+a capture one. `Reason::Plumbing` is the nearest thing today and it is narrower:
+it names members that exist on every object, not built-ins generally.
+
+**What T-SQL showed.** The distinction does not always need a resolver. T-SQL
+REQUIRES a scalar user-defined function to be schema-qualified and never
+qualifies a built-in, so `lang::sql::tsql` reads soft-vs-hard straight off the
+grammar and emits an edge only for the qualified form. Postgres gives dbd no
+such signal, which is why dbd has to defer it.
+
+**If this is picked up**, the shape to consider is a `Reason` that means "the
+language provides this and we do not model it", kept out of the A4 denominator,
+rather than a per-language list of built-in names — the prelude table already
+plays that role and is enumerated per language.
+
+## A single file can abort the daemon: the parser's stack is not bounded
+
+FOUND while running the new `no_name_in_the_corpus_is_a_program` gate over a
+real tree. One file overflows the parse stack, and a Rust stack overflow is not
+a panic — there is no unwind, no backtrace and no file name. The process
+aborts.
+
+    <a repo>/Scripts/ej/web/ej.web.all.min.new.js   9,364,200 bytes, minified
+
+`process_file` already takes care that one bad file cannot wedge the pool: the
+parse runs on `spawn_blocking` precisely so the watchdog can preempt it. That
+protects against a parse that HANGS. It does nothing about one that aborts —
+`spawn_blocking` runs in the same process, so the whole daemon goes with it.
+
+**THE TRIGGER IS GONE — the failure mode is not.** `deba28fb` widened the
+exclude globs to `**/*.min.*.js`, because the file turned out to be a vendored
+Syncfusion Essential JS 12.3 bundle whose own header reads
+`filename: ej.web.all.min.js`. Its canonical sibling IS excluded and the views
+reference it eleven times; the `.new` copy is referenced nowhere, appears in no
+bundler config, and was committed as "copied from commit 5b04ce8" during an
+upgrade. Exactly two files in both watch roots match the widened pattern.
+
+With it, the gate now COMPLETES where it previously aborted, which also answers
+what the crash left open — **there is no second file like it**:
+
+    ~/Work         9,697 files   (399,112 excluded)  0 programs
+    ~/Developer   17,953 files (1,623,220 excluded)  0 programs
+
+**What remains open is the failure mode, not this file.** A glob is a heuristic
+about NAMES. The daemon still has no bound on parse depth, so an input nobody
+has seen yet — a deeply nested hand-written file, a generated source not named
+like a bundle — takes the whole process down rather than failing one file.
+Three things hid this one, and only the first is now fixed: the glob nearly
+caught it; `placement_on_disk` found no manifest above it so `process_file`
+returned in 4 ms before reading the bytes; and its content had not changed. The
+second is a property of that repository, and **the planned `TRUNCATE` + full
+re-index re-parses everything.**
+
+**The options, which differ in what they cost:**
+
+- **Bound the input.** Refuse to parse a file above a size, or one whose
+  longest line is far past anything hand-written, and record an explicit skip.
+  Matches how `classifiers.rs` already reasons about generated output, and how
+  `query.rs` already caps `max_line_len` at 240. Needs a name for the skip:
+  either reuse `excluded_by_config` or add a `sensei.scan_skip_reason` value,
+  and the latter is a DDL change and a deploy.
+- **Give the parse thread a large stack.** Raises the ceiling without
+  establishing one; a deeper file still aborts, just later.
+
+Bounding the input is the only one that states a rule. It is no longer urgent
+now that the corpus parses clean, but it is the difference between one file
+failing and the daemon dying.
+
+## Metrics — the graph has 0 metric consumers, and it has grown 5x since that was filed (re-measured 2026-09-28)
+
+27 live metrics across 9 families, and **not one of them reads the code graph**.
+The families are `quality` 9, `outcome` 6, `usage` 5, `velocity` 3, `autonomy`
+2, `tool` 1, `knowledge` 1, `cost` 1, `composite` 1. There is no `architecture`
+family at all.
+
+**The gap has widened, which is the only new thing here.** Issue #156 filed this
+against a graph of 811,071 edges and 395,016 nodes. Today:
+
+| table | at #156 | 2026-09-28 | growth | metric consumers |
+|---|---|---|---|---|
+| `sensei.edges` | 811,071 | 4,078,536 | 5.0x | 0 |
+| `sensei.nodes` | 395,016 | 1,182,758 | 3.0x | 0 |
+| `inference.communities` | 32,495 | 117,647 | 3.6x | 0 |
+
+Quote the current figures, not #156's. The table above exists because the ones
+in that issue title are now five times out of date, and a stale number invites
+re-deriving a conclusion from it.
+
+### Architecture — the whole family is missing
+
+No coupling, cohesion, fan-in/fan-out, dependency-cycle, instability or layering
+metric. `module_quality` is named as if it were one and is a project-level qlty
+smell density — neither per-module nor structural.
+
+Three signals are buildable today with no resolver dependency —
+`graph_confidence`, `public_surface_ratio`, `symbol_size_p95`. Ship
+`graph_confidence` first: it is a MEASUREMENT-quality signal rather than a
+code-quality one, and it has to gate and annotate every architecture metric that
+follows.
+
+The module-level ones are blocked on the resolver, not on metric design: #156
+measured the whole repository collapsing to **13 distinct module→module edges**,
+all of them TypeScript, with Rust contributing none (#146, #151, #152). Building
+a coupling metric on 13 edges would produce a confident number over nothing,
+which the no-fabrication rule forbids. `layering_violations` is blocked on a
+second thing — there is no declared layer order, and `folders.role` is set on
+154 of 9,378 folders.
+
+Proposal and prototype queries: #156,
+`docs/features/metrics/architecture-metrics.md`.
+
+### Knowledge — three of four metrics are unregistered
+
+`sensei.metrics` holds exactly one `knowledge` row, `memory_promotion`.
+`recall_hit`, `repeat_mistake` and `guidance_adherence` match nothing in the
+table — verified by key pattern, not by reading a doc.
+
+### Per-module quality — project-wide only
+
+`duplication_ratio` and `module_quality` both exist and both report at project
+grain. The blocker is the same one the architecture family hits: `folder_id` is
+repo-grained, so a module has to be derived from a path prefix before anything
+can report per-module.
+
+### Not a gap — cohesion from `community_id`
+
+Deliberately excluded, and it should stay excluded until the clustering changes.
+#149 measured 62% of communities restating the file boundary and 36% being stub
+singletons, so a cohesion metric over them would be measuring the clustering
+algorithm rather than the architecture. Recorded here because 117,647 unused
+rows look like an obvious opportunity to anyone who has not read that
+measurement.

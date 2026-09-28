@@ -71,7 +71,7 @@
       {/if}
     </div>
 
-    <!-- title + body (insight-copy) -->
+    <!-- title + body (narration-cache) -->
     <p class="text-sm text-ink m-0 leading-snug font-medium">{up.title}</p>
     {#if up.body}
       <p class="text-xs text-ink-soft mt-1 m-0 leading-snug line-clamp-3">{up.body}</p>
