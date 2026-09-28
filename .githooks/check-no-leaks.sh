@@ -133,7 +133,16 @@ scan_content() {
     #     directory are ONE leak with three spellings. The name is NOT echoed —
     #     printing it would put the leak in CI logs and in every terminal
     #     scrollback that reads the failure.
-    if [ -n "$private_re" ] && printf '%s' "$text" | grep -qiE "($private_re)"; then
+    #     DIGESTS ARE NOT NAMES. A four-letter client name lands inside a
+    #     checksum by chance — measured over this history, 130 times across
+    #     Cargo.lock, bun.lock and a tsbuildinfo, every one inside an
+    #     alphanumeric run of 32+ characters, while every genuine use sat in a
+    #     run of four. So collapse long runs to a token BEFORE matching, rather
+    #     than exempting those files by extension: an extension list is a
+    #     second thing to keep in step with reality, and it would also blind
+    #     the rule to a real name in a lockfile path.
+    if [ -n "$private_re" ] &&
+       printf '%s' "$text" | sed -E 's/[A-Za-z0-9]{32,}/<DIGEST>/g' | grep -qiE "($private_re)"; then
       note "  $file:$lineno — a name from your private-names denylist; use a placeholder"
     fi
 
@@ -191,6 +200,17 @@ self_test() {
   check "denylisted, cased"  '// over NORTHGATE 8,647 files'          hit
   check "denylisted in path" '"/Users/dev/Work/umbrella-corp/x"'      hit
   check "unlisted name"      'namespace Contoso.Policy.Services'      clean
+  # A SHORT name collides inside a hash by pure chance: one four-letter client
+  # name sat in a Cargo.lock checksum and another in a bun.lock sha512 — 130
+  # such collisions across this history, every one inside an alphanumeric run
+  # of 32+ characters, while every genuine use sat in a run of four. A digest
+  # is not a leak, and a guard that says it is gets switched off.
+  # The names below are SYNTHETIC, per the standing obligation above — `deca`
+  # is spelled from hex digits so it can sit inside a real-shaped checksum.
+  private_re='deca|zorp'
+  check "name inside sha256" 'checksum = "c3aa5ce9deca49ac262752db7d1a4bda7b05b83eccd55559c7c20605447a6d9a"' clean
+  check "name inside base64" '"integrity": "sha512-fT5mqqdzorpkEB2oFbTMDVdg1MGFxfQW"' clean
+  check "same name as word"  'repos under Work/Deca and Developer/zorp' hit
   private_re="$saved_re"
   fail=0
   scan_paths 'reports/facets/manoj/x.json'  2>/dev/null; [ $fail -eq 1 ] && { pass=$((pass+1)); echo "  ok    facets path"; } || echo "  FAIL  facets path"; t=$((t+1))
@@ -219,7 +239,11 @@ audit_tree() {
     # Same two rules as the staged path, applied to whole content. Binary files
     # are skipped by grep -I rather than filtered by extension: an extension
     # list is a second thing to keep in step with reality.
-    if [ -n "$private_re" ] && grep -qiIE "($private_re)" "$f" 2>/dev/null; then
+    # The digest collapse from `scan_content`, and it must stay in step with it.
+    # `grep -qI .` keeps the binary skip: sed would happily read a binary file,
+    # and piping it loses the -I that was doing that job.
+    if [ -n "$private_re" ] && grep -qI . "$f" 2>/dev/null &&
+       sed -E 's/[A-Za-z0-9]{32,}/<DIGEST>/g' "$f" 2>/dev/null | grep -qiE "($private_re)"; then
       note "  $f — contains a name from the private-names denylist"; n=$((n + 1))
     fi
     if grep -qiIE "(^|[^A-Za-z0-9])(/Users/|/home/|[Cc]:\\+Users\\+)" "$f" 2>/dev/null &&
