@@ -358,7 +358,16 @@ app-dev:
 app-e2e-build: install-debug
 	cd app && bunx tauri build --debug --features e2e-testing
 
-# Type-check SvelteKit sources
+# Type-check SvelteKit sources.
+#
+# IN `test`, NOT in `test-fast`. It existed for a year in neither, which is how
+# the rokkit 1.6 upgrade shipped two type errors that 1,700 unit tests and a
+# clean production build both passed over: `Toggle` stopped accepting
+# `aria-label` (it takes `label`, and has no rest-spread), so two toggles on the
+# Projects screen silently lost their accessible name. Only the typechecker
+# could see it, and nothing ran the typechecker.
+#
+# Not in `test-fast` because it is ~30s and that target is the pre-commit hook.
 app-check:
 	cd app && bun run check
 
@@ -414,7 +423,7 @@ check-ddl-comments:
 check-brew-tokens:
 	@python3 scripts/check-brew-tokens.py
 
-test: check-ddl-grants check-ddl-comments check-brew-tokens test-crates test-app-unit test-dojo test-db-if-reachable
+test: check-ddl-grants check-ddl-comments check-brew-tokens test-crates app-check test-app-unit test-dojo test-db-if-reachable
 
 test-crates:
 	cargo test --workspace
