@@ -379,7 +379,7 @@ website-build:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: check-ddl-grants check-ddl-comments test-crates-fast test-app-unit
+test-fast: check-ddl-grants check-ddl-comments check-brew-tokens test-crates-fast test-app-unit
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
@@ -404,7 +404,17 @@ check-ddl-grants:
 check-ddl-comments:
 	@python3 scripts/check-ddl-comments.py
 
-test: check-ddl-grants check-ddl-comments test-crates test-app-unit test-dojo test-db-if-reachable
+# A tap resolves `sensei-hq/tap/<token>` by filename, and it searches the formula
+# and cask namespaces SEPARATELY — so `brew install` with no `--cask` falls
+# through to the casks when no formula matches. That is why README's install
+# block could name the two tokens transposed and still look plausible: the first
+# line silently installed the desktop cask, and the second resolved a dead
+# `Casks/sensei.rb` and 404'd. Tokens are read from homebrew/, so a rename moves
+# the gate with it. Instant and needs no network, so it runs on every commit.
+check-brew-tokens:
+	@python3 scripts/check-brew-tokens.py
+
+test: check-ddl-grants check-ddl-comments check-brew-tokens test-crates test-app-unit test-dojo test-db-if-reachable
 
 test-crates:
 	cargo test --workspace
