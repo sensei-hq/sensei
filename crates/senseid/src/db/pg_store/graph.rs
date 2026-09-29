@@ -82,6 +82,28 @@ pub enum CallDirection {
     Outgoing,
 }
 
+/// What placed a callee row — the one fact the two paths in
+/// [`PgStore::get_callees_by_name`] disagree on, made explicit instead of
+/// inferred from which keys happen to be present.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Placement {
+    /// The indexer's ladder decided, and `sensei.call_graph` reduced the
+    /// per-use verdicts into this pair. Exactly one side is ever set: a placed
+    /// edge names the rung that placed it, a missed one names where the ladder
+    /// stopped.
+    Indexed { resolved_via: Option<String>, unresolved_reason: Option<String> },
+    /// The read-path receiver chase placed it just now, from the type the call
+    /// site recorded for its receiver.
+    ///
+    /// It claims NO rung, deliberately. The stored edge is still unresolved and
+    /// still carries the reason the ladder stopped, and reporting that reason
+    /// beside `resolved: true` would be one edge described two contradictory
+    /// ways in a single payload — the exact disagreement `call_coverage` refuses
+    /// to create by declining to heal the incoming side. The row says
+    /// `placed_by: "receiver_chain"` instead, which is both true and checkable.
+    ReceiverChain,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 use crate::languages::fqn::{sql_is_external, sql_is_not_external};
 
@@ -2449,8 +2471,23 @@ impl PgStore {
         if folder_ids.is_empty() {
             return Ok(vec![]);
         }
-        let rows: Vec<(String, String, String, Option<i32>, bool)> = sqlx_core::query_as::query_as(
-            "SELECT source_name, source_kind::text, source_file, source_line, target_id IS NOT NULL
+        type CallerRow =
+            (String, String, String, Option<i32>, bool, Option<String>, Option<String>, String);
+        // `resolved_via` and `unresolved_reason` are the view's own reductions
+        // over the per-use verdicts — see the column comments on
+        // `sensei.call_graph`. Selected rather than re-derived here: the
+        // reduction rule is "lowest precedence wins" over `reason_codes`, and a
+        // second copy of it in Rust is exactly how the two would drift.
+        //
+        // Exactly one of the pair is ever non-null, which is what lets a reader
+        // treat them as one answer: a placed edge says which rung placed it, a
+        // missed one says where the ladder stopped. `resolved: bool` alone
+        // flattens `declared_here` and `in_the_prelude` into the same claim, and
+        // on the live graph those are 77,462 and 36,832 edges that a reader
+        // should not trust equally.
+        let rows: Vec<CallerRow> = sqlx_core::query_as::query_as(
+            "SELECT source_name, source_kind::text, source_file, source_line,
+                    target_id IS NOT NULL, resolved_via, unresolved_reason, edge_kind::text
                FROM sensei.call_graph
               WHERE folder_id = ANY($1) AND target_symbol = $2 AND edge_kind = 'calls'
               ORDER BY source_file, source_line LIMIT 100",
@@ -2460,15 +2497,59 @@ impl PgStore {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(name, kind, file, line, resolved)| {
-            serde_json::json!({ "name": name, "kind": kind, "file_path": file, "line_start": line, "resolved": resolved })
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(name, kind, file, line, resolved, via, reason, edge_kind)| {
+                serde_json::json!({
+                    "name": name, "kind": kind, "file_path": file, "line_start": line,
+                    "resolved": resolved, "resolved_via": via, "unresolved_reason": reason,
+                    "edge_kind": edge_kind,
+                })
+            })
+            .collect())
+    }
+
+    /// One callee row, whichever path produced it.
+    ///
+    /// Both paths used to build their own object and they did not agree: the
+    /// chased one came from `nodes_display` and carried no `resolved` key at
+    /// all, so a consumer reading `row["resolved"]` got `false` for a call that
+    /// had just been successfully placed. One builder, one shape.
+    ///
+    /// `pub(super)` so the shape contract can be asserted without a database —
+    /// the point of extracting it is that the guarantee holds whichever query
+    /// supplied the fields, and a test that has to go through Postgres to check
+    /// that is testing the query instead.
+    pub(super) fn callee_row(
+        name: &str,
+        kind: Option<&str>,
+        file: Option<&str>,
+        line: Option<i32>,
+        locality: &str,
+        edge_kind: &str,
+        placement: &Placement,
+    ) -> serde_json::Value {
+        let (resolved, via, reason, placed_by) = match placement {
+            Placement::Indexed { resolved_via, unresolved_reason } => {
+                (resolved_via.is_some(), resolved_via.clone(), unresolved_reason.clone(), "indexer")
+            }
+            Placement::ReceiverChain => (true, None, None, "receiver_chain"),
+        };
+        serde_json::json!({
+            "name": name, "kind": kind, "file_path": file, "line_start": line,
+            "locality": locality, "edge_kind": edge_kind,
+            "resolved": resolved, "resolved_via": via, "unresolved_reason": reason,
+            "placed_by": placed_by,
+        })
     }
 
     /// Find callees of a function by name via the call_graph view.
     /// `scope` is resolved via [`scope_folder_ids`]: a project name/UUID expands
     /// to all of that project's folders; a bare folder name falls back to just
     /// that folder.
+    ///
+    /// Every row carries [`Placement`], so a reader can tell a call the indexer
+    /// placed from one this read path chased — see [`Self::callee_row`].
     pub async fn get_callees_by_name(
         &self,
         scope: &str,
@@ -2503,11 +2584,27 @@ impl PgStore {
         // graph, 240 of 44,946 calling symbols have more than 100 `calls` edges
         // (the largest has 3,742), and for every one of them the chain would
         // have been dead code.
-        type CalleeRow =
-            (String, Option<String>, Option<String>, Option<i32>, String, serde_json::Value);
+        //
+        // `resolved_via` / `unresolved_reason` come from the view's own
+        // reduction over the per-use verdicts, for the same reason the caller
+        // side selects them: `resolved: bool` cannot tell `declared_here` from
+        // `in_the_prelude`, and a reader triaging a gap needs to know which of
+        // the two kinds of "no" they are looking at.
+        type CalleeRow = (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<i32>,
+            String,
+            serde_json::Value,
+            Option<String>,
+            Option<String>,
+            String,
+        );
         let rows: Vec<CalleeRow> = sqlx_core::query_as::query_as(
             "SELECT cg.target_symbol, cg.target_kind::text, cg.target_file, cg.target_line,
-                        coalesce(gn.locality, 'unknown'), cg.props
+                        coalesce(gn.locality, 'unknown'), cg.props,
+                        cg.resolved_via, cg.unresolved_reason, cg.edge_kind::text
                    FROM sensei.call_graph        cg
                    LEFT JOIN sensei.graph_nodes  gn ON gn.id = cg.target_id
                   WHERE cg.folder_id = ANY($1) AND cg.source_name = $2
@@ -2535,28 +2632,55 @@ impl PgStore {
         Ok(rows
             .into_iter()
             .enumerate()
-            .map(|(i, (name, kind, file, line, locality, _))| {
+            .map(|(i, (name, kind, file, line, locality, _, via, reason, edge_kind))| {
                 match healed.get(&i).and_then(|id| found.get(id)) {
-                    Some(node) => node.clone(),
-                    None => serde_json::json!({
-                        "name": name, "kind": kind, "file_path": file,
-                        "line_start": line, "locality": locality,
-                    }),
+                    // The chase found a definition, so the row describes THAT
+                    // node — not the unresolved target the edge recorded.
+                    Some((n, k, f, l, loc)) => Self::callee_row(
+                        n,
+                        Some(k),
+                        f.as_deref(),
+                        *l,
+                        loc,
+                        &edge_kind,
+                        &Placement::ReceiverChain,
+                    ),
+                    None => Self::callee_row(
+                        &name,
+                        kind.as_deref(),
+                        file.as_deref(),
+                        line,
+                        &locality,
+                        &edge_kind,
+                        &Placement::Indexed { resolved_via: via, unresolved_reason: reason },
+                    ),
                 }
             })
             .collect())
     }
 
-    /// The display shape `get_callees_by_name` reports, for nodes named by id.
+    /// The facts `get_callees_by_name` needs about nodes named by id.
     ///
     /// Reads `locality` off `sensei.graph_nodes` like the list query does, so a
     /// call placed by the receiver chain is described by the SAME owner as one
     /// placed at emit — a second copy of that judgement here is how
     /// `library_calls` would start mis-partitioning.
+    ///
+    /// Returns the FIELDS, not a finished row. Building the JSON here is what
+    /// let the two paths' shapes drift apart: this one had no `resolved` key, so
+    /// a chased call — placed, by definition — read as unplaced to anyone
+    /// checking that field. [`Self::callee_row`] is now the only builder.
+    #[allow(clippy::type_complexity)]
     async fn nodes_display(
         &self,
         ids: &[uuid::Uuid],
-    ) -> Result<std::collections::HashMap<uuid::Uuid, serde_json::Value>, String> {
+    ) -> Result<
+        std::collections::HashMap<
+            uuid::Uuid,
+            (String, String, Option<String>, Option<i32>, String),
+        >,
+        String,
+    > {
         if ids.is_empty() {
             return Ok(std::collections::HashMap::new());
         }
@@ -2570,13 +2694,7 @@ impl PgStore {
         .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(id, name, kind, file, line, locality)| {
-                (
-                    id,
-                    serde_json::json!({ "name": name, "kind": kind, "file_path": file,
-                                        "line_start": line, "locality": locality }),
-                )
-            })
+            .map(|(id, name, kind, file, line, locality)| (id, (name, kind, file, line, locality)))
             .collect())
     }
 
