@@ -2,7 +2,6 @@
 //! Singleton pattern: use `RootWatcher::instance(queue)` to access.
 
 use crate::db::pg_store::PgStore;
-use crate::languages;
 use crate::tasks::queue::TaskQueue;
 use crate::tasks::{Task, TaskKind};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
@@ -538,7 +537,7 @@ impl RootWatcher {
             .and_then(|e| e.to_str())
             .map(|e| format!(".{}", e))
             .unwrap_or_default();
-        let is_code = languages::adapter_for_ext(&ext).is_some();
+        let is_code = crate::indexer::lang::adapter_for_ext(&ext).is_some();
         let is_doc = ext == ".md" || ext == ".mdx";
         is_code || is_doc
     }

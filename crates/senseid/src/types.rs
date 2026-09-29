@@ -105,11 +105,6 @@ impl NodeKind {
         }
     }
 
-    /// Whether this kind represents a function-like symbol.
-    pub fn is_function_like(&self) -> bool {
-        matches!(self, Self::Function | Self::Method | Self::Component | Self::Hook)
-    }
-
     /// Whether this kind represents a type-like symbol.
     #[allow(dead_code)]
     pub fn is_type_like(&self) -> bool {
@@ -357,43 +352,6 @@ impl HierarchyNode {
 
 // ── Parsed file output ───────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParsedFile {
-    pub file_path: String,
-    pub language: String,
-    pub symbols: Vec<ParsedSymbol>,
-    pub edges: Vec<ParsedEdge>,
-    pub imports: Vec<ParsedImport>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParsedSymbol {
-    pub name: String,
-    pub kind: SymbolKind,
-    pub signature: Option<String>,
-    pub docstring: Option<String>,
-    pub line_start: u32,
-    pub line_end: u32,
-    pub is_exported: bool,
-    /// Parent class/struct name for methods (e.g. "Foo" for Foo.bar).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parent: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParsedEdge {
-    pub caller_name: String,
-    pub caller_line: u32,
-    pub callee_name: String,
-    pub callee_file: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParsedImport {
-    pub target_path: String,
-    pub names: Vec<String>,
-}
-
 // ── Package / Module info ────────────────────────────────────────────────────
 
 /// A workspace member / crate / sub-package discovered inside a project.
@@ -421,31 +379,6 @@ mod tests {
         assert_eq!(SymbolKind::Function.to_string(), "function");
         assert_eq!(SymbolKind::Class.to_string(), "class");
         assert_eq!(SymbolKind::Method.to_string(), "method");
-    }
-
-    #[test]
-    fn parsed_file_roundtrip() {
-        let pf = ParsedFile {
-            file_path: "src/main.py".into(),
-            language: "python".into(),
-            symbols: vec![ParsedSymbol {
-                name: "hello".into(),
-                kind: SymbolKind::Function,
-                signature: Some("def hello(name: str) -> str".into()),
-                docstring: Some("Say hello".into()),
-                line_start: 1,
-                line_end: 3,
-                is_exported: true,
-                parent: None,
-            }],
-            edges: vec![],
-            imports: vec![ParsedImport { target_path: "os".into(), names: vec!["path".into()] }],
-        };
-        let json = serde_json::to_string(&pf).unwrap();
-        let pf2: ParsedFile = serde_json::from_str(&json).unwrap();
-        assert_eq!(pf2.symbols.len(), 1);
-        assert_eq!(pf2.symbols[0].name, "hello");
-        assert_eq!(pf2.imports[0].target_path, "os");
     }
 }
 

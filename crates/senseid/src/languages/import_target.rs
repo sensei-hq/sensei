@@ -467,7 +467,7 @@ pub fn local_import_candidates(
     if matches!(class, ImportTarget::Internal) {
         let segs: Vec<&str> = spec.trim().split("::").filter(|s| !s.is_empty()).collect();
         let Some((module, leaf)) =
-            crate::languages::rust_lang::internal_use_module(current_module, &segs)
+            crate::indexer::lang::rust::receiver::internal_use_module(current_module, &segs)
         else {
             return Vec::new();
         };
