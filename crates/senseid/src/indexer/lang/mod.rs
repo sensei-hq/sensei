@@ -461,6 +461,31 @@ pub const PRODUCTION_LANGUAGES: &[Language] = &[
     // set NARROWED: v1 claimed `.cpp`, `.hpp` and `.cc`, which are C++ and
     // which nothing here parses. See `no_adapter_claims_a_cpp_extension`.
     Language::C,
+    // SQL is a CUTOVER and it meets the identity bar outright: its ratchet is
+    // `colliding.is_empty()`, not a budget. The legacy reader was regex- and
+    // line-based, so this is a rewrite; the dialect is established before
+    // anything is read, which is why SQL is the one language whose adapter
+    // needs a manifest label before a file makes sense.
+    Language::Sql,
+    // KOTLIN ENTERS WITH A KNOWN, MEASURED RESIDUE: 39 colliding identities of
+    // 3,038 declarations over a 245-file corpus (1.3%), held by the ratchet in
+    // `kotlin::tests`. It is the only entry here that did not reach zero first,
+    // and the reason it enters anyway is that the alternative is worse, not
+    // that the residue is acceptable:
+    //
+    //   * the legacy reader it replaces mints identities with the FOUR-segment
+    //     encoder, which no lookup in this build can match — a defect that
+    //     applies to every Kotlin symbol, not 1.3% of them;
+    //   * neither colliding shape is a walk defect that this entry makes worse.
+    //     Android product flavours (`app/src/<flavour>/Color.kt`, one compiled
+    //     per build) are a PLACEMENT question — a Gradle source set is a fact
+    //     about the build, and the walk is handed one file. The anonymous
+    //     object expression (`val M = object : Migration(5, 6) { … }`) wants
+    //     naming by the property it is assigned to, the shape TypeScript
+    //     already has.
+    //
+    // Both are tracked, and the ratchet fails on a rise outside them.
+    Language::Kotlin,
 ];
 
 /// Whether this indexer is the production producer for `language`.
@@ -553,6 +578,31 @@ mod tests {
              comes from THIS FILE — its declarations, then its imports — and a walk that can \
              be handed one is a walk the barrier grows back through:\n  {}",
             found.join("\n  ")
+        );
+    }
+
+    /// **This indexer is the producer for every language the build reads.**
+    ///
+    /// The frontier was a subset while languages were being cut over one at a
+    /// time, and each entry earned its place by a corpus measurement. With
+    /// Kotlin and SQL in, the subset is the whole set — which is what makes the
+    /// legacy producer deletable, and what makes `production_adapter_for_ext`
+    /// and `adapter_for_ext` answer identically.
+    ///
+    /// Asserted against `Language::all()` rather than a count, so a NEW language
+    /// variant fails here the moment it is added rather than quietly falling
+    /// through to a producer that no longer exists.
+    ///
+    /// Breaking mutation: remove any entry from `PRODUCTION_LANGUAGES`.
+    #[test]
+    fn this_indexer_produces_every_language_the_build_reads() {
+        let missing: Vec<_> =
+            Language::all().iter().filter(|l| !indexes_in_production(**l)).collect();
+
+        assert!(
+            missing.is_empty(),
+            "these languages have an adapter but no production entry, so their files \
+             route to a producer that is on its way out: {missing:?}"
         );
     }
 
