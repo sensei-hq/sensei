@@ -21,6 +21,7 @@
 // This module has no caller on purpose — see the note in `indexer/mod.rs`.
 #![allow(dead_code)]
 
+pub mod receiver;
 mod types;
 mod walk;
 

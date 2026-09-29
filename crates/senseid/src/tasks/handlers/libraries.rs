@@ -2,7 +2,6 @@
 
 use super::super::Task;
 use super::super::executor::TaskContext;
-use crate::languages;
 
 // ── Resolve Libs ──────────────────────────────────────────────────────────
 
@@ -39,7 +38,10 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     .and_then(|e| e.to_str())
                     .map(|e| format!(".{}", e))
                     .unwrap_or_default();
-                let adapter = match languages::adapter_for_ext(&ext) {
+                // The INDEXER's registry, which is the only one now. Its
+                // adapters read a whole file into facts rather than exposing a
+                // bespoke `parse`, so the import list comes off `FileFacts`.
+                let adapter = match crate::indexer::lang::adapter_for_ext(&ext) {
                     Some(a) => a,
                     None => continue,
                 };
@@ -54,10 +56,23 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     .unwrap_or(entry.path())
                     .to_string_lossy()
                     .to_string();
-                let parsed = adapter.parse(&content, &rel_path);
+                // Package and module are irrelevant here: this asks only what
+                // the file IMPORTS, and a specifier is the same string whatever
+                // the file is called. An unreadable file is skipped, as before.
+                let source = crate::indexer::lang::Source {
+                    package: "",
+                    module: "",
+                    path: &rel_path,
+                    text: &content,
+                };
+                let parsed =
+                    match adapter.read(&source, &crate::indexer::lang::TypeHomes::unknown()) {
+                        Ok(facts) => facts,
+                        Err(_) => continue,
+                    };
 
                 for imp in &parsed.imports {
-                    let path = &imp.target_path;
+                    let path = &imp.path;
                     // Skip relative, absolute, node builtins, framework aliases
                     if path.starts_with('.') || path.starts_with('/') || path.starts_with("node:") {
                         continue;

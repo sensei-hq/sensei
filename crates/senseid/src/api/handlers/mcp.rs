@@ -463,7 +463,7 @@ pub(crate) async fn mcp_call_tool(
                 // says which languages are even capable of resolving. A repo that
                 // is mostly Kotlin and a Kotlin adapter with no FQN support explain
                 // a disappointing number far better than the number alone.
-                "languageCapabilities": crate::languages::capability_matrix(),
+                "languageCapabilities": crate::indexer::lang::capability_matrix(),
             })
         }
         "get_metrics" => {

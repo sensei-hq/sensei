@@ -455,8 +455,8 @@ impl PgStore {
         use std::collections::{HashMap, HashSet};
 
         use crate::indexer::facts::Language;
+        use crate::indexer::lang::rust::receiver::ReceiverType;
         use crate::languages::fqn::{ReceiverHint, SEP};
-        use crate::languages::rust_lang::ReceiverType;
 
         // The language's own label, from the enum that owns it — not a `const
         // RUST_LANG` in a legacy walker, which is a second place for the string
@@ -529,16 +529,17 @@ impl PgStore {
                 // type this is, which is the crate any relative path in it is
                 // relative to.
                 let package = fqn.split(SEP).nth(1).filter(|p| !p.is_empty())?;
-                let (tfqn, tname) = match crate::languages::rust_lang::concrete_receiver_type(
-                    return_type.as_deref()?,
-                    package,
-                )? {
-                    ReceiverType::SelfType => (Some(self_fqn.clone()?), None),
-                    ReceiverType::Qualified { module, name } => {
-                        (receiver_type_fqn(package, &module, &name), None)
-                    }
-                    ReceiverType::Bare(name) => (None, Some(name)),
-                };
+                let (tfqn, tname) =
+                    match crate::indexer::lang::rust::receiver::concrete_receiver_type(
+                        return_type.as_deref()?,
+                        package,
+                    )? {
+                        ReceiverType::SelfType => (Some(self_fqn.clone()?), None),
+                        ReceiverType::Qualified { module, name } => {
+                            (receiver_type_fqn(package, &module, &name), None)
+                        }
+                        ReceiverType::Bare(name) => (None, Some(name)),
+                    };
                 Some((tfqn, tname, member.clone()))
             })
             .collect();

@@ -3,7 +3,6 @@
 //! Each processor implements FileAdapter and handles a specific category of files.
 //! The router selects the right processor based on file extension/type.
 
-pub mod code;
 pub mod config;
 pub mod doc;
 pub mod metadata;

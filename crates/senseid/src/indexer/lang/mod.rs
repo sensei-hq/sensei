@@ -488,6 +488,54 @@ pub const PRODUCTION_LANGUAGES: &[Language] = &[
     Language::Kotlin,
 ];
 
+/// What one language can do here — a pure projection of the registry.
+///
+/// Moved from the retired registry, which by the end reported `parses: false`
+/// for every language it listed: it had become a name-and-extension table for
+/// parsers that had already left. Sourced from the adapters that actually read
+/// files, so it cannot describe a producer that does not exist.
+///
+/// The JSON keys are unchanged because this is served over MCP and a renamed
+/// field is a broken client.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CapabilityReport {
+    pub language: String,
+    /// Always true now. Kept so a client that branches on it keeps working, and
+    /// because "this language has a parser" stops being a question worth asking
+    /// only while exactly one producer exists.
+    pub parses: bool,
+    pub extensions: Vec<String>,
+    /// The language this one delegates to (`svelte` -> `typescript`).
+    pub host: Option<String>,
+    pub fqn: bool,
+    pub scope: bool,
+    pub inheritance: bool,
+}
+
+/// The capability matrix for every registered language.
+pub fn capability_matrix() -> Vec<CapabilityReport> {
+    let mut seen: Vec<CapabilityReport> = Vec::new();
+    for adapter in all_adapters() {
+        let language = adapter.language().as_str().to_string();
+        if seen.iter().any(|r| r.language == language) {
+            continue;
+        }
+        seen.push(CapabilityReport {
+            language,
+            // Every adapter here reads files, mints fqns, resolves in scope and
+            // emits inheritance — that is what being in this registry means.
+            // Reporting them per-adapter would be four fields restating one.
+            parses: true,
+            extensions: adapter.extensions().iter().map(|e| (*e).to_string()).collect(),
+            host: adapter.host().map(str::to_string),
+            fqn: true,
+            scope: true,
+            inheritance: true,
+        });
+    }
+    seen
+}
+
 /// Whether this indexer is the production producer for `language`.
 pub fn indexes_in_production(language: Language) -> bool {
     PRODUCTION_LANGUAGES.contains(&language)
