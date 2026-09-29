@@ -57,6 +57,16 @@ jobs:
       - name: DDL grant targets
         run: make check-ddl-grants
 
+      # The other two static gates were reachable only through the pre-commit
+      # hook and `make test`, so a commit pushed with `--no-verify` — or made by
+      # anything that is not this repo's hook — landed unchecked. Both are
+      # pure file reads with no toolchain, so this job is where they belong.
+      - name: DDL comments
+        run: make check-ddl-comments
+
+      - name: Homebrew tokens in the docs
+        run: make check-brew-tokens
+
   test:
     runs-on: ubuntu-latest
     services:

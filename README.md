@@ -32,8 +32,8 @@ Sibling repos (versioned independently, pulled in as dependencies):
 
 ```bash
 brew tap sensei-hq/tap
-brew install sensei-hq/tap/senseihq        # app + CLI + daemon
-brew install --cask sensei-hq/tap/sensei # Desktop app
+brew install sensei-hq/tap/sensei          # CLI + daemon + MCP server
+brew install --cask sensei-hq/tap/senseihq # Desktop app
 ```
 
 Homebrew formulae live in [sensei-hq/homebrew-tap](https://github.com/sensei-hq/homebrew-tap).
