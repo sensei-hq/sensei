@@ -3,7 +3,7 @@ import type {
   GraphSymbolNode, GraphCallEdge,
   SolutionGraphResponse, SolutionAnalysis, InferredRole,
   IndexQueueStatus, DirtyStatus, IndexError,
-  FunctionDetail, TypeDetail, CommunityInfo, DocDrift,
+  FunctionDetail, CallNeighbour, TypeDetail, CommunityInfo, DocDrift,
   LibEntry, LibDoc, DepVersion, SessionData, SessionsDigest,
   ProjectMemory, DriftItem, PatternEntry, Recommendation,
   ProjectSession, CallFlowModule, CallFlowCall,
@@ -731,11 +731,14 @@ export function senseiApi(port: number) {
     searchTypes: (repoId: string, q: string) =>
       get<TypeDetail[]>(`/api/graph/types?repoId=${enc(repoId)}&q=${enc(q)}`, []),
 
+    // `CallNeighbour`, not `FunctionDetail` — see the type. These return
+    // `file_path`/`line_start` and carry the placement verdict; the old
+    // annotation described a different endpoint's shape entirely.
     getCallers: (repoId: string, name: string) =>
-      get<FunctionDetail[]>(`/api/graph/callers?repoId=${enc(repoId)}&name=${enc(name)}`, []),
+      get<CallNeighbour[]>(`/api/graph/callers?repoId=${enc(repoId)}&name=${enc(name)}`, []),
 
     getCallees: (repoId: string, name: string) =>
-      get<FunctionDetail[]>(`/api/graph/callees?repoId=${enc(repoId)}&name=${enc(name)}`, []),
+      get<CallNeighbour[]>(`/api/graph/callees?repoId=${enc(repoId)}&name=${enc(name)}`, []),
 
     getFilesByTag: (repoId: string, tag: string) =>
       get<Array<{ id: string; path: string; tags: string }>>(

@@ -13895,6 +13895,262 @@ async fn get_callers_by_name_finds_a_caller_through_an_unresolved_edge() {
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
 
+/// A caller list that says only `resolved: true|false` is a list of
+/// equally-confident facts, and this graph is not equally confident anywhere.
+///
+/// `declared_here` — the file declares the target itself — and `in_the_prelude`
+/// — a name the language puts in scope everywhere, so the "target" is a guess at
+/// which of several identically-named things was meant — are both `resolved:
+/// true`. They are not the same claim, and on the live graph they are 77,462 and
+/// 36,832 edges respectively. The same on the other side: `no_import_in_scope`
+/// is a gap someone can close, `external_boundary` is the indexed world simply
+/// ending, and a reader triaging one wants nothing to do with the other.
+///
+/// `sensei.call_graph` has carried both columns since the verdict landed. This
+/// query did not select them, so the distinction existed in the database and
+/// reached no consumer.
+///
+/// Seeded through `merge_edge_occurrences`, the path the indexer actually
+/// writes — NOT by setting the columns directly. The verdict is a REDUCTION over
+/// per-use occurrences, so a test that hand-sets the column proves the select
+/// list and nothing about whether the value is real.
+///
+/// Mutation that must break this test: drop `resolved_via` or
+/// `unresolved_reason` from the select list in `get_callers_by_name`.
+#[tokio::test]
+async fn callers_carry_the_verdict_that_placed_each_edge() {
+    let s = pg_store().await;
+    let folder = format!("caller_verdict_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    let target = s
+        .seed_node(&fid, "function", "handleAuth", "src/auth.rs", None, None, Some(10), Some(20))
+        .await
+        .unwrap();
+    let placed = s
+        .seed_node(&fid, "function", "login", "src/login.rs", None, None, Some(1), Some(5))
+        .await
+        .unwrap();
+    let missed = s
+        .seed_node(&fid, "function", "middleware", "src/mw.rs", None, None, Some(1), Some(5))
+        .await
+        .unwrap();
+
+    let placed_edge =
+        s.insert_edge(&fid, &placed, Some(&target), None, None, "calls").await.unwrap();
+    let missed_edge =
+        s.insert_edge(&fid, &missed, None, Some("handleAuth"), None, "calls").await.unwrap();
+
+    s.merge_edge_occurrences(
+        &placed_edge,
+        "src/login.rs",
+        &serde_json::json!([
+            { "fact": "use", "kind": "calls", "at": [2, 1, 2, 9], "rung": "declared_here" }
+        ]),
+    )
+    .await
+    .unwrap();
+    s.merge_edge_occurrences(
+        &missed_edge,
+        "src/mw.rs",
+        &serde_json::json!([
+            { "fact": "use", "kind": "calls", "at": [3, 1, 3, 9], "reason": "no_import_in_scope" }
+        ]),
+    )
+    .await
+    .unwrap();
+
+    let callers = s.get_callers_by_name(&folder, "handleAuth").await.unwrap();
+    let row = |name: &str| callers.iter().find(|c| c["name"] == name).unwrap().clone();
+
+    let login = row("login");
+    assert_eq!(
+        login["resolved_via"],
+        serde_json::json!("declared_here"),
+        "a placed edge must say WHICH RUNG placed it, not merely that it landed"
+    );
+    assert_eq!(
+        login["unresolved_reason"],
+        serde_json::Value::Null,
+        "a placed edge has no reason — carrying both would make the row self-contradictory"
+    );
+
+    let middleware = row("middleware");
+    assert_eq!(
+        middleware["unresolved_reason"],
+        serde_json::json!("no_import_in_scope"),
+        "a missed edge must say WHY the ladder stopped, so a gap can be told from a limit"
+    );
+    assert_eq!(middleware["resolved_via"], serde_json::Value::Null, "a missed edge claims no rung");
+
+    // The edge kind travels too: the screen's calls/type-use/imports filter is a
+    // property of the edge, and without it every row reads as a call.
+    assert_eq!(login["edge_kind"], serde_json::json!("calls"));
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// Both callee paths must emit the SAME KEYS, and the chased one must claim no
+/// rung.
+///
+/// `get_callees_by_name` produces rows two ways: straight off the view, and —
+/// for an unresolved member call whose receiver the call site named — from the
+/// node the read-path chase found. Those two built separate objects, and the
+/// chased one omitted `resolved` entirely. A consumer reading `row["resolved"]`
+/// therefore got `null` (falsey) for a call that had just been successfully
+/// placed, which is the opposite of what happened.
+///
+/// The second assertion is the one with a judgement in it. A chased row is
+/// `resolved: true`, but the STORED edge is still unresolved and still carries
+/// the reason the ladder stopped. Reporting that reason next to `resolved: true`
+/// would put one edge in a payload described two contradictory ways — the same
+/// disagreement `call_coverage` refuses to create by declining to heal the
+/// incoming side. So the row claims no rung and says `placed_by:
+/// "receiver_chain"`, which is checkable.
+///
+/// No database: this is the shape contract, and the whole point is that it holds
+/// regardless of which query produced the fields.
+///
+/// Mutation that must break this test: give `Placement::ReceiverChain` a
+/// `resolved_via`, or drop a key from either arm of `callee_row`.
+#[test]
+fn both_callee_paths_report_the_same_shape() {
+    use crate::db::pg_store::graph::Placement;
+
+    let indexed = PgStore::callee_row(
+        "parse",
+        Some("function"),
+        Some("src/parse.rs"),
+        Some(12),
+        "internal",
+        "calls",
+        &Placement::Indexed {
+            resolved_via: Some("through_an_import".to_string()),
+            unresolved_reason: None,
+        },
+    );
+    let chased = PgStore::callee_row(
+        "parse",
+        Some("function"),
+        Some("src/parse.rs"),
+        Some(12),
+        "internal",
+        "calls",
+        &Placement::ReceiverChain,
+    );
+
+    let keys = |v: &serde_json::Value| {
+        let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+        k.sort();
+        k
+    };
+    assert_eq!(
+        keys(&indexed),
+        keys(&chased),
+        "a consumer must not have to know which path produced a row to read it"
+    );
+
+    assert_eq!(indexed["resolved"], serde_json::json!(true));
+    assert_eq!(indexed["resolved_via"], serde_json::json!("through_an_import"));
+    assert_eq!(indexed["placed_by"], serde_json::json!("indexer"));
+
+    assert_eq!(chased["resolved"], serde_json::json!(true), "the chase placed it — say so");
+    assert_eq!(
+        chased["resolved_via"],
+        serde_json::Value::Null,
+        "the chase is not a rung on the indexer's ladder and must not borrow one"
+    );
+    assert_eq!(
+        chased["unresolved_reason"],
+        serde_json::Value::Null,
+        "carrying the stored reason beside resolved:true describes one edge two ways"
+    );
+    assert_eq!(chased["placed_by"], serde_json::json!("receiver_chain"));
+
+    // A missed edge: no rung, a reason, and `resolved` false.
+    let missed = PgStore::callee_row(
+        "mystery",
+        None,
+        None,
+        None,
+        "unknown",
+        "calls",
+        &Placement::Indexed {
+            resolved_via: None,
+            unresolved_reason: Some("dynamic_dispatch".to_string()),
+        },
+    );
+    assert_eq!(missed["resolved"], serde_json::json!(false));
+    assert_eq!(missed["unresolved_reason"], serde_json::json!("dynamic_dispatch"));
+    assert_eq!(keys(&missed), keys(&indexed));
+}
+
+/// The callee list carries the same verdict the caller list does.
+///
+/// Sibling of `callers_carry_the_verdict_that_placed_each_edge`. Both sides of a
+/// symbol's neighbourhood are read together — what calls this, and what this
+/// calls — so a verdict on one side only would let a reader trust the two lists
+/// differently for no reason the data supports.
+///
+/// Mutation that must break this test: drop `cg.resolved_via` or
+/// `cg.unresolved_reason` from the select list in `get_callees_by_name`.
+#[tokio::test]
+async fn callees_carry_the_verdict_that_placed_each_edge() {
+    let s = pg_store().await;
+    let folder = format!("callee_verdict_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    let source = s
+        .seed_node(&fid, "function", "run_pipeline", "src/run.rs", None, None, Some(1), Some(40))
+        .await
+        .unwrap();
+    let placed_target = s
+        .seed_node(&fid, "function", "parse_manifest", "src/parse.rs", None, None, Some(5), Some(9))
+        .await
+        .unwrap();
+
+    let placed_edge =
+        s.insert_edge(&fid, &source, Some(&placed_target), None, None, "calls").await.unwrap();
+    let missed_edge =
+        s.insert_edge(&fid, &source, None, Some("dispatch"), None, "calls").await.unwrap();
+
+    s.merge_edge_occurrences(
+        &placed_edge,
+        "src/run.rs",
+        &serde_json::json!([
+            { "fact": "use", "kind": "calls", "at": [7, 1, 7, 9], "rung": "through_an_import" }
+        ]),
+    )
+    .await
+    .unwrap();
+    s.merge_edge_occurrences(
+        &missed_edge,
+        "src/run.rs",
+        &serde_json::json!([
+            { "fact": "use", "kind": "calls", "at": [9, 1, 9, 9], "reason": "dynamic_dispatch" }
+        ]),
+    )
+    .await
+    .unwrap();
+
+    let callees = s.get_callees_by_name(&folder, "run_pipeline").await.unwrap();
+    let row = |name: &str| callees.iter().find(|c| c["name"] == name).unwrap().clone();
+
+    let parsed = row("parse_manifest");
+    assert_eq!(parsed["resolved_via"], serde_json::json!("through_an_import"));
+    assert_eq!(parsed["placed_by"], serde_json::json!("indexer"));
+
+    let dispatch = row("dispatch");
+    assert_eq!(
+        dispatch["unresolved_reason"],
+        serde_json::json!("dynamic_dispatch"),
+        "a refusal, not a fault — the reader should be able to stop looking at this one"
+    );
+    assert_eq!(dispatch["resolved"], serde_json::json!(false));
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
 /// The verdict COLUMNS are populated by the writer, and re-derived when the
 /// occurrence set changes in either direction.
 ///

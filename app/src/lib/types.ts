@@ -439,6 +439,50 @@ export interface FunctionDetail {
   tags?: string;
 }
 
+/**
+ * One end of a `calls` edge, as `/api/graph/callers` and `/api/graph/callees`
+ * return it.
+ *
+ * NOT `FunctionDetail`, which is what both were typed as. The daemon sends
+ * `file_path`/`line_start` and no `id` or `complexity`, so every field a reader
+ * would reach for was `undefined` — silently, because the wrong type made it
+ * look typed. Nothing consumed these yet, which is the only reason it never
+ * surfaced.
+ *
+ * The verdict pair is the point of the row. `resolved: boolean` cannot tell
+ * `declared_here` — the file declares the target itself — from `in_the_prelude`,
+ * where the "target" is a guess at which identically-named thing was meant;
+ * both are `true`. On the other side `no_import_in_scope` is a gap someone can
+ * close and `external_boundary` is the indexed world ending, and a reader
+ * triaging one wants nothing to do with the other. Exactly one of the pair is
+ * ever set. Both vocabularies are `sensei.reason_codes`, keyed by
+ * `code_graph_rung` and `code_graph`.
+ */
+export interface CallNeighbour {
+  name: string;
+  kind: string | null;
+  file_path: string | null;
+  line_start: number | null;
+  resolved: boolean;
+  /** Which rung of the ladder placed the edge. `null` when it missed. */
+  resolved_via: string | null;
+  /** Where the ladder stopped. `null` when the edge was placed. */
+  unresolved_reason: string | null;
+  edge_kind: string;
+  /**
+   * Callees only. `indexer` — the ladder decided at scan time. `receiver_chain`
+   * — the read path chased the receiver's type just now, which is why such a
+   * row is `resolved` while claiming no rung.
+   *
+   * Absent on callers because that side deliberately does not chase: healing it
+   * would put a placed row in the same payload as a coverage count that says
+   * otherwise.
+   */
+  placed_by?: 'indexer' | 'receiver_chain';
+  /** Callees only. `internal` | `external` | `unknown` (no target node). */
+  locality?: string;
+}
+
 export interface TypeDetail {
   id: string;
   name: string;
