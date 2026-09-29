@@ -397,6 +397,58 @@ fn dotted_package_and_class(spec: &str) -> Option<(&str, &str)> {
     Some((pkg, cls))
 }
 
+/// The identities the walk mints for the two readings of a `use` path.
+///
+/// `use crate::db::pg_store` names either the MODULE `db::pg_store` or the ITEM
+/// `pg_store` inside module `db`, and only the graph knows which — so both are
+/// offered and the lookup decides.
+///
+/// Built through `indexer::fqn::refer` rather than by joining strings, because
+/// the bug this exists to fix WAS a second string-joiner: `languages::fqn::item`
+/// emits four segments and the walk emits five, the fifth being the reach
+/// (`item` for a const/fn/type, `mod` for a module) that keeps a field and a
+/// same-named method apart. Going through the encoder means a change to the
+/// scheme reaches this automatically instead of silently orphaning every import
+/// again.
+///
+/// Empty for a non-rust language: `::` paths and the `Internal` classification
+/// are rust's, and minting a rust-shaped identity for another language would put
+/// a wrong fqn in front of the right one.
+fn rust_walk_identities(
+    lang: &str,
+    package: &str,
+    module: &str,
+    leaf: &str,
+    as_module: &str,
+) -> Vec<String> {
+    use crate::indexer::facts::Language;
+    use crate::indexer::fqn::{Form, Reach, refer};
+
+    if lang != Language::Rust.as_str() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut offer = |form: &Form<'_>| {
+        if let Ok(fqn) = refer(form) {
+            let spelled = fqn.to_string();
+            if !out.contains(&spelled) {
+                out.push(spelled);
+            }
+        }
+    };
+    // A module carries its whole path in the MODULE segment and `mod` as its
+    // reach — `rust·sensei-bootstrap·config·mod`.
+    offer(&Form::Item {
+        lang: Language::Rust,
+        package,
+        module: "",
+        name: as_module,
+        reach: Reach::Mod,
+    });
+    offer(&Form::Item { lang: Language::Rust, package, module, name: leaf, reach: Reach::Item });
+    out
+}
+
 pub fn local_import_candidates(
     lang: &str,
     package: &str,
@@ -425,11 +477,24 @@ pub fn local_import_candidates(
         let mut out = Vec::new();
         // Leaf is itself a module: `db` + `pg_store` → `db::pg_store`.
         let as_module = if module.is_empty() { leaf.clone() } else { format!("{module}::{leaf}") };
-        out.push(crate::languages::fqn::item(lang, package, "", &as_module));
-        // Leaf is an item in `module`.
-        let as_item = crate::languages::fqn::item(lang, package, &module, &leaf);
-        if !out.contains(&as_item) {
-            out.push(as_item);
+        // THE WALK'S OWN SPELLING FIRST. `indexer::fqn` appends a reach segment
+        // (`·item`, `·mod`) and this function's `languages::fqn::item` does not,
+        // so every candidate built below was one segment short of the identity
+        // the node actually carries and `node_id_by_fqn` could never match it.
+        // Measured before the fix: `imports` 2.3% placed against `references`
+        // 48.5%, the difference being that references go through the ladder and
+        // therefore through this encoder.
+        out.extend(rust_walk_identities(lang, package, &module, &leaf, &as_module));
+        // The v1 four-segment shapes stay, AFTER the v2 ones, for folders that
+        // have not been re-indexed since cutover — 12.4% of nodes still carry no
+        // v2 `claims` marker. Ordered second so a v2 graph never matches them.
+        for legacy in [
+            crate::languages::fqn::item(lang, package, "", &as_module),
+            crate::languages::fqn::item(lang, package, &module, &leaf),
+        ] {
+            if !out.contains(&legacy) {
+                out.push(legacy);
+            }
         }
         return out;
     }
@@ -448,6 +513,32 @@ pub fn local_import_candidates(
     // which is a weaker question than "does this actually exist here". Every
     // dotted specifier is probed; the data answers.
     let mut out: Vec<String> = Vec::new();
+    // A `::` specifier that is not `crate`/`self`/`super` names ANOTHER crate,
+    // and in a workspace that crate is very often one this scan indexes.
+    // `classify_import` correctly calls it `External` — by the string alone,
+    // `sensei_bootstrap::config::X` and `serde::Deserialize` are the same shape
+    // — so the same rule the dotted languages get applies here: probe, and let
+    // the data answer. Without a candidate, "no candidates therefore external"
+    // only restates the classification that emptied the list.
+    if lang == crate::indexer::facts::Language::Rust.as_str() {
+        let segs: Vec<&str> = spec.trim().split("::").filter(|s| !s.is_empty()).collect();
+        if let Some((crate_name, rest)) = segs.split_first()
+            && !rest.is_empty()
+        {
+            let (front, leaf) = rest.split_at(rest.len() - 1);
+            let module = front.join("::");
+            let as_module = rest.join("::");
+            // BOTH SPELLINGS. Cargo's `name = "sensei-bootstrap"` is what every
+            // fqn carries; rust source has to write `sensei_bootstrap`. Which of
+            // the two the manifest actually used is not knowable from the source,
+            // and `resolve.rs::same_package` folds exactly this for the ladder.
+            let underscored = (*crate_name).to_string();
+            let hyphenated = underscored.replace('_', "-");
+            for pkg in [hyphenated, underscored] {
+                out.extend(rust_walk_identities(lang, &pkg, &module, leaf[0], &as_module));
+            }
+        }
+    }
     if DOTTED_PACKAGE_LANGS.contains(&lang)
         && let Some((pkg, cls)) = dotted_package_and_class(spec)
     {
@@ -822,16 +913,19 @@ mod tests {
     /// consumed — `super::super::x` then resolves one module too deep.
     #[test]
     fn rust_use_paths_resolve_through_the_shared_module_arithmetic() {
-        assert_eq!(
-            local_import_candidates(
-                "rust",
-                "senseid",
-                "db::pg_store",
-                "crate::db::graph",
-                &classify_import("crate::db::graph")
-            ),
-            vec!["rust·senseid·db::graph", "rust·senseid·db·graph"],
+        // The ARITHMETIC is what this pins, so it asserts the module path each
+        // candidate carries and not the list. The encoding moved once already —
+        // the walk appends a reach segment and this did not — and a whole-vector
+        // equality made that look like a failure of the arithmetic.
+        let c = local_import_candidates(
+            "rust",
+            "senseid",
+            "db::pg_store",
+            "crate::db::graph",
+            &classify_import("crate::db::graph"),
         );
+        assert!(c.contains(&"rust·senseid·db::graph·mod".to_string()), "as a module: {c:?}");
+        assert!(c.contains(&"rust·senseid·db·graph·item".to_string()), "as an item: {c:?}");
 
         // `super::` climbs one module per marker, relative to the importer.
         assert_eq!(
@@ -842,7 +936,7 @@ mod tests {
                 "super::common",
                 &classify_import("super::common")
             )[0],
-            "rust·senseid·tasks::handlers::common",
+            "rust·senseid·tasks::handlers::common·mod",
         );
         // TWO markers climb two levels — the fold this test exists to pin.
         assert_eq!(
@@ -853,7 +947,7 @@ mod tests {
                 "super::super::executor",
                 &classify_import("super::super::executor")
             )[0],
-            "rust·senseid·tasks::executor",
+            "rust·senseid·tasks::executor·mod",
             "each leading `super` consumes one level; consuming only the first mints \
              a module path that never existed",
         );
@@ -866,7 +960,7 @@ mod tests {
                 "self::graph",
                 &classify_import("self::graph")
             )[0],
-            "rust·senseid·db::pg_store::graph",
+            "rust·senseid·db::pg_store::graph·mod",
         );
     }
 
@@ -999,5 +1093,161 @@ mod tests {
         );
         assert!(c.contains(&"typescript·app·src/lib/x".to_string()), "the literal path");
         assert!(c.contains(&"typescript·app·lib/x".to_string()), "and the src-stripped form");
+    }
+
+    // ── the two reasons a rust import cannot resolve ───────────────────────
+    //
+    // RCA on `crates/senseid/src/paths.rs`, which has 7 unplaced `imports`
+    // edges and not one verdict among them. The verdict is absent because this
+    // path never reaches the ladder — `process.rs` calls `insert_edge`, not
+    // `insert_edge_with_props`, so there are no occurrences to reduce. The
+    // PLACEMENT is absent for the two separable reasons below.
+
+    /// **The identity this builds must be the identity the walk minted.**
+    ///
+    /// Two encoders exist. `indexer::fqn` (v2, what every node in the graph
+    /// carries) appends a REACH segment — `item`, `field`, `macro` — because a
+    /// field and a same-named method are two symbols. `languages::fqn::item`
+    /// (v1, what this function calls) does not. So the graph holds
+    ///
+    ///     rust·sensei-bootstrap·config·GITHUB_ORG·item
+    ///
+    /// and this offers
+    ///
+    ///     rust·sensei-bootstrap·config·GITHUB_ORG
+    ///
+    /// which `node_id_by_fqn` can never match. Every internal rust import misses
+    /// on a trailing segment. Measured: `imports` edges are 2.3% placed
+    /// repo-wide against 48.5% for `references`, which go through the ladder and
+    /// therefore through the v2 encoder.
+    ///
+    /// Asserted against `indexer::fqn::refer` rather than a string literal on
+    /// purpose — a literal would pin today's spelling and let the two encoders
+    /// drift again, which is the defect itself.
+    ///
+    /// Breaking mutation: drop the reach segment from the candidate.
+    #[test]
+    fn a_rust_import_candidate_is_spelled_the_way_the_walk_mints_it() {
+        use crate::indexer::facts::Language;
+        use crate::indexer::fqn::{Form, Reach, refer};
+
+        let declared = refer(&Form::Item {
+            lang: Language::Rust,
+            package: "senseid",
+            module: "db",
+            name: "pg_store",
+            reach: Reach::Item,
+        })
+        .expect("the walk mints this for `pub mod pg_store` in db.rs");
+
+        let offered = local_import_candidates(
+            "rust",
+            "senseid",
+            "paths",
+            "crate::db::pg_store",
+            &ImportTarget::Internal,
+        );
+
+        assert!(
+            offered.contains(&declared.to_string()),
+            "the import offers {offered:?}, none of which is the identity the walk \
+             minted: {declared}"
+        );
+
+        // The OTHER reading of the same path, and half the candidates: the leaf
+        // is itself a module. Pinned against a literal taken from the live graph
+        // rather than from the encoder, because this is the one assertion that
+        // would not notice if both sides of the encoder moved together.
+        let as_module = local_import_candidates(
+            "rust",
+            "sensei-bootstrap",
+            "",
+            "crate::config",
+            &ImportTarget::Internal,
+        );
+        assert!(
+            as_module.contains(&"rust·sensei-bootstrap·config·mod".to_string()),
+            "a `use` ending at a module must offer the module's own identity; got {as_module:?}"
+        );
+    }
+
+    /// **A sibling crate in this workspace is not a third-party package.**
+    ///
+    /// `classify_import` calls a rust path `Internal` only when it starts with
+    /// `crate::`, `super::` or `self::`. `paths.rs` re-exports
+    ///
+    ///     pub use sensei_bootstrap::config::{BREW_TAP, GITHUB_ORG, …};
+    ///
+    /// which names another crate in this very workspace — its source is indexed,
+    /// its declaration is in the graph — and falls through to `External`. The
+    /// rust candidate branch never runs, so no local lookup is even attempted.
+    ///
+    /// `external_package` then returns the whole `::` string as the "package",
+    /// because it splits on `/` and `.` and knows nothing of `::`.
+    ///
+    /// The name also has to survive a spelling change: cargo's manifest says
+    /// `sensei-bootstrap`, rust source must write `sensei_bootstrap`, and
+    /// `resolve.rs::same_package` already folds exactly that for the ladder.
+    ///
+    /// NOT asserted by making `classify_import` call it internal. By the string
+    /// alone `sensei_bootstrap::config::X` is indistinguishable from
+    /// `serde::Deserialize`, so deciding it is ours would be the guess R4
+    /// forbids — and this file already answers that exact question the right way
+    /// for dotted specifiers: *"Deliberately NOT gated on ANY prefix rule …
+    /// every dotted specifier is probed; the data answers."* `External` is the
+    /// honest classification. What was missing is the probe.
+    ///
+    /// Breaking mutation: drop the sibling arm from `local_import_candidates`.
+    #[test]
+    fn a_sibling_crate_import_is_probed_against_the_graph() {
+        use crate::indexer::facts::Language;
+        use crate::indexer::fqn::{Form, Reach, refer};
+
+        let spec = "sensei_bootstrap::config::GITHUB_ORG";
+        let declared = refer(&Form::Item {
+            lang: Language::Rust,
+            package: "sensei-bootstrap",
+            module: "config",
+            name: "GITHUB_ORG",
+            reach: Reach::Item,
+        })
+        .expect("this is the identity the bootstrap walk minted");
+
+        let offered =
+            local_import_candidates("rust", "senseid", "paths", spec, &classify_import(spec));
+
+        assert!(
+            offered.contains(&declared.to_string()),
+            "a `use` naming another crate in this workspace must offer that crate's \
+             identity so the lookup can answer; got {offered:?}, want {declared}"
+        );
+    }
+
+    /// The manifest and the source disagree about the separator, and both are
+    /// right. Cargo's `name = "sensei-bootstrap"` is what every fqn carries;
+    /// rust source must spell the crate `sensei_bootstrap`. Only one of the two
+    /// can match, and which one is not knowable here — so both are offered.
+    ///
+    /// Breaking mutation: stop folding `_` to `-`, and the 50 cross-crate
+    /// imports in this repo miss on one character.
+    #[test]
+    fn both_spellings_of_a_crate_name_are_offered() {
+        let offered = local_import_candidates(
+            "rust",
+            "senseid",
+            "paths",
+            "sensei_bootstrap::home_dir",
+            &classify_import("sensei_bootstrap::home_dir"),
+        );
+
+        assert!(
+            offered.iter().any(|c| c.contains("·sensei-bootstrap·")),
+            "the manifest spelling, which is what the graph stores: {offered:?}"
+        );
+        assert!(
+            offered.iter().any(|c| c.contains("·sensei_bootstrap·")),
+            "and the source spelling, for a crate whose manifest really uses an \
+             underscore: {offered:?}"
+        );
     }
 }
