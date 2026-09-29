@@ -1349,7 +1349,7 @@ mod corpus {
         println!(
             "import statements {library_imports} | placed edges that stayed first-party {local_imports}\n"
         );
-        // The same ratio `acceptance::report` prints for the other two. An EDGE
+        // The same ratio `quality::acceptance::report` prints for the other two. An EDGE
         // is a fact with both ends known; an unresolved reference is a row with
         // a reason and no target, so counting it would make a graph look richer
         // the worse it resolved.
@@ -1388,7 +1388,7 @@ mod corpus {
     /// **The two barriers, over a corpus nobody here wrote.**
     ///
     /// The same measurement `acceptance` runs over this repository's Rust and
-    /// TypeScript, pointed at Java — see [`crate::indexer::barrier`] for what
+    /// TypeScript, pointed at Java — see [`crate::indexer::quality::reachability`] for what
     /// the two barriers are and why the measurement is shared rather than
     /// copied.
     ///
@@ -1402,7 +1402,7 @@ mod corpus {
     #[test]
     #[ignore]
     fn the_two_barriers_over_a_corpus_nobody_here_wrote() {
-        use crate::indexer::barrier::{Unit, two_barriers};
+        use crate::indexer::quality::reachability::{Unit, two_barriers};
 
         let corpus = placed_corpus();
         if corpus.is_empty() {

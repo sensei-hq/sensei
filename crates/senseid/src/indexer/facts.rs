@@ -638,7 +638,7 @@ impl Evidence {
     ///
     /// One reader for both grades, because "which identity did the use site
     /// mint" is a different question from "may it become an edge". Every
-    /// MEASUREMENT asks the first: the lost-edge decomposition in `barrier.rs`
+    /// MEASUREMENT asks the first: the lost-edge decomposition in `quality/reachability.rs`
     /// needs to know a use site named a node whatever the ladder then did about
     /// it, and a harness comparing the two sides of the merge contract is
     /// comparing strings.

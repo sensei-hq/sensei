@@ -1,4 +1,11 @@
-//! **Two barriers a good graph should clear**, over ANY corpus.
+//! **Is every declaration reached by an edge?** Over ANY corpus.
+//!
+//! Named for the question, not the mechanism. This was `quality/reachability.rs`, which said
+//! how it worked and not what it answered — and `barrier` is the word `resolve`
+//! also wants for the post-parse pass, so one file was holding both meanings.
+//! `indexer/barrier.rs` sounded like a pipeline stage and never was one.
+//!
+//! The two barriers below are the measurement; REACHABILITY is the property.
 //!
 //! A class is one node; an independent function is one node. Each should appear
 //! as the CALLEE end of some edge, and which end the caller sits on says a
@@ -28,10 +35,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::facts::{
+use crate::indexer::facts::{
     Evidence, FileFacts, Language, Observation, ReachedBy, RelationKind, Resolution, SymbolKind,
 };
-use super::fqn::{self, Origin, Reach};
+use crate::indexer::fqn::{self, Origin, Reach};
 
 /// One file of a corpus: what the walk read, and the text it was read from.
 ///
@@ -39,19 +46,24 @@ use super::fqn::{self, Origin, Reach};
 /// inline test boundary, and a corpus that is not this repository — Java's is
 /// somebody else's checkout — has no workspace root to join a relative path
 /// against.
-pub(super) struct Unit<'a> {
-    pub(super) path: &'a str,
-    pub(super) text: &'a str,
-    pub(super) facts: &'a FileFacts,
+/// `pub(crate)`, not `pub(super)`: a language adapter's own corpus test builds
+/// these, and the adapters are not descendants of `quality`. The narrower
+/// visibility worked only while this module sat directly under `indexer`.
+pub(crate) struct Unit<'a> {
+    pub(crate) path: &'a str,
+    pub(crate) text: &'a str,
+    pub(crate) facts: &'a FileFacts,
 }
 
 /// What one language's source nodes did against the two barriers.
-pub(super) struct Tally {
-    pub(super) nodes: usize,
-    pub(super) exercised: usize,
-    pub(super) no_test: usize,
-    pub(super) no_source: usize,
-    pub(super) neither: usize,
+/// `pub(crate)` for the reason `Unit` is: a language adapter's corpus test
+/// reads these counts, and the adapters sit outside `quality`.
+pub(crate) struct Tally {
+    pub(crate) nodes: usize,
+    pub(crate) exercised: usize,
+    pub(crate) no_test: usize,
+    pub(crate) no_source: usize,
+    pub(crate) neither: usize,
 }
 
 /// Which declarations of a file are TESTS — the one classifier, for every
@@ -149,23 +161,23 @@ fn area_of(path: &str) -> String {
 /// One row of the by-kind report.
 #[derive(Default)]
 pub(super) struct Kind {
-    pub(super) nodes: usize,
-    pub(super) linked: usize,
+    pub(crate) nodes: usize,
+    pub(crate) linked: usize,
     /// Called from a NON-test caller.
-    pub(super) from_source: usize,
+    pub(crate) from_source: usize,
     /// Called from a test.
-    pub(super) from_test: usize,
+    pub(crate) from_test: usize,
     /// Unlinked, and NO use site anywhere names it. Nothing calls it, so the
     /// graph has nothing to lose — an entry point, a registered handler, a
     /// public surface, or genuinely dead.
-    pub(super) never_named: usize,
+    pub(crate) never_named: usize,
     /// Unlinked, and an unresolved use site carried this node's EXACT identity.
     /// No collision is possible; the edge was meant and it is missing.
-    pub(super) lost_exact: usize,
+    pub(crate) lost_exact: usize,
     /// Unlinked, no identity names it, and an unresolved use site AT THIS
     /// NODE'S OWN REACH carried its bare name. A defect, at lower confidence:
     /// two declarations can share a name.
-    pub(super) lost_by_name: usize,
+    pub(crate) lost_by_name: usize,
     /// Unlinked, SOME unresolved use site of the corpus carried its bare name,
     /// and a narrowing ruled that site out — so it is not in [`Kind::lost`].
     ///
@@ -183,7 +195,7 @@ pub(super) struct Kind {
     /// while this held still changed the RESOLVER. Neither is legible from
     /// `lost` alone, and a number nobody can attribute is a number nobody should
     /// quote.
-    pub(super) narrowed_out: usize,
+    pub(crate) narrowed_out: usize,
 }
 
 impl Kind {
@@ -637,7 +649,7 @@ pub(super) fn by_kind(units: &[Unit<'_>]) -> BTreeMap<&'static str, BTreeMap<Sym
 /// result — a count alone cannot be argued with, and every wrong diagnosis this
 /// measurement has produced was a count somebody explained before they split
 /// it.
-pub(super) fn two_barriers(units: &[Unit<'_>]) -> BTreeMap<&'static str, Tally> {
+pub(crate) fn two_barriers(units: &[Unit<'_>]) -> BTreeMap<&'static str, Tally> {
     // Where each file's test region begins. Past it, a declaration is a test.
     // By POSITION rather than by module name: the modules in this repository
     // are called `forge_token_observe_tests`, `probe_classification` and
@@ -981,8 +993,10 @@ mod tests {
                     // and `report_over` zips this list against `files`, so a
                     // silently dropped file pairs every later file's text with
                     // the wrong facts.
-                    let module = adapter
-                        .module_path(path, crate::indexer::acceptance::package_root_of(path));
+                    let module = adapter.module_path(
+                        path,
+                        crate::indexer::quality::acceptance::package_root_of(path),
+                    );
                     let source = Source { package: "unnamed", module: &module, path, text };
                     adapter
                         .read(&source, types)

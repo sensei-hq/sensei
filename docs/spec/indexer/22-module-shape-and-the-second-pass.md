@@ -22,9 +22,10 @@ effort. Every count here is from the tree or the live graph on 2026-09-29.
 | **Rows → database** | `db/pg_store/` | SQL, id lookup, upsert-by-fqn |
 | **Per-file resolution** | `indexer/resolve.rs` | the rung ladder, pure and order-independent |
 
-`indexer/barrier.rs` is **not** a resolve barrier despite the name — it is a
-graph-quality acceptance measurement ("two barriers a good graph should clear").
-The post-parse resolver below is a different thing and needs a different home.
+`indexer/quality/reachability.rs` is **not** a resolve barrier — it measures
+graph quality ("is every declaration reached by an edge?"). It was
+`indexer/barrier.rs`, a name that described the mechanism rather than the
+question and collided with the word the post-parse pass below wants.
 
 So the adapter semantics are already there on both axes. What is wrong is only
 **where they live**: the manifest layer sits in `adapters/`, a sibling of the

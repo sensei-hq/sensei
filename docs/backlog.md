@@ -37,7 +37,7 @@ have one.
 **What still has to happen, in order:** finish SQL/Kotlin/Swift → deploy →
 `TRUNCATE sensei.nodes, sensei.edges CASCADE` → full re-index → acceptance
 against the live graph → wire `Stated::Gone` → delete `languages/` and break
-the two helper couplings (`is_test_path` in `indexer/barrier.rs` ×2,
+the two helper couplings (`is_test_path` in `indexer/quality/reachability.rs` ×2,
 `fqn::is_external` in `indexer/community.rs`).
 
 **The wipe is REQUIRED, not hygiene.** `reconcile` reads `props->'claims'`, a
@@ -83,7 +83,7 @@ non-indexing callers (`classifiers.rs`, `graph_facts.rs`,
 home rather than deletion.
 
 **The v2 → v1 coupling is trivial**, which is the one piece of good news: two
-helpers, `languages::is_test_path` (twice, in `indexer/barrier.rs`) and
+helpers, `languages::is_test_path` (twice, in `indexer/quality/reachability.rs`) and
 `languages::fqn::is_external` (once, in `indexer/community.rs`). An earlier
 count of eleven files was wrong — the rest were doc-comment mentions, not
 imports.
@@ -252,7 +252,7 @@ which include the 73 edition-2018 uniform-path imports already noted below.
 
 ## Indexer — the two coverage barriers over Java (measured 2026-09-15)
 
-The measurement now lives in `indexer/barrier.rs` and is run over BOTH corpora —
+The measurement now lives in `indexer/quality/reachability.rs` and is run over BOTH corpora —
 `acceptance` supplies this repository's Rust and TypeScript,
 `lang::java::corpus` supplies `SENSEI_CORPUS`. Java's first numbers, over 5,088
 hand-written files and 887 test files:

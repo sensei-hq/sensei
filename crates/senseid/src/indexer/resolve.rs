@@ -2675,7 +2675,7 @@ mod tests {
     ///
     /// **KNOWN LIMIT, stated so nobody reads more into a green than it means.**
     /// `guard_sources()` reads what this indexer OWNS, which does not include
-    /// `acceptance.rs` or `barrier.rs`. Those two are `#[cfg(test)]` harnesses,
+    /// `quality/acceptance.rs` or `quality/reachability.rs`. Those two are `#[cfg(test)]` harnesses,
     /// so `outside_tests` would hand this guard an empty string; they are
     /// proven by the BUILD — they fail to compile while a call site survives —
     /// and by the `rg` in the commit message. `index.rs` WAS on that list and

@@ -20,20 +20,6 @@ pub mod placement;
 // fqns (`languages/fqn.rs` against `indexer/fqn.rs`), so exactly one of them
 // owns any given language, and flipping one is a single commit with deleting
 // `languages/<that language>.rs`.
-/// The acceptance harness — §6's A1–A9 and R8, measured over the real corpus.
-///
-/// `#[cfg(test)]` because it IS a test-runner tool. What it is NOT is a
-/// comparison: the question "does this agree with the producer being replaced"
-/// is a transition question, and answering it was setting the agenda for work
-/// whose actual goal is an accurate call and reference graph. Thresholds, not
-/// comparisons (§6's first line) — a graph is judged against what a reader
-/// needs from it, and the legacy producer is not that reader.
-#[cfg(test)]
-pub mod acceptance;
-/// The two coverage barriers, over any corpus — see the module docs for why it
-/// is not simply a test in `acceptance`.
-#[cfg(test)]
-pub mod barrier;
 pub mod facts;
 pub mod fqn;
 pub mod impact;
@@ -41,6 +27,16 @@ pub mod incremental;
 pub mod lang;
 pub mod persist;
 pub mod pipeline;
+/// How good the produced graph is, measured over real source — §6's criteria
+/// and R8 in `acceptance`, lost-edge reachability in `reachability`.
+///
+/// `#[cfg(test)]` because these ARE test-runner tools. What they are NOT is a
+/// comparison: "does this agree with the producer being replaced" is a
+/// transition question, and answering it set the agenda for work whose actual
+/// goal is an accurate call and reference graph. Thresholds, not comparisons
+/// (§6's first line) — a graph is judged against what a reader needs from it.
+#[cfg(test)]
+pub mod quality;
 pub mod reconcile;
 pub mod repo;
 pub mod resolve;
@@ -74,8 +70,8 @@ fn guard_sources() -> Vec<(String, String)> {
     /// failed-read guards — read every file except the one the requirement is
     /// about. Six greens over a module none of them opened.
     ///
-    /// `acceptance.rs` and `barrier.rs` stay off: both are `#[cfg(test)]`
-    /// harnesses, so `outside_tests` would hand every guard an empty string.
+    /// `quality/` stays off: both modules in it are `#[cfg(test)]` harnesses,
+    /// so `outside_tests` would hand every guard an empty string.
     const OWNED: &[&str] = &[
         "facts.rs",
         "fqn.rs",

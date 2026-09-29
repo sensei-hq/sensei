@@ -258,7 +258,7 @@ struct Scope {
     /// Whether this scope is inside a function BODY.
     ///
     /// A declaration in a body is a LOCAL, and a local is not a node — the rule
-    /// every adapter here has needed. `barrier::a_node` already excludes its
+    /// every adapter here has needed. `quality::reachability::a_node` already excludes its
     /// kind from every coverage measurement, so the row was one nothing read.
     /// It is still recorded in `locals`, because that is what types the
     /// receiver of `p.x`.
