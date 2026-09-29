@@ -361,7 +361,7 @@ mod tests {
         // exercises has no `tests/` segment for the directory rule to find.
         //
         // The indexer's coverage barrier routes PHP entirely through this
-        // function — `barrier::inline_tests_begin` returns `None` for it,
+        // function — `quality::reachability::inline_tests_begin` returns `None` for it,
         // because PHP has no in-file marker — so a gap here is not cosmetic:
         // every declaration in such a file reads as PRODUCTION to both
         // `nodes.is_test` and the barrier.

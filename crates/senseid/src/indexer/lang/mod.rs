@@ -585,7 +585,7 @@ mod tests {
     /// [`LanguageAdapter::read`] still TAKES the table and the other four
     /// adapters still read theirs — TypeScript has no other source for a type's
     /// home, and taking it away now would drop its share below the floor
-    /// `acceptance::report` records. Rust is the first adapter through (§11), so
+    /// `quality::acceptance::report` records. Rust is the first adapter through (§11), so
     /// its walk is the first file this may be asserted of. Widen the path as
     /// each next adapter lands; the trait parameter goes when the LAST one does.
     ///
