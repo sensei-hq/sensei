@@ -82,6 +82,25 @@ pub enum CallDirection {
     Outgoing,
 }
 
+/// The identity a receiver's concrete type carries in the graph.
+///
+/// Through `indexer::fqn::refer`, like every other lookup key, because the
+/// alternative is what this replaced: `languages::fqn::item` joins four
+/// segments and every node carries five, the fifth being the reach. The
+/// receiver chase therefore probed an fqn no node has ever had and could only
+/// ever miss — which is why `receiver_type_unknown` is a top fault code.
+///
+/// `None` when the parts do not form a nameable identity; the caller treats
+/// that as "not placeable", which is what it is.
+pub(super) fn receiver_type_fqn(package: &str, module: &str, name: &str) -> Option<String> {
+    use crate::indexer::facts::Language;
+    use crate::indexer::fqn::{Form, Reach, refer};
+
+    refer(&Form::Item { lang: Language::Rust, package, module, name, reach: Reach::Item })
+        .ok()
+        .map(|fqn| fqn.to_string())
+}
+
 /// What placed a callee row — the one fact the two paths in
 /// [`PgStore::get_callees_by_name`] disagree on, made explicit instead of
 /// inferred from which keys happen to be present.
@@ -433,9 +452,16 @@ impl PgStore {
         folder_ids: &[uuid::Uuid],
         calls: &[(crate::languages::fqn::ReceiverHint, String)],
     ) -> Result<Vec<Option<uuid::Uuid>>, String> {
-        use crate::languages::fqn::{ReceiverHint, SEP};
-        use crate::languages::rust_lang::{ReceiverType, rust_fqn::RUST_LANG};
         use std::collections::{HashMap, HashSet};
+
+        use crate::indexer::facts::Language;
+        use crate::languages::fqn::{ReceiverHint, SEP};
+        use crate::languages::rust_lang::ReceiverType;
+
+        // The language's own label, from the enum that owns it — not a `const
+        // RUST_LANG` in a legacy walker, which is a second place for the string
+        // `"rust"` to be decided.
+        let rust = Language::Rust.as_str();
 
         if calls.is_empty() || folder_ids.is_empty() {
             return Ok(vec![None; calls.len()]);
@@ -476,8 +502,7 @@ impl PgStore {
                 // The return-type grammar below is Rust's. Reading a TypeScript
                 // or Java return type with it would apply the wrong unwrapping
                 // rules, so a non-rust node answers nothing.
-                let fact =
-                    (language.as_deref() == Some(RUST_LANG)).then_some((return_type, self_fqn));
+                let fact = (language.as_deref() == Some(rust)).then_some((return_type, self_fqn));
                 match hinted.entry(fqn) {
                     std::collections::hash_map::Entry::Vacant(e) => {
                         e.insert(fact);
@@ -509,10 +534,9 @@ impl PgStore {
                     package,
                 )? {
                     ReceiverType::SelfType => (Some(self_fqn.clone()?), None),
-                    ReceiverType::Qualified { module, name } => (
-                        Some(crate::languages::fqn::item(RUST_LANG, package, &module, &name)),
-                        None,
-                    ),
+                    ReceiverType::Qualified { module, name } => {
+                        (receiver_type_fqn(package, &module, &name), None)
+                    }
                     ReceiverType::Bare(name) => (None, Some(name)),
                 };
                 Some((tfqn, tname, member.clone()))

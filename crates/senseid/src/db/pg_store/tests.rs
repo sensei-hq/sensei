@@ -14085,6 +14085,44 @@ fn both_callee_paths_report_the_same_shape() {
     assert_eq!(keys(&missed), keys(&indexed));
 }
 
+/// The receiver chase must probe an fqn a node can actually have.
+///
+/// Same defect as the import candidates, different consumer: this built its
+/// lookup key with `languages::fqn::item`, which joins FOUR segments, while
+/// every node in the graph carries FIVE — the fifth being the reach that keeps
+/// a field and a same-named method apart. Measured: 100% of module nodes across
+/// all six languages are `…·mod`, and not one is in any other shape. So the
+/// chase could not miss sometimes; it had to miss always, which is why
+/// `receiver_type_unknown` is a top fault code and accounts for 5 of the 6
+/// remaining unplaced edges on `crates/senseid/src/paths.rs`.
+///
+/// Asserted against `indexer::fqn::refer` rather than a string literal, so the
+/// two cannot drift apart again — a literal would pin today's spelling and let
+/// the encoder move out from under it, which IS the bug.
+///
+/// Mutation that must break this test: mint with `languages::fqn::item`.
+#[test]
+fn the_receiver_chase_probes_the_identity_the_walk_minted() {
+    use crate::indexer::facts::Language;
+    use crate::indexer::fqn::{Form, Reach, refer};
+
+    let declared = refer(&Form::Item {
+        lang: Language::Rust,
+        package: "senseid",
+        module: "db::pg_store",
+        name: "PgStore",
+        reach: Reach::Item,
+    })
+    .expect("the walk mints this for `pub struct PgStore`");
+
+    assert_eq!(
+        super::graph::receiver_type_fqn("senseid", "db::pg_store", "PgStore").as_deref(),
+        Some(declared.to_string().as_str()),
+        "the chase must look up the identity the walk wrote, not a four-segment \
+         spelling no node has ever carried"
+    );
+}
+
 /// The callee list carries the same verdict the caller list does.
 ///
 /// Sibling of `callers_carry_the_verdict_that_placed_each_edge`. Both sides of a
@@ -15815,18 +15853,21 @@ async fn rt_def_at(
 /// `TaskContext` with a `pg` returning a `PgStore`, and a `PgStore` with a
 /// `count_edges` — the exact live chain the slice exists to close.
 async fn rt_fixture(s: &PgStore, fid: &uuid::Uuid) -> (uuid::Uuid, uuid::Uuid) {
-    let store = rt_def(s, fid, "rust·recv·db::pg_store·PgStore", "struct", "PgStore", None).await;
+    let store =
+        rt_def(s, fid, "rust·recv·db::pg_store·PgStore·item", "struct", "PgStore", None).await;
     let count = rt_def(
         s,
         fid,
-        "rust·recv·db::pg_store·PgStore·count_edges",
+        "rust·recv·db::pg_store·PgStore·count_edges·item",
         "method",
         "count_edges",
         Some(&store),
     )
     .await;
-    let tc = rt_def(s, fid, "rust·recv·executor·TaskContext", "struct", "TaskContext", None).await;
-    let pg = rt_def(s, fid, "rust·recv·executor·TaskContext·pg", "method", "pg", Some(&tc)).await;
+    let tc =
+        rt_def(s, fid, "rust·recv·executor·TaskContext·item", "struct", "TaskContext", None).await;
+    let pg =
+        rt_def(s, fid, "rust·recv·executor·TaskContext·pg·item", "method", "pg", Some(&tc)).await;
     (pg, count)
 }
 
@@ -15857,7 +15898,7 @@ async fn a_receiver_hint_resolves_through_the_hinted_methods_return_type() {
         resolve_one(
             &s,
             &fid,
-            ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg".into()),
+            ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg·item".into()),
             "count_edges"
         )
         .await,
@@ -15871,7 +15912,7 @@ async fn a_receiver_hint_resolves_through_the_hinted_methods_return_type() {
         resolve_one(
             &s,
             &fid,
-            ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg".into()),
+            ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg·item".into()),
             "count_edges"
         )
         .await,
@@ -15888,14 +15929,14 @@ async fn every_failed_hop_in_the_receiver_chain_yields_unresolved() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
     let (pg, _) = rt_fixture(&s, &fid).await;
-    let hint = || ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg".into());
+    let hint = || ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg·item".into());
 
     // Hop 1: the hinted node is not in the graph at all.
     assert_eq!(
         resolve_one(
             &s,
             &fid,
-            ReceiverHint::ReturnOf("rust·recv·nope·Ghost·m".into()),
+            ReceiverHint::ReturnOf("rust·recv·nope·Ghost·m·item".into()),
             "count_edges"
         )
         .await,
@@ -15945,7 +15986,7 @@ async fn every_failed_hop_in_the_receiver_chain_yields_unresolved() {
 async fn a_stub_is_never_the_answer_to_a_receiver_hop() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
-    let ghost = rt_def(&s, &fid, "rust·recv·other·PgStore", "struct", "PgStore", None).await;
+    let ghost = rt_def(&s, &fid, "rust·recv·other·PgStore·item", "struct", "PgStore", None).await;
     let (stub,): (uuid::Uuid,) = query_as(
         "INSERT INTO sensei.nodes (folder_id, fqn, kind, name, language, parent_id, file_id)
          VALUES ($1, 'rust·recv·other·PgStore·only_stubbed',
@@ -15961,15 +16002,15 @@ async fn a_stub_is_never_the_answer_to_a_receiver_hop() {
 
     // A hop that reaches the ghost type by its own fqn — the strongest form of
     // hint there is, so what refuses here is the stub rule and nothing weaker.
-    let tc = rt_def(&s, &fid, "rust·recv·other·Ctx", "struct", "Ctx", None).await;
-    let mk = rt_def(&s, &fid, "rust·recv·other·Ctx·mk", "method", "mk", Some(&tc)).await;
+    let tc = rt_def(&s, &fid, "rust·recv·other·Ctx·item", "struct", "Ctx", None).await;
+    let mk = rt_def(&s, &fid, "rust·recv·other·Ctx·mk·item", "method", "mk", Some(&tc)).await;
     s.set_node_return_type(&mk, "crate::other::PgStore").await.unwrap();
 
     assert_eq!(
         resolve_one(
             &s,
             &fid,
-            ReceiverHint::ReturnOf("rust·recv·other·Ctx·mk".into()),
+            ReceiverHint::ReturnOf("rust·recv·other·Ctx·mk·item".into()),
             "only_stubbed"
         )
         .await,
@@ -15988,15 +16029,22 @@ async fn an_ambiguous_member_lookup_refuses_rather_than_picking_one() {
     let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
     let (pg, _) = rt_fixture(&s, &fid).await;
     s.set_node_return_type(&pg, "PgStore").await.unwrap();
-    let hint = || ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg".into());
+    let hint = || ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg·item".into());
 
     assert!(resolve_one(&s, &fid, hint(), "count_edges").await.is_some(), "one candidate resolves");
 
     // A SECOND type of the same name in the same scope, also carrying the
     // member — the split-impl / trait-qualified shape the live graph is full of.
-    let other = rt_def(&s, &fid, "rust·recv·shadow·PgStore", "class", "PgStore", None).await;
-    rt_def(&s, &fid, "rust·recv·shadow·PgStore·count_edges", "method", "count_edges", Some(&other))
-        .await;
+    let other = rt_def(&s, &fid, "rust·recv·shadow·PgStore·item", "class", "PgStore", None).await;
+    rt_def(
+        &s,
+        &fid,
+        "rust·recv·shadow·PgStore·count_edges·item",
+        "method",
+        "count_edges",
+        Some(&other),
+    )
+    .await;
 
     assert_eq!(
         resolve_one(&s, &fid, hint(), "count_edges").await,
@@ -16025,14 +16073,15 @@ async fn an_ambiguous_member_lookup_refuses_rather_than_picking_one() {
 async fn two_same_named_types_with_disjoint_members_resolve_to_nothing() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
-    let ctx = rt_def(&s, &fid, "rust·recv·api·Api", "struct", "Api", None).await;
-    let judge = rt_def(&s, &fid, "rust·recv·api·Api·judge", "method", "judge", Some(&ctx)).await;
+    let ctx = rt_def(&s, &fid, "rust·recv·api·Api·item", "struct", "Api", None).await;
+    let judge =
+        rt_def(&s, &fid, "rust·recv·api·Api·judge·item", "method", "judge", Some(&ctx)).await;
     s.set_node_return_type(&judge, "Verdict").await.unwrap();
 
     let wire = rt_def_at(
         &s,
         &fid,
-        "rust·recv·verdicts·Verdict",
+        "rust·recv·verdicts·Verdict·item",
         "enum",
         "Verdict",
         None,
@@ -16040,11 +16089,12 @@ async fn two_same_named_types_with_disjoint_members_resolve_to_nothing() {
         "src/verdicts.rs",
     )
     .await;
-    rt_def(&s, &fid, "rust·recv·verdicts·Verdict·as_wire", "method", "as_wire", Some(&wire)).await;
+    rt_def(&s, &fid, "rust·recv·verdicts·Verdict·as_wire·item", "method", "as_wire", Some(&wire))
+        .await;
     let classifier = rt_def_at(
         &s,
         &fid,
-        "rust·recv·tasks::verdict_classifier·Verdict",
+        "rust·recv·tasks::verdict_classifier·Verdict·item",
         "enum",
         "Verdict",
         None,
@@ -16055,7 +16105,7 @@ async fn two_same_named_types_with_disjoint_members_resolve_to_nothing() {
     rt_def(
         &s,
         &fid,
-        "rust·recv·tasks::verdict_classifier·Verdict·as_str",
+        "rust·recv·tasks::verdict_classifier·Verdict·as_str·item",
         "method",
         "as_str",
         Some(&classifier),
@@ -16063,7 +16113,7 @@ async fn two_same_named_types_with_disjoint_members_resolve_to_nothing() {
     .await;
     assert_ne!(wire, classifier, "the fixture must really hold TWO type nodes");
 
-    let hint = || ReceiverHint::ReturnOf("rust·recv·api·Api·judge".into());
+    let hint = || ReceiverHint::ReturnOf("rust·recv·api·Api·judge·item".into());
     assert_eq!(
         resolve_one(&s, &fid, hint(), "as_wire").await,
         None,
@@ -16090,7 +16140,7 @@ async fn a_module_qualified_return_type_picks_its_own_type_out_of_two() {
     let shadow = rt_def_at(
         &s,
         &fid,
-        "rust·recv·shadow·PgStore",
+        "rust·recv·shadow·PgStore·item",
         "struct",
         "PgStore",
         None,
@@ -16101,7 +16151,7 @@ async fn a_module_qualified_return_type_picks_its_own_type_out_of_two() {
     let shadow_count = rt_def_at(
         &s,
         &fid,
-        "rust·recv·shadow·PgStore·count_edges",
+        "rust·recv·shadow·PgStore·count_edges·item",
         "method",
         "count_edges",
         Some(&shadow),
@@ -16110,7 +16160,7 @@ async fn a_module_qualified_return_type_picks_its_own_type_out_of_two() {
     )
     .await;
     assert_ne!(shadow_count, count, "the fixture must really hold TWO count_edges");
-    let hint = || ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg".into());
+    let hint = || ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg·item".into());
 
     s.set_node_return_type(&pg, "&crate::db::pg_store::PgStore").await.unwrap();
     assert_eq!(
@@ -16142,19 +16192,25 @@ async fn a_module_qualified_return_type_picks_its_own_type_out_of_two() {
 async fn an_external_return_type_never_lands_on_a_same_named_first_party_type() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
-    let app = rt_def(&s, &fid, "rust·recv·cli·App", "struct", "App", None).await;
-    let mk = rt_def(&s, &fid, "rust·recv·cli·App·client", "method", "client", Some(&app)).await;
+    let app = rt_def(&s, &fid, "rust·recv·cli·App·item", "struct", "App", None).await;
+    let mk =
+        rt_def(&s, &fid, "rust·recv·cli·App·client·item", "method", "client", Some(&app)).await;
 
     // The first-party wrapper that makes the collision bite. It is the ONLY
     // `Client` in scope, so every count gate passes and only the path can refuse.
-    let wrapper = rt_def(&s, &fid, "rust·recv·http·Client", "struct", "Client", None).await;
-    rt_def(&s, &fid, "rust·recv·http·Client·get", "method", "get", Some(&wrapper)).await;
+    let wrapper = rt_def(&s, &fid, "rust·recv·http·Client·item", "struct", "Client", None).await;
+    rt_def(&s, &fid, "rust·recv·http·Client·get·item", "method", "get", Some(&wrapper)).await;
 
     for external in ["reqwest::blocking::Client", "&reqwest::Client", "std::sync::mpsc::Client"] {
         s.set_node_return_type(&mk, external).await.unwrap();
         assert_eq!(
-            resolve_one(&s, &fid, ReceiverHint::ReturnOf("rust·recv·cli·App·client".into()), "get")
-                .await,
+            resolve_one(
+                &s,
+                &fid,
+                ReceiverHint::ReturnOf("rust·recv·cli·App·client·item".into()),
+                "get"
+            )
+            .await,
             None,
             "`-> {external}` names a dependency's type; the first-party `Client` is a \
              different type and linking to it invents a dependency"
@@ -16171,9 +16227,10 @@ async fn an_external_return_type_never_lands_on_a_same_named_first_party_type() 
 async fn a_non_rust_type_never_answers_a_rust_return_type() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
-    let tc =
-        rt_def(&s, &fid, "rust·recv·executor·TaskContext", "struct", "TaskContext", None).await;
-    let pg = rt_def(&s, &fid, "rust·recv·executor·TaskContext·pg", "method", "pg", Some(&tc)).await;
+    let tc = rt_def(&s, &fid, "rust·recv·executor·TaskContext·item", "struct", "TaskContext", None)
+        .await;
+    let pg =
+        rt_def(&s, &fid, "rust·recv·executor·TaskContext·pg·item", "method", "pg", Some(&tc)).await;
     s.set_node_return_type(&pg, "PgStore").await.unwrap();
 
     let ts = rt_def_at(
@@ -16203,7 +16260,7 @@ async fn a_non_rust_type_never_answers_a_rust_return_type() {
         resolve_one(
             &s,
             &fid,
-            ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg".into()),
+            ReceiverHint::ReturnOf("rust·recv·executor·TaskContext·pg·item".into()),
             "count_edges"
         )
         .await,
@@ -16220,14 +16277,21 @@ async fn a_non_rust_type_never_answers_a_rust_return_type() {
 async fn self_in_a_return_type_resolves_against_the_hinted_methods_own_type() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, &format!("recv_{}", uuid::Uuid::new_v4())).await;
-    let store = rt_def(&s, &fid, "rust·recv·db::pg_store·PgStore", "struct", "PgStore", None).await;
-    let clone_ref =
-        rt_def(&s, &fid, "rust·recv·db::pg_store·PgStore·shared", "method", "shared", Some(&store))
-            .await;
+    let store =
+        rt_def(&s, &fid, "rust·recv·db::pg_store·PgStore·item", "struct", "PgStore", None).await;
+    let clone_ref = rt_def(
+        &s,
+        &fid,
+        "rust·recv·db::pg_store·PgStore·shared·item",
+        "method",
+        "shared",
+        Some(&store),
+    )
+    .await;
     let count = rt_def(
         &s,
         &fid,
-        "rust·recv·db::pg_store·PgStore·count_edges",
+        "rust·recv·db::pg_store·PgStore·count_edges·item",
         "method",
         "count_edges",
         Some(&store),
@@ -16239,7 +16303,7 @@ async fn self_in_a_return_type_resolves_against_the_hinted_methods_own_type() {
         resolve_one(
             &s,
             &fid,
-            ReceiverHint::ReturnOf("rust·recv·db::pg_store·PgStore·shared".into()),
+            ReceiverHint::ReturnOf("rust·recv·db::pg_store·PgStore·shared·item".into()),
             "count_edges"
         )
         .await,
