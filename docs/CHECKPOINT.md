@@ -1,41 +1,39 @@
 # Checkpoint
 
-**Slice:** v0.11.0 shipped and merged; graph re-indexing on the new binary.
+**Slice:** the call-graph screen — daemon contract first, then the UI.
 
 ## Done
 
-- **v0.11.0 released, merged to main, CI green.** `brew fetch` verifies formula
-  and cask against the published assets. Suites: senseid 3,312 · bootstrap 175 ·
-  app 1,700 · dojo 1,535; clippy `-D warnings` and fmt clean.
-- **Repo REPLACED.** `sensei-hq/sensei-archive` is private+archived and **must
-  stay so** — unscrubbed history and issues. Backup `~/sensei-history-backup/`.
-- **Production dōjō reconciled** — 7 created, 13 altered, `dbd diff` → 0. Applied
-  attended: the 5 constraint drops were safe only because all three tables were
-  empty (0 rows, verified).
-- **`dojo-prod` now has `required_reviewers`** (was `protection_rules=NONE`) —
-  #200's actual complaint.
-- **Architecture metrics are computing live**: graph_confidence 72 rows,
-  public_surface_ratio 76, symbol_size_p95 68.
-
-## In flight
-
-Re-index after `TRUNCATE sensei.files, sensei.nodes, sensei.edges CASCADE`.
-Truncating `files` was REQUIRED — `pipeline.rs:121` skips any file whose stored
-mtime matches. At 592k nodes / 2.35M edges (was 1.18M / 4.08M).
-**90.8% of edges carry a verdict**, written at insert — so
-`scripts/backfill-edge-verdicts.sh` is moot here, kept for un-reindexed DBs.
+- **rokkit 1.4 → 1.6 across the app** (2174b5e0) + `@rokkit/graph`. Its deps are
+  EXACT pins, so the stack moves together. 1,700 tests, build green.
+- **`brew install` was broken both ways** (88797b94, tap b6423fa). README named
+  the formula and cask tokens transposed; the cask token resolved a dead
+  `Casks/sensei.rb` left by the `senseihq` rename and 404'd. Both verified
+  against the live tap after the fix. Gate: `scripts/check-brew-tokens.py`.
+- **Callers AND callees now carry the placement verdict** — `resolved_via` /
+  `unresolved_reason` off `sensei.call_graph`, plus `edge_kind`. `resolved: bool`
+  could not tell `declared_here` from `in_the_prelude`. New `Placement` enum;
+  `callee_row` is now the ONE builder for both callee paths, which fixes a
+  chased row carrying no `resolved` key at all.
+- **rokkit #160–#164 filed**, each with a probe that reproduces it.
+- **Two type errors from the 1.6 upgrade fixed**: `Toggle` takes `label`, not
+  `aria-label`, and has no rest-spread — two Projects toggles had silently lost
+  their accessible name. `make app-check` existed in no gate; now in `make test`
+  and in CI.
 
 ## Next command
 
-    gh run view 36457949929 --repo sensei-hq/sensei   # deploy-dojo awaits approval
+    cargo test -p senseid        # confirm the full suite before committing
 
 ## Open
 
-- **deploy-dojo is `waiting` on a human** — deliberately not approved by the
-  agent; that is the only step the gate exists to require.
-- **#200 / #156** can close once that run is green.
-- **#187** — `app/e2e/**` outside every static gate. Pre-existing, untouched.
-- **Flip to released?** Deferred. It governs BOTH scopes, so it also ends
-  in-place reconcile for local dev. Revisit when DDL churn settles.
-- CLAUDE.md's release checklist names two things absent from this tree: the
-  `docs_match_code` website gate and dual `docs/skills/` copies.
+- **The screen itself is not built.** Three views, three readiness levels:
+  - *Neighbourhood* — data is live NOW (this slice). Buildable next.
+  - *World* — needs a new aggregating endpoint: `/api/graph/{repo}/tree` returns
+    every node unaggregated and carries no counts. Plus rokkit #161/#163/#164.
+  - *Schema (ER)* — no data source at all; the mockup says so itself. Blocked on
+    `docs/spec/indexer/20-schema-entities.md`.
+- **#131 / #132 mockup-drift audit not yet revisited** (asked for alongside the
+  screen). The 1.6 upgrade changes its baseline.
+- **#191** — dojo and website still on rokkit `^1.2.0`; dojo also kavach 1.1.3.
+- **#187** — `app/e2e/**` still outside every static gate.
