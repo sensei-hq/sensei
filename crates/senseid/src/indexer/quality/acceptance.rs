@@ -22,11 +22,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::barrier;
-use super::facts::{FileFacts, RefKind, RelationKind, Resolution, SymbolKind};
-use super::fqn::Reach;
-use super::lang::{self, Source, TypeHomes};
-use super::resolve::{World, member_names_of, members_declared_by, resolve, returns_declared_by};
+use super::reachability;
+use crate::indexer::facts::{FileFacts, RefKind, RelationKind, Resolution, SymbolKind};
+use crate::indexer::fqn::Reach;
+use crate::indexer::lang::{self, Source, TypeHomes};
+use crate::indexer::resolve::{
+    World, member_names_of, members_declared_by, resolve, returns_declared_by,
+};
 
 /// The directory a file's package is rooted at, from the file's own path.
 ///
@@ -50,11 +52,15 @@ pub(super) fn package_root_of(path: &str) -> &str {
 /// region is a property of the source and of nothing else — and re-opening the
 /// file at that point would make the measurement depend on the disk still
 /// holding what the walk read.
-pub(super) struct Read {
-    pub(super) package: String,
-    pub(super) path: String,
-    pub(super) text: String,
-    pub(super) facts: FileFacts,
+/// `pub(crate)`, not `pub(super)`: `impact` and `persist` measure over this
+/// same corpus, and neither is a descendant of `quality`. The narrower
+/// visibility worked only while this module sat directly under `indexer` —
+/// and a second reader would be a second measurement that drifts.
+pub(crate) struct Read {
+    pub(crate) package: String,
+    pub(crate) path: String,
+    pub(crate) text: String,
+    pub(crate) facts: FileFacts,
 }
 
 /// Read the whole corpus — every language — through the adapter each extension
@@ -63,14 +69,14 @@ pub(super) struct Read {
 /// The barrier is here: every file is walked once with no type table so the
 /// type DECLARATIONS can be collected, then walked again with the table, which
 /// is what makes a member's identity independent of which file came first (R6).
-pub(super) fn read_the_corpus() -> Vec<Read> {
+pub(crate) fn read_the_corpus() -> Vec<Read> {
     let mut sources: Vec<(String, String, String)> = Vec::new();
-    for (abs, text) in super::corpus_rust_sources() {
-        let package = super::package_of(&abs);
-        let rel = super::workspace_relative(&abs);
+    for (abs, text) in crate::indexer::corpus_rust_sources() {
+        let package = crate::indexer::package_of(&abs);
+        let rel = crate::indexer::workspace_relative(&abs);
         sources.push((package, rel, text));
     }
-    for (rel, text) in super::corpus_web_sources() {
+    for (rel, text) in crate::indexer::corpus_web_sources() {
         // ONE PACKAGE PER FRONT END, named after its directory.
         //
         // They were one package called `web`, on the grounds that the real names
@@ -170,7 +176,7 @@ fn report() {
     // Every language the registry reads, in a fixed order, whether or not the
     // corpus happened to contain one.
     let languages: Vec<&'static str> =
-        super::facts::Language::all().iter().map(|l| l.as_str()).collect();
+        crate::indexer::facts::Language::all().iter().map(|l| l.as_str()).collect();
     // Every reason, in a fixed order, whether or not it occurred.
     let reasons = [
         "Unplaced",
@@ -210,10 +216,10 @@ fn report() {
             .count();
         for import in &read.facts.imports {
             match import.origin {
-                super::facts::ImportOrigin::Local => {
+                crate::indexer::facts::ImportOrigin::Local => {
                     *imports_local.entry(language).or_default() += 1
                 }
-                super::facts::ImportOrigin::External { .. } => {
+                crate::indexer::facts::ImportOrigin::External { .. } => {
                     *imports_external.entry(language).or_default() += 1
                 }
             }
@@ -302,14 +308,14 @@ fn report() {
     // has to invent a word for it — and the words invented so far collided with
     // `Unplaced`, which is a real variant meaning something else entirely.
     let doubt = |l: &str| -> usize {
-        super::facts::Reason::ALL
+        crate::indexer::facts::Reason::ALL
             .iter()
             .filter(|r| r.casts_doubt())
             .map(|r| cells.get(&(l, format!("{r:?}"))).copied().unwrap_or(0))
             .sum()
     };
     let verdicts = |l: &str| -> usize {
-        super::facts::Reason::ALL
+        crate::indexer::facts::Reason::ALL
             .iter()
             .filter(|r| !r.casts_doubt())
             .map(|r| cells.get(&(l, format!("{r:?}"))).copied().unwrap_or(0))
@@ -325,7 +331,7 @@ fn report() {
     println!("\n## Resolved references, by the rung that placed them\n");
     println!("{header}");
     println!("{rule}");
-    for rung in super::facts::Rung::ALL {
+    for rung in crate::indexer::facts::Rung::ALL {
         row(rung.as_label(), &|l| rungs.get(&(l, rung.as_label())).copied().unwrap_or(0));
     }
 
@@ -587,8 +593,8 @@ fn every_first_party_edge_names_a_declaration_this_scan_holds() {
             // An external names a package we never open, so there is no
             // declaration of ours for it to match and counting it either way
             // would be meaningless.
-            match super::fqn::parse(fqn.as_str()) {
-                Ok(parsed) if parsed.origin == super::fqn::Origin::Lib => continue,
+            match crate::indexer::fqn::parse(fqn.as_str()) {
+                Ok(parsed) if parsed.origin == crate::indexer::fqn::Origin::Lib => continue,
                 // An identity that will not parse is a defect of its own, and
                 // it is one A7 and the fqn suite own. Counted as dangling here
                 // rather than skipped, because it certainly is not landed.
@@ -682,7 +688,8 @@ fn what_the_unimported_names_are() {
         let language = read.facts.language.as_str();
         let grammar = lang::adapter_for(read.facts.language).grammar();
         let prelude: BTreeSet<&str> = grammar.prelude.iter().map(|(name, _, _)| *name).collect();
-        let has_glob = read.facts.imports.iter().any(|i| i.binds == super::facts::Binding::Glob);
+        let has_glob =
+            read.facts.imports.iter().any(|i| i.binds == crate::indexer::facts::Binding::Glob);
 
         for reference in &read.facts.references {
             let Resolution::Unresolved { reason, evidence } = &reference.target else { continue };
@@ -824,7 +831,7 @@ fn what_the_untyped_receivers_are() {
                 continue;
             }
             let receiver = evidence.saw.iter().find_map(|o| match o {
-                super::facts::Observation::Receiver(text) => Some(text.as_str()),
+                crate::indexer::facts::Observation::Receiver(text) => Some(text.as_str()),
                 _ => None,
             });
             let Some(receiver) = receiver else { continue };
@@ -969,7 +976,7 @@ fn every_function_carries_what_a_reader_needs() {
             if !symbol.params.is_empty() {
                 counts[2] += 1;
             }
-            if matches!(symbol.declared_type, super::facts::DeclaredType::Stated(_)) {
+            if matches!(symbol.declared_type, crate::indexer::facts::DeclaredType::Stated(_)) {
                 counts[3] += 1;
             }
             if calls_from.contains_key(symbol.fqn.as_str()) {
@@ -1109,8 +1116,8 @@ fn no_two_declarations_mint_one_identity() {
     // grand total would still sit under any single number.
     let mut per_language: BTreeMap<&str, usize> = BTreeMap::new();
     for (fqn, _) in &collisions {
-        if let Ok(parsed) = super::fqn::parse(fqn)
-            && let super::fqn::Origin::Local { lang, .. } = parsed.origin
+        if let Ok(parsed) = crate::indexer::fqn::parse(fqn)
+            && let crate::indexer::fqn::Origin::Local { lang, .. } = parsed.origin
         {
             *per_language.entry(lang.as_str()).or_default() += 1;
         }
@@ -1238,7 +1245,8 @@ fn the_facts_the_seven_patterns_need_are_all_emitted_and_two_are_derived() {
 
     for read in &corpus {
         for symbol in &read.facts.symbols {
-            let stated = matches!(symbol.declared_type, super::facts::DeclaredType::Stated(_));
+            let stated =
+                matches!(symbol.declared_type, crate::indexer::facts::DeclaredType::Stated(_));
             match symbol.kind {
                 SymbolKind::Field | SymbolKind::Property if stated => field_types += 1,
                 SymbolKind::Function | SymbolKind::Method if stated => return_types += 1,
@@ -1248,7 +1256,9 @@ fn the_facts_the_seven_patterns_need_are_all_emitted_and_two_are_derived() {
             param_types += symbol
                 .params
                 .iter()
-                .filter(|p| matches!(p.declared_type, super::facts::DeclaredType::Stated(_)))
+                .filter(|p| {
+                    matches!(p.declared_type, crate::indexer::facts::DeclaredType::Stated(_))
+                })
                 .count();
         }
         for relation in &read.facts.relations {
@@ -1407,12 +1417,12 @@ fn every_import_is_classified_as_ours_or_a_librarys() {
     for read in &corpus {
         for import in &read.facts.imports {
             match &import.origin {
-                super::facts::ImportOrigin::Local => local += 1,
-                super::facts::ImportOrigin::External { package } => {
+                crate::indexer::facts::ImportOrigin::Local => local += 1,
+                crate::indexer::facts::ImportOrigin::External { package } => {
                     *external.entry(package.clone()).or_default() += 1;
                 }
             }
-            if import.binds == super::facts::Binding::Glob {
+            if import.binds == crate::indexer::facts::Binding::Glob {
                 globs += 1;
             }
         }
@@ -1467,14 +1477,14 @@ fn every_type_owned_declaration_says_which_type_owns_it() {
             .facts
             .symbols
             .iter()
-            .filter(|s| super::fqn::parse(s.fqn.as_str()).is_ok_and(|p| p.tail.len() > 1))
+            .filter(|s| crate::indexer::fqn::parse(s.fqn.as_str()).is_ok_and(|p| p.tail.len() > 1))
             .count();
         *owns.entry(language).or_default() +=
             read.facts.relations.iter().filter(|r| r.kind == RelationKind::Owns).count();
     }
 
     println!("\n## Owns, per language\n");
-    for language in super::facts::Language::all() {
+    for language in crate::indexer::facts::Language::all() {
         let l = language.as_str();
         println!(
             "  {l:<12} members {:>7} | owns {:>7}",
@@ -1483,7 +1493,7 @@ fn every_type_owned_declaration_says_which_type_owns_it() {
         );
     }
 
-    for language in super::facts::Language::all() {
+    for language in crate::indexer::facts::Language::all() {
         let l = language.as_str();
         let declared = members.get(l).copied().unwrap_or(0);
         if declared == 0 {
@@ -1500,7 +1510,7 @@ fn every_type_owned_declaration_says_which_type_owns_it() {
 /// **Two barriers, and every miss has to be explainable** — over THIS
 /// repository's Rust and TypeScript.
 ///
-/// The measurement itself lives in [`super::barrier`], because Java runs the
+/// The measurement itself lives in [`super::reachability`], because Java runs the
 /// same two barriers over a corpus nobody here wrote and a second copy of a
 /// measurement is not a second measurement. What stays here is the corpus: this
 /// repository's own source, read and placed by [`read_the_corpus`].
@@ -1508,14 +1518,14 @@ fn every_type_owned_declaration_says_which_type_owns_it() {
 #[ignore]
 fn every_source_node_is_reached_by_a_test_and_then_by_other_source() {
     let corpus = read_the_corpus();
-    let units: Vec<barrier::Unit<'_>> = corpus
+    let units: Vec<reachability::Unit<'_>> = corpus
         .iter()
-        .map(|read| barrier::Unit {
+        .map(|read| reachability::Unit {
             path: read.path.as_str(),
             text: read.text.as_str(),
             facts: &read.facts,
         })
         .collect();
-    let per = barrier::two_barriers(&units);
+    let per = reachability::two_barriers(&units);
     assert!(per.values().map(|t| t.nodes).sum::<usize>() > 0, "no source nodes at all");
 }

@@ -699,13 +699,13 @@ pub fn three(c: Mystery) { c.open(); }
     ///     cargo test -p senseid --bin senseid -- --ignored --nocapture \
     ///       indexer::impact::tests::report
     ///
-    /// Same contract as `acceptance::report` and for the same reason: a number
+    /// Same contract as `quality::acceptance::report` and for the same reason: a number
     /// retyped into prose acquires a new label each time, and a reader cannot
     /// tell a movement from a rephrasing.
     #[test]
     #[ignore]
     fn report() {
-        let corpus = crate::indexer::acceptance::read_the_corpus();
+        let corpus = crate::indexer::quality::acceptance::read_the_corpus();
         let files: Vec<FileFacts> = corpus.into_iter().map(|r| r.facts).collect();
         let graph = Graph::of(&files);
 
@@ -795,7 +795,7 @@ pub fn three(c: Mystery) { c.open(); }
     #[test]
     #[ignore]
     fn every_placed_caller_in_the_corpus_is_a_reference_the_ladder_resolved() {
-        let corpus = crate::indexer::acceptance::read_the_corpus();
+        let corpus = crate::indexer::quality::acceptance::read_the_corpus();
         let files: Vec<FileFacts> = corpus.into_iter().map(|r| r.facts).collect();
         let graph = Graph::of(&files);
 

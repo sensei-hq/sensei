@@ -1443,7 +1443,7 @@ impl Walk<'_> {
         // file does not mention at all — an imported factory's RETURN type,
         // which is cross-file knowledge by construction. Recorded in
         // `docs/backlog.md`; deleting it here would drop TypeScript's resolved
-        // share below the floor `acceptance::report` ratchets.
+        // share below the floor `quality::acceptance::report` ratchets.
         self.types.lookup(self.package, ty)
     }
 
@@ -2351,7 +2351,7 @@ impl Walk<'_> {
             // A local VALUE is not a node. The graph answers "what does this
             // function call", and a `const` in a body is neither something a
             // reader navigates to nor something a call can target —
-            // `barrier.rs::a_node` already excludes its kind from every coverage
+            // `quality/reachability.rs::a_node` already excludes its kind from every coverage
             // measurement, so it was a row nothing read.
             //
             // It was not free. JavaScript lets sibling BLOCKS redeclare a name,
@@ -3910,7 +3910,7 @@ mod tests {
     ///
     /// The graph answers "what does this function call". A `const card =
     /// page.locator(…)` inside a body is not something a reader navigates to and
-    /// not something a call can target — `barrier.rs::a_node` already excludes
+    /// not something a call can target — `quality/reachability.rs::a_node` already excludes
     /// its kind from every coverage measurement, so it was a row nothing read.
     ///
     /// It was not free. Locals were the ENTIRE A7 residue: 9 of the last 10
