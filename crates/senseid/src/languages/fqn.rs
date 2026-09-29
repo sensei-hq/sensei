@@ -242,16 +242,6 @@ pub struct FqnFileOutput {
     pub relations: Vec<TypeRelation>,
 }
 
-/// Per-file context a producer needs: the owning crate/package name (from the
-/// nearest manifest, supplied by the Phase-3 processor) and this file's
-/// crate-relative module path (e.g. `widget` or `api::handlers::codebase`; empty
-/// for the crate root).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileFqnContext {
-    pub package: String,
-    pub module: String,
-}
-
 /// Join non-empty segments with [`SEP`]. Empty segments (e.g. a crate-root
 /// module) are dropped so the encoding never emits a doubled separator.
 fn encode(segments: &[&str]) -> String {
@@ -272,26 +262,6 @@ fn encode(segments: &[&str]) -> String {
 /// `<lang>·<package>·<module>·<name>`.
 pub fn item(lang: &str, package: &str, module: &str, name: &str) -> String {
     encode(&[lang, package, module, name])
-}
-
-/// Inherent method or associated function: `<lang>·<package>·<module>·<Type>·<member>`.
-/// `module` is the TYPE's canonical module (the anchoring rule, plan 0.1), not the
-/// file the `impl` block lives in.
-pub fn method(lang: &str, package: &str, module: &str, ty: &str, member: &str) -> String {
-    encode(&[lang, package, module, ty, member])
-}
-
-/// Trait-impl method: `<lang>·<package>·<module>·<Type>·<Trait>·<member>`. The
-/// trait qualifier keeps `Display::fmt` and `Debug::fmt` on the same type distinct.
-pub fn trait_method(
-    lang: &str,
-    package: &str,
-    module: &str,
-    ty: &str,
-    tr: &str,
-    member: &str,
-) -> String {
-    encode(&[lang, package, module, ty, tr, member])
 }
 
 /// External (dependency) symbol: `lib·<package>·<path>·<member>`. `member` may be
@@ -385,27 +355,6 @@ mod tests {
     }
 
     #[test]
-    fn inherent_method() {
-        assert_eq!(
-            method("rust", "senseid", "widget", "Widget", "new"),
-            "rust·senseid·widget·Widget·new"
-        );
-    }
-
-    #[test]
-    fn trait_method_carries_trait_qualifier() {
-        assert_eq!(
-            trait_method("rust", "senseid", "fmtmod", "Foo", "Display", "fmt"),
-            "rust·senseid·fmtmod·Foo·Display·fmt"
-        );
-        // Same type + member, different trait → distinct FQN (the disambiguation).
-        assert_ne!(
-            trait_method("rust", "senseid", "fmtmod", "Foo", "Display", "fmt"),
-            trait_method("rust", "senseid", "fmtmod", "Foo", "Debug", "fmt")
-        );
-    }
-
-    #[test]
     fn lib_symbol() {
         assert_eq!(
             lib("serde_json", "serde_json", "from_str"),
@@ -425,40 +374,4 @@ mod tests {
 ///
 /// `#[cfg(test)]`, so none of this is reachable from a shipped path.
 #[cfg(test)]
-pub(crate) mod finders {
-    use super::{FqnDefinition, FqnFileOutput, FqnReference, TypeRelation};
-
-    /// The whole definition by name, for asserting on fields other than the fqn.
-    /// Panics with the def list, because a missing def usually means the producer
-    /// emitted nothing and the list is what tells you what it did emit.
-    pub(crate) fn def_of<'a>(out: &'a FqnFileOutput, name: &str) -> &'a FqnDefinition {
-        out.defs
-            .iter()
-            .find(|d| d.name == name)
-            .unwrap_or_else(|| panic!("no def named `{name}` in {:?}", out.defs))
-    }
-
-    /// A definition's fqn by name, or `"<no-def>"` — a sentinel rather than a
-    /// panic, so a test can assert a definition is ABSENT without catching.
-    pub(crate) fn def_fqn<'a>(out: &'a FqnFileOutput, name: &str) -> &'a str {
-        out.defs.iter().find(|d| d.name == name).map(|d| d.fqn.as_str()).unwrap_or("<no-def>")
-    }
-
-    /// A reference by target name. Panics with the whole ref list, because a
-    /// missing ref is almost always a producer that emitted nothing and the list
-    /// is what tells you which.
-    pub(crate) fn ref_to<'a>(out: &'a FqnFileOutput, target_name: &str) -> &'a FqnReference {
-        out.refs
-            .iter()
-            .find(|r| r.target_name == target_name)
-            .unwrap_or_else(|| panic!("no ref to `{target_name}` in {:?}", out.refs))
-    }
-
-    /// A relation by SUPERTYPE name — the missing third finder.
-    pub(crate) fn rel_to<'a>(out: &'a FqnFileOutput, parent_name: &str) -> &'a TypeRelation {
-        out.relations
-            .iter()
-            .find(|r| r.parent_name == parent_name)
-            .unwrap_or_else(|| panic!("no relation to `{parent_name}` in {:?}", out.relations))
-    }
-}
+pub(crate) mod finders {}

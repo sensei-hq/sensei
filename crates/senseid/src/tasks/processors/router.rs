@@ -1,7 +1,7 @@
 //! File router — selects the right processor based on file extension.
 
 use super::types::*;
-use super::{code, config, doc};
+use super::{config, doc};
 use std::path::Path;
 
 /// Process a single file. Routes to the correct processor by extension.
@@ -53,21 +53,25 @@ pub fn process_file(
             Ok(config::process(abs_path, &rel_path, ext))
         }
 
-        // Code — try language adapter
+        // NOT CODE. Every code extension is claimed by `indexer::lang`, whose
+        // languages are now all in `PRODUCTION_LANGUAGES`, so `process_file`
+        // routes those files to the indexer and returns before reaching here.
+        // What arrives is a file this build has no parser for — and a file node
+        // with a tag is the honest record of that.
+        //
+        // There used to be a second code parser behind this arm. It is gone: two
+        // producers writing symbols into one set of tables under DIFFERENT fqn
+        // schemes is what made every cross-file lookup miss, and the one thing
+        // that cannot be fixed while both exist.
         _ => {
-            if let Some(result) = code::process(abs_path, &rel_path, ext, &content, repo_id) {
-                Ok(result)
-            } else {
-                // Unknown file type — register as file node
-                let tag = classify_file_tag(&rel_path, ext);
-                Ok(FileProcessResult::minimal(
-                    format!("file:{}", abs_path),
-                    rel_path,
-                    abs_path.to_string(),
-                    "file",
-                    &tag,
-                ))
-            }
+            let tag = classify_file_tag(&rel_path, ext);
+            Ok(FileProcessResult::minimal(
+                format!("file:{}", abs_path),
+                rel_path,
+                abs_path.to_string(),
+                "file",
+                &tag,
+            ))
         }
     }
 }
@@ -76,33 +80,38 @@ pub fn process_file(
 mod tests {
     use super::*;
 
-    /// A CRLF-terminated source file must parse without panicking. Before line
-    /// endings were normalized, tree-sitter byte offsets (over the CRLF bytes)
-    /// overshot the extraction buffer and panicked on such files.
+    /// A CRLF-terminated file must reach its processor without panicking.
+    ///
+    /// The router normalises line endings BEFORE dispatching, because
+    /// tree-sitter byte offsets are counted over the original bytes and a
+    /// CR-stripped extraction buffer is shorter — the overshoot panicked the
+    /// parser on CRLF files.
+    ///
+    /// MARKDOWN, not Kotlin. The property is the ROUTER's, so it needs any
+    /// route that still exists, and code is no longer one of them: every code
+    /// extension is claimed by `indexer::lang`, so `process_file` sends those
+    /// files to the indexer and never reaches here. A `.kt` fixture would now
+    /// assert nothing about normalisation and everything about the fallback.
     #[test]
     fn process_file_handles_crlf_without_panicking() {
-        // KOTLIN, not Python. The property under test is the ROUTER's — it
-        // normalises line endings before dispatching, so any extension this
-        // registry still parses exercises it. Python moved to
-        // `crate::indexer::lang` and its parser here was deleted, so a `.py`
-        // fixture now asserts nothing about CRLF and everything about routing.
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("crlf.kt");
-        // Body padded so node byte-ranges are well past a CR-stripped length —
-        // the condition that triggered the panic.
-        let mut src = String::from("fun greet(name: String) {\r\n");
+        let path = dir.path().join("crlf.md");
+        let mut src = String::from("# Title\r\n\r\n");
         for i in 0..200 {
-            src.push_str(&format!("    val x{i} = compute(name, {i})  // pad line\r\n"));
+            src.push_str(&format!("Paragraph {i} with enough text to push the offsets out.\r\n"));
         }
-        src.push_str("}\r\n");
+        src.push_str("## Section\r\n\r\nBody.\r\n");
         std::fs::write(&path, &src).unwrap();
 
         let result = process_file(&path.to_string_lossy(), dir.path().to_str().unwrap(), "repo");
-        let parsed = result.expect("CRLF file should parse, not error");
+        let parsed = result.expect("a CRLF file should be processed, not error");
+        // A doc decomposes into SECTIONS, not symbols — the heading is what
+        // survives normalisation, so it is what proves the offsets lined up.
         assert!(
-            parsed.symbols.iter().any(|s| s.name == "greet"),
-            "expected the `greet` function symbol, got {:?}",
-            parsed.symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+            parsed.sections.iter().any(|s| s.heading.contains("Section")),
+            "expected the headings to become sections, got {:?}",
+            parsed.sections.iter().map(|s| &s.heading).collect::<Vec<_>>()
         );
+        assert_eq!(parsed.title.as_deref(), Some("Title"));
     }
 }

@@ -1878,12 +1878,18 @@ mod tests {
     /// starting with its language — which is what makes it worth keeping as one
     /// test rather than splitting it.
     ///
-    /// Breaking mutation: return `false` from kotlin's or swift's
-    /// `supports_fqn`, or make `fqn_output` return `None`; for C, remove
-    /// `Language::C` from `PRODUCTION_LANGUAGES`. Each fails with that
-    /// language's node names printed.
+    /// SWIFT IS DELIBERATELY ABSENT. It had the last remaining walk in the
+    /// retired producer — 733 lines for 2 files in the watched roots, which had
+    /// produced 0 nodes — and no adapter replaced it. So Swift is not indexed,
+    /// and that is a visible gap rather than a hand-off to a second producer
+    /// minting identities under another scheme. Restoring it means writing an
+    /// adapter, not reviving a fallback.
+    ///
+    /// Breaking mutation: remove `Language::Kotlin` or `Language::C` from
+    /// `PRODUCTION_LANGUAGES`. Each fails with that language's node names
+    /// printed.
     #[tokio::test]
-    async fn kotlin_c_and_swift_symbols_reach_the_db_with_fqns() {
+    async fn kotlin_and_c_symbols_reach_the_db_with_fqns() {
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("mixed");
@@ -1904,7 +1910,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(repo.join("src/util.c"), "int compute(void) {\n  return 1;\n}\n").unwrap();
-        std::fs::write(repo.join("src/Thing.swift"), "class Thing {\n    func go() {}\n}\n")
+        std::fs::write(repo.join("src/Unread.swift"), "class Thing {\n    func go() {}\n}\n")
             .unwrap();
 
         let repo_path = repo.to_string_lossy().to_string();
@@ -1916,12 +1922,12 @@ mod tests {
         let fid = ctx.pg().upsert_repo_kind(&rid, "git", "mixed", &repo_path).await.unwrap();
         ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
 
-        for f in ["src/Widget.kt", "src/util.c", "src/Thing.swift"] {
+        for f in ["src/Widget.kt", "src/util.c", "src/Unread.swift"] {
             let abs = repo.join(f).to_string_lossy().to_string();
             processed(&ctx, &repo_path, &abs).await.unwrap();
         }
 
-        for (lang, sym) in [("kotlin", "Widget"), ("c", "compute"), ("swift", "Thing")] {
+        for (lang, sym) in [("kotlin", "Widget"), ("c", "compute")] {
             let fqns: Vec<Option<String>> = sqlx_core::query_scalar::query_scalar(
                 "SELECT fqn FROM sensei.nodes
                   WHERE folder_id = $1 AND language = $2 AND name = $3",
