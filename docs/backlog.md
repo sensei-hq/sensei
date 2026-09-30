@@ -15,6 +15,67 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+## Indexer — a scan cannot be cancelled, because `--force` writes its intent into the data (measured 2026-09-30)
+
+**Agreed with the user 2026-09-30: take this up AFTER the empty-`World` defect
+is fixed.** Two parts, and the second is the prerequisite for the first being
+worth anything.
+
+### Part 2 first: `--force` is destructive, so cancelling it cannot undo it
+
+`repo_scan.rs:203-206` expresses "re-parse everything" by **mutating the
+database**: `mark_folder_unparsed` sets `parsed_at = NULL` on every file of the
+folder, and `list_unparsed_files` then returns them. The flag is the work queue.
+
+Measured consequence on this machine (2026-09-30): a forced scan at a watch root
+left **86,869 of 95,590 files** flagged unparsed. The run was interrupted. That
+flag is persisted, so it survived a daemon restart, and the boot reconcile tick
+rediscovered and re-enqueued the entire population. **There was no way to cancel
+the run** — the only mechanism that would have worked was stamping `parsed_at`
+on ~84,500 files to a time they were never parsed at, which is precisely the
+plausible-but-wrong write the DRY/no-fabrication rule forbids: it makes the
+mtime gate skip files that genuinely need re-parsing.
+
+An interrupted force therefore leaves the index in a state that is
+indistinguishable from "everything is stale", forever, with no owner.
+
+**The fix — force rides the task, never the table.** Replace
+`mark_folder_unparsed` + `list_unparsed_files` with one query that takes the
+flag: `list_files_to_parse(folder_id, force)` → all files when `force`, unparsed
+ones otherwise. Then:
+
+- force is pure in-memory task state, so cancelling the task cancels the force;
+- an interrupted force leaves **zero** residue;
+- the DB stops carrying scheduling intent in a column that means something else.
+
+`mark_folder_unparsed` loses its only caller and goes with it.
+
+### Part 1: cancel the queue over the API, without a restart
+
+`TaskQueue` (`tasks/queue.rs:15-41`) is entirely in-memory — `Mutex<QueueState>`
+holding `pending: VecDeque`, `blocked: Vec`, `running: HashMap`. There is no
+persisted task table and no cancel endpoint, so today "cancel the run" means
+`sensei restart`, which drops the queue but (see above) not the work.
+
+- **Pending and blocked: easy.** Drain both by predicate — task id, kind, or
+  path prefix — under the mutex that already exists. Needs the same segment-
+  boundary containment rule as the scan classifier (`scan_logic::under`), so
+  `/a/sensei-old` is not cancelled by a request naming `/a/sensei`.
+- **Running: needs a token.** One `tokio_util::sync::CancellationToken` per
+  running task, stored beside it in `running`, checked at the await points that
+  matter — `process_git_folder`'s file loop and `process_file`. A cancelled task
+  must complete as *cancelled*, not failed, so `retry.rs` does not treat it as a
+  permanent error and `activity.task_executions` records the truth.
+- **Endpoint:** `POST /api/tasks/cancel {scope}` where scope is a path, a kind,
+  or "all", returning counts per bucket (pending/blocked/running) so a caller can
+  see what it actually stopped.
+
+Note the id-space constraint already documented at `queue.rs:21-29`: `next_id`
+restarts at 1 each daemon session, so a cancel-by-id must be scoped to the
+issuing session.
+
+---
+
 ## Indexer — RETIRE v1 AND MAKE v2 FINAL (decided with the user 2026-09-22)
 
 **Agreed: v1 (`crate::languages`) is retired and v2 (`crate::indexer`) becomes
