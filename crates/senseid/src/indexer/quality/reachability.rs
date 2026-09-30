@@ -993,10 +993,8 @@ mod tests {
                     // and `report_over` zips this list against `files`, so a
                     // silently dropped file pairs every later file's text with
                     // the wrong facts.
-                    let module = adapter.module_path(
-                        path,
-                        crate::indexer::quality::acceptance::package_root_of(path),
-                    );
+                    let module = adapter
+                        .module_path(path, crate::indexer::quality::corpus::package_root_of(path));
                     let source = Source { package: "unnamed", module: &module, path, text };
                     adapter
                         .read(&source, types)
