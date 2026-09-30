@@ -14,12 +14,11 @@
 //! names are few and checkable. A bare number going up tells nobody which
 //! language regressed.
 //!
-//! `acceptance::read_the_corpus` is the shared reader — `impact`, `persist`,
-//! `resolve` and `reachability` all measure over it, because a second copy of a
-//! measurement is not a second measurement; it is two numbers that drift apart
-//! and then disagree about which language got worse. It is a corpus utility
-//! living in a threshold module, which is the one thing in this layer still
-//! filed by history rather than by what it does.
+//! - [`corpus`] — the one reader both of them, and `impact`, `persist` and
+//!   `resolve`, measure over. A second copy would not be a second measurement;
+//!   it would be two numbers that drift apart and then disagree about which
+//!   language got worse.
 
 pub mod acceptance;
+pub mod corpus;
 pub mod reachability;

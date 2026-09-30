@@ -2427,7 +2427,7 @@ pub fn widest(a: u32) -> u32 {
         use std::collections::{BTreeMap, BTreeSet};
 
         let mut sites: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        for read in crate::indexer::quality::acceptance::read_the_corpus() {
+        for read in crate::indexer::quality::corpus::read_the_corpus() {
             if read.facts.language != Language::TypeScript {
                 continue;
             }
