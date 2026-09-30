@@ -48,7 +48,7 @@
 
 use std::collections::BTreeSet;
 
-use super::facts::{FileFacts, Language};
+use super::facts::{FileFacts, Fqn, Language};
 use super::lang::{self, Source, TypeHomes};
 use super::resolve::{self, World, member_names_of, members_declared_by, returns_declared_by};
 
@@ -122,13 +122,36 @@ pub fn index_repo<'a>(files: &[Placed<'a>], first_party: &BTreeSet<String>) -> V
         scanned: &scanned,
     };
 
-    let out: Vec<FileFacts> = anchored
+    let mut out: Vec<FileFacts> = anchored
         .into_iter()
         .map(|facts| {
             let grammar = lang::adapter_for(facts.language).grammar();
             resolve::resolve(facts, grammar, &world)
         })
         .collect();
+
+    // PASS THREE — THE SCOPE SETTLES WHAT ONE FILE COULD NOT.
+    //
+    // `use a::b::C` names a module or an item and the importing file says
+    // which of the two it is nowhere, so `specifier_names_a_module` refuses and
+    // the walk emits no reference at all. Correct per file — R4 ranks a miss
+    // above an edge that is right half the time — and the reason 9,025 import
+    // edges in the live graph carry no verdict.
+    //
+    // Here every declaration this scan mints is known, so the question is
+    // decidable, and it is decidable ORDER-INDEPENDENTLY: `World::scanned` is
+    // deliberately never read because it GROWS as the pass runs, while this set
+    // is the finished product of the pass above and does not.
+    //
+    // Built from the resolved facts and not from `anchored`, because a member's
+    // identity carries its type's barrier-known home — the pre-barrier spelling
+    // would match nothing.
+    let declared: BTreeSet<Fqn> =
+        out.iter().flat_map(|f| f.symbols.iter().map(|s| s.fqn.clone())).collect();
+    for facts in &mut out {
+        let settled = lang::adapter_for(facts.language).settle_imports(facts, &declared);
+        facts.references.extend(settled);
+    }
     if std::env::var("SENSEI_TIME_STAGES").is_ok() {
         eprintln!("  pass1 {:?}  pass2 {:?}  barrier+resolve {:?}", t_pass1, t_pass2, t2.elapsed());
     }
@@ -1005,6 +1028,126 @@ mod tests {
             "the proof is this file's own text, which is a different and stronger claim than \
              `declared_by_its_type` — that rung says the declaration was seen in ANOTHER file, \
              and it is the one this stage stops needing"
+        );
+    }
+
+    /// **A `use` PATH THE PER-FILE LADDER CANNOT READ IS PLACED BY THE SCOPE.**
+    ///
+    /// `use crate::b::Thing;` is ambiguous in isolation and the ladder is right
+    /// to refuse it: `b::Thing` could be a MODULE, or `Thing` could be an ITEM
+    /// inside module `b`, and nothing in the importing file says which.
+    /// `specifier_names_a_module` therefore emits no reference at all for a rust
+    /// `Name` binding — R4 ranks a miss above an edge that is right half the
+    /// time — which is why 9,025 import edges in the live graph carry no verdict.
+    ///
+    /// THE SCOPE CAN ANSWER IT. After every file is read, exactly one of the two
+    /// readings has a declaration behind it, and matching against a COMPLETE set
+    /// is order-independent in a way a rung reading `World::scanned` is not: the
+    /// set does not grow as the pass runs.
+    ///
+    /// Two files, so the answer cannot come from the importing file alone.
+    ///
+    /// Mutation that must break this test: drop the settle pass from
+    /// `index_repo`, or let it place a candidate when BOTH readings resolve.
+    #[test]
+    fn an_ambiguous_use_path_is_placed_once_the_whole_scope_is_read() {
+        let importer = Placed {
+            path: "src/a.rs",
+            package: "p",
+            module: "a",
+            text: "use crate::b::Thing;\npub fn go(t: Thing) -> u32 { 1 }\n",
+        };
+        let declarer = Placed {
+            path: "src/b.rs",
+            package: "p",
+            module: "b",
+            text: "pub struct Thing { pub n: u32 }\n",
+        };
+
+        let indexed = index_repo(&[importer, declarer], &packages(&["p"]));
+        let a = indexed.iter().find(|f| f.path == "src/a.rs").expect("the importer was indexed");
+
+        let imports: Vec<&crate::indexer::facts::Reference> =
+            a.references.iter().filter(|r| r.kind == RefKind::Imports).collect();
+        assert!(
+            !imports.is_empty(),
+            "the import produced no reference at all, so nothing can carry a verdict for it"
+        );
+
+        let placed: Vec<String> = imports
+            .iter()
+            .filter_map(|r| match &r.target {
+                Resolution::Resolved { fqn, .. } => Some(fqn.to_string()),
+                Resolution::Unresolved { .. } => None,
+            })
+            .collect();
+        assert!(
+            placed.iter().any(|f| f.contains("Thing")),
+            "`use crate::b::Thing` names a struct this scope declares, so the scope pass \
+             must place it; got {placed:?}"
+        );
+    }
+
+    /// **BOTH READINGS RESOLVING IS AMBIGUOUS, NOT A COIN TOSS.**
+    ///
+    /// The scope pass may only ever confirm ONE reading. Here `b::Thing` is a
+    /// real module AND `Thing` is a real item inside `b`, so `use crate::b::Thing`
+    /// genuinely names two things this scan declares. Placing either would be
+    /// right half the time, which is exactly the guess R4 ranks below a miss —
+    /// and it would be a WRONG EDGE, which is worse than none.
+    ///
+    /// The refusal still carries a reason, so the edge is explicable rather than
+    /// silently absent.
+    ///
+    /// Mutation that must break this test: take the first match instead of
+    /// requiring exactly one.
+    #[test]
+    fn a_path_both_readings_answer_is_refused_with_a_reason() {
+        use crate::indexer::facts::Reason;
+
+        let importer = Placed {
+            path: "src/a.rs",
+            package: "p",
+            module: "a",
+            text: "use crate::b::Thing;\npub fn go() -> u32 { 1 }\n",
+        };
+        // `b` declares an item `Thing` …
+        let item = Placed {
+            path: "src/b.rs",
+            package: "p",
+            module: "b",
+            text: "pub struct Thing { pub n: u32 }\n",
+        };
+        // … and also contains a MODULE of that name.
+        let module = Placed {
+            path: "src/b/Thing.rs",
+            package: "p",
+            module: "b::Thing",
+            text: "pub fn helper() -> u32 { 2 }\n",
+        };
+
+        let indexed = index_repo(&[importer, item, module], &packages(&["p"]));
+        let a = indexed.iter().find(|f| f.path == "src/a.rs").expect("the importer was indexed");
+
+        let settled: Vec<&crate::indexer::facts::Reference> =
+            a.references.iter().filter(|r| r.kind == RefKind::Imports).collect();
+
+        for r in &settled {
+            match &r.target {
+                Resolution::Resolved { fqn, .. } => panic!(
+                    "both readings of `crate::b::Thing` are declared here, so placing {fqn} \
+                     is right half the time"
+                ),
+                Resolution::Unresolved { reason, .. } => assert_eq!(
+                    *reason,
+                    Reason::AmbiguousCandidates,
+                    "the refusal must say WHY, and 'several declarations match' is the reason"
+                ),
+            }
+        }
+        assert!(
+            !settled.is_empty(),
+            "the import must still produce a reference to carry a verdict"
         );
     }
 
