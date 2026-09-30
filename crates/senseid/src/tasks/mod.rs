@@ -721,6 +721,11 @@ pub struct Task {
     /// path) — see `handlers::metrics`. Carried through `retry()` so an interrupted
     /// backfill resumes on the same day.
     pub as_of: Option<chrono::NaiveDate>,
+    /// Re-index everything under this task's path, ignoring the mtime/hash
+    /// gate. The override for "the graph is wrong and I want it rebuilt" — see
+    /// `indexer::structure::scan_baseline`. Deleting `files` rows by hand was
+    /// the only way before, and that takes the nodes and edges with it.
+    pub force: bool,
     pub status: TaskStatus,
     pub depends_on: Vec<u64>, // won't run until these complete
     /// What this scan may look at, and whether that set is exhaustive.
@@ -746,6 +751,7 @@ impl Task {
             branch: None,
             url: None,
             as_of: None,
+            force: false,
             status: TaskStatus::Pending,
             depends_on: Vec::new(),
             scope: Scope::default(),
@@ -878,6 +884,7 @@ impl Task {
             branch: self.branch.clone(),
             url: self.url.clone(),
             as_of: self.as_of,
+            force: false,
             status: TaskStatus::Pending,
             depends_on: Vec::new(),
             scope: Scope::default(),
@@ -926,6 +933,13 @@ impl Task {
     /// Narrow (or widen) what this task may examine.
     pub fn with_scope(mut self, scope: Scope) -> Self {
         self.scope = scope;
+        self
+    }
+
+    /// Carry a forced rescan down the chain. A no-op when false, so a caller
+    /// that does not care writes nothing.
+    pub fn forced(mut self, force: bool) -> Self {
+        self.force = force;
         self
     }
 

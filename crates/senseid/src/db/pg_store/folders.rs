@@ -1560,6 +1560,40 @@ impl PgStore {
     /// unsupported or unparseable file HAS a row so the skip sticks, and
     /// re-enqueueing it every pass is the infinite re-index loop that
     /// fingerprinting the skip exists to prevent.
+    /// Mark every file in a folder unparsed, so the next pass re-reads it.
+    ///
+    /// THE FORCE OVERRIDE. `list_unparsed_files` gates on `parsed_at IS NULL`,
+    /// so clearing the column is all "re-index this repository" needs — and it
+    /// is the non-destructive way to say it. The alternative, deleting `files`
+    /// rows, takes the nodes and edges those files own with it and leaves the
+    /// graph emptier than it found it if the scan then fails.
+    ///
+    /// A SKIPPED FILE IS NOT REOPENED, and needs no clause here to stay that
+    /// way. `mark_file_parsed` clears `skip_reason` when it sets `parsed_at`,
+    /// so the two states are mutually exclusive: a skipped file has a NULL
+    /// `parsed_at` and this UPDATE never touches it. A `skip_reason IS NULL`
+    /// guard was written here first and removed once a mutation probe showed
+    /// it could not fire — an unreachable condition reads as a rule someone
+    /// must preserve.
+    ///
+    /// Re-offering a skipped file every forced pass would re-derive the same
+    /// answer at the same cost anyway; changing a skip rule is a different
+    /// operation from rebuilding a graph.
+    ///
+    /// Returns the row count, because a force that matched nothing should be
+    /// visible to its caller rather than looking like success.
+    pub async fn mark_folder_unparsed(&self, folder_id: &uuid::Uuid) -> Result<u64, String> {
+        let done = sqlx_core::query::query(
+            "UPDATE sensei.files SET parsed_at = NULL
+              WHERE folder_id = $1 AND parsed_at IS NOT NULL",
+        )
+        .bind(folder_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(done.rows_affected())
+    }
+
     pub async fn list_unparsed_files(&self, folder_id: &uuid::Uuid) -> Result<Vec<String>, String> {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
             "SELECT file_path FROM sensei.files

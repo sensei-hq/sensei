@@ -48,6 +48,7 @@ pub async fn enqueue_manifest_gate(
     ctx: &TaskContext,
     repo_path: &str,
     manifests: &[String],
+    force: bool,
 ) -> u64 {
     let mut manifest_ids = Vec::with_capacity(manifests.len());
     for rel in manifests {
@@ -55,7 +56,16 @@ pub async fn enqueue_manifest_gate(
             .push(ctx.queue.enqueue(Task::new(TaskKind::ProcessManifest, repo_path, rel)).await);
     }
     ctx.queue
-        .enqueue(Task::new(TaskKind::ProcessRepoFiles, repo_path, "").blocked_by(manifest_ids))
+        .enqueue({
+            // FORCE RIDES THE CHAIN. The flag is set on the ScanRoot the user
+            // asked for, and the gate that honours it is three tasks further
+            // down — so every hop has to carry it or the override dies quietly
+            // at the first one.
+            let mut t =
+                Task::new(TaskKind::ProcessRepoFiles, repo_path, "").blocked_by(manifest_ids);
+            t.force = force;
+            t
+        })
         .await
 }
 
@@ -187,6 +197,14 @@ pub async fn process_repo_files(ctx: &TaskContext, task: &Task) -> Result<u32, S
         return Err(format!("process_repo_files: repo row for {} has no id", task.folder_path));
     };
 
+    // A FORCED scan clears `parsed_at` first, so every file falls back into the
+    // unparsed set below. Nothing is deleted — the writer upserts by path, so a
+    // re-parse replaces what it finds.
+    if task.force {
+        let reopened = ctx.pg().mark_folder_unparsed(&folder_id).await?;
+        tracing::info!(repo = %task.folder_path, reopened, "forced rescan: files reopened for parsing");
+    }
+
     let files = ctx.pg().list_unparsed_files(&folder_id).await?;
     let mut file_ids: Vec<u64> = Vec::with_capacity(files.len());
     let mut enqueued = 0u32;
@@ -293,7 +311,7 @@ mod tests {
         let ctx = make_ctx().await;
         let manifests = vec!["Cargo.toml".to_string(), "app/package.json".to_string()];
 
-        let gate = super::enqueue_manifest_gate(&ctx, "/repo", &manifests).await;
+        let gate = super::enqueue_manifest_gate(&ctx, "/repo", &manifests, false).await;
 
         let status = ctx.queue.status().await;
         assert_eq!(status.blocked, 1, "the gate must be BLOCKED on its manifests");
@@ -746,7 +764,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let manifests: Vec<String> =
         contents.manifests().iter().map(|e| e.rel_path.to_string_lossy().to_string()).collect();
     emit(ActivityLevel::Info, msg::repo_manifests_processed_message(&name, manifests.len()));
-    let gate = enqueue_manifest_gate(ctx, &task.folder_path, &manifests).await;
+    let gate = enqueue_manifest_gate(ctx, &task.folder_path, &manifests, task.force).await;
 
     // The terminal barrier, blocked on the GATE rather than on the file tasks:
     // the gate has not fanned them out yet, so their ids do not exist to depend

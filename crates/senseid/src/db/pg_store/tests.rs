@@ -14123,6 +14123,70 @@ fn the_receiver_chase_probes_the_identity_the_walk_minted() {
     );
 }
 
+/// **A FORCED RESCAN REOPENS FILES WITHOUT DELETING ANYTHING.**
+///
+/// The gate is `list_unparsed_files`, which selects on `parsed_at IS NULL`, so
+/// a parsed file is never offered again. That is right almost always — it is
+/// what makes a re-run cheap — and wrong exactly when the INDEXER changed:
+/// rebuilt code produces different facts from bytes that have not moved, and
+/// the gate cannot know that.
+///
+/// The override had to be non-destructive. Deleting `files` rows was the only
+/// way before, and it takes the nodes and edges those files own with it — so a
+/// scan that then fails leaves the graph emptier than it found it. Clearing
+/// `parsed_at` reopens the work and touches nothing else; the writer upserts by
+/// path, so the re-parse replaces what it finds.
+///
+/// A SKIPPED FILE STAYS SKIPPED, and it needs no clause to do so: a skipped file
+/// was never parsed, so `parsed_at IS NOT NULL` already excludes it. A
+/// `skip_reason IS NULL` guard was written into the UPDATE first and removed
+/// when a mutation probe showed it could not fire.
+///
+/// Mutation that must break this test: have `mark_folder_unparsed` clear
+/// nothing, or widen it past `parsed_at`.
+#[tokio::test]
+async fn a_forced_rescan_reopens_parsed_files_and_leaves_skipped_ones_alone() {
+    let s = pg_store().await;
+    let folder = format!("force_{}", uuid::Uuid::new_v4());
+    let fid = create_test_folder(&s, &folder).await;
+
+    s.upsert_file_row(&fid, "src/parsed.rs", 1, "h1", None).await.unwrap();
+    s.upsert_file_row(
+        &fid,
+        "src/binary.bin",
+        1,
+        "h2",
+        Some(crate::classifiers::ScanSkipReason::BinaryContent),
+    )
+    .await
+    .unwrap();
+    s.mark_file_parsed(&fid, "src/parsed.rs").await.unwrap();
+    // The skipped file is deliberately NOT marked parsed: `mark_file_parsed`
+    // clears `skip_reason`, so "parsed AND skipped" is a state the system
+    // cannot be in, and a fixture that built one would be testing a fiction.
+
+    let before = s.list_unparsed_files(&fid).await.unwrap();
+    assert!(
+        !before.contains(&"src/parsed.rs".to_string()),
+        "a parsed file is not offered again — that is the gate working: {before:?}"
+    );
+
+    let reopened = s.mark_folder_unparsed(&fid).await.unwrap();
+    assert_eq!(reopened, 1, "exactly the one parsed file is reopened, not the skipped one");
+
+    let after = s.list_unparsed_files(&fid).await.unwrap();
+    assert!(
+        after.contains(&"src/parsed.rs".to_string()),
+        "the forced pass must offer the parsed file again: {after:?}"
+    );
+    assert!(
+        !after.contains(&"src/binary.bin".to_string()),
+        "a file skipped for a recorded reason stays skipped: {after:?}"
+    );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
 /// The callee list carries the same verdict the caller list does.
 ///
 /// Sibling of `callers_carry_the_verdict_that_placed_each_edge`. Both sides of a
