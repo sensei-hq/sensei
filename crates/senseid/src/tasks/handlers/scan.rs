@@ -139,6 +139,7 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             .queue
             .enqueue_unique(
                 Task::for_folder(TaskKind::ProcessGitFolder, &path_str)
+                    .forced(task.force)
                     .with_parent(task.id)
                     // Each repository gets the slice of the batch that lies
                     // under it — and, with it, whether its own file walk may
@@ -671,6 +672,7 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<u32, String
     // old branch but not the new one are dropped as "removed". process_git_folder
     // records the new branch (from the task) in props.branch.
     let git_task = Task::new(TaskKind::ProcessGitFolder, &task.folder_path, &task.path)
+        .forced(task.force)
         .with_parent(task.id)
         .with_branch(new_branch);
     // NOTE: branch_switch deliberately uses plain `enqueue`, NOT the single-writer

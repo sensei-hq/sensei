@@ -98,6 +98,14 @@ enum Commands {
     Scan {
         /// Folder to scan
         path: String,
+        /// Re-index every file, ignoring the mtime/content gate.
+        ///
+        /// Use after an indexer change: the gate is a cache, and a rebuilt
+        /// indexer produces different facts from bytes that have not moved.
+        /// Nothing is deleted — files are reopened for parsing and the writer
+        /// replaces what it finds.
+        #[arg(long)]
+        force: bool,
     },
 
     /// Scaffold the canonical Sensei doc structure into a project
@@ -255,7 +263,7 @@ fn main() -> ExitCode {
             restart_daemon(port.unwrap_or_else(|| cfg().daemon_port))
         }
         Some(Commands::Status) => daemon_cmd("status", None),
-        Some(Commands::Scan { path }) => scan(&path),
+        Some(Commands::Scan { path, force }) => scan(&path, force),
         Some(Commands::Scaffold { what, path }) => scaffold_cmd(what, path.as_deref()),
         Some(Commands::Index { cmd }) => match cmd {
             IndexCommands::Doctor => index_doctor(),
@@ -1027,14 +1035,33 @@ fn daemon_cmd(cmd: &str, port: Option<u16>) {
     }
 }
 
-fn scan(path: &str) {
+fn scan(path: &str, force: bool) {
     ensure_daemon();
     match client()
         .post(format!("{}/api/scan", daemon_url()))
-        .json(&serde_json::json!({"root": path, "max_depth": 4}))
+        .json(&serde_json::json!({"root": path, "max_depth": 4, "force": force}))
         .send()
     {
-        Ok(r) if r.status().is_success() => println!("Scanning {} (background)...", path),
+        // The daemon ECHOES `forced`, and this reads it back rather than
+        // reprinting what was asked for. A daemon too old to know the flag
+        // answers `false`, and the difference between "rebuilding" and
+        // "rebuilding nothing" is the whole reason to ask.
+        Ok(r) if r.status().is_success() => {
+            let forced = r
+                .json::<serde_json::Value>()
+                .ok()
+                .and_then(|b| b["forced"].as_bool())
+                .unwrap_or(false);
+            match (force, forced) {
+                (true, true) => println!("Scanning {} (background, forced re-index)...", path),
+                (true, false) => eprintln!(
+                    "Scanning {} (background) — but the daemon did NOT accept --force. \
+                     It is probably older than the flag; restart it after `make install-debug`.",
+                    path
+                ),
+                _ => println!("Scanning {} (background)...", path),
+            }
+        }
         _ => eprintln!("Scan request failed"),
     }
 }
