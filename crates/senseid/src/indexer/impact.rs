@@ -705,7 +705,7 @@ pub fn three(c: Mystery) { c.open(); }
     #[test]
     #[ignore]
     fn report() {
-        let corpus = crate::indexer::quality::acceptance::read_the_corpus();
+        let corpus = crate::indexer::quality::corpus::read_the_corpus();
         let files: Vec<FileFacts> = corpus.into_iter().map(|r| r.facts).collect();
         let graph = Graph::of(&files);
 
@@ -795,7 +795,7 @@ pub fn three(c: Mystery) { c.open(); }
     #[test]
     #[ignore]
     fn every_placed_caller_in_the_corpus_is_a_reference_the_ladder_resolved() {
-        let corpus = crate::indexer::quality::acceptance::read_the_corpus();
+        let corpus = crate::indexer::quality::corpus::read_the_corpus();
         let files: Vec<FileFacts> = corpus.into_iter().map(|r| r.facts).collect();
         let graph = Graph::of(&files);
 
