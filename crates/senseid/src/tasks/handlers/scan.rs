@@ -10,6 +10,21 @@ use std::time::Instant;
 
 // ── Scan Root ──────────────────────────────────────────────────────────────
 
+/// Is `repo` the requested path, or inside it?
+///
+/// Compared on a SEGMENT boundary, never as a bare prefix: `/a/sensei-old`
+/// starts with `/a/sensei` and is a different repository. The same rule
+/// `enclosing_watch_root` uses (`$1 = path OR $1 LIKE path || '/%'`), which is
+/// why it is spelled the same way here.
+fn under(repo: &str, requested: &str) -> bool {
+    // BOTH sides are trimmed. Trimming only the requested path made
+    // `under("/a/sensei", "/a/sensei/")` false — the same directory written two
+    // ways, which is exactly how a path arrives from a shell.
+    let repo = repo.trim_end_matches('/');
+    let requested = requested.trim_end_matches('/');
+    repo == requested || repo.starts_with(&format!("{requested}/"))
+}
+
 pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let root = Path::new(&task.path);
     if !root.exists() {
@@ -139,7 +154,14 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             .queue
             .enqueue_unique(
                 Task::for_folder(TaskKind::ProcessGitFolder, &path_str)
-                    .forced(task.force)
+                    // FORCE IS SCOPED TO THE PATH ASKED FOR, not to the walk.
+                    // Discovery widens to the enclosing WATCH ROOT — a scan of
+                    // one repo under `~/Developer` walks all 129 repos under it
+                    // — which is right for discovery and catastrophic for force:
+                    // `--force <one repo>` would re-parse every repository on
+                    // the machine. The flag therefore rides only the repos at or
+                    // under the requested path.
+                    .forced(task.force && under(&path_str, &task.path))
                     .with_parent(task.id)
                     // Each repository gets the slice of the batch that lies
                     // under it — and, with it, whether its own file walk may
@@ -808,6 +830,34 @@ mod tests {
             logger: sensei_logger::Logger::noop(),
         });
         (ctx, event_rx)
+    }
+
+    /// **`--force` REACHES ONLY THE PATH ASKED FOR.**
+    ///
+    /// Discovery deliberately widens: a scan of one repository inside an
+    /// existing watch root walks from that ROOT, so a redundant sub-root is not
+    /// registered. Measured on this machine, `~/Developer` is a watch root with
+    /// 129 git repositories under it — so a force flag that rode the walk would
+    /// turn `sensei scan --force <one repo>` into a re-parse of every
+    /// repository on the disk.
+    ///
+    /// The boundary is a SEGMENT, not a prefix: `/a/sensei-old` starts with
+    /// `/a/sensei` and is a different repository.
+    ///
+    /// Mutation that must break this test: use `starts_with(requested)` without
+    /// the trailing separator, or drop the `under()` guard entirely.
+    #[test]
+    fn force_is_scoped_to_the_requested_path_not_the_whole_watch_root() {
+        assert!(under("/a/sensei", "/a/sensei"), "the repository itself");
+        assert!(under("/a/sensei/crates/cli", "/a/sensei"), "and anything inside it");
+        assert!(under("/a/sensei", "/a/sensei/"), "a trailing separator is not a different path");
+
+        assert!(!under("/a/sensei-old", "/a/sensei"), "a SIBLING sharing a prefix is not inside");
+        assert!(!under("/a/other", "/a/sensei"), "nor is an unrelated repository");
+        assert!(
+            !under("/a", "/a/sensei"),
+            "nor is the PARENT — which is the watch root, and the whole point"
+        );
     }
 
     #[tokio::test]
