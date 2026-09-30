@@ -1174,6 +1174,97 @@ mod scan_tests {
         );
     }
 
+    /// `--force` must reach `mark_folder_unparsed` THROUGH THE WHOLE CHAIN.
+    ///
+    /// Every link was verified in isolation and the force still never fired on the
+    /// live daemon, so this asserts the chain end to end rather than any one hop:
+    /// a forced `ProcessGitFolder` must hand `force` to the manifest gate, the
+    /// gate must hand it to `ProcessRepoFiles`, and that must reopen files a
+    /// previous pass already parsed. Any hop dropping the flag looks exactly like
+    /// the others from outside — the scan "succeeds" and re-parses nothing.
+    ///
+    /// Mutation that must break this test: pass `false` instead of `task.force`
+    /// to `enqueue_manifest_gate`, or drop the `t.force = force` assignment in it.
+    #[tokio::test]
+    async fn a_forced_scan_reopens_files_a_previous_pass_already_parsed() {
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path().join("forced");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"forced\"\n").unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn alpha() {}\n").unwrap();
+
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "forced", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+
+        // Parse everything once.
+        super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
+            .await
+            .unwrap();
+        super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
+            .await
+            .unwrap();
+        let file_tasks: Vec<_> = ctx
+            .queue
+            .snapshot()
+            .await
+            .into_iter()
+            .filter(|(k, _, _)| *k == TaskKind::ProcessFile)
+            .collect();
+        for (_, folder_path, path) in &file_tasks {
+            super::super::process_file(&ctx, &Task::new(TaskKind::ProcessFile, folder_path, path))
+                .await
+                .unwrap();
+        }
+        assert!(
+            ctx.pg().list_unparsed_files(&fid).await.unwrap().is_empty(),
+            "precondition: everything is parsed, so ONLY a force can reopen it"
+        );
+
+        // Now the forced pass — entered exactly where `scan_root` enters it.
+        super::process_git_folder(
+            &ctx,
+            &Task::new(TaskKind::ProcessGitFolder, &repo_path, "").forced(true),
+        )
+        .await
+        .unwrap();
+
+        // The gate it enqueued must itself be forced. Run the real task the queue
+        // holds, not a hand-built one, or the test proves nothing about the chain.
+        //
+        // The MOST RECENT gate, by id: the unforced first pass left its own gate
+        // in the queue, and taking the first match silently asserted against that
+        // one instead — which is how this test first "found" a bug that was its own.
+        let gate = ctx
+            .queue
+            .snapshot_tasks()
+            .await
+            .into_iter()
+            .filter(|t| t.kind == TaskKind::ProcessRepoFiles && t.folder_path == repo_path)
+            .max_by_key(|t| t.id)
+            .expect("the forced scan enqueued no manifest gate");
+        assert!(gate.force, "ProcessGitFolder did not pass `force` to the gate it enqueued");
+
+        super::process_repo_files(&ctx, &gate).await.unwrap();
+
+        let reopened = ctx.pg().list_unparsed_files(&fid).await.unwrap();
+        assert!(
+            reopened.iter().any(|p| p == "src/lib.rs"),
+            "a FORCED scan did not reopen an already-parsed file — `--force` is a no-op: \
+             {reopened:?}"
+        );
+    }
+
     /// The other half: a file whose bytes DID change must come back as unparsed.
     ///
     /// Stated separately because the fix to the test above could trivially be

@@ -437,6 +437,25 @@ impl TaskQueue {
             || state.running.values().any(|t| t.kind == kind && t.folder_path == folder_path)
     }
 
+    /// Test-only: every task the queue is holding (pending, blocked, running,
+    /// completed) as whole [`Task`]s.
+    ///
+    /// [`Self::snapshot`] projects this down to `(kind, folder_path, path)`. That
+    /// projection was for a long time the ONLY way to look at the queue, and it
+    /// discards `force` — which is part of why a dropped force flag stayed
+    /// invisible from outside. Anything asserting on task STATE wants this one.
+    #[cfg(test)]
+    pub async fn snapshot_tasks(&self) -> Vec<Task> {
+        let s = self.inner.lock().await;
+        s.pending
+            .iter()
+            .chain(s.blocked.iter())
+            .chain(s.running.values())
+            .chain(s.completed.iter())
+            .cloned()
+            .collect()
+    }
+
     /// Test-only: a snapshot of every task the queue has seen (pending, blocked,
     /// running, completed) as `(kind, folder_path, path)`. Lets a test assert
     /// the enqueue GRAPH — which kinds were enqueued for which owner
@@ -446,14 +465,7 @@ impl TaskQueue {
     /// `ProcessGitFolder`.
     #[cfg(test)]
     pub async fn snapshot(&self) -> Vec<(super::TaskKind, String, String)> {
-        let s = self.inner.lock().await;
-        s.pending
-            .iter()
-            .chain(s.blocked.iter())
-            .chain(s.running.values())
-            .chain(s.completed.iter())
-            .map(|t| (t.kind.clone(), t.folder_path.clone(), t.path.clone()))
-            .collect()
+        self.snapshot_tasks().await.into_iter().map(|t| (t.kind, t.folder_path, t.path)).collect()
     }
 
     /// When this id space began — the lower bound for any `task_executions`
