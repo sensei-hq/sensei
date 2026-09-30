@@ -889,10 +889,39 @@ pub struct TellFile {
 }
 
 impl TellFile {
-    /// What the scan knows, for a file in `package`.
+    /// What the scan knows, for a file in `package` — and NOTHING ELSE first-party.
+    ///
+    /// Prefer [`TellFile::about_packages`]. A single-package world cannot place
+    /// an edge across a package boundary, because every sibling crate is foreign
+    /// to it; measured on sensei 2026-09-30, that meant ZERO placed edges whose
+    /// source and target packages differ, across 16 packages. This constructor
+    /// remains for tests that deliberately want a one-package world.
     pub fn about(package: &str) -> Self {
         Self {
             first_party: [package.to_string()].into_iter().collect(),
+            members: std::collections::BTreeSet::new(),
+            declared: std::collections::BTreeSet::new(),
+            returns: std::collections::BTreeMap::new(),
+            scanned: std::collections::BTreeSet::new(),
+        }
+    }
+
+    /// What the scan knows, for a file in a repo that owns `packages`.
+    ///
+    /// THIS IS THE CONTRACT `World::first_party` STATES: "Every package this scan
+    /// owns the source of, from the manifests — NOT from what has been read so
+    /// far." The caller reads them from the manifest-derived `kind='module'`
+    /// folders (`PgStore::first_party_packages`); this type does not go looking,
+    /// so a test can hand it any set.
+    ///
+    /// An empty set would be a world that owns nothing, in which every target is
+    /// foreign — strictly worse than the single-package form. The file's own
+    /// package is therefore always included, whatever the caller passes.
+    pub fn about_packages(package: &str, packages: impl IntoIterator<Item = String>) -> Self {
+        let mut first_party: std::collections::BTreeSet<String> = packages.into_iter().collect();
+        first_party.insert(package.to_string());
+        Self {
+            first_party,
             members: std::collections::BTreeSet::new(),
             declared: std::collections::BTreeSet::new(),
             returns: std::collections::BTreeMap::new(),
