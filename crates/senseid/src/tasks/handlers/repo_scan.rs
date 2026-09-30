@@ -497,11 +497,44 @@ async fn write_file_rows(
                         ctx.pg().upsert_file_row(folder_id, &rel, mtime, &hash, Some(reason)).await
                     }
                     None => {
-                        // Barrier-seeded: this one WILL be fanned out.
+                        // A supported source file, recorded at its REAL fingerprint.
+                        //
+                        // This branch used to write the barrier sentinel over every
+                        // row, every pass, so that a file always "read as changed"
+                        // and was certain to be parsed. It is certain the other way
+                        // too: an ALREADY-PARSED file went `content_hash` real → ''
+                        // , `upsert_file_row` saw `IS DISTINCT FROM`, and reset
+                        // `parsed_at`. Since this pass reruns on every reconcile
+                        // tick, every watcher batch and every FSEvents overflow — a
+                        // `cargo build` overflows FSEvents reliably — an actively
+                        // worked repository could never finish indexing. Measured
+                        // 2026-09-30: sensei reached 1,746 of 1,757 files and
+                        // returned to 0; 55,501 files machine-wide sat at the
+                        // sentinel.
+                        //
+                        // The sentinel was never needed for its stated purpose:
+                        // `list_unparsed_files` selects on `parsed_at IS NULL`, not
+                        // on the hash, so a NEW row is fanned out whatever
+                        // fingerprint it carries. Writing the truth instead lets
+                        // `upsert_file_row` keep its documented contract — unchanged
+                        // keeps its `parsed_at`, changed loses it.
                         out.to_parse += 1;
-                        ctx.pg()
-                            .upsert_file_row(folder_id, &rel, BARRIER_MTIME, BARRIER_HASH, None)
-                            .await
+                        // An unreadable file keeps the sentinel, which here means
+                        // what it says: the fingerprint is UNKNOWN, so the file must
+                        // be parsed. The row still has to exist (R13 fails closed on
+                        // a missing one), so this cannot `continue` the way the
+                        // skip branches do.
+                        let (mtime, hash) = match super::helpers::file_fingerprint(&abs) {
+                            Some(fp) => fp,
+                            None => {
+                                tracing::warn!(
+                                    file = %rel,
+                                    "repo scan: fingerprint unreadable — seeding the barrier sentinel"
+                                );
+                                (BARRIER_MTIME, BARRIER_HASH.to_string())
+                            }
+                        };
+                        ctx.pg().upsert_file_row(folder_id, &rel, mtime, &hash, None).await
                     }
                 }
             }
@@ -992,9 +1025,20 @@ mod scan_tests {
         super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
             .await
             .unwrap();
-        // BEFORE any parse: a source row must sit on the stage-3 barrier
-        // sentinel. A row bearing its TRUE fingerprint reads as UNCHANGED next
-        // pass and the file is never indexed — the defect 8d488e2a fixed once.
+        // BEFORE any parse, two things must hold, and they are asserted as
+        // PROPERTIES rather than as a magic fingerprint value.
+        //
+        // The row must EXIST — that is the stage-3 barrier, and it is what lets
+        // node persistence fail closed on a missing one (R13). And the file must
+        // be listed unparsed, so the gate actually fans it out.
+        //
+        // This used to pin `(BARRIER_MTIME, BARRIER_HASH)`, on the reasoning that
+        // a row bearing its true fingerprint "reads as UNCHANGED next pass and the
+        // file is never indexed". That reasoning was wrong: `list_unparsed_files`
+        // selects on `parsed_at IS NULL`, never on the hash, so a new row is fanned
+        // out whatever fingerprint it carries. Pinning the sentinel instead locked
+        // in a write that reset `parsed_at` on every rescan — see
+        // `a_second_scan_of_an_unchanged_repo_keeps_the_parse_state`.
         let (mtime, hash): (i64, String) = sqlx_core::query_as::query_as(
             "SELECT mtime, content_hash FROM sensei.files WHERE folder_id=$1 AND file_path=$2",
         )
@@ -1003,13 +1047,15 @@ mod scan_tests {
         .fetch_one(ctx.pg().pool())
         .await
         .unwrap();
-        assert_eq!(
-            (mtime, hash.as_str()),
-            (
-                crate::db::pg_store::folders::BARRIER_MTIME,
-                crate::db::pg_store::folders::BARRIER_HASH
-            ),
-            "a source row must sit on the barrier sentinel until a parse advances it"
+        assert!(
+            mtime > 0 && !hash.is_empty(),
+            "a readable source row must carry its REAL fingerprint, so an unchanged \
+             file keeps its parse next pass; got ({mtime}, {hash:?})"
+        );
+        assert!(
+            ctx.pg().list_unparsed_files(&fid).await.unwrap().iter().any(|p| p == "src/lib.rs"),
+            "the barrier row exists but the gate will not fan it out — the file is \
+             never indexed"
         );
 
         super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
@@ -1048,6 +1094,151 @@ mod scan_tests {
         assert!(
             still_unparsed.is_empty(),
             "an indexed file is still listed unparsed, so it is re-enqueued for ever: {still_unparsed:?}"
+        );
+    }
+
+    /// A SECOND scan of an unchanged repository must leave the parse state alone.
+    ///
+    /// This is the one the index actually broke on. `process_git_folder` runs far
+    /// more often than a person scans: the reconcile tick, every watcher batch,
+    /// and every FSEvents overflow — and a `cargo build` writing into `target/`
+    /// overflows FSEvents reliably. Measured on this machine 2026-09-30: it fired
+    /// four times in twenty-five minutes for one repository.
+    ///
+    /// So when the structure pass wrote the barrier sentinel over EVERY row, an
+    /// already-parsed file went `content_hash = '<real>'` → `''`, the upsert saw
+    /// `IS DISTINCT FROM`, and `parsed_at` was reset. The whole repository
+    /// returned to unparsed on every pass. Sensei reached 1,746 of 1,757 files
+    /// and went back to 0; machine-wide, 55,501 files sat at the sentinel and
+    /// could never converge.
+    ///
+    /// Mutation that must break this test: restore
+    /// `upsert_file_row(.., BARRIER_MTIME, BARRIER_HASH, None)` on the
+    /// barrier-seed branch of `write_file_rows`.
+    #[tokio::test]
+    async fn a_second_scan_of_an_unchanged_repo_keeps_the_parse_state() {
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path().join("steady");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"steady\"\n").unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn alpha() {}\n").unwrap();
+
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "steady", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+
+        // Full cycle once: structure → gate → parse.
+        super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
+            .await
+            .unwrap();
+        super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
+            .await
+            .unwrap();
+        let file_tasks: Vec<_> = ctx
+            .queue
+            .snapshot()
+            .await
+            .into_iter()
+            .filter(|(k, _, _)| *k == TaskKind::ProcessFile)
+            .collect();
+        for (_, folder_path, path) in &file_tasks {
+            super::super::process_file(&ctx, &Task::new(TaskKind::ProcessFile, folder_path, path))
+                .await
+                .unwrap();
+        }
+        assert!(
+            ctx.pg().list_unparsed_files(&fid).await.unwrap().is_empty(),
+            "precondition: the first cycle must leave nothing unparsed"
+        );
+
+        // NOTHING CHANGES ON DISK. Scan the structure again, as the watcher does.
+        super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
+            .await
+            .unwrap();
+
+        let unparsed = ctx.pg().list_unparsed_files(&fid).await.unwrap();
+        assert!(
+            unparsed.is_empty(),
+            "a rescan of an UNCHANGED repo reset the parse state — the index can never \
+             converge, because this runs on every build: {unparsed:?}"
+        );
+    }
+
+    /// The other half: a file whose bytes DID change must come back as unparsed.
+    ///
+    /// Stated separately because the fix to the test above could trivially be
+    /// "never reset `parsed_at`", which would make a changed file keep a parse
+    /// describing bytes that are gone. Both properties have to hold at once, and
+    /// only the REAL fingerprint delivers both.
+    ///
+    /// Mutation that must break this test: drop `content_hash` from the upsert's
+    /// `ON CONFLICT` set, or seed the barrier row from the previous hash.
+    #[tokio::test]
+    async fn a_rescan_reparses_a_file_whose_content_changed() {
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path().join("moving");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"moving\"\n").unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn alpha() {}\n").unwrap();
+
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "moving", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+
+        super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
+            .await
+            .unwrap();
+        super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
+            .await
+            .unwrap();
+        let file_tasks: Vec<_> = ctx
+            .queue
+            .snapshot()
+            .await
+            .into_iter()
+            .filter(|(k, _, _)| *k == TaskKind::ProcessFile)
+            .collect();
+        for (_, folder_path, path) in &file_tasks {
+            super::super::process_file(&ctx, &Task::new(TaskKind::ProcessFile, folder_path, path))
+                .await
+                .unwrap();
+        }
+        assert!(ctx.pg().list_unparsed_files(&fid).await.unwrap().is_empty());
+
+        // Rewrite the file with DIFFERENT bytes. The mtime gate is second-grained
+        // on some filesystems, so the content hash — not the timestamp — has to
+        // be what carries this.
+        std::fs::write(repo.join("src/lib.rs"), "pub fn alpha() {}\npub fn beta() {}\n").unwrap();
+
+        super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
+            .await
+            .unwrap();
+
+        let unparsed = ctx.pg().list_unparsed_files(&fid).await.unwrap();
+        assert!(
+            unparsed.iter().any(|p| p == "src/lib.rs"),
+            "a CHANGED file was not reopened for parsing — its declarations are now \
+             stale but counted as decided: {unparsed:?}"
         );
     }
 }
