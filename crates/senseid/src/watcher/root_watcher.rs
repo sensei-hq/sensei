@@ -239,6 +239,66 @@ pub(crate) fn rescan_reconcile_roots(paths: &[PathBuf], roots: &[PathBuf]) -> Ve
     if out.is_empty() { roots.to_vec() } else { out }
 }
 
+/// How long a root rests after an overflow-driven reconcile before another
+/// overflow can trigger one.
+///
+/// Matched to the reconcile SCHEDULER's own 300s cadence, deliberately. That
+/// scheduler is the convergence guarantee; this watcher path is only a fast
+/// catch-up on top of it, so resting for one scheduler period can never delay
+/// convergence past what is already promised — while a burst of overflows
+/// collapses to a single rescan.
+pub(crate) const OVERFLOW_RECONCILE_COOLDOWN_MS: i64 = 300_000;
+
+/// Drop the targets that were reconciled within the cooldown, and stamp those
+/// that pass. Pure/testable apart from the map it updates.
+///
+/// AN OVERFLOW BURST IS ONE EVENT, NOT N REASONS TO RESCAN. `need_rescan` means
+/// "events were lost", and a single `cargo build` writing into `target/` loses
+/// them continuously: measured 2026-09-30, **226 overflow events in six minutes**,
+/// which drove 29 full structure passes over one repository and starved the parse
+/// queue that was supposed to be draining. Every one of those carried the same
+/// information as the first.
+///
+/// The existing per-path overlap guard in [`enqueue_scanroot_reconcile`] cannot
+/// absorb this: it only suppresses a reconcile while one is still PENDING, so the
+/// next overflow after a scan completes enqueues another, for ever.
+pub(crate) fn targets_off_cooldown(
+    targets: Vec<PathBuf>,
+    last_reconcile_ms: &mut HashMap<PathBuf, i64>,
+    now_ms: i64,
+    cooldown_ms: i64,
+) -> Vec<PathBuf> {
+    targets
+        .into_iter()
+        .filter(|t| match last_reconcile_ms.get(t) {
+            Some(prev) if now_ms.saturating_sub(*prev) < cooldown_ms => false,
+            _ => {
+                last_reconcile_ms.insert(t.clone(), now_ms);
+                true
+            }
+        })
+        .collect()
+}
+
+/// What an FSEvents overflow should actually reconcile: the affected roots, less
+/// the ones still resting. The whole decision the watch loop makes on a
+/// `need_rescan` event, so the loop itself is left with a call and an enqueue.
+///
+/// Composing the two matters, and the sharp case is a GLOBAL overflow — one with
+/// no paths, which [`rescan_reconcile_roots`] widens to every root. Without the
+/// per-root throttle a build in one tree would rescan every other tree on the
+/// machine, repeatedly.
+pub(crate) fn overflow_reconcile_targets(
+    paths: &[PathBuf],
+    roots: &[PathBuf],
+    last_reconcile_ms: &mut HashMap<PathBuf, i64>,
+    now_ms: i64,
+    cooldown_ms: i64,
+) -> Vec<PathBuf> {
+    let affected = rescan_reconcile_roots(paths, roots);
+    targets_off_cooldown(affected, last_reconcile_ms, now_ms, cooldown_ms)
+}
+
 /// Enqueue one `ScanRoot` reconcile per target — the same task the `scan_folder`
 /// API, version-rescan, and reconcile-scheduler use. A target is a watch root for
 /// an overflow rescan, or a single REPOSITORY for a branch switch (see
@@ -408,6 +468,9 @@ impl RootWatcher {
 
             let mut pending: HashMap<PathBuf, ChangeKind> = HashMap::new();
             let mut last_event = std::time::Instant::now();
+            // When each root was last reconciled BECAUSE OF AN OVERFLOW, so a
+            // burst collapses to one rescan. See `targets_off_cooldown`.
+            let mut last_overflow_ms: HashMap<PathBuf, i64> = HashMap::new();
 
             loop {
                 if stop.load(std::sync::atomic::Ordering::Acquire) {
@@ -425,7 +488,24 @@ impl RootWatcher {
                         // silently fold this into a Modify and drop it, so handle
                         // it explicitly: force a reconcile of the affected root(s).
                         if event.need_rescan() {
-                            let targets = rescan_reconcile_roots(&event.paths, &roots);
+                            // THROTTLED PER ROOT. A burst of overflows all carry
+                            // the same information as the first — see
+                            // `targets_off_cooldown` for the measured storm.
+                            let targets = overflow_reconcile_targets(
+                                &event.paths,
+                                &roots,
+                                &mut last_overflow_ms,
+                                chrono::Utc::now().timestamp_millis(),
+                                OVERFLOW_RECONCILE_COOLDOWN_MS,
+                            );
+                            if targets.is_empty() {
+                                tracing::debug!(
+                                    paths = ?event.paths,
+                                    "RootWatcher: FSEvents rescan/overflow — every affected root is resting; \
+                                     the 300s reconcile scheduler still guarantees convergence",
+                                );
+                                continue;
+                            }
                             tracing::warn!(
                                 targets = targets.len(),
                                 paths = ?event.paths,
@@ -1267,5 +1347,146 @@ mod tests {
         watcher.start().unwrap();
         assert_eq!(*watcher.status(), WatcherStatus::Watching);
         watcher.stop();
+    }
+
+    // ── overflow cooldown ───────────────────────────────────────────────────
+
+    /// THE STORM PROPERTY: a burst of overflows is ONE reconcile, not N.
+    ///
+    /// Measured 2026-09-30: 226 `need_rescan` events in six minutes — a single
+    /// `cargo build` writing into `target/` — drove 29 full structure passes over
+    /// one repository. Each pass re-walked 2,343 files and re-opened the manifest
+    /// gate, starving the parse queue it was meant to be helping.
+    ///
+    /// Mutation that must break this test: return `targets` unfiltered, or stamp
+    /// the map without consulting it.
+    #[test]
+    fn a_burst_of_overflows_reconciles_a_root_once() {
+        let root = PathBuf::from("/a/dev");
+        let mut last = HashMap::new();
+        let cooldown = super::OVERFLOW_RECONCILE_COOLDOWN_MS;
+
+        let mut reconciles = 0;
+        // 226 overflows arriving across six minutes, the measured shape.
+        for i in 0..226 {
+            let now = 1_000_000 + i * (360_000 / 226);
+            reconciles +=
+                super::targets_off_cooldown(vec![root.clone()], &mut last, now, cooldown).len();
+        }
+        assert_eq!(
+            reconciles, 2,
+            "a six-minute overflow burst must collapse to one reconcile per cooldown \
+             period, not 226"
+        );
+    }
+
+    /// The first overflow is never suppressed — the fast path has to stay fast.
+    ///
+    /// Mutation that must break this test: stamp the map before the lookup, so a
+    /// first sighting reads as already-on-cooldown.
+    #[test]
+    fn the_first_overflow_for_a_root_always_passes() {
+        let mut last = HashMap::new();
+        let out = super::targets_off_cooldown(
+            vec![PathBuf::from("/a/dev")],
+            &mut last,
+            1_000_000,
+            300_000,
+        );
+        assert_eq!(out, vec![PathBuf::from("/a/dev")]);
+    }
+
+    /// Past the cooldown, a root reconciles again — this is a THROTTLE, never a
+    /// mute. Dropped events must still converge.
+    ///
+    /// Mutation that must break this test: never refresh the stamp, so one
+    /// reconcile permanently suppresses the root.
+    #[test]
+    fn a_root_reconciles_again_once_the_cooldown_elapses() {
+        let root = PathBuf::from("/a/dev");
+        let mut last = HashMap::new();
+        assert_eq!(super::targets_off_cooldown(vec![root.clone()], &mut last, 0, 300_000).len(), 1);
+        assert_eq!(
+            super::targets_off_cooldown(vec![root.clone()], &mut last, 299_999, 300_000).len(),
+            0,
+            "one millisecond inside the window is still inside it"
+        );
+        assert_eq!(
+            super::targets_off_cooldown(vec![root.clone()], &mut last, 300_000, 300_000).len(),
+            1,
+            "at the boundary the root is off cooldown"
+        );
+        assert_eq!(
+            super::targets_off_cooldown(vec![root], &mut last, 900_000, 300_000).len(),
+            1,
+            "and it keeps converging on later bursts"
+        );
+    }
+
+    /// The cooldown is PER ROOT. A busy root must not mute a quiet one — that
+    /// would turn a throttle into dropped coverage for an unrelated tree.
+    ///
+    /// Mutation that must break this test: key the map on anything shared (a
+    /// single timestamp, or the target count).
+    #[test]
+    fn one_roots_cooldown_does_not_suppress_another() {
+        let (busy, quiet) = (PathBuf::from("/a/dev"), PathBuf::from("/a/work"));
+        let mut last = HashMap::new();
+
+        super::targets_off_cooldown(vec![busy.clone()], &mut last, 0, 300_000);
+        let out = super::targets_off_cooldown(
+            vec![busy.clone(), quiet.clone()],
+            &mut last,
+            1_000,
+            300_000,
+        );
+        assert_eq!(out, vec![quiet], "the quiet root passes while the busy one rests");
+    }
+
+    /// The composed decision the watch loop makes, on the sharp case: a GLOBAL
+    /// overflow carries no paths, so `rescan_reconcile_roots` widens it to every
+    /// root. Without the throttle, one tree's build rescans every other tree on
+    /// the machine, over and over.
+    ///
+    /// Mutation that must break this test: drop the `targets_off_cooldown` call
+    /// from `overflow_reconcile_targets` and return the affected roots directly.
+    #[test]
+    fn a_global_overflow_widens_to_every_root_but_each_is_throttled() {
+        let roots = vec![PathBuf::from("/a/dev"), PathBuf::from("/a/work")];
+        let mut last = HashMap::new();
+        let cooldown = super::OVERFLOW_RECONCILE_COOLDOWN_MS;
+
+        // No paths ⇒ every root, and the first sighting must not be suppressed.
+        let first = super::overflow_reconcile_targets(&[], &roots, &mut last, 0, cooldown);
+        assert_eq!(first, roots, "a global overflow must reach every root the first time");
+
+        // The burst that follows is the same signal repeated.
+        for i in 1..50 {
+            assert!(
+                super::overflow_reconcile_targets(&[], &roots, &mut last, i * 1_000, cooldown)
+                    .is_empty(),
+                "overflow {i} of the same burst must not re-reconcile the whole machine"
+            );
+        }
+
+        // A path-scoped overflow inside a resting root is still suppressed …
+        assert!(
+            super::overflow_reconcile_targets(
+                &[PathBuf::from("/a/dev/sensei")],
+                &roots,
+                &mut last,
+                60_000,
+                cooldown,
+            )
+            .is_empty(),
+            "a scoped overflow cannot bypass its own root's cooldown"
+        );
+
+        // … and once the window passes, convergence resumes.
+        assert_eq!(
+            super::overflow_reconcile_targets(&[], &roots, &mut last, cooldown, cooldown),
+            roots,
+            "the throttle is a delay, never a mute"
+        );
     }
 }
