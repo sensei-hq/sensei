@@ -233,11 +233,32 @@ than made to look like a connection.
 §5 proposed `contracts()`. Measuring the corpus changes the shape of it, because
 the two sides of a contract are discoverable in **different places**.
 
-### The publisher side is manifest-shaped
+### The publisher side, corrected by reading the files
 
-**332 OpenAPI/Swagger documents across 9 projects, and exactly 1 under build
-output.** They are authored and committed, not generated artifacts — so a
-manifest can point at them and the pointer is stable.
+An earlier draft of this section said "332 OpenAPI/Swagger documents". **That
+was a filename-match count, and it is wrong.** Opening a sample says so: of the
+23 matches readable on disk, **3 are OpenAPI documents and 20 are not.**
+
+The population by extension explains it:
+
+| ext | count | what it is |
+|---|---:|---|
+| `.yaml` / `.json` | 115 + 9 | plausibly documents |
+| `.kt` / `.java` / `.cs` | 104 + 43 + 16 | **source files** — annotation-based API declaration |
+| `.ts` | 15 | client/middleware setup |
+| `.md`, `.mp3` | 9 + 9 | not API artifacts at all |
+
+So the document count is bounded by ~124, not 332, and **163 of the matches are
+code**. That is not noise — in JVM and .NET the API IS declared in source, by
+annotation, and a walk reaches it where a manifest pointer never would. It is a
+second publisher shape, not a failed match.
+
+**Where a document does exist it is rich.** The two readable `.yaml` files are
+OpenAPI 3.1.0 with **249 and 201 path items — 615 operations between them.**
+
+*Limit of this check:* 23 of 332 were on disk; none of the 163 `.kt`/`.java`
+/`.cs` were, so their being annotation declarations is inferred from extension
+and not verified.
 
 ### The consumer side is mostly NOT
 
@@ -272,9 +293,37 @@ the operation:
 | `fetch('/api/users/' + id)` | the PATH TEMPLATE, after normalising the interpolation |
 | `fetch(url)` where `url` is computed | nothing. A use site with no target, and a reason |
 
-The third row is the honest majority and must be reported as such. An API graph
-that silently drops what it cannot place would claim a completeness it does not
-have — the same inversion that made `imports` read as 6% placed.
+### A fourth case, which sampling showed is the DOMINANT one
+
+Classifying call sites across 866 UI files found only **19** — because a UI of
+any maturity does not call `fetch` from a component. It funnels HTTP through one
+client module, and the components call NAMED METHODS.
+
+Measured on this repo's own app:
+
+| | |
+|---|---:|
+| endpoint shapes declared in `lib/api.ts` | **167** |
+| files reaching the API through `senseiApi()` | **66** |
+| files holding a raw `/api/` string anywhere else | **12** |
+
+This is much better news than the three rows above suggest, and it changes where
+the work goes:
+
+- **The registry the UI side has is the client module.** It is one file, its
+  templates are literal, and 167 of them normalise cleanly. Resolving *that*
+  once yields the whole consumer surface.
+- **The call sites are already edges.** A component calling `api.getCallers()`
+  is an ordinary `calls` edge the graph holds today. Nothing new is needed to
+  reach them — only to attach an operation identity to the client's methods.
+
+So the consumer side is not 866 call sites to parse. It is **one module to
+resolve and an existing call graph to walk**, with the raw-string minority (12
+files here) as the residue that still needs the three rows above.
+
+The computed-URL row remains the honest floor and must be reported as such. An
+API graph that silently drops what it cannot place would claim a completeness it
+does not have — the same inversion that made `imports` read as 6% placed.
 
 ### `scan_for` — what the manifest says is worth looking at
 
