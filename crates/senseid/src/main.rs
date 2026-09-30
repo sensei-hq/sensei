@@ -125,8 +125,6 @@ const DEFAULT_LOG_FILTER: &str = "senseid=info,sensei_bootstrap=warn,warn";
 
 #[tokio::main]
 async fn main() {
-    sensei_bootstrap::tracing_init::install_daemon_console(DEFAULT_LOG_FILTER);
-
     let cli = Cli::parse();
 
     // `--instance` overrides any SENSEI_INSTANCE inherited from env. Set
@@ -139,6 +137,30 @@ async fn main() {
         unsafe {
             std::env::set_var("SENSEI_INSTANCE", inst);
         }
+    }
+
+    // LOGGING IS INSTALLED HERE, NOT AT THE TOP OF `main`, and the ordering is
+    // load-bearing: the log directory hangs off the instance's data dir, and
+    // `--instance` is only applied to the environment just above. Installing
+    // before that point sends an `--instance` run's logs into the REAL install's
+    // directory, where its retention would then prune the user's own history.
+    // The cost is that `Cli::parse` runs unlogged, which emits nothing anyway.
+    //
+    // The guard must outlive every log call, so it is bound for the whole of
+    // `main` — dropping it stops the writer thread and the daemon goes silent.
+    let retention = sensei_bootstrap::config::positive_or(
+        std::env::var("SENSEI_LOG_RETENTION_DAYS").ok(),
+        sensei_bootstrap::config::DEFAULT_LOG_RETENTION_DAYS,
+    );
+    let _log_guard = sensei_bootstrap::tracing_init::install_daemon_rolling(
+        sensei_bootstrap::tracing_init::daemon_log_dir(),
+        DEFAULT_LOG_FILTER,
+        retention as usize,
+    );
+    if _log_guard.is_none() {
+        // Never leave the daemon silent: an unwritable log directory costs the
+        // rolling file, not the log itself.
+        sensei_bootstrap::tracing_init::install_daemon_console(DEFAULT_LOG_FILTER);
     }
 
     let startup_cfg = sensei_bootstrap::SenseiConfig::from_env();
