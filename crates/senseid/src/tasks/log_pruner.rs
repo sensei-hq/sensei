@@ -24,9 +24,7 @@ const DEFAULT_RETENTION_DAYS: i32 = 30;
 /// Resolve the retention window (days) from config. Must be positive; missing /
 /// unparseable / non-positive values fall back to the default.
 fn parse_retention(cfg: Option<String>) -> i32 {
-    cfg.and_then(|v| v.trim().parse::<i32>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_RETENTION_DAYS)
+    sensei_bootstrap::config::positive_or(cfg, DEFAULT_RETENTION_DAYS)
 }
 
 /// Spawn the pruner for the daemon's lifetime.
