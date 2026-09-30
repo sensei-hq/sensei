@@ -601,6 +601,11 @@ pub(crate) async fn delete_watch_root(
 #[derive(Deserialize)]
 pub(crate) struct ScanBody {
     pub root: String,
+    /// Re-index every file, ignoring the mtime/hash gate. Off unless asked for:
+    /// a scan that re-parses an unchanged repository is the expensive path, and
+    /// the gate exists because it is almost always right.
+    #[serde(default)]
+    pub force: bool,
     #[serde(default = "default_depth")]
     pub _max_depth: u32,
 }
@@ -624,10 +629,16 @@ pub(crate) async fn scan_folder(
     }
 
     // Enqueue ScanRoot task — runs asynchronously via task workers
-    let task = crate::tasks::Task::new(crate::tasks::TaskKind::ScanRoot, "", &root_path);
+    let mut task = crate::tasks::Task::new(crate::tasks::TaskKind::ScanRoot, "", &root_path);
+    task.force = body.force;
     let task_id = state.task_queue.enqueue(task).await;
 
-    Ok(Json(serde_json::json!({"ok": true, "scanning": true, "taskId": task_id})))
+    // `forced` is echoed so a caller can SEE which kind of scan it got. A force
+    // flag that is silently ignored — by an old daemon, say — is the worst
+    // outcome: the caller waits for a rebuild that never happens.
+    Ok(Json(serde_json::json!({
+        "ok": true, "scanning": true, "taskId": task_id, "forced": body.force
+    })))
 }
 
 #[derive(Deserialize)]
