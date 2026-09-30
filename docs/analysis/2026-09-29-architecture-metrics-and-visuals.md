@@ -35,6 +35,15 @@ Not one placed edge in this repository crosses a crate boundary. That is not a
 finding about the code — `crates/senseid` genuinely depends on
 `crates/bootstrap`. It is a finding about the graph:
 
+> **Re-measured after the re-index, by fqn component rather than by directory,
+> which is the sharper cut.** 31,528 placed edges DO cross a component boundary
+> — but **31,497 of them (99.9%) point at an external library node**, and the
+> 24 that reach first-party code in another component turn out to be SQL
+> cross-schema references (`history → sensei.memories`), not code. First-party
+> cross-component CODE coupling is still zero. The headline stands; the external
+> edges are a real and separate signal (see §4.2, dependency fan-out).
+
+
 ```
 crates/senseid/src/paths.rs   imports   sensei_bootstrap::config::GITHUB_ORG   → UNPLACED
 ```
@@ -168,18 +177,53 @@ not new analysis. They are lower priority than §3.3 because they are per-ecosys
 and only apply where a build exists — but for a JS/TS client engagement, bundle
 size is frequently the presenting complaint.
 
-### 3.5 Abstract vs concrete classification
+### 3.5 Abstract vs concrete — **solved, and it needs no walk change**
 
-`A` in the Zone-of-Pain plot needs a per-language rule for what counts as
-abstract. The inputs exist in this repo — 645 `interface`, 692 `struct`, 227
-`class`, 472 `type`, 209 `enum` — but no node says "abstract". Note that 0 nodes
-carry kind `trait` despite the enum having it, so Rust traits are landing
-somewhere else and the rule cannot be assumed.
+This section previously called for an `is_abstract` flag written by each
+language walk. **That was the wrong design, and measuring showed why.**
 
-**Fact needed:** an `is_abstract` flag written by each language walk, with a
-stated rule per language (Rust `trait`; TS `interface`/`type`/`abstract class`;
-Java/C# `interface`/`abstract`; Python `ABC`/`Protocol`). A guessed rule makes
-`A` unfalsifiable, so this is a walk change, not a heuristic.
+The obvious rule — abstract = `kind = 'interface'` — is wrong because
+`interface` means two different things:
+
+| | interfaces | of which something implements |
+|---|---:|---:|
+| rust (a `trait` is recorded as `interface`) | 21 | **21 — 100%** |
+| typescript | 606 | **1 — 0.2%** |
+
+A TypeScript `interface` is usually a data shape: the sample reads `SessionRow`,
+`LogRow`, `ImpactBuckets`, `ProjectsSlice`. Counting those as abstractions put
+three TS components at 90–100% `A`, which is nonsense.
+
+**The rule that works is derived from the graph, not declared by a walk:**
+
+> A type is ABSTRACT when something implements or extends it.
+
+It is language-agnostic, self-correcting for TS's overloaded keyword, and needs
+no new fact. Verified against known contracts:
+
+| type | implementers |
+|---|---:|
+| `LanguageAdapter` | **12** — exactly the 12 adapters in the registry |
+| `ManifestAdapter` | **12** |
+| `Checker` | 9 |
+| `SessionRow` (TS) | 0 |
+
+**Undercount risk, measured: 0.** Not one rust contract in this repo lacks an
+implementer in scope. A trait declared and never implemented would be missed,
+and that is a bounded, nameable gap rather than a silent one.
+
+`A` per component, on this definition, today:
+
+| component | types | abstract | A |
+|---|---:|---:|---:|
+| sensei-bootstrap | 58 | 3 | 0.052 |
+| senseid | 837 | 18 | 0.022 |
+| sensei-dojo-web | 341 | 6 | 0.018 |
+| @sensei/desktop | 491 | 5 | 0.010 |
+
+Low, and honestly so — this is a concrete codebase. **The A axis is available
+now.** It depends on `implements`/`extends` edges, which are the best-resolved
+kinds in the graph (92.4% and 97.9% on freshly indexed files).
 
 ### 3.6 Schema entities from dbd — *and this is not blocked*
 
@@ -235,8 +279,8 @@ otherwise the top-level module.
 | **Ca** afferent coupling | components depending *on* this one | §3.1 | ~0 — unusable |
 | **Ce** efferent coupling | components this one depends on | §3.1 | ~0 — unusable |
 | **I** instability | `Ce / (Ca + Ce)` | Ca, Ce | would report everything maximally stable |
-| **A** abstractness | abstract types / all types | §3.5 | inputs present, rule absent |
-| **D** distance from main sequence | `\|A + I − 1\|` | A, I | the Zone-of-Pain plot, blocked on both |
+| **A** abstractness | types something implements / all types | none — **available now** | computed and verified; see §3.5 |
+| **D** distance from main sequence | `\|A + I − 1\|` | I only — **A is done** | the Zone-of-Pain plot. Half the axes exist; it ships when `I` does |
 | **SDP** stable-dependencies violations | edges from lower-I to higher-I | I | the *actionable* form of D — each violation is one edge to name |
 | **SAP** stable-abstractions violations | stable (low I) but concrete (low A) | A, I | |
 | **ADP** acyclic dependencies | SCCs in the component graph (Tarjan) | §3.1 | the highest-value item here — a cycle is a defect with a name, not a score |
