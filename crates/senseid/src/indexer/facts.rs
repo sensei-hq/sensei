@@ -723,6 +723,21 @@ pub enum Rung {
     ThroughAGlob,
     /// A path rooted at this package, needing no import.
     RootedInThisPackage,
+    /// The WHOLE SCOPE settled it, after every file was read.
+    ///
+    /// A path the importing file wrote, whose reading only the complete set of
+    /// declarations can fix: rust's `use a::b::C` is a module `a::b::C` or an
+    /// item `C` in `a::b`, and the file states neither. Exactly one of the two
+    /// identities turns out to have a declaration behind it.
+    ///
+    /// BELOW [`Rung::RootedInThisPackage`] because the file alone does not
+    /// settle it — a second fact, from elsewhere in the scan, had to agree.
+    /// ABOVE [`Rung::FullyQualifiedExternal`] because it lands on a declaration
+    /// this scan actually holds, which a path leaving the source never does.
+    ///
+    /// It can only ever confirm ONE reading. Both resolving is
+    /// [`Reason::AmbiguousCandidates`], not a coin toss (R4).
+    SettledByScope,
     /// A fully-qualified path that leaves the scanned source (R5). Named, never
     /// opened.
     FullyQualifiedExternal,
@@ -742,6 +757,7 @@ impl Rung {
             Self::DeclaredByItsType => "declared_by_its_type",
             Self::ThroughAGlob => "through_a_glob",
             Self::RootedInThisPackage => "rooted_in_this_package",
+            Self::SettledByScope => "settled_by_scope",
             Self::FullyQualifiedExternal => "fully_qualified_external",
             Self::InThePrelude => "in_the_prelude",
         }
@@ -756,6 +772,7 @@ impl Rung {
             "declared_by_its_type" => Self::DeclaredByItsType,
             "through_a_glob" => Self::ThroughAGlob,
             "rooted_in_this_package" => Self::RootedInThisPackage,
+            "settled_by_scope" => Self::SettledByScope,
             "fully_qualified_external" => Self::FullyQualifiedExternal,
             "in_the_prelude" => Self::InThePrelude,
             _ => return None,
@@ -770,6 +787,7 @@ impl Rung {
         Rung::DeclaredByItsType,
         Rung::ThroughAGlob,
         Rung::RootedInThisPackage,
+        Rung::SettledByScope,
         Rung::FullyQualifiedExternal,
         Rung::InThePrelude,
     ];
