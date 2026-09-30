@@ -429,7 +429,26 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 return Ok(0);
             }
         };
-        let told = crate::indexer::pipeline::TellFile::about(&placement.package);
+        // EVERY package the project owns is first-party, not just this file's.
+        // A one-package world makes every sibling crate foreign, so no edge can
+        // cross a package boundary — measured on sensei as ZERO cross-package
+        // edges across 16 packages. Read from the manifest-derived `module`
+        // folders, which is what `World::first_party` says it wants.
+        //
+        // A read failure degrades to the file's own package rather than failing
+        // the parse: the file still indexes, and intra-package edges still place.
+        // It is logged because the degraded world silently loses every
+        // cross-package edge, which is invisible in the output.
+        let packages = match ctx.pg().first_party_packages(fid).await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(error = %e, folder_id = %fid,
+                    "first_party_packages failed — resolving with this file's package alone, \
+                     so cross-package edges will not place");
+                Default::default()
+            }
+        };
+        let told = crate::indexer::pipeline::TellFile::about_packages(&placement.package, packages);
         let written = crate::indexer::pipeline::index_and_persist(
             ctx.pg(),
             fid,

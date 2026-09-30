@@ -7493,6 +7493,56 @@ async fn folder_path_alias_resolves_old_paths_after_a_rename() {
     assert_eq!(s.get_folder_ids_by_path(old).await.unwrap().map(|(id, _)| id), Some(fid));
 }
 
+/// EVERY package the repo owns is first-party — not just the file's own.
+///
+/// `World::first_party` is documented as "Every package this scan owns the source
+/// of, from the manifests". The construction at `pipeline.rs:895` seeded it with
+/// ONE package, so on sensei's own 16-package workspace **zero** edges ever
+/// resolved across a package boundary: `sensei-cli` calls `senseid` and none of
+/// it placed.
+///
+/// `ProcessManifest` already writes one `folders` row per manifest with
+/// `kind='module'`, and `folders.name` IS the package name — so the set is one
+/// indexed query over manifest-derived rows, which is exactly what the contract
+/// asks for.
+///
+/// Breaking mutation: drop the `kind = 'module'` predicate — ordinary `folder`
+/// rows flood in and every directory becomes a first-party "package", so an
+/// import naming any directory resolves local.
+#[tokio::test]
+async fn first_party_packages_are_every_module_the_project_declares() {
+    let s = pg_store().await;
+    let root_id =
+        s.add_watch_root(&tkey("fp", "root"), "fp-root", &serde_json::json!([])).await.unwrap();
+    let repo = s.upsert_repo_kind(&root_id, "git", "fp-repo", &tkey("fp", "/repo")).await.unwrap();
+    let project = s.create_project(&tkey("fp", "proj"), None, None).await.unwrap();
+    s.set_folder_project(&repo, &project, "root", None).await.unwrap();
+
+    // Two manifest-declared packages, and one ordinary folder that is NOT one.
+    for (name, path) in [("alpha", "/repo/crates/alpha"), ("beta", "/repo/crates/beta")] {
+        let abs = tkey("fp", path);
+        s.upsert_subfolder_kind(&root_id, "module", name, &abs, &abs, Some(&repo), Some(&project))
+            .await
+            .unwrap();
+    }
+    let src = tkey("fp", "/repo/src");
+    s.upsert_subfolder_kind(&root_id, "folder", "src", &src, &src, Some(&repo), Some(&project))
+        .await
+        .unwrap();
+
+    let pkgs = s.first_party_packages(&repo).await.unwrap();
+
+    assert!(pkgs.contains("alpha"), "a manifest-declared package is first-party: {pkgs:?}");
+    assert!(pkgs.contains("beta"), "AND its sibling — the whole point: {pkgs:?}");
+    assert!(
+        !pkgs.contains("src"),
+        "an ordinary folder is not a package; treating it as one makes every \
+         directory resolve local: {pkgs:?}"
+    );
+
+    s.remove_watch_root(&root_id).await.ok();
+}
+
 #[tokio::test]
 async fn repo_root_for_path_resolves_nearest_git_ancestor_skipping_members() {
     // The watcher resolver: a change under a repo → the repo ROOT (git/

@@ -929,6 +929,44 @@ impl PgStore {
     /// of repositories). Ordered by path length so the primary (shallowest) repository
     /// is first and iteration is deterministic. Honest-empty when the project has no
     /// repository-linked folder — those repositories are then skipped, never faked (I-E).
+    /// Every package the project owning `folder_id` declares — the resolver's
+    /// `World::first_party`.
+    ///
+    /// FROM THE MANIFESTS, WHICH IS THE CONTRACT. `World::first_party` is
+    /// documented as "Every package this scan owns the source of, from the
+    /// manifests — NOT from what has been read so far", and `ProcessManifest`
+    /// already writes exactly that: one `folders` row per manifest with
+    /// `kind = 'module'`, whose `name` IS the package name. Reading packages back
+    /// out of resolved fqns instead would be circular — a package no file has
+    /// resolved into yet could never enter its own first-party set.
+    ///
+    /// `kind = 'module'` IS THE WHOLE FILTER, and it is load-bearing. Ordinary
+    /// `folder` rows are directories; admitting them would make every directory a
+    /// "package", so an import naming any directory would resolve local.
+    ///
+    /// Scoped to the PROJECT, not the folder: a workspace member must count its
+    /// siblings as first-party or no edge can cross a package boundary. Measured
+    /// on sensei 2026-09-30 before this existed — 16 packages, and ZERO placed
+    /// edges whose source and target packages differ.
+    pub async fn first_party_packages(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<std::collections::BTreeSet<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT m.name \
+               FROM sensei.folders m \
+              WHERE m.kind = 'module'::sensei.folder_kind \
+                AND m.project_id IS NOT DISTINCT FROM \
+                    (SELECT f.project_id FROM sensei.folders f WHERE f.id = $1) \
+                AND m.project_id IS NOT NULL",
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(n,)| n).collect())
+    }
+
     pub async fn repository_roots_for_project(
         &self,
         project_id: &uuid::Uuid,
