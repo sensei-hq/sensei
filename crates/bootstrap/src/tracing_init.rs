@@ -114,12 +114,24 @@ pub fn install_daemon_rolling(
         .compact()
         .with_filter(filter_or(default_filter));
 
-    // The console keeps only what someone watching `brew services log` needs.
-    let console = tracing_subscriber::fmt::layer()
-        .with_target(true)
-        .with_level(true)
-        .compact()
-        .with_filter(EnvFilter::new("warn"));
+    // THE CONSOLE LAYER EXISTS ONLY FOR A HUMAN AT A TERMINAL.
+    //
+    // Under `brew services` stdout is not a terminal — it is a file launchd
+    // opened, and nothing rotates it. Writing there as well as to the rolling
+    // file duplicates every line into the one sink with no retention, which is
+    // how the 20 GB was reached in the first place. Measured before this gate:
+    // 59 MB/day of warnings, every one of them already in the rolling file.
+    //
+    // Run `senseid` in a terminal and stdout IS a tty, a person is watching, and
+    // the console layer comes back at the same filter as the file. So the rule is
+    // not "quieter in production" — it is "one sink per reader".
+    let console = std::io::IsTerminal::is_terminal(&std::io::stdout()).then(|| {
+        tracing_subscriber::fmt::layer()
+            .with_target(true)
+            .with_level(true)
+            .compact()
+            .with_filter(filter_or(default_filter))
+    });
 
     let installed = tracing_subscriber::registry().with(file).with(console).try_init().is_ok();
     installed.then_some(guard)
