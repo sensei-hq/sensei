@@ -228,8 +228,141 @@ something names the join. A published OpenAPI document with no consumer in the
 scan is an inventory entry, not an edge, and must be reported as such rather
 than made to look like a connection.
 
+## 5b. What the manifest must be asked, and what it cannot answer
+
+§5 proposed `contracts()`. Measuring the corpus changes the shape of it, because
+the two sides of a contract are discoverable in **different places**.
+
+### The publisher side is manifest-shaped
+
+**332 OpenAPI/Swagger documents across 9 projects, and exactly 1 under build
+output.** They are authored and committed, not generated artifacts — so a
+manifest can point at them and the pointer is stable.
+
+### The consumer side is mostly NOT
+
+The obvious manifest route is a generator config naming its input spec. Measured
+in the watched roots: **8 NSwag configs, and zero for orval, kubb,
+openapi-generator, graphql-codegen or buf.** That is not a registry; it is a
+handful.
+
+So a UI usually does **not** declare which endpoints it calls. What it declares
+is a *dependency* — on a generated client package, or on nothing at all when it
+calls `fetch` directly. The endpoints are in the code.
+
+### Therefore: the manifest supplies the KEY, the walk supplies the USE SITES
+
+```rust
+/// What this package publishes or consumes, as far as its MANIFEST can say.
+///
+/// Deliberately not "which endpoints" — a manifest almost never knows. It knows
+/// the JOIN KEY: the document this package publishes, or the client package it
+/// depends on. Matching a call site to an operation is the walk's job, and
+/// pretending otherwise would put a guess in the layer that is supposed to be
+/// stating facts.
+fn contracts(&self, parsed: &ParsedManifest, root: &Path) -> Vec<Contract>;
+```
+
+and, on the language side, a use site becomes an edge only when something names
+the operation:
+
+| the code says | what can be claimed |
+|---|---|
+| imports `getUser` from a generated client | the operation, by identity — a real edge |
+| `fetch('/api/users/' + id)` | the PATH TEMPLATE, after normalising the interpolation |
+| `fetch(url)` where `url` is computed | nothing. A use site with no target, and a reason |
+
+The third row is the honest majority and must be reported as such. An API graph
+that silently drops what it cannot place would claim a completeness it does not
+have — the same inversion that made `imports` read as 6% placed.
+
+### `scan_for` — what the manifest says is worth looking at
+
+`classify_path` (§4) answers "parse this or not". This is its sibling and
+answers "look for THIS in here":
+
+```rust
+/// Extra passes this manifest's ecosystem warrants, beyond the language walk.
+///
+/// Each is a PROBE, not a guarantee: a package declaring EF Core earns an ORM
+/// pass, and that pass may still find nothing. The manifest narrows where to
+/// look; it never asserts what is there.
+fn scan_for(&self, parsed: &ParsedManifest) -> Vec<Probe>;
+
+pub enum Probe {
+    /// An OpenAPI/Swagger document at a stated path.
+    OpenApiDocument(PathBuf),
+    /// This package's ORM maps types to tables — `stack_labels` already names
+    /// which one (`20-schema-entities.md` §ORM).
+    OrmEntities(OrmKind),
+    /// A `.proto` / GraphQL schema tree.
+    SchemaTree(PathBuf),
+    /// A generated client, so its call sites carry operation identities rather
+    /// than path strings.
+    GeneratedClient { package: String, from: Option<PathBuf> },
+}
+```
+
+`stack_labels` already exists and is content-derived, so `scan_for` is mostly a
+projection of a fact the adapter already reads rather than new detection.
+
+## 5c. The full cycle
+
+The stages exist. Two are missing and both slot into machinery already built —
+the task queue's `blocked_by`, which is how `DetectCommunities` is already held
+until every `ProcessFile` finishes, and which is the sole writer of
+`folders.status = 'indexed'`.
+
+```
+ScanRoot
+  └─ ProcessGitFolder                     a repo is found
+       ├─ ProcessManifest                 package, deps, role,
+       │                                  classify_path, scan_for      ← §4, §5b
+       └─ ProcessRepoFiles
+            └─ ProcessFile  × N           walk + per-file ladder
+                 │
+            ╔════╧═════════════════════════════════════════════╗
+            ║  ResolveScope        NEW — blocked_by(file_ids)  ║  ← §3
+            ║  every file read, so the scope is complete:      ║
+            ║  place what the ladder left open, with a rung    ║
+            ║  of its own or a reason                          ║
+            ╚════╤═════════════════════════════════════════════╝
+                 │
+       EmbedNodes + DetectCommunities      repo complete → 'indexed'
+                 │
+            ╔════╧═════════════════════════════════════════════╗
+            ║  ResolveCrossRepo    NEW — blocked_by(repos)     ║  ← §5
+            ║  join publisher to consumer on the contract key  ║
+            ╚══════════════════════════════════════════════════╝
+```
+
+Three things this ordering settles.
+
+**`ResolveScope` goes BEFORE the folder is marked indexed.** `DetectCommunities`
+is the sole writer of `'indexed'`, and a folder announced complete over a graph
+that still has placeable edges open is announcing the wrong thing. It becomes
+one more entry in the same `blocked_by` chain.
+
+**`ResolveCrossRepo` is scoped to the ROOT, not to a repo.** It cannot be a
+repo-complete step, because the other side may not be scanned yet. Its input is
+the set of indexed repos, and it must be re-runnable: a repo indexed later
+supplies a consumer for a publisher already on disk. That makes it closer to
+`DetectCommunities` — a whole-scope derivation — than to a file task.
+
+**It must say what it could not join.** A published document with no consumer in
+the scan is an INVENTORY entry, not a connection, and the surface has to render
+those differently or it will read as "nothing depends on this API" when the
+truth is "the consumer is not indexed". `unresolved_reason` already has the
+vocabulary for exactly this distinction — `external_boundary` is a refusal, not
+a fault.
+
+`indexer/cross_repo.rs` currently exists and is **empty** — a one-line
+placeholder. That is where this lands.
+
 ## 6. Sequence
 
+0. **Done:** `quality/` groups `acceptance`, `reachability` and `corpus`, each
+   named for what it is.
 1. **Move `adapters/manifest/` → `indexer/manifests/`.** Mechanical, no
    behaviour change, and it is what makes the rest read as one layer. Do it
    first so later diffs are about behaviour.
@@ -240,7 +373,11 @@ than made to look like a connection.
 4. **`ScopeResolver`** (#193), with `SettledByScope`. Gate: this repo's placed
    edges cross a crate boundary, and the 9,025 verdict-less import edges carry a
    verdict — either placed, or refused with a reason.
-5. **`contracts`**, in-repo first (handler ↔ operation), cross-repo second.
+5. **`scan_for` + `contracts`** (§5b), publisher side first — it is the side
+   the corpus actually has.
+6. **`ResolveCrossRepo`** (§5c) into `indexer/cross_repo.rs`, which is an empty
+   placeholder today. Gate: the first edge in this graph that crosses a
+   repository, and a stated count of publishers with no consumer indexed.
 
 Steps 1–3 are independent and can run in any order. 4 is the one that changes
 what the graph can answer; 5 is the one that changes what it is *about*.
