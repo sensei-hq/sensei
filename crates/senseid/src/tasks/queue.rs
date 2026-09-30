@@ -86,24 +86,53 @@ impl TaskQueue {
         id
     }
 
-    /// Like [`enqueue`], but a no-op returning `None` when a task with the same
-    /// `(kind, folder_path, path)` is already pending, blocked, or running — the
-    /// single-writer guard (D6e / W5). The dedup check and the insert happen
-    /// under **one** lock acquisition, so two concurrent callers can't both slip
-    /// a duplicate past the guard (the check-then-enqueue race). Enqueue sites
-    /// that must never double-scan a folder/file (ScanRoot / ProcessGitFolder /
-    /// ProcessFile) use this instead of [`enqueue`].
+    /// Like [`enqueue`], but a no-op returning `None` when an already-queued twin
+    /// COVERS this request — the single-writer guard (D6e / W5). The check and the
+    /// insert happen under **one** lock acquisition, so two concurrent callers
+    /// can't both slip a duplicate past the guard (the check-then-enqueue race).
+    /// Enqueue sites that must never double-scan a folder/file (ScanRoot /
+    /// ProcessGitFolder / ProcessFile) use this instead of [`enqueue`].
+    ///
+    /// COVERAGE IS NOT IDENTITY, and the difference is `force`. A twin matches on
+    /// `(kind, folder_path, path)`, but it only *covers* this request if it is at
+    /// least as forceful: a forced pass re-parses everything an unforced one
+    /// would, and an unforced pass does not.
+    ///
+    /// The key used to be the triple alone. Because the reconcile tick keeps an
+    /// unforced `ProcessGitFolder` queued for every repository, a user's
+    /// `--force` always arrived behind one and was dropped — returning `None`
+    /// with no log while `/api/scan` echoed `"forced": true` to the caller.
+    /// Measured 2026-09-30: `mark_folder_unparsed`'s log line appeared zero times
+    /// in 2 GB of daemon log. No force had ever run.
     pub async fn enqueue_unique(&self, task: Task) -> Option<u64> {
         let mut state = self.inner.lock().await;
+        let force = task.force;
         let matches = |t: &Task| {
             t.kind == task.kind && t.folder_path == task.folder_path && t.path == task.path
         };
-        let dup = state.pending.iter().any(matches)
-            || state.blocked.iter().any(matches)
-            || state.running.values().any(matches);
-        if dup {
-            return None; // guard drops the lock on return
+
+        if state
+            .pending
+            .iter()
+            .chain(state.blocked.iter())
+            .chain(state.running.values())
+            .any(|t| matches(t) && (t.force || !force))
+        {
+            return None; // covered; the guard drops the lock on return
         }
+
+        // Not covered, and `force` is the only reason it isn't. A twin still
+        // WAITING can be upgraded in place — cheaper and more correct than a
+        // second pass over the same folder, which is the other way to lose.
+        let st = &mut *state;
+        if let Some(t) = st.pending.iter_mut().chain(st.blocked.iter_mut()).find(|t| matches(t)) {
+            t.force = true;
+            return Some(t.id);
+        }
+
+        // Only a RUNNING twin is left. Its handler already read `force`, so
+        // mutating it would change nothing a worker can still see — the forced
+        // request has to be admitted as a task of its own.
         let id = self.enqueue_locked(&mut state, task);
         drop(state);
         self.notify.notify_one();
@@ -766,6 +795,87 @@ mod tests {
             .enqueue_unique(Task::new(running.kind.clone(), &running.folder_path, &running.path))
             .await;
         assert!(dup_running.is_none(), "a running task still dedupes a re-enqueue");
+    }
+
+    /// A FORCED task must not be swallowed by an unforced twin.
+    ///
+    /// The dedup key was `(kind, folder_path, path)` — `force` was not in it. The
+    /// reconcile tick keeps an unforced `ProcessGitFolder` queued for every repo,
+    /// so a user's `sensei scan --force <repo>` always landed behind one and was
+    /// dropped: `enqueue_unique` returned `None` and the flag went nowhere.
+    ///
+    /// Measured 2026-09-30: `"forced rescan: files reopened for parsing"` — the
+    /// line `mark_folder_unparsed` logs on EVERY force — appeared zero times in
+    /// 2 GB of daemon log, while `/api/scan` was happily echoing `"forced":true`
+    /// back to the caller. The echo exists precisely because a silently-ignored
+    /// force is the worst outcome; it was being ignored one layer below the echo.
+    ///
+    /// Mutation that must break this test: drop the `t.force || !force` term from
+    /// the coverage predicate, so any twin covers a forced request again.
+    #[tokio::test]
+    async fn a_forced_task_is_not_dropped_behind_an_unforced_twin() {
+        let q = TaskQueue::new();
+
+        let first = q.enqueue_unique(Task::new(TaskKind::ProcessGitFolder, "repo", "repo")).await;
+        assert!(first.is_some(), "the unforced task is admitted");
+
+        let forced = q
+            .enqueue_unique(Task::new(TaskKind::ProcessGitFolder, "repo", "repo").forced(true))
+            .await;
+        assert!(forced.is_some(), "a FORCED task is not a duplicate of an unforced one");
+
+        // UPGRADED IN PLACE, not duplicated: running the same folder twice would
+        // be the other way to lose, and it doubles the work it was asked to do once.
+        assert_eq!(q.status().await.pending, 1, "the twin is upgraded, not duplicated");
+        let t = q.next_task().await;
+        assert!(t.force, "the task the worker receives must carry the force flag");
+    }
+
+    /// The reverse does NOT admit: an unforced request is fully covered by a
+    /// forced twin, because a forced pass re-parses everything the unforced one
+    /// would have.
+    ///
+    /// Mutation that must break this test: make the predicate `t.force == force`,
+    /// which would let an unforced twin in behind a forced one and scan twice.
+    #[tokio::test]
+    async fn an_unforced_task_behind_a_forced_twin_is_still_dropped() {
+        let q = TaskQueue::new();
+        q.enqueue_unique(Task::new(TaskKind::ProcessGitFolder, "repo", "repo").forced(true))
+            .await
+            .expect("the forced task is admitted");
+
+        let plain = q.enqueue_unique(Task::new(TaskKind::ProcessGitFolder, "repo", "repo")).await;
+        assert!(plain.is_none(), "a forced twin already covers an unforced request");
+        assert_eq!(q.status().await.pending, 1);
+
+        // And two forced requests still collapse to one.
+        let again = q
+            .enqueue_unique(Task::new(TaskKind::ProcessGitFolder, "repo", "repo").forced(true))
+            .await;
+        assert!(again.is_none(), "an identical forced twin is still a duplicate");
+        assert_eq!(q.status().await.pending, 1);
+    }
+
+    /// A RUNNING twin cannot be upgraded — it already read `force` when the
+    /// handler started — so a forced request must be admitted as its own task.
+    ///
+    /// Mutation that must break this test: upgrade `running` in place and return
+    /// `Some(id)`. The mutation of a task already past its force check is
+    /// invisible, and the force silently never happens.
+    #[tokio::test]
+    async fn a_forced_task_behind_a_running_unforced_twin_is_admitted() {
+        let q = TaskQueue::new();
+        q.enqueue_unique(Task::new(TaskKind::ProcessGitFolder, "repo", "repo"))
+            .await
+            .expect("admitted");
+        let running = q.next_task().await;
+        assert!(!running.force, "precondition: the running twin is unforced");
+
+        let forced = q
+            .enqueue_unique(Task::new(TaskKind::ProcessGitFolder, "repo", "repo").forced(true))
+            .await;
+        assert!(forced.is_some(), "a running unforced twin cannot satisfy a forced request");
+        assert_eq!(q.status().await.pending, 1, "admitted as a new task, since it cannot upgrade");
     }
 
     #[tokio::test]

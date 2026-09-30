@@ -27,17 +27,28 @@ worth anything.
 database**: `mark_folder_unparsed` sets `parsed_at = NULL` on every file of the
 folder, and `list_unparsed_files` then returns them. The flag is the work queue.
 
-Measured consequence on this machine (2026-09-30): a forced scan at a watch root
-left **86,869 of 95,590 files** flagged unparsed. The run was interrupted. That
-flag is persisted, so it survived a daemon restart, and the boot reconcile tick
-rediscovered and re-enqueued the entire population. **There was no way to cancel
-the run** — the only mechanism that would have worked was stamping `parsed_at`
-on ~84,500 files to a time they were never parsed at, which is precisely the
-plausible-but-wrong write the DRY/no-fabrication rule forbids: it makes the
-mtime gate skip files that genuinely need re-parsing.
+Measured consequence on this machine (2026-09-30): **86,869 of 95,590 files** sat
+flagged unparsed, and that flag is persisted, so it survived a daemon restart and
+the boot reconcile tick re-enqueued the entire population. **There was no way to
+cancel the run** — the only mechanism that would have worked was stamping
+`parsed_at` on ~84,500 files to a time they were never parsed at, which is
+precisely the plausible-but-wrong write the no-fabrication rule forbids: it makes
+the gate skip files that genuinely need re-parsing.
 
-An interrupted force therefore leaves the index in a state that is
-indistinguishable from "everything is stale", forever, with no owner.
+**CORRECTION (same day, after root-causing it).** That backlog was first
+attributed here to an *interrupted force*. It was not. No force had ever run —
+`enqueue_unique` was dropping every forced task behind the reconcile tick's
+unforced twin, and `mark_folder_unparsed`'s log line appeared zero times in 2 GB
+of daemon log. 55,501 of those files were reset by the STRUCTURE pass writing the
+barrier sentinel over already-parsed rows. Both of those are now fixed (see
+`a_second_scan_of_an_unchanged_repo_keeps_the_parse_state` and
+`a_forced_task_is_not_dropped_behind_an_unforced_twin`).
+
+What survives the correction is the design point below, and it is why the
+misattribution was easy to make: because force is expressed as a DB mutation,
+"who cleared this flag" has no answer after the fact. An interrupted force still
+leaves the index indistinguishable from "everything is stale", forever, with no
+owner — that part was never about which writer did it.
 
 **The fix — force rides the task, never the table.** Replace
 `mark_folder_unparsed` + `list_unparsed_files` with one query that takes the
