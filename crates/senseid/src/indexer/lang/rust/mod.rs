@@ -39,6 +39,105 @@ use crate::indexer::resolve::{Grammar, Root};
 pub struct RustAdapter;
 
 impl LanguageAdapter for RustAdapter {
+    /// `use a::b::C` is two readings and the importing file states neither: the
+    /// last segment may be a MODULE or an ITEM inside the one before it.
+    /// `specifier_names_a_module` refuses to guess, so the walk emits no
+    /// reference at all — correct per file, and the reason 9,025 import edges
+    /// in the live graph carry no verdict.
+    ///
+    /// Here the whole scope is known, so the question is decidable: build both
+    /// identities and ask which one this scan actually declared.
+    ///
+    /// EXACTLY ONE, or nothing. If both readings resolve, the path is genuinely
+    /// ambiguous — a module and an item of the same name — and placing either
+    /// would be right half the time, which is the guess R4 ranks below a miss.
+    /// If neither resolves the target is outside this scan, which is a boundary
+    /// and not a fault.
+    fn settle_imports(
+        &self,
+        facts: &crate::indexer::facts::FileFacts,
+        declared: &std::collections::BTreeSet<Fqn>,
+    ) -> Vec<crate::indexer::facts::Reference> {
+        use crate::indexer::facts::{
+            Binding, Evidence, Reason, RefKind, Reference, Resolution, Rung,
+        };
+        use crate::indexer::fqn::{Form, Reach, refer};
+        use crate::indexer::lang::common::specifier_names_a_module;
+
+        let Ok(from) = self.file_fqn(&facts.package, &facts.module, &facts.path) else {
+            return Vec::new();
+        };
+
+        facts
+            .imports
+            .iter()
+            // Only the ones the walk refused. An import that already produced a
+            // reference has been through the ladder and is not this pass's to
+            // re-answer — two producers for one use site is how they disagree.
+            .filter(|i| !specifier_names_a_module(Language::Rust, &i.binds))
+            .filter(|i| matches!(i.binds, Binding::Name(_)))
+            .filter_map(|import| {
+                let segs: Vec<&str> =
+                    import.path.trim().split("::").filter(|s| !s.is_empty()).collect();
+                let (module, leaf) = receiver::internal_use_module(&facts.module, &segs)?;
+                if leaf.is_empty() {
+                    return None;
+                }
+                // THE TWO READINGS DIFFER ONLY IN THE REACH SEGMENT. A file at
+                // module path `b::Thing` mints an identity whose MODULE segment
+                // is the parent (`b`) and whose NAME is the leaf (`Thing`) —
+                // exactly the shape an item takes, with `mod` as the reach
+                // instead of `item`. So `use crate::b::Thing` asks which of the
+                // two reaches this scan actually holds, and `internal_use_module`
+                // has already split the path the way both forms need.
+                //
+                // (Spelled in words rather than as literal identities: this file
+                // is under the guard that forbids building an fqn by formatting,
+                // and that guard reads source text.)
+                let one = |reach| {
+                    refer(&Form::Item {
+                        lang: Language::Rust,
+                        package: &facts.package,
+                        module: &module,
+                        name: &leaf,
+                        reach,
+                    })
+                    .ok()
+                    .filter(|f| declared.contains(f))
+                };
+                let as_module = one(Reach::Mod);
+                let as_item = one(Reach::Item);
+
+                let target = match (as_module, as_item) {
+                    (Some(fqn), None) | (None, Some(fqn)) => {
+                        Resolution::Resolved { fqn, via: Rung::SettledByScope }
+                    }
+                    // Both, or neither. Named rather than dropped, so the edge
+                    // carries a verdict either way.
+                    (both, _) => Resolution::Unresolved {
+                        reason: if both.is_some() {
+                            Reason::AmbiguousCandidates
+                        } else {
+                            Reason::ExternalBoundary
+                        },
+                        evidence: Evidence {
+                            name: import.path.clone(),
+                            node_kind: "import".to_string(),
+                            reach: Reach::Item,
+                            saw: Vec::new(),
+                        },
+                    },
+                };
+                Some(Reference {
+                    from: from.clone(),
+                    kind: RefKind::Imports,
+                    at: import.at,
+                    target,
+                })
+            })
+            .collect()
+    }
+
     fn language(&self) -> Language {
         Language::Rust
     }

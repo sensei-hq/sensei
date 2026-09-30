@@ -3116,6 +3116,11 @@ mod tests {
                 "declared_by_its_type",
                 "through_a_glob",
                 "rooted_in_this_package",
+                // The scope pass, between the last rung a FILE can reach on its
+                // own and the first that leaves the indexed source: a second
+                // fact from elsewhere in the scan had to agree, but it lands on
+                // a declaration this scan actually holds.
+                "settled_by_scope",
                 "fully_qualified_external",
                 "in_the_prelude",
             ],

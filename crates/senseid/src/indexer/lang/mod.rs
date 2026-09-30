@@ -393,6 +393,32 @@ pub trait LanguageAdapter: Send + Sync {
     /// Declaring it makes the relationship queryable, and explains why a
     /// `.svelte` file's symbols are filed under the TypeScript language rather
     /// than a Svelte one.
+    /// **THE SCOPE PASS.** Place the imports the per-file ladder refused,
+    /// now that every declaration in the scope is known.
+    ///
+    /// Called once per file AFTER the whole repository is read, with `declared`
+    /// holding every identity this scan minted. That completeness is what makes
+    /// it sound where a rung is not: `World::scanned` is deliberately never
+    /// read because it GROWS as the pass runs and a rung consulting it would
+    /// answer differently depending on file order (R6). This set does not grow
+    /// — it is the finished product of the pass before.
+    ///
+    /// Default: none. A language whose specifiers are unambiguous has nothing to
+    /// settle, and saying so by not overriding is better than an empty override
+    /// in every adapter. Rust overrides it because `use a::b::C` is genuinely
+    /// two readings and only the scope can say which.
+    ///
+    /// It may only PLACE what the walk already saw. Minting a use site here
+    /// would make this a second producer, which is the thing the tree spent
+    /// 8,411 lines removing.
+    fn settle_imports(
+        &self,
+        _facts: &FileFacts,
+        _declared: &std::collections::BTreeSet<Fqn>,
+    ) -> Vec<crate::indexer::facts::Reference> {
+        Vec::new()
+    }
+
     fn host(&self) -> Option<&'static str> {
         None
     }
