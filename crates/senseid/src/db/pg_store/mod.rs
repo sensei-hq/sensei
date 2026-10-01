@@ -623,6 +623,35 @@ impl PgStore {
         &self.pool
     }
 
+    /// Close the pool: stop handing out connections, then wait for the
+    /// checked-out ones to come back and be closed properly.
+    ///
+    /// Until #212 nothing ever called this. The graceful-shutdown future in
+    /// `api::server` awaited only SIGINT, while both real stop paths
+    /// (`sensei stop` and `brew services stop sensei`) send SIGTERM, so the
+    /// daemon was killed outright and its backends were left for Postgres to
+    /// reap on its own schedule. On 2026-09-30 that left 56 orphaned backends
+    /// alive with no owning process, the oldest close to three hours old,
+    /// against a `max_connections` of 100 — over half the server's budget held
+    /// by nothing.
+    ///
+    /// Idempotent: sqlx's `Pool::close` may be awaited on multiple handles
+    /// concurrently. A second call resolves immediately ONCE the pool has
+    /// drained; while a connection is still checked out it waits alongside the
+    /// first, which is the same wait, not a new one.
+    ///
+    /// IT CAN WAIT FOR EVER, AND THE CALLER MUST BOUND IT. `Pool::close`
+    /// returns a future that completes only when every checked-out connection
+    /// has been returned, and it carries no timeout of its own. A task stuck on
+    /// a long query would hold shutdown open indefinitely — and because the
+    /// SIGTERM handler is process-wide and permanent, a second SIGTERM would be
+    /// caught too, leaving the daemon killable only by SIGKILL. Call this inside
+    /// a `tokio::time::timeout` so a stuck connection degrades to the old
+    /// kill-outright behaviour instead of an unkillable process.
+    pub async fn close(&self) {
+        self.pool.close().await;
+    }
+
     // ── Config ────────────────────────────────────────────────────────
 
     /// Columns of `activity.runs` in `Run` field order. `timestamptz` columns
@@ -858,6 +887,21 @@ impl PgStore {
     /// to. Tuple: `(standalone_id, standalone_project, git_id, git_project,
     /// git_root, git_abs_path)`. Shared by the heal (which re-absorbs each) and
     /// [`Self::detect_nested_standalone_roots`] (which reports read-only).
+    /// Every `standalone` folder sitting INSIDE a git repository — mis-scoped by
+    /// structure, whatever its project says.
+    ///
+    /// This used to also require `s.project_id IS DISTINCT FROM g.project_id`,
+    /// using a divergent project as the evidence that the standalone was
+    /// mis-scoped. That proxy is now obsolete and actively wrong: a folder
+    /// inherits its project from its repo anchor at write time (#211), so a
+    /// nested standalone's project MATCHES its enclosing repo by construction
+    /// and the old predicate matched nothing. The repair silently stopped
+    /// happening — caught by `audit_repairs_nested_standalone`, which asserts
+    /// the kind is repaired, not just the project.
+    ///
+    /// Structure is the better rule anyway. A standalone inside a repo is
+    /// mis-scoped because the repo owns that subtree, and that is true whether
+    /// or not the two happen to name the same project.
     #[allow(clippy::type_complexity)]
     async fn nested_standalone_candidates(
         &self,
@@ -875,7 +919,6 @@ impl PgStore {
                 AND s.abs_path <> g.abs_path
                 AND starts_with(s.abs_path, g.abs_path || '/')
               WHERE s.kind = 'standalone'::sensei.folder_kind
-                AND s.project_id IS DISTINCT FROM g.project_id
               ORDER BY s.id, length(g.abs_path) DESC",
         )
         .fetch_all(&self.pool)
@@ -1062,5 +1105,39 @@ impl PgStore {
         ids.sort_unstable();
         ids.dedup();
         Ok(ids)
+    }
+}
+
+#[cfg(test)]
+mod pool_lifecycle_tests {
+    use super::PgStore;
+
+    /// Shutdown runs this twice in the worst case (the signal handler and a
+    /// later drop path both reaching for it), so the second call is asserted,
+    /// not assumed.
+    #[tokio::test]
+    async fn closing_the_store_closes_the_pool_and_is_idempotent() {
+        let Ok(pg) = PgStore::connect_test().await else {
+            println!("no database — skipping");
+            return;
+        };
+
+        // A live pool first, so a closed one afterwards means `close` did it
+        // rather than the connection never having worked.
+        assert!(!pg.pool().is_closed(), "a freshly connected pool is open");
+        sqlx_core::query::query("SELECT 1")
+            .execute(pg.pool())
+            .await
+            .expect("a live pool answers a trivial query");
+
+        pg.close().await;
+
+        assert!(pg.pool().is_closed(), "close() must close the sqlx pool");
+        let after = sqlx_core::query::query("SELECT 1").execute(pg.pool()).await;
+        assert!(after.is_err(), "a closed pool must refuse to hand out connections");
+
+        // Idempotence: the second close must return, not panic or hang.
+        pg.close().await;
+        assert!(pg.pool().is_closed(), "a second close() leaves the pool closed");
     }
 }
