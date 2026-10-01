@@ -650,15 +650,35 @@ async fn tag_file_nodes_by_framework_kind_aggregates_symbol_kinds() {
 }
 
 /// Create a unique test folder for FK tests. Uses suffix for isolation.
+///
+/// CARRIES A REPOSITORY, because every folder does. Since da504332 a folder
+/// inherits `repository_id` from its anchor at write time — measured 13,722 of
+/// 13,722 on the live DB — so a folder without one is a state production can no
+/// longer produce. Modelling it here is not a harmless simplification: it is
+/// what let `version_conflicts_view_flags_multi_version_pins_and_excludes_local`
+/// keep asserting on a view that, resolved through `folder_projects`, could
+/// never have matched its fixture.
+///
+/// The repository is keyed on `suffix`, so the same suffix returns the same
+/// repository exactly as it returns the same folder.
 pub(crate) async fn create_test_folder(s: &PgStore, suffix: &str) -> uuid::Uuid {
     use sqlx_core::query_as::query_as;
     s.execute_raw(
             "INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING"
         ).await.unwrap();
     let abs_path = format!("/_test/{}", suffix);
+    let (rid,): (uuid::Uuid,) = query_as(
+        "INSERT INTO sensei.repositories(repo_key, name) VALUES($1, $2) \
+         ON CONFLICT(repo_key) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+    )
+    .bind(format!("test/{suffix}"))
+    .bind(suffix)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     let row: (uuid::Uuid,) = query_as(
-            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id"
-        ).bind(suffix).bind(&abs_path).fetch_one(s.pool()).await.unwrap();
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, repository_id) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name, repository_id = EXCLUDED.repository_id RETURNING id"
+        ).bind(suffix).bind(&abs_path).bind(rid).fetch_one(s.pool()).await.unwrap();
     row.0
 }
 
@@ -666,15 +686,15 @@ pub(crate) async fn create_test_folder(s: &PgStore, suffix: &str) -> uuid::Uuid 
 /// wiring the folder to the project. Used by the pattern tests since
 /// detected_patterns is project-scoped (#82) and needs a non-null
 /// project_id, while `list_patterns_by_folder` still keys on folder.
+///
+/// Goes through `set_folder_project`, the production API, so the membership
+/// reaches `project_repositories` as well as `folders.project_id`. A raw
+/// `UPDATE … SET project_id` writes only the half that `folder_projects` does
+/// not read.
 async fn create_test_project_and_folder(s: &PgStore, suffix: &str) -> (uuid::Uuid, uuid::Uuid) {
     let pid = s.create_project(&format!("_test:{}", suffix), None, None).await.unwrap();
     let fid = create_test_folder(s, suffix).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(pid)
-        .bind(fid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&fid, &pid, "root", None).await.unwrap();
     (pid, fid)
 }
 
@@ -6423,26 +6443,20 @@ async fn version_conflicts_view_flags_multi_version_pins_and_excludes_local() {
     // Two folders in the same project, different versions.
     let fid_a = create_test_folder(&s, &format!("vc-a-{suffix}")).await;
     let fid_b = create_test_folder(&s, &format!("vc-b-{suffix}")).await;
-    // Attach folders to the project.
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id IN ($2, $3)")
-        .bind(pid)
-        .bind(fid_a)
-        .bind(fid_b)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    // Attach folders to the project THROUGH THE PRODUCTION API, so membership
+    // reaches `project_repositories`. The view resolves via `folder_projects`,
+    // which reads only the junction — a raw `UPDATE … SET project_id` leaves it
+    // with nothing to find and the assertion below would be measuring an empty
+    // set rather than the exclusion rule it names.
+    s.set_folder_project(&fid_a, &pid, "root", None).await.unwrap();
+    s.set_folder_project(&fid_b, &pid, "root", None).await.unwrap();
 
     s.upsert_referenced_library(&fid_a, &lib, Some("1.2.0"), None).await.unwrap();
     s.upsert_referenced_library(&fid_b, &lib, Some("1.3.0"), None).await.unwrap();
 
     // Third folder pins a local-source variant. This must be excluded.
     let fid_local = create_test_folder(&s, &format!("vc-local-{suffix}")).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(pid)
-        .bind(fid_local)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&fid_local, &pid, "root", None).await.unwrap();
     s.upsert_referenced_library(
         &fid_local,
         &lib,

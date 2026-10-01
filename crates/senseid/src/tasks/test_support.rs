@@ -280,6 +280,13 @@ pub(crate) async fn seed_project_folder_at(
         .execute(pg.pool())
         .await
         .unwrap();
+    // AND THE JUNCTION, through the production primitive. Since #210 membership
+    // lives in `sensei.project_repositories`, and `folder_projects` — which
+    // every migrated view resolves through — reads ONLY that. A fixture that
+    // sets `folders.project_id` alone models a state production can no longer
+    // produce, so the view under test reads nothing and the test asserts
+    // against an empty set it mistakes for a real one.
+    pg.link_project_repository(&pid, &rid).await.unwrap();
     (pid, fid)
 }
 
@@ -396,6 +403,11 @@ pub(crate) async fn link_repository_to_project(
     .execute(pg.pool())
     .await
     .unwrap();
+    // AND THE JUNCTION, through the production primitive — see
+    // `seed_project_folder_at`. `folder_projects` reads only
+    // `project_repositories`, so setting `folders.project_id` alone leaves the
+    // view under test with nothing to find.
+    pg.link_project_repository(project_id, repository_id).await.unwrap();
 }
 
 /// A repository for tests that need a valid `repository_id` to hang metric rows
@@ -440,6 +452,11 @@ pub(crate) async fn seed_bare_repository(
     .execute(pg.pool())
     .await
     .unwrap();
+    // AND THE JUNCTION, through the production primitive — see
+    // `seed_project_folder_at`. `folder_projects` reads only
+    // `project_repositories`, so setting `folders.project_id` alone leaves the
+    // view under test with nothing to find.
+    pg.link_project_repository(project_id, &rid).await.unwrap();
     rid
 }
 
@@ -477,6 +494,13 @@ pub(crate) async fn seed_second_repository(
         .execute(pg.pool())
         .await
         .unwrap();
+    // AND THE JUNCTION, through the production primitive. Since #210 membership
+    // lives in `sensei.project_repositories`, and `folder_projects` — which
+    // every migrated view resolves through — reads ONLY that. A fixture that
+    // sets `folders.project_id` alone models a state production can no longer
+    // produce, so the view under test reads nothing and the test asserts
+    // against an empty set it mistakes for a real one.
+    pg.link_project_repository(project_id, &rid).await.unwrap();
     (fid, rid)
 }
 
