@@ -7,24 +7,48 @@
  * `StructureDiagram` MOUNTING without a runtime throw, and the level control
  * genuinely re-querying rather than re-rendering the same payload.
  *
- * Whether the throwaway `sensei_e2e` DB has an indexed graph depends on prior
- * runs, so the body waits for EITHER the diagram OR the honest empty state —
- * exactly one always renders, and both prove the fetch settled without
- * collapsing into the other. What is NEVER acceptable is the error state, which
- * is asserted absent: a 500 or an unreachable daemon is a real failure here, not
- * an environmental one.
+ * The throwaway `sensei_e2e` DB is dropped before a run and nothing indexes
+ * into it, so the seeded project has no graph and the EMPTY state is what
+ * renders here. That is deliberate rather than a shortfall: empty is a terminal
+ * state this screen has to get right, and getting it right means not being
+ * reached by a failure. The body therefore waits for either the diagram or the
+ * empty state and asserts the ERROR state is absent — a 500 or an unreachable
+ * daemon is a real failure here, never an environmental one.
+ *
+ * The collapse test needs a real graph and SKIPS without one, with its reason
+ * stated. Graph CONTENT is verified against the live daemon on sensei's own
+ * index instead (1,751 file nodes -> 150 module nodes), which is the corpus
+ * that makes the assertion mean something.
  */
 
 import { test, expect } from '../fixtures';
 import {
-  navigateTo, navigateToScreen, daemonGet, DAEMON_URL,
+  navigateTo, navigateToScreen, daemonGet, daemonPost, DAEMON_URL,
   installErrorTrap, readErrors, type ErrBuf,
 } from '../helpers';
 
-async function anyProjectId(): Promise<string> {
-  const projects = await daemonGet<Array<{ id: string; name: string }>>('/api/projects');
-  if (!projects.length) throw new Error('e2e daemon has no projects to diagram');
-  return projects[0].id;
+/**
+ * A project to diagram, SEEDED rather than assumed.
+ *
+ * `reset-e2e-db` drops `sensei_e2e` before a run, so a fresh database has no
+ * projects at all and a spec that reads `/api/projects[0]` throws before it
+ * tests anything. Reusing whatever a previous run happened to leave behind is
+ * worse than that: it passes or fails depending on history.
+ *
+ * A project with nothing indexed under it is the right fixture here. The graph
+ * CONTENT is verified against the real index at the daemon level; what this
+ * spec covers is that the screen mounts, settles, and lands in a terminal state
+ * — and the empty state is a terminal state this screen must get right.
+ */
+async function seedProjectId(): Promise<string> {
+  const existing = await daemonGet<Array<{ id: string; name: string }>>('/api/projects');
+  const mine = existing.find((p) => p.name === 'e2e-structure');
+  if (mine) return mine.id;
+  const created = await daemonPost<{ ok: boolean; id: string }>('/api/projects', {
+    name: 'e2e-structure',
+    description: 'fixture for the Structure diagram spec',
+  });
+  return created.id;
 }
 
 async function seedSetupComplete(tauriPage: any): Promise<void> {
@@ -68,7 +92,7 @@ test.describe('Project · Diagrams · Structure', () => {
   });
 
   test('mounts, settles out of loading, and never shows the error state', async ({ tauriPage }) => {
-    const id = await anyProjectId();
+    const id = await seedProjectId();
     await navigateToScreen(
       tauriPage,
       `/project/${id}/diagrams/structure`,
@@ -104,7 +128,7 @@ test.describe('Project · Diagrams · Structure', () => {
   });
 
   test('switching to module level re-queries and collapses the graph', async ({ tauriPage }) => {
-    const id = await anyProjectId();
+    const id = await seedProjectId();
     await navigateToScreen(
       tauriPage,
       `/project/${id}/diagrams/structure`,
