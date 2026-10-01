@@ -628,16 +628,63 @@ pub(crate) async fn scan_folder(
         return Ok(Json(serde_json::json!({"ok": false, "error": "path not found"})));
     }
 
-    // Enqueue ScanRoot task — runs asynchronously via task workers
-    let mut task = crate::tasks::Task::new(crate::tasks::TaskKind::ScanRoot, "", &root_path);
+    // WHAT WAS ASKED FOR DECIDES THE TASK, rather than everything becoming a
+    // ScanRoot. A path that IS an indexed repository gets `ProcessGitFolder` —
+    // one repo, no `.git` walk of the subtree, no fan-out to its siblings. That
+    // matters most with `--force`: a forced ScanRoot over a path inside
+    // `~/Developer` fans out to every repository beneath it, so scoping by task
+    // kind is what makes "force this one repo" mean it.
+    //
+    // The two lookups are the ones that already exist — `enclosing_watch_root`
+    // and `repo_root_for_path` — and the decision between them is pure and
+    // tested in `scan_logic::classify_scan_target`.
+    let enclosing = state.pg.enclosing_watch_root(&root_path).await.ok().flatten();
+    let indexed_repo = state.pg.repo_root_for_path(&root_path).await.ok().flatten();
+    let target = crate::tasks::handlers::scan_logic::classify_scan_target(
+        Some(&root_path),
+        indexed_repo.as_ref().map(|(p, _)| p.as_str()),
+        enclosing.as_ref().map(|(_, p)| p.as_str()),
+    );
+
+    use crate::tasks::handlers::scan_logic::ScanTarget;
+    let (kind, task_path) = match &target {
+        // A repository is the indexable unit: a manifest and its resolution are
+        // repo-wide, so half a repo cannot be re-indexed coherently.
+        ScanTarget::Repo(repo) => (crate::tasks::TaskKind::ProcessGitFolder, repo.clone()),
+        ScanTarget::Root(p) | ScanTarget::Subtree { path: p, .. } | ScanTarget::NewRoot(p) => {
+            (crate::tasks::TaskKind::ScanRoot, p.clone())
+        }
+        // Unreachable here — `requested` is non-empty, checked above.
+        ScanTarget::AllRoots => (crate::tasks::TaskKind::ScanRoot, root_path.clone()),
+    };
+
+    let mut task = match kind {
+        crate::tasks::TaskKind::ProcessGitFolder => {
+            crate::tasks::Task::for_folder(kind, &task_path)
+        }
+        _ => crate::tasks::Task::new(kind, "", &task_path),
+    };
     task.force = body.force;
     let task_id = state.task_queue.enqueue(task).await;
 
     // `forced` is echoed so a caller can SEE which kind of scan it got. A force
     // flag that is silently ignored — by an old daemon, say — is the worst
-    // outcome: the caller waits for a rebuild that never happens.
+    // outcome: the caller waits for a rebuild that never happens. `scope` is
+    // echoed for the same reason: "I asked for one repo and it scanned the
+    // world" should be visible in the response, not inferred from the logs.
+    let scope = match &target {
+        ScanTarget::Repo(_) => "repository",
+        ScanTarget::Root(_) => "watch-root",
+        ScanTarget::Subtree { .. } => "subtree",
+        ScanTarget::NewRoot(_) => "new-watch-root",
+        ScanTarget::AllRoots => "all-roots",
+    };
+    if target.creates_a_watch_root() {
+        tracing::info!(path = %task_path, "scan: registering a NEW watch root");
+    }
     Ok(Json(serde_json::json!({
-        "ok": true, "scanning": true, "taskId": task_id, "forced": body.force
+        "ok": true, "scanning": true, "taskId": task_id,
+        "forced": body.force, "scope": scope
     })))
 }
 
