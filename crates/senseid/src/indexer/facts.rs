@@ -723,6 +723,20 @@ pub enum Rung {
     ThroughAGlob,
     /// A path rooted at this package, needing no import.
     RootedInThisPackage,
+    /// The head of the path names a SIBLING package this scan owns the source of.
+    ///
+    /// A dependency puts a sibling crate's root in scope without anything being
+    /// written down, so [`Rung::ThroughAnImport`] has nothing to read and
+    /// `rooted_in_this_package` rejects the head — it accepts only the root
+    /// TOKENS. The external rung then correctly declines, because the package is
+    /// ours. Before this rung existed there was nowhere left to go and the
+    /// reference fell to `NoImportInScope`: measured on sensei 2026-09-30, 11
+    /// occurrences of `sensei_bootstrap::SenseiConfig::from_env` alone.
+    ///
+    /// BELOW [`Rung::RootedInThisPackage`] because the file's own package is the
+    /// narrower, more certain scope. ABOVE `FullyQualifiedExternal` because the
+    /// target being OURS is the stronger claim about where it lives.
+    RootedInAScannedPackage,
     /// The WHOLE SCOPE settled it, after every file was read.
     ///
     /// A path the importing file wrote, whose reading only the complete set of
@@ -757,6 +771,7 @@ impl Rung {
             Self::DeclaredByItsType => "declared_by_its_type",
             Self::ThroughAGlob => "through_a_glob",
             Self::RootedInThisPackage => "rooted_in_this_package",
+            Self::RootedInAScannedPackage => "rooted_in_a_scanned_package",
             Self::SettledByScope => "settled_by_scope",
             Self::FullyQualifiedExternal => "fully_qualified_external",
             Self::InThePrelude => "in_the_prelude",
@@ -772,6 +787,7 @@ impl Rung {
             "declared_by_its_type" => Self::DeclaredByItsType,
             "through_a_glob" => Self::ThroughAGlob,
             "rooted_in_this_package" => Self::RootedInThisPackage,
+            "rooted_in_a_scanned_package" => Self::RootedInAScannedPackage,
             "settled_by_scope" => Self::SettledByScope,
             "fully_qualified_external" => Self::FullyQualifiedExternal,
             "in_the_prelude" => Self::InThePrelude,
@@ -787,6 +803,7 @@ impl Rung {
         Rung::DeclaredByItsType,
         Rung::ThroughAGlob,
         Rung::RootedInThisPackage,
+        Rung::RootedInAScannedPackage,
         Rung::SettledByScope,
         Rung::FullyQualifiedExternal,
         Rung::InThePrelude,

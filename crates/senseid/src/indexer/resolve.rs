@@ -639,6 +639,13 @@ impl<'a> Ladder<'a> {
         if let Placed::Proven(fqn) = self.rooted_in_this_package(&wanted, at) {
             return Resolution::Resolved { fqn, via: Rung::RootedInThisPackage };
         }
+        // BELOW this package's own root and ABOVE the external rung: a sibling
+        // we own outranks a library, and the file's own package outranks a
+        // sibling. The external rung already DECLINES an owned package, so
+        // without this arm the reference had nowhere to go.
+        if let Placed::Proven(fqn) = self.rooted_in_a_scanned_package(&wanted) {
+            return Resolution::Resolved { fqn, via: Rung::RootedInAScannedPackage };
+        }
         if let Placed::Proven(fqn) = self.a_fully_qualified_external(&wanted) {
             return Resolution::Resolved { fqn, via: Rung::FullyQualifiedExternal };
         }
@@ -1125,6 +1132,37 @@ impl<'a> Ladder<'a> {
 
     /// Rung 3. A path that states its own root needs no import: the root word
     /// says where the package-relative part begins.
+    /// A path whose HEAD names a sibling package this scan owns.
+    ///
+    /// A dependency puts a sibling crate's root in scope without any import
+    /// statement, so `through_an_import` has nothing written down to read and
+    /// `rooted_in_this_package` rejects the head — it requires a root TOKEN
+    /// (`crate` / `self` / `super`), which a package name is not. The external
+    /// rung then declines, correctly, because `owned_by_this_scan` says the
+    /// package is ours. This rung is what catches it.
+    ///
+    /// MINTS IN THE PACKAGE THE HEAD NAMES, not the file's own. Minting in the
+    /// use site's package would point the edge at a same-named symbol in the
+    /// CALLER's crate — the R4 defect already recorded for `ArtifactKind`, where
+    /// `senseid` declares one and `dojo_protocol` declares another.
+    ///
+    /// `owned_by_this_scan` rather than a string compare, because a manifest may
+    /// hyphenate a name that source has to spell with an underscore
+    /// (`sensei-bootstrap` / `sensei_bootstrap`) and the two are one package.
+    fn rooted_in_a_scanned_package(&self, wanted: &Wanted) -> Placed {
+        let Some((head, rest)) = wanted.segments.split_first() else {
+            return Placed::Unbound;
+        };
+        // A bare name is not a rooted path — it has no head to own.
+        if rest.is_empty() {
+            return Placed::Unbound;
+        }
+        let Some(owned) = self.owned_by_this_scan(head) else {
+            return Placed::Unbound;
+        };
+        self.identity(owned, rest, wanted.reach)
+    }
+
     fn rooted_in_this_package(&self, wanted: &Wanted, at: Span) -> Placed {
         let Some(head) = wanted.segments.first() else {
             return Placed::Unbound;
@@ -3116,6 +3154,11 @@ mod tests {
                 "declared_by_its_type",
                 "through_a_glob",
                 "rooted_in_this_package",
+                // Still a path the file spelled out, but rooted in a SIBLING
+                // package rather than its own — so it sits immediately below
+                // this package's own root and above everything that needs a
+                // second source or leaves the scan.
+                "rooted_in_a_scanned_package",
                 // The scope pass, between the last rung a FILE can reach on its
                 // own and the first that leaves the indexed source: a second
                 // fact from elsewhere in the scan had to agree, but it lands on
@@ -3180,6 +3223,60 @@ mod tests {
 
     /// Rung 3. A path that roots itself in the package needs no import at all,
     /// and the root word is what says where the module segment starts.
+    /// A path headed by a SIBLING package resolves, with no import statement.
+    ///
+    /// A Cargo dependency puts a sibling crate's root in scope without anything
+    /// being written down, so `through_an_import` has nothing to read and
+    /// `rooted_in_this_package` rejects the head (it accepts only `crate` /
+    /// `self` / `super`). `a_fully_qualified_external` then correctly DECLINES,
+    /// because `owned_by_this_scan` says the package is ours — and before this
+    /// rung existed there was nowhere left to go, so it fell to
+    /// `NoImportInScope`.
+    ///
+    /// Measured on sensei's converged index 2026-09-30: 11 occurrences of
+    /// `sensei_bootstrap::SenseiConfig::from_env` alone, and `cross_package`
+    /// plateaued at 100 — exactly the references written WITH a `use`.
+    ///
+    /// Breaking mutation: delete the `rooted_in_a_scanned_package` arm from the
+    /// ladder — every inline sibling path falls back to `NoImportInScope`.
+    #[test]
+    fn a_path_headed_by_a_sibling_package_is_placed_without_an_import() {
+        let facts = ladder_among(
+            "m",
+            "fn f() { sensei_bootstrap::config::positive_or(None, 7); }",
+            &["sensei-bootstrap"],
+        );
+        // Minted in the package the HEAD names, not the file's own `p`.
+        assert_placed(&facts, "rust·sensei-bootstrap·config·positive_or·item");
+    }
+
+    /// The separator is not the question, and this pins that.
+    ///
+    /// The manifest spells the package `sensei-bootstrap`; rust source must spell
+    /// the identifier `sensei_bootstrap`. `same_package` folds the two, and the
+    /// rung has to consult it rather than compare strings.
+    ///
+    /// Breaking mutation: compare the head to `first_party` with `==` instead of
+    /// `owned_by_this_scan` — every hyphenated crate stops resolving.
+    #[test]
+    fn a_sibling_package_resolves_however_the_manifest_spelled_it() {
+        let hyphen =
+            ladder_among("m", "fn f() { sensei_bootstrap::home_dir(); }", &["sensei-bootstrap"]);
+        assert_placed(&hyphen, "rust·sensei-bootstrap·home_dir·item");
+    }
+
+    /// A package we do NOT own stays external. The new rung must widen
+    /// first-party, never swallow a library.
+    ///
+    /// Breaking mutation: place the rung before the ownership test, or drop the
+    /// test — `tokio::spawn` becomes a first-party edge into a package with no
+    /// source here, which is the false-external defect in reverse.
+    #[test]
+    fn a_package_the_scan_does_not_own_is_still_external() {
+        let facts = ladder_among("m", "fn f() { tokio::spawn(()); }", &["sensei-bootstrap"]);
+        assert_placed(&facts, "lib·tokio·spawn");
+    }
+
     #[test]
     fn a_path_rooted_in_this_package_is_placed_without_an_import() {
         let facts = ladder("m", "fn f() { crate::db::PgStore::connect(); }");
