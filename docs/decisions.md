@@ -12,6 +12,36 @@ updated: 2026-07-20
 
 ---
 
+## 2026-10-01 — Three decisions SUPERSEDED, with Jerry
+
+All three were settled choices documented in the schema. Each was revisited
+because the product moved and the old answer had started to cost more than it
+saved. Recorded here rather than silently re-done, so the next reader finds the
+override and not just the contradiction.
+
+**The standing rule Jerry set while doing this: when an older decision blocks
+progress, ASK — do not engineer around it, and do not blindly inherit it.**
+
+| Decision | Superseded answer | New answer | Why it changed |
+|---|---|---|---|
+| **D-PROJ-JUNCTION** (was D1/D2/D10) | A project aggregates repositories **via the folders junction**; `repositories` has no `project_id`. Membership sat on `folders.project_id`, settable independently on all 13,697 folder rows. | Membership lives in **`sensei.project_repositories (project_id, repository_id)`**. `folders.project_id` is derived, written only by inheritance from the repo anchor. | Nothing enforced that a repository's folders agree, and one had already drifted: the swarco `documentation` checkout's root sat in project `swarco` while its 362 subfolders sat in `documentation`. A junction keyed on the repository makes that unrepresentable. A `project_id` COLUMN on `repositories` was rejected — a repository is keyed on its REMOTE, so two checkouts collapse to one row, and four repositories legitimately serve two projects each (`kavach` in `kavach` + `vite-multi-adapter`, `bridge` in `bridge` + `sparsh`); a column would force each to pick one and drop the other silently. |
+| **D-REPO-ANCHOR** (was I16) | `folders.repository_id` is set **ONLY on the repo-root/checkout folder**; subfolders resolve via nearest ancestor (`repo_anchor_for`). | **Every folder carries its own `repository_id`**, inherited from its anchor at WRITE time. `kind` (`git`/`standalone`/`subtree`) still marks which folder IS the anchor. | `repo_anchor_for` is a set-returning FUNCTION, and a predicate cannot be pushed into a function scan. Measured: `WHERE project = 'sparsh'` planned as a Seq Scan over all 13,715 folders with 13,715 function calls, to answer a question with 45 rows. A migration of eight views onto it was built and adversarially reviewed; **four failed outright** — `structure_edges` 81 ms → ~37 s (~450×), `task_health` ~70× on its own documented query, `project_metrics` made non-auto-updatable which silently broke a production WRITE path. After: 21 ms and 149 ms, via `Bitmap Index Scan on folders_repository_id_idx` — an index that already existed and was unusable only because the column was deliberately under-populated. A materialised view was designed twice and rejected both times: it needs a refresh hook, carries staleness a reader must be told about, and the first version (materialising folder→**project**) would have made a user editing a project see no effect until the next scan. |
+| **D-SCAN-SENTINEL** | A source file's `files` row is written at the stage-3 barrier sentinel (`mtime=0`, empty hash) on every structure pass, so it always "reads as changed" and is certain to be parsed. | The structure pass writes the **real fingerprint**; `parsed_at IS NULL` alone decides what is fanned out. | The sentinel was written over EVERY row on EVERY pass, so an already-parsed file went `content_hash` real → `''`, the upsert saw `IS DISTINCT FROM`, and `parsed_at` was reset. Since that pass reruns on every reconcile tick, watcher batch and FSEvents overflow — and a `cargo build` overflows FSEvents reliably — **an actively worked repository could never finish indexing**. Measured: sensei reached 1,746 of 1,757 files and returned to 0; 55,501 files machine-wide sat at the sentinel. The sentinel was never needed for its stated purpose: `list_unparsed_files` selects on `parsed_at IS NULL`, never on the hash. |
+
+### What these have in common
+
+Each old decision was documented with a reason, and in each case **the reason was
+the most persuasive part of the wrong answer**. The I16 comment read as a
+constraint to design around; it was a choice that had stopped paying. The
+sentinel's comment cited a real past defect (`8d488e2a`) that the current gate no
+longer admits. The folders-junction comment stated a genuine M:N requirement that
+a different shape satisfies better.
+
+So the test for a settled decision is not "is there a reason written down" but
+"does that reason still hold against what is measured today".
+
+---
+
 ## 2026-07-24 — Auto-buildout decisions locked (P0–P5)
 
 Locked with Dev ahead of the phased unattended build-out. Full context:

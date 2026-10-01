@@ -7533,6 +7533,8 @@ async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() 
 
     let repo_path = tkey("inh", "/repo");
     let repo = s.upsert_repo_kind(&root_id, "git", "inh-repo", &repo_path).await.unwrap();
+    let repository = s.upsert_repository("inh-repo", None).await.unwrap();
+    s.link_folder_to_repository(&repo, &repository).await.unwrap();
     s.set_folder_project(&repo, &owner, "root", None).await.unwrap();
 
     // The caller insists on `other`. The repository says `owner`.
@@ -7550,18 +7552,35 @@ async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() 
         .await
         .unwrap();
 
-    let stored: (Option<uuid::Uuid>,) =
-        sqlx_core::query_as::query_as("SELECT project_id FROM sensei.folders WHERE id = $1")
-            .bind(sub)
-            .fetch_one(s.pool())
-            .await
-            .unwrap();
+    let stored: (Option<uuid::Uuid>, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
+        "SELECT project_id, repository_id FROM sensei.folders WHERE id = $1",
+    )
+    .bind(sub)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
 
     assert_eq!(
         stored.0,
         Some(owner),
         "a subfolder was written into a project its repository does not belong to — \
          this is how swarco put 362 folders in the wrong project"
+    );
+
+    // AND the repository itself, which is what removes `repo_anchor_for` from
+    // every read. `repository_id` used to be set ONLY on the anchor, so a
+    // folder's repository could be found only by walking ancestors through a
+    // set-returning function — and a predicate cannot be pushed into a function
+    // scan, which made `WHERE project = $1` a seq scan of all 13,715 folders.
+    // Resolving the anchor ONCE at write time makes every read an index lookup.
+    //
+    // Breaking mutation: drop `repository_id` from the inherited CTE — the
+    // subfolder keeps NULL and the function scan comes back.
+    assert_eq!(
+        stored.1,
+        Some(repository),
+        "a subfolder did not inherit its anchor's repository, so its project can \
+         only be found by walking ancestors at read time"
     );
 
     s.remove_watch_root(&root_id).await.ok();

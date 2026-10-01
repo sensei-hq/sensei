@@ -107,7 +107,23 @@ comment on column folders.props
 comment on column folders.tags
      is 'Array of tag strings for quick filtering. Vocabulary controlled by sensei.tags table.';
 comment on column folders.repository_id
-     is 'FK to sensei.repositories — the global repository this checkout belongs to. Set ONLY on the repo-root/checkout folder (I16); subfolders resolve via nearest ancestor (repo_anchor_for). NULL until the scanner resolves the remote. ON DELETE SET NULL.';
+     is 'FK to sensei.repositories — the global repository this folder belongs to.
+
+SET ON EVERY FOLDER, inherited from its repo anchor at WRITE time by
+upsert_subfolder_kind / upsert_folder. `kind` (git/standalone/subtree) is what
+marks which folder IS the anchor.
+
+SUPERSEDES I16 (2026-10-01, see docs/decisions.md D-REPO-ANCHOR), which set this
+only on the anchor and had subfolders resolve via repo_anchor_for. That is a
+set-returning FUNCTION, and a predicate cannot be pushed into a function scan —
+`WHERE project = $1` seq-scanned all 13,715 folders with 13,715 function calls to
+answer a 45-row question, and four of eight views migrated onto it regressed
+catastrophically (one ~450x). Resolving the anchor once per folder WRITTEN
+instead of per row READ makes every read a Bitmap Index Scan on
+folders_repository_id_idx.
+
+NULL only while the scanner has not yet resolved the owning repository.
+ON DELETE SET NULL.';
 comment on column folders.branch
      is 'The checked-out branch for this checkout folder (develop vs main = two folders, one repository). Metrics-only seam — does NOT make the code graph branch-aware.';
 comment on column folders.modified_at
