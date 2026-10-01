@@ -7509,6 +7509,64 @@ async fn folder_path_alias_resolves_old_paths_after_a_rename() {
 /// Breaking mutation: drop the `kind = 'module'` predicate — ordinary `folder`
 /// rows flood in and every directory becomes a first-party "package", so an
 /// import naming any directory resolves local.
+/// A subfolder upsert CANNOT plant a project that contradicts its repository.
+///
+/// `upsert_subfolder_kind` and `upsert_folder` take `project_id` from the caller,
+/// and `pipeline.rs` already documents the intent as "a module belongs to its
+/// repo's project — the modules inheriting rather than each minting its own".
+/// Taking it by hand is what let the intent be violated: the swarco
+/// `documentation` checkout ended with its root in project `swarco` and its 362
+/// subfolders in `documentation`.
+///
+/// So the stored column is now DERIVED from the repo anchor at write time, and
+/// the caller's value is used only when there is no anchor to inherit from.
+///
+/// Breaking mutation: bind the caller's `project_id` directly again — the
+/// subfolder keeps the contradicting project and swarco becomes representable.
+#[tokio::test]
+async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() {
+    let s = pg_store().await;
+    let root_id =
+        s.add_watch_root(&tkey("inh", "root"), "inh-root", &serde_json::json!([])).await.unwrap();
+    let owner = s.create_project(&tkey("inh", "owner"), None, None).await.unwrap();
+    let other = s.create_project(&tkey("inh", "other"), None, None).await.unwrap();
+
+    let repo_path = tkey("inh", "/repo");
+    let repo = s.upsert_repo_kind(&root_id, "git", "inh-repo", &repo_path).await.unwrap();
+    s.set_folder_project(&repo, &owner, "root", None).await.unwrap();
+
+    // The caller insists on `other`. The repository says `owner`.
+    let sub_path = format!("{repo_path}/src");
+    let sub = s
+        .upsert_subfolder_kind(
+            &root_id,
+            "folder",
+            "src",
+            &sub_path,
+            &sub_path,
+            Some(&repo),
+            Some(&other),
+        )
+        .await
+        .unwrap();
+
+    let stored: (Option<uuid::Uuid>,) =
+        sqlx_core::query_as::query_as("SELECT project_id FROM sensei.folders WHERE id = $1")
+            .bind(sub)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+
+    assert_eq!(
+        stored.0,
+        Some(owner),
+        "a subfolder was written into a project its repository does not belong to — \
+         this is how swarco put 362 folders in the wrong project"
+    );
+
+    s.remove_watch_root(&root_id).await.ok();
+}
+
 /// A folder NEVER carries its own project — it resolves through its repository.
 ///
 /// `folders.project_id` was settable independently on all 13,697 rows, so a

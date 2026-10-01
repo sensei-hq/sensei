@@ -190,15 +190,35 @@ impl PgStore {
         parent_id: Option<&uuid::Uuid>,
         project_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
+        // THE PROJECT IS INHERITED FROM THE REPO ANCHOR, never taken on trust.
+        //
+        // `pipeline.rs` already states the intent — "a module belongs to its
+        // repo's project … the modules inheriting rather than each minting its
+        // own" — but took the value from the caller, so the intent could be
+        // violated. It was: the swarco `documentation` checkout ended with its
+        // root in project `swarco` and its 362 subfolders in `documentation`.
+        //
+        // The caller's value is the FALLBACK, used only when no anchor exists to
+        // inherit from (the repo root's own upsert, which is where the project is
+        // legitimately decided). Anything beneath an anchor takes the anchor's.
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.folders(root_id, kind, status, name, path, abs_path, parent_id, project_id)
-             VALUES($1, $2::sensei.folder_kind, 'indexed'::sensei.folder_status, $3, $4, $5, $6, $7)
+            "WITH inherited AS (
+               SELECT anchor.project_id
+                 FROM sensei.repo_anchor_for($5) ra
+                 JOIN sensei.folders anchor ON anchor.id = ra.repo_folder_id
+                WHERE anchor.abs_path <> $5
+                LIMIT 1
+             )
+             INSERT INTO sensei.folders(root_id, kind, status, name, path, abs_path, parent_id, project_id)
+             VALUES($1, $2::sensei.folder_kind, 'indexed'::sensei.folder_status, $3, $4, $5, $6,
+                    COALESCE((SELECT project_id FROM inherited), $7))
              ON CONFLICT(abs_path) DO UPDATE SET
                 kind = CASE WHEN folders.kind IN ('folder'::sensei.folder_kind, 'module'::sensei.folder_kind)
                             THEN EXCLUDED.kind ELSE folders.kind END,
                 name = EXCLUDED.name,
                 parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
-                project_id = COALESCE(EXCLUDED.project_id, folders.project_id),
+                project_id = COALESCE((SELECT project_id FROM inherited),
+                                      EXCLUDED.project_id, folders.project_id),
                 modified_at = now()
              RETURNING id"
         )
@@ -530,13 +550,27 @@ impl PgStore {
             // member. Leaving it stale was why every folder here kept the
             // `workspace_member` an earlier run wrote, and the derivation
             // silently had no effect.
-            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, parent_id, project_id, workspace_root_id)
-             VALUES($1, $2::sensei.folder_kind, $3, $4, $5, $6, $7, $8)
+            // PROJECT INHERITED FROM THE REPO ANCHOR, for the reason given on
+            // `upsert_subfolder_kind`: taking it from the caller is what let the
+            // swarco checkout put 362 subfolders in a project its repository does
+            // not belong to. The caller's value is the fallback, used only by the
+            // anchor's own upsert — which is where a project is legitimately set.
+            "WITH inherited AS (
+               SELECT anchor.project_id
+                 FROM sensei.repo_anchor_for($5) ra
+                 JOIN sensei.folders anchor ON anchor.id = ra.repo_folder_id
+                WHERE anchor.abs_path <> $5
+                LIMIT 1
+             )
+             INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, parent_id, project_id, workspace_root_id)
+             VALUES($1, $2::sensei.folder_kind, $3, $4, $5, $6,
+                    COALESCE((SELECT project_id FROM inherited), $7), $8)
              ON CONFLICT(abs_path) DO UPDATE SET
                kind = EXCLUDED.kind,
                name = EXCLUDED.name,
                parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
-               project_id = COALESCE(EXCLUDED.project_id, folders.project_id),
+               project_id = COALESCE((SELECT project_id FROM inherited),
+                                     EXCLUDED.project_id, folders.project_id),
                -- ASSIGNED, not COALESCEd. Membership is derived, so a module
                -- dropped from a `workspaces` array must stop reading as a
                -- member; COALESCE would pin the first answer forever.
