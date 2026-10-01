@@ -241,6 +241,25 @@ async fn write_one_repo(
         out.errors.push(format!("link_folder_to_repository: {e}"));
     }
 
+    // AND THE MEMBERSHIP ITSELF, which is a different fact from either link
+    // above. `folders.project_id` says which project a FOLDER claims;
+    // `project_repositories` says which projects a REPOSITORY belongs to, and
+    // since #210 that junction is the only thing `folder_projects` — and so
+    // every view resolving a project — actually reads.
+    //
+    // This write was missing. The scan had both ids in hand right here and
+    // wrote neither into the junction, whose sole writer (`set_folder_project`)
+    // has no production caller at all — every call site is inside `mod tests`.
+    // So the junction held exactly what the one-time 2026-09-30 backfill put
+    // there, and a repository scanned after it resolved to NO project: the inner
+    // join found nothing and the repo's rows vanished from every migrated view,
+    // as an empty result indistinguishable from a genuinely empty one.
+    if let (Some(rid), Some(pid)) = (out.repository_id, project_id)
+        && let Err(e) = pg.link_project_repository(&pid, &rid).await
+    {
+        out.errors.push(format!("link_project_repository: {e}"));
+    }
+
     // ── Stage 2 ──────────────────────────────────────────────────────────
     let stage = events.begin("scan_repo", &abs);
     if let Ok(text) = std::fs::read_to_string(root.join(".gitmodules")) {
@@ -1657,6 +1676,77 @@ mod corpus {
     /// reason stage 2's corpus check is ignored. Run it deliberately:
     ///
     /// ```text
+    /// A SCANNED REPOSITORY REACHES THE JUNCTION, not just `folders.project_id`.
+    ///
+    /// `sensei.project_repositories` is where membership now lives (#210), and
+    /// every view migrated onto `folder_projects` reads it and nothing else. The
+    /// scan path had both ids in hand — `upsert_repository` returns the
+    /// repository, `get_or_create_project_by_name` the project — and wrote
+    /// neither into the junction: the only writer, `set_folder_project`, has no
+    /// production caller at all, every call site being inside `mod tests`.
+    ///
+    /// So the junction held only what the one-time 2026-09-30 backfill put
+    /// there. A repository scanned after it resolved to NO project, and because
+    /// `folder_projects` inner-joins the junction, that repository's rows simply
+    /// ceased to exist in every migrated view — an empty result indistinguishable
+    /// from a genuinely empty one, which is the exact failure the no-fabrication
+    /// rule exists to prevent, in its silent-absence direction.
+    ///
+    /// Asserted on a repository this test creates, so it cannot pass on the
+    /// backfill's residue.
+    ///
+    /// Mutation that must break this test: drop the `link_project_repository`
+    /// call from `write_one_repo`.
+    #[tokio::test]
+    async fn a_scanned_repository_records_its_project_in_the_junction() {
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        // A name unique to this run: a shared `sensei_test` carries other runs'
+        // projects, and a fixed name would let a previous run's junction row
+        // satisfy the assertion.
+        let name = format!("junction{}", uuid::Uuid::new_v4().simple());
+        let repo = tmp.path().join(&name);
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), format!("[package]\nname=\"{name}\"\n")).unwrap();
+
+        let root_id = resolve_watch_root(&pg, tmp.path()).await;
+        let summary =
+            scan_and_write_structure(&pg, tmp.path(), &root_id, StageEvents::none()).await;
+        let written =
+            summary.repos.iter().find(|r| r.repository_id.is_some()).expect("repo written");
+        let repository_id = written.repository_id.expect("repository row");
+
+        let linked: Vec<String> = sqlx_core::query_scalar::query_scalar(
+            "SELECT p.name FROM sensei.project_repositories pr
+               JOIN sensei.projects p ON p.id = pr.project_id
+              WHERE pr.repository_id = $1",
+        )
+        .bind(repository_id)
+        .fetch_all(pg.pool())
+        .await
+        .expect("read junction");
+
+        assert_eq!(
+            linked,
+            vec![name.clone()],
+            "a freshly scanned repository is absent from `project_repositories`, so every view \
+             resolving through `folder_projects` silently drops it"
+        );
+
+        // And the resolution the views actually perform must agree, or the
+        // junction row is present but unreachable.
+        let resolved: Vec<String> = sqlx_core::query_scalar::query_scalar(
+            "SELECT DISTINCT project FROM sensei.folder_projects WHERE folder_id = $1",
+        )
+        .bind(written.folder_id.expect("folder row"))
+        .fetch_all(pg.pool())
+        .await
+        .expect("read folder_projects");
+        assert_eq!(resolved, vec![name], "`folder_projects` cannot resolve the scanned repo");
+    }
+
     /// cargo test -p senseid --lib indexer::pipeline::corpus -- --ignored --nocapture
     /// ```
     ///

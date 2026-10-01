@@ -334,12 +334,40 @@ impl PgStore {
         self.link_project_repository_for_folder(folder_id, project_id).await
     }
 
+    /// Record that `repository_id` belongs to `project_id` — THE primitive, and
+    /// the only statement that writes `sensei.project_repositories`.
+    ///
+    /// Both membership paths go through here: the scan path, which has the two
+    /// ids in hand the moment it creates them, and the user-edit path via
+    /// [`Self::set_folder_project`]. Idempotent, so a rescan costs nothing.
+    pub async fn link_project_repository(
+        &self,
+        project_id: &uuid::Uuid,
+        repository_id: &uuid::Uuid,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.project_repositories (project_id, repository_id) \
+             VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(project_id)
+        .bind(repository_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// Record that the repository owning `folder_id` belongs to `project_id`.
     ///
-    /// Resolves through the repo ANCHOR because `repository_id` is set only on
-    /// the repo-root/checkout folder (I16). A folder under no tracked repository
-    /// records nothing — `repo_anchor_for` never fabricates an anchor, so an
-    /// unattached folder gets no membership rather than a guessed one.
+    /// Reads `folders.repository_id` directly. It used to walk ancestors through
+    /// `repo_anchor_for` because the column was set ONLY on the repo-root folder
+    /// (I16) — that is no longer true: every folder carries its repository,
+    /// inherited from its anchor at write time, which is what made
+    /// `folder_projects` indexable. The walk is now redundant work for the same
+    /// answer.
+    ///
+    /// A folder under no tracked repository records NOTHING rather than guessing
+    /// an anchor — the miss stays a miss.
     pub async fn link_project_repository_for_folder(
         &self,
         folder_id: &uuid::Uuid,
@@ -347,11 +375,8 @@ impl PgStore {
     ) -> Result<(), String> {
         sqlx_core::query::query(
             "INSERT INTO sensei.project_repositories (project_id, repository_id) \
-             SELECT $2, anchor.repository_id \
-               FROM sensei.folders f \
-               JOIN LATERAL (SELECT a.repo_folder_id FROM sensei.repo_anchor_for(f.abs_path) a LIMIT 1) ra ON true \
-               JOIN sensei.folders anchor ON anchor.id = ra.repo_folder_id \
-              WHERE f.id = $1 AND anchor.repository_id IS NOT NULL \
+             SELECT $2, f.repository_id FROM sensei.folders f \
+              WHERE f.id = $1 AND f.repository_id IS NOT NULL \
              ON CONFLICT DO NOTHING",
         )
         .bind(folder_id)
