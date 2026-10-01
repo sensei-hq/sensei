@@ -59,4 +59,4 @@ Common queries:
 comment on column folder_projects.repository_id is
 'Carried on every folder now, inherited from its anchor at write time. `kind` still marks which folder IS the anchor, so nothing the old sparseness encoded was lost.';
 comment on column folder_projects.project_id is
-'From `project_repositories`, never from `folders.project_id`. A folder does not carry its own project; that is what made the swarco drift possible.';
+'From `project_repositories`, never from `folders.project_id`. A folder does not carry its own project; that is what made the client-q drift possible.';

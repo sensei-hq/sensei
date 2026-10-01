@@ -682,6 +682,29 @@ pub(crate) async fn create_test_folder(s: &PgStore, suffix: &str) -> uuid::Uuid 
     row.0
 }
 
+/// A folder with NO repository — the state [`create_test_folder`] deliberately
+/// cannot produce.
+///
+/// `folders.repository_id` is NULLABLE and the production writer guards for it
+/// (`WHERE f.repository_id IS NOT NULL`): a folder whose anchor has no
+/// repository inherits none. So the unattributed bucket stays representable
+/// even though it is currently empty on the live DB, and the views' honest-NULL
+/// behaviour over it is a real property that needs a fixture to assert on.
+///
+/// Use this ONLY to test that behaviour. Everything else wants the default,
+/// which carries a repository exactly as every live folder does.
+pub(crate) async fn create_test_folder_unattributed(s: &PgStore, suffix: &str) -> uuid::Uuid {
+    use sqlx_core::query_as::query_as;
+    s.execute_raw(
+            "INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING"
+        ).await.unwrap();
+    let abs_path = format!("/_test/{}", suffix);
+    let row: (uuid::Uuid,) = query_as(
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name, repository_id = NULL RETURNING id"
+        ).bind(suffix).bind(&abs_path).fetch_one(s.pool()).await.unwrap();
+    row.0
+}
+
 /// Create a unique (project, folder) pair for FK tests that need both,
 /// wiring the folder to the project. Used by the pattern tests since
 /// detected_patterns is project-scoped (#82) and needs a non-null
@@ -5801,8 +5824,12 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
     // exercises capture-before-reclaim directly.)
     // Repo-grain: the capture guard keys on the session's repository, so give the
     // folder a repository and anchor the session to it via repo_folder_id.
+    // `create_test_folder` already seeded `test/{suffix}` for this same suffix, so
+    // this must adopt that row rather than insert a second one under the unique
+    // `repositories_repo_key_key`.
     let (repo_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'prune-del') RETURNING id",
+        "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'prune-del') \
+         ON CONFLICT (repo_key) DO UPDATE SET name = EXCLUDED.name RETURNING id",
     )
     .bind(format!("test/{suffix}"))
     .fetch_one(s.pool())
@@ -13913,15 +13940,19 @@ async fn folder_branch_is_a_typed_column_and_a_graph_nodes_dimension() {
 ///
 /// Both clauses matter. Without the first, grouping by repository is a join the
 /// caller has to re-derive every time. Without the second, a NULL would be
-/// indistinguishable from a fabricated fallback — and `folders.repository_id` is
-/// genuinely sparse (183 of 193 git folders on 2026-09-23), so the unattributed
-/// bucket is a real population and is exactly the query that finds what still
-/// needs attributing.
+/// indistinguishable from a fabricated fallback. `folders.repository_id` is no
+/// longer sparse — every folder inherits one from its anchor at write time, 0 of
+/// 13,722 null on 2026-10-01 — but the column stays NULLABLE and the writer
+/// guards for it, so the unattributed bucket remains representable and the view
+/// must still answer honestly over it. The fixture uses
+/// `create_test_folder_unattributed` precisely because the default can no longer
+/// produce that state.
 #[tokio::test]
 async fn graph_nodes_names_the_repository_and_leaves_an_unattributed_folder_null() {
     let s = pg_store().await;
     let attributed = create_test_folder(&s, &format!("repoA_{}", uuid::Uuid::new_v4())).await;
-    let orphan = create_test_folder(&s, &format!("repoB_{}", uuid::Uuid::new_v4())).await;
+    let orphan =
+        create_test_folder_unattributed(&s, &format!("repoB_{}", uuid::Uuid::new_v4())).await;
 
     let repo_key = format!("example.test/{}", uuid::Uuid::new_v4());
     let (repo_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(

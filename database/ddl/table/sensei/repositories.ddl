@@ -17,8 +17,8 @@ set search_path to sensei, extensions;
 -- the project is owned by the repo-ANCHOR FOLDER — the checkout — and every folder
 -- beneath it DERIVES its project from that anchor. The junction is therefore
 -- per-checkout, not per-folder. Before this, project_id was settable independently
--- on all 13,697 folders and one repository had already drifted: the swarco
--- documentation checkout's root sat in project `swarco` while its 362 subfolders
+-- on all 13,697 folders and one repository had already drifted: the client-q
+-- documentation checkout's root sat in project `client-q` while its 362 subfolders
 -- sat in `documentation`.
 --
 -- folders.repository_id points HERE, and only the repo-root/checkout folder carries

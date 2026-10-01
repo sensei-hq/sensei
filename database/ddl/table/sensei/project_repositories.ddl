@@ -5,8 +5,8 @@ set search_path to sensei, extensions;
 -- DECISION CHANGED 2026-09-30, superseding the folder-grain junction of D1/D2/D10.
 -- Membership used to be `folders.project_id`, settable independently on all 13,697
 -- folder rows, so nothing stopped a repository's folders disagreeing about their
--- project — and one already did: the swarco `documentation` checkout's root sat in
--- project `swarco` while its 362 subfolders sat in `documentation`. A junction
+-- project — and one already did: the client-q `documentation` checkout's root sat in
+-- project `client-q` while its 362 subfolders sat in `documentation`. A junction
 -- keyed on the repository makes that unrepresentable rather than merely discouraged.
 --
 -- M:N IS REAL AND IS NOT A HYPOTHETICAL. A canonical repository is keyed on its
@@ -43,7 +43,7 @@ to pick one and drop the other silently.
 
 WHY NOT ON FOLDERS, which is what this replaces: `project_id` was settable
 independently on all 13,697 folders, so a repository''s folders could disagree —
-and the swarco documentation repo already did, root in one project and its 362
+and the client-q documentation repo already did, root in one project and its 362
 subfolders in another. Keying on the repository makes the drift unrepresentable
 instead of merely unlikely.
 
