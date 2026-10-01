@@ -203,15 +203,16 @@ impl PgStore {
         // legitimately decided). Anything beneath an anchor takes the anchor's.
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "WITH inherited AS (
-               SELECT anchor.project_id
+               SELECT anchor.project_id, anchor.repository_id
                  FROM sensei.repo_anchor_for($5) ra
                  JOIN sensei.folders anchor ON anchor.id = ra.repo_folder_id
                 WHERE anchor.abs_path <> $5
                 LIMIT 1
              )
-             INSERT INTO sensei.folders(root_id, kind, status, name, path, abs_path, parent_id, project_id)
+             INSERT INTO sensei.folders(root_id, kind, status, name, path, abs_path, parent_id, project_id, repository_id)
              VALUES($1, $2::sensei.folder_kind, 'indexed'::sensei.folder_status, $3, $4, $5, $6,
-                    COALESCE((SELECT project_id FROM inherited), $7))
+                    COALESCE((SELECT project_id FROM inherited), $7),
+                    (SELECT repository_id FROM inherited))
              ON CONFLICT(abs_path) DO UPDATE SET
                 kind = CASE WHEN folders.kind IN ('folder'::sensei.folder_kind, 'module'::sensei.folder_kind)
                             THEN EXCLUDED.kind ELSE folders.kind END,
@@ -219,6 +220,12 @@ impl PgStore {
                 parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
                 project_id = COALESCE((SELECT project_id FROM inherited),
                                       EXCLUDED.project_id, folders.project_id),
+                -- COALESCE, so an ANCHOR's own repository_id is never cleared:
+                -- its `inherited` CTE is empty by construction (it excludes the
+                -- folder itself), and overwriting with NULL would unlink the one
+                -- row that actually owns the link.
+                repository_id = COALESCE((SELECT repository_id FROM inherited),
+                                         folders.repository_id),
                 modified_at = now()
              RETURNING id"
         )
@@ -556,21 +563,25 @@ impl PgStore {
             // not belong to. The caller's value is the fallback, used only by the
             // anchor's own upsert — which is where a project is legitimately set.
             "WITH inherited AS (
-               SELECT anchor.project_id
+               SELECT anchor.project_id, anchor.repository_id
                  FROM sensei.repo_anchor_for($5) ra
                  JOIN sensei.folders anchor ON anchor.id = ra.repo_folder_id
                 WHERE anchor.abs_path <> $5
                 LIMIT 1
              )
-             INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, parent_id, project_id, workspace_root_id)
+             INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, parent_id, project_id, workspace_root_id, repository_id)
              VALUES($1, $2::sensei.folder_kind, $3, $4, $5, $6,
-                    COALESCE((SELECT project_id FROM inherited), $7), $8)
+                    COALESCE((SELECT project_id FROM inherited), $7), $8,
+                    (SELECT repository_id FROM inherited))
              ON CONFLICT(abs_path) DO UPDATE SET
                kind = EXCLUDED.kind,
                name = EXCLUDED.name,
                parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
                project_id = COALESCE((SELECT project_id FROM inherited),
                                      EXCLUDED.project_id, folders.project_id),
+               -- See `upsert_subfolder_kind`: COALESCE so an anchor keeps its own.
+               repository_id = COALESCE((SELECT repository_id FROM inherited),
+                                        folders.repository_id),
                -- ASSIGNED, not COALESCEd. Membership is derived, so a module
                -- dropped from a `workspaces` array must stop reading as a
                -- member; COALESCE would pin the first answer forever.
