@@ -247,8 +247,12 @@ mod tests {
     /// committed the same version is a no-op. Each "boot" uses a fresh queue,
     /// mirroring the in-memory queue being recreated on every daemon start.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn rescan_is_crash_safe_then_commits_and_is_idempotent() {
         let _serialised = VERSION_KEY_LOCK.enter();
+        // DATABASE-WIDE: this sweeps every watch root and deletes their `files`
+        // rows. Excludes the tests that depend on their own scan state.
+        let _sweep = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.sweeping();
         let pg = PgStore::connect_test().await.unwrap();
 
         // A watch root we can assert a ScanRoot targets. The shared test DB may
@@ -355,8 +359,12 @@ mod tests {
     /// survives, so the enqueued ScanRoot skips the file it was queued to
     /// re-derive.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn a_version_rescan_clears_the_per_file_gate_so_the_graph_re_derives() {
         let _serialised = VERSION_KEY_LOCK.enter();
+        // DATABASE-WIDE: this sweeps every watch root and deletes their `files`
+        // rows. Excludes the tests that depend on their own scan state.
+        let _sweep = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.sweeping();
         let pg = PgStore::connect_test().await.unwrap();
 
         let tmp = tempfile::tempdir().unwrap();
@@ -401,11 +409,15 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn version_rescan_skips_a_root_already_scanning() {
         // Single-writer (D6e/W5): a version-bump rescan must not stack a second
         // ScanRoot for a root the reconcile tick is already scanning — the race
         // the review flagged. Without the guard the root would show 2 ScanRoots.
         let _serialised = VERSION_KEY_LOCK.enter();
+        // DATABASE-WIDE: this sweeps every watch root and deletes their `files`
+        // rows. Excludes the tests that depend on their own scan state.
+        let _sweep = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.sweeping();
         let pg = PgStore::connect_test().await.unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let root_path = tmp.path().to_string_lossy().to_string();
