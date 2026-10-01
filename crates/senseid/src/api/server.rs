@@ -6,6 +6,14 @@ use axum::http::Method;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
+/// How long shutdown waits for the connection pool to drain before giving up.
+///
+/// Long enough for an ordinary in-flight query, short enough that a stuck one
+/// cannot make the daemon unkillable by `sensei stop` — which is what an
+/// unbounded wait would do, since the SIGTERM handler is permanent and would
+/// swallow the follow-up signal too.
+const SHUTDOWN_POOL_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Write a single-line startup error to `<sensei_dir>/startup-error.log` so
 /// users can find it without scraping launchd / brew-services log paths.
 fn write_startup_error(msg: &str) {
@@ -161,6 +169,10 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
     // serving degraded. Branch: full router on success; on a persistent failure
     // serve a hot-swappable degraded router and self-heal in the background
     // (no restart) once the DB returns. See `api::resilience`.
+    // A handle for the shutdown path. `pg` is MOVED into `build_full_app`, so the
+    // graceful block cannot reach it otherwise; `PgStore` is Clone over an
+    // Arc-backed sqlx pool, so closing this clone closes the one shared pool.
+    let mut pg_for_shutdown: Option<crate::db::pg_store::PgStore> = None;
     let (app, watcher_queue): (axum::Router, Option<Arc<TaskQueue>>) =
         match crate::api::resilience::connect_with_retry(
             || {
@@ -175,6 +187,7 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
                 clear_startup_error();
                 crate::api::resilience::mark_full();
                 tracing::info!("senseid listening on :{} (full mode)", port);
+                pg_for_shutdown = Some(pg.clone());
                 let (router, queue) = build_full_app(pg).await;
                 (router.layer(cors), Some(queue))
             }
@@ -244,14 +257,20 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            // `.ok()` is deliberate here — ctrl_c() only errors if signal
-            // handler registration fails (rare, non-actionable at runtime).
-            // Either way we want the graceful-shutdown future to complete
-            // so the server drives its teardown flow. Not a silent-error bug.
-            if let Err(e) = tokio::signal::ctrl_c().await {
-                tracing::warn!(error = %e, "ctrl_c handler setup failed — shutdown will still run");
-            }
+            // SIGINT **or SIGTERM**. This used to await `ctrl_c()` alone, which
+            // is SIGINT — and both real stop paths send SIGTERM, so the graceful
+            // block never ran in normal operation and the daemon was killed
+            // outright. Measured 2026-09-30: 56 orphaned Postgres backends, the
+            // oldest nearly three hours, with no owning process alive.
+            crate::shutdown::shutdown_signal().await;
             tracing::info!("Shutting down...");
+
+            // ORDER IS THE DESIGN. Stop taking new work first, so nothing starts
+            // that the remaining time cannot finish; then stop the watcher, which
+            // is what enqueues more; only then release the database.
+            if let Some(q) = &watcher_queue {
+                q.begin_shutdown().await;
+            }
             if let Some(q) = watcher_queue {
                 let watcher = crate::watcher::root_watcher::RootWatcher::instance(q);
                 if let Ok(mut w) = watcher.lock() {
@@ -259,6 +278,25 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
                     tracing::info!("Watcher stopped");
                 }
             }
+
+            // BOUNDED, AND THAT IS NOT OPTIONAL. `Pool::close` completes only
+            // once every checked-out connection is returned and carries no
+            // timeout; a task stuck on a long query would hold shutdown open for
+            // ever. Catching SIGTERM is process-wide and permanent, so a second
+            // SIGTERM would be caught too and the daemon would be killable only
+            // by SIGKILL — strictly worse than the bug this fixes. The timeout
+            // degrades that case back to today's behaviour: we stop waiting and
+            // let the process go.
+            if let Some(pg) = pg_for_shutdown {
+                match tokio::time::timeout(SHUTDOWN_POOL_GRACE, pg.close()).await {
+                    Ok(()) => tracing::info!("Database pool closed"),
+                    Err(_) => tracing::warn!(
+                        grace_secs = SHUTDOWN_POOL_GRACE.as_secs(),
+                        "pool did not drain in time — exiting with connections still open",
+                    ),
+                }
+            }
+            tracing::info!("Shutdown complete");
         })
         .await
 }

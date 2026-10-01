@@ -7,7 +7,7 @@ use super::progress::TaskEvent;
 use super::{Task, TaskStatus};
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::{Mutex, Notify, broadcast};
 
 const DEFAULT_MAX_CONCURRENT_REPOS: usize = 3;
@@ -27,6 +27,16 @@ pub struct TaskQueue {
     /// and the queue is the right owner of that boundary because it defines the
     /// id space.
     session_start: chrono::DateTime<chrono::Utc>,
+    /// Set once by [`TaskQueue::begin_shutdown`]; never cleared. While set,
+    /// [`TaskQueue::next_task`] hands out nothing, so the worker pool drains
+    /// down to whatever was already running instead of pulling in new work the
+    /// process has no time left to finish.
+    ///
+    /// It is an atomic rather than a `QueueState` field so [`TaskQueue::
+    /// is_shutting_down`] can be a plain `fn` — a shutdown path that has to
+    /// `.await` a lock just to ask "are we stopping?" is a shutdown path that
+    /// can deadlock against the work it is trying to stop.
+    shutting_down: AtomicBool,
 }
 
 struct QueueState {
@@ -61,7 +71,55 @@ impl TaskQueue {
             session_start: chrono::Utc::now(),
             tx,
             max_concurrent_repos: std::sync::atomic::AtomicUsize::new(max_repos),
+            shutting_down: AtomicBool::new(false),
         }
+    }
+
+    /// Stop handing out new work. Tasks already running are left alone to
+    /// finish; nothing queued behind them starts.
+    ///
+    /// Called from the daemon's graceful-shutdown path, so the cost of being
+    /// wrong is asymmetric: starting one more task on the way out means a
+    /// half-written graph and a connection that outlives the process, while
+    /// declining to start one usually costs only a re-run on the next boot.
+    ///
+    /// USUALLY, not always, and the difference is worth knowing: the reconcile
+    /// tick enqueues exactly ONE kind — `ScanRoot` — which fans out to the whole
+    /// scan chain, so anything scan-shaped recovers by itself. The kinds reached
+    /// another way (embedding, community detection, analysis, library import,
+    /// the metric chain) are NOT re-enqueued by it and simply wait for whatever
+    /// normally triggers them. That is why the counts below are logged rather
+    /// than assumed harmless.
+    ///
+    /// Takes the queue lock, and that is the point rather than an accident:
+    /// `next_task` reads the flag inside the same critical section it uses to
+    /// pick a task, so once this returns there is no in-flight selection still
+    /// holding a stale `false` that could hand out one last task. A bare atomic
+    /// store would leave exactly that window open.
+    // `allow` only until `api::server`'s graceful-shutdown path calls this: the
+    // queue half of #212 lands ahead of the signal half that drives it.
+    #[allow(dead_code)]
+    pub async fn begin_shutdown(&self) {
+        let state = self.inner.lock().await;
+        let already = self.shutting_down.swap(true, Ordering::SeqCst);
+        if !already {
+            // The counts are the record of what shutdown abandoned — the next
+            // boot should re-enqueue them, and if it doesn't, this line is the
+            // evidence of what went missing.
+            tracing::info!(
+                pending = state.pending.len(),
+                blocked = state.blocked.len(),
+                running = state.running.len(),
+                "task queue shutting down: no new work will be handed out; \
+                 running tasks are left to finish",
+            );
+        }
+    }
+
+    /// Whether [`begin_shutdown`](Self::begin_shutdown) has been called.
+    #[allow(dead_code)]
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::SeqCst)
     }
 
     pub fn set_max_concurrent_repos(&self, n: usize) {
@@ -222,10 +280,28 @@ impl TaskQueue {
 
     /// Get next runnable task. Blocks until one is available.
     /// Respects MAX_CONCURRENT_REPOS limit.
+    ///
+    /// Once [`begin_shutdown`](Self::begin_shutdown) has been called this parks
+    /// forever instead of returning. That is deliberately the SAME shape the
+    /// queue already has for "nothing is dispatchable" — a worker whose repo is
+    /// at its concurrency cap also parks on `notified()` indefinitely — so no
+    /// caller learns a new state. The alternative, returning `Option<Task>`,
+    /// would push an `else { break }` into every one of the worker and
+    /// scheduler loops that await this, to express something none of them can
+    /// act on: there is no useful work for a worker to do after shutdown but
+    /// stop, and letting the process exit stops it. The flag is re-read on every
+    /// pass, not just on entry, because `complete`/`fail` call `notify_waiters`
+    /// and would otherwise let one more task through per in-flight task.
     pub async fn next_task(&self) -> Task {
         loop {
             {
                 let mut state = self.inner.lock().await;
+                if self.shutting_down.load(Ordering::SeqCst) {
+                    // Read under the lock so it orders against `begin_shutdown`.
+                    drop(state);
+                    self.notify.notified().await;
+                    continue;
+                }
                 // Among the pending tasks whose repo isn't at the concurrency
                 // limit, pick the one with the best (lowest) `kind_priority` so
                 // the light metric-backfill chain preempts a bulk boot re-index
@@ -1009,6 +1085,173 @@ mod tests {
         // … and only then the bulk index.
         let t3 = q.next_task().await;
         assert_eq!(t3.kind, TaskKind::ScanRoot);
+    }
+
+    /// `is_shutting_down` is the observable half of the flag: false on a fresh
+    /// queue, true once `begin_shutdown` has returned, and it stays true.
+    ///
+    /// Mutation that must break this test: have `is_shutting_down` return a
+    /// constant, or have `begin_shutdown` not store the flag.
+    #[tokio::test]
+    async fn is_shutting_down_reflects_the_flag() {
+        let q = TaskQueue::new();
+        assert!(!q.is_shutting_down(), "a fresh queue is not shutting down");
+
+        q.begin_shutdown().await;
+        assert!(q.is_shutting_down(), "the flag is set once begin_shutdown returns");
+
+        // Idempotent — SIGTERM arriving twice must not un-set it.
+        q.begin_shutdown().await;
+        assert!(q.is_shutting_down(), "a second begin_shutdown leaves it set");
+    }
+
+    /// (a) Work queued BEFORE shutdown is still handed out, right up to the
+    /// moment the flag flips. This is the control arm for the test below: it
+    /// proves the task is genuinely startable, so a later refusal to hand it out
+    /// can only be the shutdown flag and not a per-repo cap or an empty queue.
+    ///
+    /// Mutation that must break this test: park in `next_task` unconditionally
+    /// (i.e. check nothing), which would make shutdown "work" by never
+    /// dispatching anything at all.
+    #[tokio::test]
+    async fn a_task_queued_before_shutdown_is_still_handed_out() {
+        let q = TaskQueue::new();
+        let id = q.enqueue(Task::new(TaskKind::ProcessFile, "repo", "a.ts")).await;
+
+        let task =
+            tokio::time::timeout(std::time::Duration::from_secs(5), q.next_task()).await.expect(
+                "a pending task on a queue that is not shutting down must be handed out at once",
+            );
+        assert_eq!(task.id, id);
+        assert_eq!(task.status, TaskStatus::Running);
+        assert!(!q.is_shutting_down(), "handing out work did not flip the flag");
+    }
+
+    /// (b) Once `begin_shutdown` has returned, a task that is pending AND
+    /// startable is no longer handed out — `next_task` parks instead of
+    /// returning it.
+    ///
+    /// The first `next_task` call is load-bearing: it proves the queue is in a
+    /// state where a second dispatch WOULD happen (same folder, 1 of 3 repo
+    /// slots used, one task pending), so the timeout that follows measures the
+    /// flag and nothing else.
+    ///
+    /// Mutation that must break this test: drop the `is_shutting_down` check
+    /// from `next_task`'s selection block.
+    #[tokio::test]
+    async fn no_new_task_is_handed_out_once_shutting_down() {
+        let q = TaskQueue::new();
+        q.enqueue(Task::new(TaskKind::ProcessFile, "repo", "a.ts")).await;
+        q.enqueue(Task::new(TaskKind::ProcessFile, "repo", "b.ts")).await;
+
+        let first = tokio::time::timeout(std::time::Duration::from_secs(5), q.next_task())
+            .await
+            .expect("precondition: this queue hands out work");
+        assert_eq!(first.path, "a.ts");
+
+        q.begin_shutdown().await;
+
+        // `b.ts` is still pending and still startable — only the flag stands
+        // between it and a worker.
+        let status = q.status().await;
+        assert_eq!(status.pending, 1, "precondition: a startable task is still queued");
+        assert_eq!(status.running, 1, "precondition: the repo is below its concurrency cap");
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(250), q.next_task())
+                .await
+                .is_err(),
+            "a shutting-down queue must park rather than start more work",
+        );
+        assert_eq!(q.status().await.pending, 1, "the parked task was not consumed");
+    }
+
+    /// Shutdown stops NEW work; it does not disturb work already running. The
+    /// in-flight task still completes, still unblocks its dependents, and the
+    /// `notify_waiters` that completion fires must not be a back door through
+    /// which a parked worker picks up fresh work.
+    ///
+    /// Mutation that must break this test: check the flag only on entry to
+    /// `next_task` instead of on every pass of its loop, so the wake-up that
+    /// `complete` sends lets one more task through.
+    #[tokio::test]
+    async fn a_running_task_still_finishes_after_begin_shutdown() {
+        let q = TaskQueue::new();
+        let dep = q.enqueue(Task::new(TaskKind::ProcessFile, "repo", "a.ts")).await;
+        q.enqueue(Task::new(TaskKind::DetectCommunities, "repo", "").blocked_by(vec![dep])).await;
+
+        let running = tokio::time::timeout(std::time::Duration::from_secs(5), q.next_task())
+            .await
+            .expect("precondition: this queue hands out work");
+        assert_eq!(running.id, dep);
+
+        q.begin_shutdown().await;
+
+        // The running task is untouched by shutdown and completes normally …
+        q.complete(running.id).await;
+        let status = q.status().await;
+        assert_eq!(status.running, 0, "the in-flight task finished");
+        assert_eq!(status.completed, 1);
+        // … including the dependent it releases, which becomes pending …
+        assert_eq!(status.blocked, 0, "the dependent was released as usual");
+        assert_eq!(status.pending, 1);
+
+        // … but the completion's wake-up must not start it.
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(250), q.next_task())
+                .await
+                .is_err(),
+            "completing a task during shutdown must not hand out the task it unblocked",
+        );
+    }
+
+    /// The live shape of shutdown: a worker is ALREADY parked in `next_task`
+    /// when SIGTERM lands (it is idle — that is what a worker does between
+    /// tasks). It must not be handed work by the wake-up that the last
+    /// in-flight task's `complete` sends.
+    ///
+    /// This is the case an entry-only flag check would miss, and the one that
+    /// matters: checking on entry stops workers that arrive after shutdown,
+    /// but every worker that was idle at SIGTERM is already past that point.
+    ///
+    /// Mutation that must break this test: hoist the `is_shutting_down` check
+    /// out of `next_task`'s loop so it runs once on entry.
+    #[tokio::test]
+    async fn a_worker_parked_before_shutdown_is_not_woken_with_new_work() {
+        use std::sync::Arc;
+        let q = Arc::new(TaskQueue::new());
+
+        // One task running, one barrier blocked behind it: nothing dispatchable.
+        let dep = q.enqueue(Task::new(TaskKind::ProcessFile, "repo", "a.ts")).await;
+        q.enqueue(Task::new(TaskKind::DetectCommunities, "repo", "").blocked_by(vec![dep])).await;
+        // Timed, not bare: `next_task` parks forever when it declines to
+        // dispatch, so an un-timed call here would hang the whole test binary
+        // under a regression instead of failing it.
+        let running = tokio::time::timeout(std::time::Duration::from_secs(5), q.next_task())
+            .await
+            .expect("precondition: this queue hands out work");
+        assert_eq!(running.id, dep);
+
+        // A worker goes idle and parks — before any shutdown.
+        let mut worker = tokio::spawn({
+            let q = q.clone();
+            async move { q.next_task().await.id }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(!worker.is_finished(), "precondition: the worker parked, nothing was dispatchable");
+        assert!(!q.is_shutting_down(), "precondition: it parked BEFORE shutdown");
+
+        q.begin_shutdown().await;
+        // The last in-flight task finishes, releasing the barrier and waking
+        // every parked worker.
+        q.complete(running.id).await;
+        assert_eq!(q.status().await.pending, 1, "the barrier was released and is startable");
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(250), &mut worker).await.is_err(),
+            "a worker parked before shutdown must stay parked, not pick up the released barrier",
+        );
+        worker.abort();
     }
 
     #[tokio::test]
