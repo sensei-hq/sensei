@@ -888,6 +888,16 @@ pub struct TellFile {
     scanned: std::collections::BTreeSet<crate::indexer::facts::Fqn>,
 }
 
+/// Per-repo world cache. See [`TellFile::shared`] for why it exists and
+/// [`TellFile::forget`] for who is allowed to clear it.
+fn cache()
+-> &'static std::sync::Mutex<std::collections::HashMap<uuid::Uuid, std::sync::Arc<TellFile>>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<uuid::Uuid, std::sync::Arc<TellFile>>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
 impl TellFile {
     /// What the scan knows, for a file in `package` — and NOTHING ELSE first-party.
     ///
@@ -904,6 +914,73 @@ impl TellFile {
             returns: std::collections::BTreeMap::new(),
             scanned: std::collections::BTreeSet::new(),
         }
+    }
+
+    /// Build the repo-wide world ONCE and hand out shared references to it.
+    ///
+    /// The sets are ~15,800 rows on this repository and `process_file` runs per
+    /// FILE, so rebuilding per file would move tens of millions of rows per
+    /// scan. It would also be WRONG: `World` is a barrier artifact built from a
+    /// completed pass, and a world that grew as the scan progressed would let
+    /// file 500 resolve against more knowledge than file 1 — the same repository
+    /// would then index differently depending on order, which is exactly what R6
+    /// forbids. Stale within a scan is the contract, not a compromise.
+    ///
+    /// An `Arc` rather than a clone because `World` BORROWS its collections;
+    /// copying them per file would reintroduce the cost the cache removes.
+    pub async fn shared(
+        pg: &crate::db::pg_store::PgStore,
+        folder_id: &uuid::Uuid,
+    ) -> Result<std::sync::Arc<Self>, String> {
+        if let Some(found) = cache().lock().map_err(|_| "world cache poisoned")?.get(folder_id) {
+            return Ok(found.clone());
+        }
+        let first_party = pg.first_party_packages(folder_id).await?;
+        let (members, declared_names, returns_by_name) =
+            pg.world_sets_for_folder(folder_id).await?;
+
+        // `from_encoded`, because these strings came OUT of the graph, where the
+        // encoder put them. Re-deriving them here would be a second minting site
+        // and the two would drift — which is the whole reason fqn minting has one
+        // owner.
+        let declared =
+            declared_names.into_iter().map(crate::indexer::facts::Fqn::from_encoded).collect();
+        let returns = returns_by_name
+            .into_iter()
+            .map(|(f, t)| (crate::indexer::facts::Fqn::from_encoded(f), t))
+            .collect();
+
+        let built = std::sync::Arc::new(Self {
+            first_party,
+            members,
+            declared,
+            returns,
+            // NEVER POPULATED. `scanned` is the field R6 forbids reading, and a
+            // world that carried it would make placement depend on how much of
+            // the scan had happened yet.
+            scanned: std::collections::BTreeSet::new(),
+        });
+        cache().lock().map_err(|_| "world cache poisoned")?.insert(*folder_id, built.clone());
+        Ok(built)
+    }
+
+    /// Drop the cached world for one repo.
+    ///
+    /// ONE WRITER, and it is `process_repo_files` — the manifest gate, which
+    /// runs once per repo immediately before the file fan-out. A second
+    /// invalidation point would let the world change mid-scan and reintroduce
+    /// the order dependence the cache exists to prevent.
+    pub fn forget(folder_id: &uuid::Uuid) {
+        if let Ok(mut c) = cache().lock() {
+            c.remove(folder_id);
+        }
+    }
+
+    /// Test-only: how many times a world has been built, so a test can assert
+    /// "once per scan" as a COUNT rather than by reading the code.
+    #[cfg(test)]
+    pub fn cached_count() -> usize {
+        cache().lock().map(|c| c.len()).unwrap_or(0)
     }
 
     /// What the scan knows, for a file in a repo that owns `packages`.
@@ -989,6 +1066,68 @@ pub fn placement_on_disk(
 #[cfg(test)]
 mod parse_task {
     use super::*;
+
+    /// THE WORLD IS BUILT ONCE PER REPO SCAN, asserted as a count rather than
+    /// read off the code.
+    ///
+    /// ~15,800 rows on this repository and `process_file` runs per FILE, so a
+    /// rebuild per file moves tens of millions of rows per scan. It would also
+    /// be WRONG: `World` is a barrier artifact from a completed pass, and one
+    /// that grew mid-scan would let file 500 resolve against more knowledge than
+    /// file 1 — the same repo indexing differently depending on order, which R6
+    /// forbids.
+    ///
+    /// Breaking mutation: drop the cache lookup at the top of `shared` so every
+    /// call rebuilds — the two Arcs no longer point at one allocation.
+    #[tokio::test]
+    async fn the_world_is_built_once_per_repo_and_shared() {
+        let Ok(pg) = PgStore::connect_test().await else {
+            println!("no database — skipping");
+            return;
+        };
+        let folder = uuid::Uuid::new_v4();
+        TellFile::forget(&folder);
+
+        let first = TellFile::shared(&pg, &folder).await.expect("a world is built");
+        let second = TellFile::shared(&pg, &folder).await.expect("and reused");
+
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &second),
+            "the second call rebuilt the world instead of sharing it — per-file \
+             rebuilds move tens of millions of rows and break order independence"
+        );
+
+        // And the gate clears it: the next scan gets a fresh one.
+        TellFile::forget(&folder);
+        let third = TellFile::shared(&pg, &folder).await.expect("a later scan rebuilds");
+        assert!(
+            !std::sync::Arc::ptr_eq(&first, &third),
+            "forget() did not clear the cache — a later scan would resolve against \
+             a world from before its own changes"
+        );
+        TellFile::forget(&folder);
+    }
+
+    /// `scanned` must stay empty. It is the one field R6 forbids reading, and a
+    /// world carrying it would make placement depend on how much of the scan had
+    /// happened yet.
+    ///
+    /// Breaking mutation: populate `scanned` in `shared`.
+    #[tokio::test]
+    async fn the_shared_world_never_carries_scanned() {
+        let Ok(pg) = PgStore::connect_test().await else {
+            println!("no database — skipping");
+            return;
+        };
+        let folder = uuid::Uuid::new_v4();
+        TellFile::forget(&folder);
+        let world = TellFile::shared(&pg, &folder).await.expect("a world is built");
+        assert!(
+            world.world().scanned.is_empty(),
+            "`scanned` is the field order-independence depends on staying empty"
+        );
+        TellFile::forget(&folder);
+    }
 
     /// **THE ONE MISSING JOIN: `index_file` -> `persist::write`.**
     ///

@@ -327,20 +327,39 @@ pub fn returns_declared_by<'a>(
         .flat_map(|facts| facts.symbols.iter())
         .filter_map(|symbol| match &symbol.declared_type {
             DeclaredType::Stated(stated) => {
-                let stated = stated.trim_start_matches('&').trim();
-                if stated != "Self" {
-                    return Some((symbol.fqn.clone(), stated.to_string()));
-                }
-                // `Self` IS the enclosing type, and the member's identity says
-                // which: the segment before the member name.
-                let parsed = fqn::parse(symbol.fqn.as_str()).ok()?;
-                let at = parsed.tail.iter().position(|s| *s == symbol.name)?;
-                let owner = parsed.tail.get(at.checked_sub(1)?)?;
-                Some((symbol.fqn.clone(), (*owner).to_string()))
+                stated_return_type(symbol.fqn.as_str(), &symbol.name, stated)
+                    .map(|ty| (symbol.fqn.clone(), ty))
             }
             DeclaredType::Unstated => None,
         })
         .collect()
+}
+
+/// Normalise one STATED type into what `World::returns` holds.
+///
+/// Extracted so a caller reading declarations back out of the DATABASE produces
+/// the identical string to one reading them off a fresh parse. Two copies of
+/// this rule would disagree the first time either changed, and the symptom
+/// would be a rung that silently stops matching rather than an error.
+///
+/// `&` is stripped, because a reference to a type is that type for the purpose
+/// of asking what its members are — keeping it means `&PgStore` never matches
+/// `PgStore`.
+///
+/// `Self` IS the enclosing type, and the member's identity says which: the
+/// segment before the member name.
+pub fn stated_return_type(fqn: &str, name: &str, stated: &str) -> Option<String> {
+    let stated = stated.trim_start_matches('&').trim();
+    if stated.is_empty() {
+        return None;
+    }
+    if stated != "Self" {
+        return Some(stated.to_string());
+    }
+    let parsed = fqn::parse(fqn).ok()?;
+    let at = parsed.tail.iter().position(|s| *s == name)?;
+    let owner = parsed.tail.get(at.checked_sub(1)?)?;
+    Some((*owner).to_string())
 }
 
 /// Every member identity the scan declares, for [`World::declared_members`].
