@@ -3608,10 +3608,11 @@ impl PgStore {
 
 // ── Structure diagram (#205) ────────────────────────────────────────────────
 
-/// `(id, label, package, module, language, files, symbols)` — the Structure
-/// diagram's node row. Named rather than spelled inline because it is a
-/// seven-column projection and the columns are told apart by POSITION.
-type StructureNodeRow = (String, String, Option<String>, Option<String>, Option<String>, i64, i64);
+/// `(id, label, package, module, top_module, language, files, symbols)` — the
+/// Structure diagram's node row. Named rather than spelled inline because it is
+/// a wide projection and the columns are told apart by POSITION.
+type StructureNodeRow =
+    (String, String, Option<String>, Option<String>, Option<String>, Option<String>, i64, i64);
 
 /// One node of the Structure diagram, at whichever level was asked for.
 ///
@@ -3625,6 +3626,15 @@ pub struct StructureNode {
     pub package: String,
     pub module: String,
     pub language: Option<String>,
+    /// The containment chain the diagram draws its rim from: package -> top
+    /// module -> leaf, truncated at whatever level this node IS.
+    ///
+    /// FROM THE FQN, NEVER THE FILESYSTEM. A workspace member sits at a
+    /// directory path that says nothing about the package it declares, so a
+    /// directory-derived tree disagrees with the call graph for every one of
+    /// them. Derived here rather than client-side so three consumers cannot
+    /// each re-derive it differently.
+    pub path: Vec<String>,
     /// Files rolled into this node — 1 at `file` level, the group size above it.
     pub files: i64,
     /// Symbols declared beneath it. The node's weight on the diagram.
@@ -3689,6 +3699,10 @@ impl PgStore {
         level: &str,
     ) -> Result<Vec<StructureNode>, String> {
         let group = structure_group_sql(level, "");
+        // The module's top segment, spelled by the SAME helper the `module`
+        // level uses, so the path and the grouping can never disagree about
+        // where a module begins.
+        let top = structure_group_sql("module", "");
         // `mode()` for the descriptive columns: at file level there is exactly
         // one row per group so it is the identity, and above it the modal value
         // is the honest summary of a group that spans several.
@@ -3697,6 +3711,7 @@ impl PgStore {
                   , {group} AS label
                   , mode() within group (order by package)  AS package
                   , mode() within group (order by module)   AS module
+                  , mode() within group (order by {top})    AS top_module
                   , mode() within group (order by language) AS language
                   , count(*)::bigint                        AS files
                   , coalesce(sum(symbols), 0)::bigint       AS symbols
@@ -3712,14 +3727,31 @@ impl PgStore {
             .map_err(|e| e.to_string())?;
         Ok(rows
             .into_iter()
-            .map(|(id, label, package, module, language, files, symbols)| StructureNode {
-                id,
-                label,
-                package: package.unwrap_or_default(),
-                module: module.unwrap_or_default(),
-                language,
-                files,
-                symbols,
+            .map(|(id, label, package, module, top_module, language, files, symbols)| {
+                let package = package.unwrap_or_default();
+                // `top_module` already carries `package/top`, which is the
+                // module level's own id — take its tail so the chain does not
+                // repeat the package it is nested under.
+                let top = top_module
+                    .as_deref()
+                    .and_then(|t| t.rsplit('/').next())
+                    .unwrap_or_default()
+                    .to_string();
+                let path = match level {
+                    "package" => vec![package.clone()],
+                    "module" => vec![package.clone(), top],
+                    _ => vec![package.clone(), top, id.clone()],
+                };
+                StructureNode {
+                    id,
+                    label,
+                    package,
+                    module: module.unwrap_or_default(),
+                    language,
+                    path,
+                    files,
+                    symbols,
+                }
             })
             .collect())
     }

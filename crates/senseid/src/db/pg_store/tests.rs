@@ -16745,5 +16745,24 @@ async fn structure_level_module_groups_by_the_modules_top_segment() {
     assert_eq!(packages.len(), 1, "one package");
     assert_eq!(packages[0].files, 3, "and it carries every file beneath it");
 
+    // THE CONTAINMENT PATH IS THE FQN'S, NOT THE FILESYSTEM'S. The diagram draws
+    // its rim from `path`, and deriving that from directories disagrees with the
+    // call graph for every workspace member — a file's directory says nothing
+    // about the package it declares. Derived here so three consumers cannot each
+    // re-derive it differently.
+    let api = files.iter().find(|n| n.id.ends_with("handler.rs")).expect("the api file");
+    assert_eq!(
+        api.path,
+        vec!["pkg".to_string(), "api".to_string(), "src/api/handler.rs".to_string()],
+        "a file's path is package -> top module -> itself"
+    );
+    let tasks = modules.iter().find(|m| m.id == "pkg/tasks").expect("the tasks module");
+    assert_eq!(
+        tasks.path,
+        vec!["pkg".to_string(), "tasks".to_string()],
+        "a module node stops at the module — it IS the leaf at this level"
+    );
+    assert_eq!(packages[0].path, vec!["pkg".to_string()], "and a package node at the package");
+
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }

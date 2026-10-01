@@ -20,6 +20,7 @@ import type {
   SyncStateResponse,
   IntakeGuide, PlaybookRecommendation,
   ProvisionModel, ProvisionPhase,
+  StructureLevel, StructurePayload,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -508,6 +509,17 @@ export function senseiApi(port: number) {
     getProjectDrift: (id: string) =>
       get<{ items: DriftItem[]; total: number; drifted: number; broken: number }>(
         `/api/projects/${enc(id)}/drift`, { items: [], total: 0, drifted: 0, broken: 0 }
+      ),
+
+    /** #205 — the Structure diagram payload.
+     *
+     *  Result-based deliberately. This screen must tell "no edges here" apart
+     *  from "the daemon failed", and the fallback-returning `get` collapses
+     *  both into an empty graph — which is the one thing the spec names as a
+     *  wrong gate, being indistinguishable from an unindexed project. */
+    tryGetProjectStructure: (id: string, level: StructureLevel, kinds: string[]) =>
+      tryGet<StructurePayload>(
+        `/api/projects/${enc(id)}/diagrams/structure?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
       ),
 
     getProjectPatterns: (id: string) =>
