@@ -7555,15 +7555,15 @@ async fn folder_path_alias_resolves_old_paths_after_a_rename() {
 /// `upsert_subfolder_kind` and `upsert_folder` take `project_id` from the caller,
 /// and `pipeline.rs` already documents the intent as "a module belongs to its
 /// repo's project — the modules inheriting rather than each minting its own".
-/// Taking it by hand is what let the intent be violated: the swarco
-/// `documentation` checkout ended with its root in project `swarco` and its 362
+/// Taking it by hand is what let the intent be violated: the client-q
+/// `documentation` checkout ended with its root in project `client-q` and its 362
 /// subfolders in `documentation`.
 ///
 /// So the stored column is now DERIVED from the repo anchor at write time, and
 /// the caller's value is used only when there is no anchor to inherit from.
 ///
 /// Breaking mutation: bind the caller's `project_id` directly again — the
-/// subfolder keeps the contradicting project and swarco becomes representable.
+/// subfolder keeps the contradicting project and client-q becomes representable.
 #[tokio::test]
 async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() {
     let s = pg_store().await;
@@ -7605,7 +7605,7 @@ async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() 
         stored.0,
         Some(owner),
         "a subfolder was written into a project its repository does not belong to — \
-         this is how swarco put 362 folders in the wrong project"
+         this is how client-q put 362 folders in the wrong project"
     );
 
     // AND the repository itself, which is what removes `repo_anchor_for` from
@@ -7631,7 +7631,7 @@ async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() 
 ///
 /// `folders.project_id` was settable independently on all 13,697 rows, so a
 /// repository's folders could disagree about their project, and one did: the
-/// swarco `documentation` checkout's root sat in project `swarco` while its 362
+/// client-q `documentation` checkout's root sat in project `client-q` while its 362
 /// subfolders sat in `documentation`. Membership now lives once in
 /// `project_repositories`, keyed on the repository, and `folder_projects`
 /// resolves it.
@@ -7639,11 +7639,11 @@ async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() 
 /// SEEDS THE DRIFT RATHER THAN LOOKING FOR IT. The first version of this test
 /// asserted over the live shape and was VACUOUS: the test database is clean, so
 /// there was no drift to find and pointing the view back at `folders.project_id`
-/// did not fail it. Reproducing the swarco shape is what makes the assertion
+/// did not fail it. Reproducing the client-q shape is what makes the assertion
 /// able to fail.
 ///
 /// Breaking mutation: point `folder_projects` at `f.project_id` instead of the
-/// junction — the subfolder reports the wrong project, exactly as swarco did.
+/// junction — the subfolder reports the wrong project, exactly as client-q did.
 #[tokio::test]
 async fn a_folder_resolves_the_project_of_its_repository_not_its_own_column() {
     let s = pg_store().await;
@@ -7664,7 +7664,7 @@ async fn a_folder_resolves_the_project_of_its_repository_not_its_own_column() {
     // The anchor belongs to `owner`, and this is what also records the junction row.
     s.set_folder_project(&repo, &owner, "root", None).await.unwrap();
 
-    // A subfolder whose STORED column says something else — the swarco shape.
+    // A subfolder whose STORED column says something else — the client-q shape.
     let sub_path = format!("{repo_path}/docs");
     let sub = s
         .upsert_subfolder_kind(
@@ -7692,7 +7692,7 @@ async fn a_folder_resolves_the_project_of_its_repository_not_its_own_column() {
         names,
         vec![tkey("fproj", "owner")],
         "the subfolder resolved to its own stored project instead of its \
-         repository's — this is the swarco drift, 362 folders in the wrong project"
+         repository's — this is the client-q drift, 362 folders in the wrong project"
     );
 
     s.remove_watch_root(&root_id).await.ok();
