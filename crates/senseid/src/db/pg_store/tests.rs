@@ -7509,6 +7509,77 @@ async fn folder_path_alias_resolves_old_paths_after_a_rename() {
 /// Breaking mutation: drop the `kind = 'module'` predicate — ordinary `folder`
 /// rows flood in and every directory becomes a first-party "package", so an
 /// import naming any directory resolves local.
+/// A folder NEVER carries its own project — it resolves through its repository.
+///
+/// `folders.project_id` was settable independently on all 13,697 rows, so a
+/// repository's folders could disagree about their project, and one did: the
+/// swarco `documentation` checkout's root sat in project `swarco` while its 362
+/// subfolders sat in `documentation`. Membership now lives once in
+/// `project_repositories`, keyed on the repository, and `folder_projects`
+/// resolves it.
+///
+/// SEEDS THE DRIFT RATHER THAN LOOKING FOR IT. The first version of this test
+/// asserted over the live shape and was VACUOUS: the test database is clean, so
+/// there was no drift to find and pointing the view back at `folders.project_id`
+/// did not fail it. Reproducing the swarco shape is what makes the assertion
+/// able to fail.
+///
+/// Breaking mutation: point `folder_projects` at `f.project_id` instead of the
+/// junction — the subfolder reports the wrong project, exactly as swarco did.
+#[tokio::test]
+async fn a_folder_resolves_the_project_of_its_repository_not_its_own_column() {
+    let s = pg_store().await;
+    let root_id = s
+        .add_watch_root(&tkey("fproj", "root"), "fproj-root", &serde_json::json!([]))
+        .await
+        .unwrap();
+    let owner = s.create_project(&tkey("fproj", "owner"), None, None).await.unwrap();
+    let other = s.create_project(&tkey("fproj", "other"), None, None).await.unwrap();
+
+    let repo_path = tkey("fproj", "/repo");
+    let repo = s.upsert_repo_kind(&root_id, "git", "fproj-repo", &repo_path).await.unwrap();
+    // The anchor needs a `repositories` row: membership is keyed on the
+    // repository, so a checkout with none has nowhere to record it. (Ten real
+    // git folders holding 1,704 nodes are in exactly that state — see #210.)
+    let repository = s.upsert_repository("fproj-repo", None).await.unwrap();
+    s.link_folder_to_repository(&repo, &repository).await.unwrap();
+    // The anchor belongs to `owner`, and this is what also records the junction row.
+    s.set_folder_project(&repo, &owner, "root", None).await.unwrap();
+
+    // A subfolder whose STORED column says something else — the swarco shape.
+    let sub_path = format!("{repo_path}/docs");
+    let sub = s
+        .upsert_subfolder_kind(
+            &root_id,
+            "folder",
+            "docs",
+            &sub_path,
+            &sub_path,
+            Some(&repo),
+            Some(&other),
+        )
+        .await
+        .unwrap();
+
+    let resolved: Vec<(Option<String>,)> = sqlx_core::query_as::query_as(
+        "SELECT project FROM sensei.folder_projects WHERE folder_id = $1",
+    )
+    .bind(sub)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+
+    let names: Vec<String> = resolved.into_iter().filter_map(|(n,)| n).collect();
+    assert_eq!(
+        names,
+        vec![tkey("fproj", "owner")],
+        "the subfolder resolved to its own stored project instead of its \
+         repository's — this is the swarco drift, 362 folders in the wrong project"
+    );
+
+    s.remove_watch_root(&root_id).await.ok();
+}
+
 #[tokio::test]
 async fn first_party_packages_are_every_module_the_project_declares() {
     let s = pg_store().await;
