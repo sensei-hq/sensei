@@ -51,14 +51,21 @@ The DB carries all three: `nodes.name`, `nodes.fqn`, `nodes.kind`,
 `nodes.parent_id`, and `nodes.props->>'declared_type'` — which is populated on
 **every** node row.
 
-**There is no `owns` edge kind** (edges are calls / extends / implements /
-imports / references). Membership is `nodes.parent_id`, so
-`members_declared_by`'s equivalent is "a member node whose parent is a type".
+**`Owns` is persisted as a `references` edge carrying `props->>'relation' =
+'owns'`** (`persist.rs:637`, `persist.rs:677`) — 408,156 such rows database-wide.
+That is the faithful source, and `members_declared_by`'s own doc says why a
+`SymbolKind` filter cannot stand in for it: it "cannot be stood in for by a
+`SymbolKind` filter without getting a different answer in each language".
+
+**Measured, and it matters:** the kind filter gives sensei **8,911** member
+fqns; the `owns` relation gives **1,806**. Had the gate below been written
+against the approximation it could only have been met by using the wrong
+query.
 
 ## Caching is mandatory here, unlike #207
 
-Measured on sensei: **3,403 member names + 8,911 member fqns + 10,612 return
-types ≈ 23,000 rows** per world. `process_file` runs per FILE, so querying
+Measured on sensei: **3,403 member names + 1,806 member fqns + 10,612 return
+types ≈ 15,800 rows** per world. `process_file` runs per FILE, so querying
 per-file would move ~40 million rows across one repo scan.
 
 `first_party` was ~18 rows and could be read per file. This cannot.
@@ -92,8 +99,9 @@ Related and small, but a separate behaviour change with its own verification.
 
 ## Done gate
 
-1. A world built for sensei's repo folder holds > 3,000 member names, > 8,000
-   member fqns and > 10,000 return types.
+1. A world built for sensei's repo folder holds > 3,000 member names, > 1,700
+   member fqns (from the `owns` RELATION, not a kind filter) and > 10,000 return
+   types.
 2. The cache is built once per repo scan — asserted by a test that counts
    builds across N files, not by reading the code.
 3. `process_repo_files` clears it; a test proves a second scan rebuilds.
@@ -114,8 +122,9 @@ Related and small, but a separate behaviour change with its own verification.
   every such member at a type named `Self`.
 - **`&` left on a stated type.** Same builder strips it; keeping it means
   `&PgStore` never matches `PgStore`.
-- **Members taken from `kind` alone, ignoring `parent_id`.** A free function is
-  not a member, and treating it as one puts non-members in `declared_members`.
+- **Members taken from a `kind` filter instead of the `owns` relation.** It is
+  the documented trap and it is not subtle: 8,911 against 1,806 on sensei. A
+  gate written against the larger number would be passed by the wrong query.
 
 ## Related
 
