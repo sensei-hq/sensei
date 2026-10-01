@@ -297,6 +297,41 @@ impl PgStore {
         sqlx_core::query::query(
             "UPDATE sensei.folders SET project_id = $2, props = props || $3, modified_at = now() WHERE id = $1"
         ).bind(folder_id).bind(project_id).bind(props).execute(&self.pool).await.map_err(|e| e.to_string())?;
+
+        // MEMBERSHIP ALSO GOES TO THE JUNCTION, which is where it now lives.
+        // The `folders.project_id` write above is kept only until its ~140
+        // readers migrate to `folder_projects`; writing one without the other is
+        // how the two would disagree, and a repository's folders disagreeing
+        // about their project is the defect this replaces (see
+        // `project_repositories`).
+        self.link_project_repository_for_folder(folder_id, project_id).await
+    }
+
+    /// Record that the repository owning `folder_id` belongs to `project_id`.
+    ///
+    /// Resolves through the repo ANCHOR because `repository_id` is set only on
+    /// the repo-root/checkout folder (I16). A folder under no tracked repository
+    /// records nothing — `repo_anchor_for` never fabricates an anchor, so an
+    /// unattached folder gets no membership rather than a guessed one.
+    pub async fn link_project_repository_for_folder(
+        &self,
+        folder_id: &uuid::Uuid,
+        project_id: &uuid::Uuid,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.project_repositories (project_id, repository_id) \
+             SELECT $2, anchor.repository_id \
+               FROM sensei.folders f \
+               JOIN LATERAL (SELECT a.repo_folder_id FROM sensei.repo_anchor_for(f.abs_path) a LIMIT 1) ra ON true \
+               JOIN sensei.folders anchor ON anchor.id = ra.repo_folder_id \
+              WHERE f.id = $1 AND anchor.repository_id IS NOT NULL \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(folder_id)
+        .bind(project_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -929,6 +964,104 @@ impl PgStore {
     /// of repositories). Ordered by path length so the primary (shallowest) repository
     /// is first and iteration is deterministic. Honest-empty when the project has no
     /// repository-linked folder — those repositories are then skipped, never faked (I-E).
+    /// The three repo-wide sets the resolver's `World` needs, for the project
+    /// owning `folder_id`: member NAMES, member IDENTITIES, and declared types.
+    ///
+    /// Read from a COMPLETED pass, which is the contract. `World` is documented
+    /// as a barrier artifact; a file resolves against what the PREVIOUS pass
+    /// learned, which is what makes resolution independent of scan order (R6).
+    /// Reading the database gives exactly that and nothing newer.
+    ///
+    /// `declared_members` comes from the `owns` RELATION, not from a node-kind
+    /// filter. `members_declared_by`'s own doc says a `SymbolKind` filter
+    /// "cannot be stood in for without getting a different answer in each
+    /// language", and the gap is not subtle — measured on sensei 2026-09-30, the
+    /// kind filter answers 8,911 and the relation answers 1,806.
+    ///
+    /// `returns` is normalised through [`crate::indexer::resolve::stated_return_type`],
+    /// the SAME function the fresh-parse builder uses, so a type read back out
+    /// of the database cannot drift from one read off source.
+    pub async fn world_sets_for_folder(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<
+        (
+            std::collections::BTreeSet<String>,
+            std::collections::BTreeSet<String>,
+            std::collections::BTreeMap<String, String>,
+        ),
+        String,
+    > {
+        // Member NAMES — the weaker question, and a kind filter IS the rule here
+        // (`member_names_of` filters on SymbolKind).
+        let names: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "WITH anchor AS (SELECT ra.repo_abs_path FROM sensei.folders f \
+                 CROSS JOIN LATERAL sensei.repo_anchor_for(f.abs_path) ra \
+                WHERE f.id = $1) \
+             SELECT DISTINCT n.name FROM sensei.nodes n \
+              WHERE n.folder_id IN (SELECT f.id FROM sensei.folders f \
+                     WHERE EXISTS (SELECT 1 FROM anchor a \
+                             WHERE f.abs_path = a.repo_abs_path \
+                                OR f.abs_path LIKE a.repo_abs_path || '/%')) \
+                AND n.kind IN ('method', 'field', 'property') \
+                AND n.name <> ''",
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("world member names: {e}"))?;
+
+        // Member IDENTITIES — the `owns` relation, which is the vocabulary.
+        let declared: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "WITH anchor AS (SELECT ra.repo_abs_path FROM sensei.folders f \
+                 CROSS JOIN LATERAL sensei.repo_anchor_for(f.abs_path) ra \
+                WHERE f.id = $1) \
+             SELECT DISTINCT tn.fqn FROM sensei.edges e \
+               JOIN sensei.nodes tn ON tn.id = e.target_id \
+              WHERE e.folder_id IN (SELECT f.id FROM sensei.folders f \
+                     WHERE EXISTS (SELECT 1 FROM anchor a \
+                             WHERE f.abs_path = a.repo_abs_path \
+                                OR f.abs_path LIKE a.repo_abs_path || '/%')) \
+                AND e.props->>'relation' = 'owns' \
+                AND tn.fqn IS NOT NULL",
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("world declared members: {e}"))?;
+
+        // Declared types, normalised by the shared rule.
+        let stated: Vec<(String, String, String)> = sqlx_core::query_as::query_as(
+            "WITH anchor AS (SELECT ra.repo_abs_path FROM sensei.folders f \
+                 CROSS JOIN LATERAL sensei.repo_anchor_for(f.abs_path) ra \
+                WHERE f.id = $1) \
+             SELECT n.fqn, n.name, n.props->>'declared_type' FROM sensei.nodes n \
+              WHERE n.folder_id IN (SELECT f.id FROM sensei.folders f \
+                     WHERE EXISTS (SELECT 1 FROM anchor a \
+                             WHERE f.abs_path = a.repo_abs_path \
+                                OR f.abs_path LIKE a.repo_abs_path || '/%')) \
+                AND n.fqn IS NOT NULL \
+                AND coalesce(n.props->>'declared_type', '') <> ''",
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("world returns: {e}"))?;
+
+        let returns = stated
+            .into_iter()
+            .filter_map(|(fqn, name, ty)| {
+                crate::indexer::resolve::stated_return_type(&fqn, &name, &ty).map(|t| (fqn, t))
+            })
+            .collect();
+
+        Ok((
+            names.into_iter().map(|(n,)| n).collect(),
+            declared.into_iter().map(|(f,)| f).collect(),
+            returns,
+        ))
+    }
+
     /// Every package the project owning `folder_id` declares — the resolver's
     /// `World::first_party`.
     ///
@@ -953,12 +1086,15 @@ impl PgStore {
         folder_id: &uuid::Uuid,
     ) -> Result<std::collections::BTreeSet<String>, String> {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT DISTINCT m.name \
+            "WITH anchor AS (SELECT ra.repo_abs_path FROM sensei.folders f \
+                 CROSS JOIN LATERAL sensei.repo_anchor_for(f.abs_path) ra \
+                WHERE f.id = $1) \
+             SELECT DISTINCT m.name \
                FROM sensei.folders m \
               WHERE m.kind = 'module'::sensei.folder_kind \
-                AND m.project_id IS NOT DISTINCT FROM \
-                    (SELECT f.project_id FROM sensei.folders f WHERE f.id = $1) \
-                AND m.project_id IS NOT NULL",
+                AND EXISTS (SELECT 1 FROM anchor a \
+                             WHERE m.abs_path = a.repo_abs_path \
+                                OR m.abs_path LIKE a.repo_abs_path || '/%')",
         )
         .bind(folder_id)
         .fetch_all(&self.pool)
