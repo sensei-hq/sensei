@@ -429,26 +429,27 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 return Ok(0);
             }
         };
-        // EVERY package the project owns is first-party, not just this file's.
-        // A one-package world makes every sibling crate foreign, so no edge can
-        // cross a package boundary — measured on sensei as ZERO cross-package
-        // edges across 16 packages. Read from the manifest-derived `module`
-        // folders, which is what `World::first_party` says it wants.
+        // THE REPO-WIDE WORLD, built once per scan and shared.
         //
-        // A read failure degrades to the file's own package rather than failing
-        // the parse: the file still indexes, and intra-package edges still place.
-        // It is logged because the degraded world silently loses every
-        // cross-package edge, which is invisible in the output.
-        let packages = match ctx.pg().first_party_packages(fid).await {
-            Ok(p) => p,
+        // Four of World's five fields were empty in production, so three rungs
+        // could never fire — `declared_by_its_type` had 0 rows in the entire
+        // database. It is read from a COMPLETED pass, which is the contract: a
+        // world that grew during the scan would let file 500 resolve against
+        // more knowledge than file 1, and the repo would index differently
+        // depending on order (R6).
+        //
+        // A read failure degrades to this file's own package rather than failing
+        // the parse — the file still indexes, intra-package edges still place.
+        // Logged, because a degraded world loses edges silently.
+        let told = match crate::indexer::pipeline::TellFile::shared(ctx.pg(), fid).await {
+            Ok(w) => w,
             Err(e) => {
                 tracing::warn!(error = %e, folder_id = %fid,
-                    "first_party_packages failed — resolving with this file's package alone, \
-                     so cross-package edges will not place");
-                Default::default()
+                    "world unavailable — resolving with this file's package alone, so \
+                     cross-package and receiver-typed edges will not place");
+                std::sync::Arc::new(crate::indexer::pipeline::TellFile::about(&placement.package))
             }
         };
-        let told = crate::indexer::pipeline::TellFile::about_packages(&placement.package, packages);
         let written = crate::indexer::pipeline::index_and_persist(
             ctx.pg(),
             fid,

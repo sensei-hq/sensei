@@ -197,6 +197,13 @@ pub async fn process_repo_files(ctx: &TaskContext, task: &Task) -> Result<u32, S
         return Err(format!("process_repo_files: repo row for {} has no id", task.folder_path));
     };
 
+    // THE ONE INVALIDATION POINT for the repo-wide world. This gate runs once
+    // per repo immediately before the file fan-out, so clearing here means every
+    // file of this scan sees one world, built from the pass that finished. A
+    // second invalidation site would let it change mid-scan and reintroduce the
+    // order dependence R6 forbids.
+    crate::indexer::pipeline::TellFile::forget(&folder_id);
+
     // A FORCED scan clears `parsed_at` first, so every file falls back into the
     // unparsed set below. Nothing is deleted — the writer upserts by path, so a
     // re-parse replaces what it finds.
