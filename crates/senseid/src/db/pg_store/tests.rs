@@ -16766,3 +16766,95 @@ async fn structure_level_module_groups_by_the_modules_top_segment() {
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
+
+/// COVERAGE COUNTS WHAT COULD NOT BE PLACED, not every edge there is.
+///
+/// The first version of this asked `graph_placement` for
+/// `outcome <> 'resolved'`. That view's outcomes are `placed` / `missed` /
+/// `no verdict` — there is NO `resolved` — so the predicate matched every row
+/// and the screen reported the project's TOTAL edge count as its unplaced one.
+/// Measured on sensei before the fix: 69,747 "unplaced" against 69,747 total,
+/// where the truth is 38,578. A coverage line exists to say what the diagram is
+/// hiding; one that reports the whole population says nothing and looks precise
+/// doing it.
+///
+/// It also cost 107 of the endpoint's 122 seconds, because filtering
+/// `graph_placement` by project cannot push past its window functions.
+///
+/// Mutation that must break this test: drop the `target_id IS NULL` filter.
+#[tokio::test]
+async fn structure_coverage_counts_only_the_edges_that_could_not_be_placed() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, fid) = create_test_project_and_folder(&s, &format!("cov_{uniq}")).await;
+
+    let a = s
+        .seed_node_by_fqn(
+            &fid,
+            "rust·pkg·tasks::a·run·item",
+            "function",
+            "run",
+            Some("rust"),
+            Some(crate::db::pg_store::FqnDef {
+                file_path: "src/tasks/a.rs",
+                signature: None,
+                line_start: Some(1),
+                line_end: Some(2),
+                is_exported: true,
+                parent_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let b = s
+        .seed_node_by_fqn(
+            &fid,
+            "rust·pkg·api::b·run·item",
+            "function",
+            "run",
+            Some("rust"),
+            Some(crate::db::pg_store::FqnDef {
+                file_path: "src/api/b.rs",
+                signature: None,
+                line_start: Some(1),
+                line_end: Some(2),
+                is_exported: true,
+                parent_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+
+    // One PLACED edge (a real target) and two that resolved to nothing.
+    s.replace_edges_of_kind(
+        &fid,
+        "calls",
+        &[
+            crate::db::pg_store::EdgeSpec {
+                source_id: a,
+                target_id: Some(b),
+                target_name: None,
+                target_file: None,
+            },
+            crate::db::pg_store::EdgeSpec {
+                source_id: a,
+                target_id: None,
+                target_name: Some("nowhere".into()),
+                target_file: Some("src/gone.rs".into()),
+            },
+            crate::db::pg_store::EdgeSpec {
+                source_id: b,
+                target_id: None,
+                target_name: Some("also_nowhere".into()),
+                target_file: Some("src/gone.rs".into()),
+            },
+        ],
+    )
+    .await
+    .unwrap();
+
+    let unplaced = s.structure_unplaced(&pid, &["calls".to_string()]).await.unwrap();
+    assert_eq!(unplaced, 2, "only the two edges with no target are unplaced — not all three");
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
