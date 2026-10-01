@@ -3605,3 +3605,208 @@ impl PgStore {
     // chains (consensus-*) keep role=null and stay invisible to the
     // wizard.
 }
+
+// ── Structure diagram (#205) ────────────────────────────────────────────────
+
+/// `(id, label, package, module, language, files, symbols)` — the Structure
+/// diagram's node row. Named rather than spelled inline because it is a
+/// seven-column projection and the columns are told apart by POSITION.
+type StructureNodeRow = (String, String, Option<String>, Option<String>, Option<String>, i64, i64);
+
+/// One node of the Structure diagram, at whichever level was asked for.
+///
+/// `id` is the GROUPING KEY and is what edges reference, so the same struct
+/// serves all three levels: a file path at `file`, `package/top-module` at
+/// `module`, the package alone at `package`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StructureNode {
+    pub id: String,
+    pub label: String,
+    pub package: String,
+    pub module: String,
+    pub language: Option<String>,
+    /// Files rolled into this node — 1 at `file` level, the group size above it.
+    pub files: i64,
+    /// Symbols declared beneath it. The node's weight on the diagram.
+    pub symbols: i64,
+}
+
+/// One bundled edge between two [`StructureNode`]s at the requested level.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StructureEdge {
+    pub source: String,
+    pub target: String,
+    pub kind: String,
+    /// `in_module` | `cross_module` | `cross_package`, from `structure_edges`.
+    /// Computed in the view so three consumers cannot each re-derive it.
+    pub span: String,
+    pub occurrences: i64,
+}
+
+/// What the diagram is NOT showing, which has to be said rather than implied.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StructureCoverage {
+    pub drawn: i64,
+    pub unplaced: i64,
+}
+
+/// THE LEVEL EXPRESSION, in one place.
+///
+/// `module` is the module's FIRST segment, not the whole module path, and that
+/// is a measured choice rather than a stylistic one. On sensei's own corpus the
+/// fqn's module segment is per-FILE across most of the tree: grouping on it
+/// whole gives 1,446 groups over 1,751 files (1.21x) with 1,390 of them holding
+/// a single file, which is not a level. Its first segment gives 150 groups over
+/// the same files (11.7x), and they are the units a reader names — `senseid/tasks`,
+/// `senseid/api`, `@sensei/desktop/routes`.
+///
+/// Rust separates with `::` and the JS/TS trees with `/`; splitting on both
+/// leaves a segment that already has no separator unchanged, so one expression
+/// covers every language in the corpus.
+fn structure_group_sql(level: &str, prefix: &str) -> String {
+    match level {
+        "package" => format!("{prefix}package"),
+        "module" => format!(
+            "{prefix}package || '/' || split_part(split_part({prefix}module, '/', 1), '::', 1)"
+        ),
+        // `file` and anything unrecognised. The caller validates; this stays
+        // total so a bad level can never produce a SQL fragment that is wrong
+        // rather than merely narrow.
+        _ => format!("{prefix}file_path"),
+    }
+}
+
+impl PgStore {
+    /// Nodes of the Structure diagram for one project, rolled up to `level`.
+    ///
+    /// Reads `sensei.structure_graph`, which is already internal-only and
+    /// already resolves membership through `folder_projects` — so a repository
+    /// serving two projects contributes its files to BOTH, and neither sees the
+    /// other's.
+    pub async fn structure_nodes(
+        &self,
+        project_id: &uuid::Uuid,
+        level: &str,
+    ) -> Result<Vec<StructureNode>, String> {
+        let group = structure_group_sql(level, "");
+        // `mode()` for the descriptive columns: at file level there is exactly
+        // one row per group so it is the identity, and above it the modal value
+        // is the honest summary of a group that spans several.
+        let sql = format!(
+            "SELECT {group} AS id
+                  , {group} AS label
+                  , mode() within group (order by package)  AS package
+                  , mode() within group (order by module)   AS module
+                  , mode() within group (order by language) AS language
+                  , count(*)::bigint                        AS files
+                  , coalesce(sum(symbols), 0)::bigint       AS symbols
+               FROM sensei.structure_graph
+              WHERE project_id = $1
+              GROUP BY 1, 2
+              ORDER BY symbols DESC, id"
+        );
+        let rows: Vec<StructureNodeRow> = sqlx_core::query_as::query_as(&sql)
+            .bind(project_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, label, package, module, language, files, symbols)| StructureNode {
+                id,
+                label,
+                package: package.unwrap_or_default(),
+                module: module.unwrap_or_default(),
+                language,
+                files,
+                symbols,
+            })
+            .collect())
+    }
+
+    /// Edges of the Structure diagram for one project, rolled up to `level` and
+    /// restricted to `kinds`.
+    ///
+    /// A self-loop produced BY the rollup is dropped: two files of one module
+    /// calling each other is an edge at file level and nothing at module level,
+    /// and drawing it as a loop asserts a relationship the module does not have
+    /// with itself.
+    pub async fn structure_edges(
+        &self,
+        project_id: &uuid::Uuid,
+        level: &str,
+        kinds: &[String],
+    ) -> Result<Vec<StructureEdge>, String> {
+        let src = structure_group_sql(level, "source_");
+        let tgt = structure_group_sql(level, "target_");
+        // `source_file`/`target_file` are the path columns on this view, so the
+        // file-level grouping key has to name them rather than `file_path`.
+        let (src, tgt) = if level == "file" || !matches!(level, "module" | "package") {
+            ("source_file".to_string(), "target_file".to_string())
+        } else {
+            (src, tgt)
+        };
+        let sql = format!(
+            "SELECT {src} AS source
+                  , {tgt} AS target
+                  , kind
+                  , mode() within group (order by span) AS span
+                  , sum(occurrences)::bigint            AS occurrences
+               FROM sensei.structure_edges
+              WHERE project_id = $1
+                AND kind = ANY($2)
+                AND {src} <> {tgt}
+              GROUP BY 1, 2, 3
+              ORDER BY occurrences DESC"
+        );
+        let rows: Vec<(String, String, String, Option<String>, i64)> =
+            sqlx_core::query_as::query_as(&sql)
+                .bind(project_id)
+                .bind(kinds)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(source, target, kind, span, occurrences)| StructureEdge {
+                source,
+                target,
+                kind,
+                span: span.unwrap_or_else(|| "cross_module".to_string()),
+                occurrences,
+            })
+            .collect())
+    }
+
+    /// Drawn against unplaced, for the coverage line.
+    ///
+    /// `unplaced` comes from `graph_placement`, the view that already decomposes
+    /// every edge's outcome, so the number the screen shows and the number the
+    /// resolution surfaces show cannot disagree. Without it a sparse diagram
+    /// reads as a simple codebase rather than an unresolved one.
+    pub async fn structure_coverage(
+        &self,
+        project_id: &uuid::Uuid,
+        kinds: &[String],
+    ) -> Result<StructureCoverage, String> {
+        let (drawn,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT coalesce(sum(occurrences), 0)::bigint FROM sensei.structure_edges
+              WHERE project_id = $1 AND kind = ANY($2)",
+        )
+        .bind(project_id)
+        .bind(kinds)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let (unplaced,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT coalesce(sum(edges), 0)::bigint FROM sensei.graph_placement
+              WHERE project_id = $1 AND edge_kind::text = ANY($2) AND outcome <> 'resolved'",
+        )
+        .bind(project_id)
+        .bind(kinds)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(StructureCoverage { drawn, unplaced })
+    }
+}

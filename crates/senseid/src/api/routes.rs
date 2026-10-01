@@ -11,6 +11,7 @@ use crate::api::handlers::checker;
 use crate::api::handlers::codebase;
 use crate::api::handlers::config;
 use crate::api::handlers::corrections;
+use crate::api::handlers::diagrams;
 use crate::api::handlers::dojo;
 use crate::api::handlers::gateway;
 use crate::api::handlers::gateway_chains;
@@ -111,6 +112,7 @@ pub fn create_router(state: AppState) -> Router {
             get(project_detail::get_project_repos).post(observatory::add_solution_repo),
         )
         .route("/api/projects/{id}/repos/{repo_id}", delete(observatory::remove_solution_repo))
+        .route("/api/projects/{id}/diagrams/structure", get(diagrams::structure))
         .route("/api/projects/{id}/tags", post(observatory::add_solution_tag))
         .route("/api/projects/{id}/tags/{tag}", delete(observatory::remove_solution_tag))
         // Git author identity for a folder + its owning project (MCP
@@ -2009,6 +2011,67 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["models"].as_array().map(|a| a.len()), Some(0));
+    }
+
+    /// #205 — the Structure endpoint REFUSES a level or kind it does not know,
+    /// rather than quietly answering a narrower question.
+    ///
+    /// `level` reaches a `GROUP BY` expression and `kinds` a `= ANY`, so an
+    /// unrecognised value has two possible readings: a 400, or an empty graph.
+    /// An empty graph is the wrong one — this screen exists to distinguish "no
+    /// edges here" from "nothing resolved", and a third silent meaning ("you
+    /// asked for something that does not exist") makes both unreadable.
+    ///
+    /// Mutation that must break this: drop either `contains` guard.
+    #[tokio::test]
+    async fn structure_diagram_rejects_an_unknown_level_or_kind() {
+        let (app, state) = test_app().await;
+        let pid = state
+            .pg
+            .create_project(&format!("_test:struct:{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+
+        let (bad_level, _) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/projects/{pid}/diagrams/structure?level=symbol"),
+            None,
+        )
+        .await;
+        assert_eq!(bad_level, StatusCode::BAD_REQUEST, "an unknown level is refused");
+
+        let (bad_kind, _) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/projects/{pid}/diagrams/structure?kinds=calls,teleports"),
+            None,
+        )
+        .await;
+        assert_eq!(bad_kind, StatusCode::BAD_REQUEST, "an unknown edge kind is refused");
+
+        // And a project that does not exist is a 404, not a 500 and not an
+        // empty graph.
+        let (missing, _) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/projects/{}/diagrams/structure", uuid::Uuid::new_v4()),
+            None,
+        )
+        .await;
+        assert_eq!(missing, StatusCode::NOT_FOUND, "an unknown project is 404");
+
+        // A real but EMPTY project answers 200 with empty arrays and a coverage
+        // block — honest-empty, because it genuinely is empty.
+        let (ok, body) =
+            req(app, "GET", &format!("/api/projects/{pid}/diagrams/structure?level=module"), None)
+                .await;
+        assert_eq!(ok, StatusCode::OK);
+        assert_eq!(body["nodes"].as_array().map(|a| a.len()), Some(0));
+        assert_eq!(body["level"], "module", "the level is echoed, so a client can tell");
+        assert!(body["coverage"]["unplaced"].is_number(), "coverage is always present");
+
+        state.pg.delete_project(&pid).await.ok();
     }
 
     #[tokio::test]

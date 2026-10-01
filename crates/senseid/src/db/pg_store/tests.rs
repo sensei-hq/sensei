@@ -16674,3 +16674,76 @@ async fn rewriting_an_identical_return_type_leaves_the_node_untouched() {
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
+
+// ── Structure diagram (#205) ────────────────────────────────────────────────
+
+/// THE LEVEL ROLLUP IS A DERIVATION, and `module` means the module's TOP
+/// segment — not the whole module path.
+///
+/// Measured on sensei's own corpus before this was written: the fqn's module
+/// segment is per-FILE for most of the tree, so grouping on it whole collapses
+/// 1,751 files into 1,446 groups — 1.21x, with 1,390 of those groups holding
+/// exactly one file. A "module" level that returns a node per file is not a
+/// level at all, and #205's done gate asks for an order of magnitude.
+///
+/// Grouping on the module's FIRST segment (`tasks` of `tasks::metrics`,
+/// `routes` of `routes/(observatory)/insights`) gives 150 groups over the same
+/// 1,751 files — 11.7x — and the groups are the ones a reader would name:
+/// `senseid/tasks`, `senseid/api`, `senseid/indexer`.
+///
+/// This test pins the property on a fixture rather than on the corpus: two
+/// files in different sub-modules of ONE top module must collapse to ONE node,
+/// while a file in another top module stays separate.
+///
+/// Mutation that must break it: group by `module` instead of its first segment.
+#[tokio::test]
+async fn structure_level_module_groups_by_the_modules_top_segment() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, fid) = create_test_project_and_folder(&s, &format!("struct_{uniq}")).await;
+
+    // Three files: two under `tasks`, one under `api`. Same package.
+    let specs = [
+        ("rust·pkg·tasks::alpha·run·item", "src/tasks/alpha.rs"),
+        ("rust·pkg·tasks::beta·run·item", "src/tasks/beta.rs"),
+        ("rust·pkg·api::handler·run·item", "src/api/handler.rs"),
+    ];
+    for (fqn, path) in specs {
+        s.seed_node_by_fqn(
+            &fid,
+            fqn,
+            "function",
+            "run",
+            Some("rust"),
+            Some(crate::db::pg_store::FqnDef {
+                file_path: path,
+                signature: None,
+                line_start: Some(1),
+                line_end: Some(2),
+                is_exported: true,
+                parent_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    }
+
+    let files = s.structure_nodes(&pid, "file").await.unwrap();
+    assert_eq!(files.len(), 3, "file level is one node per file");
+
+    let modules = s.structure_nodes(&pid, "module").await.unwrap();
+    let mut labels: Vec<String> = modules.iter().map(|m| m.id.clone()).collect();
+    labels.sort();
+    assert_eq!(
+        labels,
+        vec!["pkg/api".to_string(), "pkg/tasks".to_string()],
+        "two sub-modules of one top module collapse to ONE node; grouping on the \
+         whole module path would leave three"
+    );
+
+    let packages = s.structure_nodes(&pid, "package").await.unwrap();
+    assert_eq!(packages.len(), 1, "one package");
+    assert_eq!(packages[0].files, 3, "and it carries every file beneath it");
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
