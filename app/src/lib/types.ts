@@ -1787,3 +1787,53 @@ export interface ProvisionModel {
   name: string;
   phase: ProvisionPhase;
 }
+
+// ── Diagrams · Structure (#205) ─────────────────────────────────────────────
+
+/** The three rollups the Structure endpoint serves.
+ *
+ *  `module` is the module's TOP segment, not the whole module path — measured
+ *  on sensei, grouping on the whole path collapses 1,751 files to 1,446 groups
+ *  (1.21x) because that segment is per-file across most of the tree, while its
+ *  first segment gives 150 (11.7x). The daemon owns that decision; this type
+ *  only names the levels it offers. */
+export type StructureLevel = 'file' | 'module' | 'package';
+
+export interface StructureNode {
+  id: string;
+  label: string;
+  package: string;
+  module: string;
+  language: string | null;
+  /** package → top module → leaf, truncated at whatever level this node IS.
+   *  From the fqn, never the filesystem — see the daemon's `structure_nodes`. */
+  path: string[];
+  files: number;
+  symbols: number;
+}
+
+export interface StructureEdge {
+  source: string;
+  target: string;
+  kind: string;
+  /** `in_module` | `cross_module` | `cross_package`, computed in the view. */
+  span: string;
+  occurrences: number;
+}
+
+/** What the diagram is NOT showing. `unplaced` reads from `graph_placement`,
+ *  so this and the resolution surfaces cannot disagree. Shown always, because a
+ *  sparse diagram with no count beside it reads as a simple codebase rather
+ *  than an unresolved one. */
+export interface StructureCoverage {
+  drawn: number;
+  unplaced: number;
+}
+
+export interface StructurePayload {
+  level: StructureLevel;
+  kinds: string[];
+  nodes: StructureNode[];
+  edges: StructureEdge[];
+  coverage: StructureCoverage;
+}
