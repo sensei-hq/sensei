@@ -3653,13 +3653,6 @@ pub struct StructureEdge {
     pub occurrences: i64,
 }
 
-/// What the diagram is NOT showing, which has to be said rather than implied.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct StructureCoverage {
-    pub drawn: i64,
-    pub unplaced: i64,
-}
-
 /// THE LEVEL EXPRESSION, in one place.
 ///
 /// `module` is the module's FIRST segment, not the whole module path, and that
@@ -3810,35 +3803,43 @@ impl PgStore {
             .collect())
     }
 
-    /// Drawn against unplaced, for the coverage line.
+    /// How many edges of these kinds COULD NOT be placed, for the coverage line.
     ///
-    /// `unplaced` comes from `graph_placement`, the view that already decomposes
-    /// every edge's outcome, so the number the screen shows and the number the
-    /// resolution surfaces show cannot disagree. Without it a sparse diagram
-    /// reads as a simple codebase rather than an unresolved one.
-    pub async fn structure_coverage(
+    /// `target_id IS NULL` is the definition: the resolver reached no
+    /// conclusion, so the edge names a relationship the index cannot point at
+    /// and the diagram must not draw. Counted straight off `edges` scoped by
+    /// `folder_projects`.
+    ///
+    /// NOT from `graph_placement`, and that is a correction rather than a
+    /// preference. Asking it for `outcome <> 'resolved'` matched EVERY row,
+    /// because its outcomes are `placed` / `missed` / `no verdict` and none of
+    /// them is `resolved` — so the screen reported the project's total edge
+    /// count as its unplaced one (69,747 of 69,747 on sensei, where the truth
+    /// is 38,578). It was also the whole cost: filtering that view by project
+    /// cannot push past its window functions, which took 107 of the endpoint's
+    /// 122 seconds against 2.9 for this.
+    ///
+    /// `drawn` is NOT computed here. It is how many edges the payload actually
+    /// carries at the requested level, which only the caller knows — deriving a
+    /// second number for it here would let the line disagree with the picture
+    /// beside it.
+    pub async fn structure_unplaced(
         &self,
         project_id: &uuid::Uuid,
         kinds: &[String],
-    ) -> Result<StructureCoverage, String> {
-        let (drawn,): (i64,) = sqlx_core::query_as::query_as(
-            "SELECT coalesce(sum(occurrences), 0)::bigint FROM sensei.structure_edges
-              WHERE project_id = $1 AND kind = ANY($2)",
-        )
-        .bind(project_id)
-        .bind(kinds)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    ) -> Result<i64, String> {
         let (unplaced,): (i64,) = sqlx_core::query_as::query_as(
-            "SELECT coalesce(sum(edges), 0)::bigint FROM sensei.graph_placement
-              WHERE project_id = $1 AND edge_kind::text = ANY($2) AND outcome <> 'resolved'",
+            "SELECT count(*)::bigint FROM sensei.edges ed
+               JOIN sensei.folder_projects fp ON fp.folder_id = ed.folder_id
+              WHERE fp.project_id = $1
+                AND ed.kind::text = ANY($2)
+                AND ed.target_id IS NULL",
         )
         .bind(project_id)
         .bind(kinds)
         .fetch_one(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
-        Ok(StructureCoverage { drawn, unplaced })
+        Ok(unplaced)
     }
 }

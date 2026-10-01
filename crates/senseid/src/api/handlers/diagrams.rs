@@ -43,8 +43,14 @@ pub(crate) struct StructureQuery {
 /// `coverage.unplaced` is NOT decoration. Calls are under half placed on this
 /// corpus, so the diagram necessarily omits more edges than it draws; a sparse
 /// picture with no count beside it reads as a simple codebase rather than an
-/// unresolved one. It is read from `graph_placement`, the same view the
-/// resolution surfaces use, so the two cannot drift.
+/// unresolved one.
+///
+/// It counts `edges.target_id IS NULL` directly, NOT `graph_placement`. An
+/// earlier version asked that view for `outcome <> 'resolved'` — a predicate
+/// that matched every row, because its outcomes are `placed` / `missed` /
+/// `no verdict` and none of them is `resolved`. The screen therefore reported
+/// the project's TOTAL edge count as its unplaced one, which is a precise-looking
+/// number that says nothing. It was also 107 of the endpoint's 122 seconds.
 ///
 /// A DB error is a 500. It is never an empty payload — that would be
 /// indistinguishable from an unindexed project, which is the one thing this
@@ -71,21 +77,20 @@ pub(crate) async fn structure(
 
     let project_id = resolve_project_id(&state, &id).await?;
 
-    let nodes = state
-        .pg
-        .structure_nodes(&project_id, &level)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let edges = state
-        .pg
-        .structure_edges(&project_id, &level, &kinds)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let coverage = state
-        .pg
-        .structure_coverage(&project_id, &kinds)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // CONCURRENTLY, because the three reads share nothing. Sequentially the
+    // response costs their SUM; the edge query alone dominates, so waiting for
+    // the other two in series adds latency for no ordering anyone needs.
+    let (nodes, edges, unplaced) = tokio::try_join!(
+        state.pg.structure_nodes(&project_id, &level),
+        state.pg.structure_edges(&project_id, &level, &kinds),
+        state.pg.structure_unplaced(&project_id, &kinds),
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // `drawn` is the payload's OWN edge count, not a second query. The line
+    // sits directly beside the picture, so deriving it twice is how the two
+    // come to disagree — and at a rolled-up level the number on screen is the
+    // rolled-up one, which only this function knows.
+    let coverage = serde_json::json!({ "drawn": edges.len() as i64, "unplaced": unplaced });
 
     Ok(Json(serde_json::json!({
         "level": level,
