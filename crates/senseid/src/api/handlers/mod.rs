@@ -3,6 +3,7 @@ pub(crate) mod checker;
 pub(crate) mod codebase;
 pub(crate) mod config;
 pub(crate) mod corrections;
+pub(crate) mod diagrams;
 pub(crate) mod dojo;
 pub(crate) mod gateway;
 pub(crate) mod gateway_chains;
