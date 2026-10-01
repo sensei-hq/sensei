@@ -6,8 +6,8 @@
 **Data:** `sensei.graph_nodes` + `sensei.edges`, both already populated. **No new indexing.**
 **App file:** _greenfield_
 **Daemon files:** _greenfield_ — no HTTP handler serves a structure payload yet
-**Rokkit:** `StructureDiagram` + `BundleControl` — both ship in `@rokkit/graph@1.8.0`. **No rokkit work required to ship v1.**
-**Status:** greenfield, and the FIRST screen of the Diagrams set precisely because it needs nothing new from the indexer or from rokkit.
+**Rokkit:** `StructureDiagram` + `BundleControl` — both ship in `@rokkit/graph@1.8.0`. **No rokkit work required to ship v1**, but the app was pinned at `^1.6.0`, which exports neither; all ten `@rokkit/*` packages were moved to 1.8.0 together (a split version across them is its own hazard).
+**Status:** SHIPPED 2026-10-01 (`d2e8f181` endpoint, `6f8ea574` screen). The FIRST screen of the Diagrams set precisely because it needs nothing new from the indexer or from rokkit.
 
 ## Purpose
 
@@ -73,9 +73,29 @@ the view is *about* and three consumers would otherwise each re-derive it.
 
 ## API
 
-`GET /api/projects/:id/diagrams/structure?level=file|module&kinds=calls,references`
+`GET /api/projects/:id/diagrams/structure?level=file|module|package&kinds=calls,references`
 
-Returns `{ nodes: [...], edges: [...], coverage: { drawn, unplaced } }`.
+Returns `{ nodes, edges, coverage: { drawn, unplaced }, level, kinds }`.
+
+**`module` MEANS THE MODULE'S TOP SEGMENT.** Written as this spec first had it —
+grouping on the fqn's module segment whole — the level does not collapse
+anything: measured on sensei, 1,751 files become 1,446 groups (1.21x) with 1,390
+of them holding exactly one file, because that segment is per-file across most
+of the tree. Its FIRST segment gives 150 groups over the same files (11.7x), and
+they are the units a reader names (`senseid/tasks`, `senseid/api`,
+`@sensei/desktop/routes`). `package` was added as the third level (16 nodes,
+109x) once the middle one earned its place.
+
+`level` and `kinds` are VALIDATED — an unrecognised value is a 400, never an
+empty graph. An empty graph would be a third silent meaning alongside "no edges
+here" and "nothing resolved", which are the two this screen exists to separate.
+
+`kinds` defaults to `calls` alone: all five at file level is 3,215 edges over
+1,751 nodes, which is the hairball named under Wrong gate.
+
+Each node carries `path` — package → top module → leaf, truncated at whatever
+level the node IS. The diagram draws its rim from it, derived server-side so
+three consumers cannot each re-derive it.
 
 Fails with 500 on a DB error — never an empty payload
 (`map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?`, the daemon idiom).
@@ -88,7 +108,9 @@ Fails with 500 on a DB error — never an empty payload
 3. The coverage line shows a non-zero unplaced count and matches
    `graph_placement` for the same project.
 4. Switching `level=module` collapses to modules; the node count drops by at
-   least an order of magnitude.
+   least an order of magnitude. **Measured: 1,751 → 150, 11.7x** — and only
+   because `module` means the module's top segment (see API). Grouping on the
+   whole module path gives 1.21x and fails this gate.
 5. Selecting a file shows its module, crate and degree.
 6. Loading, empty and error states each reachable and distinct.
 7. e2e passes against the live daemon with the real index.
