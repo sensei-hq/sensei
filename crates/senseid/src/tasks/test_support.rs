@@ -88,6 +88,58 @@ pub(crate) static CORRECTIONS_TABLE_LOCK: TestGate = TestGate::new();
 /// the call under test.
 pub(crate) static ACTIVITY_PRUNE_GATE: TestGate = TestGate::new();
 
+/// A [`TestGate`] that admits many readers but only one writer.
+///
+/// [`TestGate`] is the right shape when every participant mutates the shared
+/// thing. It is the wrong shape when ONE test is destructive and many are merely
+/// vulnerable: a plain mutex would serialise the victims against each other too,
+/// and the scan tests below cost ~50-100 s apiece.
+pub(crate) struct TestSweepGate(std::sync::RwLock<()>);
+
+impl TestSweepGate {
+    pub(crate) const fn new() -> Self {
+        Self(std::sync::RwLock::new(()))
+    }
+
+    /// Taken by the test that performs the DATABASE-WIDE sweep. Excludes every
+    /// holder of [`Self::using`].
+    pub(crate) fn sweeping(&self) -> std::sync::RwLockWriteGuard<'_, ()> {
+        self.0.write().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Taken by a test whose own `files` rows must survive. Concurrent with
+    /// every other reader — only the sweep is excluded.
+    pub(crate) fn using(&self) -> std::sync::RwLockReadGuard<'_, ()> {
+        self.0.read().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Serialises `maybe_rescan_on_version_change` against every test that depends
+/// on its own `files` rows surviving.
+///
+/// The sweep is DATABASE-WIDE and correctly so: a version bump must re-derive
+/// every root, so it walks `list_watch_roots()` and calls
+/// `clear_scan_state_for_root` on each, which is
+/// `DELETE FROM sensei.files … WHERE f.root_id = $1`. Being global is the
+/// behaviour under test, so the sweeping test cannot be scoped to its own root.
+///
+/// Concurrently it deletes a sibling's barrier rows between the scan that writes
+/// them and the parse that reads them. The victim does not fail where the row was
+/// deleted — it fails later and elsewhere, as R13 refusing to let a definition
+/// name an untracked file: `upsert_node_by_fqn(rust·forced·crate·lib·mod): no
+/// files row for src/lib.rs`. Measured: `repo_scan::scan_tests` passes alone and
+/// as a whole module, and all four of its parse-dependent tests fail when run
+/// alongside `version_rescan`.
+///
+/// Note which side is new. The sweep predates this; the tests it damages were
+/// added with the stage-3 barrier fix, so the race was exposed rather than
+/// introduced — which is also why the failing set grows with load rather than
+/// being stable.
+///
+/// Hold [`TestSweepGate::using`] for the whole span between writing scan state
+/// and the last assertion that depends on it, not merely around the parse.
+pub(crate) static SCAN_STATE_SWEEP_GATE: TestSweepGate = TestSweepGate::new();
+
 /// Serialises the tests that edit a SEEDED `sensei.schedules` row, or run the
 /// seed import.
 ///
