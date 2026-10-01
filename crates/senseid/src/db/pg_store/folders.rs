@@ -195,8 +195,8 @@ impl PgStore {
         // `pipeline.rs` already states the intent — "a module belongs to its
         // repo's project … the modules inheriting rather than each minting its
         // own" — but took the value from the caller, so the intent could be
-        // violated. It was: the swarco `documentation` checkout ended with its
-        // root in project `swarco` and its 362 subfolders in `documentation`.
+        // violated. It was: the client-q `documentation` checkout ended with its
+        // root in project `client-q` and its 362 subfolders in `documentation`.
         //
         // The caller's value is the FALLBACK, used only when no anchor exists to
         // inherit from (the repo root's own upsert, which is where the project is
@@ -584,7 +584,7 @@ impl PgStore {
             // silently had no effect.
             // PROJECT INHERITED FROM THE REPO ANCHOR, for the reason given on
             // `upsert_subfolder_kind`: taking it from the caller is what let the
-            // swarco checkout put 362 subfolders in a project its repository does
+            // client-q checkout put 362 subfolders in a project its repository does
             // not belong to. The caller's value is the fallback, used only by the
             // anchor's own upsert — which is where a project is legitimately set.
             "WITH inherited AS (

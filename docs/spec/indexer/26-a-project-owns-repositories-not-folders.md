@@ -24,16 +24,16 @@ nothing stops them drifting.
 ## It has already drifted
 
 ```
-/Users/Jerry/Work/pre-sales/swarco/documentation
-  → project "swarco"        | git    |   1 folder    ← the repo ROOT
+/Users/dev/client-v/client-q/documentation
+  → project "client-q"        | git    |   1 folder    ← the repo ROOT
   → project "documentation" | folder | 362 folders   ← everything beneath it
 ```
 
 One repository, two projects. 285 of 286 repos are consistent; this one is not,
 and nothing prevents the next.
 
-Five projects also span two repositories each (`fitness` 7 modules, `swarco` 6,
-`website`, `database`, `documentation.wiki`). That is **legitimate** under
+Five projects also span two repositories each (`fitness` 7 modules, `client-q` 6,
+`website`, `database`, `client-g`). That is **legitimate** under
 project→repository — it is only expressed folder-by-folder today.
 
 ## Why it must be fixed before more is built on it
@@ -87,7 +87,7 @@ require a remote, those 10 simply never got one. A backfill, not a blocker.
 2. **Backfill**, in order:
    a. a `repositories` row for every repo-anchor folder that lacks one;
    b. `repositories.project_id` from the **anchor folder's** current
-      `project_id` — the ROOT wins, which resolves swarco to `swarco`;
+      `project_id` — the ROOT wins, which resolves client-q to `client-q`;
    c. re-derive `folders.project_id` from the anchor so subfolders agree.
 3. **Writers** — folder upserts stop taking a project from the caller and derive
    it from the repo anchor. `set_folder_project` is replaced by
@@ -109,7 +109,7 @@ set independently**, not that it stopped existing.
 2. Every repo-anchor folder holding nodes has a `repositories` row.
 3. **No repository's folders disagree about their project** — asserted by a test
    over the live shape, not by reading the code.
-4. The swarco split is resolved: all 363 folders of that repo sit in one project.
+4. The client-q split is resolved: all 363 folders of that repo sit in one project.
 5. A folder upsert cannot set a project that contradicts its repository —
    mutation-probed.
 6. Full suite green; sensei re-indexes and `structure_edges` counts do not fall.
@@ -122,7 +122,7 @@ set independently**, not that it stopped existing.
   repository row — that is the same drift with extra steps.
 - **The 90 empty standalones treated as a blocker.** They hold zero nodes;
   requiring rows for them before proceeding is cost with no benefit.
-- **Backfill taking the majority folder's project.** The swarco repo's 362
+- **Backfill taking the majority folder's project.** The client-q repo's 362
   subfolders outvote its root, which would move the repository into
   `documentation` — the root is the repository's identity and must win.
 
