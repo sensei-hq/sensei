@@ -15,6 +15,58 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+## Indexer — an interrupted scan silently disables cross-package resolution (measured 2026-09-30)
+
+The structure pass downgrades EVERY directory to `kind='folder'`, and
+`ProcessManifest` re-upgrades the manifest-bearing ones to `kind='module'`
+afterwards. `upsert_subfolder_kind`'s conflict rule permits the downgrade:
+
+```sql
+kind = CASE WHEN folders.kind IN ('folder','module') THEN EXCLUDED.kind ELSE folders.kind END
+```
+
+Between those two passes a repository has **no module folders**, and
+`first_party_packages` reads exactly those rows — so `World::first_party` is
+empty and every cross-package edge silently fails to place.
+
+Observed on this machine: stopping the daemon mid-scan left all 18 of sensei's
+module folders as plain `folder`. Restarting restored them, so it is recoverable
+— but until the next COMPLETE scan, #207/#208 are inert and nothing says so.
+
+The normal path is protected only by ordering: the file gate is `blocked_by` the
+manifest tasks, so files are not parsed inside the window. That is a real
+guarantee but an implicit one, and it does not cover an interrupted scan.
+
+**Fix candidates.** Make the downgrade non-destructive (the structure pass should
+not be able to demote a `module`, since only a manifest pass knows one exists);
+or have `first_party_packages` refuse to answer "no packages" for a repo whose
+manifests have not been re-applied, rather than returning an empty set that reads
+as a legitimate answer. The second is the fail-loud shape.
+
+---
+
+## DB — `IS NOT DISTINCT FROM` over a scalar subquery scans the whole table on a miss (measured 2026-09-30)
+
+Written while scoping the resolver's world:
+
+```sql
+WHERE f.project_id IS NOT DISTINCT FROM (SELECT g.project_id FROM folders g WHERE g.id = $1)
+```
+
+For a folder that does not exist the subquery is NULL, and
+`IS NOT DISTINCT FROM NULL` matches **every row whose column is also NULL** — so
+an unknown id silently returns a world assembled from every project-less folder
+in the database. Measured: 105s for what should have been an instant empty
+answer, and the result was wrong as well as slow.
+
+`IS NOT DISTINCT FROM` is the right operator for comparing two possibly-NULL
+values. It is the wrong one for "scope to the thing this id belongs to", where a
+miss must yield NOTHING. Fixed by scoping through `repo_anchor_for` instead
+(0.19s), but the pattern is worth knowing: **a NULL-tolerant comparison against a
+scalar subquery turns a miss into a match-everything.**
+
+---
+
 ## Indexer — a scan cannot be cancelled, because `--force` writes its intent into the data (measured 2026-09-30)
 
 **Agreed with the user 2026-09-30: take this up AFTER the empty-`World` defect
