@@ -53,5 +53,23 @@ two projects yields two rows, because its nodes genuinely belong to both; a
 consumer needing exactly one must name which, rather than be handed an arbitrary
 pick that looks authoritative.';
 
+comment on column project_repositories.project_id is
+'The project this repository belongs to. CASCADE on delete: membership is a
+statement about a project that exists, so deleting the project removes the
+claim rather than leaving a row pointing at nothing.
+
+A repository may appear here more than once, under different projects — that is
+the point of the table. See the table comment for why a column on `repositories`
+could not express it.';
+
+comment on column project_repositories.created_at is
+'When the membership was recorded. NOT when the repository was scanned and not
+when the project was created — a repository can be scanned long before anyone
+assigns it, and a project can exist with no repositories at all.
+
+Carried so a membership that appeared without anyone intending it can be told
+apart from one that was always there. The 2026-09-30 backfill and a user edit
+are otherwise indistinguishable.';
+
 comment on column project_repositories.repository_id is
 'The CANONICAL repository (keyed on remote), not a checkout. Two checkouts of one remote share this id, which is precisely why a project cannot be stored on the repository row itself.';
