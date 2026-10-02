@@ -1131,14 +1131,21 @@ impl PgStore {
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Option<String>, String, i32, Option<uuid::Uuid>)> =
             sqlx_core::query_as::query_as(
-                "SELECT dp.id, dp.name, dp.family, dp.lifecycle::text, dp.instance_count, f.project_id
+                "SELECT dp.id, dp.name, dp.family, dp.lifecycle::text, dp.instance_count,
+                        sensei.sole_project_of(f.id)
                  FROM inference.detected_patterns dp
                  JOIN sensei.folders f ON f.id = dp.folder_id
                  WHERE dp.lifecycle IN ('suggested','rule') AND NOT dp.is_anti_pattern
-                   AND ($1::uuid IS NULL OR f.project_id = $1)
+                   AND ($1::uuid IS NULL
+                        OR EXISTS (SELECT 1 FROM sensei.folder_projects fp
+                                    WHERE fp.folder_id = f.id AND fp.project_id = $1))
                  ORDER BY dp.instance_count DESC
-                 LIMIT 100"
-            ).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+                 LIMIT 100",
+            )
+            .bind(project)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, name, family, lifecycle, instance_count, project_id)| {
             serde_json::json!({ "id": id, "name": name, "family": family, "lifecycle": lifecycle,
                                 "instance_count": instance_count, "project_id": project_id })
@@ -1178,7 +1185,9 @@ impl PgStore {
                 "SELECT dp.id, dp.name, dp.family, dp.instance_count, dp.modified_at
              FROM inference.detected_patterns dp
              JOIN sensei.folders f ON f.id = dp.folder_id
-             WHERE f.project_id = $1 AND dp.lifecycle = 'rule' AND NOT dp.is_anti_pattern
+             WHERE EXISTS (SELECT 1 FROM sensei.folder_projects fp
+                            WHERE fp.folder_id = f.id AND fp.project_id = $1)
+               AND dp.lifecycle = 'rule' AND NOT dp.is_anti_pattern
              ORDER BY dp.modified_at DESC LIMIT $2",
             )
             .bind(project_id)

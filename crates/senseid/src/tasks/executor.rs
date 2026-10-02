@@ -248,7 +248,9 @@ mod tests {
         {
             let root_id =
                 ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
+            crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, "repo", "/tmp/repo")
+                .await
+                .unwrap();
         }
         let task = Task::new(TaskKind::DeleteFolder, "repo", "/tmp/repo/src");
         let result = execute_task(&ctx, &task).await;
@@ -261,7 +263,9 @@ mod tests {
         {
             let root_id =
                 ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
+            crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, "repo", "/tmp/repo")
+                .await
+                .unwrap();
         }
         let task = Task::new(TaskKind::ResolveLibs, "repo", "");
         let result = execute_task(&ctx, &task).await;
@@ -420,7 +424,9 @@ mod tests {
             let repo_path = tmp.path().to_string_lossy().to_string();
             let root_id =
                 ctx.pg().add_watch_root(&repo_path, "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, "repo", &repo_path).await.unwrap();
+            crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, "repo", &repo_path)
+                .await
+                .unwrap();
         }
 
         let mut task = Task::new(TaskKind::ProcessFolder, "repo", &src_dir.to_string_lossy());
@@ -484,7 +490,9 @@ mod tests {
         {
             let root_id =
                 ctx.pg().add_watch_root(&path, &unique, &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, &unique, &path).await.unwrap();
+            crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, &unique, &path)
+                .await
+                .unwrap();
             let p = ctx.pg().get_repo_by_name(&unique).await.unwrap();
             assert!(p.is_some());
         }

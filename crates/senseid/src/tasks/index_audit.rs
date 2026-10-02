@@ -581,26 +581,12 @@ mod tests {
         // Live subfolder (dir present) vs ghost subfolder (dir absent, has a node).
         let live_dir = repo.join("live");
         std::fs::create_dir_all(&live_dir).unwrap();
-        pg.upsert_subfolder(
-            &root_id,
-            "live",
-            "live",
-            &live_dir.to_string_lossy(),
-            Some(&repo_fid),
-            None,
-        )
-        .await
-        .unwrap();
+        pg.upsert_subfolder(&root_id, "live", "live", &live_dir.to_string_lossy(), Some(&repo_fid))
+            .await
+            .unwrap();
         let gone = repo.join("gone"); // never created on disk
         let gone_fid = pg
-            .upsert_subfolder(
-                &root_id,
-                "gone",
-                "gone",
-                &gone.to_string_lossy(),
-                Some(&repo_fid),
-                None,
-            )
+            .upsert_subfolder(&root_id, "gone", "gone", &gone.to_string_lossy(), Some(&repo_fid))
             .await
             .unwrap();
         pg.seed_node(&gone_fid, "struct", "Ghost", "gone/x.rs", None, None, None, None)
@@ -657,18 +643,21 @@ mod tests {
             .create_project(&format!("mono-{}", uuid::Uuid::new_v4().simple()), None, None)
             .await
             .unwrap();
-        pg.upsert_folder(
-            &root_id,
-            "git",
-            "monorepo",
-            "monorepo",
-            &repo.to_string_lossy(),
-            None,
-            Some(&gpid),
-            None,
-        )
-        .await
-        .unwrap();
+        let g_fid = pg
+            .upsert_folder(
+                &root_id,
+                "git",
+                "monorepo",
+                "monorepo",
+                &repo.to_string_lossy(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&pg, &g_fid, &gpid, "monorepo")
+            .await
+            .unwrap();
         // A standalone root mis-scoped INSIDE the repo, attributed to a DIFFERENT project.
         let spid = pg
             .create_project(&format!("sub-{}", uuid::Uuid::new_v4().simple()), None, None)
@@ -682,9 +671,11 @@ mod tests {
                 "sub",
                 &nested.to_string_lossy(),
                 None,
-                Some(&spid),
                 None,
             )
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&pg, &s_fid, &spid, "sub")
             .await
             .unwrap();
 
@@ -695,7 +686,7 @@ mod tests {
         // — but after a repair pass MY nested standalone is guaranteed re-absorbed.
         audit_index_integrity(&pg, std::slice::from_ref(&root), true).await;
         let (kind, pid): (String, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
-            "SELECT kind::text, project_id FROM sensei.folders WHERE id = $1",
+            "SELECT kind::text, sensei.sole_project_of(id) FROM sensei.folders WHERE id = $1",
         )
         .bind(s_fid)
         .fetch_one(pg.pool())
@@ -721,18 +712,13 @@ mod tests {
         let name = format!("dupname-{}", uuid::Uuid::new_v4().simple());
         // Survivor: a folder-bearing project.
         let survivor = pg.create_project(&name, None, None).await.unwrap();
-        pg.upsert_folder(
-            &root_id,
-            "git",
-            "repo",
-            "repo",
-            &repo.to_string_lossy(),
-            None,
-            Some(&survivor),
-            None,
-        )
-        .await
-        .unwrap();
+        let sv_fid = pg
+            .upsert_folder(&root_id, "git", "repo", "repo", &repo.to_string_lossy(), None, None)
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&pg, &sv_fid, &survivor, "repo")
+            .await
+            .unwrap();
         // Phantom: a same-name, 0-folder, discovery project.
         let phantom = pg.create_project(&name, None, None).await.unwrap();
 
@@ -784,9 +770,11 @@ mod tests {
                 "monorepo",
                 &repo.to_string_lossy(),
                 None,
-                Some(&gpid),
                 None,
             )
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&pg, &repo_fid, &gpid, "monorepo")
             .await
             .unwrap();
         pg.seed_node(&repo_fid, "function", "a", "live.rs", None, None, None, None).await.unwrap();
@@ -801,7 +789,6 @@ mod tests {
                 "ghost",
                 &ghost_dir.to_string_lossy(),
                 Some(&repo_fid),
-                None,
             )
             .await
             .unwrap();
@@ -816,36 +803,34 @@ mod tests {
             .create_project(&format!("sub-{}", uuid::Uuid::new_v4().simple()), None, None)
             .await
             .unwrap();
-        pg.upsert_folder(
-            &root_id,
-            "standalone",
-            "sub",
-            "sub",
-            &nested.to_string_lossy(),
-            None,
-            Some(&spid),
-            None,
-        )
-        .await
-        .unwrap();
+        let c_fid = pg
+            .upsert_folder(
+                &root_id,
+                "standalone",
+                "sub",
+                "sub",
+                &nested.to_string_lossy(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&pg, &c_fid, &spid, "sub")
+            .await
+            .unwrap();
 
         // (d) duplicate-name phantom project (duplicate-name class).
         let dupname = format!("dupname-{}", uuid::Uuid::new_v4().simple());
         let survivor = pg.create_project(&dupname, None, None).await.unwrap();
         let extra_repo = tmp.path().join("dup");
         std::fs::create_dir_all(&extra_repo).unwrap();
-        pg.upsert_folder(
-            &root_id,
-            "git",
-            "dup",
-            "dup",
-            &extra_repo.to_string_lossy(),
-            None,
-            Some(&survivor),
-            None,
-        )
-        .await
-        .unwrap();
+        let d_fid = pg
+            .upsert_folder(&root_id, "git", "dup", "dup", &extra_repo.to_string_lossy(), None, None)
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&pg, &d_fid, &survivor, "dup")
+            .await
+            .unwrap();
         let phantom = pg.create_project(&dupname, None, None).await.unwrap();
 
         // One repair pass fixes every class it can see. The per-root classes

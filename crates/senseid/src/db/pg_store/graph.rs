@@ -3158,11 +3158,17 @@ impl PgStore {
         #[allow(clippy::type_complexity)]
         let doc_rows: Vec<(uuid::Uuid, uuid::Uuid, String, String)> =
             sqlx_core::query_as::query_as(
+                // `folders` is joined for `abs_path` and `folder_projects` for
+                // the membership — two joins now, because they are two facts.
+                // The migration replaced the single folders join with the
+                // junction and left `f.abs_path` behind it, which Postgres
+                // rejects as a missing FROM-clause entry rather than silently.
                 "SELECT n.id, n.folder_id, f.abs_path, np.file_path
                FROM sensei.nodes n
                JOIN sensei.node_paths np ON np.node_id = n.id
                JOIN sensei.folders f ON f.id = n.folder_id
-              WHERE f.project_id = $1
+               JOIN sensei.folder_projects fp ON fp.folder_id = n.folder_id
+              WHERE fp.project_id = $1
                 AND n.kind = 'doc'
               LIMIT 500",
             )
@@ -3296,8 +3302,8 @@ impl PgStore {
         let open_rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
             "SELECT di.id, di.detail
                FROM inference.drift_items di
-               JOIN sensei.folders f ON f.id = di.folder_id
-              WHERE f.project_id = $1
+               JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id
+              WHERE fp.project_id = $1
                 AND di.status = 'broken'
                 AND di.resolved_at IS NULL",
         )
@@ -3362,7 +3368,16 @@ impl PgStore {
                   SELECT 1
                     FROM sensei.nodes g
                     JOIN sensei.folders gf ON gf.id = g.folder_id
-                   WHERE gf.project_id = sf.project_id
+                   -- The two folders SHARE a project. Membership is a set
+                   -- now, so this is an intersection rather than an equality,
+                   -- and a repository serving two projects makes that a real
+                   -- difference rather than a spelling one.
+                   WHERE EXISTS (SELECT 1
+                                   FROM sensei.folder_projects a
+                                   JOIN sensei.folder_projects b
+                                     ON b.project_id = a.project_id
+                                  WHERE a.folder_id = gf.id
+                                    AND b.folder_id = sf.id)
                      AND gf.kind IN ('git'::sensei.folder_kind,
                                      'standalone'::sensei.folder_kind,
                                      'subtree'::sensei.folder_kind)

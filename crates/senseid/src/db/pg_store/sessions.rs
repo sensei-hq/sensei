@@ -478,8 +478,9 @@ impl PgStore {
     ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "UPDATE activity.sessions s SET analyzed_at = NULL
-               FROM sensei.folders f
-              WHERE f.id = s.folder_id AND f.project_id = $1 AND s.client_session_id IS NOT NULL",
+               FROM sensei.folder_projects fp
+              WHERE fp.folder_id = s.folder_id AND fp.project_id = $1
+                AND s.client_session_id IS NOT NULL",
         )
         .bind(project_id)
         .execute(&self.pool)
@@ -505,9 +506,9 @@ impl PgStore {
                     coalesce(sum((e.v->>'failed')::int), 0)::int8 AS failed,
                     count(*)::int8                                AS sessions
                FROM activity.sessions s
-               JOIN sensei.folders f ON f.id = s.folder_id,
+               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id,
                     jsonb_each(s.props->'tool_usage') AS e(tool, v)
-              WHERE f.project_id = $1
+              WHERE fp.project_id = $1
                 AND s.props ? 'tool_usage'
                 AND jsonb_typeof(s.props->'tool_usage') = 'object'
               GROUP BY e.tool
@@ -988,8 +989,8 @@ impl PgStore {
                     s.evidence, (s.props->>'resumed')::bool AS resumed, s.props->'trouble' AS trouble,
                     s.tokens_in, s.tokens_out, EXTRACT(EPOCH FROM s.duration)::float8, s.provider, s.model
                FROM activity.sessions s
-               JOIN sensei.folders  f ON f.id = s.folder_id
-              WHERE f.project_id = $1
+               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id
+              WHERE fp.project_id = $1
                 AND s.outcome   IS NOT NULL
                 AND s.outcome   <> 'empty'::sensei.session_outcome
                 AND date_trunc('day', s.started_at)::date = $2

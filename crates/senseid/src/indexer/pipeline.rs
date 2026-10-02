@@ -207,12 +207,15 @@ async fn write_one_repo(
         Err(e) => out.errors.push(format!("upsert_repository: {e}")),
     }
 
-    // A repo gets a PROJECT, 1:1, as `folders.project_id` documents. Without it
-    // every folder had project_id NULL, and the chain that answers "which
+    // A repo gets a PROJECT, 1:1. Without it the chain that answers "which
     // projects use this library" — and everything keyed on it, including the
     // update scheduler and therefore the registry-URL extraction — had no input
     // at all. Matched by name, so the 147 projects predating this scan are
     // reused rather than duplicated.
+    //
+    // The project is recorded BELOW, against the repository, once the folder
+    // and its repository both exist. It is deliberately not an argument to the
+    // folder upsert: since #211 there is no `folders.project_id` to put it in.
     let project_id = match pg.get_or_create_project_by_name(&name).await {
         Ok((id, _created)) => Some(id),
         Err(e) => {
@@ -221,10 +224,7 @@ async fn write_one_repo(
         }
     };
 
-    let folder_id = match pg
-        .upsert_folder(root_id, "git", &name, &abs, &abs, None, project_id.as_ref(), None)
-        .await
-    {
+    let folder_id = match pg.upsert_folder(root_id, "git", &name, &abs, &abs, None, None).await {
         Ok(id) => id,
         Err(e) => {
             out.errors.push(format!("upsert_folder(root): {e}"));
@@ -242,10 +242,11 @@ async fn write_one_repo(
     }
 
     // AND THE MEMBERSHIP ITSELF, which is a different fact from either link
-    // above. `folders.project_id` says which project a FOLDER claims;
-    // `project_repositories` says which projects a REPOSITORY belongs to, and
-    // since #210 that junction is the only thing `folder_projects` — and so
-    // every view resolving a project — actually reads.
+    // above. `project_repositories` says which projects a REPOSITORY belongs
+    // to, and since #210 that junction is the only thing `folder_projects` —
+    // and so every view resolving a project — actually reads. #211 then
+    // dropped `folders.project_id`, so it is not merely the thing read first;
+    // it is the only place the answer exists.
     //
     // This write was missing. The scan had both ids in hand right here and
     // wrote neither into the junction, whose sole writer (`set_folder_project`)
@@ -279,24 +280,21 @@ async fn write_one_repo(
     // stop the scan: the other roots are independent and their structure is
     // still correct. `out.errors` non-empty is how a caller tells the
     // difference between "this repo has no files" and "this repo failed".
-    let folder_ids =
-        match write_structure(pg, root_id, root, &folder_id, project_id.as_ref(), &scan, &mut out)
-            .await
-        {
-            Ok(ids) => {
-                // The BARRIER's own number, the same one `folder_completeness`
-                // divides by — not a recount (08 S2).
-                stage.completed(out.files as u64);
-                ids
-            }
-            Err(e) => {
-                // S4: a stage that fails says so. Silence here is what leaves a UI
-                // showing a scan that stopped running minutes ago.
-                stage.failed(&e);
-                out.errors.push(e);
-                BTreeMap::new()
-            }
-        };
+    let folder_ids = match write_structure(pg, root_id, root, &folder_id, &scan, &mut out).await {
+        Ok(ids) => {
+            // The BARRIER's own number, the same one `folder_completeness`
+            // divides by — not a recount (08 S2).
+            stage.completed(out.files as u64);
+            ids
+        }
+        Err(e) => {
+            // S4: a stage that fails says so. Silence here is what leaves a UI
+            // showing a scan that stopped running minutes ago.
+            stage.failed(&e);
+            out.errors.push(e);
+            BTreeMap::new()
+        }
+    };
 
     // ── Stage 2 S8/S11: the dependency edges ─────────────────────────────
     write_dependencies(pg, root, &scan, &folder_ids, &mut out).await;
@@ -711,7 +709,6 @@ async fn write_structure(
     root_id: &uuid::Uuid,
     repo_root: &std::path::Path,
     root_folder_id: &uuid::Uuid,
-    project_id: Option<&uuid::Uuid>,
     scan: &RepoScan,
     out: &mut RepoResult,
 ) -> Result<BTreeMap<std::path::PathBuf, uuid::Uuid>, String> {
@@ -747,9 +744,10 @@ async fn write_structure(
                 &rel.to_string_lossy(),
                 &f.abs_path.to_string_lossy(),
                 Some(&parent),
-                // A module belongs to its repo's project — the 1:1 rule, with
-                // the modules inheriting rather than each minting its own.
-                project_id,
+                // No project argument: a module belongs to its repo's project
+                // because it inherits the repo's REPOSITORY, which the upsert
+                // resolves from the anchor. The membership itself is written
+                // once, against the repository, by `scan_root`.
                 ws_root.as_ref(),
             )
             .await

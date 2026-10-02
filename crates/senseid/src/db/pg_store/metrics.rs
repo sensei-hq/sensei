@@ -580,8 +580,8 @@ impl PgStore {
                   , count(*) FILTER (WHERE s.outcome = 'completed'::sensei.session_outcome)::int8   AS completed
                   , count(*) FILTER (WHERE s.ftr)::int8                                             AS first_try
                FROM activity.sessions s
-               JOIN sensei.folders    f ON f.id = s.folder_id
-              WHERE f.project_id = $1
+               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id
+              WHERE fp.project_id = $1
                 AND s.outcome   IS NOT NULL
                 AND s.outcome   <> 'empty'::sensei.session_outcome
                 AND date_trunc('day', s.started_at)::date = $2",

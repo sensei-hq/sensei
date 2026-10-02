@@ -310,8 +310,8 @@ async fn project_file_count(pg: &PgStore, project_id: &uuid::Uuid) -> Result<i64
     let (total,): (i64,) = sqlx_core::query_as::query_as(
         "SELECT count(*)::int8
            FROM sensei.nodes   n
-           JOIN sensei.folders f ON f.id = n.folder_id
-          WHERE f.project_id  = $1
+           JOIN sensei.folder_projects fp ON fp.folder_id = n.folder_id
+          WHERE fp.project_id = $1
             AND n.kind        = 'file'::sensei.node_kind",
     )
     .bind(project_id)

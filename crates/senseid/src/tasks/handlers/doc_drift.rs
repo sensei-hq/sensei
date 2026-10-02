@@ -83,7 +83,9 @@ mod tests {
             )
             .await
             .unwrap();
-        let fid = pg.upsert_repo(&root, "drift-repo", &abs).await.unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(pg, &root, "drift-repo", &abs)
+            .await
+            .unwrap();
         pg.set_folder_project(&fid, &pid, "primary", None).await.unwrap();
         // Stage 3's barrier (R14) first: `nodes.file_id` is a foreign key into
         // `sensei.files` (R13), so the file a doc node names has to be tracked
@@ -101,8 +103,8 @@ mod tests {
         let broken = |pid| async move {
             let n: (i64,) = sqlx_core::query_as::query_as(
                 "SELECT count(*) FROM inference.drift_items di
-                   JOIN sensei.folders f ON f.id = di.folder_id
-                  WHERE f.project_id = $1 AND di.status = 'broken' AND di.resolved_at IS NULL",
+                   JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id
+                  WHERE fp.project_id = $1 AND di.status = 'broken' AND di.resolved_at IS NULL",
             )
             .bind(pid)
             .fetch_one(pg.pool())
@@ -152,7 +154,8 @@ mod tests {
         assert_eq!(scan_doc_drift(&ctx, &task).await.unwrap(), 0, "no new broken on re-scan");
         let total: (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*) FROM inference.drift_items di
-               JOIN sensei.folders f ON f.id = di.folder_id WHERE f.project_id = $1",
+               JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id
+              WHERE fp.project_id = $1",
         )
         .bind(pid)
         .fetch_one(pg.pool())
@@ -176,8 +179,8 @@ mod tests {
         assert_eq!(broken(pid).await, 0, "the previously-broken row is no longer open");
         let resolved: (i64,) = sqlx_core::query_as::query_as(
             "SELECT count(*) FROM inference.drift_items di
-               JOIN sensei.folders f ON f.id = di.folder_id
-              WHERE f.project_id = $1 AND di.status = 'current' AND di.resolved_at IS NOT NULL",
+               JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id
+              WHERE fp.project_id = $1 AND di.status = 'current' AND di.resolved_at IS NOT NULL",
         )
         .bind(pid)
         .fetch_one(pg.pool())

@@ -925,15 +925,12 @@ mod tests {
             .await
             .unwrap();
         let repo_path = format!("/_test/imp-repo-{}", uuid::Uuid::new_v4());
-        let fid = pg.upsert_repo(&root, "imp-repo", &repo_path).await.unwrap();
-        // link folder → project (scan/reconcile does this in production; the
-        // importer resolves project_id from the folder via cwd).
-        sqlx_core::query::query("UPDATE sensei.folders SET project_id=$1 WHERE id=$2")
-            .bind(pid)
-            .bind(fid)
-            .execute(pg.pool())
+        let fid = crate::tasks::test_support::seed_repo_folder(&pg, &root, "imp-repo", &repo_path)
             .await
             .unwrap();
+        // link folder → project (scan/reconcile does this in production; the
+        // importer resolves project_id from the folder via cwd).
+        pg.set_folder_project(&fid, &pid, "root", None).await.unwrap();
         let sid = format!("_test-imp-{}", uuid::Uuid::new_v4());
 
         // a historical transcript whose cwd == the tracked folder's abs_path

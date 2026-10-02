@@ -983,7 +983,14 @@ mod tests {
         let folder_path = tmp.path().to_string_lossy().to_string();
         let root_id =
             ctx.pg().add_watch_root(&folder_path, "rl_fc", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "rl-fc-repo", &folder_path).await.unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            ctx.pg(),
+            &root_id,
+            "rl-fc-repo",
+            &folder_path,
+        )
+        .await
+        .unwrap();
         ctx.pg().update_folder_status(&fid, "failed").await.unwrap();
 
         let task = Task::new(TaskKind::ResolveLibs, &folder_path, &folder_path);

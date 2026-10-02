@@ -1133,8 +1133,7 @@ async fn docs_are_served_for_the_version_a_folder_pins_and_labelled_when_they_ca
         .await
         .unwrap();
     let abs = format!("/_test/s9-app-{}", uuid::Uuid::new_v4());
-    let folder =
-        s.upsert_folder(&rid, "git", "s9-app", &abs, &abs, None, None, None).await.unwrap();
+    let folder = s.upsert_folder(&rid, "git", "s9-app", &abs, &abs, None, None).await.unwrap();
 
     // Unique per run, like the watch root and the folder above. It was the one
     // FIXED identifier in the test, and `delete_library` at the bottom only
@@ -1409,19 +1408,10 @@ async fn a_repo_relative_path_resolves_to_a_file_in_a_module_folder() {
     let base = format!("/tmp/fidfor_{}", uuid::Uuid::new_v4());
     let rid = s.add_watch_root(&base, "fidfor", &serde_json::json!([])).await.unwrap();
 
-    let repo = s.upsert_folder(&rid, "git", "repo", &base, &base, None, None, None).await.unwrap();
+    let repo = s.upsert_folder(&rid, "git", "repo", &base, &base, None, None).await.unwrap();
     let mod_abs = format!("{base}/crates/senseid");
     let module = s
-        .upsert_folder(
-            &rid,
-            "module",
-            "senseid",
-            "crates/senseid",
-            &mod_abs,
-            Some(&repo),
-            None,
-            None,
-        )
+        .upsert_folder(&rid, "module", "senseid", "crates/senseid", &mod_abs, Some(&repo), None)
         .await
         .unwrap();
 
@@ -1473,11 +1463,10 @@ async fn a_file_two_folders_both_track_resolves_to_the_callers_own_folder() {
     let base = format!("/tmp/fidtwo_{}", uuid::Uuid::new_v4());
     let rid = s.add_watch_root(&base, "fidtwo", &serde_json::json!([])).await.unwrap();
 
-    let outer =
-        s.upsert_folder(&rid, "git", "outer", &base, &base, None, None, None).await.unwrap();
+    let outer = s.upsert_folder(&rid, "git", "outer", &base, &base, None, None).await.unwrap();
     let inner_abs = format!("{base}/vendored");
     let inner = s
-        .upsert_folder(&rid, "git", "vendored", "vendored", &inner_abs, Some(&outer), None, None)
+        .upsert_folder(&rid, "git", "vendored", "vendored", &inner_abs, Some(&outer), None)
         .await
         .unwrap();
 
@@ -1515,10 +1504,25 @@ async fn folder_completeness_propagates_incompleteness_up_the_tree() {
     let root_id = s.add_watch_root(&root_path, "fc", &serde_json::json!([])).await.unwrap();
 
     // root ── child ── grandchild
-    let root = s.upsert_repo(&root_id, "fc-root", &root_path).await.unwrap();
-    let child = s.upsert_repo(&root_id, "fc-child", &format!("{root_path}/child")).await.unwrap();
-    let grand =
-        s.upsert_repo(&root_id, "fc-grand", &format!("{root_path}/child/grand")).await.unwrap();
+    let root = crate::tasks::test_support::seed_repo_folder(&s, &root_id, "fc-root", &root_path)
+        .await
+        .unwrap();
+    let child = crate::tasks::test_support::seed_repo_folder(
+        &s,
+        &root_id,
+        "fc-child",
+        &format!("{root_path}/child"),
+    )
+    .await
+    .unwrap();
+    let grand = crate::tasks::test_support::seed_repo_folder(
+        &s,
+        &root_id,
+        "fc-grand",
+        &format!("{root_path}/child/grand"),
+    )
+    .await
+    .unwrap();
     for (c, p) in [(child, root), (grand, child)] {
         sqlx_core::query::query("UPDATE sensei.folders SET parent_id = $2 WHERE id = $1")
             .bind(c)
@@ -1590,7 +1594,9 @@ async fn folder_completeness_counts_a_deliberate_skip_as_decided() {
     let s = pg_store().await;
     let root_path = format!("/tmp/fcskip_{}", uuid::Uuid::new_v4());
     let root_id = s.add_watch_root(&root_path, "fcs", &serde_json::json!([])).await.unwrap();
-    let f = s.upsert_repo(&root_id, "fcs-f", &root_path).await.unwrap();
+    let f = crate::tasks::test_support::seed_repo_folder(&s, &root_id, "fcs-f", &root_path)
+        .await
+        .unwrap();
 
     s.set_folder_expected_files(&f, 1).await.unwrap();
     sqlx_core::query::query(
@@ -1631,7 +1637,9 @@ async fn folder_completeness_separates_a_parse_from_a_skip() {
     let s = pg_store().await;
     let root_path = format!("/tmp/fcsplit_{}", uuid::Uuid::new_v4());
     let root_id = s.add_watch_root(&root_path, "fcsplit", &serde_json::json!([])).await.unwrap();
-    let f = s.upsert_repo(&root_id, "fcsplit-f", &root_path).await.unwrap();
+    let f = crate::tasks::test_support::seed_repo_folder(&s, &root_id, "fcsplit-f", &root_path)
+        .await
+        .unwrap();
 
     // Three files, one of each state — so a column that reported the wrong one
     // cannot coincide with the right answer.
@@ -3815,16 +3823,7 @@ async fn folder_upsert_and_list() {
     let path = format!("/_test/folder_root_{}", uuid::Uuid::new_v4());
     let rid = s.add_watch_root(&path, "test_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(
-            &rid,
-            "git",
-            "myrepo",
-            "myrepo",
-            &format!("{}/myrepo", path),
-            None,
-            None,
-            None,
-        )
+        .upsert_folder(&rid, "git", "myrepo", "myrepo", &format!("{}/myrepo", path), None, None)
         .await
         .unwrap();
     let folders = s.list_folders_by_root(&rid).await.unwrap();
@@ -3852,8 +3851,7 @@ async fn list_pending_folders_returns_only_non_terminal_status() {
     ] {
         let name = format!("repo_{}", suffix);
         let abs_path = format!("{}/{}", root_path, name);
-        let fid =
-            s.upsert_folder(&rid, "git", &name, &name, &abs_path, None, None, None).await.unwrap();
+        let fid = s.upsert_folder(&rid, "git", &name, &name, &abs_path, None, None).await.unwrap();
         s.update_folder_status(&fid, status).await.unwrap();
     }
 
@@ -3898,7 +3896,7 @@ async fn update_folder_status_round_trips() {
     let root_path = format!("/_test/status_{}", uuid::Uuid::new_v4().simple());
     let rid = s.add_watch_root(&root_path, "status_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None, None)
+        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None)
         .await
         .unwrap();
 
@@ -3924,7 +3922,7 @@ async fn get_folder_status_reads_back_status_and_is_none_for_missing() {
     let root_path = format!("/_test/getstatus_{}", uuid::Uuid::new_v4().simple());
     let rid = s.add_watch_root(&root_path, "getstatus_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None, None)
+        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None)
         .await
         .unwrap();
 
@@ -5445,12 +5443,7 @@ async fn pattern_upsert_merges_across_folders_in_same_project() {
     let suffix = format!("pat_project_scope_{}", uuid::Uuid::new_v4());
     let (proj_id, fid_a) = create_test_project_and_folder(&s, &suffix).await;
     let fid_b = create_test_folder(&s, &format!("{}_b", suffix)).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(proj_id)
-        .bind(fid_b)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&fid_b, &proj_id, "root", None).await.unwrap();
 
     let id_a = s
         .upsert_pattern(
@@ -5530,12 +5523,13 @@ async fn merge_projects_moves_folders_sessions_memories_and_deletes_source() {
     assert!(!src_exists.0, "source project should be deleted after merge");
 
     // The source's folder now lives under the target project.
-    let (folder_project,): (Option<uuid::Uuid>,) =
-        sqlx_core::query_as::query_as("SELECT project_id FROM sensei.folders WHERE id = $1")
-            .bind(src_folder)
-            .fetch_one(s.pool())
-            .await
-            .unwrap();
+    let (folder_project,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+        "SELECT sensei.sole_project_of(id) FROM sensei.folders WHERE id = $1",
+    )
+    .bind(src_folder)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     assert_eq!(folder_project, Some(tgt), "folder should be reassigned to target");
 
     // The memory survived and points at the target.
@@ -5611,12 +5605,14 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
     let repo_abs = format!("{root_path}/repo");
     let repo_pid = s.create_project(&format!("_test:heal_repo_{uniq}"), None, None).await.unwrap();
     let repo_fid = s.upsert_repo_kind(&root_id, "git", "repo", &repo_abs).await.unwrap();
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(repo_pid)
-        .bind(repo_fid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    crate::tasks::test_support::give_folder_a_repository(
+        &s,
+        &repo_fid,
+        &format!("heal-repo-{uniq}"),
+    )
+    .await
+    .unwrap();
+    s.set_folder_project(&repo_fid, &repo_pid, "root", None).await.unwrap();
 
     // A sub-crate INSIDE the repo, mis-scoped as its own standalone project
     // (the Bug 3 phantom). Give it a node so we can prove its nodes are dropped.
@@ -5625,12 +5621,14 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
         s.create_project(&format!("_test:heal_phantom_{uniq}"), None, None).await.unwrap();
     let crate_fid =
         s.upsert_repo_kind(&root_id, "standalone", "dojo-mind", &crate_abs).await.unwrap();
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(phantom_pid)
-        .bind(crate_fid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    crate::tasks::test_support::give_folder_a_repository(
+        &s,
+        &crate_fid,
+        &format!("heal-phantom-{uniq}"),
+    )
+    .await
+    .unwrap();
+    s.set_folder_project(&crate_fid, &phantom_pid, "root", None).await.unwrap();
     let node_id = s
         .seed_node(&crate_fid, "struct", "DojoStore", "src/store.rs", None, None, None, None)
         .await
@@ -5650,7 +5648,7 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
     // The nested root is now a folder of the repo's project, parented to the repo.
     let (kind, pid, parent): (String, Option<uuid::Uuid>, Option<uuid::Uuid>) =
         sqlx_core::query_as::query_as(
-            "SELECT kind::text, project_id, parent_id FROM sensei.folders WHERE id = $1",
+            "SELECT kind::text, sensei.sole_project_of(id), parent_id FROM sensei.folders WHERE id = $1",
         )
         .bind(crate_fid)
         .fetch_one(s.pool())
@@ -6567,12 +6565,7 @@ async fn folder_dependency_records_an_intra_project_edge() {
     let suffix = uuid::Uuid::new_v4();
     let (pid, from_fid) = create_test_project_and_folder(&s, &format!("intra-a-{suffix}")).await;
     let to_fid = create_test_folder(&s, &format!("intra-b-{suffix}")).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(pid)
-        .bind(to_fid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&to_fid, &pid, "root", None).await.unwrap();
 
     s.upsert_folder_dependency(&from_fid, &to_fid, "path", "Cargo.toml", Some("../b"))
         .await
@@ -7007,10 +7000,24 @@ async fn mk_anchor_folder(
     s.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
     let name = abs_path.rsplit('/').next().unwrap_or(abs_path);
     let row: (uuid::Uuid,) = query_as(
-            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) \
-             VALUES('00000000-0000-0000-0000-000000000001', $1::sensei.folder_kind, $2, $2, $3, $4) \
-             ON CONFLICT(abs_path) DO UPDATE SET kind = EXCLUDED.kind, project_id = EXCLUDED.project_id RETURNING id"
-        ).bind(kind).bind(name).bind(abs_path).bind(project_id).fetch_one(s.pool()).await.unwrap();
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) \
+             VALUES('00000000-0000-0000-0000-000000000001', $1::sensei.folder_kind, $2, $2, $3) \
+             ON CONFLICT(abs_path) DO UPDATE SET kind = EXCLUDED.kind RETURNING id",
+    )
+    .bind(kind)
+    .bind(name)
+    .bind(abs_path)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    // Membership is the REPOSITORY's (#211), so a fixture that wants this folder
+    // in a project has to give it one and link that — the folder has no column
+    // of its own to stamp.
+    if let Some(pid) = project_id {
+        let rid = s.upsert_repository(&format!("test/{}", row.0), None).await.unwrap();
+        s.link_folder_to_repository(&row.0, &rid).await.unwrap();
+        s.link_project_repository(&pid, &rid).await.unwrap();
+    }
     row.0
 }
 
@@ -7550,27 +7557,29 @@ async fn folder_path_alias_resolves_old_paths_after_a_rename() {
 /// Breaking mutation: drop the `kind = 'module'` predicate — ordinary `folder`
 /// rows flood in and every directory becomes a first-party "package", so an
 /// import naming any directory resolves local.
-/// A subfolder upsert CANNOT plant a project that contradicts its repository.
+/// A subfolder upsert CANNOT plant a project that contradicts its repository —
+/// and now there is no parameter with which to try.
 ///
-/// `upsert_subfolder_kind` and `upsert_folder` take `project_id` from the caller,
-/// and `pipeline.rs` already documents the intent as "a module belongs to its
-/// repo's project — the modules inheriting rather than each minting its own".
-/// Taking it by hand is what let the intent be violated: the client-q
-/// `documentation` checkout ended with its root in project `client-q` and its 362
-/// subfolders in `documentation`.
+/// The upserts used to take `project_id` from the caller, which is how the
+/// intent (`pipeline.rs`: "a module belongs to its repo's project") came to be
+/// violated: the client-q `documentation` checkout ended with its root in
+/// project `client-q` and its 362 subfolders in `documentation`. The first fix
+/// DERIVED the stored column from the repo anchor and ignored the caller.
 ///
-/// So the stored column is now DERIVED from the repo anchor at write time, and
-/// the caller's value is used only when there is no anchor to inherit from.
+/// #211 removed the column and the parameter outright, so the guarantee is now
+/// structural rather than enforced: a subfolder inherits its REPOSITORY, and
+/// its project is whatever that repository's `project_repositories` row says.
+/// There is nothing left to contradict.
 ///
-/// Breaking mutation: bind the caller's `project_id` directly again — the
-/// subfolder keeps the contradicting project and client-q becomes representable.
+/// Breaking mutation: drop `repository_id` from the inherited CTE — the
+/// subfolder inherits nothing, resolves to no project, and the assertion on
+/// `sole_project_of` goes NULL.
 #[tokio::test]
 async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() {
     let s = pg_store().await;
     let root_id =
         s.add_watch_root(&tkey("inh", "root"), "inh-root", &serde_json::json!([])).await.unwrap();
     let owner = s.create_project(&tkey("inh", "owner"), None, None).await.unwrap();
-    let other = s.create_project(&tkey("inh", "other"), None, None).await.unwrap();
 
     let repo_path = tkey("inh", "/repo");
     let repo = s.upsert_repo_kind(&root_id, "git", "inh-repo", &repo_path).await.unwrap();
@@ -7578,23 +7587,15 @@ async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() 
     s.link_folder_to_repository(&repo, &repository).await.unwrap();
     s.set_folder_project(&repo, &owner, "root", None).await.unwrap();
 
-    // The caller insists on `other`. The repository says `owner`.
+    // The caller cannot name a project at all. The repository says `owner`.
     let sub_path = format!("{repo_path}/src");
     let sub = s
-        .upsert_subfolder_kind(
-            &root_id,
-            "folder",
-            "src",
-            &sub_path,
-            &sub_path,
-            Some(&repo),
-            Some(&other),
-        )
+        .upsert_subfolder_kind(&root_id, "folder", "src", &sub_path, &sub_path, Some(&repo))
         .await
         .unwrap();
 
     let stored: (Option<uuid::Uuid>, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
-        "SELECT project_id, repository_id FROM sensei.folders WHERE id = $1",
+        "SELECT sensei.sole_project_of(id), repository_id FROM sensei.folders WHERE id = $1",
     )
     .bind(sub)
     .fetch_one(s.pool())
@@ -7604,8 +7605,8 @@ async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() 
     assert_eq!(
         stored.0,
         Some(owner),
-        "a subfolder was written into a project its repository does not belong to — \
-         this is how client-q put 362 folders in the wrong project"
+        "a subfolder did not resolve to its repository's project — this is how \
+         client-q put 362 folders in the wrong project"
     );
 
     // AND the repository itself, which is what removes `repo_anchor_for` from
@@ -7642,8 +7643,12 @@ async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() 
 /// did not fail it. Reproducing the client-q shape is what makes the assertion
 /// able to fail.
 ///
-/// Breaking mutation: point `folder_projects` at `f.project_id` instead of the
-/// junction — the subfolder reports the wrong project, exactly as client-q did.
+/// Breaking mutation: drop `repository_id` from the inherited CTE in
+/// `upsert_subfolder_kind` — the subfolder inherits no repository, resolves
+/// through nothing, and reports no project at all.
+///
+/// (The ORIGINAL mutation — point `folder_projects` at `f.project_id` — is no
+/// longer expressible: #211 removed the column.)
 #[tokio::test]
 async fn a_folder_resolves_the_project_of_its_repository_not_its_own_column() {
     let s = pg_store().await;
@@ -7652,7 +7657,6 @@ async fn a_folder_resolves_the_project_of_its_repository_not_its_own_column() {
         .await
         .unwrap();
     let owner = s.create_project(&tkey("fproj", "owner"), None, None).await.unwrap();
-    let other = s.create_project(&tkey("fproj", "other"), None, None).await.unwrap();
 
     let repo_path = tkey("fproj", "/repo");
     let repo = s.upsert_repo_kind(&root_id, "git", "fproj-repo", &repo_path).await.unwrap();
@@ -7664,18 +7668,12 @@ async fn a_folder_resolves_the_project_of_its_repository_not_its_own_column() {
     // The anchor belongs to `owner`, and this is what also records the junction row.
     s.set_folder_project(&repo, &owner, "root", None).await.unwrap();
 
-    // A subfolder whose STORED column says something else — the client-q shape.
+    // A subfolder. It cannot be given a project of its own — there is no
+    // column and no parameter — so the only answer available is its
+    // repository's, which is the whole point.
     let sub_path = format!("{repo_path}/docs");
     let sub = s
-        .upsert_subfolder_kind(
-            &root_id,
-            "folder",
-            "docs",
-            &sub_path,
-            &sub_path,
-            Some(&repo),
-            Some(&other),
-        )
+        .upsert_subfolder_kind(&root_id, "folder", "docs", &sub_path, &sub_path, Some(&repo))
         .await
         .unwrap();
 
@@ -7691,8 +7689,8 @@ async fn a_folder_resolves_the_project_of_its_repository_not_its_own_column() {
     assert_eq!(
         names,
         vec![tkey("fproj", "owner")],
-        "the subfolder resolved to its own stored project instead of its \
-         repository's — this is the client-q drift, 362 folders in the wrong project"
+        "the subfolder did not resolve to its repository's project — this is the \
+         client-q drift, 362 folders in the wrong project"
     );
 
     s.remove_watch_root(&root_id).await.ok();
@@ -7704,20 +7702,19 @@ async fn first_party_packages_are_every_module_the_project_declares() {
     let root_id =
         s.add_watch_root(&tkey("fp", "root"), "fp-root", &serde_json::json!([])).await.unwrap();
     let repo = s.upsert_repo_kind(&root_id, "git", "fp-repo", &tkey("fp", "/repo")).await.unwrap();
+    crate::tasks::test_support::give_folder_a_repository(&s, &repo, &tkey("fp", "repo"))
+        .await
+        .unwrap();
     let project = s.create_project(&tkey("fp", "proj"), None, None).await.unwrap();
     s.set_folder_project(&repo, &project, "root", None).await.unwrap();
 
     // Two manifest-declared packages, and one ordinary folder that is NOT one.
     for (name, path) in [("alpha", "/repo/crates/alpha"), ("beta", "/repo/crates/beta")] {
         let abs = tkey("fp", path);
-        s.upsert_subfolder_kind(&root_id, "module", name, &abs, &abs, Some(&repo), Some(&project))
-            .await
-            .unwrap();
+        s.upsert_subfolder_kind(&root_id, "module", name, &abs, &abs, Some(&repo)).await.unwrap();
     }
     let src = tkey("fp", "/repo/src");
-    s.upsert_subfolder_kind(&root_id, "folder", "src", &src, &src, Some(&repo), Some(&project))
-        .await
-        .unwrap();
+    s.upsert_subfolder_kind(&root_id, "folder", "src", &src, &src, Some(&repo)).await.unwrap();
 
     let pkgs = s.first_party_packages(&repo).await.unwrap();
 
@@ -7745,7 +7742,7 @@ async fn repo_root_for_path_resolves_nearest_git_ancestor_skipping_members() {
     let repo_fid = s.upsert_repo_kind(&root_id, "git", "mono", &repo).await.unwrap();
     // A workspace member subdir (not an index owner) — must be skipped.
     let member = format!("{repo}/packages/chart");
-    s.upsert_subfolder(&root_id, "chart", "mono/packages/chart", &member, Some(&repo_fid), None)
+    s.upsert_subfolder(&root_id, "chart", "mono/packages/chart", &member, Some(&repo_fid))
         .await
         .ok();
 
@@ -7791,10 +7788,8 @@ async fn scope_repo_roots_returns_repo_roots_not_structural_subfolders() {
     let repo_fid = s.upsert_repo_kind(&root_id, "git", "app", &repo).await.unwrap();
     // A structural subfolder (kind='folder') under the repo — NOT a repo root.
     let comp = format!("{repo}/src/lib");
-    let comp_fid = s
-        .upsert_subfolder(&root_id, "lib", "app/src/lib", &comp, Some(&repo_fid), None)
-        .await
-        .unwrap();
+    let comp_fid =
+        s.upsert_subfolder(&root_id, "lib", "app/src/lib", &comp, Some(&repo_fid)).await.unwrap();
 
     let roots = s.scope_repo_roots(&[repo_fid, comp_fid]).await.unwrap();
     assert!(roots.contains(&repo), "the git repo root is returned");
@@ -8182,12 +8177,17 @@ async fn get_project_repos_excludes_subfolder_tree() {
     let git_abs = format!("/_test/repos-git-{}", uuid::Uuid::new_v4());
     let sub_abs = format!("/_test/repos-sub-{}", uuid::Uuid::new_v4());
     let mem_abs = format!("/_test/repos-mem-{}", uuid::Uuid::new_v4());
+    // ONE repository for all three, which is the shape under test: the repo root
+    // and the folders beneath it belong to the same repository, and membership
+    // comes from that repository rather than from each folder.
+    let rid = s.upsert_repository(&format!("test/repos-{pid}"), None).await.unwrap();
     sqlx_core::query::query(
-            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) VALUES
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, repository_id) VALUES
                ('00000000-0000-0000-0000-000000000001','git'::sensei.folder_kind,'the-repo','the-repo',$1,$3),
                ('00000000-0000-0000-0000-000000000001','folder'::sensei.folder_kind,'subdir','subdir',$2,$3),
                ('00000000-0000-0000-0000-000000000001','module'::sensei.folder_kind,'member','member',$4,$3)"
-        ).bind(&git_abs).bind(&sub_abs).bind(pid).bind(&mem_abs).execute(s.pool()).await.unwrap();
+        ).bind(&git_abs).bind(&sub_abs).bind(rid).bind(&mem_abs).execute(s.pool()).await.unwrap();
+    s.link_project_repository(&pid, &rid).await.unwrap();
 
     let repos = s.get_project_repos(&pid).await.unwrap();
     let kinds: Vec<String> =
@@ -8198,11 +8198,14 @@ async fn get_project_repos_excludes_subfolder_tree() {
     // a monorepo with N members regresses to an N+1-repo project (#62).
     assert!(!kinds.iter().any(|k| k == "module"), "kind=module excluded from repos: {kinds:?}");
 
-    sqlx_core::query::query("DELETE FROM sensei.folders WHERE project_id = $1")
-        .bind(pid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    sqlx_core::query::query(
+        "DELETE FROM sensei.folders f USING sensei.folder_projects fp \
+          WHERE fp.folder_id = f.id AND fp.project_id = $1",
+    )
+    .bind(pid)
+    .execute(s.pool())
+    .await
+    .unwrap();
     sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
@@ -8235,15 +8238,15 @@ async fn upsert_subfolder_kind_relabels_structural_but_preserves_root() {
 
     // A plain structural folder → relabel to workspace_member on re-upsert.
     let a = format!("/_test/sfk-a-{}", uuid::Uuid::new_v4());
-    s.upsert_subfolder(&rid, "a", "a", &a, None, None).await.unwrap();
+    s.upsert_subfolder(&rid, "a", "a", &a, None).await.unwrap();
     assert_eq!(kind_at(&s, a.clone()).await, "folder", "first upsert is a plain folder");
-    s.upsert_subfolder_kind(&rid, "module", "a", "a", &a, None, None).await.unwrap();
+    s.upsert_subfolder_kind(&rid, "module", "a", "a", &a, None).await.unwrap();
     assert_eq!(kind_at(&s, a.clone()).await, "module", "relabelled folder → workspace_member");
 
     // A nested project root (subtree) must NOT be reclassified by a member upsert.
     let b = format!("/_test/sfk-b-{}", uuid::Uuid::new_v4());
     s.upsert_repo_kind(&rid, "subtree", "b", &b).await.unwrap();
-    s.upsert_subfolder_kind(&rid, "module", "b", "b", &b, None, None).await.unwrap();
+    s.upsert_subfolder_kind(&rid, "module", "b", "b", &b, None).await.unwrap();
     assert_eq!(
         kind_at(&s, b.clone()).await,
         "subtree",
@@ -8660,40 +8663,27 @@ async fn list_projects_under_filters_by_folder_path_boundary() {
 
     // A: folder strictly beneath `under`.
     let a = s.ensure_test_project(&format!("fpu-a-{short}")).await.unwrap();
-    s.upsert_folder(&root, "git", "a", "x/a", &format!("{under}/a"), None, Some(&a), None)
-        .await
-        .unwrap();
+    let fa =
+        s.upsert_folder(&root, "git", "a", "x/a", &format!("{under}/a"), None, None).await.unwrap();
+    crate::tasks::test_support::place_folder_in_project(&s, &fa, &a, "fpu-a").await.unwrap();
     // B: folder exactly equal to `under` (boundary: abs_path == under).
     let b = s.ensure_test_project(&format!("fpu-b-{short}")).await.unwrap();
-    s.upsert_folder(&root, "git", "b", "x", &under, None, Some(&b), None).await.unwrap();
+    let fb = s.upsert_folder(&root, "git", "b", "x", &under, None, None).await.unwrap();
+    crate::tasks::test_support::place_folder_in_project(&s, &fb, &b, "fpu-b").await.unwrap();
     // C: folder elsewhere under base but outside `under`.
     let c = s.ensure_test_project(&format!("fpu-c-{short}")).await.unwrap();
-    s.upsert_folder(
-        &root,
-        "git",
-        "c",
-        "elsewhere",
-        &format!("{base}/elsewhere"),
-        None,
-        Some(&c),
-        None,
-    )
-    .await
-    .unwrap();
+    let fc = s
+        .upsert_folder(&root, "git", "c", "elsewhere", &format!("{base}/elsewhere"), None, None)
+        .await
+        .unwrap();
+    crate::tasks::test_support::place_folder_in_project(&s, &fc, &c, "fpu-c").await.unwrap();
     // D: sibling sharing the `under` prefix textually but across a path boundary.
     let d = s.ensure_test_project(&format!("fpu-d-{short}")).await.unwrap();
-    s.upsert_folder(
-        &root,
-        "git",
-        "d",
-        "x-other",
-        &format!("{under}-other/z"),
-        None,
-        Some(&d),
-        None,
-    )
-    .await
-    .unwrap();
+    let fd = s
+        .upsert_folder(&root, "git", "d", "x-other", &format!("{under}-other/z"), None, None)
+        .await
+        .unwrap();
+    crate::tasks::test_support::place_folder_in_project(&s, &fd, &d, "fpu-d").await.unwrap();
 
     let scoped: Vec<String> = s
         .list_projects_under(Some(&under))
@@ -8751,22 +8741,22 @@ async fn list_root_folders_excludes_nested_folder_descendants() {
     let p = s.ensure_test_project(&format!("rootf-{short}")).await.unwrap();
 
     // One git repo root …
-    s.upsert_folder(&root, "git", "repo", "repo", &format!("{base}/repo"), None, Some(&p), None)
+    // Each ROOT gets its own repository, and both are put in `p`. The 30
+    // descendants below need none: they inherit the repo anchor's repository,
+    // which is where the project lives.
+    let f_repo = s
+        .upsert_folder(&root, "git", "repo", "repo", &format!("{base}/repo"), None, None)
+        .await
+        .unwrap();
+    crate::tasks::test_support::place_folder_in_project(&s, &f_repo, &p, "rootf-repo")
         .await
         .unwrap();
     // … plus one standalone root …
-    s.upsert_folder(
-        &root,
-        "standalone",
-        "lib",
-        "lib",
-        &format!("{base}/lib"),
-        None,
-        Some(&p),
-        None,
-    )
-    .await
-    .unwrap();
+    let f_lib = s
+        .upsert_folder(&root, "standalone", "lib", "lib", &format!("{base}/lib"), None, None)
+        .await
+        .unwrap();
+    crate::tasks::test_support::place_folder_in_project(&s, &f_lib, &p, "rootf-lib").await.unwrap();
     // … plus many nested `kind:'folder'` descendants (the bloat).
     for i in 0..30 {
         s.upsert_folder(
@@ -8776,7 +8766,6 @@ async fn list_root_folders_excludes_nested_folder_descendants() {
             &format!("repo/src/d{i}"),
             &format!("{base}/repo/src/d{i}"),
             None,
-            Some(&p),
             None,
         )
         .await
@@ -8974,12 +8963,7 @@ async fn get_or_create_adopts_folder_bearing_project_no_duplicate() {
 
     let keep = s.create_project(&name, None, None).await.unwrap();
     let fid = create_test_folder(&s, &format!("dupname-{}", uuid::Uuid::new_v4())).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(keep)
-        .bind(fid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&fid, &keep, "root", None).await.unwrap();
 
     let (resolved, created) = s.get_or_create_project_by_name(&name).await.unwrap();
     assert!(!created, "should adopt the existing folder-bearing project");
@@ -9018,12 +9002,7 @@ async fn heal_duplicate_name_projects_prunes_empty_dupe_idempotently() {
     // Survivor: folder-bearing project.
     let keep = s.create_project(&name, None, None).await.unwrap();
     let fid = create_test_folder(&s, &format!("dupheal-{}", uuid::Uuid::new_v4())).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(keep)
-        .bind(fid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&fid, &keep, "root", None).await.unwrap();
 
     // Phantom: second same-name project, 0 folders, maturity=discovery (default),
     // carrying a session so we can prove the heal reassigns FK rows.
@@ -9045,12 +9024,13 @@ async fn heal_duplicate_name_projects_prunes_empty_dupe_idempotently() {
     assert!(s.get_project(&keep).await.unwrap().is_some(), "folder-bearing survivor must remain");
 
     // Survivor still owns its folder; the phantom's session followed it.
-    let (folder_project,): (Option<uuid::Uuid>,) =
-        sqlx_core::query_as::query_as("SELECT project_id FROM sensei.folders WHERE id = $1")
-            .bind(fid)
-            .fetch_one(s.pool())
-            .await
-            .unwrap();
+    let (folder_project,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+        "SELECT sensei.sole_project_of(id) FROM sensei.folders WHERE id = $1",
+    )
+    .bind(fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     assert_eq!(folder_project, Some(keep), "survivor keeps its folder");
     let (sess_project,): (Option<uuid::Uuid>,) =
         sqlx_core::query_as::query_as("SELECT project_id FROM activity.sessions WHERE id = $1")
@@ -9107,21 +9087,11 @@ async fn heal_leaves_two_folder_bearing_same_name_projects() {
 
     let a = s.create_project(&name, None, None).await.unwrap();
     let fa = create_test_folder(&s, &format!("dupneg-a-{}", uuid::Uuid::new_v4())).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(a)
-        .bind(fa)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&fa, &a, "root", None).await.unwrap();
 
     let b = s.create_project(&name, None, None).await.unwrap();
     let fb = create_test_folder(&s, &format!("dupneg-b-{}", uuid::Uuid::new_v4())).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(b)
-        .bind(fb)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&fb, &b, "root", None).await.unwrap();
 
     s.heal_duplicate_name_projects().await.unwrap();
 
@@ -9900,21 +9870,19 @@ async fn setup_scope_test(s: &PgStore, suffix: &str) -> (uuid::Uuid, uuid::Uuid,
     // Root repo folder (kind='git', owns root_id = watch_id).
     let root_abs = format!("/_test/scope_{}/root", suffix);
     let root_name = format!("scope_root_{}", suffix);
-    let root_id = s.upsert_repo(&watch_id, &root_name, &root_abs).await.unwrap();
+    // Through the scan-shaped helper: the project is the REPOSITORY's since
+    // #211, so a folder with no `repositories` row can hold no project and
+    // every scoping read below would come back empty.
+    let root_id = crate::tasks::test_support::seed_repo_folder(s, &watch_id, &root_name, &root_abs)
+        .await
+        .unwrap();
     s.set_folder_project(&root_id, &proj_id, "main", None).await.unwrap();
 
     // Child subfolder (kind='folder', parent = root, project = proj_id).
     let child_abs = format!("/_test/scope_{}/root/child", suffix);
     let child_name = format!("scope_child_{}", suffix);
     let child_id = s
-        .upsert_subfolder(
-            &watch_id,
-            &child_name,
-            &child_name,
-            &child_abs,
-            Some(&root_id),
-            Some(&proj_id),
-        )
+        .upsert_subfolder(&watch_id, &child_name, &child_name, &child_abs, Some(&root_id))
         .await
         .unwrap();
 
@@ -11646,15 +11614,15 @@ async fn repositories_for_project_lists_repos_primary_first() {
         .await
         .unwrap();
     for (f, r) in [(f_root, r_root), (f_nested, r_nested)] {
-        sqlx_core::query::query(
-            "UPDATE sensei.folders SET repository_id = $2, project_id = $3 WHERE id = $1",
-        )
-        .bind(f)
-        .bind(r)
-        .bind(pid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+        // Only the repository link. The MEMBERSHIP was already written, against
+        // the repository, by the two `link_repository_to_project` calls above —
+        // that is the only place it exists now.
+        sqlx_core::query::query("UPDATE sensei.folders SET repository_id = $2 WHERE id = $1")
+            .bind(f)
+            .bind(r)
+            .execute(s.pool())
+            .await
+            .unwrap();
     }
 
     let repos = s.repositories_for_project(&pid).await.unwrap();

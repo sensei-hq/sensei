@@ -373,7 +373,14 @@ mod tests {
             .add_watch_root(&root_path, "version_gate_root", &serde_json::json!([]))
             .await
             .unwrap();
-        let fid = pg.upsert_repo(&rid, "gate-repo", &format!("{root_path}/repo")).await.unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            &pg,
+            &rid,
+            "gate-repo",
+            &format!("{root_path}/repo"),
+        )
+        .await
+        .unwrap();
 
         // A file the old binary already indexed — the row that makes the next
         // scan skip it.

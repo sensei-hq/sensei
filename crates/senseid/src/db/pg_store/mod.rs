@@ -745,11 +745,12 @@ impl PgStore {
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, kind::text, name, path, abs_path, role::text
-             FROM sensei.folders
-             WHERE project_id = $1
-               AND ($2 = false OR kind::text IN ('git','standalone'))
-             ORDER BY path",
+                "SELECT f.id, f.kind::text, f.name, f.path, f.abs_path, f.role::text
+             FROM sensei.folders f
+             JOIN sensei.folder_projects fp ON fp.folder_id = f.id
+             WHERE fp.project_id = $1
+               AND ($2 = false OR f.kind::text IN ('git','standalone'))
+             ORDER BY f.path",
             )
             .bind(project_id)
             .bind(roots_only)
@@ -871,11 +872,11 @@ impl PgStore {
                JOIN sensei.projects keep
                  ON keep.name = empty.name AND keep.id <> empty.id
               WHERE empty.maturity = 'discovery'
-                AND NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = empty.id)
-                AND EXISTS     (SELECT 1 FROM sensei.folders f WHERE f.project_id = keep.id)
+                AND NOT EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = empty.id)
+                AND EXISTS     (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = keep.id)
                 AND (SELECT count(*) FROM sensei.projects k
                        WHERE k.name = empty.name
-                         AND EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = k.id)) = 1",
+                         AND EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = k.id)) = 1",
         ).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 
@@ -906,16 +907,22 @@ impl PgStore {
     async fn nested_standalone_candidates(
         &self,
     ) -> Result<
-        Vec<(uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, uuid::Uuid, uuid::Uuid, String)>,
+        Vec<(uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, String)>,
         String,
     > {
+        // BOTH project columns are OPTIONAL. `sole_project_of` is NULL whenever
+        // a repository serves no project or two, and 4,129 folders are in that
+        // state live. Decoding the enclosing repo's project as a bare `Uuid`
+        // made ONE such repo abort the whole heal pass with a decode error, so
+        // nothing anywhere was re-absorbed — the re-parenting does not need a
+        // project at all, and only the phantom merge below does.
         sqlx_core::query_as::query_as(
             "SELECT DISTINCT ON (s.id)
-                    s.id, s.project_id, g.id, g.project_id, g.root_id, g.abs_path
+                    s.id, sensei.sole_project_of(s.id), g.id,
+                    sensei.sole_project_of(g.id), g.root_id, g.abs_path
                FROM sensei.folders s
                JOIN sensei.folders g
                  ON g.kind = 'git'::sensei.folder_kind
-                AND g.project_id IS NOT NULL
                 AND s.abs_path <> g.abs_path
                 AND starts_with(s.abs_path, g.abs_path || '/')
               WHERE s.kind = 'standalone'::sensei.folder_kind

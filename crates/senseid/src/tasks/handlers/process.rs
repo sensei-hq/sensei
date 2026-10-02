@@ -180,7 +180,6 @@ pub async fn reconcile_repo_identity(
     if super::scan_logic::is_monorepo(repo_path)
         && let Some(root_id) = crate::api::util::json_uuid(&folder["root_id"])
     {
-        let project_id = folder["project_id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok());
         for sub in super::scan_logic::find_subprojects(repo_path, 3) {
             let Some(role) = super::scan_logic::infer_role(&sub) else { continue };
             let sub_abs = sub.to_string_lossy().to_string();
@@ -192,15 +191,7 @@ pub async fn reconcile_repo_identity(
             // member but never reclassifies a nested project root.
             match ctx
                 .pg()
-                .upsert_subfolder_kind(
-                    &root_id,
-                    "module",
-                    &name,
-                    &rel,
-                    &sub_abs,
-                    Some(&folder_id),
-                    project_id.as_ref(),
-                )
+                .upsert_subfolder_kind(&root_id, "module", &name, &rel, &sub_abs, Some(&folder_id))
                 .await
             {
                 Ok(sub_id) => {
@@ -1497,7 +1488,14 @@ mod tests {
         {
             let root_id =
                 ctx.pg().add_watch_root(&repo_path, "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, folder_name, &repo_path).await.unwrap();
+            crate::tasks::test_support::seed_repo_folder(
+                ctx.pg(),
+                &root_id,
+                folder_name,
+                &repo_path,
+            )
+            .await
+            .unwrap();
         }
 
         let pkg_id = format!("pkg:{}:(root)", folder_name);
@@ -3168,7 +3166,10 @@ mod tests {
         let repo_path = tmp.path().to_string_lossy().to_string();
         let root_id =
             ctx.pg().add_watch_root(&repo_path, "ss", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "ss-repo", &repo_path).await.unwrap();
+        let fid =
+            crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, "ss-repo", &repo_path)
+                .await
+                .unwrap();
 
         ctx.pg().upsert_scan_state(&fid, "a.rs", 111, "hashA").await.unwrap();
         ctx.pg().upsert_scan_state(&fid, "b.rs", 222, "hashB").await.unwrap();
@@ -3196,7 +3197,14 @@ mod tests {
             .add_watch_root(&repo_path, "skipreason", &serde_json::json!([]))
             .await
             .unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "skipreason-repo", &repo_path).await.unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            ctx.pg(),
+            &root_id,
+            "skipreason-repo",
+            &repo_path,
+        )
+        .await
+        .unwrap();
 
         // Skipped: fingerprint + reason recorded (exercises the ::enum cast).
         ctx.pg()
@@ -3248,7 +3256,10 @@ mod tests {
         let repo_path = tmp.path().to_string_lossy().to_string();
         let root_id =
             ctx.pg().add_watch_root(&repo_path, "ur", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "ur-repo", &repo_path).await.unwrap();
+        let fid =
+            crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, "ur-repo", &repo_path)
+                .await
+                .unwrap();
 
         // funcA lives in a.rs; funcB in b.rs calls it. A call starts UNRESOLVED
         // (target_name only); resolve_edge points it at funcA — the production
@@ -3291,7 +3302,14 @@ mod tests {
         {
             let root_id =
                 ctx.pg().add_watch_root("/tmp/test", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, folder_name, "/tmp/test").await.unwrap();
+            crate::tasks::test_support::seed_repo_folder(
+                ctx.pg(),
+                &root_id,
+                folder_name,
+                "/tmp/test",
+            )
+            .await
+            .unwrap();
         }
 
         let task = Task::new(TaskKind::DeleteFile, "/tmp/test", "/tmp/a.rs");
@@ -3309,7 +3327,14 @@ mod tests {
         {
             let root_id =
                 ctx.pg().add_watch_root(repo_path, "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, folder_name, repo_path).await.unwrap();
+            crate::tasks::test_support::seed_repo_folder(
+                ctx.pg(),
+                &root_id,
+                folder_name,
+                repo_path,
+            )
+            .await
+            .unwrap();
         }
 
         let task = Task::new(TaskKind::DeleteFolder, repo_path, "/tmp/myrepo/src");
