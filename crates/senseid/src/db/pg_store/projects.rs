@@ -814,9 +814,8 @@ impl PgStore {
     ) -> Result<Vec<(String, String)>, String> {
         let rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
             "SELECT n.scope_key, n.slug
-               FROM sensei.folder_namespaces fn
-               JOIN sensei.namespaces n ON n.id = fn.namespace_id
-              WHERE fn.folder_id = $1",
+               FROM sensei.namespaces n
+              WHERE n.id IN (SELECT sensei.namespaces_for_folder($1))",
         )
         .bind(folder_id)
         .fetch_all(&self.pool)
@@ -835,9 +834,9 @@ impl PgStore {
         }
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT n.id
-               FROM sensei.folder_namespaces fn
-               JOIN sensei.namespaces n ON n.id = fn.namespace_id
-              WHERE fn.folder_id = $1 AND n.scope_key = $2
+               FROM sensei.namespaces n
+              WHERE n.id IN (SELECT sensei.namespaces_for_folder($1))
+                AND n.scope_key = $2
               LIMIT 1",
         )
         .bind(folder_id)

@@ -12,7 +12,7 @@ use std::path::Path;
 
 /// Reconcile a project root's identity FROM its README frontmatter — folder
 /// props (incl. the frontmatter snapshot), icons, project identity, role, and
-/// folder_namespaces. Filesystem-READ-ONLY (it never writes the README, so it
+/// repository_namespaces. Filesystem-READ-ONLY (it never writes the README, so it
 /// can't trigger a file-change loop), idempotent, and additive. Shared by the
 /// scan pipeline (process_git_folder) and the watcher's ReconcileRepoMetadata task.
 pub async fn reconcile_repo_identity(
@@ -160,15 +160,39 @@ pub async fn reconcile_repo_identity(
         for lang in &id_stack {
             ns.push(("technology", lang.clone()));
         }
+        // The namespace ROWS are all created — the `project` one included,
+        // because it is the project's governance identity and the dōjō reads
+        // its slug. What differs is what gets BOUND.
+        //
+        // Only repository facts are bound, and they are bound to the
+        // REPOSITORY. A `project`-scope namespace is deliberately NOT bound:
+        // membership is `project_repositories`, and binding it here would be a
+        // second writer for the same fact — which is how eight folders came to
+        // claim a project their repository does not belong to.
+        // `namespaces_for_folder` reaches the project namespace through the
+        // project instead, so nothing downstream loses it.
+        let repository_id = ctx.pg().repository_id_for_folder(&folder_id).await.ok().flatten();
         for (scope, name) in &ns {
             let slug = metadata::slugify(name);
             if slug.is_empty() {
                 continue;
             }
-            if let Ok(ns_id) = ctx.pg().upsert_namespace(scope, name, &slug).await {
-                ctx.pg().link_folder_namespace(&folder_id, &ns_id).await
-                    .unwrap_or_else(|e| tracing::warn!(folder_id = %folder_id, ns_id = %ns_id, error = %e, "link_folder_namespace failed"));
+            let Ok(ns_id) = ctx.pg().upsert_namespace(scope, name, &slug).await else {
+                continue;
+            };
+            if *scope == "project" {
+                continue;
             }
+            let Some(rid) = repository_id else {
+                // A repo-root folder with no `repositories` row cannot hold a
+                // namespace. Say so rather than dropping the binding quietly —
+                // the same silence that hid the missing junction writer.
+                tracing::warn!(folder_id = %folder_id, ns_id = %ns_id, scope,
+                    "namespace not bound: folder carries no repository");
+                continue;
+            };
+            ctx.pg().link_repository_namespace(&rid, &ns_id).await
+                .unwrap_or_else(|e| tracing::warn!(repository_id = %rid, ns_id = %ns_id, error = %e, "link_repository_namespace failed"));
         }
     }
 

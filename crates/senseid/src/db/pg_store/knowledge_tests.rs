@@ -814,13 +814,16 @@ async fn federated_ledger_and_shareability() {
     let Ok(pg) = PgStore::connect_test().await else {
         return;
     };
-    // Seed the scopes used by the test (sensei_test is empty; production data
-    // is seeded via staging.import_scopes — we replicate the two rows we need).
+    // The scopes ladder is REFERENCE data, seeded from
+    // `database/import/staging/scopes.jsonl` into every database. This insert
+    // only covers a bare DB that has not been imported into; on conflict it
+    // leaves the canonical row alone rather than restating its own idea of the
+    // level and shareability.
     sqlx_core::query::query(
         "INSERT INTO sensei.scopes(key, name, level, shareable)
              VALUES ('organization', 'Organization', 20, true),
                     ('technology',   'Technology',   40, false)
-             ON CONFLICT (key) DO UPDATE SET shareable = EXCLUDED.shareable",
+             ON CONFLICT (key) DO NOTHING",
     )
     .execute(pg.pool())
     .await
@@ -894,13 +897,13 @@ async fn federated_ledger_and_shareability() {
         .execute(pg.pool())
         .await
         .unwrap();
-    // clean up namespaces and seeded scopes
+    // Clean up the namespaces this test created — and ONLY those. The scopes
+    // are shared reference data: deleting them took out every other test's
+    // namespaces on the same rung, and was invisible only while `sensei_test`
+    // happened to be missing both rows (#183: never assert on, or delete,
+    // state the test does not own).
     sqlx_core::query::query("DELETE FROM sensei.namespaces WHERE id = ANY($1::uuid[])")
         .bind(vec![org_ns, tech_ns])
-        .execute(pg.pool())
-        .await
-        .unwrap();
-    sqlx_core::query::query("DELETE FROM sensei.scopes WHERE key IN ('organization','technology')")
         .execute(pg.pool())
         .await
         .unwrap();
@@ -926,4 +929,82 @@ async fn latest_hook_event_ts_returns_max_for_family() {
     }
     let max = pg.latest_hook_event_ts("claude").await.unwrap().unwrap();
     assert!(max >= base + 5000, "expected >= {} got {max}", base + 5000);
+}
+
+/// A namespace belongs to the REPOSITORY, so two checkouts resolve the same rules.
+///
+/// This is the governance half of #211's lesson. `folder_namespaces` keyed the
+/// binding on a folder, and every one of the 447 live rows sat on a repo-ROOT
+/// folder — none on a `folder` or `module` kind. The folder grain bought
+/// nothing and allowed drift: four repositories with two checkouts already
+/// disagreed with themselves about which namespaces applied, so which rules you
+/// were governed by depended on which clone you happened to be working in.
+///
+/// Keyed on the repository that fact cannot be stated twice.
+#[tokio::test]
+async fn a_namespace_belongs_to_the_repository_so_two_checkouts_resolve_alike() {
+    let pg = PgStore::connect_test().await.unwrap();
+    let uniq = uuid::Uuid::new_v4().simple().to_string();
+    let root = pg
+        .add_watch_root(&format!("/_test/ns-repo-{uniq}"), "t", &serde_json::json!([]))
+        .await
+        .unwrap();
+
+    // ONE repository, TWO checkouts of it — the shape that made the old grain
+    // ambiguous. Both folders are repo roots; neither is "the" one.
+    let repository = pg.upsert_repository(&format!("ns-repo-{uniq}"), None).await.unwrap();
+    let mut folders = Vec::new();
+    for clone in ["a", "b"] {
+        let fid = pg
+            .upsert_repo_kind(
+                &root,
+                "git",
+                &format!("ns-{clone}-{uniq}"),
+                &format!("/_test/ns-repo-{uniq}/{clone}"),
+            )
+            .await
+            .unwrap();
+        pg.link_folder_to_repository(&fid, &repository).await.unwrap();
+        folders.push(fid);
+    }
+
+    // A technology namespace — the kind of fact that is genuinely the
+    // repository's ("this checkout uses svelte"), not a project's.
+    let ns = pg
+        .upsert_namespace("technology", &format!("svelte-{uniq}"), &format!("svelte-{uniq}"))
+        .await
+        .unwrap();
+    pg.link_repository_namespace(&repository, &ns).await.unwrap();
+
+    let content = format!("namespace rule {uniq}");
+    pg.insert_memory(&InsertMemory {
+        project_id: None,
+        scope: "stack".into(),
+        scope_filter: None,
+        mtype: "convention".into(),
+        title: format!("ns rule {uniq}"),
+        content: content.clone(),
+        impact: None,
+        tags: vec![],
+        triage_signal: None,
+        status: "active".into(),
+        namespace_id: Some(ns),
+        enforcement: Some("recommended".into()),
+        origin: Some("authored".into()),
+        source_id: None,
+        spine_slot: None,
+        feature: None,
+    })
+    .await
+    .unwrap();
+
+    // BOTH checkouts, not just the one the binding happened to name.
+    for (clone, fid) in ["a", "b"].iter().zip(&folders) {
+        let rules = pg.resolve_rules_raw(fid).await.unwrap();
+        assert!(
+            rules.iter().any(|r| r.content == content),
+            "checkout {clone} must resolve its repository's namespace rule; got {:?}",
+            rules.iter().map(|r| &r.content).collect::<Vec<_>>()
+        );
+    }
 }

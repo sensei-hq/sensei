@@ -1159,7 +1159,8 @@ technology(40) · team(50) · project(60) · repository(70)
 
 A namespace is one instantiated rung — `(organization, "Sensei HQ")`,
 `(technology, "rust")`, `(project, "sensei")` — and a repo belongs to a SET of
-them via `folder_namespaces`. Its purpose is deciding **which rules apply to a
+them via `repository_namespaces` (and, for a `project` rung, via the project
+itself). Its purpose is deciding **which rules apply to a
 repo and which wins** (more specific scope beats less specific). Three of its
 four referents are `rule_packs`, `rule_pack_adoptions` and `shared_rules`.
 `dojo.seats` is the fourth, and is the odd one out: it bills against a rule

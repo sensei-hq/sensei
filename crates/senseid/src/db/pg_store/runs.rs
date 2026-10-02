@@ -528,13 +528,16 @@ impl PgStore {
     /// this project (proof the user is actively using sensei there).
     pub async fn run_project_slug(&self, run_id: &uuid::Uuid) -> Result<Option<String>, String> {
         let row: Option<(String,)> = sqlx_core::query_as::query_as(
+            // Straight from the run's PROJECT to that project's namespace. It
+            // used to detour through a folder of the project and that folder's
+            // namespace binding, so a run reported no slug whenever the detour
+            // had a gap — and reported a DIFFERENT project's slug whenever the
+            // folder binding disagreed with project membership, as eight did.
             "SELECT n.slug
                FROM activity.runs r
-               JOIN sensei.folder_projects fp ON fp.project_id = r.project_id
-               JOIN sensei.folders f ON f.id = fp.folder_id
-               JOIN sensei.folder_namespaces fn ON fn.folder_id = f.id
-               JOIN sensei.namespaces n ON n.id = fn.namespace_id
-              WHERE r.id = $1 AND n.scope_key = 'project'
+               JOIN sensei.projects p   ON p.id = r.project_id
+               JOIN sensei.namespaces n ON n.scope_key = 'project' AND n.name = p.name
+              WHERE r.id = $1
               LIMIT 1",
         )
         .bind(run_id)
@@ -555,12 +558,9 @@ impl PgStore {
         let row: Option<(String, String)> = sqlx_core::query_as::query_as(
             "SELECT n.slug, p.name
                FROM activity.runs r
-               JOIN sensei.projects p ON p.id = r.project_id
-               JOIN sensei.folder_projects fp ON fp.project_id = r.project_id
-               JOIN sensei.folders f ON f.id = fp.folder_id
-               JOIN sensei.folder_namespaces fn ON fn.folder_id = f.id
-               JOIN sensei.namespaces n ON n.id = fn.namespace_id
-              WHERE r.id = $1 AND n.scope_key = 'project'
+               JOIN sensei.projects p   ON p.id = r.project_id
+               JOIN sensei.namespaces n ON n.scope_key = 'project' AND n.name = p.name
+              WHERE r.id = $1
               LIMIT 1",
         )
         .bind(run_id)

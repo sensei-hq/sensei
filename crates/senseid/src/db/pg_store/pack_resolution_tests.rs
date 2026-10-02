@@ -67,7 +67,7 @@ async fn adopted_pack_rules_resolve_with_never_weaken() {
              VALUES ($1, $2, 1, 'recommended', 'test')")
             .bind(pack).bind(ns).execute(pool).await.unwrap();
 
-    // Resolve for a folder with NO folder_namespaces — only the general clause matches.
+    // Resolve for a folder with NO namespaces of its own — only the general clause matches.
     let raws = pg.resolve_local_pack_raws(Some(&uuid::Uuid::new_v4())).await.unwrap();
 
     let mine: Vec<_> = raws.iter().filter(|r| r.title == "S1" || r.title == "S2").collect();
