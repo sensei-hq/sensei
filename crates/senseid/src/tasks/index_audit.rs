@@ -77,6 +77,7 @@ pub struct AuditSamples {
     /// A folder indexed twice because it is registered inside another holding the
     /// same files, rendered as `inner (n files) inside outer`.
     pub contained_duplicate_folders: Vec<String>,
+    pub misrooted_folders: Vec<String>,
 }
 
 impl AuditSamples {
@@ -121,6 +122,10 @@ pub struct AuditReport {
     /// the same files. REPORTED ONLY: `homebrew/` and `marketplace/` are git
     /// SUBTREES of this repository and are indistinguishable here from a mistake.
     pub contained_duplicate_folders: u64,
+    /// Folders whose `root_id` disagrees with the watch root their own
+    /// `abs_path` sits under. REPORTED ONLY: which half is wrong — the stamp or
+    /// the path — is not knowable here.
+    pub misrooted_folders: u64,
     /// A few example paths/ids per class.
     pub samples: AuditSamples,
 }
@@ -134,6 +139,7 @@ impl AuditReport {
             || self.duplicate_name_projects > 0
             || self.duplicate_repository_paths > 0
             || self.contained_duplicate_folders > 0
+            || self.misrooted_folders > 0
     }
 }
 
@@ -299,6 +305,33 @@ pub async fn audit_index_integrity(
     // intentionally present twice — and nothing here distinguishes them from an
     // accidental nested checkout. Measured live, every case sits at exactly 100%
     // overlap, subtree and accident alike.
+    // Class 7 — A FOLDER WHOSE `root_id` DISAGREES WITH ITS OWN PATH.
+    //
+    // `folders.root_id` caches a derivable fact: the watch root is the longest
+    // `folders_to_watch.path` prefixing the folder's `abs_path`. Nothing today
+    // lets a user set it independently, which is why the live DB measured clean
+    // (13,724 of 13,724 agreeing, 2026-10-02) — but nothing NOTICED either, and
+    // an unchecked cache of a derivable fact is precisely how `project_id` came
+    // to let one repository's folders name two different projects (#210).
+    //
+    // DB-WIDE rather than per-root, deliberately: the drift this looks for is a
+    // folder stamped with the WRONG root, so scoping the check to one root is
+    // the one way to guarantee missing it.
+    //
+    // Reported, never repaired. The stamp may be wrong, or the folder may have
+    // moved on disk; choosing is the user's call, as with the other two
+    // report-only classes.
+    match pg.misrooted_folders().await {
+        Ok(rows) => {
+            report.misrooted_folders = rows.len() as u64;
+            AuditSamples::extend_capped(
+                &mut report.samples.misrooted_folders,
+                rows.iter().map(|(path, root)| format!("{path} is not under {root}")),
+            );
+        }
+        Err(e) => tracing::warn!(error = %e, "index_audit: misrooted_folders failed"),
+    }
+
     match pg.contained_duplicate_folders().await {
         Ok(dups) => {
             report.contained_duplicate_folders = dups.len() as u64;
@@ -427,6 +460,74 @@ mod tests {
         let path = dir.to_string_lossy().to_string();
         let id = pg.add_watch_root(&path, "audit_test", &serde_json::json!([])).await.unwrap();
         (WatchRootRef { id, path }, id)
+    }
+
+    /// A FOLDER WHOSE `root_id` DISAGREES WITH ITS OWN PATH.
+    ///
+    /// `folders.root_id` is a cache of a derivable fact: the watch root is the
+    /// longest `folders_to_watch.path` prefixing the folder's `abs_path`. A
+    /// cache that nothing checks is how `folders.project_id` came to have a
+    /// repository's folders naming two different projects (#210) — the drift was
+    /// invisible until someone went looking.
+    ///
+    /// Measured 2026-10-02 the live DB is clean, 13,724 of 13,724 agreeing. That
+    /// is the state this makes an ENFORCED invariant rather than a happy
+    /// accident: nothing today lets a user set `root_id` independently, but
+    /// nothing noticed if a writer did.
+    ///
+    /// Reported, never repaired. Which half is wrong is not knowable here — a
+    /// folder may have been moved on disk, or registered under the wrong root —
+    /// and the other report-only classes set that precedent.
+    ///
+    /// Mutation that must break this test: invert the path test in
+    /// `misrooted_folders` (`NOT starts_with` -> `starts_with`), so it reports
+    /// the folders that ARE correctly rooted. Probed.
+    #[tokio::test]
+    async fn audit_reports_a_folder_whose_root_disagrees_with_its_path() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(home.join("repo")).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+
+        let (root_ref, home_id) = present_root(&pg, &home).await;
+        let (_, other_id) = present_root(&pg, &elsewhere).await;
+
+        // A folder that LIVES under `home` but is stamped with `elsewhere`.
+        let fid = pg
+            .upsert_repo_kind(&other_id, "git", "misrooted", &home.join("repo").to_string_lossy())
+            .await
+            .unwrap();
+
+        let report = audit_index_integrity(&pg, &[root_ref], false).await;
+
+        // ASSERTS ON THE ROW THIS TEST OWNS, not on a total. The check is
+        // DB-WIDE by design (a folder stamped with the wrong root is invisible
+        // to a per-root scan), and the shared test database carries other
+        // tests' folders — so an absolute count is a reading of the whole
+        // database, not of this fixture. Asserting `== 1` failed with `left: 2`
+        // for exactly that reason, which is the house rule this test now
+        // follows: never assert on a global sweep's result, scope the assertion
+        // to rows the test owns.
+        // Read the store directly for THIS test's path rather than the report's
+        // samples: `extend_capped` caps them, so a sibling's rows can push this
+        // one out of the list and turn a real pass into a false failure.
+        let mine = tmp.path().to_string_lossy().to_string();
+        let rows = pg.misrooted_folders().await.unwrap();
+        assert!(
+            rows.iter().any(|(path, _)| path.starts_with(&mine)),
+            "the folder under `home` stamped with the `elsewhere` root must be reported"
+        );
+        assert!(report.has_drift(), "and it counts as drift, so the audit is not clean");
+
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+            .bind(fid)
+            .execute(pg.pool())
+            .await
+            .ok();
+        pg.remove_watch_root(&home_id).await.ok();
+        pg.remove_watch_root(&other_id).await.ok();
     }
 
     #[tokio::test]
