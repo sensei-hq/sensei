@@ -109,7 +109,6 @@ pub async fn process_manifest(ctx: &TaskContext, task: &Task) -> Result<u32, Str
     else {
         return Err(format!("process_manifest: repo row for {} has no ids", task.folder_path));
     };
-    let project_id = crate::api::util::json_uuid(&repo["project_id"]);
 
     // Facts belong to the folder that HOLDS the manifest (D11).
     let dir_rel = Path::new(&task.path).parent().unwrap_or(Path::new(""));
@@ -169,7 +168,6 @@ pub async fn process_manifest(ctx: &TaskContext, task: &Task) -> Result<u32, Str
                 &dir_rel.to_string_lossy(),
                 &dir_abs.to_string_lossy(),
                 Some(&repo_folder_id),
-                project_id.as_ref(),
             )
             .await?;
     }
@@ -402,7 +400,6 @@ async fn write_folder_tree(
     ctx: &TaskContext,
     root_id: &uuid::Uuid,
     repo_folder_id: uuid::Uuid,
-    project_id: Option<&uuid::Uuid>,
     repo_abs: &Path,
     tree: &[crate::indexer::repo::PlannedFolder],
 ) -> BTreeMap<PathBuf, uuid::Uuid> {
@@ -429,7 +426,6 @@ async fn write_folder_tree(
                 &f.rel_path.to_string_lossy(),
                 &abs.to_string_lossy(),
                 Some(&parent),
-                project_id,
             )
             .await
         {
@@ -663,14 +659,19 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     else {
         return Err(format!("process_git_folder: folder row for {} has no ids", task.folder_path));
     };
-    // The project, resolved and ATTACHED before anything else — a folder with
-    // no `project_id` is invisible to every project surface (UI, list_projects,
-    // metrics), and nothing downstream repairs it.
+    // The project, resolved and ATTACHED before anything else — a repository
+    // with no membership is invisible to every project surface (UI,
+    // list_projects, metrics), and nothing downstream repairs it.
+    //
+    // `set_folder_project` writes `project_repositories`, which since #211 is
+    // the ONLY place membership lives. The folders of this repo inherit it by
+    // resolving through their own `repository_id`, so nothing further has to be
+    // threaded down the tree — which is why `write_folder_tree` no longer takes
+    // a project at all.
     let (project_uuid, _created) = resolve_project(ctx, repo_abs, &name).await?;
     if let Err(e) = ctx.pg().set_folder_project(&folder_id, &project_uuid, "root", None).await {
         tracing::warn!(folder_id = %folder_id, error = %e, "process_git_folder: set_folder_project failed");
     }
-    let project_id = Some(project_uuid);
 
     // The indexed git branch, in the TYPED column. Preferred from the
     // `BranchSwitch` task that triggered this re-index, else read from
@@ -722,8 +723,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     );
 
     let tree = repo::folder_tree(&contents);
-    let folders =
-        write_folder_tree(ctx, &root_id, folder_id, project_id.as_ref(), repo_abs, &tree).await;
+    let folders = write_folder_tree(ctx, &root_id, folder_id, repo_abs, &tree).await;
     emit(ActivityLevel::Info, msg::repo_folders_saved_message(&name, folders.len()));
 
     // STAGE 3 BARRIER: every `files` row exists before any parse task runs, so
@@ -868,6 +868,10 @@ mod scan_tests {
             .upsert_repo_kind(&root_id, "git", "demo", &repo.to_string_lossy())
             .await
             .unwrap();
+        // As a scan leaves it: the repo folder carries a `repositories`
+        // row. `process_git_folder` records membership against that row,
+        // so a fixture without one is a state production never produces.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "demo").await.unwrap();
 
         let task = Task::new(TaskKind::ProcessGitFolder, &repo.to_string_lossy(), "");
         let written = super::process_git_folder(&ctx, &task).await.unwrap();
@@ -929,6 +933,10 @@ mod scan_tests {
             .upsert_repo_kind(&root_id, "git", "demo", &repo.to_string_lossy())
             .await
             .unwrap();
+        // As a scan leaves it: the repo folder carries a `repositories`
+        // row. `process_git_folder` records membership against that row,
+        // so a fixture without one is a state production never produces.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "demo").await.unwrap();
 
         // A node for a file that is NOT in the event batch, and whose path the
         // walk will still see. `prune_vanished` drops nodes whose file is
@@ -989,6 +997,10 @@ mod scan_tests {
             .upsert_repo_kind(&root_id, "git", "demo", &repo.to_string_lossy())
             .await
             .unwrap();
+        // As a scan leaves it: the repo folder carries a `repositories`
+        // row. `process_git_folder` records membership against that row,
+        // so a fixture without one is a state production never produces.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "demo").await.unwrap();
         ctx.pg()
             .seed_node(&fid, "function", "doomed", "src/gone.rs", None, None, None, None)
             .await
@@ -1043,6 +1055,10 @@ mod scan_tests {
             .upsert_repo_kind(&root_id, "git", "demo", &repo.to_string_lossy())
             .await
             .unwrap();
+        // As a scan leaves it: the repo folder carries a `repositories`
+        // row. `process_git_folder` records membership against that row,
+        // so a fixture without one is a state production never produces.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "demo").await.unwrap();
 
         let repo_path = repo.to_string_lossy().to_string();
         super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
@@ -1162,6 +1178,12 @@ mod scan_tests {
             .upsert_repo_kind(&root_id, "git", "steady", &repo.to_string_lossy())
             .await
             .unwrap();
+        // As a scan leaves it: the repo folder carries a `repositories`
+        // row. `process_git_folder` records membership against that row,
+        // so a fixture without one is a state production never produces.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "steady")
+            .await
+            .unwrap();
         let repo_path = repo.to_string_lossy().to_string();
 
         // Full cycle once: structure → gate → parse.
@@ -1234,6 +1256,12 @@ mod scan_tests {
         let fid = ctx
             .pg()
             .upsert_repo_kind(&root_id, "git", "forced", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        // As a scan leaves it: the repo folder carries a `repositories`
+        // row. `process_git_folder` records membership against that row,
+        // so a fixture without one is a state production never produces.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "forced")
             .await
             .unwrap();
         let repo_path = repo.to_string_lossy().to_string();
@@ -1327,6 +1355,12 @@ mod scan_tests {
         let fid = ctx
             .pg()
             .upsert_repo_kind(&root_id, "git", "moving", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        // As a scan leaves it: the repo folder carries a `repositories`
+        // row. `process_git_folder` records membership against that row,
+        // so a fixture without one is a state production never produces.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "moving")
             .await
             .unwrap();
         let repo_path = repo.to_string_lossy().to_string();

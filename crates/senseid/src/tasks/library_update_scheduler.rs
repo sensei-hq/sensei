@@ -352,8 +352,12 @@ mod tests {
         s.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001','/_test','_test','watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
         let fid = uuid::Uuid::new_v4();
         s.execute_raw(&format!(
-            "INSERT INTO sensei.folders(id, root_id, kind, name, path, abs_path, project_id) VALUES('{fid}','00000000-0000-0000-0000-000000000001','git'::sensei.folder_kind,'{lib}','{lib}','/_test/{u}','{pid}')"
+            "INSERT INTO sensei.folders(id, root_id, kind, name, path, abs_path) VALUES('{fid}','00000000-0000-0000-0000-000000000001','git'::sensei.folder_kind,'{lib}','{lib}','/_test/{u}')"
         )).await.unwrap();
+        // The folder belongs to the project through its REPOSITORY (#211).
+        let rid = s.upsert_repository(&format!("test/{u}"), None).await.unwrap();
+        s.link_folder_to_repository(&fid, &rid).await.unwrap();
+        s.link_project_repository(&pid, &rid).await.unwrap();
         s.execute_raw(&format!(
             "INSERT INTO sensei.referenced_libraries(folder_id, library_id, version_used) VALUES('{fid}','{lid}','{version_used}') ON CONFLICT DO NOTHING"
         )).await.unwrap();

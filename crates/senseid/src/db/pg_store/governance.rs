@@ -39,8 +39,22 @@ impl PgStore {
                           OR m.namespace_id IN (
                                 SELECT namespace_id FROM sensei.folder_namespaces WHERE folder_id = $1
                           )
+                          -- The folder's project(s), through the junction.
+                          -- EXISTS over a SET, not equality against a scalar:
+                          -- a repository serving two projects is governed by
+                          -- both, and that is a real case rather than a
+                          -- spelling choice.
+                          --
+                          -- This was `m.project_id = (SELECT project_id FROM
+                          -- sensei.folders WHERE id = $1)`. Once #211 dropped
+                          -- that column the subquery did not fail — the
+                          -- unqualified name resolved OUTWARD to `m.project_id`,
+                          -- making the predicate `m.project_id = m.project_id`
+                          -- and handing every project's rules to every folder.
                           OR ( m.namespace_id IS NULL
-                               AND m.project_id = (SELECT project_id FROM sensei.folders WHERE id = $1) ) )
+                               AND EXISTS (SELECT 1 FROM sensei.folder_projects fp
+                                            WHERE fp.folder_id = $1
+                                              AND fp.project_id = m.project_id) ) )
                   ORDER BY m.enforcement DESC,
                            COALESCE(n.level, s.level, 0) DESC,
                            m.strength DESC",

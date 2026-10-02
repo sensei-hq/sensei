@@ -1355,10 +1355,14 @@ mod tests {
             )
             .await
             .unwrap();
-        let fid = pg
-            .upsert_repo(&root, "ana-repo", &format!("/_test/ana-{}", uuid::Uuid::new_v4()))
-            .await
-            .unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            pg,
+            &root,
+            "ana-repo",
+            &format!("/_test/ana-{}", uuid::Uuid::new_v4()),
+        )
+        .await
+        .unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
         let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
 
@@ -1509,10 +1513,14 @@ mod tests {
             )
             .await
             .unwrap();
-        let fid = pg
-            .upsert_repo(&root, "sig-repo", &format!("/_test/sig-{}", uuid::Uuid::new_v4()))
-            .await
-            .unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            pg,
+            &root,
+            "sig-repo",
+            &format!("/_test/sig-{}", uuid::Uuid::new_v4()),
+        )
+        .await
+        .unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
         let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
 
@@ -1710,14 +1718,14 @@ mod tests {
             )
             .await
             .unwrap();
-        let fid = pg
-            .upsert_repo(
-                &root,
-                "ana-plan-repo",
-                &format!("/_test/ana-plan-{}", uuid::Uuid::new_v4()),
-            )
-            .await
-            .unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            pg,
+            &root,
+            "ana-plan-repo",
+            &format!("/_test/ana-plan-{}", uuid::Uuid::new_v4()),
+        )
+        .await
+        .unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
         let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
 

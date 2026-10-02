@@ -510,7 +510,8 @@ impl PgStore {
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT f.id
                FROM activity.runs r
-               JOIN sensei.folders f ON f.project_id = r.project_id
+               JOIN sensei.folder_projects fp ON fp.project_id = r.project_id
+               JOIN sensei.folders f ON f.id = fp.folder_id
               WHERE r.id = $1
               LIMIT 1",
         )
@@ -529,7 +530,8 @@ impl PgStore {
         let row: Option<(String,)> = sqlx_core::query_as::query_as(
             "SELECT n.slug
                FROM activity.runs r
-               JOIN sensei.folders f ON f.project_id = r.project_id
+               JOIN sensei.folder_projects fp ON fp.project_id = r.project_id
+               JOIN sensei.folders f ON f.id = fp.folder_id
                JOIN sensei.folder_namespaces fn ON fn.folder_id = f.id
                JOIN sensei.namespaces n ON n.id = fn.namespace_id
               WHERE r.id = $1 AND n.scope_key = 'project'
@@ -554,7 +556,8 @@ impl PgStore {
             "SELECT n.slug, p.name
                FROM activity.runs r
                JOIN sensei.projects p ON p.id = r.project_id
-               JOIN sensei.folders f ON f.project_id = r.project_id
+               JOIN sensei.folder_projects fp ON fp.project_id = r.project_id
+               JOIN sensei.folders f ON f.id = fp.folder_id
                JOIN sensei.folder_namespaces fn ON fn.folder_id = f.id
                JOIN sensei.namespaces n ON n.id = fn.namespace_id
               WHERE r.id = $1 AND n.scope_key = 'project'

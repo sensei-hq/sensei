@@ -249,13 +249,12 @@ pub(crate) async fn seed_project_folder_at(
     ensure_test_watch_root(pg).await;
     let name = format!("metrics-{uniq}");
     let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) \
-         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) \
-         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id RETURNING id",
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) \
+         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) \
+         ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id",
     )
     .bind(&name)
     .bind(abs_path)
-    .bind(pid)
     .fetch_one(pg.pool())
     .await
     .unwrap();
@@ -391,14 +390,12 @@ pub(crate) async fn link_repository_to_project(
     ensure_test_watch_root(pg).await;
     let abs = format!("/_test/link-{name}-{repository_id}");
     sqlx_core::query::query(
-        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id, repository_id) \
-         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3, $4) \
-         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id, \
-                                             repository_id = EXCLUDED.repository_id",
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, repository_id) \
+         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) \
+         ON CONFLICT(abs_path) DO UPDATE SET repository_id = EXCLUDED.repository_id",
     )
     .bind(name)
     .bind(&abs)
-    .bind(project_id)
     .bind(repository_id)
     .execute(pg.pool())
     .await
@@ -440,14 +437,12 @@ pub(crate) async fn seed_bare_repository(
     .await
     .unwrap();
     sqlx_core::query::query(
-        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id, repository_id) \
-         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3, $4) \
-         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id, \
-                                             repository_id = EXCLUDED.repository_id",
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, repository_id) \
+         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) \
+         ON CONFLICT(abs_path) DO UPDATE SET repository_id = EXCLUDED.repository_id",
     )
     .bind(format!("bare-{uniq}"))
     .bind(format!("/_test/bare-{uniq}"))
-    .bind(project_id)
     .bind(rid)
     .execute(pg.pool())
     .await
@@ -469,13 +464,12 @@ pub(crate) async fn seed_second_repository(
     let name = format!("metrics-{uniq}-b");
     let abs_path = format!("/_test/metrics-{uniq}-b");
     let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) \
-         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) \
-         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id RETURNING id",
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) \
+         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) \
+         ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id",
     )
     .bind(&name)
     .bind(&abs_path)
-    .bind(project_id)
     .fetch_one(pg.pool())
     .await
     .unwrap();
@@ -948,8 +942,9 @@ pub(crate) async fn cleanup_metrics_fixture(
     // Covers both the primary folder and any `seed_second_repository`; deleted at the
     // end (folders.repository_id is ON DELETE SET NULL, so the ordering is safe).
     let repo_ids: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
-        "SELECT DISTINCT repository_id FROM sensei.folders \
-          WHERE project_id = $1 AND repository_id IS NOT NULL",
+        "SELECT DISTINCT f.repository_id FROM sensei.folders f \
+           JOIN sensei.folder_projects fp ON fp.folder_id = f.id \
+          WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL",
     )
     .bind(pid)
     .fetch_all(pg.pool())
@@ -1044,4 +1039,64 @@ pub async fn seed_file(
     file_path: &str,
 ) -> Result<uuid::Uuid, String> {
     pg.upsert_file_row(folder_id, file_path, 1, "seed", None).await
+}
+
+/// Give a repo-root folder its `repositories` row and link it, as a scan does.
+///
+/// `upsert_folder`/`upsert_repo` alone write a `git` folder with
+/// `repository_id = NULL`, which is a state production never produces —
+/// `write_one_repo` creates the repository and links it on every scan.
+///
+/// The difference did not matter while `folders.project_id` existed, because a
+/// folder carried its project directly. Since #211 the project is the
+/// REPOSITORY's (`folders.repository_id` → `project_repositories` →
+/// `projects`), so a folder with no repository can hold no project at all:
+/// `set_folder_project` records the props and nothing else, and every scoping
+/// read comes back empty.
+///
+/// Keyless (`remote = None`) on purpose. `upsert_repository` keys on the
+/// normalised REMOTE and nulls are distinct, so each fixture gets its own row
+/// instead of colliding with every other keyless one.
+pub async fn give_folder_a_repository(
+    pg: &crate::db::pg_store::PgStore,
+    folder_id: &uuid::Uuid,
+    name: &str,
+) -> Result<uuid::Uuid, String> {
+    let repository_id = pg.upsert_repository(name, None).await?;
+    pg.link_folder_to_repository(folder_id, &repository_id).await?;
+    Ok(repository_id)
+}
+
+/// Put a repo-root folder in a project — the whole chain, in the order a scan
+/// writes it.
+///
+/// This is what a fixture used to express by passing `Some(&project_id)` to
+/// `upsert_folder`. That parameter is gone with the column, and the three facts
+/// it used to stand for are now distinct: the folder exists, the folder has a
+/// repository, and the repository belongs to a project. Only the last of those
+/// is membership, and `link_project_repository` is its only writer.
+pub async fn place_folder_in_project(
+    pg: &crate::db::pg_store::PgStore,
+    folder_id: &uuid::Uuid,
+    project_id: &uuid::Uuid,
+    name: &str,
+) -> Result<(), String> {
+    let repository_id = give_folder_a_repository(pg, folder_id, name).await?;
+    pg.link_project_repository(project_id, &repository_id).await
+}
+
+/// Register a repo-root folder the way a SCAN does: the folder, its
+/// `repositories` row, and the link between them.
+///
+/// Same shape, and same reason, as [`seed_node`]'s file barrier: ~30 fixtures
+/// were each forgetting the same prerequisite, so it lives in one place.
+pub async fn seed_repo_folder(
+    pg: &crate::db::pg_store::PgStore,
+    root_id: &uuid::Uuid,
+    name: &str,
+    abs_path: &str,
+) -> Result<uuid::Uuid, String> {
+    let folder_id = pg.upsert_repo(root_id, name, abs_path).await?;
+    give_folder_a_repository(pg, &folder_id, name).await?;
+    Ok(folder_id)
 }

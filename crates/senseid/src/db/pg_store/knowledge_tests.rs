@@ -676,14 +676,22 @@ async fn project_learned_convention_scopes_to_its_own_project_not_general() {
         )
         .await
         .unwrap();
-    let folder_a = pg
-        .upsert_repo(&root, "rules-repo-a", &format!("/_test/rules-a-{}", uuid::Uuid::new_v4()))
-        .await
-        .unwrap();
-    let folder_b = pg
-        .upsert_repo(&root, "rules-repo-b", &format!("/_test/rules-b-{}", uuid::Uuid::new_v4()))
-        .await
-        .unwrap();
+    let folder_a = crate::tasks::test_support::seed_repo_folder(
+        &pg,
+        &root,
+        "rules-repo-a",
+        &format!("/_test/rules-a-{}", uuid::Uuid::new_v4()),
+    )
+    .await
+    .unwrap();
+    let folder_b = crate::tasks::test_support::seed_repo_folder(
+        &pg,
+        &root,
+        "rules-repo-b",
+        &format!("/_test/rules-b-{}", uuid::Uuid::new_v4()),
+    )
+    .await
+    .unwrap();
     pg.set_folder_project(&folder_a, &proj_a, "root", None).await.unwrap();
     pg.set_folder_project(&folder_b, &proj_b, "root", None).await.unwrap();
 

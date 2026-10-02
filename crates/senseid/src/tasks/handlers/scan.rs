@@ -908,6 +908,12 @@ mod tests {
             .upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy())
             .await
             .unwrap();
+        // The repo needs its `repositories` row before the project: membership
+        // is the repository's, so without one `set_folder_project` records
+        // nothing and the twin-guard's project intersection finds no overlap.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &repo_fid, "dedup-repo")
+            .await
+            .unwrap();
         ctx.pg().set_folder_project(&repo_fid, &pid, "root", None).await.unwrap();
 
         // The canonical git-root copies, stored repo-relative: a code symbol AND
@@ -952,7 +958,6 @@ mod tests {
                 "crates/member",
                 &member.to_string_lossy(),
                 Some(&repo_fid),
-                Some(&pid),
             )
             .await
             .unwrap();
@@ -1059,6 +1064,9 @@ mod tests {
             .upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy())
             .await
             .unwrap();
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &repo_fid, "gcorder-repo")
+            .await
+            .unwrap();
         ctx.pg().set_folder_project(&repo_fid, &pid, "root", None).await.unwrap();
         let member_fid = ctx
             .pg()
@@ -1068,7 +1076,6 @@ mod tests {
                 "crates/member",
                 &member.to_string_lossy(),
                 Some(&repo_fid),
-                Some(&pid),
             )
             .await
             .unwrap();
@@ -1179,7 +1186,6 @@ mod tests {
                 "repo/sub",
                 &root.join("repo/sub").to_string_lossy(),
                 Some(&repo_fid),
-                None,
             )
             .await
             .unwrap();
@@ -1219,6 +1225,9 @@ mod tests {
         let repo_fid = ctx
             .pg()
             .upsert_repo_kind(&root_id, "git", "live", &tmp.path().join("live").to_string_lossy())
+            .await
+            .unwrap();
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &repo_fid, "live-repo")
             .await
             .unwrap();
         ctx.pg().set_folder_project(&repo_fid, &live, "root", None).await.unwrap();
@@ -1502,7 +1511,7 @@ mod tests {
 
         // A subtree must NOT be clobbered by a root re-registration.
         let p2 = tmp.path().join("b").to_string_lossy().to_string();
-        ctx.pg().upsert_folder(&root_id, "subtree", "b", "b", &p2, None, None, None).await.unwrap();
+        ctx.pg().upsert_folder(&root_id, "subtree", "b", "b", &p2, None, None).await.unwrap();
         ctx.pg().upsert_repo_kind(&root_id, "git", "b", &p2).await.unwrap();
         assert_eq!(ctx.pg().get_repo_by_path(&p2).await.unwrap().unwrap()["kind"], "subtree");
     }
@@ -1514,7 +1523,10 @@ mod tests {
         let repo_path = tmp.path().to_string_lossy().to_string();
         let root_id =
             ctx.pg().add_watch_root(&repo_path, "pv", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "pv-repo", &repo_path).await.unwrap();
+        let fid =
+            crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, "pv-repo", &repo_path)
+                .await
+                .unwrap();
 
         // Two indexed files: a.rs (still on disk) and a moved-away b.rs (orphan),
         // plus a module node (abs dir path) that must never be pruned.
@@ -1580,7 +1592,6 @@ mod tests {
                 "live",
                 &live_dir.to_string_lossy(),
                 Some(&repo_fid),
-                None,
             )
             .await
             .unwrap();
@@ -1602,7 +1613,6 @@ mod tests {
                 "gone",
                 &gone_dir.to_string_lossy(),
                 Some(&repo_fid),
-                None,
             )
             .await
             .unwrap();
@@ -1614,7 +1624,6 @@ mod tests {
                 "gone/sub",
                 &gone_sub.to_string_lossy(),
                 Some(&gone_fid),
-                None,
             )
             .await
             .unwrap();
@@ -1730,7 +1739,6 @@ mod tests {
                 "packages/live",
                 &live.to_string_lossy(),
                 Some(&repo_fid),
-                None,
             )
             .await
             .unwrap();
@@ -1743,7 +1751,6 @@ mod tests {
                 "packages/gone",
                 &gone.to_string_lossy(),
                 Some(&repo_fid),
-                None,
             )
             .await
             .unwrap();
@@ -1787,7 +1794,7 @@ mod tests {
         let sub = absent_repo.join("src"); // also absent
         let sub_fid = ctx
             .pg()
-            .upsert_subfolder(&root_id, "src", "src", &sub.to_string_lossy(), Some(&repo_fid), None)
+            .upsert_subfolder(&root_id, "src", "src", &sub.to_string_lossy(), Some(&repo_fid))
             .await
             .unwrap();
         let node = ctx

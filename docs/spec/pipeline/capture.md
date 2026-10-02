@@ -169,10 +169,13 @@ Detection heuristics (ordered by confidence):
 
 Once grouped:
 
-- `sensei.projects.id` is the join key; `sensei.folders.project_id`
-  points at it. Multiple folders per project is already supported
-  by the DDL and the handlers (`list_folders_by_project`,
-  `set_folder_project`, `add_solution_repo`).
+- `sensei.projects.id` is the join key. A folder reaches it through
+  `sensei.folder_projects` — `folders.repository_id` →
+  `project_repositories` → `projects` — not through a column of its
+  own; `folders.project_id` was dropped in #211 because two folders of
+  one repository could name two different projects. Multiple folders
+  per project is already supported by the DDL and the handlers
+  (`list_folders_by_project`, `set_folder_project`, `add_solution_repo`).
 - `POST /api/projects/merge` (existing) folds one project's
   folders + sessions + memories into another — used when the user
   accepts a suggestion or manually combines projects.

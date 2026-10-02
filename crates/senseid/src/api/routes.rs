@@ -2405,7 +2405,9 @@ mod tests {
             .add_watch_root("/_test/del_proj", "test", &serde_json::json!([]))
             .await
             .unwrap();
-        state.pg.upsert_repo(&root_id, "x", "/_test/del_proj/x").await.unwrap();
+        crate::tasks::test_support::seed_repo_folder(&state.pg, &root_id, "x", "/_test/del_proj/x")
+            .await
+            .unwrap();
         let resp = app
             .oneshot(
                 Request::builder()
@@ -2513,11 +2515,14 @@ mod tests {
         // Setup: root + child folders registered under a project.
         let root_id =
             state.pg.add_watch_root(&root_path, "test", &serde_json::json!([])).await.unwrap();
-        let root_fid = state
-            .pg
-            .upsert_repo(&root_id, &root_name, &format!("{}/{}", root_path, root_name))
-            .await
-            .unwrap();
+        let root_fid = crate::tasks::test_support::seed_repo_folder(
+            &state.pg,
+            &root_id,
+            &root_name,
+            &format!("{}/{}", root_path, root_name),
+        )
+        .await
+        .unwrap();
         let child_fid = state
             .pg
             .upsert_subfolder(
@@ -2526,7 +2531,6 @@ mod tests {
                 &format!("{}/{}", root_name, child_name),
                 &format!("{}/{}/{}", root_path, root_name, child_name),
                 Some(&root_fid),
-                None,
             )
             .await
             .unwrap();
@@ -3093,9 +3097,12 @@ mod tests {
         let abs_path = "/_test/mcp-seam/repo".to_string();
         let root_id =
             state.pg.add_watch_root(&abs_path, "mcp-seam", &serde_json::json!([])).await.unwrap();
-        state
+        let folder_id = state
             .pg
-            .upsert_folder(&root_id, "git", "repo", "repo", &abs_path, None, Some(&pid), None)
+            .upsert_folder(&root_id, "git", "repo", "repo", &abs_path, None, None)
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&state.pg, &folder_id, &pid, "repo")
             .await
             .unwrap();
 
@@ -3299,7 +3306,10 @@ mod tests {
         // Folder name == project name: get_file_tags looks up folders.name.
         let folder_id = state
             .pg
-            .upsert_folder(&root_id, "git", &name, "repo", &abs_path, None, Some(&pid), None)
+            .upsert_folder(&root_id, "git", &name, "repo", &abs_path, None, None)
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&state.pg, &folder_id, &pid, &name)
             .await
             .unwrap();
 
@@ -3661,9 +3671,9 @@ mod tests {
             .add_watch_root(&base, &format!("fp-{short}"), &serde_json::json!([]))
             .await
             .unwrap();
-        state
-            .pg
-            .upsert_folder(&root, "git", &name, "repo", &under, None, Some(&pid), None)
+        let fid =
+            state.pg.upsert_folder(&root, "git", &name, "repo", &under, None, None).await.unwrap();
+        crate::tasks::test_support::place_folder_in_project(&state.pg, &fid, &pid, &name)
             .await
             .unwrap();
 
@@ -3798,18 +3808,15 @@ mod tests {
         let root = state.pg.add_watch_root(&base, &name, &serde_json::json!([])).await.unwrap();
 
         // One git repo root + many nested `kind:'folder'` descendants.
-        state
+        // The ANCHOR is placed first. The 40 descendants below need no
+        // membership of their own — `upsert_folder` resolves their repository
+        // from the anchor, which is where the project now lives.
+        let anchor = state
             .pg
-            .upsert_folder(
-                &root,
-                "git",
-                &pname,
-                "repo",
-                &format!("{base}/repo"),
-                None,
-                Some(&pid),
-                None,
-            )
+            .upsert_folder(&root, "git", &pname, "repo", &format!("{base}/repo"), None, None)
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&state.pg, &anchor, &pid, &pname)
             .await
             .unwrap();
         for i in 0..40 {
@@ -3822,7 +3829,6 @@ mod tests {
                     &format!("repo/src/d{i}"),
                     &format!("{base}/repo/src/d{i}"),
                     None,
-                    Some(&pid),
                     None,
                 )
                 .await
@@ -4415,8 +4421,9 @@ mod tests {
         // ── FTR PARITY: store daily == get_ftr_daily == direct base arithmetic; headline == Σnum/Σden ──
         let (direct_rate, direct_count): (f64, i64) = query_as(
             "SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8, count(*)::int8 \
-               FROM activity.sessions s JOIN sensei.folders f ON f.id = s.folder_id \
-              WHERE f.project_id = $1 AND s.outcome IS NOT NULL",
+               FROM activity.sessions s \
+               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id \
+              WHERE fp.project_id = $1 AND s.outcome IS NOT NULL",
         )
         .bind(pid)
         .fetch_one(pg.pool())

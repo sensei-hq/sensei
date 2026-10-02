@@ -5,7 +5,6 @@ create table if not exists folders (
 , parent_id                uuid          references sensei.folders(id) on delete cascade
 , repository_id            uuid          references sensei.repositories(id) on delete set null
 , workspace_root_id        uuid          references sensei.folders(id) on delete set null
-, project_id               uuid          references sensei.projects(id) on delete set null
 , kind                     folder_kind   not null default 'git'
 , status                   folder_status not null default 'discovered'
 , role                     folder_role
@@ -32,9 +31,6 @@ create index if not exists folders_kind_idx
 
 create index if not exists folders_status_idx
     on folders(status);
-
-create index if not exists folders_project_id_idx
-    on folders(project_id);
 
 create index if not exists folders_tags_idx
     on folders using gin(tags);
@@ -76,10 +72,11 @@ describing the wrong thing.
 
 ## How to find a project''s folders
 
-NOT by `folders.project_id`. That column is derived and is being retired
-(#211) — membership lives in `sensei.project_repositories`, keyed on the
-REPOSITORY, because a repository''s folders must not be able to disagree about
-their project. Resolve through `sensei.folder_projects`, which is
+A folder does NOT carry a project. That column existed until #211 and was
+settable per folder, so a repository''s folders could disagree about their
+project — and they did. Membership now lives in
+`sensei.project_repositories`, keyed on the REPOSITORY. Resolve through
+`sensei.folder_projects`, which is
 `folders.repository_id` -> `project_repositories` -> `projects`:
 
     SELECT folder_id FROM sensei.folder_projects WHERE project = ''sensei''
@@ -112,8 +109,6 @@ comment on column folders.root_id
      is 'Foreign key to folders_to_watch — which watched root this folder was discovered under.';
 comment on column folders.parent_id
      is 'Self-referencing FK for folder hierarchy. Null means direct child of the watch root.';
-comment on column folders.project_id
-     is 'Foreign key to projects — groups this folder into a project. Nullable.';
 comment on column folders.kind
      is 'What this folder IS: git (repository), module (a manifest-bearing build unit inside a repo — a crate, an npm package, a Go module), subtree (nested git repo), standalone (non-git, no git siblings — written only by v1 scan paths, retiring with them), folder (an ordinary directory inside a repo, no manifest).
 

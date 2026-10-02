@@ -30,17 +30,23 @@ language sql
 stable
 set search_path = sensei, extensions
 as $$
+  -- `project_id` is the SOLE member of the folder's resolved set, or NULL when
+  -- its repository serves more than one project (#211 removed the column this
+  -- used to read). A `standalone` folder qualifies as an anchor when it has any
+  -- membership at all — that is what `project_id is not null` used to mean here.
   with anchors as (
-    select f.id, f.project_id, f.abs_path as p, 1 as live
+    select f.id, sensei.sole_project_of(f.id) as project_id, f.abs_path as p, 1 as live
       from sensei.folders f
      where f.kind in ('git', 'subtree')
-        or (f.kind = 'standalone' and f.project_id is not null)
+        or (f.kind = 'standalone'
+            and exists (select 1 from sensei.folder_projects fp where fp.folder_id = f.id))
     union all
-    select f.id, f.project_id, a.alias_abs_path as p, 0 as live
+    select f.id, sensei.sole_project_of(f.id) as project_id, a.alias_abs_path as p, 0 as live
       from sensei.folder_path_aliases a
       join sensei.folders f on f.id = a.folder_id
      where f.kind in ('git', 'subtree')
-        or (f.kind = 'standalone' and f.project_id is not null)
+        or (f.kind = 'standalone'
+            and exists (select 1 from sensei.folder_projects fp where fp.folder_id = f.id))
   )
   select c.id, c.project_id, c.p, case when c.live = 1 then 'live' else 'alias' end
     from anchors c

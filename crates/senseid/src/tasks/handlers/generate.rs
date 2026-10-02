@@ -472,10 +472,14 @@ mod tests {
             )
             .await
             .unwrap();
-        let fid = pg
-            .upsert_repo(&root, "gen-repo", &format!("/_test/gen-{}", uuid::Uuid::new_v4()))
-            .await
-            .unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            pg,
+            &root,
+            "gen-repo",
+            &format!("/_test/gen-{}", uuid::Uuid::new_v4()),
+        )
+        .await
+        .unwrap();
         // A session attributes this folder to the project (L1's attribution path).
         let csid = format!("_test-gen-sid-{}", uuid::Uuid::new_v4());
         pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();

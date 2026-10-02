@@ -291,11 +291,11 @@ async fn find_duplicates_scoped_surfaces_same_folder_pairs() {
         return;
     };
     let u = uuid::Uuid::new_v4();
-    let pid = pg.create_project(&format!("_dupproj_{u}"), None, None).await.unwrap();
+    let _pid = pg.create_project(&format!("_dupproj_{u}"), None, None).await.unwrap();
     pg.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000002','/_dup','_dup','watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
     let fid = uuid::Uuid::new_v4();
     pg.execute_raw(&format!(
-            "INSERT INTO sensei.folders(id, root_id, kind, name, path, abs_path, project_id) VALUES('{fid}','00000000-0000-0000-0000-000000000002','git'::sensei.folder_kind,'_dup_{u}','_dup','/_dup/{u}','{pid}')"
+            "INSERT INTO sensei.folders(id, root_id, kind, name, path, abs_path) VALUES('{fid}','00000000-0000-0000-0000-000000000002','git'::sensei.folder_kind,'_dup_{u}','_dup','/_dup/{u}')"
         )).await.unwrap();
     // Two near-identical function nodes in the SAME folder (identical 384-dim
     // embedding → similarity 1.0). The old cross-folder-only predicate hid these.
@@ -330,7 +330,7 @@ async fn patterns_for_symbol_matches_by_file_and_is_honest_empty() {
     let pid = pg.create_project(&format!("_pfsproj_{u}"), None, None).await.unwrap();
     pg.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000003','/_pfs','_pfs','watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
     let fid = uuid::Uuid::new_v4();
-    pg.execute_raw(&format!("INSERT INTO sensei.folders(id, root_id, kind, name, path, abs_path, project_id) VALUES('{fid}','00000000-0000-0000-0000-000000000003','git'::sensei.folder_kind,'_pfs_{u}','_pfs','/_pfs/{u}','{pid}')")).await.unwrap();
+    pg.execute_raw(&format!("INSERT INTO sensei.folders(id, root_id, kind, name, path, abs_path) VALUES('{fid}','00000000-0000-0000-0000-000000000003','git'::sensei.folder_kind,'_pfs_{u}','_pfs','/_pfs/{u}')")).await.unwrap();
     // A node 'my_handler' at a repo-RELATIVE path; a project pattern whose instance is its ABSOLUTE form.
     let file =
         pg.upsert_file_row(&fid, "src/routes/x.rs", 0, "src/routes/x.rs", None).await.unwrap();

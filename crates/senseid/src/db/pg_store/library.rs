@@ -907,7 +907,8 @@ impl PgStore {
             // referenced by a folder but never fetched has no version row —
             // and it is still a real pin the scheduler must see. An INNER join
             // would silently drop exactly the libraries with no docs yet.
-            "SELECT l.id, l.name, l.ecosystem::text, lv.local_path, f.project_id,
+            "SELECT l.id, l.name, l.ecosystem::text, lv.local_path,
+                    sensei.sole_project_of(f.id),
                     rl.version_used, lv.base_url, lv.source_type::text
                FROM sensei.referenced_libraries rl
                JOIN sensei.libraries l ON l.id = rl.library_id
@@ -919,7 +920,8 @@ impl PgStore {
                      ORDER BY v.is_latest DESC, v.modified_at DESC
                      LIMIT 1
                ) lv ON true
-              WHERE f.project_id IS NOT NULL AND rl.version_used IS NOT NULL AND rl.version_used <> ''",
+              WHERE EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.folder_id = f.id)
+                AND rl.version_used IS NOT NULL AND rl.version_used <> ''",
         )
         .fetch_all(&self.pool)
         .await
@@ -1101,7 +1103,9 @@ impl PgStore {
                    ) lv ON true
                   WHERE l.kind = 'detected'::sensei.library_kind
                     AND ($1::text     IS NULL OR f.name = $1)
-                    AND ($2::uuid     IS NULL OR f.project_id = $2)
+                    AND ($2::uuid     IS NULL
+                         OR EXISTS (SELECT 1 FROM sensei.folder_projects fp
+                                     WHERE fp.folder_id = f.id AND fp.project_id = $2))
                   GROUP BY l.id, l.name, l.ecosystem, lv.version, l.description, lv.page_count
                  HAVING COUNT(DISTINCT rl.folder_id) >= $3
                   ORDER BY repo_count DESC, l.name"
@@ -1573,8 +1577,9 @@ impl PgStore {
                    FROM sensei.folder_dependencies fd
                    JOIN sensei.folders  from_f ON from_f.id = fd.from_folder_id
                    JOIN sensei.folders  to_f   ON to_f.id   = fd.to_folder_id
-              LEFT JOIN sensei.projects to_p   ON to_p.id   = to_f.project_id
-                  WHERE from_f.project_id = $1
+              LEFT JOIN sensei.projects to_p   ON to_p.id   = sensei.sole_project_of(to_f.id)
+                  WHERE EXISTS (SELECT 1 FROM sensei.folder_projects fp
+                                 WHERE fp.folder_id = from_f.id AND fp.project_id = $1)
                   ORDER BY to_p.name NULLS LAST, from_f.name, fd.source_manifest",
         )
         .bind(project_id)
