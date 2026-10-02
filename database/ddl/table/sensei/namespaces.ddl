@@ -18,7 +18,8 @@ create index if not exists namespaces_scope_key_idx
 comment on table namespaces is
 'Concrete instances of a scope — e.g. (organization, "Sensei HQ"),
 (project, "sensei"), (technology, "rust"). A repo belongs to a SET of these
-(via folder_namespaces); there is no parent_id tree — precedence comes from the
+(via repository_namespaces, or for a `project` namespace via the project of the
+same name); there is no parent_id tree — precedence comes from the
 scope level (optionally overridden per namespace). Created at scan time from
 README frontmatter (organization/project/team) and detected stack.';
 

@@ -6,7 +6,8 @@ impl PgStore {
     /// Only active/reinforced/battle_tested/challenged memories are included.
     /// Governance Tier-1 resolution: the active rules that apply to a repo,
     /// ordered strongest-first. A rule applies when it sits on one of the repo's
-    /// member namespaces (`folder_namespaces`), on an always-on `general`/`user`
+    /// member namespaces (its REPOSITORY's, via `repository_namespaces`), on
+    /// an always-on `general`/`user`
     /// scope, is genuinely global (unscoped **and** not tied to a project —
     /// `namespace_id IS NULL AND project_id IS NULL`), or is a project-tied
     /// learned convention for **this repo's own project** (`namespace_id IS NULL
@@ -36,8 +37,10 @@ impl PgStore {
                                      'battle_tested'::sensei.memory_status)
                     AND ( (m.namespace_id IS NULL AND m.project_id IS NULL)
                           OR n.scope_key IN ('general', 'user')
+                          -- Namespaces attach to the REPOSITORY; this lifts
+                          -- the folder to it. One definition, four resolvers.
                           OR m.namespace_id IN (
-                                SELECT namespace_id FROM sensei.folder_namespaces WHERE folder_id = $1
+                                SELECT sensei.namespaces_for_folder($1)
                           )
                           -- The folder's project(s), through the junction.
                           -- EXISTS over a SET, not equality against a scalar:
@@ -127,7 +130,7 @@ impl PgStore {
                    JOIN sensei.rule_pack_rules r ON r.pack_id = p.id
                    LEFT JOIN sensei.namespaces n ON n.id = a.namespace_id
                   WHERE a.namespace_id IN (
-                            SELECT namespace_id FROM sensei.folder_namespaces WHERE folder_id = $1)
+                            SELECT sensei.namespaces_for_folder($1))
                      OR a.namespace_id IN (
                             SELECT id FROM sensei.namespaces WHERE scope_key IN ('general', 'user'))
                   ORDER BY r.ordinal",
@@ -170,7 +173,7 @@ impl PgStore {
               WHERE r.verification = 'checker'
                 AND r.checker_ref IS NOT NULL AND r.checker_ref <> ''
                 AND ( a.namespace_id IN (
-                          SELECT namespace_id FROM sensei.folder_namespaces WHERE folder_id = $1)
+                          SELECT sensei.namespaces_for_folder($1))
                       OR a.namespace_id IN (
                           SELECT id FROM sensei.namespaces WHERE scope_key IN ('general', 'user')) )
               ORDER BY r.statement",
@@ -248,8 +251,7 @@ impl PgStore {
               WHERE st.user_key = $1
                 AND ( st.namespace_id IS NULL
                       OR st.namespace_id IN (
-                            SELECT namespace_id FROM sensei.folder_namespaces
-                             WHERE folder_id = $2 ) )",
+                            SELECT sensei.namespaces_for_folder($2) ) )",
         )
         .bind(user_key)
         .bind(folder_id)

@@ -2125,17 +2125,42 @@ impl PgStore {
             .and_then(|(folder_id, project_id)| project_id.map(|p| (folder_id, p))))
     }
 
-    /// Link a folder (repo) to a namespace it belongs to. Idempotent.
-    pub async fn link_folder_namespace(
+    /// A folder's repository, or `None` when it carries none.
+    ///
+    /// `None` is a real answer, not a miss to paper over: `folders.repository_id`
+    /// is nullable, and a caller that needs a repository must decide what to do
+    /// without one rather than be handed a substitute.
+    pub async fn repository_id_for_folder(
         &self,
         folder_id: &uuid::Uuid,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(Option<uuid::Uuid>,)> =
+            sqlx_core::query_as::query_as("SELECT repository_id FROM sensei.folders WHERE id = $1")
+                .bind(folder_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(row.and_then(|(rid,)| rid))
+    }
+
+    /// Link a REPOSITORY to a namespace it belongs to. Idempotent.
+    ///
+    /// Keyed on the repository, not on a folder: a namespace states a fact
+    /// about the checkout ("this repo uses svelte"), and keying it on a
+    /// directory let two clones of one repository disagree about which rules
+    /// governed them. Never pass a `project`-scope namespace — project
+    /// membership is `project_repositories`, and a second writer for it is
+    /// what this grain exists to prevent.
+    pub async fn link_repository_namespace(
+        &self,
+        repository_id: &uuid::Uuid,
         namespace_id: &uuid::Uuid,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.folder_namespaces(folder_id, namespace_id)
+            "INSERT INTO sensei.repository_namespaces(repository_id, namespace_id)
              VALUES($1, $2) ON CONFLICT DO NOTHING",
         )
-        .bind(folder_id)
+        .bind(repository_id)
         .bind(namespace_id)
         .execute(&self.pool)
         .await

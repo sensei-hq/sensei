@@ -14,8 +14,9 @@ lives.
 - Data model, not a hierarchy: `sensei.scopes` (the ladder — `general < user <
   organization < client < technology < team < project < repository`, each with
   a `level`) + `sensei.namespaces` (instances — `(organization, "Sensei-HQ")`,
-  `(project, "sensei")`) + `sensei.folder_namespaces` (which repo belongs to
-  which namespaces — a set, not a tree).
+  `(project, "sensei")`) + `sensei.repository_namespaces` (which repo belongs
+  to which namespaces — a set, not a tree). Governance attaches at the
+  REPOSITORY and the PROJECT, never at a folder inside one.
 - Design rationale (parent_id tried and dropped — a repo needs *both* a
   personal and an org source at once): `docs/architecture/concepts/governance.md`
   §"Level, not parent".
