@@ -23,6 +23,20 @@ Lane 2 is done: a project resolves ONE way, and so does governance.
   moved: they restated project membership and 8 already contradicted it.
   Verified live: `/api/knowledge/rules` for this repo returns 29 general +
   exactly 1 project rule, its own.
+- **Clean-slate verification** (2321920d). Dropped and redeployed `sensei_test`
+  and `sensei_e2e` from the dbd tree alone, then ran the real flows against a
+  virgin DB with `~/Developer/sensei-hq` registered. Found the big one:
+  indexing worked and MEMBERSHIP DID NOT — 3 repos, 27,860 nodes,
+  `project_repositories` empty, every project `orphaned` with `repos_count: 0`
+  and an empty Structure diagram. `ProcessGitFolder` ran before `scan_root`'s
+  reconcile assigned repositories, so `set_folder_project` matched no row.
+  The handler now creates the repository itself. Verified end-to-end after the
+  fix: junction=3, folder_projects=457, diagram 1,760 nodes / 1,282 edges,
+  21 rules resolving.
+  - `indexer::pipeline::scan_root` (v2, #130) has NO production caller — the
+    #211 junction write lived there, which is why no test caught this.
+  - Schema diff live vs fresh: tables and views identical; only two retired
+    seed functions linger in live (#217).
 - **#205, #206 closed** earlier in the slice (Structure endpoint + screen).
 
 ## Next
@@ -36,7 +50,10 @@ is the worked template (spec + handler + `*-state.svelte.ts` + e2e).
 
 - `sensei.projects` has no `namespace_id`, so a project's namespace resolves by
   NAME. Correct today; a rename would orphan the dōjō slug. Worth filing.
-- 231 uncommented columns filed; #213/#214 and #201–#204 open.
+- 231 uncommented columns filed; #213/#214, #201–#204 open.
+- NEW from the clean-slate run: #215 registering a root never enqueues a
+  scan; #216 the watcher drops its first batch before PgStore is attached;
+  #217 governance seed drift (ponytail adoption missing from the import).
 
 ## Known broken
 
@@ -45,5 +62,6 @@ is the worked template (spec + handler + `*-state.svelte.ts` + e2e).
   Pre-existing, unrelated. `cargo build -p senseid -p sensei-cli -p sensei-mcp
   --bins` works and is what the running daemon was deployed from.
 - 30+ commits UNPUSHED on `develop` (nothing to the remote since the scrub).
-- Otherwise green: senseid 3197/0, workspace 361/0, clippy `-D warnings` and
-  `fmt --check` clean, `dbd reconcile` reports no drift on either database.
+- Otherwise green: senseid 3198/0, workspace 361/0, clippy `-D warnings` and
+  `fmt --check` clean. `scripts/check-sql-against-schema.py` plans all 1,529
+  SQL statements against a fresh deploy with 0 schema failures.
