@@ -3,6 +3,8 @@ create table if not exists folders (
   id                       uuid          primary key default gen_random_uuid()
 , root_id                  uuid          not null references sensei.folders_to_watch(id) on delete cascade
 , parent_id                uuid          references sensei.folders(id) on delete cascade
+, repository_id            uuid          references sensei.repositories(id) on delete set null
+, workspace_root_id        uuid          references sensei.folders(id) on delete set null
 , project_id               uuid          references sensei.projects(id) on delete set null
 , kind                     folder_kind   not null default 'git'
 , status                   folder_status not null default 'discovered'
@@ -15,8 +17,6 @@ create table if not exists folders (
 , icons                    jsonb         not null default '{}'
 , props                    jsonb         not null default '{}'
 , tags                     text[]        not null default '{}'
-, repository_id            uuid          references sensei.repositories(id) on delete set null
-, workspace_root_id        uuid          references sensei.folders(id) on delete set null
 , branch                   text
 , modified_at              timestamptz   not null default now()
 );
@@ -50,15 +50,61 @@ create index if not exists folders_workspace_root_id_idx
     on folders(workspace_root_id) where workspace_root_id is not null;
 
 comment on table folders is
-'Content: discovered filesystem tree. Every entry was found by scanning a watched root.
-- kind: git (repository), module (a manifest-bearing build unit inside a repo), subtree (nested git repo), standalone (non-git, no git siblings), folder (ordinary directory, no manifest)
-- workspace_root_id: which workspace declares this module; null = declared by nothing
-- status: discovered (found), queued (files counted), indexing (in progress), indexed (complete), failed, archived (directory gone, history kept)
-- stack: detected technology stack ["rust", "typescript", "svelte"] — set by ProcessGitFolder
-- path: relative to the watch root
-- abs_path: absolute path on disk (unique across all roots)
-- parent_id: null = direct child of watch root; set = child of another folder
-- project_id: FK to projects — auto-created 1:1 for git/subtree, user can merge/split';
+'The scanned filesystem tree — every directory sensei considered worth indexing,
+discovered by walking a watched root.
+
+## What a row is
+
+- A directory that is either a repository, a manifest-bearing build unit inside
+  one, or an ordinary folder beneath those. A directory sensei does not index
+  has NO row here — there is no "not indexed" state to look for.
+- Unique on `abs_path`, so one directory is one row no matter how many roots or
+  scans reach it.
+
+## Three independent axes, deliberately not collapsed
+
+- **What it IS** — `kind`. A property of the directory alone.
+- **Where it is in the LIFECYCLE** — `status`. Changes as indexing progresses;
+  says nothing about what the folder is.
+- **Who CLAIMS it** — `repository_id` (which repository owns it) and
+  `workspace_root_id` (which workspace declares it as a member). Both are
+  relationships, so both are stored as FKs rather than folded into `kind`.
+
+Collapsing any two of these is the mistake this shape exists to prevent: a
+`kind` that moves when an unrelated manifest gains a `workspaces` array is
+describing the wrong thing.
+
+## How to find a project''s folders
+
+NOT by `folders.project_id`. That column is derived and is being retired
+(#211) — membership lives in `sensei.project_repositories`, keyed on the
+REPOSITORY, because a repository''s folders must not be able to disagree about
+their project. Resolve through `sensei.folder_projects`, which is
+`folders.repository_id` -> `project_repositories` -> `projects`:
+
+    SELECT folder_id FROM sensei.folder_projects WHERE project = ''sensei''
+
+That resolution is MULTI-VALUED by design: a repository is keyed on its remote,
+so one serving two projects yields a row for each.
+
+## Common queries
+
+    -- the repositories under a watch root
+    SELECT name, abs_path FROM folders WHERE root_id = $1 AND kind = ''git''
+    -- the build units a workspace declares
+    SELECT name FROM folders WHERE workspace_root_id = $1
+    -- what is still mid-flight
+    SELECT abs_path, status FROM folders WHERE status NOT IN (''indexed'', ''archived'')
+
+## Invariants a caller can rely on
+
+- `root_id` is NOT NULL and agrees with `abs_path`: the watch root is always the
+  longest `folders_to_watch.path` prefixing it. Checked by the index audit''s
+  misrooted-folders class, so it is enforced rather than assumed.
+- `repository_id` is carried by EVERY folder, inherited from its repo anchor at
+  write time — not only by the repo root. `kind` still marks which folder IS the
+  anchor.
+- `parent_id` NULL means a direct child of the watch root.';
 
 comment on column folders.id
      is 'Surrogate primary key (UUID).';
@@ -73,17 +119,23 @@ comment on column folders.kind
 
 It does NOT say who claims the folder. Whether a workspace declares a module is a relationship and lives in workspace_root_id. `workspace_member` and `package` were once two values here; merged, because that split flips for several folders the moment a `workspaces` array is added — nothing about the directory changes — and a kind that moves under an unrelated edit describes the wrong thing.';
 comment on column folders.workspace_root_id
-     is 'The folder whose manifest DECLARES this module as a workspace member (package.json `workspaces`, Cargo.toml `[workspace] members`). NULL means nothing declares it — a real state, and the common one for a repo with several independent build units. Derived from the declaring manifest and matched on repo-relative PATH, never on the directory name or its position in the tree; asserting membership no manifest states is the R4 fabrication. Refreshed on every scan so a folder that leaves the member list stops reading as a member.
+     is 'WHICH workspace declares this module as a member — not whether one does.
 
-Only the REPO ROOT''s manifest is read today, so a nested workspace root is not detected — its members resolve as undeclared. A named gap, not a silent one.
-
-WHICH workspace declares this module, when one does.
-
-Membership is a RELATIONSHIP, so it is stored as one — not as a `kind`. `kind` says what a folder IS; this says who claims it, and says WHICH workspace rather than a bare yes/no, so "the members of this workspace" is a single indexed lookup.
-
-NULL means nothing declares it: a real and common state. `marketplace/`, `app/`, `dojo/` and `website/` here are all real build units that no workspace lists. NULL is "undeclared", never "unknown".
-
-DERIVED from the declaring manifest''s member list (package.json `workspaces`, Cargo.toml `[workspace] members`), matched on the repo-relative PATH. Refreshed on every scan, because a folder that leaves the list must stop reading as a member.';
+- Membership is a RELATIONSHIP, so it is stored as one. `kind` says what a
+  folder IS; this says who claims it. Naming the workspace rather than a bare
+  yes/no makes "the members of this workspace" a single indexed lookup.
+- DERIVED from the declaring manifest''s member list (package.json
+  `workspaces`, Cargo.toml `[workspace] members`), matched on the repo-relative
+  PATH — never on the directory name or its position in the tree. Asserting
+  membership no manifest states is the R4 fabrication.
+- Refreshed on every scan, so a folder that leaves the member list stops
+  reading as a member.
+- NULL means nothing declares it. A real and common state, not "unknown":
+  `marketplace/`, `app/`, `dojo/` and `website/` here are all genuine build
+  units that no workspace lists.
+- KNOWN GAP, named rather than silent: only the REPO ROOT''s manifest is read
+  today, so a nested workspace root is not detected and its members resolve as
+  undeclared.';
 comment on column folders.status
      is 'Indexing lifecycle: discovered → queued → indexing → indexed, or failed. Or archived, when the directory is gone but its history is worth keeping.
 
