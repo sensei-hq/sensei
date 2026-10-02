@@ -29,6 +29,28 @@ create index if not exists edges_target_id_idx
 create index if not exists edges_kind_idx
     on edges(kind);
 
+-- The diagram access path: a project's folders, then THEIR edges.
+--
+-- Covering, so the four columns `structure_edges` needs from this table come
+-- out of the index and the 3.9 GB heap is never visited. Measured 2026-10-02
+-- on the `calls` edges of one project, forced serial: the seq-scan plan reads
+-- 610,830 buffers, folder-driven without this index 124,196, and folder-driven
+-- with it 60,432 — 10x. Heap Fetches were still 68,717 because the visibility
+-- map was cold; a vacuumed table makes it a true index-only scan.
+--
+-- `where target_id is not null` matches what every diagram asks for: an
+-- unresolved edge names a relationship the index cannot point at, so no diagram
+-- draws it. That predicate removes 1.96M of 3.18M rows from the index.
+--
+-- THE INDEX ALONE DOES NOTHING. With `structure_edges` written as a plain join
+-- the planner still seq-scans `edges` (verified — 19.6 s, same shape), because
+-- filtering 368,570 `calls` rows out of 3.18M is a fair seq scan on its own
+-- terms. It is the LATERAL in that view that makes the per-folder lookup the
+-- plan, and this index that makes the lookup cheap. Neither half works alone.
+create index if not exists edges_folder_kind_cover_idx
+    on edges(folder_id, kind) include (source_id, target_id)
+ where target_id is not null;
+
 create index if not exists edges_confidence_idx
     on edges(confidence);
 
