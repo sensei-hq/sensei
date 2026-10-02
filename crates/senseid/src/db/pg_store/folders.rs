@@ -1770,6 +1770,41 @@ impl PgStore {
         Ok(())
     }
 
+    /// Folders whose `root_id` names a watch root their `abs_path` is not under.
+    ///
+    /// `folders.root_id` caches a derivable fact, and an unchecked cache of a
+    /// derivable fact is how `folders.project_id` came to let one repository's
+    /// folders name two different projects (#210). This is the check that the
+    /// cache still agrees with the path.
+    ///
+    /// ASKS THE CHEAP DIRECTION. The tempting query — "find the longest watch
+    /// root prefixing this path, compare" — searches every root for every
+    /// folder. That is fine against the live DB's 2 roots and pathological
+    /// against a test database that has accumulated 37,000 of them. Checking a
+    /// folder against ITS OWN root instead is one indexed join and O(folders),
+    /// and it catches the drift that matters: a folder stamped with a root it
+    /// does not live under.
+    ///
+    /// What it deliberately does NOT catch is a folder correctly under root A
+    /// while a MORE specific root B also contains it. Nested watch roots are
+    /// prevented upstream — `resolve_watch_root` always picks the longest
+    /// existing root rather than creating one inside another — so that shape
+    /// should not arise, and looking for it is what costs the full search.
+    ///
+    /// Returns `(abs_path, root_path)` so a report can show the disagreement.
+    pub async fn misrooted_folders(&self) -> Result<Vec<(String, String)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT f.abs_path, w.path
+               FROM sensei.folders f
+               JOIN sensei.folders_to_watch w ON w.id = f.root_id
+              WHERE f.abs_path <> w.path
+                AND NOT starts_with(f.abs_path, w.path || '/')",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
     /// Every folder at or under `repo_abs`, as `abs_path -> id`.
     ///
     /// What the manifest pass needs to turn a `link:`/`workspace:` sibling
