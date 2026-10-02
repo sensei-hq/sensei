@@ -1051,6 +1051,23 @@ impl PgStore {
     /// `returns` is normalised through [`crate::indexer::resolve::stated_return_type`],
     /// the SAME function the fresh-parse builder uses, so a type read back out
     /// of the database cannot drift from one read off source.
+    ///
+    /// SCOPED BY `repository_id`, NOT BY WALKING THE PATH. All three used to
+    /// resolve the repo through `repo_anchor_for` and then collect its folders
+    /// with `f.abs_path LIKE a.repo_abs_path || '/%'` — a function scan feeding
+    /// a prefix match over all 13,724 folders, which is the exact pair that made
+    /// `folder_projects` unusable before #210. Every folder now carries its own
+    /// `repository_id`, so the same set is one indexed lookup.
+    ///
+    /// The identities query also gets `edges_owns_folder_idx`, partial on the
+    /// `owns` relation and covering `target_id`. Without it the plan seq-scans
+    /// all 3.18M edges for the 408,335 `owns` rows and filters by folder
+    /// AFTERWARDS. Measured 2026-10-02 forced serial: 397,888 buffers before,
+    /// 41,535 after — 9.6x, verified to return the identical 1,812 fqns.
+    ///
+    /// This is not a micro-optimisation. Fifteen of these were observed running
+    /// CONCURRENTLY for over 40 minutes each, blocking DDL — one World rebuild
+    /// per folder being scanned, each scanning a 3.9 GB table.
     pub async fn world_sets_for_folder(
         &self,
         folder_id: &uuid::Uuid,
@@ -1065,14 +1082,10 @@ impl PgStore {
         // Member NAMES — the weaker question, and a kind filter IS the rule here
         // (`member_names_of` filters on SymbolKind).
         let names: Vec<(String,)> = sqlx_core::query_as::query_as(
-            "WITH anchor AS (SELECT ra.repo_abs_path FROM sensei.folders f \
-                 CROSS JOIN LATERAL sensei.repo_anchor_for(f.abs_path) ra \
-                WHERE f.id = $1) \
-             SELECT DISTINCT n.name FROM sensei.nodes n \
-              WHERE n.folder_id IN (SELECT f.id FROM sensei.folders f \
-                     WHERE EXISTS (SELECT 1 FROM anchor a \
-                             WHERE f.abs_path = a.repo_abs_path \
-                                OR f.abs_path LIKE a.repo_abs_path || '/%')) \
+            "SELECT DISTINCT n.name FROM sensei.nodes n \
+              WHERE n.folder_id IN (SELECT f2.id FROM sensei.folders f2 \
+                     WHERE f2.repository_id = (SELECT f1.repository_id \
+                                                 FROM sensei.folders f1 WHERE f1.id = $1)) \
                 AND n.kind IN ('method', 'field', 'property') \
                 AND n.name <> ''",
         )
@@ -1083,15 +1096,11 @@ impl PgStore {
 
         // Member IDENTITIES — the `owns` relation, which is the vocabulary.
         let declared: Vec<(String,)> = sqlx_core::query_as::query_as(
-            "WITH anchor AS (SELECT ra.repo_abs_path FROM sensei.folders f \
-                 CROSS JOIN LATERAL sensei.repo_anchor_for(f.abs_path) ra \
-                WHERE f.id = $1) \
-             SELECT DISTINCT tn.fqn FROM sensei.edges e \
+            "SELECT DISTINCT tn.fqn FROM sensei.edges e \
                JOIN sensei.nodes tn ON tn.id = e.target_id \
-              WHERE e.folder_id IN (SELECT f.id FROM sensei.folders f \
-                     WHERE EXISTS (SELECT 1 FROM anchor a \
-                             WHERE f.abs_path = a.repo_abs_path \
-                                OR f.abs_path LIKE a.repo_abs_path || '/%')) \
+              WHERE e.folder_id IN (SELECT f2.id FROM sensei.folders f2 \
+                     WHERE f2.repository_id = (SELECT f1.repository_id \
+                                                 FROM sensei.folders f1 WHERE f1.id = $1)) \
                 AND e.props->>'relation' = 'owns' \
                 AND tn.fqn IS NOT NULL",
         )
@@ -1102,14 +1111,10 @@ impl PgStore {
 
         // Declared types, normalised by the shared rule.
         let stated: Vec<(String, String, String)> = sqlx_core::query_as::query_as(
-            "WITH anchor AS (SELECT ra.repo_abs_path FROM sensei.folders f \
-                 CROSS JOIN LATERAL sensei.repo_anchor_for(f.abs_path) ra \
-                WHERE f.id = $1) \
-             SELECT n.fqn, n.name, n.props->>'declared_type' FROM sensei.nodes n \
-              WHERE n.folder_id IN (SELECT f.id FROM sensei.folders f \
-                     WHERE EXISTS (SELECT 1 FROM anchor a \
-                             WHERE f.abs_path = a.repo_abs_path \
-                                OR f.abs_path LIKE a.repo_abs_path || '/%')) \
+            "SELECT n.fqn, n.name, n.props->>'declared_type' FROM sensei.nodes n \
+              WHERE n.folder_id IN (SELECT f2.id FROM sensei.folders f2 \
+                     WHERE f2.repository_id = (SELECT f1.repository_id \
+                                                 FROM sensei.folders f1 WHERE f1.id = $1)) \
                 AND n.fqn IS NOT NULL \
                 AND coalesce(n.props->>'declared_type', '') <> ''",
         )
