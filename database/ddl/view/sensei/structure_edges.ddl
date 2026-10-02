@@ -11,12 +11,49 @@ with e as (
        , split_part(tn.fqn, '·', 2)    as target_package
        , split_part(sn.fqn, '·', 3)    as source_module
        , split_part(tn.fqn, '·', 3)    as target_module
-    from sensei.edges           ed
-    join sensei.folder_projects fp on fp.folder_id = ed.folder_id
+    -- LATERAL, AND IT IS THE WHOLE PERFORMANCE STORY. Written as a plain
+    -- `join sensei.edges ed on ...` the planner reads the 3.18M-row, 3.9 GB
+    -- `edges` table WHOLE for every question, filters 368,570 `calls` rows out
+    -- of it, and only then meets the 418 folders the project actually owns:
+    -- 610,830 buffers and ~26 s for one project, measured forced-serial
+    -- 2026-10-02. That is not a bad plan on its own terms — 11.6% selectivity
+    -- earns a seq scan — it is the wrong ORDER.
+    --
+    -- Driven from the folders instead, the same answer costs 124,196 buffers,
+    -- and with `edges_folder_kind_cover_idx` serving the four columns needed
+    -- here it is 60,432 — a 10x cut, as an Index Only Scan.
+    --
+    -- Adding that index WITHOUT this lateral changes nothing (verified: still a
+    -- seq scan). The two only work together.
+    --
+    -- THE COST OF THIS CHOICE, stated rather than discovered: an UNFILTERED read
+    -- of this view is now much worse — ~62 s against ~26 s — because it becomes
+    -- 13,722 per-folder lookups instead of one scan. That is the right trade
+    -- only because every consumer filters by project: the sole reader is
+    -- `PgStore::structure_edges`, which always binds `project_id = $1`, and
+    -- nothing else in the database depends on this view (checked via pg_depend
+    -- 2026-10-02). A future consumer wanting the whole corpus at once should
+    -- read `sensei.edges` directly rather than make this view serve both.
+    from sensei.folder_projects fp
+    cross join lateral (
+      select e2.kind, e2.source_id, e2.target_id
+        from sensei.edges e2
+       where e2.folder_id = fp.folder_id
+         and e2.target_id is not null
+       -- AN OPTIMISATION FENCE, NOT A LEFTOVER. Do not delete it.
+       --
+       -- Postgres decorrelates a simple LATERAL back into a plain join, and
+       -- then picks the seq scan all over again: with the lateral but without
+       -- this line the plan is `Seq Scan on edges e2`, 610,879 buffers, 17.4 s
+       -- — i.e. the rewrite achieves nothing. `offset 0` blocks the pull-up, so
+       -- the subquery runs per folder and reaches
+       -- `edges_folder_kind_cover_idx` as an Index Only Scan (418 loops,
+       -- 5.9 s). Measured both ways 2026-10-02.
+       offset 0
+    ) ed
     join sensei.nodes           sn on sn.id = ed.source_id
     join sensei.nodes           tn on tn.id = ed.target_id
-   where ed.target_id  is not null
-     and sn.file_id    is not null
+   where sn.file_id    is not null
      and tn.file_id    is not null
      and sn.fqn        is not null
      and tn.fqn        is not null
