@@ -98,7 +98,7 @@ impl ScanSummary {
 /// Reuses the walk-level reader in `tasks::handlers::scan` rather than
 /// shelling out a second time — a second copy would be a second place for
 /// "what counts as this repo's remote" to be answered differently.
-fn origin_remote(repo_path: &str) -> Option<String> {
+pub(crate) fn origin_remote(repo_path: &str) -> Option<String> {
     let remotes = crate::tasks::handlers::scan::read_git_remotes(repo_path);
     let pick = remotes.iter().find(|r| r["name"] == "origin").or_else(|| remotes.first())?;
     pick["url"].as_str().map(str::to_string)

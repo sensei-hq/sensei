@@ -659,17 +659,54 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     else {
         return Err(format!("process_git_folder: folder row for {} has no ids", task.folder_path));
     };
-    // The project, resolved and ATTACHED before anything else — a repository
-    // with no membership is invisible to every project surface (UI,
-    // list_projects, metrics), and nothing downstream repairs it.
+    // THE REPOSITORY FIRST, THEN THE PROJECT. Since #211 membership belongs to
+    // the repository (`folders.repository_id` → `project_repositories`), so
+    // `set_folder_project` on a folder with no repository matches no row and
+    // records NOTHING.
     //
-    // `set_folder_project` writes `project_repositories`, which since #211 is
-    // the ONLY place membership lives. The folders of this repo inherit it by
-    // resolving through their own `repository_id`, so nothing further has to be
-    // threaded down the tree — which is why `write_folder_tree` no longer takes
-    // a project at all.
+    // That is not a hypothetical ordering: `scan_root` writes folder rows and
+    // enqueues one `ProcessGitFolder` per repo, and only its RECONCILE — which
+    // runs afterwards — calls `assign_repositories`. So on a fresh install this
+    // handler always ran while `repository_id` was still NULL. Measured on a
+    // from-scratch database against `~/Developer/sensei-hq`: 3 repositories, 3
+    // projects, 27,860 nodes indexed, and `project_repositories` EMPTY — every
+    // project tagged `orphaned` with `repos_count: 0`, and every project-scoped
+    // screen an empty graph over a fully indexed codebase.
+    //
+    // Keyed on the REMOTE via the one reader that answers "what is this repo's
+    // remote" (`pipeline::origin_remote`), so this agrees with the reconcile
+    // rather than minting a second, path-keyed identity for the same checkout.
+    // Both writers are upserts, so whichever runs first wins and the other is
+    // a no-op.
+    let repository_id = match ctx
+        .pg()
+        .upsert_repository(
+            &name,
+            crate::indexer::pipeline::origin_remote(&task.folder_path).as_deref(),
+        )
+        .await
+    {
+        Ok(rid) => {
+            if let Err(e) = ctx.pg().link_folder_to_repository(&folder_id, &rid).await {
+                tracing::warn!(folder_id = %folder_id, error = %e,
+                        "process_git_folder: link_folder_to_repository failed");
+            }
+            Some(rid)
+        }
+        Err(e) => {
+            tracing::warn!(folder_id = %folder_id, error = %e,
+                    "process_git_folder: upsert_repository failed — membership cannot be recorded");
+            None
+        }
+    };
+
+    // The project, resolved and ATTACHED — a repository with no membership is
+    // invisible to every project surface (UI, list_projects, metrics), and
+    // nothing downstream repairs it.
     let (project_uuid, _created) = resolve_project(ctx, repo_abs, &name).await?;
-    if let Err(e) = ctx.pg().set_folder_project(&folder_id, &project_uuid, "root", None).await {
+    if repository_id.is_some()
+        && let Err(e) = ctx.pg().set_folder_project(&folder_id, &project_uuid, "root", None).await
+    {
         tracing::warn!(folder_id = %folder_id, error = %e, "process_git_folder: set_folder_project failed");
     }
 
@@ -839,6 +876,78 @@ mod scan_tests {
     use crate::db::pg_store::graph_seed::SeedGraph;
     use crate::tasks::test_support::make_ctx;
 
+    /// A repo folder with NO `repositories` row still ends up in its project.
+    ///
+    /// THE FRESH-INSTALL PATH, and the one that was broken. `scan_root` writes
+    /// folder rows and enqueues a `ProcessGitFolder` per repo; only its
+    /// RECONCILE, which runs afterwards, calls `assign_repositories`. So when
+    /// this handler ran, `folders.repository_id` was still NULL — and since
+    /// #211 membership is the repository's, so `set_folder_project` matched no
+    /// row and recorded nothing. Measured on a from-scratch database against
+    /// `~/Developer/sensei-hq`: 3 repositories, 3 projects, 27,860 nodes, and
+    /// `project_repositories` EMPTY — every project tagged `orphaned` with
+    /// `repos_count: 0`, and the Structure diagram an empty graph.
+    ///
+    /// The handler must therefore establish the repository ITSELF rather than
+    /// depend on a later step having done it.
+    ///
+    /// Mutation that must break this test: drop the `upsert_repository` +
+    /// `link_folder_to_repository` pair from `process_git_folder`.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn a_repo_with_no_repository_row_still_reaches_its_project() {
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path().join("fresh");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn a() {}\n").unwrap();
+
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt-fresh", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "fresh", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        // Exactly what the walk leaves behind, and nothing more.
+        assert_eq!(
+            ctx.pg().repository_id_for_folder(&fid).await.unwrap(),
+            None,
+            "precondition: the walk leaves a repo folder with no repository"
+        );
+
+        let task = Task::new(TaskKind::ProcessGitFolder, &repo.to_string_lossy(), "");
+        super::process_git_folder(&ctx, &task).await.unwrap();
+
+        let rid = ctx
+            .pg()
+            .repository_id_for_folder(&fid)
+            .await
+            .unwrap()
+            .expect("the handler must give the folder a repository");
+
+        // The MEMBERSHIP, which is the whole point — asserted through
+        // `folder_projects`, the view every project-scoped read resolves by,
+        // rather than through the junction it happens to be built from.
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT project_id FROM sensei.folder_projects WHERE folder_id = $1",
+        )
+        .bind(fid)
+        .fetch_all(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "the folder must resolve to exactly one project; repository={rid}"
+        );
+    }
+
     /// The whole pass over a real repository on disk: folder rows with parents,
     /// file rows for supported AND unsupported files, a project attached, and
     /// the manifest gate enqueued with the file fan-out behind it.
@@ -868,10 +977,12 @@ mod scan_tests {
             .upsert_repo_kind(&root_id, "git", "demo", &repo.to_string_lossy())
             .await
             .unwrap();
-        // As a scan leaves it: the repo folder carries a `repositories`
-        // row. `process_git_folder` records membership against that row,
-        // so a fixture without one is a state production never produces.
-        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "demo").await.unwrap();
+        // NO repository is pre-created. That is the real production state:
+        // the walk writes the folder with `upsert_repo_kind`, and
+        // `ProcessGitFolder` runs BEFORE `scan_root`'s reconcile assigns
+        // repositories. Seeding one here is what hid the defect the live run
+        // found — membership recorded against a folder that had no repository
+        // yet, so nothing was recorded at all.
 
         let task = Task::new(TaskKind::ProcessGitFolder, &repo.to_string_lossy(), "");
         let written = super::process_git_folder(&ctx, &task).await.unwrap();
