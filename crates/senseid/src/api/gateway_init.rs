@@ -522,6 +522,7 @@ fn baseline_production_config() -> GatewayConfig {
             pricing: None,
             // Image-gen models: lineage/family isn't a meaningful panel axis here.
             family: None,
+            catalog: None,
         },
     );
     models.insert(
@@ -535,6 +536,7 @@ fn baseline_production_config() -> GatewayConfig {
             max_output_tokens: 0,
             pricing: None,
             family: None,
+            catalog: None,
         },
     );
     models.insert(
@@ -548,6 +550,7 @@ fn baseline_production_config() -> GatewayConfig {
             max_output_tokens: 16_384,
             pricing: None,
             family: family_for_baseline("gpt-4o-mini"),
+            catalog: None,
         },
     );
     models.insert(
@@ -561,6 +564,7 @@ fn baseline_production_config() -> GatewayConfig {
             max_output_tokens: 8_192,
             pricing: None,
             family: family_for_baseline("claude-sonnet"),
+            catalog: None,
         },
     );
     // One representative model per OpenAI-compatible aggregator so the
@@ -578,6 +582,7 @@ fn baseline_production_config() -> GatewayConfig {
             max_output_tokens: 8_192,
             pricing: None,
             family: family_for_baseline("openrouter-claude-sonnet-4-5"),
+            catalog: None,
         },
     );
     models.insert(
@@ -591,6 +596,7 @@ fn baseline_production_config() -> GatewayConfig {
             max_output_tokens: 16_384,
             pricing: None,
             family: family_for_baseline("vercel-gpt-4o"),
+            catalog: None,
         },
     );
     models.insert(
@@ -604,6 +610,7 @@ fn baseline_production_config() -> GatewayConfig {
             max_output_tokens: 4_096,
             pricing: None,
             family: family_for_baseline("nvidia-llama-3.1-70b-instruct"),
+            catalog: None,
         },
     );
     // Gemini — one chat model + one embedding model so both
@@ -619,6 +626,7 @@ fn baseline_production_config() -> GatewayConfig {
             max_output_tokens: 8_192,
             pricing: None,
             family: family_for_baseline("gemini-2.0-flash"),
+            catalog: None,
         },
     );
     models.insert(
@@ -632,6 +640,7 @@ fn baseline_production_config() -> GatewayConfig {
             max_output_tokens: 0,
             pricing: None,
             family: family_for_baseline("gemini-text-embedding-004"),
+            catalog: None,
         },
     );
     // Bedrock — Claude Sonnet 3.5 v2 is the most broadly-available
@@ -648,6 +657,7 @@ fn baseline_production_config() -> GatewayConfig {
             max_output_tokens: 8_192,
             pricing: None,
             family: family_for_baseline("bedrock-claude-3-5-sonnet"),
+            catalog: None,
         },
     );
     // Local embedding model (Ollama). 384-dim — matches sensei.nodes.embedding
@@ -666,6 +676,7 @@ fn baseline_production_config() -> GatewayConfig {
             max_output_tokens: 0,
             pricing: None,
             family: family_for_baseline("all-minilm"),
+            catalog: None,
         },
     );
     // Local chat model (Ollama gemma4). The PRIMARY TextChat candidate so the
@@ -683,6 +694,7 @@ fn baseline_production_config() -> GatewayConfig {
             max_output_tokens: 4_096,
             pricing: None,
             family: family_for_baseline("gemma4"),
+            catalog: None,
         },
     );
     // In-process embedded chat (llama.cpp via the `embedded-llama` router).
@@ -709,6 +721,7 @@ fn baseline_production_config() -> GatewayConfig {
             max_output_tokens: 4_096,
             pricing: None,
             family: family_for_baseline("gemma2:2b"),
+            catalog: None,
         },
     );
 
@@ -991,6 +1004,7 @@ pub async fn init_gateway_test() -> Arc<Gateway> {
             max_output_tokens: 1024,
             pricing: None,
             family: None,
+            catalog: None,
         },
     );
 
@@ -1051,6 +1065,7 @@ mod tests {
                 max_output_tokens: 4096,
                 pricing: None,
                 family: family_for_baseline("gemma2:2b"),
+                catalog: None,
             },
         );
         models.insert(
@@ -1064,6 +1079,7 @@ mod tests {
                 max_output_tokens: 0,
                 pricing: None,
                 family: family_for_baseline("all-minilm-l6-v2"),
+                catalog: None,
             },
         );
 
@@ -1183,6 +1199,7 @@ mod tests {
                 max_output_tokens: 4096,
                 pricing: None,
                 family: None,
+                catalog: None,
             },
         );
         // No api id anywhere → falls back to the config id.
@@ -1197,6 +1214,7 @@ mod tests {
                 max_output_tokens: 4096,
                 pricing: None,
                 family: None,
+                catalog: None,
             },
         );
 
@@ -1343,6 +1361,7 @@ mod tests {
                     max_output_tokens: 4096,
                     pricing: None,
                     family: family_for_baseline("gemma2:2b"),
+                    catalog: None,
                 },
             )]),
             chains: HashMap::from([(

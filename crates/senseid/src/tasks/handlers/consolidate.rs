@@ -187,6 +187,7 @@ pub async fn consolidate_for_project(
         consensus: None,
         allow_fallback: true,
         credentials: std::collections::HashMap::new(),
+        routing: None,
     };
     let resp = match ctx.app_state.gateway.execute(&request).await {
         Ok(r) if r.success => r,

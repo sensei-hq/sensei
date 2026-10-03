@@ -762,6 +762,7 @@ pub(crate) fn build_generalise_request(
         consensus: None,
         allow_fallback: true,
         credentials: std::collections::HashMap::new(),
+        routing: None,
     }
 }
 
