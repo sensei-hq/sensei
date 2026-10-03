@@ -37,6 +37,22 @@ Lane 2 is done: a project resolves ONE way, and so does governance.
     #211 junction write lived there, which is why no test caught this.
   - Schema diff live vs fresh: tables and views identical; only two retired
     seed functions linger in live (#217).
+- **Dōjō plane verified** (2026-10-02). Local Supabase started, `dbd reset
+  --force --scope dojo` + `dbd deploy --scope dojo` against it: 115 entities,
+  5 RLS policy files applied, and the before/after object diff is ZERO — 78
+  objects both sides, no manual bypass on that plane either. Dōjō app runs
+  against the fresh DB (routes 200, auth gate correct, `/version` 0.11.0), its
+  1,535 unit tests green. The three relay endpoints the daemon calls
+  (`relay/{session,segments,inbox}`) all exist and fail closed with 401;
+  `artifacts` targets dojo-mind, a separate service, by design.
+  NOT verified: an authenticated daemon→dōjō round-trip (needs a real
+  membership + API key).
+- **App e2e: 114 passed / 21 failed / 17 skipped** (152, 22.3 min) against a
+  daemon-provisioned `sensei_e2e`. Consistent with the known red gate (#187,
+  previously 23). Sampled failures are harness defects (an invalid
+  `[data-pw-text={}]` selector, missing testids) and an empty-DB precondition
+  — none related to this slice. No before/after baseline was taken this
+  session, so "no regression" rests on those causes, not a measurement.
 - **#205, #206 closed** earlier in the slice (Structure endpoint + screen).
 
 ## Next
@@ -57,10 +73,12 @@ is the worked template (spec + handler + `*-state.svelte.ts` + e2e).
 
 ## Known broken
 
-- `make install-debug` / `crates-debug`: vendored `llama-cpp-sys-2`
-  (cpp-httplib) will not compile against the system OpenSSL headers.
-  Pre-existing, unrelated. `cargo build -p senseid -p sensei-cli -p sensei-mcp
-  --bins` works and is what the running daemon was deployed from.
+- `llama-cpp-sys-2` (vendored cpp-httplib) will not compile against the system
+  OpenSSL headers, so any build with `--features senseid/embedded-llama-cpp`
+  fails. Pre-existing. WORKAROUND: `EMBED=0` on any make target skips the
+  feature — `make install-debug EMBED=0` and `make app-e2e-build EMBED=0` both
+  succeed. CONSEQUENCE: the installed daemon has NO in-process llama; it
+  cannot be rebuilt with it until this is fixed.
 - 30+ commits UNPUSHED on `develop` (nothing to the remote since the scrub).
 - Otherwise green: senseid 3198/0, workspace 361/0, clippy `-D warnings` and
   `fmt --check` clean. `scripts/check-sql-against-schema.py` plans all 1,529
