@@ -2327,7 +2327,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.57.0",
 ]
 
 [[package]]
@@ -2767,11 +2767,10 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "llama-cpp-2"
-version = "0.1.146"
+version = "0.1.158"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3b0f368c76cc0fe475e8257aeeec269e0d6569bd48b1f503efd0963fc3ee397"
+checksum = "5a89d1d5c09794689aa6190206dd55499d8153b3669c72f2ef24a4e8ddc5ccbe"
 dependencies = [
- "encoding_rs",
  "enumflags2",
  "llama-cpp-sys-2",
  "thiserror 2.0.18",
@@ -2781,9 +2780,9 @@ dependencies = [
 
 [[package]]
 name = "llama-cpp-sys-2"
-version = "0.1.146"
+version = "0.1.158"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b291e4bc2d10c43cd8dec16d49b6104cb3cb125f596ec380a753a5db1d965dd"
+checksum = "608edbeed8bcb8573d8e665f3f047e085202510b7b3d09e7fae2cfe3d80d6bec"
 dependencies = [
  "bindgen 0.72.1",
  "cc",
@@ -4695,8 +4694,8 @@ dependencies = [
 
 [[package]]
 name = "sensei-cloud-providers"
-version = "0.5.1"
-source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.5.1#fa6a43a36fea6c8db0f23c8a58921611beba105d"
+version = "0.7.0"
+source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#b444b6b6454246f239ef03ad10903d38b69cdebe"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -4723,8 +4722,8 @@ dependencies = [
 
 [[package]]
 name = "sensei-gateway"
-version = "0.5.1"
-source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.5.1#fa6a43a36fea6c8db0f23c8a58921611beba105d"
+version = "0.7.0"
+source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#b444b6b6454246f239ef03ad10903d38b69cdebe"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -4743,13 +4742,14 @@ dependencies = [
 
 [[package]]
 name = "sensei-kernel"
-version = "0.5.1"
-source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.5.1#fa6a43a36fea6c8db0f23c8a58921611beba105d"
+version = "0.7.0"
+source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#b444b6b6454246f239ef03ad10903d38b69cdebe"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
  "futures",
+ "indexmap 2.14.0",
  "reqwest 0.13.4",
  "serde",
  "serde_json",
@@ -4760,8 +4760,8 @@ dependencies = [
 
 [[package]]
 name = "sensei-local-engine"
-version = "0.5.1"
-source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.5.1#fa6a43a36fea6c8db0f23c8a58921611beba105d"
+version = "0.7.0"
+source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#b444b6b6454246f239ef03ad10903d38b69cdebe"
 dependencies = [
  "async-trait",
  "futures",
@@ -4777,8 +4777,8 @@ dependencies = [
 
 [[package]]
 name = "sensei-local-providers"
-version = "0.5.1"
-source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.5.1#fa6a43a36fea6c8db0f23c8a58921611beba105d"
+version = "0.7.0"
+source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#b444b6b6454246f239ef03ad10903d38b69cdebe"
 dependencies = [
  "async-trait",
  "futures",
@@ -6620,7 +6620,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

@@ -154,6 +154,7 @@ pub(crate) async fn image_generate(
         consensus: None,
         allow_fallback: true,
         credentials: std::collections::HashMap::new(),
+        routing: None,
     };
 
     let response = state

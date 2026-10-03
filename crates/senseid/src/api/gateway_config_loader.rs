@@ -182,6 +182,7 @@ pub(crate) fn build_models(rows: &[ModelRow]) -> HashMap<String, ModelConfig> {
                 // Lineage from `gateway.models.family` — powers MOE panel
                 // family-distinctness. `None` ⇒ id is its own family.
                 family: m.family.clone(),
+                catalog: None,
             },
         );
     }
