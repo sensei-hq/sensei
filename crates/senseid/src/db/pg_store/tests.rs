@@ -711,7 +711,7 @@ pub(crate) async fn create_test_folder_unattributed(s: &PgStore, suffix: &str) -
 /// project_id, while `list_patterns_by_folder` still keys on folder.
 ///
 /// Goes through `set_folder_project`, the production API, so the membership
-/// reaches `project_repositories` as well as `folders.project_id`. A raw
+/// reaches `repositories_in_projects` as well as `folders.project_id`. A raw
 /// `UPDATE … SET project_id` writes only the half that `folder_projects` does
 /// not read.
 async fn create_test_project_and_folder(s: &PgStore, suffix: &str) -> (uuid::Uuid, uuid::Uuid) {
@@ -6469,7 +6469,7 @@ async fn version_conflicts_view_flags_multi_version_pins_and_excludes_local() {
     let fid_a = create_test_folder(&s, &format!("vc-a-{suffix}")).await;
     let fid_b = create_test_folder(&s, &format!("vc-b-{suffix}")).await;
     // Attach folders to the project THROUGH THE PRODUCTION API, so membership
-    // reaches `project_repositories`. The view resolves via `folder_projects`,
+    // reaches `repositories_in_projects`. The view resolves via `folder_projects`,
     // which reads only the junction — a raw `UPDATE … SET project_id` leaves it
     // with nothing to find and the assertion below would be measuring an empty
     // set rather than the exclusion rule it names.
@@ -7568,7 +7568,7 @@ async fn folder_path_alias_resolves_old_paths_after_a_rename() {
 ///
 /// #211 removed the column and the parameter outright, so the guarantee is now
 /// structural rather than enforced: a subfolder inherits its REPOSITORY, and
-/// its project is whatever that repository's `project_repositories` row says.
+/// its project is whatever that repository's `repositories_in_projects` row says.
 /// There is nothing left to contradict.
 ///
 /// Breaking mutation: drop `repository_id` from the inherited CTE — the
@@ -7634,7 +7634,7 @@ async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() 
 /// repository's folders could disagree about their project, and one did: the
 /// client-q `documentation` checkout's root sat in project `client-q` while its 362
 /// subfolders sat in `documentation`. Membership now lives once in
-/// `project_repositories`, keyed on the repository, and `folder_projects`
+/// `repositories_in_projects`, keyed on the repository, and `folder_projects`
 /// resolves it.
 ///
 /// SEEDS THE DRIFT RATHER THAN LOOKING FOR IT. The first version of this test

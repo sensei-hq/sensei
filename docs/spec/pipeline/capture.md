@@ -171,7 +171,7 @@ Once grouped:
 
 - `sensei.projects.id` is the join key. A folder reaches it through
   `sensei.folder_projects` — `folders.repository_id` →
-  `project_repositories` → `projects` — not through a column of its
+  `repositories_in_projects` → `projects` — not through a column of its
   own; `folders.project_id` was dropped in #211 because two folders of
   one repository could name two different projects. Multiple folders
   per project is already supported by the DDL and the handlers

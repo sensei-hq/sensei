@@ -23,9 +23,9 @@ resolves rules through.
   is no tree to walk — multi-membership falls out for free, so a repository can
   belong to two organizations or two technology namespaces with no special case.
 - **What it is NOT.** It is not project membership. That is
-  `project_repositories`, and it is the only place a project is recorded. A
+  `repositories_in_projects`, and it is the only place a project is recorded. A
   `project`-scope namespace must never be bound here: it would be a second
-  writer for a fact `project_repositories` already owns, which is exactly how
+  writer for a fact `repositories_in_projects` already owns, which is exactly how
   the predecessor drifted.
 - **Who writes it.** The scan, from README frontmatter plus the detected stack.
 

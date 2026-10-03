@@ -25,7 +25,7 @@ Joins referenced_libraries through folder_projects to projects, deduplicates by 
 
 Membership comes from `folder_projects`, never from `folders.project_id`. The
 old column was settable per folder, so the folders of one repository could name
-different projects; `project_repositories` now holds membership and
+different projects; `repositories_in_projects` now holds membership and
 `folder_projects` resolves it through `folders.repository_id`.
 
 `folder_projects` IS MULTI-VALUED — a repository is keyed on its remote, so one
@@ -55,14 +55,14 @@ current state, not a structural guarantee.
 
 Consequence for fixtures: a folder inserted with a NULL `repository_id` and then
 wired to a project by `UPDATE folders SET project_id` produces NO row here. A
-fixture must create a `repositories` row, a `project_repositories` row, and set
+fixture must create a `repositories` row, a `repositories_in_projects` row, and set
 `folders.repository_id`.
 
 `folder_projects` is referenced directly rather than restated, and NOT wrapped in
 a CTE — in `graph_nodes` the identical SQL spelled as a CTE stopped the planner
 parameterising the view by the consumer''s key. Plan shape for
 `WHERE project_id = $1`, EXPLAIN at `max_parallel_workers_per_gather = 0` on
-2026-10-02: Seq Scan on the 261-row `project_repositories` -> Bitmap Index Scan
+2026-10-02: Seq Scan on the 261-row `repositories_in_projects` -> Bitmap Index Scan
 on `folders_repository_id_idx` -> Index Only Scan on `referenced_libraries_pkey`
 -> Index Scan on `libraries_pkey`. No sequential scan of `folders` or
 `referenced_libraries`. (No claim is made here about what the

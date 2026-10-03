@@ -331,7 +331,7 @@ impl PgStore {
     }
 
     /// Record that `repository_id` belongs to `project_id` — THE primitive, and
-    /// the only statement that writes `sensei.project_repositories`.
+    /// the only statement that writes `sensei.repositories_in_projects`.
     ///
     /// Both membership paths go through here: the scan path, which has the two
     /// ids in hand the moment it creates them, and the user-edit path via
@@ -342,7 +342,7 @@ impl PgStore {
         repository_id: &uuid::Uuid,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.project_repositories (project_id, repository_id) \
+            "INSERT INTO sensei.repositories_in_projects (project_id, repository_id) \
              VALUES ($1, $2) ON CONFLICT DO NOTHING",
         )
         .bind(project_id)
@@ -370,7 +370,7 @@ impl PgStore {
         project_id: &uuid::Uuid,
     ) -> Result<(), String> {
         let res = sqlx_core::query::query(
-            "INSERT INTO sensei.project_repositories (project_id, repository_id) \
+            "INSERT INTO sensei.repositories_in_projects (project_id, repository_id) \
              SELECT $2, f.repository_id FROM sensei.folders f \
               WHERE f.id = $1 AND f.repository_id IS NOT NULL \
              ON CONFLICT DO NOTHING",
@@ -605,7 +605,7 @@ impl PgStore {
             // silently had no effect.
             // THE CALLER CANNOT NAME A PROJECT. There is no parameter, because
             // since #211 there is no column: membership belongs to the
-            // REPOSITORY (`folders.repository_id` → `project_repositories`),
+            // REPOSITORY (`folders.repository_id` → `repositories_in_projects`),
             // and the only writer is `link_project_repository`. Taking a
             // project from the caller is what let the client-q checkout put 362
             // subfolders in a project its repository does not belong to.
@@ -2149,7 +2149,7 @@ impl PgStore {
     /// about the checkout ("this repo uses svelte"), and keying it on a
     /// directory let two clones of one repository disagree about which rules
     /// governed them. Never pass a `project`-scope namespace — project
-    /// membership is `project_repositories`, and a second writer for it is
+    /// membership is `repositories_in_projects`, and a second writer for it is
     /// what this grain exists to prevent.
     pub async fn link_repository_namespace(
         &self,

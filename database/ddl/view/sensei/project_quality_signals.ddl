@@ -8,7 +8,7 @@ set search_path to sensei, activity, inference, extensions;
 -- Folder -> project comes from `folder_projects` (never `folders.project_id`).
 -- That view is multi-valued — a folder of a repository serving two projects
 -- returns two rows — but each row carries a DIFFERENT project_id, and
--- (folder_id, project_id) is unique there (project_repositories' PK), so the
+-- (folder_id, project_id) is unique there (repositories_in_projects' PK), so the
 -- `GROUP BY project_id` already in `patterns` and `drift` lands each pattern or
 -- drift item once per owning project. No double count, no extra DISTINCT.
 CREATE OR REPLACE VIEW sensei.project_quality_signals AS

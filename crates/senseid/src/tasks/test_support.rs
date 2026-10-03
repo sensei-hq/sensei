@@ -280,7 +280,7 @@ pub(crate) async fn seed_project_folder_at(
         .await
         .unwrap();
     // AND THE JUNCTION, through the production primitive. Since #210 membership
-    // lives in `sensei.project_repositories`, and `folder_projects` — which
+    // lives in `sensei.repositories_in_projects`, and `folder_projects` — which
     // every migrated view resolves through — reads ONLY that. A fixture that
     // sets `folders.project_id` alone models a state production can no longer
     // produce, so the view under test reads nothing and the test asserts
@@ -402,7 +402,7 @@ pub(crate) async fn link_repository_to_project(
     .unwrap();
     // AND THE JUNCTION, through the production primitive — see
     // `seed_project_folder_at`. `folder_projects` reads only
-    // `project_repositories`, so setting `folders.project_id` alone leaves the
+    // `repositories_in_projects`, so setting `folders.project_id` alone leaves the
     // view under test with nothing to find.
     pg.link_project_repository(project_id, repository_id).await.unwrap();
 }
@@ -449,7 +449,7 @@ pub(crate) async fn seed_bare_repository(
     .unwrap();
     // AND THE JUNCTION, through the production primitive — see
     // `seed_project_folder_at`. `folder_projects` reads only
-    // `project_repositories`, so setting `folders.project_id` alone leaves the
+    // `repositories_in_projects`, so setting `folders.project_id` alone leaves the
     // view under test with nothing to find.
     pg.link_project_repository(project_id, &rid).await.unwrap();
     rid
@@ -489,7 +489,7 @@ pub(crate) async fn seed_second_repository(
         .await
         .unwrap();
     // AND THE JUNCTION, through the production primitive. Since #210 membership
-    // lives in `sensei.project_repositories`, and `folder_projects` — which
+    // lives in `sensei.repositories_in_projects`, and `folder_projects` — which
     // every migrated view resolves through — reads ONLY that. A fixture that
     // sets `folders.project_id` alone models a state production can no longer
     // produce, so the view under test reads nothing and the test asserts
@@ -1049,7 +1049,7 @@ pub async fn seed_file(
 ///
 /// The difference did not matter while `folders.project_id` existed, because a
 /// folder carried its project directly. Since #211 the project is the
-/// REPOSITORY's (`folders.repository_id` → `project_repositories` →
+/// REPOSITORY's (`folders.repository_id` → `repositories_in_projects` →
 /// `projects`), so a folder with no repository can hold no project at all:
 /// `set_folder_project` records the props and nothing else, and every scoping
 /// read comes back empty.

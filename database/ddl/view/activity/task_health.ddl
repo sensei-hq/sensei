@@ -40,7 +40,7 @@ set search_path to activity, sensei, extensions;
 -- ## Project is a SET, and this view keeps one row per execution anyway
 --
 -- Project membership no longer lives on `folders.project_id` — it lives on
--- `sensei.project_repositories` and resolves through `sensei.folder_projects`,
+-- `sensei.repositories_in_projects` and resolves through `sensei.folder_projects`,
 -- which is MULTI-VALUED BY DESIGN: a repository is keyed on its remote, so
 -- measured 2026-10-01, 8 repositories serve two projects each and 4,129 of
 -- 13,722 folders carry more than one project row.

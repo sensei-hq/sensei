@@ -660,7 +660,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         return Err(format!("process_git_folder: folder row for {} has no ids", task.folder_path));
     };
     // THE REPOSITORY FIRST, THEN THE PROJECT. Since #211 membership belongs to
-    // the repository (`folders.repository_id` → `project_repositories`), so
+    // the repository (`folders.repository_id` → `repositories_in_projects`), so
     // `set_folder_project` on a folder with no repository matches no row and
     // records NOTHING.
     //
@@ -669,7 +669,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // runs afterwards — calls `assign_repositories`. So on a fresh install this
     // handler always ran while `repository_id` was still NULL. Measured on a
     // from-scratch database against `~/Developer/sensei-hq`: 3 repositories, 3
-    // projects, 27,860 nodes indexed, and `project_repositories` EMPTY — every
+    // projects, 27,860 nodes indexed, and `repositories_in_projects` EMPTY — every
     // project tagged `orphaned` with `repos_count: 0`, and every project-scoped
     // screen an empty graph over a fully indexed codebase.
     //
@@ -885,7 +885,7 @@ mod scan_tests {
     /// #211 membership is the repository's, so `set_folder_project` matched no
     /// row and recorded nothing. Measured on a from-scratch database against
     /// `~/Developer/sensei-hq`: 3 repositories, 3 projects, 27,860 nodes, and
-    /// `project_repositories` EMPTY — every project tagged `orphaned` with
+    /// `repositories_in_projects` EMPTY — every project tagged `orphaned` with
     /// `repos_count: 0`, and the Structure diagram an empty graph.
     ///
     /// The handler must therefore establish the repository ITSELF rather than

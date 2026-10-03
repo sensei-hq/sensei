@@ -69,9 +69,9 @@ CASE ever gains a fourth branch this view must be revisited with it.
 `folder_projects` is the ONE exception to that rule, and it is a measured one: it
 is two joins with no aggregate, so the planner inlines it entirely rather than
 scanning it as a subquery — the plan for `WHERE project = ''sparsh''` names
-`project_repositories`, `folders` and `projects` directly, with no Subquery Scan
+`repositories_in_projects`, `folders` and `projects` directly, with no Subquery Scan
 node. It does NOT reach them all by index, and at these sizes it should not: the
-251-row `projects` and the 261-row `project_repositories` are each a Seq Scan,
+251-row `projects` and the 261-row `repositories_in_projects` are each a Seq Scan,
 hash-joined, and THAT pair is what drives the Bitmap Index Scan on
 `folders_repository_id_idx`, then `nodes_unique_identity`, then `files_pkey`. The
 `folders.project_id` spelling it replaces ends identically — a Bitmap Index Scan
@@ -79,7 +79,7 @@ on `folders`, then `nodes_unique_identity`, then `files_pkey` — and differs on
 at the head: no hash join, `folders_project_id_idx` driven from the `projects` Seq
 Scan alone. Warm buffers 1,951 here against 1,945 there, all shared hits, the same
 count on every one of four repetitions a side (measured 2026-10-01). Three of the
-six are the `project_repositories` Seq Scan; the other three are ONE EXTRA FOLDER
+six are the `repositories_in_projects` Seq Scan; the other three are ONE EXTRA FOLDER
 — 45 against 44, the old 44 a strict subset — whose `folders.project_id` says
 `bridge` while its repository serves `sparsh` too. That extra folder IS the
 disagreement this view was migrated to end, so half the extra cost is buying the
@@ -115,7 +115,7 @@ twice; it must name one project or deduplicate on `file_id`.
 A file whose repository belongs to no project returns NO row, rather than a row
 under an invented project. Today that drops nothing: all 661,879 nodes this view
 consumes sit in a folder carrying a `repository_id` that has at least one
-`project_repositories` row (measured 2026-10-01), which is why the diff above
+`repositories_in_projects` row (measured 2026-10-01), which is why the diff above
 lost nothing.
 
 INTERNAL ONLY. External nodes are library surface, not this project''s structure;
@@ -143,4 +143,4 @@ comment on column structure_graph.symbols is
 comment on column structure_graph.file_id is
 'The node identity WITHIN one project. `file_path` is relative to its own folder and repeats across packages, so it cannot be the key; and across projects a file of a shared repository appears once per project, so the key of the whole view is (project_id, file_id).';
 comment on column structure_graph.project_id is
-'From `project_repositories` via `folder_projects`, never from `folders.project_id`. A folder does not carry its own project; that is what let the folders of one repository drift apart.';
+'From `repositories_in_projects` via `folder_projects`, never from `folders.project_id`. A folder does not carry its own project; that is what let the folders of one repository drift apart.';

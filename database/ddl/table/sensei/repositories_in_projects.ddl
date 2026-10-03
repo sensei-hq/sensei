@@ -21,17 +21,17 @@ set search_path to sensei, extensions;
 -- its own. For a repository in two projects that resolution is deliberately
 -- MULTI-VALUED: its nodes really do belong to both, and a consumer that needs one
 -- must say which rather than be handed an arbitrary pick.
-create table if not exists project_repositories (
+create table if not exists repositories_in_projects (
   project_id    uuid        not null references sensei.projects(id)     on delete cascade
 , repository_id uuid        not null references sensei.repositories(id) on delete cascade
 , created_at    timestamptz not null default now()
 , primary key (project_id, repository_id)
 );
 
-create index if not exists project_repositories_repository_id_idx
-    on project_repositories(repository_id);
+create index if not exists repositories_in_projects_repository_id_idx
+    on repositories_in_projects(repository_id);
 
-comment on table project_repositories is
+comment on table repositories_in_projects is
 'Project ↔ repository membership — the ONE place it lives, replacing
 `folders.project_id` (decision changed 2026-09-30, superseding D1/D2/D10).
 
@@ -53,7 +53,7 @@ two projects yields two rows, because its nodes genuinely belong to both; a
 consumer needing exactly one must name which, rather than be handed an arbitrary
 pick that looks authoritative.';
 
-comment on column project_repositories.project_id is
+comment on column repositories_in_projects.project_id is
 'The project this repository belongs to. CASCADE on delete: membership is a
 statement about a project that exists, so deleting the project removes the
 claim rather than leaving a row pointing at nothing.
@@ -62,7 +62,7 @@ A repository may appear here more than once, under different projects — that i
 the point of the table. See the table comment for why a column on `repositories`
 could not express it.';
 
-comment on column project_repositories.created_at is
+comment on column repositories_in_projects.created_at is
 'When the membership was recorded. NOT when the repository was scanned and not
 when the project was created — a repository can be scanned long before anyone
 assigns it, and a project can exist with no repositories at all.
@@ -71,5 +71,5 @@ Carried so a membership that appeared without anyone intending it can be told
 apart from one that was always there. The 2026-09-30 backfill and a user edit
 are otherwise indistinguishable.';
 
-comment on column project_repositories.repository_id is
+comment on column repositories_in_projects.repository_id is
 'The CANONICAL repository (keyed on remote), not a checkout. Two checkouts of one remote share this id, which is precisely why a project cannot be stored on the repository row itself.';

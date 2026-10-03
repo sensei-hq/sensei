@@ -94,7 +94,7 @@ See the root spec §2.
 
 ### T2 — Shared data, two-way (local ⇄ dojo)
 
-`sensei.repositories` · `sensei.projects` · `sensei.project_repositories` (new) ·
+`sensei.repositories` · `sensei.projects` · `sensei.repositories_in_projects` (new) ·
 `sensei.repository_metrics` (renamed)
 
 A project is *a collection of repos*, shared by the team. A repository is
@@ -108,7 +108,7 @@ machine happens to be that repository — `folders.repository_id`, which stays T
 ### 3.1 `project_metrics` → `repository_metrics`
 
 ```
-DROP  project_id     -- derivable via project_repositories; 0 disagreements today
+DROP  project_id     -- derivable via repositories_in_projects; 0 disagreements today
 DROP  folder_id      -- 0 rows, and a folder is local; a shared metric cannot key on it
 DROP  session_id     -- 0 rows; session-grain is local-only by the T0 rule
 KEEP  metric_id, repository_id, scope, identity, commit_sha,
@@ -123,7 +123,7 @@ ADD   origin metric_origin     -- 'local' | 'dojo'  (who computed this row)
 create view project_metrics as
 select pr.project_id, rm.*
   from repository_metrics rm
-  join project_repositories pr on pr.repository_id = rm.repository_id;
+  join repositories_in_projects pr on pr.repository_id = rm.repository_id;
 ```
 
 Safe because no repo maps to more than one project today. If that ever changes,
@@ -166,14 +166,14 @@ ADD   synced_at timestamptz
 has to change. Dojo keys its side by `repo_key` too, so two users of the same
 repo converge without coordination.
 
-### 3.4 `projects` + new `project_repositories`
+### 3.4 `projects` + new `repositories_in_projects`
 
 Today a project's membership is expressed **only** through `folders.project_id`
 — a local, path-bound table. That cannot be shared. The membership needs its own
 shared table:
 
 ```sql
-create table project_repositories (
+create table repositories_in_projects (
   project_id     uuid not null references projects(id)     on delete cascade
 , repository_id  uuid not null references repositories(id) on delete cascade
 , role           text                                       -- 'primary' | 'library' | …
@@ -269,7 +269,7 @@ New dojo tables required:
 | Table | Key | Purpose |
 |---|---|---|
 | `dojo.repositories` | `repo_key` unique per tenant | the shared repo identity |
-| `dojo.project_repositories` | `(project_id, repository_id)` | the shared collection |
+| `dojo.repositories_in_projects` | `(project_id, repository_id)` | the shared collection |
 | `dojo.metrics` | `key` unique | authoritative metric config |
 | `dojo.repository_metrics` | `(metric, repo, scope, identity, day, grain)` | the shared values |
 
@@ -280,7 +280,7 @@ New dojo tables required:
 Your requirement: *only repos accessible by the user get the data.*
 
 ```
-identity → membership → tenant → project → project_repositories → repository
+identity → membership → tenant → project → repositories_in_projects → repository
                                                                        ↓
                                                             repository_metrics
 ```
@@ -335,7 +335,7 @@ with a prompt on first dojo link.
 **Q3 — Can a repo belong to two projects?** Zero today. If we forbid it, the
 `project_metrics` view is a clean join and roll-ups are unambiguous. If we allow
 it, every project-level roll-up must decide how to weight a shared repo. I lean
-forbid, with a unique constraint on `project_repositories.repository_id`.
+forbid, with a unique constraint on `repositories_in_projects.repository_id`.
 
 **Q4 — Who sees `scope='user'` rows in dojo?** Self + admins, or all tenant
 members? This is a people question, not a technical one, and it changes the RLS
@@ -359,7 +359,7 @@ Forward-only; each step ships independently.
 1. Drop the three dead columns from `project_metrics`; rename to
    `repository_metrics`; add `project_metrics` view. **No behaviour change** —
    0 rows affected, pure rename + derivation.
-2. Add `project_repositories`; backfill from `folders`; make `folders.project_id`
+2. Add `repositories_in_projects`; backfill from `folders`; make `folders.project_id`
    derived.
 3. Add `visibility`/`synced_at` to `repositories`; `origin`/`shared_at` to
    `repository_metrics`.

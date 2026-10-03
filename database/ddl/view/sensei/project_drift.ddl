@@ -11,7 +11,7 @@ retired `folders.project_id` (#211).
 
 MULTI-VALUED, inherited from `folder_projects`: a repository is keyed on its
 remote, 8 repositories serve two projects each, so a drift item in one of their
-folders appears ONCE PER PROJECT. `project_repositories` is keyed
+folders appears ONCE PER PROJECT. `repositories_in_projects` is keyed
 (project_id, repository_id), so a given (drift item, project) pair still appears
 exactly once — scope the view before aggregating and nothing double-counts:
 

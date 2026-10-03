@@ -28,7 +28,7 @@ set search_path to sensei, extensions;
 --      `pg_relation_is_updatable` returns 28 (UPDATE+INSERT+DELETE) and the
 --      explainer UPDATE above succeeds through the view.
 --
--- RESOLVED THROUGH `project_repositories`, THE JUNCTION ITSELF — not through
+-- RESOLVED THROUGH `repositories_in_projects`, THE JUNCTION ITSELF — not through
 -- `sensei.folder_projects`, and not through `folders.project_id`, which this view
 -- stops reading. `folders.project_id` is NOT gone: it is still a live column on
 -- `sensei.folders` and other views still read it (see the view comment below and
@@ -55,7 +55,7 @@ set search_path to sensei, extensions;
 -- via folder_projects, 722,951 via the folders subquery) to answer a question the
 -- 261-row junction answers directly.
 --
--- The junction's SubPlan is a SEQ SCAN of `project_repositories` — 261 rows,
+-- The junction's SubPlan is a SEQ SCAN of `repositories_in_projects` — 261 rows,
 -- `Rows Removed by Filter: 260`, 3 pages — and that seq scan is the right plan,
 -- not a missing index. 19,581 loops x 3 pages = 58,743 of the 59,610 buffers;
 -- `project_repositories_repository_id_idx` does exist and the planner correctly
@@ -69,7 +69,7 @@ set search_path to sensei, extensions;
 -- collapse to one row and membership is multi-valued BY DESIGN, not by defect.
 -- This column therefore answers "one project that owns this value", NOT "the
 -- project" — a convenience for the legacy downstream chain, never an authority. The
--- authoritative, multi-valued answer is `sensei.project_repositories` (and
+-- authoritative, multi-valued answer is `sensei.repositories_in_projects` (and
 -- `sensei.folder_projects` for folder-grained readers); a reader that must not
 -- miss a shared repository's values has to go there. Constraint 2 above is what
 -- forces one value: the view exposes `id`, the base table's primary key, and the
@@ -154,7 +154,7 @@ create or replace view project_metrics as
 select rm.id
      , rm.metric_id
      , ( select pr.project_id
-           from sensei.project_repositories pr
+           from sensei.repositories_in_projects pr
           where pr.repository_id = rm.repository_id
           order by pr.created_at desc, pr.project_id
           limit 1
@@ -186,11 +186,11 @@ base relation are not updatable` — because a derived column has no inverse. So
 grain cannot be targeted wrongly, but the view must never acquire a join or it
 stops being writable at all.
 
-project_id is DERIVED FROM sensei.project_repositories. This view stopped reading
+project_id is DERIVED FROM sensei.repositories_in_projects. This view stopped reading
 folders.project_id on 2026-10-01, but THAT COLUMN IS NOT REMOVED: it is still a
 live, indexed column on sensei.folders, and other views still read it. Per
 docs/decisions.md D-PROJ-JUNCTION, membership now LIVES in
-sensei.project_repositories and folders.project_id is derived from it, written
+sensei.repositories_in_projects and folders.project_id is derived from it, written
 only by inheritance from the repo anchor. The reason to stop reading it here is
 that it used to be settable independently per folder, so a repository''s folders
 could disagree about their project — and one pair did, the client-q
@@ -198,7 +198,7 @@ could disagree about their project — and one pair did, the client-q
 disagreement unrepresentable. Because a repository may serve several projects
 (measured 2026-10-01: 8 of the 253 project-owning repositories serve two), the
 derived column is ONE owner, not THE owner: it takes the most recent membership,
-ties broken on the project uuid. Ask sensei.project_repositories, or
+ties broken on the project uuid. Ask sensei.repositories_in_projects, or
 sensei.folder_projects, for the complete answer.
 
 Dropped in the rename and NOT restored here: folder_id and session_id. Both held

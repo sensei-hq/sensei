@@ -39,7 +39,7 @@ set search_path to activity, sensei, extensions;
 -- ## Project is an ARRAY, because one row per job outranks one project per row
 --
 -- Project membership is no longer a column on `folders`. It lives in
--- `sensei.project_repositories` and resolves through `sensei.folder_projects`,
+-- `sensei.repositories_in_projects` and resolves through `sensei.folder_projects`,
 -- which is MULTI-VALUED BY DESIGN: a repository is keyed on its remote, so two
 -- checkouts collapse to one repository row and that row can serve more than one
 -- project. Measured 2026-10-01: 8 repositories carry two project links each
@@ -189,6 +189,6 @@ Common queries:
 comment on column task_failures.attempts is 'Failed executions accumulated for this job in the retained window. Compare against max_retry: attempts >> max_retry means re-discovery each pass, not retry — the shape that produced 17.5M rows over 43,312 paths on 2026-09-23.';
 comment on column task_failures.is_folder_scoped is 'Whether folder_path is a path (true) or a group UUID (false). A false row has no repository and no projects BY CONSTRUCTION, not through a failed lookup.';
 comment on column task_failures.projects is 'EVERY project this job''s folder belongs to, ordered by name — an array because sensei.folder_projects is multi-valued (a repository keyed on its remote can serve two projects). Collapsed per folder before the join so the restart list keeps one row per job; test membership with ''name'' = any(projects). NULL means the folder is under no tracked repository, not that a lookup failed.';
-comment on column task_failures.project_ids is 'Project UUIDs matching projects element-for-element (same ORDER BY). From sensei.project_repositories, never from folders.project_id — a folder does not carry its own project.';
+comment on column task_failures.project_ids is 'Project UUIDs matching projects element-for-element (same ORDER BY). From sensei.repositories_in_projects, never from folders.project_id — a folder does not carry its own project.';
 
 grant select on task_failures to authenticated, service_role;

@@ -7,7 +7,7 @@ select f.id            as folder_id
      , pr.project_id
      , p.name          as project
   from sensei.folders              f
-  join sensei.project_repositories pr on pr.repository_id = f.repository_id
+  join sensei.repositories_in_projects pr on pr.repository_id = f.repository_id
   left join sensei.projects        p  on p.id = pr.project_id;
 
 comment on view folder_projects is
@@ -59,4 +59,4 @@ Common queries:
 comment on column folder_projects.repository_id is
 'Carried on every folder now, inherited from its anchor at write time. `kind` still marks which folder IS the anchor, so nothing the old sparseness encoded was lost.';
 comment on column folder_projects.project_id is
-'From `project_repositories`, never from `folders.project_id`. A folder does not carry its own project; that is what made the client-q drift possible.';
+'From `repositories_in_projects`, never from `folders.project_id`. A folder does not carry its own project; that is what made the client-q drift possible.';

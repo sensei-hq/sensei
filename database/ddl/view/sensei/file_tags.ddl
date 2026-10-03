@@ -12,7 +12,7 @@ set search_path to sensei, extensions;
 -- ## Project — membership is the REPOSITORY's, and it is a SET
 --
 -- `project_id`/`project`/`project_maturity` no longer read `folders.project_id`.
--- Membership lives in `project_repositories`, and `sensei.folder_projects`
+-- Membership lives in `repositories_in_projects`, and `sensei.folder_projects`
 -- resolves it. A repository is keyed on its REMOTE, so one can serve several
 -- projects and that resolution is MULTI-VALUED.
 --

@@ -43,12 +43,12 @@ signal.
 
 Membership comes from `folder_projects`, never from `folders.project_id`. The
 old column let each folder of one repository name a different project, which is
-how the drift this replaces began; `project_repositories` now holds membership
+how the drift this replaces began; `repositories_in_projects` now holds membership
 and `folder_projects` resolves it through `folders.repository_id` — a plain
 join, no function scan.
 
 What that resolution actually plans as, per EXPLAIN (ANALYZE, BUFFERS) on
-2026-10-01: a Hash Join whose build side is a `Seq Scan on project_repositories`
+2026-10-01: a Hash Join whose build side is a `Seq Scan on repositories_in_projects`
 reading all 261 rows in 3 buffers, probed by `folders.repository_id`. That is
 the correct plan for a 3-page table, and it is a seq scan, not an index
 lookup — `project_repositories_repository_id_idx` exists and the planner rightly
@@ -57,7 +57,7 @@ outright, because no column of it is selected here.
 
 `folders` is still joined here for `name`, which `folder_projects` does not
 carry, so the inlined view probes `folders_pkey` a second time on the same id.
-Resolving against `project_repositories` directly was measured as the
+Resolving against `repositories_in_projects` directly was measured as the
 alternative on 2026-10-01 and returns byte-identical rows (0 either way under a
 symmetric EXCEPT ALL). That second probe is its own Memoize node and reports
 `hit=1683 read=0`, identically on every repetition: 6,970 input rows, 6,409
@@ -110,7 +110,7 @@ The old `where f.project_id is not null` guard is gone because the inner join to
 no row rather than an invented project. Measured 2026-10-01: 0 of 13,722 folders
 and 0 of 7,025 referenced_libraries rows fall out that way, because the scan
 path now writes `repository_id` on the folders it creates under a tracked
-repository (0 of 13,722 null today) and writes `project_repositories` itself.
+repository (0 of 13,722 null today) and writes `repositories_in_projects` itself.
 The column stays NULLABLE and the writer guards for it — a folder whose anchor
 has no repository inherits none — so the zero is the current state, not a
 structural guarantee.
@@ -118,5 +118,5 @@ structural guarantee.
 Consequence for fixtures: a folder inserted with a NULL `repository_id` and then
 wired to a project by `UPDATE folders SET project_id` produces NO row here. That
 is not a regression — it is a shape the scan path can no longer write. A fixture
-must create a `repositories` row, a `project_repositories` row, and set
+must create a `repositories` row, a `repositories_in_projects` row, and set
 `folders.repository_id`.';

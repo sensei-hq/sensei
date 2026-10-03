@@ -75,7 +75,7 @@ set search_path to sensei, extensions;
 -- has two folders holding nodes, one stamped `kavach` (1,604 nodes) and one
 -- stamped `vite-multi-adapter` (844) — one repository, two answers, neither
 -- wrong by any rule the column enforced. Membership now lives in
--- `project_repositories` and `sensei.folder_projects` resolves it.
+-- `repositories_in_projects` and `sensei.folder_projects` resolves it.
 --
 -- `folder_projects` IS MULTI-VALUED, so joining it would change this view's
 -- grain: measured 2026-10-01, a plain join yields 847,783 rows against 744,923
@@ -138,7 +138,7 @@ set search_path to sensei, extensions;
 -- repetition. There is no stable "warm" figure to quote, and an earlier draft
 -- of this comment quoted three that could not be reproduced.
 --
--- Resolving from `project_repositories` keyed by `repository_id` instead kept a
+-- Resolving from `repositories_in_projects` keyed by `repository_id` instead kept a
 -- Bitmap Index Scan on `folders_repository_id_idx` — but it restates the
 -- folder->project rule `folder_projects` owns, and a second copy of that rule
 -- is how `folders.project_id` drifted in the first place.
