@@ -608,12 +608,12 @@ mod tests {
                 assert!(cfg.models.contains_key(&e.model), "{} model {} missing", chain, e.model);
             }
         }
-        // Reasoning is heavy synthesis — it leads with ollama gemma4 (a strong
-        // local model; gemma4 is multimodal and can't be embedded), then
-        // escalates to larger local models + cloud.
+        // Reasoning is heavy synthesis — it leads with gemma4 in-process on
+        // embedded-llama (5cc8c2bc), then the same model on ollama, then larger
+        // local models + cloud.
         let reasoning = &cfg.chains["reasoning"];
         assert_eq!(reasoning.capability, Capability::TextChat);
-        assert_eq!(reasoning.models[0].router.as_deref(), Some("ollama"));
+        assert_eq!(reasoning.models[0].router.as_deref(), Some("embedded-llama"));
         assert_eq!(reasoning.models[0].model, "gemma4");
         assert!(reasoning.models.len() >= 4, "reasoning should have a cloud tail");
         for e in &reasoning.models {
