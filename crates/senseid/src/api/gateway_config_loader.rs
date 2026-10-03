@@ -650,6 +650,59 @@ mod tests {
         assert_eq!(cfg.routers["typesafe"].url, "https://api.typesafe.ai");
     }
 
+    /// End to end (#202 "exercise a real inference"): the DB seed → this loader →
+    /// gateway v0.7.0 → a local Ollama ≥ 0.35 with `nimble` pulled answers a
+    /// System One decision through the seeded `decide` chain. Ignored by default:
+    ///   `GATEWAY_LOADER_TEST_URL=<seeded db> cargo test -p senseid \
+    ///    decide_chain_answers -- --ignored`
+    #[tokio::test]
+    #[ignore]
+    async fn decide_chain_answers_a_real_decision_end_to_end() {
+        use gateway::types::decision::{DecisionAnswer, DecisionQuestion, DecisionQuestions};
+        use gateway::types::request::{InferenceRequest, Payload};
+
+        let url = std::env::var("GATEWAY_LOADER_TEST_URL")
+            .unwrap_or_else(|_| "postgresql://localhost:5432/sensei".to_string());
+        let pool = sqlx_postgres::PgPoolOptions::new().connect(&url).await.expect("connect");
+        let cfg = super::load_gateway_config(&pool).await.expect("load ok").expect("DB has chains");
+        let gw = gateway::FacadeBuilder::new(cfg).build().await.gateway;
+
+        let req = InferenceRequest {
+            capability: Capability::Decision,
+            model: None,
+            router: None,
+            chain: Some("decide".into()),
+            payload: Payload::Decision {
+                state: json!({"ticket": "I was charged twice. Please refund the extra payment."}),
+                questions: DecisionQuestions::from([(
+                    "refund".to_string(),
+                    DecisionQuestion::Noul {
+                        instructions: json!("Is the customer requesting a refund?"),
+                        criteria: None,
+                    },
+                )]),
+                images: vec![],
+                keep_alive: None,
+            },
+            budget: None,
+            auth: None,
+            panel: None,
+            consensus: None,
+            allow_fallback: true,
+            credentials: Default::default(),
+            routing: None,
+        };
+        let resp = gw.execute(&req).await.expect("the decide chain answers");
+        assert!(resp.success, "{resp:?}");
+        assert_eq!(resp.attempts[0].adapter, "ollama", "served locally first: {:?}", resp.attempts);
+        let Some(DecisionAnswer::Noul { noul }) =
+            resp.decisions.as_ref().and_then(|d| d.get("refund"))
+        else {
+            panic!("a noul answer for 'refund': {resp:?}");
+        };
+        assert!(*noul > 0.5, "a refund request reads as a refund: p={noul}");
+    }
+
     #[test]
     fn assemble_produces_an_embedded_first_chat_chain_end_to_end() {
         // A realistic slice: embedded → ollama → cloud, router-gated.
