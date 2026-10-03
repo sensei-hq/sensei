@@ -42,8 +42,24 @@ pub const REGISTRY: &[RouterEntry] = &[
         id: "ollama",
         name: "Ollama",
         providers: &["ollama"],
-        capabilities: &["text_chat", "text_complete", "text_embed"],
+        capabilities: &["text_chat", "text_complete", "text_embed", "decision"],
         needs_key: false,
+    },
+    // gateway v0.7.0 auto-registers both (facade): OpenRouter as OpenAI-wire
+    // chat + System One decisions, TypeSafe as decisions only (gateway#72).
+    RouterEntry {
+        id: "openrouter",
+        name: "OpenRouter",
+        providers: &["openrouter"],
+        capabilities: &["text_chat", "decision"],
+        needs_key: true,
+    },
+    RouterEntry {
+        id: "typesafe",
+        name: "TypeSafe",
+        providers: &["typesafe"],
+        capabilities: &["decision"],
+        needs_key: true,
     },
     RouterEntry {
         id: "stability",

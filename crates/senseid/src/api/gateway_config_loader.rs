@@ -43,6 +43,8 @@ pub(crate) fn map_capability(db_cap: &str) -> Option<Capability> {
         // #77 — image gen is now a first-class capability; before this landed
         // it lived only in the code-defined baseline and was grafted in.
         "image" => Some(Capability::ImageGenerate),
+        // gateway#72 — System One decision models (probabilities, not text).
+        "decision" => Some(Capability::Decision),
         _ => None,
     }
 }
