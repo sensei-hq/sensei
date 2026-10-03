@@ -36,7 +36,20 @@ Issues are the tracker; this is the position in the queue.
 
     [x] #215 registering a root enqueues a scan        91809876
     [x] #216 watcher batch needs no database           91809876
-    [ ] #224 git history scanner  ← IN PROGRESS        (design workflow running)
+    [ ] #224 git history scanner  ← IN PROGRESS
+        design v1 reviewed: 28 problems, all tracing to ONE decision — it
+        PRUNED commits by `rev-list HEAD` reachability. Unsound: facts are
+        repository-grain, scans run per checkout, and 10 repos here have >1
+        anchor folder (3 genuinely divergent — a kavach worktree on another
+        branch, two bookdown clones not sharing objects). They would prune and
+        re-walk each other forever at the 5-min cadence. A shallow clone would
+        delete a full clone's history; an empty reachable set deletes all of it.
+        design v2 = INSERT-ONLY: a commit is an immutable fact keyed by
+        (repository_id, sha), nothing pruned by reachability, cursor demoted to
+        an optimisation with ON CONFLICT DO NOTHING. Under adversarial review.
+        Measured: 24,495 touches / 4,028 non-merge commits for sensei; naive
+        co-change = 588,865 pairs, 81% from 53 bulk commits → cap per commit and
+        compute co-change at QUERY time, never materialise it.
     [ ] #222 derivation: SCC + layering (Cycles, Layers)
     [ ] #223 derivation: Zones + Dependency matrix
     [ ] #227 persistence layer: fold in or document the exception
