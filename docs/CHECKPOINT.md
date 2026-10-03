@@ -36,20 +36,29 @@ Issues are the tracker; this is the position in the queue.
 
     [x] #215 registering a root enqueues a scan        91809876
     [x] #216 watcher batch needs no database           91809876
-    [ ] #224 git history scanner  ← IN PROGRESS
-        design v1 reviewed: 28 problems, all tracing to ONE decision — it
-        PRUNED commits by `rev-list HEAD` reachability. Unsound: facts are
-        repository-grain, scans run per checkout, and 10 repos here have >1
-        anchor folder (3 genuinely divergent — a kavach worktree on another
-        branch, two bookdown clones not sharing objects). They would prune and
-        re-walk each other forever at the 5-min cadence. A shallow clone would
-        delete a full clone's history; an empty reachable set deletes all of it.
-        design v2 = INSERT-ONLY: a commit is an immutable fact keyed by
-        (repository_id, sha), nothing pruned by reachability, cursor demoted to
-        an optimisation with ON CONFLICT DO NOTHING. Under adversarial review.
-        Measured: 24,495 touches / 4,028 non-merge commits for sensei; naive
-        co-change = 588,865 pairs, 81% from 53 bulk commits → cap per commit and
-        compute co-change at QUERY time, never materialise it.
+    [ ] #224 git history scanner  ← DESIGN VALIDATED, ready to build
+        v1 pruned commits by `rev-list HEAD` reachability → 28 problems. Killed.
+        v2 = INSERT-ONLY and validated. Why the prune was never needed: 4,298 of
+        6,654 paths ever touched in sensei (65%) no longer exist, so they have
+        no `files` row and cannot reach a diagram. EXISTENCE is the filter, not
+        reachability.
+        Walk the TIP SET (`--branches --remotes --tags`), not HEAD and not
+        `--all`: 3 of 4 co-keyed checkout pairs then produce byte-identical
+        commit sets (symmetric difference 0; the 4th is 1.7%), so two checkouts
+        agree instead of fighting. `--all` sweeps `refs/stash` + `refs/original`.
+        Tables: commits(repository_id, sha, authored_at, author_email) ·
+        commit_files(repository_id, sha, path, lines_changed) ·
+        commit_scans(folder_id PK — cursor is per CHECKOUT, facts per repository).
+        authored_at not committed_at: survives rebase/cherry-pick so one logical
+        change buckets identically through two checkouts. Diverges from churn.rs
+        (committer date) — named, not silent. No file_id (65% would be NULL).
+        Decisions: cap 50 · window 90 configurable · ownership configurable
+        (commits/lines/recency, default commits) · retention 400d with an
+        enforced `retention_days >= max(window_days)` floor.
+        Folds in two live churn.rs bugs: 2,087/24,496 records (8.5%) are rename
+        pseudo-paths stored verbatim, 30 more are C-quoted octal; and
+        `unwrap_or(0)` reports a binary file's UNKNOWN churn as zero. `-z` + one
+        shared parser fixes both (DRY forbids a second numstat parser).
     [ ] #222 derivation: SCC + layering (Cycles, Layers)
     [ ] #223 derivation: Zones + Dependency matrix
     [ ] #227 persistence layer: fold in or document the exception
