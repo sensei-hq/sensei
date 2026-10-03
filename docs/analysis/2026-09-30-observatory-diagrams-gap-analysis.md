@@ -453,8 +453,14 @@ The question stays live in exactly one place: #225, where graph or history data
 would cross to the shared dōjō plane. That is a different decision with a
 different answer.
 
-The other two open questions — DSM seriation and the co-change window — still
-stand.
+The co-change window is SETTLED (2026-10-03): configurable, default 90 days.
+Three companions were settled with it — a 50-file bulk-commit cap (a larger
+commit is a sweep, not coupling), an Ownership rule configurable between
+most-commits / most-lines / most-recent defaulting to most commits, and a
+400-day retention with an enforced `retention_days >= max(window_days)` floor
+so a window can never outrun the data behind it. See #224.
+
+DSM seriation (#223) is still open.
 
 ### Rokkit 1.9.0 closes the component column
 
