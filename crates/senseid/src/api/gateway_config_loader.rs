@@ -389,6 +389,9 @@ mod tests {
         assert_eq!(map_capability("vision"), Some(Capability::ImageAnalyze));
         assert_eq!(map_capability("audio"), Some(Capability::AudioTranscribe));
         assert_eq!(map_capability("image"), Some(Capability::ImageGenerate));
+        // gateway v0.7.0 (sensei-hq/gateway#72): System One decision models answer
+        // with probabilities, not text — a capability of their own, NOT TextChat.
+        assert_eq!(map_capability("decision"), Some(Capability::Decision));
         assert_eq!(map_capability("nonsense"), None);
     }
 
