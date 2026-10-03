@@ -486,8 +486,42 @@ pub(crate) async fn add_watch_root(
         tracing::warn!(error = %e, %id, "add_watch_root: update_watch_status watching failed");
     }
 
+    // AND SCAN IT (#215). Registering a root used to write the row, register the
+    // watcher and stop — so the folder stayed unindexed until the 5-minute
+    // reconcile happened past. Measured on a from-scratch database: 150s of
+    // `folders=0 repos=0 files=0 nodes=0` after a successful POST.
+    //
+    // `enqueue_unique`, not `enqueue`: `add_watch_root` is an upsert on the
+    // path, so re-POSTing the same root would otherwise stack a second full walk.
+    //
+    // Gated on the directory EXISTING. `scan_root` hard-errors on a missing path
+    // and `ScanRoot` is not retryable, so enqueueing one for a path that is not
+    // there yet mints a permanently-failed task. Accepting the row while
+    // declining to scan is legitimate — a root may be created later — so the
+    // decision is REPORTED in the response rather than made silently.
+    let scanning = if std::path::Path::new(&expanded).exists() {
+        state
+            .task_queue
+            .enqueue_unique(crate::tasks::Task::new(
+                crate::tasks::TaskKind::ScanRoot,
+                "",
+                &expanded,
+            ))
+            .await;
+        true
+    } else {
+        tracing::warn!(
+            path = %expanded,
+            "add_watch_root: path does not exist — root registered, scan NOT enqueued"
+        );
+        false
+    };
+
     Ok(Json(serde_json::json!({
         "ok": true, "id": id, "path": expanded, "excluded": body.excluded,
+        // Whether a scan was started, so a caller can tell "registered and
+        // scanning" from "registered, nothing to scan yet".
+        "scanning": scanning,
         // What the exclusions actually RESOLVE to, and whether each names a real
         // directory — so a typo is visible at the moment it is made rather than
         // discovered later as unexpectedly-indexed content.
@@ -591,10 +625,41 @@ pub(crate) async fn delete_watch_root(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    // Read the path BEFORE deleting the row — afterwards there is nothing left
+    // to tell the watcher which registration to drop.
+    let path = state.pg.get_watch_root(&uuid).await.ok().flatten().map(|(path, _excluded)| path);
+
     state.pg.remove_watch_root(&uuid).await.map_err(|e| {
         tracing::error!("delete_watch_root: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+
+    // AND UNREGISTER IT. Since #216 the watcher resolves a change against its
+    // OWN root list rather than re-reading the database, so a registration that
+    // outlives its row keeps resolving edits under a deleted tree — and
+    // `scan_root` re-creates a missing root row, so the deleted root would come
+    // back. It also stops notify watching a tree nobody asked about.
+    //
+    // The std Mutex must not be held across an await, so the lock scope is
+    // closed before anything else (see `add_watch_root`).
+    if let Some(path) = path {
+        let queue = state.task_queue.clone();
+        let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(queue);
+        match w_mutex.lock() {
+            Ok(mut w) => {
+                w.unregister(&std::path::PathBuf::from(&path));
+                // Re-establish the stream over the remaining roots. `start()` is
+                // a no-op teardown+respawn; with no roots left it simply stops.
+                let _ = w.start();
+            }
+            Err(e) => tracing::warn!(
+                error = %e, %path,
+                "delete_watch_root: RootWatcher mutex poisoned; root stays registered"
+            ),
+        }
+    }
+
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
