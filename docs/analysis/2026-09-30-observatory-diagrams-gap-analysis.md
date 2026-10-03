@@ -442,10 +442,19 @@ that spec rather than assumed.
 
 ### Open questions, updated
 
-The three at the foot of this document still stand. One is now more urgent:
-**author anonymisation** must be settled before the git-history scanner is
-written, not after it persists author data — the scanner is step 3 of the
-sequence and the collective's anonymisation is not yet designed for it.
+**Author anonymisation is NOT a gate on the git-history scanner** (corrected
+2026-10-03). Anonymisation governs what travels BEYOND a project — memories,
+insights and rules that may be shared publicly. Git history is local project
+data: commits, file changes and authorship stay in the user's own database and
+feed their own screens. Ownership (view 7) is therefore unblocked along with
+Hidden coupling, and step 3 of the sequence can be taken as written.
+
+The question stays live in exactly one place: #225, where graph or history data
+would cross to the shared dōjō plane. That is a different decision with a
+different answer.
+
+The other two open questions — DSM seriation and the co-change window — still
+stand.
 
 ### Rokkit 1.9.0 closes the component column
 

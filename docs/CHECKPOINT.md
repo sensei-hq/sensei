@@ -29,11 +29,26 @@ project resolves one way, and so does governance.
   fresh DB, 1,535 unit tests green, all three relay endpoints the daemon calls
   exist and fail closed 401. Schema diff live vs fresh is now zero everywhere.
 
-## Next
+## Next — autopilot queue (in order)
 
-    cargo test -p senseid --bins   # baseline before the next screen
+Order set 2026-10-03: core computation/indexing → layer semantics → sensei → dōjō.
+Issues are the tracker; this is the position in the queue.
 
-Lane 3: the next Observatory diagram screen. Structure is the worked template.
+    [x] #215 registering a root enqueues a scan        91809876
+    [x] #216 watcher batch needs no database           91809876
+    [ ] #224 git history scanner  ← IN PROGRESS        (design workflow running)
+    [ ] #222 derivation: SCC + layering (Cycles, Layers)
+    [ ] #223 derivation: Zones + Dependency matrix
+    [ ] #227 persistence layer: fold in or document the exception
+    [ ] #217 governance seed drift (ponytail adoption)
+    [ ] #218 transcript ingestion opt-in
+    [ ] #219 Diagrams · World
+    [ ] #220 Diagrams · Neighbourhood
+    [ ] #221 Diagrams · Schema
+    [ ] #225 dōjō team view — needs the sync-shape decision first
+
+Per slice: TDD, mutation-probe each test, full suite + clippy + fmt +
+`scripts/check-sql-against-schema.py`, then close the issue with evidence.
 
 ## Open questions
 
