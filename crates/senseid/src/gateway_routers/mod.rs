@@ -97,6 +97,34 @@ mod tests {
         assert!(!find("ollama").unwrap().needs_key);
     }
 
+    /// The ids are a MIRROR of `gateway::types::capability::Capability`'s serde
+    /// rendering (#202): a mirrored enum drifts silently on a gateway bump — it
+    /// compiles and routes to the wrong capability. Every id must deserialize
+    /// to a real gateway variant.
+    #[test]
+    fn every_capability_id_is_a_real_gateway_capability() {
+        for r in REGISTRY {
+            for cap in r.capabilities {
+                let parsed: Result<gateway::types::capability::Capability, _> =
+                    serde_json::from_value(serde_json::Value::String((*cap).to_string()));
+                assert!(parsed.is_ok(), "{}: '{cap}' is not a gateway Capability", r.id);
+            }
+        }
+    }
+
+    /// gateway v0.7.0 auto-registers System One decision routers (gateway#72).
+    #[test]
+    fn decision_routers_are_listed() {
+        assert!(find("ollama").unwrap().capabilities.contains(&"decision"));
+        let openrouter = find("openrouter").expect("openrouter listed");
+        assert!(openrouter.capabilities.contains(&"decision"));
+        assert!(openrouter.capabilities.contains(&"text_chat"));
+        assert!(openrouter.needs_key);
+        let typesafe = find("typesafe").expect("typesafe listed");
+        assert_eq!(typesafe.capabilities, &["decision"]);
+        assert!(typesafe.needs_key);
+    }
+
     #[test]
     fn every_router_has_at_least_one_provider() {
         for r in REGISTRY {
