@@ -581,6 +581,109 @@ mod tests {
         (status, json)
     }
 
+    /// Registering a watch root SCANS it (#215).
+    ///
+    /// `add_watch_root` wrote the row and registered the path with the watcher
+    /// but enqueued nothing, so a newly added folder sat unindexed until the
+    /// 5-minute reconcile happened by. Measured on a from-scratch database:
+    /// registered, then 150s of `folders=0 repos=0 files=0 nodes=0`.
+    ///
+    /// Mutation that must break this test: drop the `enqueue_unique` from
+    /// `add_watch_root`.
+    #[tokio::test]
+    async fn registering_a_watch_root_enqueues_a_scan_for_it() {
+        let (app, state) = test_app().await;
+        // A real directory: `scan_root` hard-errors on a missing path and
+        // ScanRoot is NOT retryable, so enqueueing one for a path that does not
+        // exist would mint a permanently-failed task.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_string_lossy().to_string();
+
+        let (status, _) = req(
+            app.clone(),
+            "POST",
+            "/api/scan/roots",
+            Some(serde_json::json!({ "path": path, "excluded": [] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Scoped to the root this test owns — the queue is shared and other
+        // tests enqueue into it (#183).
+        let mine: Vec<_> = state
+            .task_queue
+            .snapshot()
+            .await
+            .into_iter()
+            .filter(|(k, _, p)| *k == crate::tasks::TaskKind::ScanRoot && p == &path)
+            .collect();
+        assert_eq!(mine.len(), 1, "exactly one ScanRoot for the new root; got {mine:?}");
+
+        // Idempotent: re-POSTing the same root must not stack a second walk.
+        let _ = req(
+            app,
+            "POST",
+            "/api/scan/roots",
+            Some(serde_json::json!({ "path": path, "excluded": [] })),
+        )
+        .await;
+        let again: Vec<_> = state
+            .task_queue
+            .snapshot()
+            .await
+            .into_iter()
+            .filter(|(k, _, p)| *k == crate::tasks::TaskKind::ScanRoot && p == &path)
+            .collect();
+        assert_eq!(again.len(), 1, "re-registering must not enqueue a second scan");
+    }
+
+    /// Deleting a watch root UNREGISTERS it from the watcher.
+    ///
+    /// Companion to #216. While `process_batch` asked the database for the root
+    /// list, a deleted row quietly filtered the stale in-memory registration
+    /// out. Now that the watcher resolves against its OWN roots, a registration
+    /// that outlives its row would keep resolving edits under a deleted tree —
+    /// and `scan_root` calls `add_watch_root` when a path has no enclosing root,
+    /// so the row would RESURRECT itself. It also leaves notify watching a tree
+    /// nobody asked about, which is a leak in its own right.
+    ///
+    /// Mutation that must break this test: drop the `unregister` from
+    /// `delete_watch_root`.
+    #[tokio::test]
+    async fn deleting_a_watch_root_unregisters_it_from_the_watcher() {
+        let (app, state) = test_app().await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_string_lossy().to_string();
+
+        let (status, body) = req(
+            app.clone(),
+            "POST",
+            "/api/scan/roots",
+            Some(serde_json::json!({ "path": path, "excluded": [] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let id = body["id"].as_str().unwrap().to_string();
+
+        let registered = {
+            let w = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
+            let g = w.lock().unwrap();
+            g.roots().contains_key(std::path::Path::new(&path))
+        };
+        assert!(registered, "precondition: POST registers the root with the watcher");
+
+        let (status, _) = req(app, "DELETE", &format!("/api/scan/roots/{id}"), None).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Scoped to THIS path — the watcher singleton is shared across tests (#183).
+        let still_there = {
+            let w = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
+            let g = w.lock().unwrap();
+            g.roots().contains_key(std::path::Path::new(&path))
+        };
+        assert!(!still_there, "a deleted root must not stay registered with the watcher");
+    }
+
     /// `/hook/event` must answer with a decodable JSON body. The MCP proxy
     /// (`crates/mcp` `daemon_result`) decodes every 2xx as JSON, so a bare
     /// `StatusCode::OK` (empty body) makes `log_event` report "unreadable

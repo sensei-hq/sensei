@@ -1,6 +1,9 @@
 //! Root watcher — watches registered directories for file changes and enqueues tasks.
 //! Singleton pattern: use `RootWatcher::instance(queue)` to access.
 
+// TEST-ONLY since #216: the watcher no longer touches the database. Its
+// fixtures still seed one to prove a batch resolves WITHOUT it.
+#[cfg(test)]
 use crate::db::pg_store::PgStore;
 use crate::tasks::queue::TaskQueue;
 use crate::tasks::{Task, TaskKind};
@@ -353,7 +356,6 @@ pub struct RootWatcher {
     /// changed file to its owning indexed repo so incremental tasks target the
     /// right folder_path. `None` before boot wiring (e.g. in isolated tests) — the
     /// watch loop then can't resolve and logs a warning instead of enqueueing.
-    store: Option<PgStore>,
     status: WatcherStatus,
     stop_flag: Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -372,20 +374,11 @@ impl RootWatcher {
         Self {
             roots: HashMap::new(),
             queue,
-            store: None,
             status: WatcherStatus::Stopped("no roots".into()),
             stop_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             thread: None,
             health: Arc::new(WatcherHealth::new()),
         }
-    }
-
-    /// Give the watcher a DB handle so the watch loop can resolve each changed
-    /// file to its owning repo. Called once at boot (where `AppState.pg` exists);
-    /// persists in the singleton across start/stop restarts. `PgStore` is cheaply
-    /// cloneable (Arc'd pool).
-    pub fn set_store(&mut self, store: PgStore) {
-        self.store = Some(store);
     }
 
     pub fn register(&mut self, root: PathBuf, exclusions: Vec<String>) {
@@ -428,7 +421,6 @@ impl RootWatcher {
             self.roots.values().flat_map(|r| r.excluded.clone()).collect();
         let queue = self.queue.clone();
         let health = self.health.clone();
-        let store = self.store.clone();
 
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| "RootWatcher requires tokio runtime".to_string())?;
@@ -558,9 +550,10 @@ impl RootWatcher {
                         {
                             let batch: HashMap<PathBuf, ChangeKind> = std::mem::take(&mut pending);
                             let q = queue.clone();
-                            let s = store.clone();
+                            // The thread's OWN roots — the ones it is watching.
+                            let r = roots.clone();
                             rt.spawn(async move {
-                                RootWatcher::process_batch(batch, &q, s.as_ref()).await;
+                                RootWatcher::process_batch(batch, &q, &r).await;
                             });
                         }
                     }
@@ -645,32 +638,33 @@ impl RootWatcher {
     /// reading "absent from the batch" as "deleted from disk".
     ///
     /// A path under no watch root is dropped: nobody asked us to watch it.
+    /// TAKES THE ROOTS, rather than asking a database for them (#216).
+    ///
+    /// This used to hold an `Option<&PgStore>` and call `list_watch_roots()`,
+    /// with two paths that threw the whole batch away: no store, or a failed
+    /// read. The first fired on every fresh install — `spawn_root_watchers`
+    /// returns before its `set_store` when no root exists yet, and the other
+    /// three register/start paths never set it — and `start()` clones the store
+    /// into the thread, so a later `set_store` could not reach a live watcher.
+    ///
+    /// The read was never necessary. The watch thread is watching these roots;
+    /// it already has their paths. Passing them removes both drop paths and a
+    /// DB round-trip per debounce window, and makes the failure unreachable
+    /// rather than something four call sites must remember to prevent.
+    ///
+    /// It is also the MORE correct set: `list_watch_roots` returns every root in
+    /// the database, including ones this watcher is not watching.
     pub(crate) async fn process_batch(
         changes: HashMap<PathBuf, ChangeKind>,
         queue: &TaskQueue,
-        store: Option<&PgStore>,
+        roots: &[PathBuf],
     ) {
-        let Some(store) = store else {
-            tracing::warn!(
-                count = changes.len(),
-                "process_batch: no PgStore — cannot resolve watch roots; batch dropped"
-            );
-            return;
-        };
-        let roots: Vec<PathBuf> = match store.list_watch_roots().await {
-            Ok(rows) => rows.iter().filter_map(|r| r["path"].as_str().map(PathBuf::from)).collect(),
-            Err(e) => {
-                tracing::warn!(error = %e, "process_batch: list_watch_roots failed; batch dropped");
-                return;
-            }
-        };
-
         // Grouped by watch root, splitting OBSERVED deletions from changes: a
         // delete is something the filesystem told us happened, and it is the
         // only removal a non-exhaustive scan may act on.
         let mut by_root: HashMap<PathBuf, (Vec<PathBuf>, Vec<PathBuf>)> = HashMap::new();
         for (path, kind) in changes {
-            let Some(root) = watch_root_for_path(&path, &roots) else { continue };
+            let Some(root) = watch_root_for_path(&path, roots) else { continue };
             let entry = by_root.entry(root).or_default();
             match kind {
                 ChangeKind::Delete => entry.1.push(path),
@@ -1189,6 +1183,55 @@ mod tests {
 
     // ── process_batch ─────────────────────────────────────────────────
 
+    /// A batch resolves against the watcher's OWN roots, with no database.
+    ///
+    /// This is #216. `process_batch` used to take an `Option<&PgStore>` and ask
+    /// it for `list_watch_roots()`, dropping the whole batch when the store was
+    /// absent — and the store was absent on every fresh install, deterministically:
+    /// `spawn_root_watchers` returns before its `set_store` when no live root
+    /// exists (`api/server.rs`), and the three other register/start paths never
+    /// set it at all. Worse, `start()` CLONES the store into the thread, so a
+    /// later `set_store` could never reach a running watcher.
+    ///
+    /// The database was never needed. The only thing it supplied was the list of
+    /// root paths — which the watch thread already owns, because it is watching
+    /// them. Taking `roots` directly deletes both drop paths (the absent store
+    /// AND a failing `list_watch_roots`) and a DB round-trip per debounce window.
+    ///
+    /// Mutation that must break this test: make `process_batch` take the roots
+    /// from anywhere other than its argument, or restore the early return.
+    #[tokio::test]
+    async fn a_batch_resolves_against_the_watchers_own_roots_without_a_database() {
+        let q = TaskQueue::new();
+        let root = PathBuf::from("/_test/watch/no-db-root");
+
+        let mut changes = HashMap::new();
+        changes.insert(root.join("repo/src/a.rs"), ChangeKind::Modify);
+
+        // No PgStore anywhere in this test — that is the point.
+        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
+
+        let snap = q.snapshot().await;
+        assert_eq!(snap.len(), 1, "the batch must survive without a database; got {snap:?}");
+        assert_eq!(snap[0].0, TaskKind::ScanRoot);
+    }
+
+    /// A path under no watched root is still dropped — the grouping is what
+    /// decides, and it must not become "enqueue everything" once the database
+    /// stops gating it.
+    #[tokio::test]
+    async fn a_change_outside_every_watched_root_enqueues_nothing() {
+        let q = TaskQueue::new();
+        let root = PathBuf::from("/_test/watch/scoped-root");
+
+        let mut changes = HashMap::new();
+        changes.insert(PathBuf::from("/_test/watch/somewhere-else/x.rs"), ChangeKind::Modify);
+
+        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
+
+        assert!(q.snapshot().await.is_empty(), "a path under no root must enqueue nothing");
+    }
+
     /// Seed a `git` repo folder in the DB so `repo_root_for_path` resolves a
     /// change under it. Returns `(pg, repo_abs_path, root_id)`.
     async fn seed_watch_repo() -> (PgStore, String, uuid::Uuid) {
@@ -1215,7 +1258,10 @@ mod tests {
         changes.insert(PathBuf::from(format!("{repo}/src/b.rs")), ChangeKind::Create);
         changes.insert(PathBuf::from(format!("{repo}/src/gone.rs")), ChangeKind::Delete);
 
-        RootWatcher::process_batch(changes, &q, Some(&pg)).await;
+        // The watch root is `repo`'s parent — the thread's own root list, which
+        // is what the watcher now resolves against instead of the database.
+        let root = PathBuf::from(&repo).parent().unwrap().to_path_buf();
+        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
 
         let snap = q.snapshot().await;
         assert_eq!(snap.len(), 1, "one scan for one root, got {snap:?}");
@@ -1236,7 +1282,10 @@ mod tests {
         changes.insert(PathBuf::from(format!("{repo}/keep.rs")), ChangeKind::Modify);
         changes.insert(PathBuf::from(format!("{repo}/gone.rs")), ChangeKind::Delete);
 
-        RootWatcher::process_batch(changes, &q, Some(&pg)).await;
+        // The watch root is `repo`'s parent — the thread's own root list, which
+        // is what the watcher now resolves against instead of the database.
+        let root = PathBuf::from(&repo).parent().unwrap().to_path_buf();
+        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
 
         let task = q.next_task().await;
         match &task.scope {
@@ -1261,7 +1310,10 @@ mod tests {
 
         let mut changes = HashMap::new();
         changes.insert(PathBuf::from(format!("{repo}/a.rs")), ChangeKind::Modify);
-        RootWatcher::process_batch(changes, &q, Some(&pg)).await;
+        // The watch root is `repo`'s parent — the thread's own root list, which
+        // is what the watcher now resolves against instead of the database.
+        let root = PathBuf::from(&repo).parent().unwrap().to_path_buf();
+        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
 
         let task = q.next_task().await;
         assert!(!task.scope.is_exhaustive(), "a batch must not license absence-as-deletion");
@@ -1272,12 +1324,15 @@ mod tests {
     /// A path under no watch root is dropped — nobody asked us to watch it.
     #[tokio::test]
     async fn process_batch_drops_paths_under_no_watch_root() {
-        let (pg, _repo, root_id) = seed_watch_repo().await;
+        let (pg, repo, root_id) = seed_watch_repo().await;
         let q = TaskQueue::new();
 
         let mut changes = HashMap::new();
         changes.insert(PathBuf::from("/somewhere/else/x.rs"), ChangeKind::Modify);
-        RootWatcher::process_batch(changes, &q, Some(&pg)).await;
+        // The watch root is `repo`'s parent — the thread's own root list, which
+        // is what the watcher now resolves against instead of the database.
+        let root = PathBuf::from(&repo).parent().unwrap().to_path_buf();
+        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
 
         assert_eq!(q.status().await.pending, 0, "nothing outside a watch root is scanned");
 
