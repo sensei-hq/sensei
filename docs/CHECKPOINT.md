@@ -36,7 +36,14 @@ Issues are the tracker; this is the position in the queue.
 
     [x] #215 registering a root enqueues a scan        91809876
     [x] #216 watcher batch needs no database           91809876
-    [ ] #224 git history scanner  ← DESIGN VALIDATED, ready to build
+    [ ] #224 git history scanner  ← BUILDING
+        [ ] 1 DDL: commits · commit_files · commit_scans   (+ dbd reconcile)
+        [ ] 2 git helper with exit-code granularity (Result, not Option)
+        [ ] 3 numstat parser: bytes under -z, one shared impl (DRY)
+        [ ] 4 ScanGitHistory TaskKind + handler + enqueue + schedule row
+        [ ] 5 migrate churn.rs onto the shared parser (fixes 8.6% bad paths)
+        [ ] 6 retention prune, 400d, `retention >= max(window)` enforced
+        [ ] 7 gates + close #224
         v1 pruned commits by `rev-list HEAD` reachability → 28 problems. Killed.
         v2 = INSERT-ONLY and validated. Why the prune was never needed: 4,298 of
         6,654 paths ever touched in sensei (65%) no longer exist, so they have
