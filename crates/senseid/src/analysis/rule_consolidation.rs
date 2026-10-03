@@ -70,6 +70,7 @@ pub async fn consolidate_global_rules(
         consensus: None,
         allow_fallback: true,
         credentials: std::collections::HashMap::new(),
+        routing: None,
     };
     let resp =
         gateway.execute(&request).await.map_err(|e| format!("merge model call failed: {e}"))?;

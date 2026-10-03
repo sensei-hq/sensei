@@ -111,6 +111,7 @@ async fn classify_chunk(gateway: &Gateway, prompts: &[&str]) -> Option<Vec<Promp
         consensus: None,
         allow_fallback: true,
         credentials: std::collections::HashMap::new(),
+        routing: None,
     };
 
     match gateway.execute(&request).await {
