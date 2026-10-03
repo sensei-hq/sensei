@@ -166,7 +166,7 @@ pub async fn reconcile_repo_identity(
         //
         // Only repository facts are bound, and they are bound to the
         // REPOSITORY. A `project`-scope namespace is deliberately NOT bound:
-        // membership is `project_repositories`, and binding it here would be a
+        // membership is `repositories_in_projects`, and binding it here would be a
         // second writer for the same fact — which is how eight folders came to
         // claim a project their repository does not belong to.
         // `namespaces_for_folder` reaches the project namespace through the

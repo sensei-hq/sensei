@@ -3,7 +3,7 @@ set search_path to sensei, extensions;
 -- ## Project — membership is the REPOSITORY's, and it is a SET
 --
 -- `project_id`/`project` no longer read `folders.project_id` (#211). Membership
--- lives in `sensei.project_repositories` and `sensei.folder_projects` resolves
+-- lives in `sensei.repositories_in_projects` and `sensei.folder_projects` resolves
 -- it, exactly as in `graph_nodes`.
 --
 -- `folder_projects` IS MULTI-VALUED — a repository is keyed on its REMOTE, so
@@ -29,16 +29,16 @@ set search_path to sensei, extensions;
 --     436,683 (7 folders)   the multi-project population: scalar NULL, and
 --                           `projects` carries both. `project_maturity` is NULL
 --                           on these same rows and no others.
---      42,282 (5 folders)   `folders.project_id` and `project_repositories`
+--      42,282 (5 folders)   `folders.project_id` and `repositories_in_projects`
 --                           DISAGREE, and the new answer is the right one.
---           0               no folder lacks a `project_repositories` row.
+--           0               no folder lacks a `repositories_in_projects` row.
 --
 -- THAT THIRD BUCKET APPEARED WHILE THIS MIGRATION WAS BEING WRITTEN, which is
 -- the argument for #211 making itself. A first pass at 09:12 measured it empty.
 -- At 09:40 the daemon re-stamped five folders — `sanctioncheck.net`,
 -- `disclosurereport`, `mcr.net`, `template-builder`, `WorkflowEngine` — with one
 -- umbrella `folders.project_id` of `client-h`, while each of those folders carries
--- its OWN repository and `project_repositories` names each repository's own
+-- its OWN repository and `repositories_in_projects` names each repository's own
 -- project. One settable column overwrote five true answers with one in 28
 -- minutes. The new resolution reports each repository's project; it does not
 -- preserve the stamp, and preserving it is not the goal.

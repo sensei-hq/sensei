@@ -75,9 +75,9 @@ describing the wrong thing.
 A folder does NOT carry a project. That column existed until #211 and was
 settable per folder, so a repository''s folders could disagree about their
 project — and they did. Membership now lives in
-`sensei.project_repositories`, keyed on the REPOSITORY. Resolve through
+`sensei.repositories_in_projects`, keyed on the REPOSITORY. Resolve through
 `sensei.folder_projects`, which is
-`folders.repository_id` -> `project_repositories` -> `projects`:
+`folders.repository_id` -> `repositories_in_projects` -> `projects`:
 
     SELECT folder_id FROM sensei.folder_projects WHERE project = ''sensei''
 

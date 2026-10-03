@@ -48,7 +48,7 @@ Powers the library detail panel: detected libraries, versions, and call site cou
 
 Membership comes from `folder_projects`, never from `folders.project_id` (#211).
 The old column was settable per folder, so the folders of one repository could
-name different projects; `project_repositories` now holds membership and
+name different projects; `repositories_in_projects` now holds membership and
 `folder_projects` resolves it through `folders.repository_id`.
 
 THE GRAIN IS THE FOLDER AND IT DID NOT MOVE. One row per
@@ -103,7 +103,7 @@ done in full). The LATERAL form is correlated on `rl.folder_id` and the same sta
 plans with no sequential scan of `folders` at all: Index Scan `libraries_pkey`
 -> Bitmap Index Scan `referenced_libraries_library_id_idx` -> Memoize over
 Index Scan `folders_pkey` -> Memoize over the lateral Aggregate, whose own
-input is a 3-block Seq Scan of the 261-row `project_repositories` hashed
+input is a 3-block Seq Scan of the 261-row `repositories_in_projects` hashed
 against one `folders_pkey` probe. Those row counts and that shape are the
 evidence; the two were compared on the statement MINUS
 `unresolved_import_count`, which is common to both forms and dominates each
@@ -131,7 +131,7 @@ so that zero is the current state, not a structural guarantee.
 Consequence for fixtures: a folder inserted with a NULL `repository_id` and then
 wired to a project by `UPDATE folders SET project_id` still produces a row here,
 but with a NULL `project_id`. A fixture asserting on the project must create a
-`repositories` row, a `project_repositories` row, and set `folders.repository_id`.';
+`repositories` row, a `repositories_in_projects` row, and set `folders.repository_id`.';
 
 comment on column library_usage.project_id is
 'The project, when there is exactly one. NULL where the folder''s repository serves two projects — read `project_ids` there. Never from `folders.project_id`.';

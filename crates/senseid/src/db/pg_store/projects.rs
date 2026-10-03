@@ -477,8 +477,8 @@ impl PgStore {
         // repository the source also claimed — a merge is a union, not a move,
         // and the source's rows are then deleted with the project by CASCADE.
         sqlx_core::query::query(
-            "INSERT INTO sensei.project_repositories (project_id, repository_id)
-             SELECT $2, pr.repository_id FROM sensei.project_repositories pr
+            "INSERT INTO sensei.repositories_in_projects (project_id, repository_id)
+             SELECT $2, pr.repository_id FROM sensei.repositories_in_projects pr
               WHERE pr.project_id = $1
              ON CONFLICT DO NOTHING",
         )

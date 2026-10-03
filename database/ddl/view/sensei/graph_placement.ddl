@@ -67,7 +67,7 @@ be seeded before it is emitted.)
 MEMBERSHIP COMES FROM `folder_projects`, NEVER FROM `folders.project_id`. That
 column was settable independently on every folder, so a single repository''s
 folders could disagree about which project they were in — and did. The path is
-now edge -> folder -> repository -> `project_repositories`, which is two indexed
+now edge -> folder -> repository -> `repositories_in_projects`, which is two indexed
 joins and no function scan, so a repository''s edges cannot be split between
 projects by accident. Measured when this was changed: the `kavach` repository''s
 edges were split 5,347 / 2,834 between two projects and are now 8,181 under each.
@@ -79,7 +79,7 @@ projects. So `sum(edges)` over the WHOLE view (3,615,094 when written) is larger
 than `count(*)` on `sensei.edges` (3,178,411) by exactly those 436,683 — SUM
 WITHIN A PROJECT, NEVER ACROSS ONE.
 
-That is not double counting, and the key is why: `project_repositories` is keyed
+That is not double counting, and the key is why: `repositories_in_projects` is keyed
 on (project_id, repository_id) and a folder carries exactly one `repository_id`,
 so a folder yields exactly ONE row per distinct project. No
 (project, edge_kind, verdict) row can count the same edge twice, which is why
@@ -109,6 +109,6 @@ comment on column graph_placement.code_kind is
 comment on column graph_placement.pct_of_kind is
 'Share of this edge kind in this project. The denominator to compare resolution quality across kinds, because populations differ by orders of magnitude.';
 comment on column graph_placement.project is
-'From project_repositories via folder_projects, not from folders.project_id. A repository serving two projects contributes its edges to BOTH, so always filter or group by this column — a total taken across projects over-counts the shared repositories.';
+'From repositories_in_projects via folder_projects, not from folders.project_id. A repository serving two projects contributes its edges to BOTH, so always filter or group by this column — a total taken across projects over-counts the shared repositories.';
 comment on column graph_placement.edges is
 'Edges in this (project, edge_kind, verdict) bucket. Each edge is counted once per project its repository serves, so summing within one project is exact and summing across all of them is not.';

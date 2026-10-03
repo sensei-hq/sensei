@@ -11,7 +11,7 @@ set search_path to sensei, extensions;
 --
 -- PROJECT MEMBERSHIP IS THE REPOSITORY'S, AND IT IS A SET. `project_id`/`project`
 -- no longer read `folders.project_id`; membership lives in
--- `project_repositories` and `sensei.folder_projects` resolves it.
+-- `repositories_in_projects` and `sensei.folder_projects` resolves it.
 --
 -- `folder_projects` IS MULTI-VALUED — a repository is keyed on its REMOTE, so
 -- two checkouts collapse to one repository row and eight repositories serve two
@@ -125,7 +125,7 @@ the diff was "exactly those 100,738" was wrong:
   was lost, it stopped being singular.
 - 3,375 are RELABELLED — the scalar changes to a different project. These are
   not noise. They are rows whose `folders.project_id` disagreed with what
-  `project_repositories` maps their repository to, and the junction is
+  `repositories_in_projects` maps their repository to, and the junction is
   authoritative (#210). Measured in one REPEATABLE READ snapshot on
   2026-10-02, 601 folders were in that state. An hour earlier the same query
   returned 0: the column and the junction are written at different points in a

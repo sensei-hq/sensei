@@ -124,7 +124,7 @@ anything drawing ONE line per file pair must `sum(occurrences)` across those
 rows rather than read one of them.
 
 PROJECT IS RESOLVED THROUGH `folder_projects`, NEVER FROM `folders.project_id`.
-Membership belongs to the REPOSITORY (`project_repositories`), so every folder of
+Membership belongs to the REPOSITORY (`repositories_in_projects`), so every folder of
 a checkout now answers the same way. The old per-folder column could be set
 independently on each folder, and a repository''s folders did disagree: measured
 2026-10-01, ONE checkout had 147 of its folders filed under one project and 99
@@ -135,13 +135,13 @@ second — and neither project could see the other part. Both now report the who
 THAT RESOLUTION IS MULTI-VALUED, AND HERE IT MAKES A SECOND ROW, NOT A DOUBLED
 COUNT. A repository is keyed on its REMOTE, so one repository can serve several
 projects — measured 2026-10-01, 8 of the 253 repositories in
-`project_repositories` serve two projects each, none more, covering 436,683 edge
+`repositories_in_projects` serve two projects each, none more, covering 436,683 edge
 rows. Each such edge produces one CTE row per project, and `project` AND
 `project_id` are BOTH in the GROUP BY above, so those rows fall into SEPARATE
 groups: the edge is reported once under each project carrying the SAME
 `occurrences`, never once carrying doubled `occurrences`. Two facts make that
 structural rather than lucky. A folder carries ONE `repository_id` and
-`project_repositories` is keyed (project_id, repository_id), so no folder can
+`repositories_in_projects` is keyed (project_id, repository_id), so no folder can
 emit two rows with the same project_id and the fan-out can never collapse back
 into one group. And it holds against an independent ground truth: re-run
 2026-10-01, for each of the 10 projects that own a shared repository and have
@@ -196,7 +196,7 @@ one-block saving was reading noise. Quote the SHAPE instead. Both
 definitions read `folders` whole — a Parallel Seq Scan of 10,385 blocks, 81 MB
 for 13,722 rows, most of either total — so that cost was already being paid.
 `folder_projects` adds exactly one hash join whose build side is a Seq Scan of
-`project_repositories`: 261 rows in 3 blocks, which is the right plan for a
+`repositories_in_projects`: 261 rows in 3 blocks, which is the right plan for a
 3-block table, and 3 blocks against ~12,400 is why the totals do not move.
 
 BOTH ENDS INTERNAL (`file_id IS NOT NULL` on both, which is exactly
@@ -214,7 +214,7 @@ Common queries:
   SELECT project, sum(occurrences) FROM structure_edges WHERE project IN (''kavach'', ''vite-multi-adapter'') GROUP BY 1';
 
 comment on column structure_edges.project is
-'From `folder_projects`, which resolves through `project_repositories` — never from `folders.project_id`. A repository serving two projects reports its edges under BOTH, with identical `occurrences` under each.';
+'From `folder_projects`, which resolves through `repositories_in_projects` — never from `folders.project_id`. A repository serving two projects reports its edges under BOTH, with identical `occurrences` under each.';
 comment on column structure_edges.span is
 'in_module | cross_module | cross_package. How far the edge reaches, and so whether it follows the hierarchy or cuts across it. Computed once here so every consumer agrees.';
 comment on column structure_edges.occurrences is

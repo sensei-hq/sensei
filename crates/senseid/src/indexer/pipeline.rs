@@ -242,7 +242,7 @@ async fn write_one_repo(
     }
 
     // AND THE MEMBERSHIP ITSELF, which is a different fact from either link
-    // above. `project_repositories` says which projects a REPOSITORY belongs
+    // above. `repositories_in_projects` says which projects a REPOSITORY belongs
     // to, and since #210 that junction is the only thing `folder_projects` —
     // and so every view resolving a project — actually reads. #211 then
     // dropped `folders.project_id`, so it is not merely the thing read first;
@@ -1676,7 +1676,7 @@ mod corpus {
     /// ```text
     /// A SCANNED REPOSITORY REACHES THE JUNCTION, not just `folders.project_id`.
     ///
-    /// `sensei.project_repositories` is where membership now lives (#210), and
+    /// `sensei.repositories_in_projects` is where membership now lives (#210), and
     /// every view migrated onto `folder_projects` reads it and nothing else. The
     /// scan path had both ids in hand — `upsert_repository` returns the
     /// repository, `get_or_create_project_by_name` the project — and wrote
@@ -1717,7 +1717,7 @@ mod corpus {
         let repository_id = written.repository_id.expect("repository row");
 
         let linked: Vec<String> = sqlx_core::query_scalar::query_scalar(
-            "SELECT p.name FROM sensei.project_repositories pr
+            "SELECT p.name FROM sensei.repositories_in_projects pr
                JOIN sensei.projects p ON p.id = pr.project_id
               WHERE pr.repository_id = $1",
         )
@@ -1729,7 +1729,7 @@ mod corpus {
         assert_eq!(
             linked,
             vec![name.clone()],
-            "a freshly scanned repository is absent from `project_repositories`, so every view \
+            "a freshly scanned repository is absent from `repositories_in_projects`, so every view \
              resolving through `folder_projects` silently drops it"
         );
 

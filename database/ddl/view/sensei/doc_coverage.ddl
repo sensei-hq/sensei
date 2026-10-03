@@ -49,7 +49,7 @@ set search_path to sensei, extensions;
 --
 -- ## Project comes from `folder_projects`, not from `folders.project_id` (#211)
 --
--- Membership belongs to the REPOSITORY (`project_repositories`); the per-folder
+-- Membership belongs to the REPOSITORY (`repositories_in_projects`); the per-folder
 -- column is being retired. Measured 2026-10-02 over all 13,724 folders, the two
 -- resolutions never disagree on a name: the old scalar is a member of the new
 -- set for 13,724 of 13,724, and 9,595 folders resolve to exactly one project.

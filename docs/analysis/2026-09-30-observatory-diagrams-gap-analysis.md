@@ -397,13 +397,13 @@ it is shaped for a screen's latency budget.
 ### A ✅ under Data no longer implies a screen will show anything
 
 **#211 dropped `folders.project_id`.** A folder's project now resolves only
-through `folders.repository_id` → `project_repositories` → `projects`, exposed as
+through `folders.repository_id` → `repositories_in_projects` → `projects`, exposed as
 `sensei.folder_projects`. Every diagram endpoint is project-scoped, so every row
 in the scoreboard now depends on that chain resolving.
 
 It did not. On a from-scratch database with `~/Developer/sensei-hq` registered:
 3 repositories, 3 projects, 2,430 files, **27,860 nodes indexed — and
-`project_repositories` empty**. Every project came back `repos_count: 0`, tagged
+`repositories_in_projects` empty**. Every project came back `repos_count: 0`, tagged
 `orphaned`, and the Structure diagram returned an empty graph. `ProcessGitFolder`
 ran before `scan_root`'s reconcile assigned repositories, so the membership write
 matched no row. Fixed in `2321920d`; after the fix the same run gives junction 3,
