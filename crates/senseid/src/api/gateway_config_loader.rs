@@ -626,6 +626,28 @@ mod tests {
         assert!(embed.models.iter().all(|e| e.model == "all-minilm-l6-v2"));
         // Embedded chat model carries TextChat.
         assert!(cfg.models["gemma2:2b"].capabilities.contains(&Capability::TextChat));
+
+        // System One (gateway#72): the seeded `decide` chain loads as a Decision
+        // chain — seed + `map_capability` composing, local decision models first.
+        let decide = &cfg.chains["decide"];
+        assert_eq!(decide.capability, Capability::Decision);
+        let legs: Vec<(Option<&str>, &str)> =
+            decide.models.iter().map(|e| (e.router.as_deref(), e.model.as_str())).collect();
+        assert_eq!(
+            legs,
+            [
+                (Some("ollama"), "nimble"),
+                (Some("ollama"), "tev1"),
+                (Some("openrouter"), "jev-1.13")
+            ]
+        );
+        for m in ["nimble", "tev1", "jev-1.13"] {
+            assert_eq!(cfg.models[m].capabilities, [Capability::Decision], "{m}");
+        }
+        // tev1's short window is what lets the gateway route long states past it.
+        assert_eq!(cfg.models["tev1"].context_window, 2048);
+        assert_eq!(cfg.routers["openrouter"].url, "https://openrouter.ai/api");
+        assert_eq!(cfg.routers["typesafe"].url, "https://api.typesafe.ai");
     }
 
     #[test]
