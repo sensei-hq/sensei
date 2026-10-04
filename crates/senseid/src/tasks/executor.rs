@@ -147,6 +147,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::ComputeProjectMetrics => handlers::metrics::compute_project(ctx, task).await,
             TaskKind::ComputeGroupMetrics => handlers::metrics::compute_group(ctx, task).await,
             TaskKind::ComputeHealth => handlers::metrics::compute_health(ctx, task).await,
+            TaskKind::ScanGitHistory => handlers::git_history::scan_git_history(ctx, task).await,
             TaskKind::IngestCaptures => crate::transcript::run_backfill(ctx, task).await,
             TaskKind::IngestCapture => crate::transcript::run_ingest_capture(ctx, task).await,
             TaskKind::BackfillCoverage => {

@@ -12,3 +12,4 @@
 {"name":"metrics","enabled":true,"interval_secs":3600,"modified_at":"2026-08-27"}
 {"name":"reconcile","enabled":true,"interval_secs":300,"modified_at":"2026-08-27"}
 {"name":"watchdog","enabled":true,"interval_secs":60,"modified_at":"2026-08-27"}
+{"name":"git_history_prune","enabled":true,"interval_secs":86400,"modified_at":"2026-10-03"}

@@ -22,6 +22,7 @@ pub mod placement;
 // `languages/<that language>.rs`.
 pub mod facts;
 pub mod fqn;
+pub mod git_history;
 pub mod impact;
 pub mod incremental;
 pub mod lang;
