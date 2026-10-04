@@ -41,9 +41,13 @@ Issues are the tracker; this is the position in the queue.
         [x] 2 git helper: exit-code granularity, 19 tests, mutation-probed
         [x] 3 numstat parser: -z bytes, 24 tests; braces 2,087→0, cquote 30→0
         [x] 4 ScanGitHistory TaskKind + handler + enqueue (3 tests, probed)
-        [ ] 5 migrate churn.rs onto the shared parser (fixes 8.6% bad paths)
+        [ ] 5 migrate churn.rs onto the shared parser  ← LAST ITEM
+            DRY is VIOLATED until this lands: two numstat parsers exist.
+            Needs the parser to also carry the COMMITTER date — churn
+            buckets on %cd, history on %aI (survives rebase). Migrating
+            without that silently moves churn values between days.
         [x] 6 retention prune: 400d default, floor enforced, 4 tests
-        [ ] 7 gates + close #224
+        [ ] 7 gates + close #224   (6fdfd84d landed items 1,2,3,4,6)
         v1 pruned commits by `rev-list HEAD` reachability → 28 problems. Killed.
         v2 = INSERT-ONLY and validated. Why the prune was never needed: 4,298 of
         6,654 paths ever touched in sensei (65%) no longer exist, so they have
