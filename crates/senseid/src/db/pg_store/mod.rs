@@ -485,6 +485,7 @@ mod config;
 mod dojo;
 mod extensions;
 pub(crate) mod folders;
+mod git_history;
 mod governance;
 mod graph;
 mod indexer;

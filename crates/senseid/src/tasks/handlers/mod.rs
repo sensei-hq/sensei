@@ -12,6 +12,7 @@ mod corrections_llm;
 mod doc_drift;
 mod embed;
 mod generate;
+pub(crate) mod git_history;
 pub(crate) mod helpers;
 mod learn_playbooks;
 pub(crate) mod libraries;

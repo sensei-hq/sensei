@@ -37,12 +37,12 @@ Issues are the tracker; this is the position in the queue.
     [x] #215 registering a root enqueues a scan        91809876
     [x] #216 watcher batch needs no database           91809876
     [ ] #224 git history scanner  ← BUILDING
-        [ ] 1 DDL: commits · commit_files · commit_scans   (+ dbd reconcile)
-        [ ] 2 git helper with exit-code granularity (Result, not Option)
-        [ ] 3 numstat parser: bytes under -z, one shared impl (DRY)
-        [ ] 4 ScanGitHistory TaskKind + handler + enqueue + schedule row
+        [x] 1 DDL: commits · commit_files · commit_scans   (applied, 3 DBs)
+        [x] 2 git helper: exit-code granularity, 19 tests, mutation-probed
+        [x] 3 numstat parser: -z bytes, 24 tests; braces 2,087→0, cquote 30→0
+        [x] 4 ScanGitHistory TaskKind + handler + enqueue (3 tests, probed)
         [ ] 5 migrate churn.rs onto the shared parser (fixes 8.6% bad paths)
-        [ ] 6 retention prune, 400d, `retention >= max(window)` enforced
+        [x] 6 retention prune: 400d default, floor enforced, 4 tests
         [ ] 7 gates + close #224
         v1 pruned commits by `rev-list HEAD` reachability → 28 problems. Killed.
         v2 = INSERT-ONLY and validated. Why the prune was never needed: 4,298 of

@@ -42,6 +42,10 @@ const DESCRIPTIONS: &[(&str, &str)] = &[
         "Dōjō sync — maps shared repositories to tenants, fetches the sync plan, and pushes allowed metric rows",
     ),
     (
+        "git_history_prune",
+        "Git-history retention — drops commits past the retention window (400d by default, never below the largest window a diagram can request)",
+    ),
+    (
         "forge_token",
         "Forge-token standing — verifies each persona GitHub token, records expiry, and marks a dead one so the UI can say \"sign in again\"",
     ),

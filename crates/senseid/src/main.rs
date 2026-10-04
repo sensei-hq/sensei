@@ -16,6 +16,7 @@ mod dojo_client;
 mod federation;
 pub mod gateway_keys;
 pub mod gateway_routers;
+pub mod git;
 pub mod git_identity;
 mod governance;
 mod graph_facts;

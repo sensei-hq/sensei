@@ -27,6 +27,7 @@ pub mod contribute_scheduler;
 pub mod dojo_sync;
 pub mod executor;
 pub mod forge_token_check;
+pub mod git_history_pruner;
 pub mod handlers;
 pub mod index_audit;
 pub mod library_update_scheduler;
@@ -59,6 +60,8 @@ use std::time::Instant;
 #[serde(rename_all = "snake_case")]
 pub enum TaskKind {
     ScanRoot,
+    /// Walk one checkout's git history into repository facts (#224).
+    ScanGitHistory,
     ProcessGitFolder,
     ProcessFolder,
     ProcessFile,
@@ -282,6 +285,7 @@ impl TaskKind {
     /// so a kind cannot be half-added.
     pub const ALL: &'static [TaskKind] = &[
         Self::ScanRoot,
+        Self::ScanGitHistory,
         Self::ProcessGitFolder,
         Self::ProcessFolder,
         Self::ProcessFile,
@@ -329,6 +333,18 @@ impl TaskKind {
                 budget_secs: 600,
                 high_priority: false,
                 retryable: false,
+            },
+            Self::ScanGitHistory => KindInfo {
+                name: "scan_git_history",
+                pipeline: Pipeline::Index,
+                stage: Stage::Discover,
+                // A first walk reads the whole log — 4,000 commits and 24,500
+                // touches for sensei. Retryable: every failure here is
+                // transient and the walk is idempotent, so a repeat inserts
+                // nothing rather than duplicating.
+                budget_secs: 900,
+                high_priority: false,
+                retryable: true,
             },
             Self::ProcessGitFolder => KindInfo {
                 name: "process_git_folder",
@@ -1051,7 +1067,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), total, "a kind appears twice in ALL");
-        assert_eq!(total, 36, "ALL is missing a kind — add it beside its info() arm");
+        assert_eq!(total, 37, "ALL is missing a kind — add it beside its info() arm");
     }
 
     #[test]

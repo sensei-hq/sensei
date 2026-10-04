@@ -576,6 +576,8 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // `analyzed_at IS NOT NULL` so the pruner never drops a session before
     // the analyzer has derived its insights.
     crate::tasks::activity_pruner::spawn(Arc::new(state.pg.clone()));
+    // Git-history retention (#224) — the only thing that deletes a commit.
+    crate::tasks::git_history_pruner::spawn(Arc::new(state.pg.clone()));
 
     // Capture-spool drain: hook events that failed to reach the daemon (daemon
     // down, or a POST slower than the hook's 2s budget) are dead-lettered to

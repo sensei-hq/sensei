@@ -40,6 +40,7 @@ set search_path to sensei, extensions;
 create type task_execution_kind as enum (
   -- ── index pipeline ──
   'scan_root'
+  , 'scan_git_history'
 , 'process_git_folder'
 , 'process_folder'
 , 'process_file'

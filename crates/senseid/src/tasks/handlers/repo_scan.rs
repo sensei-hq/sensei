@@ -710,6 +710,18 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
         tracing::warn!(folder_id = %folder_id, error = %e, "process_git_folder: set_folder_project failed");
     }
 
+    // AND ITS HISTORY (#224). Enqueued rather than run inline: a first walk
+    // reads the whole log, and this handler already gates `folders.status`.
+    // `enqueue_unique` because the reconcile re-enqueues ProcessGitFolder every
+    // ~300s and a re-walk, while harmless, is wasted work.
+    ctx.queue
+        .enqueue_unique(crate::tasks::Task::new(
+            crate::tasks::TaskKind::ScanGitHistory,
+            &task.folder_path,
+            "",
+        ))
+        .await;
+
     // The indexed git branch, in the TYPED column. Preferred from the
     // `BranchSwitch` task that triggered this re-index, else read from
     // `.git/HEAD`. `folders.branch` is a real partition key — one folder per
