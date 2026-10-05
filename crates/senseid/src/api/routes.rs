@@ -113,6 +113,7 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/projects/{id}/repos/{repo_id}", delete(observatory::remove_solution_repo))
         .route("/api/projects/{id}/diagrams/structure", get(diagrams::structure))
+        .route("/api/projects/{id}/diagrams/layering", get(diagrams::layering))
         .route("/api/projects/{id}/tags", post(observatory::add_solution_tag))
         .route("/api/projects/{id}/tags/{tag}", delete(observatory::remove_solution_tag))
         // Git author identity for a folder + its owning project (MCP
@@ -2175,6 +2176,145 @@ mod tests {
         assert!(body["coverage"]["unplaced"].is_number(), "coverage is always present");
 
         state.pg.delete_project(&pid).await.ok();
+    }
+
+    /// #222 — the layering endpoint ranks a real seeded graph, end to end.
+    ///
+    /// This is the only test that proves the whole chain AGREES: `module_of`
+    /// names a unit, `module_edges` names its dependencies with the same
+    /// expression, `structure_nodes` supplies the universe, and
+    /// `analysis::layering` ranks them. A unit test of the algorithm cannot
+    /// catch the two SQL expressions drifting apart — that failure shows up as
+    /// nodes with no edges, which renders as a perfectly plausible diagram.
+    ///
+    /// The seeded shape: `alpha` and `beta` depend on each other (a cycle),
+    /// `beta` depends on `gamma` (below it), and `alpha` has two files that
+    /// refer to each other (a module self-dependency, which exists only at
+    /// module grain). `alpha -> beta` is observed twice and `beta -> alpha`
+    /// once, so the weakest link is unambiguous.
+    ///
+    /// Mutation that must break this test: have `structure_group_sql("module")`
+    /// spell the identity itself instead of calling `sensei.module_of` — the
+    /// units stop matching the edges and `cycles` empties.
+    #[tokio::test]
+    async fn layering_endpoint_ranks_a_seeded_graph_and_names_the_cut() {
+        let (app, state) = test_app().await;
+        let pg = &state.pg;
+        let tag = uuid::Uuid::new_v4();
+        let pid = pg.create_project(&format!("_test:layering:{tag}"), None, None).await.unwrap();
+        let root = format!("/_test/layering/{tag}");
+        let root_id = pg.add_watch_root(&root, "lay-wt", &serde_json::json!([])).await.unwrap();
+        let fid = pg.upsert_repo(&root_id, "lay", &root).await.unwrap();
+        crate::tasks::test_support::place_folder_in_project(pg, &fid, &pid, &format!("lay-{tag}"))
+            .await
+            .unwrap();
+
+        // `rust·<package>·<module>·<symbol>` — segment 2 is the package and
+        // segment 3 the module, which is the decomposition every structure view
+        // reads (see `structure_graph`).
+        //
+        // THE MODULE SEGMENTS CARRY BOTH SEPARATORS (`alpha::core`, `beta/web`)
+        // ON PURPOSE. `module_of` takes the first segment after splitting on
+        // `/` AND `::`, so bare names like `alpha` would collapse to the same
+        // id under almost any wrong expression and the drift this test exists
+        // to catch would survive — verified: with bare names, replacing the
+        // `sensei.module_of` call with an inline expression that forgets the
+        // `::` split left the test GREEN.
+        let def = |path: &'static str| crate::db::pg_store::FqnDef {
+            file_path: path,
+            signature: None,
+            line_start: Some(1),
+            line_end: Some(2),
+            is_exported: true,
+            parent_id: None,
+        };
+        let node = |fqn: &str, name: &str, path: &'static str| {
+            let (fqn, name) = (fqn.to_string(), name.to_string());
+            async move {
+                pg.seed_node_by_fqn(&fid, &fqn, "function", &name, Some("rust"), Some(def(path)))
+                    .await
+                    .unwrap()
+            }
+        };
+        let a1 = node("rust·p·alpha::core·one", "one", "a1.rs").await;
+        let a1b = node("rust·p·alpha::core·five", "five", "a1.rs").await;
+        let a2 = node("rust·p·alpha::core·four", "four", "a2.rs").await;
+        let b1 = node("rust·p·beta/web·two", "two", "b1.rs").await;
+        let c1 = node("rust·p·gamma::util·three", "three", "c1.rs").await;
+
+        for (s, t) in [(&a1, &b1), (&a1b, &b1), (&b1, &a1), (&b1, &c1), (&a1, &a2)] {
+            pg.insert_edge(&fid, s, Some(t), None, None, "calls").await.unwrap();
+        }
+
+        let (status, body) =
+            req(app, "GET", &format!("/api/projects/{pid}/diagrams/layering?level=module"), None)
+                .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["layerSource"], "derived", "the screen must know which layering this is");
+
+        let layer = |m: &str| {
+            body["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|n| n["id"] == m)
+                .unwrap_or_else(|| panic!("{m} missing from {}", body["nodes"]))["layer"]
+                .as_u64()
+                .unwrap()
+        };
+        assert_eq!(layer("p/alpha"), layer("p/beta"), "the cycle's members share a rank");
+        assert_eq!(layer("p/gamma"), layer("p/alpha") + 1, "gamma sits one below the cycle");
+
+        let cycles = body["cycles"].as_array().unwrap();
+        assert_eq!(cycles.len(), 1, "one cycle, got {}", body["cycles"]);
+        assert_eq!(cycles[0]["members"], serde_json::json!(["p/alpha", "p/beta"]));
+        assert_eq!(
+            (cycles[0]["cut"]["source"].as_str(), cycles[0]["cut"]["target"].as_str()),
+            (Some("p/beta"), Some("p/alpha")),
+            "the cut is the direction observed once, not the one observed twice"
+        );
+
+        // The self-dependency survives: two files of one module referring to
+        // each other is a fact about the module, and dropping it here is how a
+        // module with no outward dependency disappears from the diagram.
+        let selfs = body["selfDependencies"].as_array().unwrap();
+        assert_eq!(selfs.len(), 1, "got {}", body["selfDependencies"]);
+        assert_eq!(selfs[0]["source"], "p/alpha");
+
+        // ... and it is NOT a graph edge, so it cannot be mistaken for a cycle.
+        let edges = body["edges"].as_array().unwrap();
+        assert!(
+            !edges.iter().any(|e| e["source"] == e["target"]),
+            "a self-dependency is never drawn as an edge"
+        );
+        assert_eq!(
+            edges.iter().find(|e| e["source"] == "p/beta" && e["target"] == "p/gamma").unwrap()["conformance"],
+            "down",
+            "beta -> gamma descends exactly one layer"
+        );
+
+        // Every dependency in this fixture names a known unit, so the omission
+        // counter is zero — and it is PRESENT, which is what lets a screen tell
+        // "nothing was dropped" from "nobody counted".
+        assert_eq!(body["coverage"]["unknownUnit"], 0);
+        assert_eq!(body["coverage"]["units"], 3);
+
+        // An unknown grain is refused rather than silently answered at another.
+        let (bad, _) = req(
+            app_clone(&state),
+            "GET",
+            &format!("/api/projects/{pid}/diagrams/layering?level=package"),
+            None,
+        )
+        .await;
+        assert_eq!(bad, StatusCode::BAD_REQUEST, "package is not a layering grain");
+
+        pg.delete_project(&pid).await.ok();
+    }
+
+    /// A second router over the same state, for a test that needs two requests.
+    fn app_clone(state: &AppState) -> Router {
+        create_router(state.clone())
     }
 
     #[tokio::test]

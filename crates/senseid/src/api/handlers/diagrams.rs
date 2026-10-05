@@ -64,17 +64,7 @@ pub(crate) async fn structure(
     if !LEVELS.contains(&level.as_str()) {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let kinds: Vec<String> = q
-        .kinds
-        .unwrap_or_else(|| DEFAULT_KINDS.to_string())
-        .split(',')
-        .map(|k| k.trim().to_string())
-        .filter(|k| !k.is_empty())
-        .collect();
-    if kinds.is_empty() || !kinds.iter().all(|k| EDGE_KINDS.contains(&k.as_str())) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
+    let kinds = parse_kinds(q.kinds)?;
     let project_id = resolve_project_id(&state, &id).await?;
 
     // CONCURRENTLY, because the three reads share nothing. Sequentially the
@@ -99,6 +89,160 @@ pub(crate) async fn structure(
         "edges": edges,
         "coverage": coverage,
     })))
+}
+
+/// The grains Layers and Cycles can be ranked at.
+///
+/// `package` is deliberately absent. It is a level the Structure diagram offers,
+/// but on this corpus a project's package graph is single digits of nodes —
+/// measured 2026-10-05, project `sensei` is 14 packages and 9 dependencies —
+/// which has no layering to show. The mockup agrees: Layers is module-only and
+/// Cycles toggles module against file (`…v8.dc.html:2450`).
+///
+/// `file` IS safe here despite `structure_nodes` keying file nodes on their
+/// PATH rather than their id, which merges two files that share a relative
+/// path. Measured 2026-10-05 before shipping it, because a merge would
+/// fabricate a cycle out of two unrelated files: in project `sensei` 1,745 of
+/// 3,518 file rows collide on path and ALL 1,745 are same-package — two
+/// checkouts of one repository, where merging is the right answer. Across six
+/// projects and 36,229 paths, cross-package collisions are ZERO.
+const LAYERING_LEVELS: [&str; 2] = ["module", "file"];
+
+#[derive(Deserialize)]
+pub(crate) struct LayeringQuery {
+    level: Option<String>,
+    kinds: Option<String>,
+}
+
+/// GET /api/projects/{id}/diagrams/layering?level=module|file&kinds=calls
+///
+/// ONE endpoint for TWO screens. Layers ranks the modules and says how each
+/// dependency sits against that ranking; Cycles collapses the mutually
+/// dependent ones and names the weakest link to cut. They are the same
+/// computation read two ways — strongly-connected components, then longest-path
+/// depth over the condensation — so serving them from one payload is what stops
+/// the two screens disagreeing about which modules are in a cycle.
+///
+/// `layerSource` is `derived`, and the screen MUST NOT read an empty violation
+/// list as a clean architecture. Under a layering derived from the graph it
+/// describes, an edge cannot climb — `layer(source) < layer(target)` holds for
+/// every edge by the definition of longest path, and that is true of any
+/// graph-derived rank, not of this one in particular. Distinguishing "nothing
+/// climbs" from "a climb is not expressible" needs a DECLARED layering to
+/// compare against, which nothing stores yet; the field is here so the screen
+/// can say which it is looking at.
+///
+/// A DB error is a 500, never an empty payload — an empty graph and an
+/// unreachable database must not render the same way.
+pub(crate) async fn layering(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<LayeringQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let level = q.level.unwrap_or_else(|| "module".to_string());
+    if !LAYERING_LEVELS.contains(&level.as_str()) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let kinds = parse_kinds(q.kinds)?;
+    let project_id = resolve_project_id(&state, &id).await?;
+
+    // The node universe comes from `structure_nodes`, NOT from the dependency
+    // rows. A module with no cross-module dependency has no edge to be inferred
+    // from and would silently vanish — measured on project `sensei`, 9 modules
+    // appear only in a dependency on themselves and are exactly that case.
+    let (nodes, deps, unplaced) = tokio::try_join!(
+        state.pg.structure_nodes(&project_id, &level),
+        state.pg.dependency_graph(&project_id, &level, &kinds),
+        state.pg.structure_unplaced(&project_id, &kinds),
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let units: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
+    let ranked = crate::analysis::layering::analyse(&units, &deps);
+
+    let placed: std::collections::HashMap<&str, &crate::analysis::layering::Placed> =
+        ranked.units.iter().map(|p| (p.id.as_str(), p)).collect();
+    let out_nodes: Vec<serde_json::Value> = nodes
+        .iter()
+        .map(|n| {
+            let p = placed.get(n.id.as_str());
+            serde_json::json!({
+                "id": n.id,
+                "label": n.label,
+                "group": n.package,
+                // The box's weight on the diagram, same measure the Structure
+                // screen sizes by, so one module is the same size on both.
+                "weight": n.symbols,
+                "files": n.files,
+                "language": n.language,
+                "layer": p.map(|p| p.layer),
+                "component": p.map(|p| p.component),
+                "componentSize": p.map(|p| p.component_size),
+            })
+        })
+        .collect();
+
+    let out_edges: Vec<serde_json::Value> = ranked
+        .deps
+        .iter()
+        .map(|d| {
+            serde_json::json!({
+                "id": format!("{}→{}", d.source, d.target),
+                "source": d.source,
+                "target": d.target,
+                "kind": "dependency",
+                "weight": d.occurrences,
+                "conformance": d.conformance,
+                "weakest": d.weakest,
+            })
+        })
+        .collect();
+
+    Ok(Json(serde_json::json!({
+        "level": level,
+        "kinds": kinds,
+        "layerSource": "derived",
+        "depth": ranked.depth,
+        "nodes": out_nodes,
+        "edges": out_edges,
+        "cycles": ranked.cycles,
+        // Kept rather than dropped: at module grain this is two files of one
+        // module referring to each other, which is a fact about the module. It
+        // is empty by construction at file grain — `structure_edges` has no
+        // file-to-itself row to carry.
+        "selfDependencies": ranked.self_deps,
+        "coverage": {
+            "drawn": ranked.deps.len() as i64,
+            "unplaced": unplaced,
+            "units": out_nodes.len() as i64,
+            // Dependencies omitted because an endpoint owns no file and so is
+            // not a unit. NOT decoration: measured 2026-10-05 on project
+            // `sensei`, 32 of 234 module dependencies are in this state,
+            // because an fqn's third segment is the module for most adapters
+            // and a SYMBOL for some. A diagram that drops 13.7% of its edges
+            // without a number beside it reads as a sparse codebase.
+            "unknownUnit": ranked.dropped.len() as i64,
+        },
+    })))
+}
+
+/// Validate and split the `kinds` query parameter.
+///
+/// Shared by both diagram handlers so an unknown kind is a 400 on each — an
+/// empty graph that means "you asked for a kind that does not exist" is
+/// indistinguishable from "this project has no edges", which is the distinction
+/// these screens exist to make.
+fn parse_kinds(raw: Option<String>) -> Result<Vec<String>, StatusCode> {
+    let kinds: Vec<String> = raw
+        .unwrap_or_else(|| DEFAULT_KINDS.to_string())
+        .split(',')
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+        .collect();
+    if kinds.is_empty() || !kinds.iter().all(|k| EDGE_KINDS.contains(&k.as_str())) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    Ok(kinds)
 }
 
 /// A project NAME or a UUID, matching the read-side pattern the other
