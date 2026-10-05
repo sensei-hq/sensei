@@ -3670,23 +3670,18 @@ pub struct StructureEdge {
 
 /// THE LEVEL EXPRESSION, in one place.
 ///
-/// `module` is the module's FIRST segment, not the whole module path, and that
-/// is a measured choice rather than a stylistic one. On sensei's own corpus the
-/// fqn's module segment is per-FILE across most of the tree: grouping on it
-/// whole gives 1,446 groups over 1,751 files (1.21x) with 1,390 of them holding
-/// a single file, which is not a level. Its first segment gives 150 groups over
-/// the same files (11.7x), and they are the units a reader names — `senseid/tasks`,
-/// `senseid/api`, `@sensei/desktop/routes`.
-///
-/// Rust separates with `::` and the JS/TS trees with `/`; splitting on both
-/// leaves a segment that already has no separator unchanged, so one expression
-/// covers every language in the corpus.
+/// `module` DELEGATES to `sensei.module_of`, which is where the module identity
+/// now lives (#222). The expression used to be spelled out here, and `module_edges`
+/// needs the identical one — the Layers screen draws nodes from this rollup and
+/// edges from that view, so two spellings would put a node on one screen and its
+/// dependencies on another. `module_of` is IMMUTABLE and PostgreSQL inlines it,
+/// so the plan is unchanged; its doc comment carries the measurements behind the
+/// first-segment choice (150 groups over 1,751 files against 1,446 whole-path
+/// ones) and behind taking the package as well as the module.
 fn structure_group_sql(level: &str, prefix: &str) -> String {
     match level {
         "package" => format!("{prefix}package"),
-        "module" => format!(
-            "{prefix}package || '/' || split_part(split_part({prefix}module, '/', 1), '::', 1)"
-        ),
+        "module" => format!("sensei.module_of({prefix}package, {prefix}module)"),
         // `file` and anything unrecognised. The caller validates; this stays
         // total so a bad level can never produce a SQL fragment that is wrong
         // rather than merely narrow.
@@ -3814,6 +3809,81 @@ impl PgStore {
                 kind,
                 span: span.unwrap_or_else(|| "cross_module".to_string()),
                 occurrences,
+            })
+            .collect())
+    }
+
+    /// The dependency graph one Layers or Cycles screen ranks, at `level`.
+    ///
+    /// Returns [`crate::analysis::layering::Dep`] directly rather than a third
+    /// near-identical row struct: `(source, target, occurrences)` is already
+    /// what the analysis takes, and a transform in between would be a place for
+    /// the two to drift.
+    ///
+    /// ## Why the grain branches, and why that is not two definitions
+    ///
+    /// `module` reads `sensei.module_edges`, which KEEPS a module's dependency
+    /// on itself. `file` reads `sensei.structure_edges`, where a file depending
+    /// on itself does not exist — the view drops it at source, because at file
+    /// grain it is the largest population and draws nothing. So the diagonal is
+    /// present at one grain and absent at the other as a property of the DATA,
+    /// not of this function, and `self_deps` is correctly empty for `file`.
+    ///
+    /// `PgStore::structure_edges` cannot serve the module case: it drops every
+    /// self-dependency produced by the rollup, which the Structure diagram needs
+    /// (a module looping to itself draws nothing) and the layering lane must
+    /// not have done for it — a module whose only dependency is on itself would
+    /// otherwise vanish, and 9 modules of project `sensei` are in that state.
+    ///
+    /// Both grains name their units with `sensei.module_of` / the file path, the
+    /// same expressions [`structure_group_sql`] uses, so the units this returns
+    /// are exactly the ones [`PgStore::structure_nodes`] places.
+    pub async fn dependency_graph(
+        &self,
+        project_id: &uuid::Uuid,
+        level: &str,
+        kinds: &[String],
+    ) -> Result<Vec<crate::analysis::layering::Dep>, String> {
+        let sql = if level == "module" {
+            "SELECT source_module, target_module, sum(occurrences)::bigint
+               FROM sensei.module_edges
+              WHERE project_id = $1 AND kind = ANY($2)
+              GROUP BY 1, 2
+              ORDER BY 3 DESC, 1, 2"
+                .to_string()
+        } else {
+            let src = structure_group_sql(level, "source_");
+            let tgt = structure_group_sql(level, "target_");
+            let (src, tgt) = if level == "package" {
+                (src, tgt)
+            } else {
+                ("source_file".to_string(), "target_file".to_string())
+            };
+            format!(
+                "SELECT {src}, {tgt}, sum(occurrences)::bigint
+                   FROM sensei.structure_edges
+                  WHERE project_id = $1 AND kind = ANY($2)
+                  GROUP BY 1, 2
+                  ORDER BY 3 DESC, 1, 2"
+            )
+        };
+        let rows: Vec<(Option<String>, Option<String>, i64)> = sqlx_core::query_as::query_as(&sql)
+            .bind(project_id)
+            .bind(kinds)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        // A NULL unit means the symbol carried no package, so `module_of`
+        // propagated. Skipped rather than coalesced to "": a bucket named ""
+        // would collect every unplaceable symbol in the project into one
+        // invented module and sit at the bottom of every layering.
+        Ok(rows
+            .into_iter()
+            .filter_map(|(s, t, w)| match (s, t) {
+                (Some(source), Some(target)) => {
+                    Some(crate::analysis::layering::Dep { source, target, occurrences: w })
+                }
+                _ => None,
             })
             .collect())
     }

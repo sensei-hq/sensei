@@ -114,7 +114,7 @@ needed is present.
 **Component (M).** `DependencyMatrix.svelte` exists in `@rokkit/graph`. Whether
 it accepts a pre-seriated order or does its own is (I) — needs reading.
 
-## 3. Layers
+## 3. Layers — DERIVATION SHIPPED (#222)
 
 > *"The intended layers, top to bottom, with every dependency between modules.
 > Arrows should only point down; the vermillion ones climb."*
@@ -134,7 +134,47 @@ and 4 share a dependency and should be built together, cycles first.**
 **Component.** No layered/Sugiyama layout in `@rokkit/graph` (M — not in the
 component listing). This is a genuine new component.
 
-## 4. Cycles
+### What 2026-10-05 changed, and the one thing the plan got wrong
+
+`@rokkit/graph@1.9.0` ships `LayersDiagram` and `ViolationsControl`, so the
+component gap is closed — see the rokkit section below.
+
+**The recursive CTE was the wrong tool, and not for a performance reason.** The
+`(source, target, length)` enumeration terminates only on an acyclic input, so a
+single surviving self-loop makes the query run FOREVER — it does not error, it
+hangs. That makes the acyclicity produced by step 1 an unasserted precondition of
+step 2. Tarjan plus a Kahn-ordered pass is linear, terminates by construction and
+is testable without a database, so the computation is Rust
+(`crates/senseid/src/analysis/layering.rs`) and the database supplies the edge
+set.
+
+**"Conformance is same level or one level down" is unsatisfiable as a violation
+test, and this is the finding worth keeping.** For every edge of the
+condensation, `layer(source) < layer(target)` holds BY THE DEFINITION of longest
+path — so under a derived layering an edge can never climb and a violation count
+is vacuously zero. That is true of ANY rank derived from the graph, not of this
+one in particular, so no choice of rank function rescues it. Verified on the live
+corpus: 0 of 1,504 condensation edges climb.
+
+The mockup already knew. Its Layers view reads a HARDCODED INTENDED layering
+(`docs/mockups/Sensei/lib/arch-data.js:59-65`, flagged *"ILLUSTRATIVE until the
+index exports them"*), and rokkit agrees — `GraphNode.layer` is documented as
+*"the layer the HOST assigned … rokkit computes no depth"*. **A real "climbs a
+layer" finding therefore needs a DECLARED layering to compare the measured one
+against, and nothing stores one yet.** The endpoint reports
+`layerSource: "derived"` so the screen can say which it is showing; an empty
+violation list must read as *"a climb is not expressible"*, never *"this
+architecture is clean"*.
+
+What a derived layering CAN say, and does: the depth structure, the cycles, and
+`skip` — a dependency reaching more than one layer down. `skip` is **not** a
+violation and is not presented as one: it is legal under relaxed layering (POSA's
+*Layers*, the Clean Architecture dependency rule), and on this corpus it is the
+majority of edges, concentrated on shared foundations. rokkit's own vocabulary
+already separates the two (`down` | `skip` | `up` | `level`), and the daemon uses
+that vocabulary rather than a parallel one.
+
+## 4. Cycles — DERIVATION SHIPPED (#222)
 
 > *"Each group of mutually dependent modules collapsed into one node. What
 > remains reads as a hierarchy, and each collapsed node names the weakest link to
@@ -156,6 +196,37 @@ recently added).
 **Component.** `Graph` can draw the condensed DAG, but a **collapsed node that
 expands to its members** is the drill-down affordance discussed below — it is the
 same gap as #12.
+
+### What 2026-10-05 changed
+
+The weakest link is the inner dependency with the FEWEST occurrences — the
+mockup's own rule (`…v8.dc.html:2468`), and the honest one to state: it is "the
+dependency used least", not a minimum feedback arc set. That is NP-hard, and a
+heuristic dressed as an optimum would be a worse answer than a simple rule a
+reader can check.
+
+**Both grains the mockup toggles are live**, module and file, because the
+computation takes `(source, target, occurrences)` and knows nothing about what a
+unit is. File grain was measured before it shipped, because `structure_nodes`
+keys a file node on its PATH rather than its id and a merge would fabricate a
+cycle out of two unrelated files: in project `sensei` 1,745 of 3,518 file rows
+collide on path and ALL 1,745 are same-package — two checkouts of one repository,
+where merging is the right answer. Across six projects and 36,229 paths,
+cross-package collisions are **zero**.
+
+**A hole the build surfaced and did not paper over.** 32 of 234 module
+dependencies in project `sensei` (13.7%) name an endpoint that owns no file, so
+it is in no node universe and the edge cannot be drawn. The cause is upstream: an
+fqn's third segment is the module for most adapters but a SYMBOL for some
+(`c·senseid·ACCEPT_INPUT·item`), so a top-level symbol mints a module-shaped name
+no file is modal for. Minting a node would put a C macro on the diagram labelled
+as a module; dropping silently would hide 13.7% behind a complete-looking
+picture. They are dropped AND counted — `coverage.unknownUnit`.
+
+**The shipped Structure diagram has the same hole at module level**: 31 of its
+213 module-level edges have an endpoint absent from its own node list, and it
+shows no number for them. That is pre-existing and is now measured rather than
+suspected.
 
 ## 5. Hidden coupling (co-change) — BLOCKED
 

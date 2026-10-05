@@ -4,6 +4,7 @@
 //! *when* to run things) so the heuristics stay unit-testable.
 
 pub mod doc_drift;
+pub mod layering;
 pub mod metric_day_explainer;
 pub mod metric_narrative;
 pub mod narration_cache;
