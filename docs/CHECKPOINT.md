@@ -1,7 +1,8 @@
 # Checkpoint
 
-**Slice:** Observatory diagrams — data → derivation → screens. Lane 1 (data) done.
-Lane 2 (derivation) half done: cycles and layers ship, zones and the matrix do not.
+**Slice:** Observatory diagrams — data → derivation → screens. Lanes 1 (data) and
+2 (derivation) are DONE for the architecture set. Nothing is blocked on data any
+more; what is left is screens plus three unwritten endpoints.
 
 ## Next — autopilot queue (in order)
 
@@ -11,9 +12,9 @@ Issues are the tracker; this is the position in the queue.
     [x] #215 registering a root enqueues a scan             91809876
     [x] #216 watcher batch needs no database                91809876
     [x] #224 git history scanner                            964a99b6
-    [x] #222 derivation: SCC + layering                     b71dc0af
-    [ ] #223 derivation: Zones + Dependency matrix   ← NEXT
-    [ ] #227 persistence layer: fold in or document the exception
+    [x] #222 derivation: SCC + layering                     83c9f9ab
+    [x] #223 derivation: Zones (+ the matrix needs none)    8ec2fa6c
+    [ ] #227 persistence layer: fold in or document   ← NEXT
     [ ] #217 governance seed drift (ponytail adoption)
     [ ] #218 transcript ingestion opt-in
     [ ] #232 Diagrams · Layers + Cycles screens
@@ -28,8 +29,9 @@ Per slice: TDD, mutation-probe each test, full suite + clippy + fmt +
 - #230 a DECLARED layering — a derived one provably cannot climb, so Layers has
   no violation to show until something stores an intended one. Who authors it,
   where it lives, and whether it belongs to the project or the repository.
-- #233 every diagram shares a 1.5–74 s per-project read of `structure_edges`.
-  Matview + pg_cron is new infrastructure; refresh-on-index-barrier avoids it.
+- #233 every diagram shares a 1.5–74 s per-project read of `structure_edges`
+  (zones 40 s on top of it). Matview + pg_cron is new infrastructure;
+  refresh-on-index-barrier avoids it. This is the gap between demoable and usable.
 - Should `ponytail` be adopted by default? Live has it, a fresh install does not
   (#217). `sensei.projects` has no `namespace_id`, so a rename orphans the slug.
 
@@ -39,11 +41,15 @@ Per slice: TDD, mutation-probe each test, full suite + clippy + fmt +
   of `sensei`'s module dependencies and 78% of the largest client project's
   point at a unit that owns no file. Counted as `coverage.unknownUnit`; the
   shipped Structure diagram has the same hole (31 of 213), uncounted.
+- **dbd#41 blocks `dbd reconcile` on any database `dbd deploy` created.** It
+  emits a false `ALTER TYPE` for a column whose extension type lives off the
+  search_path — the configuration `design.yaml` asks for. Workaround: apply the
+  one changed file with `psql -f`, or drop and redeploy `sensei_test`.
 - **App e2e 114/21/17 skipped** — the known red gate (#187). Sampled causes are
   harness defects, not this slice.
 - `--features senseid/embedded-llama-cpp` will not compile (#203). `EMBED=0`
   works on every make target and is how the live daemon was built.
-- 30+ commits UNPUSHED on `develop`. Otherwise green: senseid 3267/0, clippy
-  `-D warnings` + fmt, 1,539 SQL statements plan against a fresh deploy.
+- 30+ commits UNPUSHED on `develop`. Otherwise green: senseid 3268/0, clippy
+  `-D warnings` + fmt, dbd doctor, SQL statements plan against a fresh deploy.
 - `audit_repairs_nested_standalone` failed once on a full run, passed on rerun
   and in isolation. Unattributed; shared test DB (#183) is the likelier cause.
