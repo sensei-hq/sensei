@@ -36,9 +36,9 @@ Per slice: TDD, mutation-probe each test, full suite + clippy + fmt +
 ## Known broken
 
 - **#231 an fqn's segment 3 is a SYMBOL for some adapters, not a module.** 13.7%
-  of `sensei`'s module dependencies and 78% of Ethico's point at a unit that owns
-  no file. Counted as `coverage.unknownUnit`; the shipped Structure diagram has
-  the same hole (31 of 213) with no number beside it.
+  of `sensei`'s module dependencies and 78% of the largest client project's
+  point at a unit that owns no file. Counted as `coverage.unknownUnit`; the
+  shipped Structure diagram has the same hole (31 of 213), uncounted.
 - **App e2e 114/21/17 skipped** — the known red gate (#187). Sampled causes are
   harness defects, not this slice.
 - `--features senseid/embedded-llama-cpp` will not compile (#203). `EMBED=0`
