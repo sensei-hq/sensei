@@ -14,8 +14,8 @@ Issues are the tracker; this is the position in the queue.
     [x] #224 git history scanner                            964a99b6
     [x] #222 derivation: SCC + layering                     83c9f9ab
     [x] #223 derivation: Zones (+ the matrix needs none)    8ec2fa6c
-    [ ] #227 persistence layer: fold in or document   ← NEXT
-    [ ] #217 governance seed drift (ponytail adoption)
+    [x] #227 persistence layer — ADR: metric SQL stays     9c7b8794
+    [ ] #217 governance seed drift (ponytail adoption)   ← NEXT
     [ ] #218 transcript ingestion opt-in
     [ ] #232 Diagrams · Layers + Cycles screens
     [ ] #219 World · #220 Neighbourhood · #221 Schema
@@ -49,7 +49,11 @@ Per slice: TDD, mutation-probe each test, full suite + clippy + fmt +
   harness defects, not this slice.
 - `--features senseid/embedded-llama-cpp` will not compile (#203). `EMBED=0`
   works on every make target and is how the live daemon was built.
-- 30+ commits UNPUSHED on `develop`. Otherwise green: senseid 3268/0, clippy
-  `-D warnings` + fmt, dbd doctor, SQL statements plan against a fresh deploy.
-- `audit_repairs_nested_standalone` failed once on a full run, passed on rerun
-  and in isolation. Unattributed; shared test DB (#183) is the likelier cause.
+- 30+ commits UNPUSHED on `develop`. Otherwise green: senseid 3270/0, clippy
+  `-D warnings` + fmt, dbd doctor, SQL statements plan against a fresh deploy
+  (and that planner now runs in CI).
+- Two unattributed single-run failures, both passing on rerun and in isolation:
+  `audit_repairs_nested_standalone` and `prune_empty_projects_…`. The latter uses
+  fixed project names and runs a GLOBAL prune, which is the #183 class. The one
+  race I could name — two tests fighting over the `cost.subscription` config key
+  — is fixed with a mutex.
