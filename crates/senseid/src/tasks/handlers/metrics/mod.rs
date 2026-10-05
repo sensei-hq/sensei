@@ -22,6 +22,27 @@
 //! UNKNOWN `task_name` is an intentional logged no-op that returns `Ok` — a registry
 //! entry the daemon doesn't yet know about degrades to a warning, never a panic or a
 //! stuck queue.
+//!
+//! ## The SQL in here is deliberate, not drift (#227)
+//!
+//! The computers under this module hold raw SQL rather than calling `PgStore`,
+//! which is the only place in production that does. That is a RECORDED decision,
+//! not an oversight: `docs/spec/2026-10-05-adr-metric-sql-lives-with-its-definition.md`.
+//! `PgStore` owns data access; a metric computer owns a DEFINITION that happens to
+//! be expressed in SQL — written beside the prose stating what it measures,
+//! assembled with [`day_filter`] so the windowed and point-in-time forms share one
+//! statement, and used exactly once.
+//!
+//! **What that costs you when you change a column.** These statements are built
+//! with `format!`, so `scripts/check-sql-against-schema.py` — which plans every
+//! LITERAL statement in CI — reaches them as fragments and counts them
+//! unverifiable. 18 of the 30 production queries outside `PgStore` are in that
+//! state, and all of them are here. The only thing that catches a break is
+//! EXECUTING them, so every group's tests run its queries against a real
+//! database; verified by mutation 2026-10-05. A new metric needs a test that
+//! runs its query and asserts the VALUE — `cost`'s two original tests both
+//! returned `Ok` without ever reaching the query, and its SQL was uncovered for
+//! as long as that went unnoticed.
 
 use super::super::Task;
 use super::super::executor::TaskContext;
