@@ -23,15 +23,19 @@
 //! entry the daemon doesn't yet know about degrades to a warning, never a panic or a
 //! stuck queue.
 //!
-//! ## The SQL in here is deliberate, not drift (#227)
+//! ## The SQL in here is on its way OUT (#227)
 //!
 //! The computers under this module hold raw SQL rather than calling `PgStore`,
-//! which is the only place in production that does. That is a RECORDED decision,
-//! not an oversight: `docs/spec/2026-10-05-adr-metric-sql-lives-with-its-definition.md`.
-//! `PgStore` owns data access; a metric computer owns a DEFINITION that happens to
-//! be expressed in SQL — written beside the prose stating what it measures,
-//! assembled with [`day_filter`] so the windowed and point-in-time forms share one
-//! statement, and used exactly once.
+//! which is the only place in production that does. An ADR briefly defended that
+//! as a deliberate exception; it was superseded the same day
+//! (`docs/spec/2026-10-05-adr-metric-sql-lives-with-its-definition.md`) because a
+//! documented exception has no enforcement — nothing fails when the next metric
+//! adds the 31st query. **These are being folded into `db/pg_store/metrics.rs`.**
+//!
+//! Adding a metric before that lands? Put its query in `PgStore` now rather than
+//! here, and take the window as a parameter rather than splicing [`day_filter`]
+//! into a string — a layer method whose SQL still arrives from outside it is the
+//! same problem wearing a different hat.
 //!
 //! **What that costs you when you change a column.** These statements are built
 //! with `format!`, so `scripts/check-sql-against-schema.py` — which plans every

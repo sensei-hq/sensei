@@ -1,7 +1,22 @@
 # ADR — a metric's SQL lives with its definition, not in `PgStore`
 
-Status: **accepted** 2026-10-05. Decided by the user against the measurements
-below. Closes #227.
+Status: **SUPERSEDED** 2026-10-05, the same day it was accepted. #227 is reopened
+and the queries are being folded into `PgStore` after all.
+
+**Why it was reversed, in the user's words:** *"it would be difficult to track and
+manage with just documentation."* That beats the argument this ADR makes. A
+documented exception has no enforcement — nothing fails when a new metric adds a
+31st query, nothing distinguishes "deliberate" from "nobody noticed", and the
+reader who most needs this file is the one who will not know it exists. The
+coverage added alongside it (c04e1d18) holds the SCHEMA-DRIFT risk and does
+nothing for the MANAGEMENT risk, which was the one raised.
+
+**Kept rather than deleted**, because §4's measurements are the evidence base for
+doing the fold-in safely and they are still true: 18 of the 30 are `format!`-built
+(so a `PgStore` method must take the window as a PARAMETER and build the predicate
+inside, not accept a fragment), and 9 of 12 files already have mutation-verified
+test coverage to fold against. §3's argument for the exception is the part that
+no longer holds.
 
 ---
 
