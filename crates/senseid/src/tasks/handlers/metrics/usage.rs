@@ -34,6 +34,7 @@ use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;
+use crate::db::pg_store::MetricRow;
 
 const GRAIN_DAILY: &str = "daily";
 const SOURCE_MEASURED: &str = "measured";
@@ -106,18 +107,18 @@ pub(super) async fn compute(
             "pooled_ratio": pooled_ratio,
             "mean_of_session_ratios": mean_ratio,
         });
-        pg.upsert_project_metric_repo(
-            &mid,
-            &repository_id,
-            SCOPE_USER,
-            None,
-            None,
-            day,
-            GRAIN_DAILY,
-            mean_ratio,
-            &props,
-            SOURCE_MEASURED,
-        )
+        pg.upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &repository_id,
+            scope: SCOPE_USER,
+            identity: None,
+            commit_sha: None,
+            computed_on: day,
+            grain: GRAIN_DAILY,
+            value: mean_ratio,
+            props: &props,
+            source: SOURCE_MEASURED,
+        })
         .await?;
         written += 1;
     }

@@ -37,6 +37,7 @@ use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;
+use crate::db::pg_store::MetricRow;
 
 const GRAIN_DAILY: &str = "daily";
 const SOURCE_MEASURED: &str = "measured";
@@ -156,18 +157,18 @@ pub(super) async fn compute(
                 continue;
             }
             let props = serde_json::json!({ "placed": placed, "total": total });
-            pg.upsert_project_metric_repo(
-                &mid,
-                &repository_id,
-                SCOPE_REPO,
-                None,
-                None,
-                day,
-                GRAIN_DAILY,
-                placed as f64 / total as f64,
-                &props,
-                SOURCE_MEASURED,
-            )
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &repository_id,
+                scope: SCOPE_REPO,
+                identity: None,
+                commit_sha: None,
+                computed_on: day,
+                grain: GRAIN_DAILY,
+                value: placed as f64 / total as f64,
+                props: &props,
+                source: SOURCE_MEASURED,
+            })
             .await?;
             written += 1;
         }
@@ -179,18 +180,18 @@ pub(super) async fn compute(
                 continue;
             }
             let props = serde_json::json!({ "exported": exported, "declared": total });
-            pg.upsert_project_metric_repo(
-                &mid,
-                &repository_id,
-                SCOPE_REPO,
-                None,
-                None,
-                day,
-                GRAIN_DAILY,
-                exported as f64 / total as f64,
-                &props,
-                SOURCE_MEASURED,
-            )
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &repository_id,
+                scope: SCOPE_REPO,
+                identity: None,
+                commit_sha: None,
+                computed_on: day,
+                grain: GRAIN_DAILY,
+                value: exported as f64 / total as f64,
+                props: &props,
+                source: SOURCE_MEASURED,
+            })
             .await?;
             written += 1;
         }
@@ -199,18 +200,18 @@ pub(super) async fn compute(
     if let Some(mid) = ids.get(KEY_SYMBOL_SIZE_P95).copied() {
         for (repository_id, p95, over_100, callables) in symbol_size(pg, &project_id).await? {
             let props = serde_json::json!({ "over_100_lines": over_100, "callables": callables });
-            pg.upsert_project_metric_repo(
-                &mid,
-                &repository_id,
-                SCOPE_REPO,
-                None,
-                None,
-                day,
-                GRAIN_DAILY,
-                p95,
-                &props,
-                SOURCE_MEASURED,
-            )
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &repository_id,
+                scope: SCOPE_REPO,
+                identity: None,
+                commit_sha: None,
+                computed_on: day,
+                grain: GRAIN_DAILY,
+                value: p95,
+                props: &props,
+                source: SOURCE_MEASURED,
+            })
             .await?;
             written += 1;
         }

@@ -502,6 +502,8 @@ mod logs;
 mod mcp;
 mod memory;
 mod metrics;
+/// One row of `sensei.repository_metrics`, named rather than positional (#161).
+pub use metrics::MetricRow;
 mod patterns;
 mod personas;
 /// Named outside this module because THREE callers now share it — the scheduled
@@ -524,6 +526,8 @@ pub(crate) use schedules::{SchedulePatch, StoredSchedule};
 pub(crate) mod graph_seed;
 #[cfg(test)]
 mod knowledge_tests;
+#[cfg(test)]
+mod metrics_tests;
 #[cfg(test)]
 mod pack_resolution_tests;
 #[cfg(test)]

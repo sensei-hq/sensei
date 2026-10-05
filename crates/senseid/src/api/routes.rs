@@ -538,6 +538,7 @@ pub fn create_degraded_router(db_url: String, error: String) -> Router {
 mod tests {
     use super::*;
     use crate::api::state::SharedState;
+    use crate::db::pg_store::MetricRow;
     use crate::db::pg_store::graph_seed::SeedGraph;
     use crate::tasks::queue::TaskQueue;
     use crate::tasks::{Task, TaskKind};
@@ -933,18 +934,18 @@ mod tests {
             .unwrap();
         state
             .pg
-            .upsert_project_metric_repo(
-                &mid,
-                &rid,
-                "repo",
-                None,
-                None,
-                chrono::Utc::now().date_naive(),
-                "daily",
-                0.5,
-                &serde_json::json!({}),
-                "measured",
-            )
+            .upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &rid,
+                scope: "repo",
+                identity: None,
+                commit_sha: None,
+                computed_on: chrono::Utc::now().date_naive(),
+                grain: "daily",
+                value: 0.5,
+                props: &serde_json::json!({}),
+                source: "measured",
+            })
             .await
             .unwrap();
 
@@ -1377,28 +1378,34 @@ mod tests {
         let w2 = chrono::NaiveDate::from_ymd_opt(2020, 1, 13).unwrap(); // next Monday
         state
             .pg
-            .upsert_project_metric(
-                &mid_a,
-                &rid,
-                w1,
-                "daily",
-                0.5,
-                &serde_json::json!({"numerator": 1, "denominator": 2}),
-                "measured",
-            )
+            .upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid_a,
+                repository_id: &rid,
+                scope: "user",
+                identity: None,
+                commit_sha: None,
+                computed_on: w1,
+                grain: "daily",
+                value: 0.5,
+                props: &serde_json::json!({"numerator": 1, "denominator": 2}),
+                source: "measured",
+            })
             .await
             .unwrap();
         state
             .pg
-            .upsert_project_metric(
-                &mid_a,
-                &rid,
-                w2,
-                "daily",
-                0.75,
-                &serde_json::json!({"numerator": 3, "denominator": 4}),
-                "measured",
-            )
+            .upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid_a,
+                repository_id: &rid,
+                scope: "user",
+                identity: None,
+                commit_sha: None,
+                computed_on: w2,
+                grain: "daily",
+                value: 0.75,
+                props: &serde_json::json!({"numerator": 3, "denominator": 4}),
+                source: "measured",
+            })
             .await
             .unwrap();
 
@@ -1407,15 +1414,18 @@ mod tests {
         let mid_b = seed_metric(&state.pg, &key_b, "ratio", "lower_better").await;
         state
             .pg
-            .upsert_project_metric(
-                &mid_b,
-                &rid,
-                w1,
-                "daily",
-                0.25,
-                &serde_json::json!({"numerator": 1, "denominator": 4}),
-                "measured",
-            )
+            .upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid_b,
+                repository_id: &rid,
+                scope: "user",
+                identity: None,
+                commit_sha: None,
+                computed_on: w1,
+                grain: "daily",
+                value: 0.25,
+                props: &serde_json::json!({"numerator": 1, "denominator": 4}),
+                source: "measured",
+            })
             .await
             .unwrap();
 
@@ -1430,18 +1440,18 @@ mod tests {
         .expect("project_health seeded in registry");
         state
             .pg
-            .upsert_project_metric_repo(
-                &health_mid,
-                &rid,
-                "user",
-                None,
-                None,
-                w2,
-                "daily",
-                82.0,
-                &serde_json::json!({"components": 2}),
-                "measured",
-            )
+            .upsert_project_metric_repo(&MetricRow {
+                metric_id: &health_mid,
+                repository_id: &rid,
+                scope: "user",
+                identity: None,
+                commit_sha: None,
+                computed_on: w2,
+                grain: "daily",
+                value: 82.0,
+                props: &serde_json::json!({"components": 2}),
+                source: "measured",
+            })
             .await
             .unwrap();
 
@@ -1544,18 +1554,18 @@ mod tests {
         let rid_has = crate::tasks::test_support::repository_for_folder(&state.pg, &fid_has).await;
         state
             .pg
-            .upsert_project_metric_repo(
-                &ftr_mid,
-                &rid_has,
-                "user",
-                None,
-                None,
-                today,
-                "daily",
-                0.75,
-                &serde_json::json!({"numerator": 3, "denominator": 4}),
-                "measured",
-            )
+            .upsert_project_metric_repo(&MetricRow {
+                metric_id: &ftr_mid,
+                repository_id: &rid_has,
+                scope: "user",
+                identity: None,
+                commit_sha: None,
+                computed_on: today,
+                grain: "daily",
+                value: 0.75,
+                props: &serde_json::json!({"numerator": 3, "denominator": 4}),
+                source: "measured",
+            })
             .await
             .unwrap();
 
@@ -1651,15 +1661,18 @@ mod tests {
         for (d, num, den) in days {
             state
                 .pg
-                .upsert_project_metric(
-                    &mid,
-                    &rid,
-                    d,
-                    "daily",
-                    num as f64 / den as f64,
-                    &serde_json::json!({"numerator": num, "denominator": den}),
-                    "measured",
-                )
+                .upsert_project_metric_repo(&MetricRow {
+                    metric_id: &mid,
+                    repository_id: &rid,
+                    scope: "user",
+                    identity: None,
+                    commit_sha: None,
+                    computed_on: d,
+                    grain: "daily",
+                    value: num as f64 / den as f64,
+                    props: &serde_json::json!({"numerator": num, "denominator": den}),
+                    source: "measured",
+                })
                 .await
                 .unwrap();
         }

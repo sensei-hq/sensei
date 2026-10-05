@@ -71,6 +71,7 @@ use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;
+use crate::db::pg_store::MetricRow;
 
 /// `sensei.metric_grain` text value (knowledge writes a daily snapshot row only).
 const GRAIN_DAILY: &str = "daily";
@@ -205,18 +206,18 @@ pub(super) async fn compute(
     let day = super::today(pg).await?;
     // scope=user, identity=NULL (single local user), commit_sha=NULL (day-bucketed
     // snapshot, not commit cadence), folder_id/session_id=NULL (not in the identity).
-    pg.upsert_project_metric_repo(
-        &mid,
-        &repository_id,
-        SCOPE_USER,
-        None,
-        None,
-        day,
-        GRAIN_DAILY,
+    pg.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &repository_id,
+        scope: SCOPE_USER,
+        identity: None,
+        commit_sha: None,
+        computed_on: day,
+        grain: GRAIN_DAILY,
         value,
-        &props,
-        SOURCE_MEASURED,
-    )
+        props: &props,
+        source: SOURCE_MEASURED,
+    })
     .await?;
 
     Ok(1)

@@ -104,6 +104,7 @@ mod tests {
     use super::*;
     use crate::analysis::metric_day_explainer::MetricDayFacts;
     use crate::analysis::narration_cache::{InsightKind, facts_hash};
+    use crate::db::pg_store::MetricRow;
     use crate::tasks::test_support::{make_ctx, seed_metrics_project_folder};
     use crate::tasks::{Task, TaskKind};
     use serde_json::json;
@@ -174,18 +175,18 @@ mod tests {
             .get("ftr")
             .expect("ftr metric");
         let rid = crate::tasks::test_support::repository_for_folder(pg, &fid).await;
-        pg.upsert_project_metric_repo(
-            &mid,
-            &rid,
-            "user",
-            None,
-            None,
-            day,
-            "daily",
-            0.75,
-            &json!({"numerator": 3, "denominator": 4}),
-            "measured",
-        )
+        pg.upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: None,
+            commit_sha: None,
+            computed_on: day,
+            grain: "daily",
+            value: 0.75,
+            props: &json!({"numerator": 3, "denominator": 4}),
+            source: "measured",
+        })
         .await
         .unwrap();
         seed_cached_explainer(pg, &pid, "ftr", 0.75, day, "three of four landed first-try").await;
@@ -223,18 +224,18 @@ mod tests {
             .get("ftr")
             .expect("ftr metric");
         let rid = crate::tasks::test_support::repository_for_folder(pg, &fid).await;
-        pg.upsert_project_metric_repo(
-            &mid,
-            &rid,
-            "user",
-            None,
-            None,
-            day,
-            "daily",
-            0.6,
-            &json!({"numerator": 3, "denominator": 5}),
-            "measured",
-        )
+        pg.upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: None,
+            commit_sha: None,
+            computed_on: day,
+            grain: "daily",
+            value: 0.6,
+            props: &json!({"numerator": 3, "denominator": 5}),
+            source: "measured",
+        })
         .await
         .unwrap();
         seed_cached_explainer(pg, &pid, "ftr", 0.6, day, "three of five first-try").await;

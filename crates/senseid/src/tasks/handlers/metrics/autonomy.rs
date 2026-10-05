@@ -79,6 +79,8 @@
 //! fabricated zero); a real denominator with 0 numerator writes a real `0.0`. A
 //! repository that cannot be resolved skips the row (never a made-up repository).
 
+use crate::db::pg_store::MetricRow;
+
 use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
@@ -267,18 +269,18 @@ pub(super) async fn compute(
             // repository_id = the session's resolved repo (I-A); scope=user (I-B),
             // identity=NULL (single local user, I-C), commit_sha=NULL (day cadence,
             // I-D), folder_id/session_id=NULL (not in the identity).
-            pg.upsert_project_metric_repo(
-                &mid,
-                &repository_id,
-                SCOPE_USER,
-                None,
-                None,
-                day,
-                GRAIN_DAILY,
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &repository_id,
+                scope: SCOPE_USER,
+                identity: None,
+                commit_sha: None,
+                computed_on: day,
+                grain: GRAIN_DAILY,
                 value,
-                &props,
-                SOURCE_MEASURED,
-            )
+                props: &props,
+                source: SOURCE_MEASURED,
+            })
             .await?;
             written += 1;
         }
@@ -301,18 +303,18 @@ pub(super) async fn compute(
                 }
                 let value = done_count as f64 / started_count as f64;
                 let props = ratio_props(done_count, started_count);
-                pg.upsert_project_metric_repo(
-                    &mid,
-                    &repository_id,
-                    SCOPE_USER,
-                    None,
-                    None,
-                    day,
-                    GRAIN_DAILY,
+                pg.upsert_project_metric_repo(&MetricRow {
+                    metric_id: &mid,
+                    repository_id: &repository_id,
+                    scope: SCOPE_USER,
+                    identity: None,
+                    commit_sha: None,
+                    computed_on: day,
+                    grain: GRAIN_DAILY,
                     value,
-                    &props,
-                    SOURCE_MEASURED,
-                )
+                    props: &props,
+                    source: SOURCE_MEASURED,
+                })
                 .await?;
                 written += 1;
             }
