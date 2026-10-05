@@ -15,8 +15,8 @@ Issues are the tracker; this is the position in the queue.
     [x] #222 derivation: SCC + layering                     83c9f9ab
     [x] #223 derivation: Zones (+ the matrix needs none)    8ec2fa6c
     [x] #227 persistence layer — ADR: metric SQL stays     9c7b8794
-    [ ] #217 governance seed drift (ponytail adoption)   ← NEXT
-    [ ] #218 transcript ingestion opt-in
+    [x] #217 governance seed drift — ponytail is opt-in   6cbba6ee
+    [ ] #218 transcript ingestion opt-in                ← NEXT
     [ ] #232 Diagrams · Layers + Cycles screens
     [ ] #219 World · #220 Neighbourhood · #221 Schema
     [ ] #225 dōjō team view — needs the sync-shape decision first
@@ -32,8 +32,10 @@ Per slice: TDD, mutation-probe each test, full suite + clippy + fmt +
 - #233 every diagram shares a 1.5–74 s per-project read of `structure_edges`
   (zones 40 s on top of it). Matview + pg_cron is new infrastructure;
   refresh-on-index-barrier avoids it. This is the gap between demoable and usable.
-- Should `ponytail` be adopted by default? Live has it, a fresh install does not
-  (#217). `sensei.projects` has no `namespace_id`, so a rename orphans the slug.
+- #234 nothing lets a developer ADOPT a seeded rule pack — no CLI, MCP tool,
+  endpoint or screen writes `rule_pack_adoptions`. Two of fourteen seeded packs
+  are therefore unreachable, and every user-authored or dōjō-shared pack will
+  arrive the same way.
 
 ## Known broken
 
