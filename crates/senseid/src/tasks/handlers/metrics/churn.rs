@@ -78,6 +78,8 @@
 //! row (honest-empty). A ratio/pct with denominator 0 writes NO row. A repository
 //! that cannot be resolved is SKIPPED, never a made-up repository (I-E).
 
+use crate::db::pg_store::MetricRow;
+
 use std::collections::HashMap;
 
 use chrono::NaiveDate;
@@ -452,18 +454,18 @@ pub(super) async fn compute(
                     // fabricated 0. A count metric carries no numerator/denominator.
                     if let Some(mid) = churn_rate_id {
                         let no_props = serde_json::json!({});
-                        pg.upsert_project_metric_repo(
-                            &mid,
-                            &repository_id,
+                        pg.upsert_project_metric_repo(&MetricRow {
+                            metric_id: &mid,
+                            repository_id: &repository_id,
                             scope,
-                            author,
-                            None,
-                            day,
-                            GRAIN_DAILY,
-                            files.len() as f64,
-                            &no_props,
-                            SOURCE_MEASURED,
-                        )
+                            identity: author,
+                            commit_sha: None,
+                            computed_on: day,
+                            grain: GRAIN_DAILY,
+                            value: files.len() as f64,
+                            props: &no_props,
+                            source: SOURCE_MEASURED,
+                        })
                         .await?;
                         written += 1;
                     }
@@ -488,18 +490,18 @@ pub(super) async fn compute(
                         // I-F: pct rows carry props.numerator + props.denominator.
                         let props =
                             serde_json::json!({ "numerator": numerator, "denominator": total });
-                        pg.upsert_project_metric_repo(
-                            &mid,
-                            &repository_id,
+                        pg.upsert_project_metric_repo(&MetricRow {
+                            metric_id: &mid,
+                            repository_id: &repository_id,
                             scope,
-                            author,
-                            None,
-                            day,
-                            GRAIN_DAILY,
+                            identity: author,
+                            commit_sha: None,
+                            computed_on: day,
+                            grain: GRAIN_DAILY,
                             value,
-                            &props,
-                            SOURCE_MEASURED,
-                        )
+                            props: &props,
+                            source: SOURCE_MEASURED,
+                        })
                         .await?;
                         written += 1;
                     }
@@ -535,18 +537,18 @@ pub(super) async fn compute(
                 // I-F: ratio rows carry props.numerator + props.denominator.
                 let props =
                     serde_json::json!({ "numerator": rework_total, "denominator": project_files });
-                pg.upsert_project_metric_repo(
-                    &mid,
-                    &repository_id,
-                    SCOPE_USER,
-                    None,
-                    None,
-                    day,
-                    GRAIN_DAILY,
+                pg.upsert_project_metric_repo(&MetricRow {
+                    metric_id: &mid,
+                    repository_id: &repository_id,
+                    scope: SCOPE_USER,
+                    identity: None,
+                    commit_sha: None,
+                    computed_on: day,
+                    grain: GRAIN_DAILY,
                     value,
-                    &props,
-                    SOURCE_MEASURED,
-                )
+                    props: &props,
+                    source: SOURCE_MEASURED,
+                })
                 .await?;
                 written += 1;
             }
@@ -1376,32 +1378,32 @@ mod tests {
             .expect("module_quality seeded");
 
         // ratio metrics pool Σnum/Σden in project_metric_daily → value = num/den.
-        pg.upsert_project_metric_repo(
-            &cov,
-            &rid,
-            "user",
-            None,
-            None,
-            day,
-            "daily",
-            0.86,
-            &serde_json::json!({"numerator": 86, "denominator": 100}),
-            "measured",
-        )
+        pg.upsert_project_metric_repo(&MetricRow {
+            metric_id: &cov,
+            repository_id: &rid,
+            scope: "user",
+            identity: None,
+            commit_sha: None,
+            computed_on: day,
+            grain: "daily",
+            value: 0.86,
+            props: &serde_json::json!({"numerator": 86, "denominator": 100}),
+            source: "measured",
+        })
         .await
         .unwrap();
-        pg.upsert_project_metric_repo(
-            &mq,
-            &rid,
-            "user",
-            None,
-            None,
-            day,
-            "daily",
-            0.001,
-            &serde_json::json!({"numerator": 1, "denominator": 1000}),
-            "measured",
-        )
+        pg.upsert_project_metric_repo(&MetricRow {
+            metric_id: &mq,
+            repository_id: &rid,
+            scope: "user",
+            identity: None,
+            commit_sha: None,
+            computed_on: day,
+            grain: "daily",
+            value: 0.001,
+            props: &serde_json::json!({"numerator": 1, "denominator": 1000}),
+            source: "measured",
+        })
         .await
         .unwrap();
 

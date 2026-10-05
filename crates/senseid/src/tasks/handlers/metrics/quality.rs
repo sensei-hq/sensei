@@ -77,6 +77,7 @@ use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;
+use crate::db::pg_store::MetricRow;
 
 /// `sensei.metric_grain` text value (quality writes daily rows only).
 const GRAIN_DAILY: &str = "daily";
@@ -735,18 +736,18 @@ async fn write_ratio_rows(
             "denominator": denominator,
             "commit": sha,
         });
-        pg.upsert_project_metric_repo(
-            &mid,
+        pg.upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
             repository_id,
             scope,
             identity,
-            Some(sha),
-            day,
-            GRAIN_DAILY,
+            commit_sha: Some(sha),
+            computed_on: day,
+            grain: GRAIN_DAILY,
             value,
-            &props,
-            SOURCE_MEASURED,
-        )
+            props: &props,
+            source: SOURCE_MEASURED,
+        })
         .await?;
         written += 1;
     }
@@ -758,18 +759,18 @@ async fn write_ratio_rows(
             "denominator": denominator,
             "commit": sha,
         });
-        pg.upsert_project_metric_repo(
-            &mid,
+        pg.upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
             repository_id,
             scope,
             identity,
-            Some(sha),
-            day,
-            GRAIN_DAILY,
+            commit_sha: Some(sha),
+            computed_on: day,
+            grain: GRAIN_DAILY,
             value,
-            &props,
-            SOURCE_MEASURED,
-        )
+            props: &props,
+            source: SOURCE_MEASURED,
+        })
         .await?;
         written += 1;
     }
@@ -1155,18 +1156,18 @@ mod tests {
         let ids = pg.active_metric_ids("quality").await.unwrap();
         for key in ["duplication_ratio", "module_quality"] {
             let mid = *ids.get(key).expect("active quality metric");
-            pg.upsert_project_metric_repo(
-                &mid,
-                &rid,
-                "repo",
-                None,
-                Some(&sha),
-                dday,
-                "daily",
-                0.5,
-                &serde_json::json!({"numerator": 1, "denominator": 2, "commit": sha}),
-                "measured",
-            )
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &rid,
+                scope: "repo",
+                identity: None,
+                commit_sha: Some(&sha),
+                computed_on: dday,
+                grain: "daily",
+                value: 0.5,
+                props: &serde_json::json!({"numerator": 1, "denominator": 2, "commit": sha}),
+                source: "measured",
+            })
             .await
             .unwrap();
         }

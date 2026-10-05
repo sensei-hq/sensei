@@ -5865,18 +5865,18 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
             .fetch_one(s.pool())
             .await
             .unwrap();
-    s.upsert_project_metric_repo(
-        &ftr_id.0,
-        &repo_id,
-        "user",
-        None,
-        None,
-        day40.0,
-        "daily",
-        1.0,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_id.0,
+        repository_id: &repo_id,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day40.0,
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
     // Seed a child transcript_turn keyed on client_session_id (no FK).
@@ -6060,36 +6060,36 @@ async fn prune_activity_captures_before_reclaim_repo_grain() {
 
     // (a) captured on its OWN repo by a scope=user session metric → PRUNED.
     let captured = aged_repo_session(&s, &fid, &suffix, "captured", 40).await;
-    s.upsert_project_metric_repo(
-        &ftr_id.0,
-        &repo_a,
-        "user",
-        None,
-        None,
-        day_ago(&s, 40).await,
-        "daily",
-        1.0,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_id.0,
+        repository_id: &repo_a,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day_ago(&s, 40).await,
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
     // (b) uncaptured on repo_a; a DECOY scope=user session metric for the SAME day
     //     lives on repo_b → KEPT (the guard must match the session's repository).
     let uncaptured = aged_repo_session(&s, &fid, &suffix, "uncaptured", 45).await;
-    s.upsert_project_metric_repo(
-        &ftr_id.0,
-        &repo_b,
-        "user",
-        None,
-        None,
-        day_ago(&s, 45).await,
-        "daily",
-        1.0,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_id.0,
+        repository_id: &repo_b,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day_ago(&s, 45).await,
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -6099,32 +6099,32 @@ async fn prune_activity_captures_before_reclaim_repo_grain() {
     //     cadence='day' (the rework_density row would capture) or drops the
     //     scope='user' filter (the scope=repo ftr row would capture).
     let wrong_signal = aged_repo_session(&s, &fid, &suffix, "wrongsignal", 50).await;
-    s.upsert_project_metric_repo(
-        &rework_id.0,
-        &repo_a,
-        "user",
-        None,
-        None,
-        day_ago(&s, 50).await,
-        "daily",
-        0.2,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &rework_id.0,
+        repository_id: &repo_a,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day_ago(&s, 50).await,
+        grain: "daily",
+        value: 0.2,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
-    s.upsert_project_metric_repo(
-        &ftr_id.0,
-        &repo_a,
-        "repo",
-        None,
-        None,
-        day_ago(&s, 50).await,
-        "daily",
-        1.0,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_id.0,
+        repository_id: &repo_a,
+        scope: "repo",
+        identity: None,
+        commit_sha: None,
+        computed_on: day_ago(&s, 50).await,
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -8331,18 +8331,18 @@ async fn project_ftr_and_quality_decode_numeric_metrics() {
     .await
     .unwrap();
     crate::tasks::test_support::link_repository_to_project(&s, &rid, &pid, "ftr-decode").await;
-    s.upsert_project_metric_repo(
-        &ftr_mid,
-        &rid,
-        "user",
-        None,
-        None,
-        chrono::Utc::now().date_naive(),
-        "daily",
-        1.0,
-        &serde_json::json!({"numerator": 1, "denominator": 1}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: chrono::Utc::now().date_naive(),
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({"numerator": 1, "denominator": 1}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -10206,15 +10206,18 @@ async fn upsert_project_metric_is_idempotent() {
     let day = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
 
     let id1 = s
-        .upsert_project_metric(
-            &mid,
-            &rid,
-            day,
-            "daily",
-            0.5,
-            &serde_json::json!({"numerator": 1, "denominator": 2}),
-            "measured",
-        )
+        .upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: None,
+            commit_sha: None,
+            computed_on: day,
+            grain: "daily",
+            value: 0.5,
+            props: &serde_json::json!({"numerator": 1, "denominator": 2}),
+            source: "measured",
+        })
         .await
         .unwrap();
 
@@ -10234,15 +10237,18 @@ async fn upsert_project_metric_is_idempotent() {
             .unwrap();
 
     let id2 = s
-        .upsert_project_metric(
-            &mid,
-            &rid,
-            day,
-            "daily",
-            0.75,
-            &serde_json::json!({"numerator": 3, "denominator": 4}),
-            "estimated",
-        )
+        .upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: None,
+            commit_sha: None,
+            computed_on: day,
+            grain: "daily",
+            value: 0.75,
+            props: &serde_json::json!({"numerator": 3, "denominator": 4}),
+            source: "estimated",
+        })
         .await
         .unwrap();
     assert_eq!(id1, id2, "same identity upserts the same row (no duplicate)");
@@ -10448,26 +10454,32 @@ async fn get_project_metrics_reads_views() {
     let d1 = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
     let d2 = chrono::NaiveDate::from_ymd_opt(2020, 1, 2).unwrap(); // later => latest
 
-    s.upsert_project_metric(
-        &mid,
-        &rid,
-        d1,
-        "daily",
-        0.5,
-        &serde_json::json!({"numerator": 1, "denominator": 2}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: d1,
+        grain: "daily",
+        value: 0.5,
+        props: &serde_json::json!({"numerator": 1, "denominator": 2}),
+        source: "measured",
+    })
     .await
     .unwrap();
-    s.upsert_project_metric(
-        &mid,
-        &rid,
-        d2,
-        "daily",
-        0.75,
-        &serde_json::json!({"numerator": 3, "denominator": 4}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: d2,
+        grain: "daily",
+        value: 0.75,
+        props: &serde_json::json!({"numerator": 3, "denominator": 4}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -10599,17 +10611,20 @@ async fn a_pct_metric_without_numerator_props_still_yields_a_value() {
     let day = chrono::NaiveDate::from_ymd_opt(2020, 3, 4).unwrap();
 
     // Exactly the shape `usage.rs` writes: no numerator, no denominator.
-    s.upsert_project_metric(
-        &mid,
-        &rid,
-        day,
-        "daily",
-        0.957,
-        &serde_json::json!({
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day,
+        grain: "daily",
+        value: 0.957,
+        props: &serde_json::json!({
             "sessions": 12, "pooled_ratio": 0.981, "mean_of_session_ratios": 0.957
         }),
-        "measured",
-    )
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -10647,27 +10662,33 @@ async fn get_project_metrics_excludes_a_retired_metric() {
     let active_mid = seed_metric(&s, &active_key, "ComputeActive", 0, None).await; // active, no end
     let retired_mid = seed_metric(&s, &retired_key, "ComputeRetired", -10, Some(-1)).await; // ended yesterday
     let d = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
-    s.upsert_project_metric(
-        &active_mid,
-        &rid,
-        d,
-        "daily",
-        0.5,
-        &serde_json::json!({"numerator": 1, "denominator": 2}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &active_mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: d,
+        grain: "daily",
+        value: 0.5,
+        props: &serde_json::json!({"numerator": 1, "denominator": 2}),
+        source: "measured",
+    })
     .await
     .unwrap();
     // The retired metric HAS a durable row — it just must not be read as active.
-    s.upsert_project_metric(
-        &retired_mid,
-        &rid,
-        d,
-        "daily",
-        0.9,
-        &serde_json::json!({"numerator": 9, "denominator": 10}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &retired_mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: d,
+        grain: "daily",
+        value: 0.9,
+        props: &serde_json::json!({"numerator": 9, "denominator": 10}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -10849,48 +10870,48 @@ async fn ftr_getters_read_project_metrics() {
     .unwrap();
     crate::tasks::test_support::link_repository_to_project(&s, &rid, &pid, "ftrget").await;
     // day A (today):     3/4 = 0.75
-    s.upsert_project_metric_repo(
-        &ftr_mid,
-        &rid,
-        "user",
-        None,
-        None,
-        today,
-        "daily",
-        0.75,
-        &serde_json::json!({"numerator": 3, "denominator": 4, "correction_count": 1}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: today,
+        grain: "daily",
+        value: 0.75,
+        props: &serde_json::json!({"numerator": 3, "denominator": 4, "correction_count": 1}),
+        source: "measured",
+    })
     .await
     .unwrap();
     // day B (today-3):   1/2 = 0.50
-    s.upsert_project_metric_repo(
-        &ftr_mid,
-        &rid,
-        "user",
-        None,
-        None,
-        d_recent,
-        "daily",
-        0.5,
-        &serde_json::json!({"numerator": 1, "denominator": 2, "correction_count": 2}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: d_recent,
+        grain: "daily",
+        value: 0.5,
+        props: &serde_json::json!({"numerator": 1, "denominator": 2, "correction_count": 2}),
+        source: "measured",
+    })
     .await
     .unwrap();
     // day C (today-20):  1/2 = 0.50 — prior-14d window, excluded from 14d/7d
-    s.upsert_project_metric_repo(
-        &ftr_mid,
-        &rid,
-        "user",
-        None,
-        None,
-        d_prev,
-        "daily",
-        0.5,
-        &serde_json::json!({"numerator": 1, "denominator": 2, "correction_count": 3}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: d_prev,
+        grain: "daily",
+        value: 0.5,
+        props: &serde_json::json!({"numerator": 1, "denominator": 2, "correction_count": 3}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -11031,18 +11052,18 @@ async fn ftr14d_window_reaches_the_8_to_13_day_band() {
     .await
     .unwrap();
     crate::tasks::test_support::link_repository_to_project(&s, &rid, &pid, "ftrwin").await;
-    s.upsert_project_metric_repo(
-        &ftr_mid,
-        &rid,
-        "user",
-        None,
-        None,
-        d10,
-        "daily",
-        1.0,
-        &serde_json::json!({"numerator": 2, "denominator": 2}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: d10,
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({"numerator": 2, "denominator": 2}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -11112,32 +11133,32 @@ async fn holistic_ftr_daily_pools_not_average_of_rates() {
     .unwrap();
     crate::tasks::test_support::link_repository_to_project(&s, &r2, &p2, "ftrpool2").await;
     // P1: 1/1 = 1.0 ; P2: 0/3 = 0.0 → avg-of-rates 0.5, pooled 1/4 = 0.25.
-    s.upsert_project_metric_repo(
-        &ftr_mid,
-        &r1,
-        "user",
-        None,
-        None,
-        day,
-        "daily",
-        1.0,
-        &serde_json::json!({"numerator": 1, "denominator": 1}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_mid,
+        repository_id: &r1,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day,
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({"numerator": 1, "denominator": 1}),
+        source: "measured",
+    })
     .await
     .unwrap();
-    s.upsert_project_metric_repo(
-        &ftr_mid,
-        &r2,
-        "user",
-        None,
-        None,
-        day,
-        "daily",
-        0.0,
-        &serde_json::json!({"numerator": 0, "denominator": 3}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_mid,
+        repository_id: &r2,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day,
+        grain: "daily",
+        value: 0.0,
+        props: &serde_json::json!({"numerator": 0, "denominator": 3}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -11663,18 +11684,18 @@ async fn seed_identity_row(
     let pid = s.create_project(&format!("_test:persona:{uniq}"), None, None).await.unwrap();
     let rid = crate::tasks::test_support::seed_bare_repository(s, &pid, uniq).await;
     let mid = seed_metric(s, &format!("_test:persona:{uniq}:ftr"), "ComputeFtr", 0, None).await;
-    s.upsert_project_metric_repo(
-        &mid,
-        &rid,
-        "user",
-        Some(email),
-        None,
-        chrono::NaiveDate::from_ymd_opt(2020, 3, 1).unwrap(),
-        "daily",
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: Some(email),
+        commit_sha: None,
+        computed_on: chrono::NaiveDate::from_ymd_opt(2020, 3, 1).unwrap(),
+        grain: "daily",
         value,
-        &serde_json::json!({}),
-        "measured",
-    )
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
     (pid, rid)
@@ -11840,33 +11861,33 @@ async fn a_held_back_scope_cannot_crowd_the_push_window() {
 
     // The pushable row is OLDER, so a limit applied before the scope filter would
     // hand every slot to the newer user-scoped rows and miss it entirely.
-    s.upsert_project_metric_repo(
-        &mid,
-        &rid,
-        "repo",
-        None,
-        None,
-        chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
-        "daily",
-        1.0,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "repo",
+        identity: None,
+        commit_sha: None,
+        computed_on: chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
     for d in 10..14 {
-        s.upsert_project_metric_repo(
-            &mid,
-            &rid,
-            "user",
-            Some("crowd@example.com"),
-            None,
-            chrono::NaiveDate::from_ymd_opt(2026, 8, d).unwrap(),
-            "daily",
-            9.0,
-            &serde_json::json!({}),
-            "measured",
-        )
+        s.upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: Some("crowd@example.com"),
+            commit_sha: None,
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 8, d).unwrap(),
+            grain: "daily",
+            value: 9.0,
+            props: &serde_json::json!({}),
+            source: "measured",
+        })
         .await
         .unwrap();
     }
@@ -11889,18 +11910,18 @@ async fn the_allow_list_cannot_be_crowded_out_either() {
     let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
     let allowed_key = format!("test/bare-{uniq}");
     let mid = seed_metric(&s, &format!("_test:allow:{uniq}"), "ComputeFtr", 0, None).await;
-    s.upsert_project_metric_repo(
-        &mid,
-        &rid,
-        "repo",
-        None,
-        None,
-        chrono::NaiveDate::from_ymd_opt(2019, 1, 1).unwrap(),
-        "daily",
-        1.0,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "repo",
+        identity: None,
+        commit_sha: None,
+        computed_on: chrono::NaiveDate::from_ymd_opt(2019, 1, 1).unwrap(),
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -11916,18 +11937,18 @@ async fn the_allow_list_cannot_be_crowded_out_either() {
         .await
         .unwrap();
     for d in 20..24 {
-        s.upsert_project_metric_repo(
-            &mid,
-            &other_rid,
-            "repo",
-            None,
-            None,
-            chrono::NaiveDate::from_ymd_opt(2026, 8, d).unwrap(),
-            "daily",
-            5.0,
-            &serde_json::json!({}),
-            "measured",
-        )
+        s.upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &other_rid,
+            scope: "repo",
+            identity: None,
+            commit_sha: None,
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 8, d).unwrap(),
+            grain: "daily",
+            value: 5.0,
+            props: &serde_json::json!({}),
+            source: "measured",
+        })
         .await
         .unwrap();
     }
@@ -11952,18 +11973,18 @@ async fn two_rows_that_differ_in_every_key_field_arrive_different() {
     let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
     let key = format!("test/bare-{uniq}");
     let mid = seed_metric(&s, &format!("_test:contrast:{uniq}"), "ComputeFtr", 0, None).await;
-    s.upsert_project_metric_repo(
-        &mid,
-        &rid,
-        "repo",
-        None,
-        Some("deadbeef"),
-        chrono::NaiveDate::from_ymd_opt(2021, 3, 4).unwrap(),
-        "session",
-        7.5,
-        &serde_json::json!({ "n": 7 }),
-        "estimated",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "repo",
+        identity: None,
+        commit_sha: Some("deadbeef"),
+        computed_on: chrono::NaiveDate::from_ymd_opt(2021, 3, 4).unwrap(),
+        grain: "session",
+        value: 7.5,
+        props: &serde_json::json!({ "n": 7 }),
+        source: "estimated",
+    })
     .await
     .unwrap();
 
@@ -12277,18 +12298,18 @@ async fn seed_sync_fixture_at(
     .await
     .unwrap();
     let mid = seed_metric(s, &format!("_test:sync:{uniq}:ftr"), "ComputeFtr", 0, None).await;
-    s.upsert_project_metric_repo(
-        &mid,
-        &rid,
-        "user",
-        None,
-        None,
-        chrono::NaiveDate::from_ymd_opt(2020, 5, 1).unwrap(),
-        "daily",
-        0.5,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: chrono::NaiveDate::from_ymd_opt(2020, 5, 1).unwrap(),
+        grain: "daily",
+        value: 0.5,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
     (pid, rid)

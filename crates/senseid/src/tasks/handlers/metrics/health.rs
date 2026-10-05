@@ -41,6 +41,7 @@
 //!   `.ok()` masking, no fabricated ids. Strict project scoping — a component value
 //!   is only ever read for THIS project (`get_project_metrics` is project-scoped).
 
+use crate::db::pg_store::MetricRow;
 use crate::tasks::executor::TaskContext;
 
 /// `sensei.metric_grain` text value (health writes one daily project row).
@@ -190,18 +191,18 @@ async fn roll_up(
     let score = (100.0 * (sum_weighted / sum_weight)).round();
     let props = serde_json::json!({ "components": serde_json::Value::Object(components) });
     let day = super::today(pg).await?;
-    pg.upsert_project_metric_repo(
-        &health_id,
-        &repository_id,
-        "user",
-        None,
-        None,
-        day,
-        GRAIN_DAILY,
-        score,
-        &props,
-        SOURCE_MEASURED,
-    )
+    pg.upsert_project_metric_repo(&MetricRow {
+        metric_id: &health_id,
+        repository_id: &repository_id,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day,
+        grain: GRAIN_DAILY,
+        value: score,
+        props: &props,
+        source: SOURCE_MEASURED,
+    })
     .await?;
     Ok(1)
 }
@@ -260,18 +261,18 @@ mod tests {
             pg.primary_repository_for_project(pid).await.unwrap().expect(
                 "health test project has a repository (seed_metrics_project_folder links one)",
             );
-        pg.upsert_project_metric_repo(
-            mid,
-            &repository_id,
-            "user",
-            None,
-            None,
-            day,
-            GRAIN_DAILY,
+        pg.upsert_project_metric_repo(&MetricRow {
+            metric_id: mid,
+            repository_id: &repository_id,
+            scope: "user",
+            identity: None,
+            commit_sha: None,
+            computed_on: day,
+            grain: GRAIN_DAILY,
             value,
-            &serde_json::json!({ "numerator": value, "denominator": 1.0 }),
-            SOURCE_MEASURED,
-        )
+            props: &serde_json::json!({ "numerator": value, "denominator": 1.0 }),
+            source: SOURCE_MEASURED,
+        })
         .await
         .unwrap();
     }
