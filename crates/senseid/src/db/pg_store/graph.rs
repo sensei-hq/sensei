@@ -3656,6 +3656,37 @@ pub struct StructureNode {
     pub symbols: i64,
 }
 
+/// The `component_zones` select list, in order. A tuple because this crate
+/// depends on `sqlx-core` alone and so has no `FromRow` derive — the same shape
+/// [`StructureNodeRow`] uses, and the reason the `SELECT` names its columns
+/// explicitly rather than using `*`.
+type ZoneRow = (String, i64, i64, i64, i64, Option<f64>, Option<f64>, Option<f64>, Option<String>);
+
+/// One module's position on Martin's main sequence.
+///
+/// Every derived field is `Option` on purpose — see
+/// [`PgStore::component_zones`].
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Zone {
+    pub component: String,
+    /// Type-declaring symbols. The denominator of `A`, and the point's area.
+    pub types: i64,
+    pub abstract_types: i64,
+    /// Afferent coupling: distinct internal modules depending on this one.
+    pub ca: i64,
+    /// Efferent coupling: distinct internal modules plus library packages.
+    pub ce: i64,
+    /// `abstract_types / types`, or `None` when the module declares no type.
+    pub abstractness: Option<f64>,
+    /// `ce / (ca + ce)`, or `None` when the module has no coupling at all.
+    pub instability: Option<f64>,
+    /// `|A + I − 1|`. `None` when either input is.
+    pub distance: Option<f64>,
+    /// `pain` | `useless` | `risk` | `main`, or `None` with no distance.
+    pub zone: Option<String>,
+}
+
 /// One bundled edge between two [`StructureNode`]s at the requested level.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StructureEdge {
@@ -3885,6 +3916,63 @@ impl PgStore {
                 }
                 _ => None,
             })
+            .collect())
+    }
+
+    /// One module's position on Martin's main sequence, for the Zones diagram.
+    ///
+    /// `abstractness`, `instability`, `distance` and `zone` are `Option` and
+    /// that is the whole contract: `sensei.component_zones` returns NULL rather
+    /// than 0 when a denominator is empty, because a module declaring no type is
+    /// not "maximally concrete" and one nothing touches is not "maximally
+    /// stable". Decoding into a non-optional field would quietly restore the
+    /// fabrication the view exists to refuse.
+    ///
+    /// Ordered worst-first — a diagram shows every point, but every list beside
+    /// it wants the ones furthest off the sequence, and NULLs last so an
+    /// unplaceable module never heads the table.
+    ///
+    /// `component_zones` is a FUNCTION taking the project, not a view filtered
+    /// by one. Its four halves are outer-joined so a module with no coupling
+    /// survives, and PostgreSQL will not push a predicate across an outer join —
+    /// as a view, each nullable side was computed for the whole corpus and the
+    /// query had not returned after eleven minutes.
+    pub async fn component_zones(&self, project_id: &uuid::Uuid) -> Result<Vec<Zone>, String> {
+        let rows: Vec<ZoneRow> = sqlx_core::query_as::query_as(
+            "SELECT component, types::bigint, abstract_types::bigint, ca::bigint, ce::bigint,
+                    abstractness, instability, distance, zone
+               FROM sensei.component_zones($1)
+              ORDER BY distance DESC NULLS LAST, component",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    component,
+                    types,
+                    abstract_types,
+                    ca,
+                    ce,
+                    abstractness,
+                    instability,
+                    distance,
+                    zone,
+                )| Zone {
+                    component,
+                    types,
+                    abstract_types,
+                    ca,
+                    ce,
+                    abstractness,
+                    instability,
+                    distance,
+                    zone,
+                },
+            )
             .collect())
     }
 
