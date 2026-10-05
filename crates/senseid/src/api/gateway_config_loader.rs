@@ -379,6 +379,41 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// The four queries in [`load_gateway_config`] actually RUN (#227).
+    ///
+    /// Every other test in this module is a pure-function test, so the only SQL
+    /// here — four statements across five `gateway.*` tables, one of them a
+    /// LATERAL — was executed by nothing. A column renamed under it would have
+    /// left the daemon silently falling back to the baseline config with the
+    /// whole suite green. Measured before this test existed: cross-joining a
+    /// table that does not exist into the first query left this module GREEN.
+    ///
+    /// It asserts the SEEDED CATALOG comes back, not merely that the call
+    /// returned `Ok`. `load_gateway_config` answers `Ok(None)` when it finds no
+    /// active chain, which is its "use the baseline" signal — so an `is_ok()`
+    /// assertion would pass over a query that returned nothing at all.
+    ///
+    /// Mutation that must break this test: drop `WHERE m.is_active` from the
+    /// models query, or break any of the four statements.
+    #[tokio::test]
+    async fn the_four_catalog_queries_return_the_seeded_gateway_config() {
+        let Ok(pg) = crate::db::pg_store::PgStore::connect_test().await else { return };
+        let cfg = load_gateway_config(pg.pool()).await.expect("the catalog queries plan and run");
+        let Some(cfg) = cfg else {
+            panic!("the deployed schema seeds active fallback chains, so this cannot be None");
+        };
+        assert!(!cfg.routers.is_empty(), "routers query returned nothing");
+        assert!(!cfg.models.is_empty(), "models query returned nothing");
+        assert!(!cfg.chains.is_empty(), "chains query returned nothing");
+        // The chain-members query is the only one that can come back empty
+        // while the others do not, so it needs its own assertion: a chain with
+        // no members is a chain the gateway cannot fall back along.
+        assert!(
+            cfg.chains.values().any(|c| !c.models.is_empty()),
+            "chain_models query returned no members for any chain"
+        );
+    }
+
     #[test]
     fn map_capability_collapses_text_purposes_onto_text_chat() {
         for purpose in ["chat", "reasoning", "classify", "summarize"] {
