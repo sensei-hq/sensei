@@ -226,6 +226,49 @@ pub(crate) async fn layering(
     })))
 }
 
+/// GET /api/projects/{id}/diagrams/zones
+///
+/// Martin's abstractness against instability, one point per module. The main
+/// sequence is `A + I = 1`; `distance` is how far off it a module sits, and
+/// `zone` names where — `pain` (concrete and depended upon), `useless`
+/// (abstract and depended upon by nothing), `risk`, or `main`.
+///
+/// No parameters. The grain is the module, which is the grain the mockup uses
+/// and the only one with enough points to read a sequence off — a project here
+/// is single digits of packages.
+///
+/// `abstractness`, `instability`, `distance` and `zone` can be NULL, and the
+/// screen MUST omit those points rather than drawing them at an axis origin.
+/// `coverage.unplaceable` counts them, so an omitted point is distinguishable
+/// from one that genuinely sits at zero.
+pub(crate) async fn zones(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let project_id = resolve_project_id(&state, &id).await?;
+    let points = state
+        .pg
+        .component_zones(&project_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Counted here rather than in SQL: it is how many points the PAYLOAD cannot
+    // place, so it has to be derived from the payload or the two can disagree.
+    let unplaceable = points.iter().filter(|p| p.distance.is_none()).count() as i64;
+    let mean_distance = {
+        let placed: Vec<f64> = points.iter().filter_map(|p| p.distance).collect();
+        // `None`, not 0.0, when nothing is placeable — a mean over no points is
+        // not "perfectly on the sequence".
+        (!placed.is_empty()).then(|| placed.iter().sum::<f64>() / placed.len() as f64)
+    };
+
+    Ok(Json(serde_json::json!({
+        "points": points,
+        "meanDistance": mean_distance,
+        "coverage": { "points": points.len() as i64, "unplaceable": unplaceable },
+    })))
+}
+
 /// Validate and split the `kinds` query parameter.
 ///
 /// Shared by both diagram handlers so an unknown kind is a 400 on each — an

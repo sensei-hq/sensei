@@ -44,13 +44,13 @@ called out per row rather than smoothed over.
 
 | # | View | Group | Data | Derivation | Component | Status |
 |---|---|---|---|---|---|---|
-| 1 | Zones | Architecture | ✅ | ⚠️ partial | ✅ `ScatterPlot` | **Near-ready** |
-| 2 | Dependency matrix | Architecture | ✅ | ❌ | ✅ `DependencyMatrix` | **Derivation only** |
-| 3 | Layers | Architecture | ✅ | ❌ | ✅ `LayersDiagram` (1.9.0) | **Derivation only** |
-| 4 | Cycles | Architecture | ✅ | ❌ no SCC | ⚠️ collapse unverified (1.9.0) | **Derivation only** |
-| 5 | Hidden coupling | Architecture | ❌ **no git history** | ❌ | ✅ `ArcDiagram` (1.9.0) | **Blocked on data** |
-| 6 | Complexity | Architecture | ⚠️ partial | ❌ | ✅ `PolymetricTree` (1.9.0) | **Derivation + data** |
-| 7 | Ownership | Architecture | ❌ **no blame** | ❌ | ✅ `Treemap` | **Blocked on data** |
+| 1 | Zones | Architecture | ✅ | ✅ 2026-10-05 | ✅ `ScatterPlot` + `Plot.Rule` | **Derivation SHIPPED** |
+| 2 | Dependency matrix | Architecture | ✅ | ✅ `module_edges` | ✅ seriates itself | **Screen only** |
+| 3 | Layers | Architecture | ✅ | ✅ 2026-10-05 | ✅ `LayersDiagram` (1.9.0) | **Derivation SHIPPED** |
+| 4 | Cycles | Architecture | ✅ | ✅ 2026-10-05 | ✅ `members`/`collapsed` (1.9.0) | **Derivation SHIPPED** |
+| 5 | Hidden coupling | Architecture | ✅ **#224** | ❌ endpoint | ✅ `ArcDiagram` (1.9.0) | **Derivation + screen** |
+| 6 | Complexity | Architecture | ✅ churn via **#224** | ❌ | ✅ `PolymetricTree` (1.9.0) | **Derivation only** |
+| 7 | Ownership | Architecture | ✅ **#224** | ❌ | ✅ `Treemap` | **Derivation only** |
 | 8 | Structure | Code | ✅ | ✅ | ✅ `StructureDiagram` | **SHIPPED 2026-10-01** |
 | 9 | World | Code | ✅ | ✅ | ✅ `Graph` + pack | **Buildable now** |
 | 10 | Neighbourhood | Code | ✅ | ✅ | ✅ `Neighborhood` | **Buildable now** |
@@ -61,6 +61,12 @@ called out per row rather than smoothed over.
 **Two are blocked on a single missing input** — git history — and that one input
 also unblocks the third dimension of a fourth (Complexity's churn axis).
 
+> **Update 2026-10-05.** Nothing in this set is blocked on data any more. #224
+> landed git history (70,679 commits, 631,465 file touches), which unblocks rows
+> 5, 6 and 7 at once; #222 and #223 landed the derivations for rows 1-4, and the
+> dependency matrix needs none because the component seriates itself. What is
+> left across the whole table is SCREENS plus three unwritten endpoints.
+
 > **Update 2026-10-03.** See [What changed since 2026-09-30](#what-changed-since-2026-09-30)
 > at the foot of this document. One scoreboard column needs reading differently now:
 > a ✅ under **Data** means the rows exist, NOT that a project-scoped screen will
@@ -69,7 +75,7 @@ also unblocks the third dimension of a fourth (Complexity's churn axis).
 
 ---
 
-## 1. Zones — abstractness vs instability
+## 1. Zones — abstractness vs instability — DERIVATION SHIPPED (#223)
 
 > *"Robert C. Martin's abstractness against instability. Modules on the diagonal
 > are balanced; the further off it, the more a change will cost."*
@@ -95,7 +101,59 @@ since the cutover) but a seam whose implementers have not resolved is
 under-reported. `abstractions`' own doc comment says so; the view must not present
 `A` as exact.
 
-## 2. Dependency matrix (DSM)
+### What 2026-10-05 changed
+
+`sensei.component_zones` computes `A`, `I`, `Ca`, `Ce`, `D` and the zone per
+module, at the mockup's thresholds (`D > 0.4` splits `pain` from `useless` by
+whether `A + I < 1`; `D > 0.25` is `risk`). `GET /api/projects/{id}/diagrams/zones`
+serves it. `Plot.Rule` draws the main sequence — its own doc says
+*"The main sequence is `slope={-1} intercept={1}`"* — and `Plot.Region` takes the
+two triangles as `points`, so the component side needed nothing new.
+
+**The point set is the SHARED node universe** — a module is one `structure_graph`
+names, which is exactly the node set Structure, Layers and Cycles draw. Four
+screens disagreeing about what a module is would be worse than any one of them
+being slightly wrong, and it is also what keeps #231 off this plot: without that
+restriction the point set for project `sensei` is 391 "modules" against a real
+151, and the worst-distance list is led by a C struct and three protocol payload
+types rather than by anything a reader could act on. With it, the worst are
+`senseid/types`, `dojo-protocol/relay` and `sensei/activity` — concrete modules
+many things depend on, which is the finding the view exists for.
+
+**It refuses to invent a position, and that is the only place it departs from the
+mockup.** The mockup computes `A = abstract / types`, which is NaN for a module
+declaring no type, and `I = (Ca+Ce) ? Ce/(Ca+Ce) : 0`, which puts an isolated
+module at perfect stability. Both put a point at a corner of the plot and invite a
+reading the data does not support. `component_zones` returns NULL for each, and
+`coverage.unplaceable` counts them. This is not an edge case: measured
+2026-10-05 on project `sensei`, **68 of 151 modules cannot be placed** — 65 declare
+no type and 22 have no coupling at all. Of the 83 that can be placed, 46 sit on
+the main sequence, 27 in `pain` and 10 in `risk`; mean D is 0.294.
+
+**`Ce` counts library packages, not just internal modules.** A module whose only
+dependencies are libraries would otherwise have `Ce = 0` and read as perfectly
+stable. Measured: 825 module-library pairs over 189 distinct packages for project
+`sensei`. `$lib` is excluded — SvelteKit resolves it to the package's own source,
+so counting it inflates `Ce` with the module's own code — and that exclusion is
+worth 8 of the 825 pairs and zeroes no module's count.
+
+**It is a FUNCTION taking the project, not a view filtered by one.** The four
+halves are outer-joined so a module with no coupling survives — an inner join
+would delete the very rows `instability IS NULL` exists to report — and
+PostgreSQL does not push a predicate across an outer join, so as a view each
+nullable side was computed for the whole corpus and the query had not returned
+after eleven minutes. As a function it answers in 40 s for project `sensei` and
+4.6 s for `dbd`, which is `module_edges`' cost and the same constraint #233
+tracks for every diagram in the set.
+
+**Coupling counts DISTINCT partners over every edge kind.** Martin asks whether a
+dependency exists, not how often it is exercised, so `calls` and `references`
+between the same pair is one dependency — and an `implements` edge is a
+dependency too, which is why Zones takes no `kinds` knob where Layers does. The
+two screens ask different questions: Layers draws arrows, where the kind is
+visible; Zones counts partners, where it is not.
+
+## 2. Dependency matrix (DSM) — NO DERIVATION NEEDED (#223)
 
 > *"Every dependency as a cell — the row uses the column — with foundations
 > first. Marks below the diagonal point down the layers; anything above it is a
@@ -113,6 +171,33 @@ needed is present.
 
 **Component (M).** `DependencyMatrix.svelte` exists in `@rokkit/graph`. Whether
 it accepts a pre-seriated order or does its own is (I) — needs reading.
+
+### What 2026-10-05 changed — the open question is answered, and it removes work
+
+**`DependencyMatrix` SERIATES ITSELF, and there is no way to inject an order.**
+Its props are `state`/`nodes`/`edges`/`fields`/`groupBy`/`cell`/`value`/`label`/
+`onselect`/`class` (`dist/diagrams/DependencyMatrix.svelte:21-35`) — no `order`,
+no `sequence`, no `seriate`. The algorithm is in `dist/layout/matrix.js:9-12`:
+*"The order reuses `flow`'s ranking (longest path, DFS cycle breaking), reversed:
+`rank` puts a target in a later column than its source, and a DSM wants the
+target FIRST."*
+
+So **seriation must not be computed in the database** — the view that would have
+done it could not be used. Part 2 of the derivation gap is closed by deleting it.
+
+Part 1 — the module×module aggregation — is `sensei.module_edges`, shipped with
+#222, and it deliberately KEEPS the diagonal that `structure_edges` drops. The
+`/diagrams/layering` payload is already matrix-shaped: nodes carry `id`/`group`,
+edges carry `source`/`target`/`weight`, and `matrix.js:71-73` reads
+`edge.weight ?? 1`. The DSM therefore needs **no new endpoint**; `groupBy`
+defaults to `'group'`, which puts a package's block on the diagonal.
+
+One thing for whoever builds the screen: rokkit's ranking is DFS cycle-breaking
+while the Layers screen's is Tarjan plus a Kahn pass, so the two can order a
+cyclic graph differently. Feeding `DependencyMatrix` the CONDENSED model — one
+node carrying `members`, which `GraphGroups` supports — makes the input a DAG,
+where both rankings agree. `matrix.js` also returns `above`, the count of marks
+above the diagonal, which is the cycle signal the mockup's blurb is about.
 
 ## 3. Layers — DERIVATION SHIPPED (#222)
 

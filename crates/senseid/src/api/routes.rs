@@ -114,6 +114,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/repos/{repo_id}", delete(observatory::remove_solution_repo))
         .route("/api/projects/{id}/diagrams/structure", get(diagrams::structure))
         .route("/api/projects/{id}/diagrams/layering", get(diagrams::layering))
+        .route("/api/projects/{id}/diagrams/zones", get(diagrams::zones))
         .route("/api/projects/{id}/tags", post(observatory::add_solution_tag))
         .route("/api/projects/{id}/tags/{tag}", delete(observatory::remove_solution_tag))
         // Git author identity for a folder + its owning project (MCP
@@ -2315,6 +2316,208 @@ mod tests {
     /// A second router over the same state, for a test that needs two requests.
     fn app_clone(state: &AppState) -> Router {
         create_router(state.clone())
+    }
+
+    /// #223 — Martin's abstractness against instability, end to end.
+    ///
+    /// The seeded shape makes every number checkable by hand. Dependencies are
+    /// `alpha -> beta` (a call), `gamma -> beta` (a call), `delta -> beta` (a
+    /// call) and `beta -> alpha` (an IMPLEMENTS, which is a dependency too —
+    /// beta implements a contract alpha owns).
+    ///
+    /// - `p/alpha` — 2 types, 1 implemented. A = 1/2. Ca = {beta}; Ce is {beta}
+    ///   plus the library package `extpkg` it calls, and NOT the `$lib` alias it
+    ///   also calls, so Ce = 2, I = 2/3 and D = 1/6.
+    /// - `p/beta` — 1 type, nothing implements it, so A = 0. Ca = {alpha, gamma,
+    ///   delta} = 3, Ce = {alpha} = 1, so I = 1/4 and D = 3/4. `pain`: concrete
+    ///   and widely depended upon.
+    /// - `p/delta` — 2 types, 1 implemented (by its own sibling, which is
+    ///   cohesion and not coupling). A = 1/2. Nothing depends on it and it
+    ///   depends on beta, so I = 1 and D = 1/2. `useless`.
+    /// - `p/gamma` — NO type at all, and it calls beta. A is undefined, so D and
+    ///   the zone are too, even though I is perfectly well defined at 1.
+    /// - `p/zeta` — one type and NO coupling whatsoever. The mirror case: A is
+    ///   defined at 0, I is not, and D is undefined again.
+    ///
+    /// That last one is the case worth having a test for. The mockup computes
+    /// `A = abstract / types`, which is NaN at zero types, and `I = 0` when a
+    /// module has no coupling at all. Both are fabrications — a module that
+    /// declares no type is not maximally concrete, and an isolated one is not
+    /// maximally stable — so this reports NULL and the screen omits the point.
+    ///
+    /// NOT EXERCISED: the `risk` band (0.25 < D <= 0.4). It is the same CASE arm
+    /// as the two tested thresholds with a different constant, and hitting it
+    /// needs coupling ratios that would double the size of this fixture for no
+    /// new behaviour.
+    ///
+    /// Mutation that must break this test: coalesce `abstractness` to 0 when a
+    /// module declares no types.
+    ///
+    /// One property here is guarded TWICE and so needs a two-line mutation to
+    /// break: coupling counts distinct partners both because `me` groups the
+    /// module pairs and because `afferent`/`efferent` count distinct. Removing
+    /// either alone leaves the answer correct. That is deliberate — `module_edges`
+    /// carries one row per KIND, so a future reader who drops the group-by must
+    /// still get the right number.
+    #[tokio::test]
+    async fn zones_endpoint_computes_the_main_sequence_and_refuses_to_invent_one() {
+        let (app, state) = test_app().await;
+        let pg = &state.pg;
+        let tag = uuid::Uuid::new_v4();
+        let pid = pg.create_project(&format!("_test:zones:{tag}"), None, None).await.unwrap();
+        let root = format!("/_test/zones/{tag}");
+        let root_id = pg.add_watch_root(&root, "zone-wt", &serde_json::json!([])).await.unwrap();
+        let fid = pg.upsert_repo(&root_id, "zone", &root).await.unwrap();
+        crate::tasks::test_support::place_folder_in_project(pg, &fid, &pid, &format!("zn-{tag}"))
+            .await
+            .unwrap();
+
+        let def = |path: &'static str| crate::db::pg_store::FqnDef {
+            file_path: path,
+            signature: None,
+            line_start: Some(1),
+            line_end: Some(2),
+            is_exported: true,
+            parent_id: None,
+        };
+        let node = |fqn: &str, kind: &str, name: &str, path: &'static str| {
+            let (fqn, kind, name) = (fqn.to_string(), kind.to_string(), name.to_string());
+            async move {
+                pg.seed_node_by_fqn(&fid, &fqn, &kind, &name, Some("rust"), Some(def(path)))
+                    .await
+                    .unwrap()
+            }
+        };
+        let ifc = node("rust·p·alpha::core·Ifc", "interface", "Ifc", "a.rs").await;
+        let _s1 = node("rust·p·alpha::core·S1", "struct", "S1", "a.rs").await;
+        let fn1 = node("rust·p·alpha::core·one", "function", "one", "a.rs").await;
+        let s2 = node("rust·p·beta/web·S2", "struct", "S2", "b.rs").await;
+        let fn2 = node("rust·p·beta/web·two", "function", "two", "b.rs").await;
+        let fn3 = node("rust·p·gamma::util·three", "function", "three", "c.rs").await;
+        let ifc2 = node("rust·p·delta/x·Ifc2", "interface", "Ifc2", "d.rs").await;
+        let imp2 = node("rust·p·delta/x·Impl2", "struct", "Impl2", "d2.rs").await;
+        let fn4 = node("rust·p·delta/x·four", "function", "four", "d.rs").await;
+        // A module with a type and NO coupling at all — the other half of the
+        // NULL story, and the one the mockup would place at perfect stability.
+        let _s5 = node("rust·p·zeta/none·S5", "struct", "S5", "z.rs").await;
+        // A SYMBOL whose fqn puts it in a module-shaped name no file is modal
+        // for — #231's shape. `a.rs` holds three `alpha::core` symbols and this
+        // one, so `alpha::core` wins the file and `p/Widget` is recognised by
+        // nothing. It must not become a point.
+        let _w = node("rust·p·Widget·inner", "struct", "inner", "a.rs").await;
+        // LIBRARY SURFACE: `lib·<package>·…` with no definition, so `file_id` is
+        // NULL — which is exactly what makes a node library surface rather than
+        // code. `$lib` is SvelteKit's alias for a package's OWN source and must
+        // NOT count as an external dependency; `extpkg` must.
+        let ext = pg
+            .seed_node_by_fqn(&fid, "lib·extpkg·thing", "function", "thing", None, None)
+            .await
+            .unwrap();
+        let alias = pg
+            .seed_node_by_fqn(&fid, "lib·$lib·helper", "function", "helper", None, None)
+            .await
+            .unwrap();
+
+        // `S2 implements Ifc` is what makes Ifc an abstraction — abstractness is
+        // derived from the EDGES, never from the keyword (see `abstractions`).
+        pg.insert_edge(&fid, &s2, Some(&ifc), None, None, "implements").await.unwrap();
+        // Delta's abstraction is implemented by its own sibling, so delta stays
+        // abstract WITHOUT gaining an afferent dependency.
+        pg.insert_edge(&fid, &imp2, Some(&ifc2), None, None, "implements").await.unwrap();
+        for (s, t) in [(&fn1, &fn2), (&fn3, &fn2), (&fn4, &fn2), (&fn1, &ext), (&fn1, &alias)] {
+            pg.insert_edge(&fid, s, Some(t), None, None, "calls").await.unwrap();
+        }
+        // A SECOND edge of a different kind between the same module pair, so
+        // `module_edges` carries two rows for `alpha -> beta`. Coupling counts
+        // DISTINCT partners, so this must not move Ce(alpha) or Ca(beta) —
+        // without it, counting rows and counting partners agree and the
+        // difference is untestable.
+        pg.insert_edge(&fid, &fn1, Some(&fn2), None, None, "references").await.unwrap();
+
+        let (status, body) =
+            req(app, "GET", &format!("/api/projects/{pid}/diagrams/zones"), None).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let point = |m: &str| {
+            body["points"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["component"] == m)
+                .unwrap_or_else(|| panic!("{m} missing from {}", body["points"]))
+                .clone()
+        };
+        let num = |v: &serde_json::Value| v.as_f64().unwrap();
+        let close = |v: &serde_json::Value, want: f64, what: &str| {
+            assert!((num(v) - want).abs() < 1e-9, "{what}: expected {want}, got {v}")
+        };
+
+        let a = point("p/alpha");
+        assert_eq!((a["types"].as_i64(), a["abstractTypes"].as_i64()), (Some(2), Some(1)));
+        close(&a["abstractness"], 0.5, "A(alpha)");
+        assert_eq!(
+            (a["ca"].as_i64(), a["ce"].as_i64()),
+            (Some(1), Some(2)),
+            "Ce counts the library package too — and NOT the `$lib` alias, which \
+             resolves to the package's own source"
+        );
+        close(&a["instability"], 2.0 / 3.0, "I(alpha)");
+        close(&a["distance"], 1.0 / 6.0, "D(alpha) = |0.5 + 2/3 - 1|");
+        assert_eq!(a["zone"], "main", "abstract in proportion to how unstable it is");
+
+        let b = point("p/beta");
+        close(&b["abstractness"], 0.0, "A(beta) — a type nothing implements");
+        assert_eq!((b["ca"].as_i64(), b["ce"].as_i64()), (Some(3), Some(1)));
+        close(&b["instability"], 0.25, "I(beta)");
+        close(&b["distance"], 0.75, "D(beta)");
+        assert_eq!(b["zone"], "pain", "concrete and depended upon");
+
+        let d = point("p/delta");
+        close(&d["abstractness"], 0.5, "A(delta)");
+        assert_eq!(
+            (d["ca"].as_i64(), d["ce"].as_i64()),
+            (Some(0), Some(1)),
+            "implementing its OWN contract is cohesion, not an afferent dependency"
+        );
+        close(&d["instability"], 1.0, "I(delta)");
+        close(&d["distance"], 0.5, "D(delta)");
+        assert_eq!(d["zone"], "useless", "abstract and depended upon by nothing");
+
+        // The module that declares no type: NULL, not zero, and only for the
+        // half that is genuinely undefined.
+        let g = point("p/gamma");
+        assert_eq!(g["types"].as_i64(), Some(0));
+        assert!(g["abstractness"].is_null(), "no type declared is not 'maximally concrete'");
+        close(&g["instability"], 1.0, "I(gamma) — coupling IS defined for it");
+        assert!(g["distance"].is_null(), "and so D cannot be computed");
+        assert!(g["zone"].is_null());
+
+        // ... and the module nothing touches: A is defined, I is not.
+        let z = point("p/zeta");
+        close(&z["abstractness"], 0.0, "A(zeta)");
+        assert_eq!((z["ca"].as_i64(), z["ce"].as_i64()), (Some(0), Some(0)));
+        assert!(z["instability"].is_null(), "no coupling at all is not 'maximally stable'");
+        assert!(z["distance"].is_null());
+        assert!(z["zone"].is_null());
+
+        // The node universe is the one every other diagram draws: a module is
+        // one `structure_graph` names. Without that, #231's symbol-shaped names
+        // become points — on project `sensei` that is 391 "modules" against a
+        // real 151, with the worst-distance list led by a C struct.
+        assert!(
+            !body["points"].as_array().unwrap().iter().any(|p| p["component"] == "p/Widget"),
+            "a symbol-shaped module no file is modal for is not a point: {}",
+            body["points"]
+        );
+
+        // The count sits beside the picture, so a reader can tell an omitted
+        // point from one that happens to land at the origin.
+        assert_eq!(body["coverage"]["unplaceable"], 2, "gamma has no A, zeta has no I");
+        assert_eq!(body["coverage"]["points"], 5);
+        // The mean is over the PLACEABLE points only: (1/6 + 3/4 + 1/2) / 3.
+        close(&body["meanDistance"], (1.0 / 6.0 + 0.75 + 0.5) / 3.0, "mean distance");
+
+        pg.delete_project(&pid).await.ok();
     }
 
     #[tokio::test]
