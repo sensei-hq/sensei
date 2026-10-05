@@ -107,11 +107,6 @@ const CONCENTRATION_TOP_FRACTION: f64 = 0.20;
 /// The date format `git log --date=short` emits (`%cd`) and both this computer and
 /// the planner parse — the single place the committer-day format lives.
 const GIT_DATE_FMT: &str = "%Y-%m-%d";
-/// Sentinel byte prefixed to each commit's date line in `git log` output so header
-/// lines are unambiguously separable from `--numstat` body lines (SOH never
-/// appears in a file path or an ISO date). See [`parse_numstat_log`].
-const COMMIT_MARK: char = '\u{1}';
-
 /// Run `git` in `root` with `args` and return stdout, or `None` when git is
 /// unavailable, `root` is not a git repo / does not exist, the repo has no commits,
 /// or the command otherwise fails. A `None` is an honest "no git data" (the caller
@@ -205,34 +200,41 @@ fn nth_commit_day_before(root: &str, day: NaiveDate, n: u32) -> Option<NaiveDate
     out.lines().last().and_then(|l| NaiveDate::parse_from_str(l.trim(), GIT_DATE_FMT).ok())
 }
 
-/// Parse `git log --numstat --date=short --pretty=format:'\x01%cd'` output into
-/// per-`(day, file)` line-churn. Each commit contributes a header line
-/// `\x01YYYY-MM-DD` followed by `--numstat` rows `added\tdeleted\tpath`
-/// (`added`/`deleted` are `-` for binary files). A file touched with only binary or
-/// zero-line diffs still appears (weight 0) so it counts toward `churn_rate`'s
-/// distinct-file total. Pure over the captured text so it is unit-testable without a
-/// git subprocess. A day appears ONLY when ≥1 numstat body line was seen (so an
-/// empty commit contributes no day → no fabricated churn).
-fn parse_numstat_log(stdout: &str) -> HashMap<NaiveDate, HashMap<String, i64>> {
+/// Fold parsed commits into per-`(committer day, file)` line churn.
+///
+/// THE PARSER IS SHARED (#224). This used to own a second `--numstat` reader
+/// that split non-`-z` output on tabs, and it was wrong in two measured ways:
+/// of 24,496 records it stored 2,087 (8.51%) rename pseudo-paths like
+/// `{barrier.rs => quality/reachability.rs}` and 30 C-quoted octal paths as if
+/// they were file paths — 8.6% of what it called a path could not be one. It
+/// also turned a binary file's UNKNOWN churn into a reported `0` via
+/// `unwrap_or(0)`. Reading bytes under `-z` through
+/// [`crate::indexer::git_history`] fixes both at the source, and the DRY rule
+/// means there is now exactly one such reader in the tree.
+///
+/// WHAT IS DELIBERATELY UNCHANGED, because churn's values must not move:
+/// the bucket is the COMMITTER day (`%cI`, which is why the shared parser
+/// carries it beside the author date), and a binary file still appears with
+/// weight 0 rather than being dropped — it is a touched file, and
+/// `churn_rate`'s distinct-file denominator counts it. `None` means unknown in
+/// the parser; here that unknown is weighted 0, which is this metric's
+/// long-standing choice rather than a fabrication introduced by the parser.
+///
+/// Pure over already-parsed commits so it is unit-testable without a git
+/// subprocess, exactly as its predecessor was.
+fn fold_churn_by_day(
+    commits: &[crate::indexer::git_history::Commit],
+) -> HashMap<NaiveDate, HashMap<String, i64>> {
     let mut by_day: HashMap<NaiveDate, HashMap<String, i64>> = HashMap::new();
-    let mut current: Option<NaiveDate> = None;
-    for line in stdout.lines() {
-        if let Some(rest) = line.strip_prefix(COMMIT_MARK) {
-            current = NaiveDate::parse_from_str(rest.trim(), GIT_DATE_FMT).ok();
-            continue;
+    for c in commits {
+        let day = c.committed_day();
+        for f in &c.files {
+            // A path Postgres could not store is also a path this metric cannot
+            // name. Skipping is honest; inventing a lossy decode is not.
+            let Some(path) = f.path.as_str() else { continue };
+            let weight = f.lines_changed.unwrap_or(0);
+            *by_day.entry(day).or_default().entry(path.to_string()).or_insert(0) += weight;
         }
-        let Some(day) = current else { continue };
-        // numstat body: added \t deleted \t path (path may itself contain tabs).
-        let mut parts = line.splitn(3, '\t');
-        let (Some(add), Some(del), Some(path)) = (parts.next(), parts.next(), parts.next()) else {
-            continue;
-        };
-        if path.is_empty() {
-            continue;
-        }
-        // Binary files report '-' for both counts → 0 line-churn, still a touched file.
-        let weight = add.parse::<i64>().unwrap_or(0) + del.parse::<i64>().unwrap_or(0);
-        *by_day.entry(day).or_default().entry(path.to_string()).or_insert(0) += weight;
     }
     by_day
 }
@@ -279,14 +281,19 @@ fn git_day_file_churn(
     };
     let since = (lo - chrono::Duration::days(2)).format(GIT_DATE_FMT).to_string();
     let until = (hi + chrono::Duration::days(2)).format(GIT_DATE_FMT).to_string();
-    let pretty = format!("--pretty=format:{COMMIT_MARK}%cd");
     let author_flag = author.map(|email| format!("--author={email}"));
+    // `-z -M` and the shared pretty format, so the ONE parser in the tree can
+    // read this. The revision scope stays churn's own — no `--branches
+    // --remotes --tags` here, because this metric is about the checked-out
+    // branch's activity in a window, not the repository's whole tip set.
     let mut args: Vec<&str> = vec![
         "log",
         "--no-merges",
+        "--no-show-signature",
+        "-z",
+        "-M",
         "--numstat",
-        "--date=short",
-        &pretty,
+        crate::indexer::git_history::PRETTY_FORMAT,
         "--since",
         &since,
         "--until",
@@ -295,10 +302,15 @@ fn git_day_file_churn(
     if let Some(ref a) = author_flag {
         args.push(a);
     }
-    let Some(out) = run_git(root, &args) else {
+    // Bytes, not a lossy string: a path is not guaranteed UTF-8 and
+    // `from_utf8_lossy` would rename it to something that was never there.
+    let Ok(out) = crate::git::run_bytes(std::path::Path::new(root), &args) else {
         return HashMap::new();
     };
-    let mut by_day = parse_numstat_log(&out);
+    let Ok(commits) = crate::indexer::git_history::parse_log(&out) else {
+        return HashMap::new();
+    };
+    let mut by_day = fold_churn_by_day(&commits);
     by_day.retain(|d, _| *d >= lo && *d <= hi);
     by_day
 }
@@ -567,16 +579,52 @@ mod tests {
 
     // ── Pure: numstat parser ─────────────────────────────────────────────────
 
+    /// The SAME day/file/weight arithmetic the hand-rolled parser produced —
+    /// now folded from the shared reader (#224).
+    ///
+    /// The assertions are unchanged from the predecessor on purpose: this
+    /// metric's values must not move because its parser did. What DID change is
+    /// upstream and strictly better — a rename now yields the post-image path
+    /// instead of a `{old => new}` string, and a non-UTF-8 path survives.
+    ///
+    /// MUTATION THAT MUST BREAK IT: bucket on `authored_day()` instead of
+    /// `committed_day()`, or drop the `unwrap_or(0)` so a binary file stops
+    /// counting as a touched file.
     #[test]
-    fn parse_numstat_log_buckets_line_churn_by_day_and_file() {
-        // Two commits on 2020-01-01 (a.rs +3/-1, b.rs +0/-2) and one on 2020-01-02
-        // (a.rs +5/-0, bin -/- binary). Per-(day,file) weight = added + deleted; a
-        // binary file (`-`/`-`) still appears with weight 0 (a touched file).
-        let m = '\u{1}';
-        let log = format!(
-            "{m}2020-01-01\n3\t1\ta.rs\n0\t2\tb.rs\n{m}2020-01-01\n2\t0\ta.rs\n{m}2020-01-02\n5\t0\ta.rs\n-\t-\tbin.png\n"
-        );
-        let by_day = parse_numstat_log(&log);
+    fn churn_folds_line_churn_by_committer_day_and_file() {
+        use crate::indexer::git_history::parse_log;
+
+        // Two commits on 2020-01-01 (a.rs +3/-1, b.rs +0/-2; then a.rs +2/-0)
+        // and one on 2020-01-02 (a.rs +5/-0, bin.png binary). Author dates are
+        // deliberately a DIFFERENT day, so bucketing on the wrong one fails.
+        let mut log: Vec<u8> = Vec::new();
+        let fixtures = [
+            (b"a".repeat(40), "2020-01-01T10:00:00+00:00", "3\t1\ta.rs\u{0}0\t2\tb.rs"),
+            (b"b".repeat(40), "2020-01-01T11:00:00+00:00", "2\t0\ta.rs"),
+            (b"c".repeat(40), "2020-01-02T10:00:00+00:00", "5\t0\ta.rs\u{0}-\t-\tbin.png"),
+        ];
+        let last = fixtures.len() - 1;
+        for (i, (sha, committed, body)) in fixtures.into_iter().enumerate() {
+            log.push(0x01);
+            log.extend_from_slice(&sha);
+            log.push(0);
+            log.extend_from_slice(b"2019-12-25T00:00:00+00:00"); // author day differs
+            log.push(0);
+            log.extend_from_slice(committed.as_bytes());
+            log.push(0);
+            log.extend_from_slice(b"dev@example.com\n");
+            log.extend_from_slice(body.as_bytes());
+            log.push(0);
+            // The EMPTY record `format:` writes BETWEEN commits — and not after
+            // the last one. Verified against real `git log` output rather than
+            // assumed; a trailing separator desyncs the parser.
+            if i != last {
+                log.push(0);
+            }
+        }
+
+        let commits = parse_log(&log).expect("fixture parses");
+        let by_day = fold_churn_by_day(&commits);
         let d1 = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
         let d2 = NaiveDate::from_ymd_opt(2020, 1, 2).unwrap();
         assert_eq!(by_day[&d1]["a.rs"], 6, "a.rs day-1 churn = (3+1)+(2+0) = 6");
@@ -585,6 +633,10 @@ mod tests {
         assert_eq!(by_day[&d2]["a.rs"], 5, "a.rs day-2 churn = 5+0 = 5");
         assert_eq!(by_day[&d2]["bin.png"], 0, "binary file counts as a touched file (weight 0)");
         assert_eq!(by_day[&d2].len(), 2, "a.rs + bin.png distinct on day 2");
+        assert!(
+            !by_day.contains_key(&NaiveDate::from_ymd_opt(2019, 12, 25).unwrap()),
+            "the AUTHOR day must not appear — churn buckets on the committer day"
+        );
     }
 
     // ── Git-sourced churn (temp repo fixtures) ───────────────────────────────

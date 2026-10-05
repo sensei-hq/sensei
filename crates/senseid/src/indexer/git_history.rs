@@ -200,7 +200,7 @@ const BINARY_MARKER: &[u8] = b"-";
 /// The commit header format. `%x01` here and [`COMMIT_SENTINEL`] are the same
 /// byte written twice, and `the_pretty_format_and_the_sentinel_cannot_drift`
 /// holds them together.
-pub const PRETTY_FORMAT: &str = "--pretty=format:%x01%H%x00%aI%x00%ae";
+pub const PRETTY_FORMAT: &str = "--pretty=format:%x01%H%x00%aI%x00%cI%x00%ae";
 
 /// The ref namespaces that make up THE TIP SET, as `git log` pseudo-refs.
 ///
@@ -318,6 +318,16 @@ pub struct Commit {
     /// See the module docs for why this is not the committer date.
     pub authored_at: DateTime<FixedOffset>,
 
+    /// The **committer** date from `%cI`.
+    ///
+    /// Carried beside `authored_at` because the two are not interchangeable and
+    /// both have a consumer. History windows on the AUTHOR date — it survives a
+    /// rebase, so one logical change buckets identically through two checkouts.
+    /// The churn metric buckets on the COMMITTER date and shares that choice
+    /// with the planner's day discovery, so the two cannot drift; reading churn
+    /// off the author date would silently move its values between days.
+    pub committed_at: DateTime<FixedOffset>,
+
     /// `%ae`, or `None` when the commit object's author line carries `<>`.
     ///
     /// An empty email is an absent identity, not an identity that is the empty
@@ -336,6 +346,14 @@ impl Commit {
     /// under the day before. The day bucket is a human-activity bucket.
     pub fn authored_day(&self) -> NaiveDate {
         self.authored_at.date_naive()
+    }
+
+    /// The calendar day in the COMMITTER's own offset — the churn bucket.
+    ///
+    /// Same offset argument as [`Self::authored_day`]: the day is a
+    /// human-activity bucket, so it is read in the offset the event carried.
+    pub fn committed_day(&self) -> NaiveDate {
+        self.committed_at.date_naive()
     }
 }
 
@@ -599,7 +617,16 @@ pub fn parse_log(stdout: &[u8]) -> Result<Vec<Commit>, GitLogError> {
                 raw: raw_when.into(),
             })?;
 
-        // The third header field is `email` or `email LF <first entry>`. Split at
+        let (_, raw_committed) = fields.next_field().ok_or_else(truncated)?;
+        let committed_at = std::str::from_utf8(raw_committed)
+            .ok()
+            .and_then(|w| DateTime::parse_from_rfc3339(w).ok())
+            .ok_or_else(|| GitLogError::MalformedAuthoredAt {
+                sha: sha.clone(),
+                raw: raw_committed.into(),
+            })?;
+
+        // The FOURTH header field is `email` or `email LF <first entry>`. Split at
         // the FIRST LF: an email cannot contain one, so everything after it
         // belongs to the diff — including a path that contains LF itself, which
         // stays intact because only the first is consumed.
@@ -631,7 +658,7 @@ pub fn parse_log(stdout: &[u8]) -> Result<Vec<Commit>, GitLogError> {
             }
         }
 
-        commits.push(Commit { sha, authored_at, author_email, files });
+        commits.push(Commit { sha, authored_at, committed_at, author_email, files });
     }
 
     Ok(commits)
@@ -654,12 +681,49 @@ mod tests {
 
     // ── the grammar, one shape per test ──────────────────────────────────────
 
+    /// The COMMITTER date is carried alongside the author date.
+    ///
+    /// Both are needed and they are not interchangeable. History buckets on the
+    /// AUTHOR date because it survives a rebase and a cherry-pick, so one
+    /// logical change lands in the same window through two checkouts. The churn
+    /// metric buckets on the COMMITTER date, and shares that choice with the
+    /// planner's day discovery so the two cannot drift — migrating churn onto
+    /// this parser without carrying `%cI` would silently move its values
+    /// between days.
+    ///
+    /// MUTATION THAT MUST BREAK IT: drop `%x00%cI` from `PRETTY_FORMAT`, or
+    /// return `authored_at` from `committed_day`.
+    #[test]
+    fn a_commit_carries_the_committer_date_as_well_as_the_author_date() {
+        let log = nul_join(&[
+            b"\x01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"2020-01-01T23:30:00+09:00",
+            b"2020-03-05T04:00:00+00:00",
+            b"dev@example.com\n3\t1\ta.rs",
+        ]);
+
+        let commits = parse_log(&log).expect("a well-formed stream parses");
+        let c = &commits[0];
+        assert_eq!(
+            c.authored_day().to_string(),
+            "2020-01-01",
+            "the author's own day, not the UTC one"
+        );
+        assert_eq!(
+            c.committed_day().to_string(),
+            "2020-03-05",
+            "a rebase moves the committer date; churn buckets on it"
+        );
+        assert_ne!(c.authored_day(), c.committed_day(), "the fixture exercises both");
+    }
+
     #[test]
     fn a_plain_commit_yields_its_touches_with_added_plus_deleted() {
         // MUTATION THAT MUST BREAK IT: in `parse_entry`, return `Some(a)` instead
         // of `Some(a.checked_add(d)?)` — the deleted column stops counting.
         let log = nul_join(&[
             b"\x01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            b"2020-01-01T09:30:00+00:00",
             b"2020-01-01T09:30:00+00:00",
             b"dev@example.com\n3\t1\ta.rs",
             b"0\t2\tsrc/b.rs",
@@ -685,6 +749,7 @@ mod tests {
         // path that no longer exists.
         let log = nul_join(&[
             b"\x01bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            b"2020-02-02T00:00:00+00:00",
             b"2020-02-02T00:00:00+00:00",
             b"dev@example.com\n1\t1\tkeep.rs",
             b"38\t24\t",
@@ -720,6 +785,7 @@ mod tests {
         let log = nul_join(&[
             b"\x01cccccccccccccccccccccccccccccccccccccccc",
             b"2020-03-03T00:00:00+00:00",
+            b"2020-03-03T00:00:00+00:00",
             b"dev@example.com\n-\t-\tassets/logo.png",
             b"0\t0\ttouched-but-unchanged.rs",
         ]);
@@ -748,6 +814,7 @@ mod tests {
         // defect.
         let mut log = Vec::new();
         log.extend_from_slice(b"\x01dddddddddddddddddddddddddddddddddddddddd\x00");
+        log.extend_from_slice(b"2020-04-04T00:00:00+00:00\x00");
         log.extend_from_slice(b"2020-04-04T00:00:00+00:00\x00");
         log.extend_from_slice(b"dev@example.com\n1\t0\td\xe9j\xe0.txt\x00");
 
@@ -780,6 +847,7 @@ mod tests {
         // entry reached by a different code path. It must use the SAME cursor.
         let log = nul_join(&[
             b"\x01eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            b"2020-05-05T00:00:00+00:00",
             b"2020-05-05T00:00:00+00:00",
             b"dev@example.com\n7\t3\t",
             b"old/name.rs",
@@ -826,11 +894,14 @@ mod tests {
         let log = nul_join(&[
             b"\x01f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0",
             b"2020-06-06T00:00:00+00:00",
+            b"2020-06-06T00:00:00+00:00",
             b"merger@example.com",
             b"\x01f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
             b"2020-06-07T00:00:00+00:00",
+            b"2020-06-07T00:00:00+00:00",
             b"merger@example.com",
             b"\x01f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2",
+            b"2020-06-08T00:00:00+00:00",
             b"2020-06-08T00:00:00+00:00",
             b"dev@example.com\n1\t0\treal.rs",
         ]);
@@ -872,6 +943,7 @@ mod tests {
         let log = nul_join(&[
             b"\x019999999999999999999999999999999999999999",
             b"2020-07-07T00:00:00+00:00",
+            b"2020-07-07T00:00:00+00:00",
             b"dev@example.com\n1\t0\t\x01first-entry.rs",
             b"2\t0\t\x01later-entry.rs",
             b"5\t5\t",
@@ -880,6 +952,7 @@ mod tests {
             b"3\t0\tplain.rs",
             b"", // the commit separator
             b"\x018888888888888888888888888888888888888888",
+            b"2020-07-08T00:00:00+00:00",
             b"2020-07-08T00:00:00+00:00",
             b"dev@example.com\n4\t0\tnext.rs",
         ]);
@@ -924,6 +997,7 @@ mod tests {
         let mut log = Vec::new();
         log.extend_from_slice(b"\x010a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a\x00");
         log.extend_from_slice(b"2020-08-08T00:00:00+00:00\x00");
+        log.extend_from_slice(b"2020-08-08T00:00:00+00:00\x00");
         log.extend_from_slice(b"dev@example.com\n4\t0\tweird\nname.rs\x00");
 
         let c = &parse_log(&log).expect("a newline inside a path parses")[0];
@@ -942,6 +1016,7 @@ mod tests {
         let log = nul_join(&[
             b"\x017777777777777777777777777777777777777777",
             b"2020-09-09T00:00:00+00:00",
+            b"2020-09-09T00:00:00+00:00",
             b"\n1\t0\ta.rs",
         ]);
 
@@ -957,6 +1032,7 @@ mod tests {
         // previous day and lands in the wrong churn bucket.
         let log = nul_join(&[
             b"\x016666666666666666666666666666666666666666",
+            b"2026-01-01T01:00:00+09:00",
             b"2026-01-01T01:00:00+09:00",
             b"dev@example.com\n1\t0\ta.rs",
         ]);
@@ -980,6 +1056,7 @@ mod tests {
         let log = nul_join(&[
             b"\x015555555555555555555555555555555555555555",
             b"2020-10-10T00:00:00+00:00",
+            b"2020-10-10T00:00:00+00:00",
             b"dev@example.com\n1\t1\t",
             b"only/the/pre-image.rs",
         ]);
@@ -1001,6 +1078,7 @@ mod tests {
         // binary file.
         let log = nul_join(&[
             b"\x014444444444444444444444444444444444444444",
+            b"2020-11-11T00:00:00+00:00",
             b"2020-11-11T00:00:00+00:00",
             b"dev@example.com\n1x\t0\ta.rs",
         ]);
@@ -1071,6 +1149,7 @@ mod tests {
         log.extend_from_slice(&nul_join(&[
             b"\x011111111111111111111111111111111111111111",
             b"2020-01-01T00:00:00+00:00",
+            b"2020-01-01T00:00:00+00:00",
             b"dev@example.com\n1\t0\ta.rs",
         ]));
 
@@ -1101,7 +1180,7 @@ mod tests {
                 "-z",
                 "-M",
                 "--numstat",
-                "--pretty=format:%x01%H%x00%aI%x00%ae",
+                "--pretty=format:%x01%H%x00%aI%x00%cI%x00%ae",
                 "--branches",
                 "--remotes",
                 "--tags",
@@ -1109,8 +1188,17 @@ mod tests {
         );
         assert!(!args.iter().any(|a| a == "--all"), "--all sweeps refs/stash and refs/original");
         assert!(!args.iter().any(|a| a == "HEAD"), "HEAD alone is one checkout's opinion");
-        assert!(args.iter().any(|a| a.contains("%aI")), "author date, not committer date");
-        assert!(!args.iter().any(|a| a.contains("%cI") || a.contains("%cd")), "no committer date");
+        // BOTH dates, and the reason each is here. History windows on %aI
+        // because it survives a rebase, so one logical change buckets the same
+        // through two checkouts. churn buckets on %cI and shares that with the
+        // planner's day discovery, so carrying it is what lets the two share
+        // ONE parser without churn's values moving between days.
+        assert!(args.iter().any(|a| a.contains("%aI")), "the author date, for history windows");
+        assert!(args.iter().any(|a| a.contains("%cI")), "the committer date, for churn");
+        assert!(
+            !args.iter().any(|a| a.contains("%cd")),
+            "%cd is the short committer date churn used to read; %cI supersedes it"
+        );
     }
 
     #[test]
@@ -1204,6 +1292,7 @@ mod tests {
     const MEASURED: &[&[u8]] = &[
         b"\x019ed345d596d38b5ce023898423ea8b1e1f3b4705\x00",
         b"2026-09-29T18:58:51-05:00\x00",
+        b"2026-09-29T18:58:51-05:00\x00",
         b"hi@sensei-hq.com\n1\t1\tcrates/senseid/src/indexer/facts.rs\x00",
         b"3\t3\tcrates/senseid/src/indexer/impact.rs\x00",
         b"1\t1\tcrates/senseid/src/indexer/lang/c/walk.rs\x00",
@@ -1232,7 +1321,7 @@ mod tests {
         // rename — the two renames below sit in the MIDDLE of sixteen entries, so
         // an off-by-one consumes a real entry and the count drops.
         let log: Vec<u8> = MEASURED.concat();
-        assert_eq!(log.len(), 877, "the fixture is the measured byte count, unedited");
+        assert_eq!(log.len(), 903, "the fixture is the measured byte count, unedited");
 
         let commits = parse_log(&log).expect("real git output parses");
         assert_eq!(commits.len(), 1, "a single-commit walk is one commit");
