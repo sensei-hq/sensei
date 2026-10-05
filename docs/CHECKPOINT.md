@@ -36,40 +36,18 @@ Issues are the tracker; this is the position in the queue.
 
     [x] #215 registering a root enqueues a scan        91809876
     [x] #216 watcher batch needs no database           91809876
-    [ ] #224 git history scanner  ← BUILDING
-        [x] 1 DDL: commits · commit_files · commit_scans   (applied, 3 DBs)
-        [x] 2 git helper: exit-code granularity, 19 tests, mutation-probed
-        [x] 3 numstat parser: -z bytes, 24 tests; braces 2,087→0, cquote 30→0
-        [x] 4 ScanGitHistory TaskKind + handler + enqueue (3 tests, probed)
-        [ ] 5 migrate churn.rs onto the shared parser  ← LAST ITEM
-            DRY is VIOLATED until this lands: two numstat parsers exist.
-            Needs the parser to also carry the COMMITTER date — churn
-            buckets on %cd, history on %aI (survives rebase). Migrating
-            without that silently moves churn values between days.
-        [x] 6 retention prune: 400d default, floor enforced, 4 tests
-        [ ] 7 gates + close #224   (6fdfd84d landed items 1,2,3,4,6)
-        v1 pruned commits by `rev-list HEAD` reachability → 28 problems. Killed.
-        v2 = INSERT-ONLY and validated. Why the prune was never needed: 4,298 of
-        6,654 paths ever touched in sensei (65%) no longer exist, so they have
-        no `files` row and cannot reach a diagram. EXISTENCE is the filter, not
-        reachability.
-        Walk the TIP SET (`--branches --remotes --tags`), not HEAD and not
-        `--all`: 3 of 4 co-keyed checkout pairs then produce byte-identical
-        commit sets (symmetric difference 0; the 4th is 1.7%), so two checkouts
-        agree instead of fighting. `--all` sweeps `refs/stash` + `refs/original`.
-        Tables: commits(repository_id, sha, authored_at, author_email) ·
-        commit_files(repository_id, sha, path, lines_changed) ·
-        commit_scans(folder_id PK — cursor is per CHECKOUT, facts per repository).
-        authored_at not committed_at: survives rebase/cherry-pick so one logical
-        change buckets identically through two checkouts. Diverges from churn.rs
-        (committer date) — named, not silent. No file_id (65% would be NULL).
-        Decisions: cap 50 · window 90 configurable · ownership configurable
-        (commits/lines/recency, default commits) · retention 400d with an
-        enforced `retention_days >= max(window_days)` floor.
-        Folds in two live churn.rs bugs: 2,087/24,496 records (8.5%) are rename
-        pseudo-paths stored verbatim, 30 more are C-quoted octal; and
-        `unwrap_or(0)` reports a binary file's UNKNOWN churn as zero. `-z` + one
-        shared parser fixes both (DRY forbids a second numstat parser).
+    [x] #224 git history scanner — CLOSED
+        Insert-only commits/commit_files/commit_scans, a -z byte parser, a git
+        helper with exit-code granularity, ScanGitHistory, and 400d retention
+        with an enforced `retention >= max(window)` floor.
+        churn.rs migrated onto the shared parser, so ONE numstat reader exists.
+        LIVE on this machine: 70,679 commits · 631,465 touches · 80 checkouts ·
+        77 repositories (3 repos with 2 checkouts each — separate cursors, one
+        fact set, which is the whole design). 0 brace pseudo-paths and 0
+        C-quoted paths where the old reader produced 8.6%. 27,752 binary files
+        NULL (unknown) vs 19,986 genuine zero-line diffs — the old
+        `unwrap_or(0)` conflated all 47,738. Co-change: 7,287 pairs in 649 ms
+        at query time with the 50-file cap, so nothing is materialised.
     [ ] #222 derivation: SCC + layering (Cycles, Layers)
     [ ] #223 derivation: Zones + Dependency matrix
     [ ] #227 persistence layer: fold in or document the exception
