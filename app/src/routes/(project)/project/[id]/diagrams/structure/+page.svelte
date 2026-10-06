@@ -1,6 +1,6 @@
 <script lang="ts">
     import { StructureDiagram, BundleControl } from '@rokkit/graph';
-    import { PageHeader } from '$lib/components';
+    import { PageHeader, ToggleChip } from '$lib/components';
     import { senseiApi } from '$lib/api.js';
     import { appState } from '$lib/appstate.svelte.js';
     import {
@@ -30,33 +30,24 @@
     <div class="flex flex-wrap items-center gap-4">
         <div class="flex items-center gap-2" role="group" aria-label="Level">
             {#each LEVELS as level (level)}
-                <button
-                    type="button"
-                    class="px-3 py-1 text-sm rounded border border-paper-edge bg-transparent cursor-pointer"
-                    class:bg-primary={view.level === level}
-                    class:text-on-primary={view.level === level}
-                    aria-pressed={view.level === level}
-                    data-testid={`structure-level-${level}`}
-                    onclick={() => view.setLevel(level)}
-                >
-                    {level}
-                </button>
+                <ToggleChip
+                    label={level}
+                    pressed={view.level === level}
+                    testid={`structure-level-${level}`}
+                    onpress={() => view.setLevel(level)}
+                />
             {/each}
         </div>
 
         <div class="flex items-center gap-2" role="group" aria-label="Edge kinds">
             {#each KINDS as kind (kind)}
-                <button
-                    type="button"
-                    class="px-2 py-1 text-xs rounded border border-paper-edge bg-transparent cursor-pointer"
-                    class:bg-primary={view.kinds.includes(kind)}
-                    class:text-on-primary={view.kinds.includes(kind)}
-                    aria-pressed={view.kinds.includes(kind)}
-                    data-testid={`structure-kind-${kind}`}
-                    onclick={() => view.toggleKind(kind)}
-                >
-                    {kind}
-                </button>
+                <ToggleChip
+                    label={kind}
+                    size="xs"
+                    pressed={view.kinds.includes(kind)}
+                    testid={`structure-kind-${kind}`}
+                    onpress={() => view.toggleKind(kind)}
+                />
             {/each}
         </div>
 

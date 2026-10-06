@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { PageHeader } from '$lib/components';
+    import { PageHeader, ToggleChip } from '$lib/components';
     import { senseiApi } from '$lib/api.js';
     import { appState } from '$lib/appstate.svelte.js';
     import { DIAGRAM_VIEWS } from '../diagrams-nav.js';
@@ -23,17 +23,12 @@
 <div class="flex flex-col gap-4 p-4" data-testid="cycles-screen">
     <div class="flex items-center gap-2" role="group" aria-label="Level">
         {#each LEVELS as level (level)}
-            <button
-                type="button"
-                class="px-3 py-1 text-sm rounded border border-paper-edge bg-transparent cursor-pointer"
-                class:bg-primary={view.level === level}
-                class:text-on-primary={view.level === level}
-                aria-pressed={view.level === level}
-                data-testid={`cycles-level-${level}`}
-                onclick={() => view.setLevel(level)}
-            >
-                {level}
-            </button>
+            <ToggleChip
+                label={level}
+                pressed={view.level === level}
+                testid={`cycles-level-${level}`}
+                onpress={() => view.setLevel(level)}
+            />
         {/each}
     </div>
 
