@@ -553,6 +553,8 @@ mod pack_resolution_tests;
 #[allow(clippy::await_holding_lock)]
 mod playbook_tests;
 #[cfg(test)]
+mod resolution_tests;
+#[cfg(test)]
 // `resume_test_guard()` is a blocking `std::sync::Mutex` held across awaits on
 // purpose — see `crate::tasks::test_support::TestGate` for why an async mutex loses
 // wakeups here. These are current-thread test runtimes, one per test, so
