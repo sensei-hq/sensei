@@ -35,8 +35,21 @@ anything later; the reasoning is below the list, not implied by it.
         97.2% of import edges were never CLASSIFIED (→ #242), so the
         2.6% figure divided by a population nobody asked about.
         csharp calls place at 15.5% vs java 43% vs corpus 29.6%.
-    [ ] #242 97.2% of import edges are never classified   ← NEXT
-    [ ] #231 fqn segment 3 is a SYMBOL for some adapters
+    [x] #242 97.2% of import edges are never classified  0a667709 4cc6dc2b
+        `Import` carries a `target: Resolution` like `Reference` does;
+        `resolve` places it through `Ladder::place_brought`. External
+        imports now land on LIBRARY SURFACE by `fully_qualified_external`,
+        the same door a call to that member uses — so "who depends on
+        serde" is answerable from the one edge kind that names a
+        dependency. `place_entered` delegates, which also collapsed a
+        DOUBLE ROW: one `use` line wrote two `imports` edges whenever the
+        specifier named a module (7 rows for 6 lines in playbook/mod.rs).
+        Found and fixed on the way: `upsert_lib_node_by_fqn` stamped
+        `modified_at = now()` unconditionally, so a re-scan churned two
+        rows per external dependency.
+        NEEDS A RE-INDEX to move the live numbers — the placement comes
+        from the walk, so backfill-edge-verdicts.sh cannot help.
+    [ ] #231 fqn segment 3 is a SYMBOL for some adapters   ← NEXT
 
     -- C. screens --
     [ ] #232 Layers + Cycles screens — `up` is now POPULATED (2e898607)
