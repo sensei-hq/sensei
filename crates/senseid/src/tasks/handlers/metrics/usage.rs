@@ -30,7 +30,6 @@
 //! per-session ratios weights each session equally, so short sessions actually
 //! move the number. Both are written to props so the reading stays transparent.
 
-use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;

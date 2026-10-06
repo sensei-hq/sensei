@@ -317,43 +317,6 @@ fn git_day_file_churn(
     by_day
 }
 
-/// `# project files` — `kind = 'file'` nodes across the project's folders (the
-/// `rework_density` denominator). One scalar count; the former per-folder breakdown
-/// is gone with the per-module rows.
-async fn project_file_count(pg: &PgStore, project_id: &uuid::Uuid) -> Result<i64, String> {
-    let (total,): (i64,) = sqlx_core::query_as::query_as(
-        "SELECT count(*)::int8
-           FROM sensei.nodes   n
-           JOIN sensei.folder_projects fp ON fp.folder_id = n.folder_id
-          WHERE fp.project_id = $1
-            AND n.kind        = 'file'::sensei.node_kind",
-    )
-    .bind(project_id)
-    .fetch_one(pg.pool())
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(total)
-}
-
-/// `# rework-flagged files` — `inference.detected_patterns` rows the analyzer writes
-/// as `name = "rework: <file>"` (`is_anti_pattern`). One row per file (the table's
-/// uniqueness is `(project_id, name, is_anti_pattern)`), so a row count IS a
-/// distinct-file count — the `rework_density` numerator.
-async fn rework_count(pg: &PgStore, project_id: &uuid::Uuid) -> Result<i64, String> {
-    let (total,): (i64,) = sqlx_core::query_as::query_as(
-        "SELECT count(*)::int8
-           FROM inference.detected_patterns
-          WHERE project_id      = $1
-            AND is_anti_pattern
-            AND name LIKE 'rework: %'",
-    )
-    .bind(project_id)
-    .fetch_one(pg.pool())
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(total)
-}
-
 /// Compute the `churn` group for one project. `project_raw` is the project uuid
 /// carried in `task.folder_path`. `as_of` is the target `computed_on` day:
 /// - `churn_rate` / `churn_concentration` (git-sourced, per-repository): `Some(D)`
@@ -527,11 +490,11 @@ pub(super) async fn compute(
         // repository → honest-empty (no row). The former per-module (folder_id-set)
         // rows are retired (they collide under project_metrics_identity).
         if let Some(repository_id) = pg.primary_repository_for_project(&project_id).await? {
-            let project_files = project_file_count(pg, &project_id).await?;
+            let project_files = pg.churn_project_file_count(&project_id).await?;
             // 0 project files → no denominator → NO row (a real denominator of 0
             // would be a fabricated 0/0). 0 rework over real files → a real 0.0.
             if project_files > 0 {
-                let rework_total = rework_count(pg, &project_id).await?;
+                let rework_total = pg.churn_rework_flagged_file_count(&project_id).await?;
                 let day = super::today(pg).await?;
                 let value = rework_total as f64 / project_files as f64;
                 // I-F: ratio rows carry props.numerator + props.denominator.

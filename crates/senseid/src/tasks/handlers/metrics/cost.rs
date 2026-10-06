@@ -14,11 +14,9 @@
 //! fee is incurred: you are billed for a period, not a day. So this is a SNAPSHOT
 //! group — computed today-only, forward-only, no watermark (like `knowledge`).
 //!
-//! ## What counts as a result
-//!
-//! Merged runs + accepted recommendations. Both are things the user shipped or
-//! adopted — a completed *session* is activity, not delivery, and counting it
-//! would make the metric fall simply because someone worked more.
+//! What counts as a result — merged runs + accepted recommendations, and why a
+//! completed session is not one — is documented with the query that counts them,
+//! in `db::pg_store::metric_reads::cost`.
 //!
 //! Honest-empty throughout: no configured subscription → no row (never a
 //! fabricated price); a window that delivered nothing → no row (dividing by zero
@@ -26,7 +24,6 @@
 //! stretch infinitely expensive rather than idle).
 
 use crate::cost::{COST_WINDOW_DAYS, SUBSCRIPTION_CONFIG_KEY, Subscription};
-use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;
@@ -36,30 +33,6 @@ const GRAIN_DAILY: &str = "daily";
 const SOURCE_MEASURED: &str = "measured";
 const SCOPE_USER: &str = "user";
 const KEY_COST_PER_RESULT: &str = "cost_per_result";
-
-/// Results delivered for `project_id` within the trailing window: merged runs +
-/// accepted recommendations. Counted separately so the props can show which
-/// contributed — a cost that moved because recommendations dried up is a
-/// different story from one that moved because runs stopped merging.
-async fn results_in_window(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    window_days: u32,
-) -> Result<(i64, i64), String> {
-    let sql = format!(
-        "SELECT (SELECT count(*) FROM activity.runs \
-                  WHERE project_id = $1 AND status = 'done' \
-                    AND completed_at > now() - interval '{window_days} days')::int8, \
-                (SELECT count(*) FROM inference.recommendations \
-                  WHERE project_id = $1 AND status = 'accepted' \
-                    AND acted_at > now() - interval '{window_days} days')::int8"
-    );
-    sqlx_core::query_as::query_as::<_, (i64, i64)>(&sql)
-        .bind(project_id)
-        .fetch_one(pg.pool())
-        .await
-        .map_err(|e| e.to_string())
-}
 
 pub(super) async fn compute(
     ctx: &TaskContext,
@@ -88,7 +61,8 @@ pub(super) async fn compute(
         return Ok(0);
     };
 
-    let (merged_runs, accepted_recs) = results_in_window(pg, &project_id, COST_WINDOW_DAYS).await?;
+    let (merged_runs, accepted_recs) =
+        pg.cost_results_in_window(&project_id, COST_WINDOW_DAYS).await?;
     let results = merged_runs + accepted_recs;
     let Ok(results_u32) = u32::try_from(results) else {
         return Ok(0);
@@ -134,6 +108,7 @@ pub(super) async fn compute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::pg_store::PgStore;
 
     /// `cost.subscription` is ONE row in a database every test shares (#183), so
     /// the two tests that set it would otherwise race: one clears the key while
@@ -169,10 +144,11 @@ mod tests {
         assert!(compute(&ctx, "not-a-uuid", None).await.is_err());
     }
 
-    /// `results_in_window` actually RUNS, and its answer reaches the row (#227).
+    /// `PgStore::cost_results_in_window` actually RUNS, and its answer reaches
+    /// the row (#227).
     ///
     /// The two tests above both return before it: one at "no plan configured",
-    /// the other at the uuid parse. So the only SQL in this module — four
+    /// the other at the uuid parse. So the group's only production SQL — four
     /// schema objects across two schemas, assembled with `format!` and
     /// therefore invisible to `check-sql-against-schema.py` — was executed by
     /// nothing, and a column renamed under it would have broken production with
@@ -180,7 +156,7 @@ mod tests {
     /// exist into that query left this module GREEN before this test existed.
     ///
     /// Mutation that must break this test: break the `activity.runs` half of
-    /// `results_in_window` — the assertion is on the count it returns, not
+    /// `cost_results_in_window` — the assertion is on the count it returns, not
     /// merely on the call succeeding.
     #[tokio::test]
     async fn a_configured_plan_counts_delivered_results_through_the_window_query() {
