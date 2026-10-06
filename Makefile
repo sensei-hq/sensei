@@ -60,6 +60,13 @@ VERSION := $(shell cat VERSION)
 # lean Ollama-only build on a host without that toolchain.
 CRATE_FEATURES := $(if $(filter 0 no off,$(EMBED)),,--features senseid/embedded-llama-cpp)
 
+# llama.cpp's vendored cpp-httplib no longer compiles against OpenSSL 3.5+, and
+# `llama-cpp-sys-2` builds it whether or not anything uses it (#243). The prelude
+# turns its TLS off — see the file, which explains why a toolchain file is the
+# only hook that runs early enough. Honoured only when the caller has not set one
+# of their own, so a cross-compile toolchain still wins.
+export CMAKE_TOOLCHAIN_FILE ?= $(CURDIR)/scripts/llama-cmake-prelude.cmake
+
 crates:
 	cargo build --release -p senseid -p sensei-cli -p sensei-mcp $(CRATE_FEATURES)
 
