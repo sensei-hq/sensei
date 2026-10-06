@@ -72,7 +72,19 @@ anything later; the reasoning is below the list, not implied by it.
     [ ] #231 fqn segment 3 is a SYMBOL for some adapters   ← NEXT
 
     -- C. screens --
-    [ ] #232 Layers + Cycles screens — `up` is now POPULATED (2e898607)
+    [x] #232 Layers + Cycles screens          d0f191d7 1690a5d7
+        Two screens, one controller, under a Diagrams sub-nav. All three
+        cautions honoured: `skip` is NOT a break (25 climbs vs 15 skips
+        live, so counting both would overstate by 60%), unknownUnit sits
+        beside the picture, and zero is a FINDING with words rather than
+        an empty canvas. Verified in a browser against project `sensei`:
+        154 units / 4 layers / one 22-member cycle cut at
+        senseid/adapters → senseid/tasks ×2 / 21 self-dependencies.
+        Found + fixed on the way: the PRESSED chip was invisible on every
+        diagram screen — `[type="button"]` in the preflight ties
+        `.bg-primary` on specificity and wins by order (#244).
+    [!] #244 the preflight disables background utilities on typed buttons
+        Instruments and Memories still render their pressed chip invisible.
     [ ] #233 diagram read cost — decide WITH a real screen
     [ ] #219 World · #220 Neighbourhood · #221 Schema
 
