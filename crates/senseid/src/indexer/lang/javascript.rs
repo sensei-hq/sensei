@@ -5167,7 +5167,7 @@ mod tests {
         );
         assert_eq!(
             file_fqn("pkg", "index", "src/index.ts").map(|f| f.to_string()).as_deref(),
-            Ok("typescript·pkg·index·mod")
+            Ok("typescript·pkg··index·mod")
         );
         assert!(
             file_fqn("pkg", "", "src/index.ts").is_err(),

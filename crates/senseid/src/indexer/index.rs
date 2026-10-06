@@ -1320,7 +1320,7 @@ mod tests {
         match &entered.target {
             Resolution::Resolved { fqn, .. } => assert_eq!(
                 fqn.to_string(),
-                "python·p·pkg·mod",
+                "python·p··pkg·mod",
                 "`.` names the CONTAINING PACKAGE — the module the specifier \
                  reduces to. The member `a` is a separate fact, exactly as `C` \
                  is in `from a.b import C`, whose edge names `a.b`."

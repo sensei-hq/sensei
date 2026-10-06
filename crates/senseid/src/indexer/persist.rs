@@ -2171,7 +2171,7 @@ pub fn widest(a: u32) -> u32 {
         let expected: Vec<persist::ImportRow> = facts
             .imports
             .iter()
-            .map(|import| persist::ImportRow::of(import, "rust·senseid·gadget·mod"))
+            .map(|import| persist::ImportRow::of(import, "rust·senseid··gadget·mod"))
             .collect();
         assert!(!expected.is_empty(), "the fixture must exercise some imports");
         same_rows(stored.imports.clone(), expected, "every import the walk saw");
@@ -3182,7 +3182,7 @@ pub fn widest(a: u32) -> u32 {
         let free = "rust·senseid·gadget·widest·item";
         assert_eq!(
             containment.get(free).map(Option::as_deref),
-            Some(Some("rust·senseid·gadget·mod")),
+            Some(Some("rust·senseid··gadget·mod")),
             "{free} is declared at file scope, so its parent is the FILE and never a type"
         );
     }

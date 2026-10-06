@@ -837,7 +837,13 @@ mod tests {
         let facts = twice("package p\n\nfun greet(name: String): String = name\n");
         let found = named(&facts, "greet");
         assert_eq!(found.len(), 1, "one declaration: {found:?}");
-        assert!(!found[0].contains("··"), "and it is an item of the package: {found:?}");
+        // The whole identity, not a shape test. This used to assert the ABSENCE
+        // of a doubled separator, which stopped meaning "an item of the package"
+        // the moment an empty module started occupying its slot (#231): a
+        // package-root declaration now carries exactly that doubling, and the
+        // thing worth pinning is that `greet` is an ITEM of package `p` and not
+        // a member of a type.
+        assert_eq!(found[0], "kotlin·p··greet·item", "an item of the package: {found:?}");
     }
 
     /// A PRIMARY CONSTRUCTOR declares its `val`/`var` parameters and nothing
