@@ -18,15 +18,18 @@ anything later; the reasoning is below the list, not implied by it.
     [x] #217 governance seed drift — ponytail is opt-in     6cbba6ee
 
     -- A. persistence (settle the pattern before 30 more land on it) --
-    [ ] #161 positional args → typed rows                 ← NEXT
-    [ ] #227 fold the 30 queries into PgStore + a grep gate
+    [x] #161 8+-arg writers → typed rows   8fe58786 bfea831e a1e45890
+        10 row types, 0 functions left at 8+. 41 remain in the 5-7 band,
+        left open deliberately — that tail is multi-key lookups, not
+        a producer's struct spelled out, so it is a different risk.
+    [ ] #227 fold the 30 queries into PgStore + a grep gate  ← NEXT
 
     -- B. indexing truth (the instrument before the fixes) --
     [ ] #235 resolution by (language, kind, outcome)
     [ ] #231 fqn segment 3 is a SYMBOL for some adapters
 
     -- C. screens --
-    [ ] #232 Layers + Cycles screens
+    [ ] #232 Layers + Cycles screens — `up` is now POPULATED (2e898607)
     [ ] #233 diagram read cost — decide WITH a real screen
     [ ] #219 World · #220 Neighbourhood · #221 Schema
 
@@ -56,12 +59,13 @@ Per slice: TDD, mutation-probe each test, full suite + clippy + fmt +
 
 ## Open questions
 
-- #230 a DECLARED layering — a derived one provably cannot climb, so Layers has
-  no violation to show until something stores an intended one. Who authors it,
-  where it lives, and whether it belongs to the project or the repository.
-- #234 nothing lets a developer ADOPT a seeded rule pack — no CLI, MCP tool,
-  endpoint or screen writes `rule_pack_adoptions`. Two of fourteen seeded packs
-  are unreachable, and every user-authored or dōjō-shared pack arrives the same way.
+- #230 is NO LONGER BLOCKING (2e898607). "Which calls break the downward flow"
+  is answered by a cycle's back edges — 25 of them on project `sensei`, led by
+  `senseid/db → senseid/tasks ×149`. A declared layering is now only for the
+  narrower "does the measured structure match the one you intended".
+- #234 nothing lets a developer ADOPT a seeded rule pack. DECIDED 2026-10-05:
+  the MCP tool pair (`list_available_packs` / `adopt_pack`) writes it first;
+  CLI and app screen follow if they earn it.
 - `sensei.assistants` is an EMPTY table with no reader or writer (4 tree
   references, all prose). #218's consent should use a `sensei.config` key; the
   table itself wants a separate give-it-a-writer-or-drop-it call.
@@ -77,6 +81,9 @@ Per slice: TDD, mutation-probe each test, full suite + clippy + fmt +
   of `sensei`'s module dependencies and 78% of the largest client project's
   point at a unit that owns no file. Counted as `coverage.unknownUnit`; the
   shipped Structure diagram has the same hole (31 of 213), uncounted.
+- `create_memory` has NO production caller (all 17 sites are tests), and
+  `sensei.memories` has three writers. Now `#[cfg(test)]`; which one production
+  uses is unanswered.
 - `project_health` and `unused_tools` have NEVER produced a metric row despite
   being effective since 2026-08-09. `cost` last computed 2026-09-20 while every
   other family ran 2026-10-05, with a subscription configured.
