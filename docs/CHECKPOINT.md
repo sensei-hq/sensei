@@ -30,7 +30,12 @@ anything later; the reasoning is below the list, not implied by it.
         make test-fast, verified by planting a statement.
 
     -- B. indexing truth (the instrument before the fixes) --
-    [ ] #235 resolution by (language, kind, outcome)        ← NEXT
+    [x] #235 resolution by (language, kind, outcome)        6426808b
+        sensei.resolution_quality(project). Corrected its own premise:
+        97.2% of import edges were never CLASSIFIED (→ #242), so the
+        2.6% figure divided by a population nobody asked about.
+        csharp calls place at 15.5% vs java 43% vs corpus 29.6%.
+    [ ] #242 97.2% of import edges are never classified   ← NEXT
     [ ] #231 fqn segment 3 is a SYMBOL for some adapters
 
     -- C. screens --
@@ -84,8 +89,13 @@ Per slice: TDD, mutation-probe each test, full suite + clippy + fmt +
 
 ## Known broken
 
-- **#235 imports resolve at 2.6%** — 212,270 unplaced-with-a-name against 6,622
-  placed, while 68,287 `lib·` nodes exist and calls/references DO reach them.
+- **#242 97.2% of import edges are never CLASSIFIED** — 251,270 of 258,623 carry
+  neither `resolved_via` nor `unresolved_reason`. Not a resolver failure; nothing
+  attempted them. `references` has 2 such rows of 1.69M, `calls` 4,421 of 1.35M,
+  so it is imports-specific. This made "imports resolve at 2.6%" meaningless.
+- **C# resolves worst AND is indexed least** — `calls` place at 15.5% for csharp
+  against 43% for java and 29.6% corpus-wide, and only 52.3% of its tracked files
+  carry a node. Two defects stacking (#237).
 - **#237 ~11,100 tracked files have no nodes**: C# 52.3%, java 79.9%, js 78.4%,
   py 74.2%. Cause NOT established — check whether those 9 folders ever finished
   before suspecting the adapter.
