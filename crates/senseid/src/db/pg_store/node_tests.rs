@@ -189,7 +189,7 @@ async fn cleanup(pg: &PgStore, folder_id: &uuid::Uuid, root_id: &uuid::Uuid) {
         .execute(pg.pool())
         .await
         .ok();
-    sqlx_core::query::query("DELETE FROM sensei.watch_roots WHERE id = $1")
+    sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1")
         .bind(root_id)
         .execute(pg.pool())
         .await
