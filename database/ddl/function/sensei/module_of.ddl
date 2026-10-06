@@ -14,7 +14,24 @@ language sql
 immutable
 parallel safe
 as $$
-  select pkg || '/' || split_part(split_part(mod, '/', 1), '::', 1)
+  select case
+           -- NO FQN AT ALL. `split_part` on a null yields null, so this is the
+           -- node that carries no identity, and it has no module rather than one
+           -- rooted at the empty string.
+           when mod is null then null
+           -- A PACKAGE-ROOT SYMBOL IS IN ITS PACKAGE. The module segment is
+           -- empty and present, which is a fact and not an absence (#231): since
+           -- `indexer::fqn` stopped dropping it, `split_part(fqn, '·', 3)` yields
+           -- `''` for a declaration written at the root rather than sliding the
+           -- symbol's own NAME into the module's place.
+           --
+           -- The package's own name and not `pkg || '/'`, which reads as a
+           -- truncation and sorts oddly beside `senseid/tasks`; and not null,
+           -- which would drop a C header's whole contents off every structure
+           -- diagram rather than showing them at the root.
+           when mod = '' then pkg
+           else pkg || '/' || split_part(split_part(mod, '/', 1), '::', 1)
+         end
 $$;
 
 comment on function module_of(text, text) is
