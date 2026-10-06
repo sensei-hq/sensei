@@ -273,6 +273,7 @@ impl<'a> Walk<'a> {
                 }
             };
             self.imports.push(Import {
+                target: Import::unplaced(path),
                 path: path.to_string(),
                 binds,
                 origin: ImportOrigin::External { package },

@@ -197,6 +197,7 @@ impl<'a> Walk<'a> {
                 _ => continue,
             };
             self.imports.push(Import {
+                target: Import::unplaced(path),
                 path: path.to_string(),
                 binds: Binding::Name(bound),
                 origin: external(path),
@@ -238,12 +239,24 @@ impl<'a> Walk<'a> {
                 _ => continue,
             };
             bound_any = true;
-            self.imports.push(Import { path: path.clone(), binds, origin: origin.clone(), at });
+            self.imports.push(Import {
+                target: Import::unplaced(&path),
+                path: path.clone(),
+                binds,
+                origin: origin.clone(),
+                at,
+            });
         }
         // `from . import x` with nothing the loop recognised still entered a
         // module, and dropping it would lose the only edge the statement has.
         if !bound_any {
-            self.imports.push(Import { path, binds: Binding::Glob, origin, at });
+            self.imports.push(Import {
+                target: Import::unplaced(&path),
+                path,
+                binds: Binding::Glob,
+                origin,
+                at,
+            });
         }
     }
 

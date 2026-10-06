@@ -967,6 +967,49 @@ pub struct Import {
     pub binds: Binding,
     pub origin: ImportOrigin,
     pub at: Span,
+    /// What the specifier names, once the ladder has read it.
+    ///
+    /// An import carries a target for the same reason a [`Reference`] does, and
+    /// it was the one fact shape that did not. Measured 2026-10-06: of 258,623
+    /// `imports` edges, 251,270 — 97.2% — carried NEITHER `resolved_via` nor
+    /// `unresolved_reason`, where `references` had 2 such rows out of 1.69M and
+    /// `calls` 4,421 out of 1.35M. An import was the only fact this indexer
+    /// wrote without ever saying how it turned out (#242).
+    ///
+    /// Not an `Option`: a specifier the ladder could not read is a
+    /// [`Resolution::Unresolved`] carrying the reason, never an absence (R2).
+    pub target: Resolution,
+}
+
+impl Import {
+    /// The target of an import the walk has only STATED, not placed.
+    ///
+    /// Every walk emits this and no walk emits anything else, because a walk
+    /// never reaches outside the file it is reading (R1) and reducing a
+    /// specifier to an identity needs the roots, the package boundary and the
+    /// relative rule — which live in the resolution ladder (R7). `resolve` is
+    /// the one place that turns it into an answer, exactly as it is for a
+    /// callee.
+    ///
+    /// [`Reach::Item`] because an import binds an ITEM: the identity it has to
+    /// MEET is the one a declaration minted, and a declaration of a function, a
+    /// type or a const is an item. A specifier naming a MODULE is placed by
+    /// `entered_module`, which mints [`Reach::Mod`] itself — so the reach stated
+    /// here is the one for the case that has no other owner.
+    pub fn unplaced(path: &str) -> Resolution {
+        Resolution::Unresolved {
+            reason: Reason::Unplaced,
+            evidence: Evidence {
+                name: path.to_string(),
+                // The same `node_kind` `common::import_references` states, so a
+                // histogram of unhandled forms counts imports once rather than
+                // under two spellings.
+                node_kind: "import".to_string(),
+                reach: Reach::Item,
+                saw: Vec::new(),
+            },
+        }
+    }
 }
 
 // ── the product of one walk (spec §3) ────────────────────────────────────────
@@ -1415,6 +1458,7 @@ mod tests {
             at: a_span(),
         };
         let import = Import {
+            target: Import::unplaced("crate::db::PgStore"),
             path: "crate::db::PgStore".to_string(),
             binds: Binding::Name("PgStore".to_string()),
             origin: ImportOrigin::Local,

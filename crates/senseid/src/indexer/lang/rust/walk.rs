@@ -2159,6 +2159,7 @@ impl<'a> Walk<'a> {
             None => name,
         };
         self.imports.push(Import {
+            target: Import::unplaced(name),
             path: name.to_string(),
             binds: Binding::Name(bound.to_string()),
             origin: import_origin(name),
@@ -2238,7 +2239,13 @@ impl<'a> Walk<'a> {
             }
             Binding::MemberOf { .. } => {}
         }
-        self.imports.push(Import { origin: import_origin(&path), path, binds, at: span(at) });
+        self.imports.push(Import {
+            target: Import::unplaced(&path),
+            origin: import_origin(&path),
+            path,
+            binds,
+            at: span(at),
+        });
     }
 
     fn declared_type(&self, node: Node<'_>, field: &str) -> DeclaredType {

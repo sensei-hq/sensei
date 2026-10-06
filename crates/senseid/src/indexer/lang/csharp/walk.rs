@@ -334,6 +334,7 @@ impl<'a> Walk<'a> {
                 (target.to_string(), Binding::Glob)
             };
             self.imports.push(Import {
+                target: Import::unplaced(target),
                 path: target.to_string(),
                 binds,
                 origin: ImportOrigin::External { package },
