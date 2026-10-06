@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use crate::db::pg_store::NodeRow;
 use crate::db::pg_store::PgStore;
 
 /// A cross-test serialisation gate.
@@ -1023,8 +1024,18 @@ pub async fn seed_node(
     line_end: Option<i32>,
 ) -> Result<uuid::Uuid, String> {
     seed_file(pg, folder_id, file_path).await?;
-    pg.upsert_node(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end)
-        .await
+    pg.upsert_node(&NodeRow {
+        folder_id,
+        kind,
+        name,
+        file_path,
+        parent_id,
+        signature,
+        line_start,
+        line_end,
+        is_exported: false,
+    })
+    .await
 }
 
 /// The barrier half on its own, for fixtures that write nodes by raw SQL.

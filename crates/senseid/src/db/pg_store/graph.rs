@@ -130,6 +130,41 @@ use crate::languages::fqn::{sql_is_external, sql_is_not_external};
 /// [`PgStore::get_nodes_by_file`] projects it, before it becomes JSON.
 type NodeOutline = (uuid::Uuid, String, String, Option<uuid::Uuid>, Option<i32>);
 
+/// One row of `sensei.nodes`, named rather than positional (#161).
+///
+/// `upsert_node` took nine positional arguments and carried a comment defending
+/// them: *"The arguments ARE the columns. A struct here would restate the same
+/// names one indirection away without removing a single one."* The verbosity
+/// claim is true and beside the point. The value is not fewer names — it is that
+/// destructuring this EXHAUSTIVELY turns a field added to the producer into a
+/// compile error. The positional list could not, which is how
+/// `extract_return_type` ran on every rust function for months while no return
+/// type reached a column: there was no ninth argument, and nothing failed.
+///
+/// **No `Default`, deliberately.** `..Default::default()` would relocate the
+/// silence rather than remove it: a field added later would quietly take its
+/// default at every existing site instead of forcing a decision. That is why
+/// the defaulting wrapper this replaced (`upsert_node` → `upsert_node_ex` with
+/// `is_exported = false`) is gone — a wrapper whose only job is to supply a
+/// default is the same hazard with a friendlier name.
+#[derive(Debug, Clone)]
+pub struct NodeRow<'a> {
+    pub folder_id: &'a uuid::Uuid,
+    pub kind: &'a str,
+    pub name: &'a str,
+    /// Resolved to `nodes.file_id` by the writer, which FAILS CLOSED on a miss
+    /// (R13): a node naming an untracked file is a bug in the walk, and minting
+    /// a `files` row here would hide it behind a plausible id.
+    pub file_path: &'a str,
+    pub parent_id: Option<&'a uuid::Uuid>,
+    pub signature: Option<&'a str>,
+    /// Part of `nodes_unique_identity`, so moving a symbol within its file is a
+    /// different node rather than an update.
+    pub line_start: Option<i32>,
+    pub line_end: Option<i32>,
+    pub is_exported: bool,
+}
+
 impl PgStore {
     /// BM25-style keyword ranking: matches nodes by name/signature/docstring.
     pub async fn rank_bm25(
@@ -164,9 +199,17 @@ impl PgStore {
         line_end: Option<i32>,
         parent_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_node(
-            folder_id, "function", name, file_path, parent_id, signature, line_start, line_end,
-        )
+        self.upsert_node(&NodeRow {
+            folder_id,
+            kind: "function",
+            name,
+            file_path,
+            parent_id,
+            signature,
+            line_start,
+            line_end,
+            is_exported: false,
+        })
         .await
     }
 
@@ -176,7 +219,18 @@ impl PgStore {
         name: &str,
         file_path: &str,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_node(folder_id, "file", name, file_path, None, None, None, None).await
+        self.upsert_node(&NodeRow {
+            folder_id,
+            kind: "file",
+            name,
+            file_path,
+            parent_id: None,
+            signature: None,
+            line_start: None,
+            line_end: None,
+            is_exported: false,
+        })
+        .await
     }
 
     pub async fn merge_type(
@@ -187,7 +241,18 @@ impl PgStore {
         kind: &str,
         line_start: Option<i32>,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_node(folder_id, kind, name, file_path, None, None, line_start, None).await
+        self.upsert_node(&NodeRow {
+            folder_id,
+            kind,
+            name,
+            file_path,
+            parent_id: None,
+            signature: None,
+            line_start,
+            line_end: None,
+            is_exported: false,
+        })
+        .await
     }
 
     pub async fn merge_doc(
@@ -196,7 +261,18 @@ impl PgStore {
         name: &str,
         file_path: &str,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_node(folder_id, "doc", name, file_path, None, None, None, None).await
+        self.upsert_node(&NodeRow {
+            folder_id,
+            kind: "doc",
+            name,
+            file_path,
+            parent_id: None,
+            signature: None,
+            line_start: None,
+            line_end: None,
+            is_exported: false,
+        })
+        .await
     }
 
     pub async fn project_exists(&self, folder_id: &uuid::Uuid) -> Result<bool, String> {
@@ -601,31 +677,6 @@ impl PgStore {
         Ok(wanted.iter().map(|w| w.as_ref().and_then(|k| sole.get(k).copied())).collect())
     }
 
-    /// Upsert a node (default `is_exported = false`). Thin wrapper over
-    /// [`Self::upsert_node_ex`] for the many callers that don't carry visibility
-    /// (file/section/rationale/module nodes, tests).
-    // The arguments ARE the columns. A struct here would restate the same
-    // names one indirection away without removing a single one; `FqnDef`
-    // above is the case where a struct earned its keep, because that call
-    // has a meaningful default.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn upsert_node(
-        &self,
-        folder_id: &uuid::Uuid,
-        kind: &str,
-        name: &str,
-        file_path: &str,
-        parent_id: Option<&uuid::Uuid>,
-        signature: Option<&str>,
-        line_start: Option<i32>,
-        line_end: Option<i32>,
-    ) -> Result<uuid::Uuid, String> {
-        self.upsert_node_ex(
-            folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, false,
-        )
-        .await
-    }
-
     /// A node that names a DIRECTORY rather than a file — the structural
     /// `module` node the folder pass writes, one per source directory.
     ///
@@ -671,18 +722,23 @@ impl PgStore {
     /// refreshed on the D3 upsert-then-prune conflict, so a symbol that flips
     /// pub↔private is kept current.
     #[allow(clippy::too_many_arguments)]
-    pub async fn upsert_node_ex(
-        &self,
-        folder_id: &uuid::Uuid,
-        kind: &str,
-        name: &str,
-        file_path: &str,
-        parent_id: Option<&uuid::Uuid>,
-        signature: Option<&str>,
-        line_start: Option<i32>,
-        line_end: Option<i32>,
-        is_exported: bool,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_node(&self, row: &NodeRow<'_>) -> Result<uuid::Uuid, String> {
+        // EXHAUSTIVE (#161). A field added to `NodeRow` stops this compiling
+        // until someone binds it, and `clippy -D warnings` makes binding it
+        // without using it fail too. The nine positional arguments this replaced
+        // had neither property — which is how `extract_return_type` ran on every
+        // rust function for months while no return type reached a column.
+        let NodeRow {
+            folder_id,
+            kind,
+            name,
+            file_path,
+            parent_id,
+            signature,
+            line_start,
+            line_end,
+            is_exported,
+        } = row;
         // ON CONFLICT targets nodes_unique_identity (folder_id, file_id, kind, name,
         // parent_id, line_start NULLS NOT DISTINCT). DO UPDATE keeps the row STABLE on
         // re-scans — same UUID whether just inserted or pre-existing (D3 upsert-then-

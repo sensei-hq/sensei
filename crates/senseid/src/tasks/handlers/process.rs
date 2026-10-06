@@ -4,6 +4,7 @@ use super::super::executor::TaskContext;
 
 use super::super::Task;
 use super::helpers::{is_binary_ext, is_probably_binary};
+use crate::db::pg_store::NodeRow;
 use std::path::Path;
 
 // ── Process Repo ──────────────────────────────────────────────────────────
@@ -574,16 +575,17 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // File node.
         let file_node_id = ctx
             .pg()
-            .upsert_node(
-                &folder_id,
-                &result.kind,
-                &result.rel_path,
-                &result.rel_path,
-                None,
-                None,
-                None,
-                None,
-            )
+            .upsert_node(&NodeRow {
+                folder_id: &folder_id,
+                kind: &result.kind,
+                name: &result.rel_path,
+                file_path: &result.rel_path,
+                parent_id: None,
+                signature: None,
+                line_start: None,
+                line_end: None,
+                is_exported: false,
+            })
             .await
             .map_err(|e| format!("upsert file node: {e}"))?;
 
@@ -732,17 +734,17 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             for sym in &result.symbols {
                 let id = ctx
                     .pg()
-                    .upsert_node_ex(
-                        &folder_id,
-                        &sym.kind,
-                        &sym.name,
-                        &result.rel_path,
-                        Some(&file_node_id),
-                        sym.signature.as_deref(),
-                        Some(sym.line as i32),
-                        Some(sym.line_end as i32),
-                        sym.is_exported,
-                    )
+                    .upsert_node(&NodeRow {
+                        folder_id: &folder_id,
+                        kind: &sym.kind,
+                        name: &sym.name,
+                        file_path: &result.rel_path,
+                        parent_id: Some(&file_node_id),
+                        signature: sym.signature.as_deref(),
+                        line_start: Some(sym.line as i32),
+                        line_end: Some(sym.line_end as i32),
+                        is_exported: sym.is_exported,
+                    })
                     .await
                     .map_err(|e| format!("upsert symbol node {}: {e}", sym.name))?;
                 sym_ids.insert((sym.name.clone(), sym.line as i32), id);
@@ -790,16 +792,17 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             };
             let sec_id = ctx
                 .pg()
-                .upsert_node(
-                    &folder_id,
-                    "section",
-                    &heading_path,
-                    &result.rel_path,
-                    Some(&parent_id),
-                    None,
-                    None,
-                    None,
-                )
+                .upsert_node(&NodeRow {
+                    folder_id: &folder_id,
+                    kind: "section",
+                    name: &heading_path,
+                    file_path: &result.rel_path,
+                    parent_id: Some(&parent_id),
+                    signature: None,
+                    line_start: None,
+                    line_end: None,
+                    is_exported: false,
+                })
                 .await
                 .map_err(|e| format!("upsert section node {}: {e}", heading_path))?;
             let props = serde_json::json!({
@@ -826,16 +829,17 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         for r in &result.rationales {
             let id = ctx
                 .pg()
-                .upsert_node(
-                    &folder_id,
-                    "rationale",
-                    &r.text,
-                    &result.rel_path,
-                    Some(&file_node_id),
-                    None,
-                    Some(r.line as i32),
-                    Some(r.line as i32),
-                )
+                .upsert_node(&NodeRow {
+                    folder_id: &folder_id,
+                    kind: "rationale",
+                    name: &r.text,
+                    file_path: &result.rel_path,
+                    parent_id: Some(&file_node_id),
+                    signature: None,
+                    line_start: Some(r.line as i32),
+                    line_end: Some(r.line as i32),
+                    is_exported: false,
+                })
                 .await
                 .map_err(|e| format!("upsert rationale node: {e}"))?;
             ctx.pg()
