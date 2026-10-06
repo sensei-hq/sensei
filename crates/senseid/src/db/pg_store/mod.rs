@@ -497,6 +497,7 @@ pub(crate) use graph::CallDirection;
 #[cfg(test)]
 pub(crate) use indexer::LibColumns;
 pub(crate) use indexer::{Dropped, EdgeColumns, NodeColumns};
+mod gateway_catalog;
 mod library;
 mod logs;
 mod mcp;

@@ -369,7 +369,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // Table-driven gateway config (#76): load routers/models/chains from the
     // `gateway.*` tables. A load error is logged and degrades to the in-code
     // baseline rather than failing daemon startup.
-    let db_config = match super::gateway_config_loader::load_gateway_config(pg.pool()).await {
+    let db_config = match super::gateway_config_loader::load_gateway_config(&pg).await {
         Ok(Some(cfg)) => {
             tracing::info!(
                 "Gateway: loaded table-driven config ({} routers, {} models, {} chains)",
