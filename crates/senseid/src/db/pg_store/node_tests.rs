@@ -195,3 +195,54 @@ async fn cleanup(pg: &PgStore, folder_id: &uuid::Uuid, root_id: &uuid::Uuid) {
         .await
         .ok();
 }
+
+/// RE-MINTING AN UNCHANGED LIBRARY NODE DOES NOT MOVE IT.
+///
+/// `upsert_lib_node_by_fqn` stamped `modified_at = now()` on every conflicting
+/// insert, so a node nothing had changed looked freshly written on every scan.
+/// Nothing noticed while only call and reference targets reached library
+/// surface, because `reconcile`'s idempotence test imported a name its fixture
+/// never used. Once imports started placing there (#242) a re-index of an
+/// untouched file churned two rows per external dependency.
+///
+/// Both rows are asserted: the symbol AND the `package` container it hangs off,
+/// which is a second statement with the same defect.
+///
+/// Mutation that must break this test: replace either `modified_at` CASE with a
+/// bare `now()`.
+#[tokio::test]
+async fn re_minting_an_unchanged_library_node_does_not_move_it() {
+    let Ok(pg) = PgStore::connect_test().await else {
+        return;
+    };
+    let uniq = uuid::Uuid::new_v4();
+    let root = format!("/_test/libnodes/{uniq}");
+    let root_id = pg.add_watch_root(&root, "lib-wt", &serde_json::json!([])).await.unwrap();
+    let folder_id = pg.upsert_repo(&root_id, "libnodes", &root).await.unwrap();
+
+    let fqn = format!("lib·probe-{uniq}·collections::BTreeMap");
+    let package = format!("probe-{uniq}");
+    let mint = || pg.upsert_lib_node_by_fqn(&folder_id, &fqn, "BTreeMap", &package, Some("rust"));
+    mint().await.unwrap();
+
+    async fn stamp(pg: &PgStore, fqn: &str) -> chrono::DateTime<chrono::Utc> {
+        let (at,): (chrono::DateTime<chrono::Utc>,) =
+            sqlx_core::query_as::query_as("SELECT modified_at FROM sensei.nodes WHERE fqn = $1")
+                .bind(fqn)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+        at
+    }
+    let container = format!("lib·{package}");
+    let before = (stamp(&pg, &fqn).await, stamp(&pg, &container).await);
+
+    // The SAME write again, exactly as a re-scan of an unchanged file makes it.
+    mint().await.unwrap();
+    let after = (stamp(&pg, &fqn).await, stamp(&pg, &container).await);
+
+    assert_eq!(after.0, before.0, "the symbol row did not change, so it must not look written");
+    assert_eq!(after.1, before.1, "nor the package container it hangs off");
+
+    cleanup(&pg, &folder_id, &root_id).await;
+}

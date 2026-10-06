@@ -1175,7 +1175,19 @@ impl PgStore {
              ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
                SET resolved = true,
                    language = COALESCE(nodes.language, EXCLUDED.language),
-                   modified_at = now()
+                   -- Moved only when this write CHANGED something. A bare
+                   -- `now()` made every re-scan of an unchanged file churn two
+                   -- rows per external dependency; nothing noticed while only
+                   -- calls reached library surface, and imports placing there
+                   -- (#242) is what surfaced it.
+                   --
+                   -- `DO UPDATE ... WHERE` would be the shorter spelling and is
+                   -- wrong here: a skipped update returns no row, and the
+                   -- RETURNING is what the caller parents the symbol on.
+                   modified_at = CASE
+                     WHEN nodes.resolved IS NOT TRUE
+                       OR (nodes.language IS NULL AND EXCLUDED.language IS NOT NULL)
+                     THEN now() ELSE nodes.modified_at END
              RETURNING id",
         )
         .bind(folder_id)
@@ -1205,7 +1217,17 @@ impl PgStore {
                    -- First writer wins: a lib fqn is language-scoped by
                    -- construction, so a later NULL must not erase it.
                    language    = COALESCE(nodes.language, EXCLUDED.language),
-                   modified_at = now()
+                   -- Moved only when this write CHANGED something — see the
+                   -- container insert above. Each arm names the SET expression
+                   -- directly below it, so a column that stops being written
+                   -- cannot leave a stale condition behind.
+                   modified_at = CASE
+                     WHEN nodes.resolved IS NOT TRUE
+                       OR (nodes.parent_id IS NULL AND EXCLUDED.parent_id IS NOT NULL)
+                       OR (nodes.language IS NULL AND EXCLUDED.language IS NOT NULL)
+                       OR nodes.props IS DISTINCT FROM
+                            (nodes.props || jsonb_build_object('package', $5::text))
+                     THEN now() ELSE nodes.modified_at END
              RETURNING id",
         )
         .bind(folder_id)
