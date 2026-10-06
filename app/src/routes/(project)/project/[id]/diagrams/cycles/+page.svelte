@@ -1,9 +1,11 @@
 <script lang="ts">
-    import { PageHeader, ToggleChip } from '$lib/components';
+    import { Toolbar } from '@rokkit/ui';
+    import { PageHeader } from '$lib/components';
     import { senseiApi } from '$lib/api.js';
     import { appState } from '$lib/appstate.svelte.js';
     import { DIAGRAM_VIEWS } from '../diagrams-nav.js';
-    import { LEVELS, LayersState } from '../layering-state.svelte.js';
+    import { LayersState } from '../layering-state.svelte.js';
+    import type { LayeringLevel } from '$lib/types.js';
 
     let { data } = $props();
 
@@ -21,16 +23,13 @@
 <PageHeader kanji={question.kanji} title="Cycles" description={question.question} />
 
 <div class="flex flex-col gap-4 p-4" data-testid="cycles-screen">
-    <div class="flex items-center gap-2" role="group" aria-label="Level">
-        {#each LEVELS as level (level)}
-            <ToggleChip
-                label={level}
-                pressed={view.level === level}
-                testid={`cycles-level-${level}`}
-                onpress={() => view.setLevel(level)}
-            />
-        {/each}
-    </div>
+    <Toolbar
+        label="Level"
+        width="fit"
+        compact
+        items={view.levelItems}
+        onclick={(value) => view.setLevel(value as LayeringLevel)}
+    />
 
     {#if view.view === 'loading'}
         <p class="text-sm text-ink-mute" data-testid="cycles-loading">

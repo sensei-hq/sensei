@@ -55,6 +55,18 @@ async function seedSetupComplete(tauriPage: any): Promise<void> {
   `);
 }
 
+/**
+ * A control in one of the screen's `@rokkit/ui` toolbars.
+ *
+ * The chips are no longer hand-rolled buttons with our own `data-testid` — the
+ * toolbars are data-driven and rokkit owns the markup, so the stable hooks are
+ * the ones it ships: `role="toolbar"` with the bar's `aria-label`, and each item
+ * carrying its own `aria-label`, `aria-pressed` and `data-active`.
+ */
+function control(bar: string, item: string): string {
+  return `[data-toolbar][aria-label="${bar}"] button[data-toolbar-item][aria-label="${item}"]`;
+}
+
 function expectNoRuntimeErrors(errs: ErrBuf, where: string): void {
   expect(errs.error, `${where}: uncaught errors`).toEqual([]);
   expect(errs.rejection, `${where}: unhandled rejections`).toEqual([]);
@@ -92,9 +104,17 @@ test.describe('Project · Diagrams · Layers', () => {
     );
 
     // Chrome renders in every state — the controls are not gated on data.
-    expect(await tauriPage.count('[data-testid="layers-level-module"]')).toBe(1);
-    expect(await tauriPage.count('[data-testid="layers-level-file"]')).toBe(1);
-    expect(await tauriPage.count('[data-testid="layers-kind-calls"]')).toBe(1);
+    expect(await tauriPage.count(control('Level', 'module'))).toBe(1);
+    expect(await tauriPage.count(control('Level', 'file'))).toBe(1);
+    expect(await tauriPage.count(control('Edge kinds', 'calls'))).toBe(1);
+
+    // The SELECTED control says so to assistive technology and marks itself for
+    // the stylesheet. Both, because a pressed chip that announces itself and
+    // renders identically to its siblings is the defect this screen shipped
+    // with before the toolbars replaced hand-rolled buttons (#244).
+    expect(await tauriPage.getAttribute(control('Level', 'module'), 'aria-pressed')).toBe('true');
+    expect(await tauriPage.getAttribute(control('Level', 'module'), 'data-active')).toBe('true');
+    expect(await tauriPage.getAttribute(control('Level', 'file'), 'data-active')).toBeNull();
 
     await settleLayers(tauriPage);
 

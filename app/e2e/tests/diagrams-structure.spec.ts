@@ -69,6 +69,18 @@ async function seedSetupComplete(tauriPage: any): Promise<void> {
   `);
 }
 
+/**
+ * A control in one of the screen's `@rokkit/ui` toolbars.
+ *
+ * The chips are no longer hand-rolled buttons with our own `data-testid` — the
+ * toolbars are data-driven and rokkit owns the markup, so the stable hooks are
+ * the ones it ships: `role="toolbar"` with the bar's `aria-label`, and each item
+ * carrying its own `aria-label`, `aria-pressed` and `data-active`.
+ */
+function control(bar: string, item: string): string {
+  return `[data-toolbar][aria-label="${bar}"] button[data-toolbar-item][aria-label="${item}"]`;
+}
+
 function expectNoRuntimeErrors(errs: ErrBuf, where: string): void {
   expect(errs.error, `${where}: uncaught errors`).toEqual([]);
   expect(errs.rejection, `${where}: unhandled rejections`).toEqual([]);
@@ -100,9 +112,9 @@ test.describe('Project · Diagrams · Structure', () => {
     );
 
     // Chrome renders in every state — the controls are not gated on data.
-    expect(await tauriPage.count('[data-testid="structure-level-file"]')).toBe(1);
-    expect(await tauriPage.count('[data-testid="structure-level-module"]')).toBe(1);
-    expect(await tauriPage.count('[data-testid="structure-kind-calls"]')).toBe(1);
+    expect(await tauriPage.count(control('Level', 'file'))).toBe(1);
+    expect(await tauriPage.count(control('Level', 'module'))).toBe(1);
+    expect(await tauriPage.count(control('Edge kinds', 'calls'))).toBe(1);
 
     await settle(tauriPage);
 
@@ -146,13 +158,11 @@ test.describe('Project · Diagrams · Structure', () => {
     const fileNodes = Number(fileLine.match(/^(\d+) nodes/)?.[1] ?? '0');
     expect(fileNodes).toBeGreaterThan(0);
 
-    await tauriPage.locator('[data-testid="structure-level-module"]').click();
+    await tauriPage.locator(control('Level', 'module')).click();
     await settle(tauriPage);
 
     expect(await tauriPage.count('[data-testid="structure-error"]')).toBe(0);
-    expect(
-      await tauriPage.getAttribute('[data-testid="structure-level-module"]', 'aria-pressed'),
-    ).toBe('true');
+    expect(await tauriPage.getAttribute(control('Level', 'module'), 'aria-pressed')).toBe('true');
 
     const moduleLine = (await tauriPage.textContent('[data-testid="structure-coverage"]')) ?? '';
     const moduleNodes = Number(moduleLine.match(/^(\d+) nodes/)?.[1] ?? '0');

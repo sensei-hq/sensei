@@ -18,6 +18,5 @@ export { default as StatusDot } from './StatusDot.svelte';
 export { default as StatusIndicator } from './StatusIndicator.svelte';
 export { default as Switch } from './Switch.svelte';
 export { default as TabBar } from './TabBar.svelte';
-export { default as ToggleChip } from './ToggleChip.svelte';
 export { default as TurnBar } from './TurnBar.svelte';
 export { default as Wordmark } from './Wordmark.svelte';

@@ -119,6 +119,32 @@ export class StructureState {
     return out;
   }
 
+  /** The level control, as `@rokkit/ui`'s `Toolbar` reads it — see the twin on
+   *  `LayersState` for why the items are built in state rather than in the
+   *  template. */
+  get levelItems() {
+    return LEVELS.map((level) => ({
+      // `label` and NOT `text`: `ProxyItem.label` reads `item[fields.label]`,
+      // and the toolbar button renders `proxy.label` for both its visible text
+      // and its `aria-label`. An item carrying only `text` renders a button with
+      // no words in it at all — verified in the browser before this was fixed.
+      label: level,
+      value: level,
+      active: this.level === level,
+      type: 'toggle' as const,
+    }));
+  }
+
+  /** The edge-kind control. */
+  get kindItems() {
+    return KINDS.map((kind) => ({
+      label: kind,
+      value: kind,
+      active: this.kinds.includes(kind),
+      type: 'toggle' as const,
+    }));
+  }
+
   /** "N nodes · M edges drawn · K unplaced (not shown)". The unplaced clause is
    *  unconditional: zero unplaced is itself worth stating, because it is the
    *  one case where the diagram is the whole truth. */

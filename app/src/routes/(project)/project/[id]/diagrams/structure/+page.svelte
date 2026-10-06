@@ -1,14 +1,11 @@
 <script lang="ts">
     import { StructureDiagram, BundleControl } from '@rokkit/graph';
-    import { PageHeader, ToggleChip } from '$lib/components';
+    import { Toolbar } from '@rokkit/ui';
+    import { PageHeader } from '$lib/components';
     import { senseiApi } from '$lib/api.js';
     import { appState } from '$lib/appstate.svelte.js';
-    import {
-        KINDS,
-        LEVELS,
-        STRUCTURE_FIELDS,
-        StructureState
-    } from './structure-state.svelte.js';
+    import { STRUCTURE_FIELDS, StructureState } from './structure-state.svelte.js';
+    import type { StructureLevel } from '$lib/types.js';
 
     let { data } = $props();
 
@@ -28,28 +25,21 @@
 
 <div class="flex flex-col gap-4 p-4" data-testid="structure-screen">
     <div class="flex flex-wrap items-center gap-4">
-        <div class="flex items-center gap-2" role="group" aria-label="Level">
-            {#each LEVELS as level (level)}
-                <ToggleChip
-                    label={level}
-                    pressed={view.level === level}
-                    testid={`structure-level-${level}`}
-                    onpress={() => view.setLevel(level)}
-                />
-            {/each}
-        </div>
+        <Toolbar
+            label="Level"
+            width="fit"
+            compact
+            items={view.levelItems}
+            onclick={(value) => view.setLevel(value as StructureLevel)}
+        />
 
-        <div class="flex items-center gap-2" role="group" aria-label="Edge kinds">
-            {#each KINDS as kind (kind)}
-                <ToggleChip
-                    label={kind}
-                    size="xs"
-                    pressed={view.kinds.includes(kind)}
-                    testid={`structure-kind-${kind}`}
-                    onpress={() => view.toggleKind(kind)}
-                />
-            {/each}
-        </div>
+        <Toolbar
+            label="Edge kinds"
+            width="fit"
+            compact
+            items={view.kindItems}
+            onclick={(value) => view.toggleKind(value as string)}
+        />
 
         <BundleControl
             bundleTension={view.bundleTension}
