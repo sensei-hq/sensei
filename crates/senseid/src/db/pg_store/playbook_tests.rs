@@ -28,20 +28,20 @@ async fn playbook_rules_load_and_run_roundtrip() {
 
     let (proj, _) = pg.get_or_create_project_by_name("_test:playbook_roundtrip").await.unwrap();
     let run_id = pg
-        .insert_playbook_run(
-            None,
-            None,
-            "greenfield",
-            "feature",
-            "high",
-            None,
-            "spec_driven",
-            "hi",
-            true,
-            Some("manual"),
-            false,
-            proj,
-        )
+        .insert_playbook_run(&PlaybookRunRow {
+            session_id: None,
+            feature: None,
+            lifecycle: "greenfield",
+            intent: "feature",
+            risk: "high",
+            rule_id: None,
+            playbook: "spec_driven",
+            rationale: "hi",
+            confirmed: true,
+            classified_by: Some("manual"),
+            model_fallback: false,
+            project_id: proj,
+        })
         .await
         .unwrap();
 
@@ -112,20 +112,20 @@ async fn session_confirmed_run_gate() {
     assert!(!pg.session_has_confirmed_run(&sid).await.unwrap());
 
     let (proj, _) = pg.get_or_create_project_by_name("_test:nudge_gate").await.unwrap();
-    pg.insert_playbook_run(
-        Some(sid),
-        None,
-        "stable",
-        "bug",
-        "low",
-        None,
-        "debug_flow",
-        "r",
-        true,
-        None,
-        false,
-        proj,
-    )
+    pg.insert_playbook_run(&PlaybookRunRow {
+        session_id: Some(sid),
+        feature: None,
+        lifecycle: "stable",
+        intent: "bug",
+        risk: "low",
+        rule_id: None,
+        playbook: "debug_flow",
+        rationale: "r",
+        confirmed: true,
+        classified_by: None,
+        model_fallback: false,
+        project_id: proj,
+    })
     .await
     .unwrap();
     assert!(pg.session_has_confirmed_run(&sid).await.unwrap());
@@ -173,20 +173,20 @@ async fn attribution_and_stats_roundtrip() {
     .await
     .unwrap();
     let (proj, _) = pg.get_or_create_project_by_name("_test:attrib").await.unwrap();
-    pg.insert_playbook_run(
-        Some(sid),
-        None,
-        "stable",
-        "bug",
-        "low",
-        None,
-        "debug_flow",
-        "r",
-        true,
-        Some("manual"),
-        false,
-        proj,
-    )
+    pg.insert_playbook_run(&PlaybookRunRow {
+        session_id: Some(sid),
+        feature: None,
+        lifecycle: "stable",
+        intent: "bug",
+        risk: "low",
+        rule_id: None,
+        playbook: "debug_flow",
+        rationale: "r",
+        confirmed: true,
+        classified_by: Some("manual"),
+        model_fallback: false,
+        project_id: proj,
+    })
     .await
     .unwrap();
 

@@ -2,6 +2,7 @@ use super::query::{resolve_folder_id, resolve_scope_ids};
 use crate::api::state::AppState;
 use crate::api::util::json_uuid;
 use crate::db::pg_store::CallDirection;
+use crate::db::pg_store::SessionOutcomeRow;
 use axum::{extract::State, http::StatusCode, response::Json};
 
 // ── MCP Tool Proxy ──────────────────────────────────────────────────────────
@@ -314,8 +315,8 @@ pub(crate) async fn mcp_call_tool(
                     params["tokensIn"].as_str().and_then(|s| s.trim().parse::<i32>().ok());
                 let tokens_out =
                     params["tokensOut"].as_str().and_then(|s| s.trim().parse::<i32>().ok());
-                state.pg.complete_session(
-                    &session_id,
+                state.pg.complete_session(&SessionOutcomeRow {
+                    id: &session_id,
                     outcome,
                     ftr,
                     turns,
@@ -323,7 +324,7 @@ pub(crate) async fn mcp_call_tool(
                     summary,
                     tokens_in,
                     tokens_out,
-                ).await.map_err(|e| { tracing::warn!(error = %e, %session_id, outcome, "mcp update_session: complete_session failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
+                }).await.map_err(|e| { tracing::warn!(error = %e, %session_id, outcome, "mcp update_session: complete_session failed"); StatusCode::INTERNAL_SERVER_ERROR })?;
                 serde_json::json!({"ok": true})
             } else {
                 serde_json::json!({"error": "invalid sessionId"})

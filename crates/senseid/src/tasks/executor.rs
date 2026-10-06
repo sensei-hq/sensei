@@ -211,6 +211,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::pg_store::HookEventRow;
 
     /// Build a TaskContext backed by PgStore and a fresh TaskQueue.
     use crate::tasks::test_support::make_ctx;
@@ -313,25 +314,31 @@ mod tests {
         let sid = format!("_test-exec-classify-{}", uuid::Uuid::new_v4());
         let now = chrono::Utc::now().timestamp_millis();
         ctx.pg()
-            .insert_hook_event(
-                &sid,
-                "claude",
-                "PostToolUse",
-                Some("Read"),
-                None,
-                now,
-                Some(true),
-                &serde_json::json!({
+            .insert_hook_event(&HookEventRow {
+                session_id: &sid,
+                assistant_family: "claude",
+                event_type: "PostToolUse",
+                tool_name: Some("Read"),
+                cwd: None,
+                ts: now,
+                success: Some(true),
+                payload: &serde_json::json!({
                     "tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs"},
                     "tool_response": "see crates/senseid/src/db/pg_store.rs:3421",
                 }),
-            )
+            })
             .await
             .unwrap();
-        ctx.pg().insert_hook_event(
-            &sid, "claude", "PreToolUse", Some("Edit"), None, now + 1, None,
-            &serde_json::json!({"tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs"}}),
-        ).await.unwrap();
+        ctx.pg().insert_hook_event(&HookEventRow {
+            session_id: &sid,
+            assistant_family: "claude",
+            event_type: "PreToolUse",
+            tool_name: Some("Edit"),
+            cwd: None,
+            ts: now + 1,
+            success: None,
+            payload: &serde_json::json!({"tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs"}}),
+        }).await.unwrap();
 
         let window = crate::tasks::handlers::tool_insights::HEALTH_VERDICT_WINDOW_DAYS;
         assert!(ctx.pg().unclassified_verdict_sessions(window).await.unwrap().contains(&sid));

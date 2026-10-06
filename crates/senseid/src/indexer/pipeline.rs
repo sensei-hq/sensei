@@ -24,6 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::repo;
 use super::scan_repo::{self, RepoScan};
 use super::structure::{self, ChangeKind, FileFacts};
+use crate::db::pg_store::LibraryPageRow;
 use crate::db::pg_store::PgStore;
 use crate::tasks::progress::StageEvents;
 
@@ -666,22 +667,22 @@ async fn ingest_library_pages(
         // A local page's location is a filesystem path, so it belongs in
         // `local_path`; `url` stays null rather than holding a path.
         match pg
-            .upsert_library_page(
+            .upsert_library_page(&LibraryPageRow {
                 library_id,
-                &page.doc.title,
-                None,
-                Some(page.location.as_str()),
-                Some(&page.doc.summary),
-                Some(&page.doc.content),
-                page.source_type,
-                page.doc.component.as_deref(),
-                // package_name: the local walk sees files, not package
-                // membership — nothing in `docs/llms/list.txt` says it
-                // documents `@rokkit/ui`. `None` is "not stated"; inferring it
-                // from the component name would be the R4 guess.
-                None,
-                None,
-            )
+                title: &page.doc.title,
+                url: None,
+                local_path: Some(page.location.as_str()),
+                description: Some(&page.doc.summary),
+                content: Some(&page.doc.content),
+                source_type: page.source_type,
+                component: page.doc.component.as_deref(),
+                // A component is not package membership — nothing in
+                // `docs/llms/list.txt` says it documents `@rokkit/ui`. `None` is
+                // "not stated"; inferring it from the component name would be
+                // the R4 guess.
+                package_name: None,
+                version: None,
+            })
             .await
         {
             Ok(_) => out.library_pages += 1,
@@ -1579,18 +1580,18 @@ mod corpus {
                     let mut n = 0;
                     for page in &pages {
                         if pg
-                            .upsert_library_page(
-                                &lib_id,
-                                &page.doc.title,
-                                Some(page.location.as_str()),
-                                None,
-                                Some(&page.doc.summary),
-                                Some(&page.doc.content),
-                                page.source_type,
-                                page.doc.component.as_deref(),
-                                None,
-                                Some(version),
-                            )
+                            .upsert_library_page(&LibraryPageRow {
+                                library_id: &lib_id,
+                                title: &page.doc.title,
+                                url: Some(page.location.as_str()),
+                                local_path: None,
+                                description: Some(&page.doc.summary),
+                                content: Some(&page.doc.content),
+                                source_type: page.source_type,
+                                component: page.doc.component.as_deref(),
+                                package_name: None,
+                                version: Some(version),
+                            })
                             .await
                             .is_ok()
                         {
@@ -1613,21 +1614,21 @@ mod corpus {
                     let mut n = 0;
                     for page in &pages {
                         if pg
-                            .upsert_library_page(
-                                &lib_id,
-                                &page.doc.title,
-                                Some(page.location.as_str()),
-                                None,
-                                Some(&page.doc.summary),
-                                Some(&page.doc.content),
-                                page.source_type,
-                                page.doc.component.as_deref(),
-                                None,
+                            .upsert_library_page(&LibraryPageRow {
+                                library_id: &lib_id,
+                                title: &page.doc.title,
+                                url: Some(page.location.as_str()),
+                                local_path: None,
+                                description: Some(&page.doc.summary),
+                                content: Some(&page.doc.content),
+                                source_type: page.source_type,
+                                component: page.doc.component.as_deref(),
+                                package_name: None,
                                 // A site documents whatever is current. S11:
-                                // `latest` IS a version, and recording it as
-                                // one keeps the dedup key total.
-                                Some("latest"),
-                            )
+                                // `latest` IS a version, and recording it as one
+                                // keeps the dedup key total.
+                                version: Some("latest"),
+                            })
                             .await
                             .is_ok()
                         {

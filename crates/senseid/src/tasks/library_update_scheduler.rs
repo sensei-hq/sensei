@@ -14,6 +14,7 @@ use std::sync::Arc;
 use super::queue::TaskQueue;
 use super::{Task, TaskKind};
 use crate::db::pg_store::PgStore;
+use crate::db::pg_store::RecommendationRow;
 use crate::libraries::advisory::{Advisory, OsvVulnSource, VulnSource, security_verdict};
 use crate::libraries::registry::{HttpVersionSource, VersionSource};
 use crate::libraries::version::{Bump, UpdateAction, classify_bump, update_action};
@@ -84,17 +85,17 @@ async fn write_update_rec(
         "mode": mode, "is_security": is_security, "advisory": pu.advisory,
     }});
     if let Err(e) = pg
-        .create_recommendation_full(
-            pu.project_id,
-            &title,
-            &why,
-            None,
-            "library_update",
+        .create_recommendation_full(&RecommendationRow {
+            project_id: pu.project_id,
+            title: &title,
+            why: &why,
+            impact: None,
+            action_type: "library_update",
             urgency,
-            &based_on,
-            None,
-            None,
-        )
+            based_on: &based_on,
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
     {
         tracing::warn!(error = %e, lib = %pu.name, "library_update_scheduler: create recommendation failed");
@@ -424,17 +425,17 @@ mod tests {
         // A NON-security notify for to_version 2.0.0.
         let based_on = serde_json::json!({ "library_update": {
             "library_id": lid.to_string(), "to_version": "2.0.0", "is_security": false } });
-        s.create_recommendation_full(
-            &pid,
-            "t",
-            "w",
-            None,
-            "library_update",
-            "low",
-            &based_on,
-            None,
-            None,
-        )
+        s.create_recommendation_full(&RecommendationRow {
+            project_id: &pid,
+            title: "t",
+            why: "w",
+            impact: None,
+            action_type: "library_update",
+            urgency: "low",
+            based_on: &based_on,
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
         .unwrap();
         // Same-tier query sees it; the security-tier query does NOT — so a prior
@@ -600,17 +601,17 @@ mod tests {
         // A prior NON-security notify for the same to_version.
         let based_on = serde_json::json!({ "library_update": {
             "library_id": lid.to_string(), "to_version": "1.5.0", "is_security": false } });
-        s.create_recommendation_full(
-            &pid,
-            "t",
-            "w",
-            None,
-            "library_update",
-            "low",
-            &based_on,
-            None,
-            None,
-        )
+        s.create_recommendation_full(&RecommendationRow {
+            project_id: &pid,
+            title: "t",
+            why: "w",
+            impact: None,
+            action_type: "library_update",
+            urgency: "low",
+            based_on: &based_on,
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
         .unwrap();
         // The security tick still writes a security-tier flag (mode-aware dedup).

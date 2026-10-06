@@ -16,6 +16,25 @@ pub struct LibraryDocs {
     pub version_note: Option<String>,
 }
 
+/// One page of library documentation, with the identity that dedupes it.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct LibraryPageRow<'a> {
+    pub library_id: &'a uuid::Uuid,
+    pub title: &'a str,
+    pub url: Option<&'a str>,
+    pub local_path: Option<&'a str>,
+    pub description: Option<&'a str>,
+    pub content: Option<&'a str>,
+    pub source_type: &'a str,
+    pub component: Option<&'a str>,
+    pub package_name: Option<&'a str>,
+    pub version: Option<&'a str>,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// Search libraries by name (ILIKE).
@@ -1138,17 +1157,22 @@ impl PgStore {
 
     pub async fn upsert_library_page(
         &self,
-        library_id: &uuid::Uuid,
-        title: &str,
-        url: Option<&str>,
-        local_path: Option<&str>,
-        description: Option<&str>,
-        content: Option<&str>,
-        source_type: &str,
-        component: Option<&str>,
-        package_name: Option<&str>,
-        version: Option<&str>,
+        row: &LibraryPageRow<'_>,
     ) -> Result<uuid::Uuid, String> {
+        // EXHAUSTIVE (#161): a field added to `LibraryPageRow` stops this
+        // compiling until someone binds it.
+        let LibraryPageRow {
+            library_id,
+            title,
+            url,
+            local_path,
+            description,
+            content,
+            source_type,
+            component,
+            package_name,
+            version,
+        } = row;
         // Pages hang off a VERSION (S7b). This writer is not told which one, so
         // it lands on the current release rather than a fabricated version.
         //

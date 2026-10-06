@@ -540,6 +540,7 @@ mod tests {
     use crate::api::state::SharedState;
     use crate::db::pg_store::MetricRow;
     use crate::db::pg_store::graph_seed::SeedGraph;
+    use crate::db::pg_store::{HookEventRow, MemoryRow};
     use crate::tasks::queue::TaskQueue;
     use crate::tasks::{Task, TaskKind};
     use axum::body::Body;
@@ -2602,16 +2603,16 @@ mod tests {
             .unwrap();
         state
             .pg
-            .insert_hook_event(
-                "_test-remap-ep-session",
-                "claude",
-                "PreToolUse",
-                None,
-                Some("/_test/remap-ep-old"),
-                1_700_000_500,
-                None,
-                &serde_json::json!({}),
-            )
+            .insert_hook_event(&HookEventRow {
+                session_id: "_test-remap-ep-session",
+                assistant_family: "claude",
+                event_type: "PreToolUse",
+                tool_name: None,
+                cwd: Some("/_test/remap-ep-old"),
+                ts: 1_700_000_500,
+                success: None,
+                payload: &serde_json::json!({}),
+            })
             .await
             .unwrap();
 
@@ -3179,7 +3180,18 @@ mod tests {
     async fn seed_memory(state: &AppState, title: &str, content: &str) -> uuid::Uuid {
         state
             .pg
-            .create_memory(None, "global", None, "decision", title, content, None, None, None, None)
+            .create_memory(&MemoryRow {
+                project_id: None,
+                scope: "global",
+                scope_filter: None,
+                mem_type: "decision",
+                title,
+                content,
+                impact: None,
+                session_id: None,
+                spine_slot: None,
+                feature: None,
+            })
             .await
             .unwrap()
     }
@@ -3601,18 +3613,18 @@ mod tests {
         // folder's ruleset is non-empty regardless of DB baseline.
         state
             .pg
-            .create_memory(
-                None,
-                "global",
-                None,
-                "convention",
-                "_test:mcp-seam-rule",
-                "seam rule",
-                None,
-                None,
-                None,
-                None,
-            )
+            .create_memory(&MemoryRow {
+                project_id: None,
+                scope: "global",
+                scope_filter: None,
+                mem_type: "convention",
+                title: "_test:mcp-seam-rule",
+                content: "seam rule",
+                impact: None,
+                session_id: None,
+                spine_slot: None,
+                feature: None,
+            })
             .await
             .unwrap();
 
@@ -3811,18 +3823,18 @@ mod tests {
         let rule_title = format!("_test:contract-rule-{short}");
         state
             .pg
-            .create_memory(
-                None,
-                "global",
-                None,
-                "convention",
-                &rule_title,
-                "seam rule",
-                None,
-                None,
-                None,
-                None,
-            )
+            .create_memory(&MemoryRow {
+                project_id: None,
+                scope: "global",
+                scope_filter: None,
+                mem_type: "convention",
+                title: &rule_title,
+                content: "seam rule",
+                impact: None,
+                session_id: None,
+                spine_slot: None,
+                feature: None,
+            })
             .await
             .unwrap();
 

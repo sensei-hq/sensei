@@ -1247,18 +1247,18 @@ async fn a_docs_read_failure_is_recorded_as_a_gap_and_never_deletes_the_pages() 
     let s = pg_store().await;
     let lib =
         s.upsert_library("_test:stale", "npm", Some("1.0.0"), None, None, None).await.unwrap();
-    s.upsert_library_page(
-        &lib,
-        "Overview",
-        None,
-        Some("/gone/llms/overview.txt"),
-        None,
-        Some("body"),
-        "local",
-        Some("overview"),
-        None,
-        None,
-    )
+    s.upsert_library_page(&LibraryPageRow {
+        library_id: &lib,
+        title: "Overview",
+        url: None,
+        local_path: Some("/gone/llms/overview.txt"),
+        description: None,
+        content: Some("body"),
+        source_type: "local",
+        component: Some("overview"),
+        package_name: None,
+        version: None,
+    })
     .await
     .unwrap();
 
@@ -1312,51 +1312,51 @@ async fn two_packages_of_one_library_can_each_document_the_same_component() {
         s.upsert_library("_test:pagekey", "npm", Some("1.0.0"), None, None, None).await.unwrap();
 
     let ui = s
-        .upsert_library_page(
-            &lib,
-            "List",
-            None,
-            None,
-            None,
-            Some("ui list docs"),
-            "local",
-            Some("List"),
-            Some("@_test/ui"),
-            None,
-        )
+        .upsert_library_page(&LibraryPageRow {
+            library_id: &lib,
+            title: "List",
+            url: None,
+            local_path: None,
+            description: None,
+            content: Some("ui list docs"),
+            source_type: "local",
+            component: Some("List"),
+            package_name: Some("@_test/ui"),
+            version: None,
+        })
         .await
         .unwrap();
     let chart = s
-        .upsert_library_page(
-            &lib,
-            "List",
-            None,
-            None,
-            None,
-            Some("chart list docs"),
-            "local",
-            Some("List"),
-            Some("@_test/chart"),
-            None,
-        )
+        .upsert_library_page(&LibraryPageRow {
+            library_id: &lib,
+            title: "List",
+            url: None,
+            local_path: None,
+            description: None,
+            content: Some("chart list docs"),
+            source_type: "local",
+            component: Some("List"),
+            package_name: Some("@_test/chart"),
+            version: None,
+        })
         .await
         .unwrap();
     assert_ne!(ui, chart, "two packages, two rows — not one evicting the other");
 
     // A LIBRARY-LEVEL page (no package) is a third, distinct row.
     let overview = s
-        .upsert_library_page(
-            &lib,
-            "List",
-            None,
-            None,
-            None,
-            Some("overview"),
-            "local",
-            Some("List"),
-            None,
-            None,
-        )
+        .upsert_library_page(&LibraryPageRow {
+            library_id: &lib,
+            title: "List",
+            url: None,
+            local_path: None,
+            description: None,
+            content: Some("overview"),
+            source_type: "local",
+            component: Some("List"),
+            package_name: None,
+            version: None,
+        })
         .await
         .unwrap();
     assert_ne!(overview, ui);
@@ -1366,18 +1366,18 @@ async fn two_packages_of_one_library_can_each_document_the_same_component() {
     // inserting a duplicate. Postgres treats NULLs as distinct by default, so
     // without that clause every re-ingest would add another overview row.
     let overview_again = s
-        .upsert_library_page(
-            &lib,
-            "List",
-            None,
-            None,
-            None,
-            Some("overview v2"),
-            "local",
-            Some("List"),
-            None,
-            None,
-        )
+        .upsert_library_page(&LibraryPageRow {
+            library_id: &lib,
+            title: "List",
+            url: None,
+            local_path: None,
+            description: None,
+            content: Some("overview v2"),
+            source_type: "local",
+            component: Some("List"),
+            package_name: None,
+            version: None,
+        })
         .await
         .unwrap();
     assert_eq!(overview, overview_again, "library-level pages are still constrained");
@@ -3984,18 +3984,18 @@ async fn repositories_view() {
 async fn memory_create_and_get() {
     let s = pg_store().await;
     let id = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "decision",
-            "_test:mem_create",
-            "Always use TDD",
-            Some("Bugs ship to prod"),
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_create",
+            content: "Always use TDD",
+            impact: Some("Bugs ship to prod"),
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     let m = s.get_memory(&id).await.unwrap().unwrap();
@@ -4019,18 +4019,18 @@ async fn create_memory_persists_spine_slot_and_feature() {
         .await
         .unwrap();
     let id = s
-        .create_memory(
-            Some(&pid),
-            "project",
-            None,
-            "decision",
-            "t",
-            "c",
-            None,
-            None,
-            Some("decisions"),
-            Some("auth"),
-        )
+        .create_memory(&MemoryRow {
+            project_id: Some(&pid),
+            scope: "project",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "t",
+            content: "c",
+            impact: None,
+            session_id: None,
+            spine_slot: Some("decisions"),
+            feature: Some("auth"),
+        })
         .await
         .unwrap();
     let row: (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
@@ -4057,18 +4057,18 @@ async fn create_memory_persists_spine_slot_and_feature() {
 async fn memory_reinforce() {
     let s = pg_store().await;
     let id = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "pattern",
-            "_test:mem_reinforce",
-            "rule",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "pattern",
+            title: "_test:mem_reinforce",
+            content: "rule",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     s.reinforce_memory(&id, 1.0).await.unwrap();
@@ -4090,18 +4090,18 @@ async fn memory_reinforce() {
 async fn memory_archive() {
     let s = pg_store().await;
     let id = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "question",
-            "_test:mem_archive",
-            "open q",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "question",
+            title: "_test:mem_archive",
+            content: "open q",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     s.archive_memory(&id).await.unwrap();
@@ -4118,33 +4118,33 @@ async fn memory_archive() {
 async fn memory_list_active() {
     let s = pg_store().await;
     let id1 = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "decision",
-            "_test:mem_list_a",
-            "rule a",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_list_a",
+            content: "rule a",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     let id2 = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "decision",
-            "_test:mem_list_b",
-            "rule b",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_list_b",
+            content: "rule b",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     let active = s.list_active_memories(None, Some("global")).await.unwrap();
@@ -4163,18 +4163,18 @@ async fn memory_list_active() {
 async fn memory_example_add_and_list() {
     let s = pg_store().await;
     let mid = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "pattern",
-            "_test:mem_ex",
-            "rule",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "pattern",
+            title: "_test:mem_ex",
+            content: "rule",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     s.add_memory_example(&mid, "fn:auth_handler", true, Some("canonical auth")).await.unwrap();
@@ -4198,18 +4198,18 @@ async fn memory_evidence_add_and_list() {
     let fid = create_test_folder(&s, &format!("mem_ev_{}", uuid::Uuid::new_v4())).await;
     let sid = s.create_session(&fid, "test", None).await.unwrap();
     let mid = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "decision",
-            "_test:mem_ev",
-            "rule",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_ev",
+            content: "rule",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     s.add_memory_evidence(&mid, Some(&sid), Some("user corrected twice")).await.unwrap();
@@ -4235,48 +4235,48 @@ async fn memory_evidence_add_and_list() {
 async fn memory_links_parent_child() {
     let s = pg_store().await;
     let parent = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "decision",
-            "_test:mem_parent",
-            "combined",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_parent",
+            content: "combined",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     let child1 = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "decision",
-            "_test:mem_child1",
-            "original 1",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_child1",
+            content: "original 1",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     let child2 = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "decision",
-            "_test:mem_child2",
-            "original 2",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_child2",
+            content: "original 2",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     s.link_memories(&parent, &child1).await.unwrap();
@@ -4490,11 +4490,17 @@ async fn begin_file_materialization_flips_and_returns_prompt_seed() {
         .create_project(&format!("_test:pbmat-{}", uuid::Uuid::new_v4()), None, None)
         .await
         .unwrap();
-    let rid = s.create_recommendation_full(
-            &pid, "Establish DBD Guardian Agent", "cross-layer churn needs a review agent", None,
-            "create_agent", "high", &serde_json::json!({}), None,
-            Some("You are an Architectural Review Agent for dbd. Before any code is accepted, check module boundaries."),
-        ).await.unwrap();
+    let rid = s.create_recommendation_full(&RecommendationRow {
+        project_id: &pid,
+        title: "Establish DBD Guardian Agent",
+        why: "cross-layer churn needs a review agent",
+        impact: None,
+        action_type: "create_agent",
+        urgency: "high",
+        based_on: &serde_json::json!({}),
+        reasoning_trace_id: None,
+        prompt: Some("You are an Architectural Review Agent for dbd. Before any code is accepted, check module boundaries."),
+    }).await.unwrap();
 
     let (action_type, title, why, prompt) =
         s.begin_file_materialization(&rid).await.unwrap().expect("pending → seed");
@@ -4565,17 +4571,17 @@ async fn seed_promote_fixture(
         serde_json::json!({ "patterns": [] })
     };
     let rid = s
-        .create_recommendation_full(
-            &proj_id,
-            "_test:promote",
-            "why",
-            None,
+        .create_recommendation_full(&RecommendationRow {
+            project_id: &proj_id,
+            title: "_test:promote",
+            why: "why",
+            impact: None,
             action_type,
-            "medium",
-            &based_on,
-            None,
-            None,
-        )
+            urgency: "medium",
+            based_on: &based_on,
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
         .unwrap();
     (proj_id, fid, pat_id, rid)
@@ -4774,17 +4780,17 @@ async fn seed_regressed_rec_with_memory(
     let (proj_id, fid, pat_id, mem_id) = seed_pattern_and_sourced_memory(s, suffix, 2.0).await;
     let based_on = serde_json::json!({ "patterns": [pat_id] });
     let rec_id = s
-        .create_recommendation_full(
-            &proj_id,
-            "_test:regressed-rec",
-            "why",
-            None,
-            "promote_pattern",
-            "medium",
-            &based_on,
-            None,
-            None,
-        )
+        .create_recommendation_full(&RecommendationRow {
+            project_id: &proj_id,
+            title: "_test:regressed-rec",
+            why: "why",
+            impact: None,
+            action_type: "promote_pattern",
+            urgency: "medium",
+            based_on: &based_on,
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
         .unwrap();
     sqlx_core::query::query(
@@ -5904,16 +5910,16 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
     assert_eq!(wm_before.0, 1, "watermark fixture did not land");
 
     // Seed a hook event under the same client_session_id.
-    s.insert_hook_event(
-        &csid,
-        "claude",
-        "UserPromptSubmit",
-        None,
-        None,
-        1000,
-        None,
-        &serde_json::json!({"prompt": "hi"}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: &csid,
+        assistant_family: "claude",
+        event_type: "UserPromptSubmit",
+        tool_name: None,
+        cwd: None,
+        ts: 1000,
+        success: None,
+        payload: &serde_json::json!({"prompt": "hi"}),
+    })
     .await
     .unwrap();
 
@@ -6201,16 +6207,16 @@ async fn prune_activity_prunes_orphan_events_by_ts() {
     // Insert an assistant_event with no matching session and old ts.
     let old_ts: i64 = (chrono::Utc::now() - chrono::Duration::days(90)).timestamp() * 1000;
     let orphan_csid = format!("orphan_prune_{}", uuid::Uuid::new_v4());
-    s.insert_hook_event(
-        &orphan_csid,
-        "claude",
-        "PostToolUse",
-        Some("Read"),
-        None,
-        old_ts,
-        None,
-        &serde_json::json!({}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: &orphan_csid,
+        assistant_family: "claude",
+        event_type: "PostToolUse",
+        tool_name: Some("Read"),
+        cwd: None,
+        ts: old_ts,
+        success: None,
+        payload: &serde_json::json!({}),
+    })
     .await
     .unwrap();
 
@@ -6287,16 +6293,16 @@ async fn prune_activity_prunes_orphans_despite_a_null_client_session_id() {
 
     let orphan_csid = format!("orphan_null_{uniq}");
     let old_ts: i64 = (chrono::Utc::now() - chrono::Duration::days(90)).timestamp() * 1000;
-    s.insert_hook_event(
-        &orphan_csid,
-        "claude",
-        "PostToolUse",
-        Some("Read"),
-        None,
-        old_ts,
-        None,
-        &serde_json::json!({}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: &orphan_csid,
+        assistant_family: "claude",
+        event_type: "PostToolUse",
+        tool_name: Some("Read"),
+        cwd: None,
+        ts: old_ts,
+        success: None,
+        payload: &serde_json::json!({}),
+    })
     .await
     .unwrap();
 
@@ -6908,16 +6914,16 @@ async fn repair_orphaned_sessions_reattaches_via_alias() {
     let fid = create_test_folder(&s, "repair-new").await; // /_test/repair-new
     s.add_folder_path_alias("/_test/repair-old", &fid, "rename").await.unwrap();
     // an orphaned event under the OLD path (a subdir) — no session row.
-    s.insert_hook_event(
-        sess,
-        "claude",
-        "PreToolUse",
-        None,
-        Some("/_test/repair-old/src"),
-        1_700_000_000,
-        None,
-        &serde_json::json!({}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: sess,
+        assistant_family: "claude",
+        event_type: "PreToolUse",
+        tool_name: None,
+        cwd: Some("/_test/repair-old/src"),
+        ts: 1_700_000_000,
+        success: None,
+        payload: &serde_json::json!({}),
+    })
     .await
     .unwrap();
     let repaired = s.repair_orphaned_sessions().await.unwrap();
@@ -6955,28 +6961,28 @@ async fn repair_prefers_the_renamed_subdir_over_a_live_parent() {
     let moved = create_test_folder(&s, "shadow-moved").await; // the renamed subdir's new home
     s.add_folder_path_alias("/_test/shadow-parent/sub", &moved, "rename").await.unwrap();
     // events under BOTH the live parent and the renamed subdir.
-    s.insert_hook_event(
-        sess,
-        "claude",
-        "PreToolUse",
-        None,
-        Some("/_test/shadow-parent"),
-        1_700_000_100,
-        None,
-        &serde_json::json!({}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: sess,
+        assistant_family: "claude",
+        event_type: "PreToolUse",
+        tool_name: None,
+        cwd: Some("/_test/shadow-parent"),
+        ts: 1_700_000_100,
+        success: None,
+        payload: &serde_json::json!({}),
+    })
     .await
     .unwrap();
-    s.insert_hook_event(
-        sess,
-        "claude",
-        "PreToolUse",
-        None,
-        Some("/_test/shadow-parent/sub/x"),
-        1_700_000_200,
-        None,
-        &serde_json::json!({}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: sess,
+        assistant_family: "claude",
+        event_type: "PreToolUse",
+        tool_name: None,
+        cwd: Some("/_test/shadow-parent/sub/x"),
+        ts: 1_700_000_200,
+        success: None,
+        payload: &serde_json::json!({}),
+    })
     .await
     .unwrap();
     s.repair_orphaned_sessions().await.unwrap();
@@ -8303,16 +8309,16 @@ async fn project_ftr_and_quality_decode_numeric_metrics() {
     let fid = create_test_folder(&s, &format!("ftr-{}", uuid::Uuid::new_v4())).await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
     let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
-    s.update_session_metrics(
-        &session_id,
-        3,
-        0,
-        "completed",
-        true,
-        1000,
-        None,
-        &serde_json::json!({}),
-    )
+    s.update_session_metrics(&SessionMetricsRow {
+        session_id: &session_id,
+        turns: 3,
+        corrections: 0,
+        outcome: "completed",
+        ftr: true,
+        duration_ms: 1000,
+        module: None,
+        tool_usage: &serde_json::json!({}),
+    })
     .await
     .unwrap();
     // Stored daily ftr row in the 14d window → the headline decodes a real value.
@@ -8421,9 +8427,18 @@ async fn session_complete() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, "sess_complete").await;
     let sid = s.create_session(&fid, "add feature", None).await.unwrap();
-    s.complete_session(&sid, "completed", true, 5, 0, Some("shipped it"), Some(1200), Some(3400))
-        .await
-        .unwrap();
+    s.complete_session(&SessionOutcomeRow {
+        id: &sid,
+        outcome: "completed",
+        ftr: true,
+        turns: 5,
+        corrections: 0,
+        summary: Some("shipped it"),
+        tokens_in: Some(1200),
+        tokens_out: Some(3400),
+    })
+    .await
+    .unwrap();
     let sess = s.get_session(&sid).await.unwrap().unwrap();
     assert_eq!(sess["outcome"], "completed");
     assert_eq!(sess["ftr"], true);
@@ -8473,16 +8488,16 @@ async fn hook_event_insert_and_query() {
         "cwd": "/tmp/test",
     });
     let id = s
-        .insert_hook_event(
-            &session_id,
-            "claude",
-            "PreToolUse",
-            Some("Read"),
-            Some("/tmp/test"),
-            chrono::Utc::now().timestamp_millis(),
-            None,
-            &payload,
-        )
+        .insert_hook_event(&HookEventRow {
+            session_id: &session_id,
+            assistant_family: "claude",
+            event_type: "PreToolUse",
+            tool_name: Some("Read"),
+            cwd: Some("/tmp/test"),
+            ts: chrono::Utc::now().timestamp_millis(),
+            success: None,
+            payload: &payload,
+        })
         .await
         .unwrap();
     assert!(id > 0);
@@ -8494,16 +8509,16 @@ async fn hook_event_post_tool_use_success() {
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let payload = serde_json::json!({"hook_event_name": "PostToolUse", "assistant_family": "claude", "tool_name": "Bash"});
     let id = s
-        .insert_hook_event(
-            &session_id,
-            "claude",
-            "PostToolUse",
-            Some("Bash"),
-            None,
-            chrono::Utc::now().timestamp_millis(),
-            Some(true),
-            &payload,
-        )
+        .insert_hook_event(&HookEventRow {
+            session_id: &session_id,
+            assistant_family: "claude",
+            event_type: "PostToolUse",
+            tool_name: Some("Bash"),
+            cwd: None,
+            ts: chrono::Utc::now().timestamp_millis(),
+            success: Some(true),
+            payload: &payload,
+        })
         .await
         .unwrap();
     assert!(id > 0);
@@ -8515,16 +8530,16 @@ async fn hook_event_no_tool_name() {
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let payload = serde_json::json!({"hook_event_name": "SessionStart", "assistant_family": "claude", "model": "claude-sonnet-4"});
     let id = s
-        .insert_hook_event(
-            &session_id,
-            "claude",
-            "SessionStart",
-            None,
-            Some("/home/user/project"),
-            chrono::Utc::now().timestamp_millis(),
-            None,
-            &payload,
-        )
+        .insert_hook_event(&HookEventRow {
+            session_id: &session_id,
+            assistant_family: "claude",
+            event_type: "SessionStart",
+            tool_name: None,
+            cwd: Some("/home/user/project"),
+            ts: chrono::Utc::now().timestamp_millis(),
+            success: None,
+            payload: &payload,
+        })
         .await
         .unwrap();
     assert!(id > 0);
@@ -8537,16 +8552,16 @@ async fn hook_event_cursor_family() {
     let payload =
         serde_json::json!({"hook_event_name": "SessionStart", "assistant_family": "cursor"});
     let id = s
-        .insert_hook_event(
-            &session_id,
-            "cursor",
-            "SessionStart",
-            None,
-            Some("/home/user/project"),
-            chrono::Utc::now().timestamp_millis(),
-            None,
-            &payload,
-        )
+        .insert_hook_event(&HookEventRow {
+            session_id: &session_id,
+            assistant_family: "cursor",
+            event_type: "SessionStart",
+            tool_name: None,
+            cwd: Some("/home/user/project"),
+            ts: chrono::Utc::now().timestamp_millis(),
+            success: None,
+            payload: &payload,
+        })
         .await
         .unwrap();
     assert!(id > 0);
@@ -8561,32 +8576,32 @@ async fn unclassified_verdict_sessions_returns_only_in_window_unclassified() {
 
     // (a) in-window PostToolUse, never classified → should appear.
     let pending_sid = format!("_test-unclassified-pending-{}", uuid::Uuid::new_v4());
-    s.insert_hook_event(
-        &pending_sid,
-        "claude",
-        "PostToolUse",
-        Some("Read"),
-        None,
-        now,
-        Some(true),
-        &serde_json::json!({"tool_response": "x"}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: &pending_sid,
+        assistant_family: "claude",
+        event_type: "PostToolUse",
+        tool_name: Some("Read"),
+        cwd: None,
+        ts: now,
+        success: Some(true),
+        payload: &serde_json::json!({"tool_response": "x"}),
+    })
     .await
     .unwrap();
 
     // (b) in-window PostToolUse that already carries a verdict row → excluded.
     let classified_sid = format!("_test-unclassified-classified-{}", uuid::Uuid::new_v4());
     let ev_id = s
-        .insert_hook_event(
-            &classified_sid,
-            "claude",
-            "PostToolUse",
-            Some("Read"),
-            None,
-            now,
-            Some(true),
-            &serde_json::json!({"tool_response": "y"}),
-        )
+        .insert_hook_event(&HookEventRow {
+            session_id: &classified_sid,
+            assistant_family: "claude",
+            event_type: "PostToolUse",
+            tool_name: Some("Read"),
+            cwd: None,
+            ts: now,
+            success: Some(true),
+            payload: &serde_json::json!({"tool_response": "y"}),
+        })
         .await
         .unwrap();
     s.upsert_verdicts_batch(&[(
@@ -8602,16 +8617,16 @@ async fn unclassified_verdict_sessions_returns_only_in_window_unclassified() {
 
     // (c) out-of-window PostToolUse (30 days old), unclassified → excluded.
     let old_sid = format!("_test-unclassified-old-{}", uuid::Uuid::new_v4());
-    s.insert_hook_event(
-        &old_sid,
-        "claude",
-        "PostToolUse",
-        Some("Read"),
-        None,
-        now - 30 * day_ms,
-        Some(true),
-        &serde_json::json!({"tool_response": "z"}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: &old_sid,
+        assistant_family: "claude",
+        event_type: "PostToolUse",
+        tool_name: Some("Read"),
+        cwd: None,
+        ts: now - 30 * day_ms,
+        success: Some(true),
+        payload: &serde_json::json!({"tool_response": "z"}),
+    })
     .await
     .unwrap();
 
@@ -10031,16 +10046,16 @@ async fn seed_logs(pg: &PgStore, marker: &str) {
         ("error", format!("{marker}-b"), "analyzer", base + chrono::Duration::minutes(90)),
     ];
     for (level, running_on, module, ts) in rows {
-        pg.insert_log(
+        pg.insert_log(&LogRow {
             level,
-            &running_on,
-            Some(module),
-            &ts.to_rfc3339(),
-            &format!("{marker} {level} message"),
-            &serde_json::json!({}),
-            &None,
-            &None,
-        )
+            running_on: &running_on,
+            module: Some(module),
+            logged_at: &ts.to_rfc3339(),
+            message: &format!("{marker} {level} message"),
+            context: &serde_json::json!({}),
+            data: &None,
+            error: &None,
+        })
         .await
         .unwrap();
     }

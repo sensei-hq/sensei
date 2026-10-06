@@ -16,6 +16,7 @@ pub mod opencode;
 pub mod vscode;
 pub mod zed;
 
+use crate::db::pg_store::HookEventRow;
 use crate::tasks::executor::TaskContext;
 use crate::tasks::{Task, TaskKind};
 use std::path::PathBuf;
@@ -632,16 +633,16 @@ async fn synthesize_session(
             _ => serde_json::json!({}),
         };
         if let Err(e) = pg
-            .insert_hook_event(
+            .insert_hook_event(&HookEventRow {
                 session_id,
-                family,
-                &ev.event_type,
-                ev.tool_name.as_deref(),
-                Some(&cwd),
-                ev.ts,
-                None,
-                &payload,
-            )
+                assistant_family: family,
+                event_type: &ev.event_type,
+                tool_name: ev.tool_name.as_deref(),
+                cwd: Some(&cwd),
+                ts: ev.ts,
+                success: None,
+                payload: &payload,
+            })
             .await
         {
             tracing::warn!(error = %e, session = %session_id, "synthesize_session: insert_hook_event failed");
@@ -860,9 +861,18 @@ mod tests {
 
         // pre-existing event ⇒ session already captured, so this test isolates
         // the PROSE cursor-skip path (synthesis is a dedup no-op).
-        pg.insert_hook_event(&sid, "claude", "Stop", None, None, 1, None, &serde_json::json!({}))
-            .await
-            .unwrap();
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &sid,
+            assistant_family: "claude",
+            event_type: "Stop",
+            tool_name: None,
+            cwd: None,
+            ts: 1,
+            success: None,
+            payload: &serde_json::json!({}),
+        })
+        .await
+        .unwrap();
 
         let ads: Vec<Box<dyn TranscriptAdapter>> =
             vec![Box::new(claude::ClaudeAdapter::new(root.clone()))];
