@@ -21,6 +21,7 @@ import type {
   IntakeGuide, PlaybookRecommendation,
   ProvisionModel, ProvisionPhase,
   StructureLevel, StructurePayload,
+  LayeringLevel, LayeringPayload,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -520,6 +521,22 @@ export function senseiApi(port: number) {
     tryGetProjectStructure: (id: string, level: StructureLevel, kinds: string[]) =>
       tryGet<StructurePayload>(
         `/api/projects/${enc(id)}/diagrams/structure?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
+      ),
+
+    /** #232 — the Layers/Cycles payload, one request serving both screens.
+     *
+     *  ONE CALL, TWO SCREENS. The layering, the cycles and the coverage all
+     *  come out of a single `analyse` over one read of `structure_edges`, and
+     *  that read is the whole cost (1.5 s to 74 s per project). Splitting it
+     *  into a layering endpoint and a cycles endpoint would pay it twice for
+     *  answers that have to agree.
+     *
+     *  Result-based for the reason the Structure one is: this screen must tell
+     *  "no cycles here" apart from "the daemon failed", and an empty canvas
+     *  reads as a clean architecture. */
+    tryGetProjectLayering: (id: string, level: LayeringLevel, kinds: string[]) =>
+      tryGet<LayeringPayload>(
+        `/api/projects/${enc(id)}/diagrams/layering?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
       ),
 
     getProjectPatterns: (id: string) =>

@@ -1837,3 +1837,96 @@ export interface StructurePayload {
   edges: StructureEdge[];
   coverage: StructureCoverage;
 }
+
+// ── Diagrams · Layers and Cycles (#232) ─────────────────────────────────────
+
+/** How one dependency sits against the layering.
+ *
+ *  FOUR VALUES, NOT TWO, and `skip` is the one that matters. A call that skips
+ *  a layer is LEGAL under relaxed layering — rokkit's own vocabulary separates
+ *  it from a climb for exactly that reason — so a screen that colours both as
+ *  violations reports a problem the architecture does not have.
+ *
+ *  `up` is the real one: every `up` edge is a cycle's back edge, the arrow the
+ *  feedback order says to cut. */
+export type Conformance = 'down' | 'skip' | 'up' | 'level';
+
+/** The grains the Layers endpoint serves. `package` is absent on purpose — a
+ *  package graph on this corpus is single digits of nodes, which has no
+ *  layering to show. */
+export type LayeringLevel = 'module' | 'file';
+
+export interface LayeringNode {
+  id: string;
+  label: string;
+  group: string;
+  weight: number;
+  files: number;
+  language: string | null;
+  /** NULL when the unit was not placed — the endpoint keeps the node and says
+   *  so rather than dropping it. */
+  layer: number | null;
+  component: number | null;
+  componentSize: number | null;
+}
+
+export interface LayeringEdge {
+  id: string;
+  source: string;
+  target: string;
+  kind: 'dependency';
+  weight: number;
+  conformance: Conformance;
+  /** The arrow the feedback order says to cut — one per cycle. */
+  weakest: boolean;
+}
+
+/** A dependency with no layering verdict: the two ends and how often. */
+export interface LayeringDep {
+  source: string;
+  target: string;
+  occurrences: number;
+}
+
+export interface LayeringCycle {
+  component: number;
+  members: string[];
+  layer: number;
+  /** Every dependency inside the component, heaviest first. */
+  inner: LayeringDep[];
+  /** The weakest link. NULL when the component has no cuttable edge. */
+  cut: LayeringDep | null;
+}
+
+/** What the picture is NOT showing.
+ *
+ *  `unknownUnit` is the one with teeth and travels with the payload for the
+ *  reason `unplaced` does on Structure: a dependency whose endpoint owns no
+ *  file is not a unit, so it is dropped — and a diagram missing a share of its
+ *  edges with no number beside it reads as a sparse codebase rather than an
+ *  incompletely-indexed one. */
+export interface LayeringCoverage {
+  drawn: number;
+  unplaced: number;
+  units: number;
+  unknownUnit: number;
+}
+
+export interface LayeringPayload {
+  level: LayeringLevel;
+  kinds: string[];
+  /** `derived` means this layering was MEASURED from the call graph rather than
+   *  declared. The screen therefore answers "do these calls flow downward",
+   *  not "is this the architecture you intended" — a declared layering is a
+   *  different question and a different source. */
+  layerSource: 'derived';
+  depth: number;
+  nodes: LayeringNode[];
+  edges: LayeringEdge[];
+  cycles: LayeringCycle[];
+  /** A unit depending on itself. At module grain that is two of its files
+   *  referring to each other, which is a fact about the module; at file grain
+   *  it is empty by construction. */
+  selfDependencies: LayeringDep[];
+  coverage: LayeringCoverage;
+}
