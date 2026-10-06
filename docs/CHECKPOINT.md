@@ -53,9 +53,22 @@ anything later; the reasoning is below the list, not implied by it.
         NEEDS A RE-INDEX to move the live DB — the placement comes from
         the walk, so backfill-edge-verdicts.sh cannot help, and
         DEPLOYING IS BLOCKED BY #243.
-    [!] #243 make install-debug cannot build (llama-cpp-sys-2 vs OpenSSL)
-        Nothing reaches the running daemon until this is fixed. Found
-        while re-indexing for #242; unrelated to it.
+    [x] #243 make install could not build at all                1f09b5d9
+        llama.cpp's vendored cpp-httplib vs OpenSSL 3.5+. Turned its
+        TLS off through a cmake prelude — sensei embeds llama.cpp for
+        INFERENCE and never serves HTTP from it. Verified on the shipped
+        binary: daemon up, embedded-llama present, a real embedding back.
+    [x] #231 fqn segment 3 is a SYMBOL for some adapters
+        f4daee2b fd1f9368 297e3cd0
+        `join` dropped an empty module, sliding the symbol's NAME into
+        the module's slot. It now drops only a TRAILING empty, so
+        `lib·tokio` is unchanged and the module is segment 3 always.
+        Closed a REAL collision too: the ratchet in
+        `no_two_shapes_mint_one_string` went from one pair per language
+        to ZERO — `Config::load` at a root and `load` in a module
+        `Config` were one node. Both minters changed; `module_of` answers
+        the root case with the package's own name.
+        NEEDS A RE-INDEX, like #242 — every package-root identity moved.
     [ ] #231 fqn segment 3 is a SYMBOL for some adapters   ← NEXT
 
     -- C. screens --
