@@ -945,3 +945,26 @@ impl PgStore {
         Ok(skipped)
     }
 }
+
+impl PgStore {
+    /// The namespace a memory belongs to, or `None` when it has none.
+    ///
+    /// Two different `None`s reach the caller here and only the caller can tell
+    /// them apart: a memory with a NULL `namespace_id`, and a memory id that
+    /// names no row. Federation treats both the same — it declines to share —
+    /// so this returns `Option<Option<..>>` flattened rather than inventing a
+    /// distinction neither it nor the schema needs. A DB ERROR is still an
+    /// `Err`: "the lookup failed" must not read as "it has no namespace" (#227).
+    pub async fn memory_namespace_id(
+        &self,
+        memory_id: &uuid::Uuid,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(Option<uuid::Uuid>,)> =
+            sqlx_core::query_as::query_as("SELECT namespace_id FROM sensei.memories WHERE id = $1")
+                .bind(memory_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(row.and_then(|(n,)| n))
+    }
+}

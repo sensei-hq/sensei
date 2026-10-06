@@ -388,7 +388,7 @@ website-build:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: check-ddl-grants check-ddl-comments check-brew-tokens test-crates-fast test-app-unit
+test-fast: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens test-crates-fast test-app-unit
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
@@ -400,6 +400,11 @@ test-crates-fast:
 # the roles. Instant and needs no database, so it runs in `test-fast` and
 # therefore on every commit; CI calls this same target rather than the script, so
 # there is one entry point to keep correct.
+## Refuse production SQL outside db/pg_store/ (#227). No database needed, so it
+## rides the pre-commit path — the enforcement a documented exception could not give.
+check-sql-in-layer:
+	@scripts/check-sql-in-layer.py
+
 check-ddl-grants:
 	@python3 scripts/check-grant-targets.py
 
@@ -423,7 +428,7 @@ check-ddl-comments:
 check-brew-tokens:
 	@python3 scripts/check-brew-tokens.py
 
-test: check-ddl-grants check-ddl-comments check-brew-tokens test-crates app-check test-app-unit test-dojo test-db-if-reachable
+test: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens test-crates app-check test-app-unit test-dojo test-db-if-reachable
 
 test-crates:
 	cargo test --workspace
