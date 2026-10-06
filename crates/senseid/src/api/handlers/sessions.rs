@@ -1,4 +1,5 @@
 use crate::api::state::AppState;
+use crate::db::pg_store::{HookEventRow, SessionOutcomeRow};
 use axum::{
     extract::{Path, Query, State},
     http::{StatusCode, header},
@@ -232,8 +233,8 @@ pub(crate) async fn update_session_handler(
 
     match state
         .pg
-        .complete_session(
-            &session_id,
+        .complete_session(&SessionOutcomeRow {
+            id: &session_id,
             outcome,
             ftr,
             turns,
@@ -241,7 +242,7 @@ pub(crate) async fn update_session_handler(
             summary,
             tokens_in,
             tokens_out,
-        )
+        })
         .await
     {
         Ok(_) => {
@@ -279,16 +280,16 @@ pub(crate) async fn ingest_hook_event(
     // Log it so it's inspectable in the daemon log / public.logs.
     if let Err(e) = state
         .pg
-        .insert_hook_event(
-            f.session_id,
-            f.family,
-            f.event_type,
-            f.tool_name,
-            f.cwd,
+        .insert_hook_event(&HookEventRow {
+            session_id: f.session_id,
+            assistant_family: f.family,
+            event_type: f.event_type,
+            tool_name: f.tool_name,
+            cwd: f.cwd,
             ts,
-            f.success,
-            &payload,
-        )
+            success: f.success,
+            payload: &payload,
+        })
         .await
     {
         tracing::warn!(error = %e, event_type = f.event_type, family = f.family, "ingest_hook_event: insert failed");

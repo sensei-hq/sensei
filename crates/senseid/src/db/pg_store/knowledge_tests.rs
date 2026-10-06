@@ -288,48 +288,48 @@ async fn list_memories_for_slot_matches_slot_and_feature() {
     let pid = pg.ensure_test_project("slot-retrieval").await.unwrap();
 
     let m_design = pg
-        .create_memory(
-            Some(&pid),
-            "project",
-            None,
-            "decision",
-            "design-project-scope",
-            "c",
-            None,
-            None,
-            Some("design"),
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: Some(&pid),
+            scope: "project",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "design-project-scope",
+            content: "c",
+            impact: None,
+            session_id: None,
+            spine_slot: Some("design"),
+            feature: None,
+        })
         .await
         .unwrap();
     let m_design_auth = pg
-        .create_memory(
-            Some(&pid),
-            "project",
-            None,
-            "decision",
-            "design-auth-feature",
-            "c",
-            None,
-            None,
-            Some("design"),
-            Some("auth"),
-        )
+        .create_memory(&MemoryRow {
+            project_id: Some(&pid),
+            scope: "project",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "design-auth-feature",
+            content: "c",
+            impact: None,
+            session_id: None,
+            spine_slot: Some("design"),
+            feature: Some("auth"),
+        })
         .await
         .unwrap();
     let m_decisions = pg
-        .create_memory(
-            Some(&pid),
-            "project",
-            None,
-            "decision",
-            "decisions-project-scope",
-            "c",
-            None,
-            None,
-            Some("decisions"),
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: Some(&pid),
+            scope: "project",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "decisions-project-scope",
+            content: "c",
+            impact: None,
+            session_id: None,
+            spine_slot: Some("decisions"),
+            feature: None,
+        })
         .await
         .unwrap();
 
@@ -914,16 +914,16 @@ async fn latest_hook_event_ts_returns_max_for_family() {
     let pg = PgStore::connect_test().await.unwrap();
     let base = 1_900_000_000_000_i64; // far-future, won't collide with seeded data
     for (i, off) in [0_i64, 5000, 2000].iter().enumerate() {
-        pg.insert_hook_event(
-            &format!("sess-test-{i}"),
-            "claude",
-            "PreToolUse",
-            Some("Bash"),
-            Some("/tmp"),
-            base + off,
-            Some(true),
-            &serde_json::json!({"t": i}),
-        )
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &format!("sess-test-{i}"),
+            assistant_family: "claude",
+            event_type: "PreToolUse",
+            tool_name: Some("Bash"),
+            cwd: Some("/tmp"),
+            ts: base + off,
+            success: Some(true),
+            payload: &serde_json::json!({"t": i}),
+        })
         .await
         .unwrap();
     }

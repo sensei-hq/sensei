@@ -44,6 +44,23 @@ fn task_execution_json(r: TaskExecutionRow) -> serde_json::Value {
     })
 }
 
+/// One structured log line as it is stored.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct LogRow<'a> {
+    pub level: &'a str,
+    pub running_on: &'a str,
+    pub module: Option<&'a str>,
+    pub logged_at: &'a str,
+    pub message: &'a str,
+    pub context: &'a serde_json::Value,
+    pub data: &'a Option<serde_json::Value>,
+    pub error: &'a Option<serde_json::Value>,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     pub async fn log_index_error(
@@ -361,17 +378,10 @@ impl PgStore {
     // ── Logging (public.logs) ───────────────────────────────────────
 
     /// Insert a structured log entry into public.logs (kavach pattern).
-    pub async fn insert_log(
-        &self,
-        level: &str,
-        running_on: &str,
-        module: Option<&str>,
-        logged_at: &str,
-        message: &str,
-        context: &serde_json::Value,
-        data: &Option<serde_json::Value>,
-        error: &Option<serde_json::Value>,
-    ) -> Result<(), String> {
+    pub async fn insert_log(&self, row: &LogRow<'_>) -> Result<(), String> {
+        // EXHAUSTIVE (#161): a field added to `LogRow` stops this
+        // compiling until someone binds it.
+        let LogRow { level, running_on, module, logged_at, message, context, data, error } = row;
         sqlx_core::query::query(
             "INSERT INTO public.logs(level, running_on, module, logged_at, message, context, data, error)
              VALUES($1, $2, $3, $4::timestamptz, $5, $6, $7, $8)"

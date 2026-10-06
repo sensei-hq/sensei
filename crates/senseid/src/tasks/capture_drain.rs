@@ -29,6 +29,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::db::pg_store::HookEventRow;
 use crate::db::pg_store::PgStore;
 use crate::tasks::ticker;
 
@@ -235,16 +236,16 @@ async fn import_file(pg: &PgStore, path: &Path) -> Result<DrainStats, String> {
         let f = hook_event_fields(payload);
         let ts = event_ts(payload, now_ms);
         match pg
-            .insert_hook_event_if_absent(
-                f.session_id,
-                f.family,
-                f.event_type,
-                f.tool_name,
-                f.cwd,
+            .insert_hook_event_if_absent(&HookEventRow {
+                session_id: f.session_id,
+                assistant_family: f.family,
+                event_type: f.event_type,
+                tool_name: f.tool_name,
+                cwd: f.cwd,
                 ts,
-                f.success,
+                success: f.success,
                 payload,
-            )
+            })
             .await
         {
             Ok(Some(_)) => stats.imported += 1,

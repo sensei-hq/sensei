@@ -1,5 +1,26 @@
 use super::*;
 
+/// One row of `sensei.playbook_runs` — a classification and what produced it.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct PlaybookRunRow<'a> {
+    pub session_id: Option<uuid::Uuid>,
+    pub feature: Option<&'a str>,
+    pub lifecycle: &'a str,
+    pub intent: &'a str,
+    pub risk: &'a str,
+    pub rule_id: Option<uuid::Uuid>,
+    pub playbook: &'a str,
+    pub rationale: &'a str,
+    pub confirmed: bool,
+    pub classified_by: Option<&'a str>,
+    pub model_fallback: bool,
+    pub project_id: uuid::Uuid,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     pub async fn list_playbooks(&self) -> Result<Vec<serde_json::Value>, String> {
@@ -174,19 +195,24 @@ impl PgStore {
     #[allow(clippy::too_many_arguments)]
     pub async fn insert_playbook_run(
         &self,
-        session_id: Option<uuid::Uuid>,
-        feature: Option<&str>,
-        lifecycle: &str,
-        intent: &str,
-        risk: &str,
-        rule_id: Option<uuid::Uuid>,
-        playbook: &str,
-        rationale: &str,
-        confirmed: bool,
-        classified_by: Option<&str>,
-        model_fallback: bool,
-        project_id: uuid::Uuid,
+        row: &PlaybookRunRow<'_>,
     ) -> Result<uuid::Uuid, String> {
+        // EXHAUSTIVE (#161): a field added to `PlaybookRunRow` stops this
+        // compiling until someone binds it.
+        let PlaybookRunRow {
+            session_id,
+            feature,
+            lifecycle,
+            intent,
+            risk,
+            rule_id,
+            playbook,
+            rationale,
+            confirmed,
+            classified_by,
+            model_fallback,
+            project_id,
+        } = row;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.playbook_run
                (session_id, feature, lifecycle, intent, risk, rule_id, playbook, rationale, confirmed,

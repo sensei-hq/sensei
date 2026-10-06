@@ -2,6 +2,7 @@
 
 use super::super::Task;
 use super::super::executor::TaskContext;
+use crate::db::pg_store::LibraryPageRow;
 
 // ── Resolve Libs ──────────────────────────────────────────────────────────
 
@@ -324,21 +325,21 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
         };
         match ctx
             .pg()
-            .upsert_library_page(
-                &lib_id,
-                &page.doc.title,
+            .upsert_library_page(&LibraryPageRow {
+                library_id: &lib_id,
+                title: &page.doc.title,
                 url,
                 local_path,
-                Some(&page.doc.summary),
-                Some(&page.doc.content),
-                page.source_type,
-                page.doc.component.as_deref(),
-                // package_name: no ingestion route reports which package a
-                // page documents yet — 02b S1's manifest read supplies it.
-                // `None` is "not stated", never inferred from the title.
-                None,
-                None,
-            )
+                description: Some(&page.doc.summary),
+                content: Some(&page.doc.content),
+                source_type: page.source_type,
+                component: page.doc.component.as_deref(),
+                // No ingestion route reports which package a page documents yet
+                // — 02b S1's manifest read supplies it. `None` is "not stated",
+                // never inferred from the title.
+                package_name: None,
+                version: None,
+            })
             .await
         {
             Ok(_) => pages_stored += 1,
@@ -416,20 +417,20 @@ pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let summary = &summary[..summary.len().min(200)];
 
     ctx.pg()
-        .upsert_library_page(
-            &lib_id,
+        .upsert_library_page(&LibraryPageRow {
+            library_id: &lib_id,
             title,
             url,
-            None,
-            Some(summary),
-            Some(content),
-            "http",
-            None,
-            // package_name: the http route does not state one (02b S1)
-            None,
-            // version: this path is handed a URL with no release attached.
-            None,
-        )
+            local_path: None,
+            description: Some(summary),
+            content: Some(content),
+            source_type: "http",
+            component: None,
+            // The http route does not state one (02b S1).
+            package_name: None,
+            // This path is handed a URL with no release attached.
+            version: None,
+        })
         .await
         .map_err(|e| format!("upsert_library_page failed: {}", e))?;
 

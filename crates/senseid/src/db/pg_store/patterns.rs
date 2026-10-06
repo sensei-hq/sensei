@@ -1,5 +1,23 @@
 use super::*;
 
+/// One row of `inference.recommendations` — a proposal and its evidence.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct RecommendationRow<'a> {
+    pub project_id: &'a uuid::Uuid,
+    pub title: &'a str,
+    pub why: &'a str,
+    pub impact: Option<&'a str>,
+    pub action_type: &'a str,
+    pub urgency: &'a str,
+    pub based_on: &'a serde_json::Value,
+    pub reasoning_trace_id: Option<&'a uuid::Uuid>,
+    pub prompt: Option<&'a str>,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// Cache read for the narration-cache pipeline. Returns the persisted
@@ -380,16 +398,21 @@ impl PgStore {
     /// distinct from raw session/file `evidence`. Used for idempotency.
     pub async fn create_recommendation_full(
         &self,
-        project_id: &uuid::Uuid,
-        title: &str,
-        why: &str,
-        impact: Option<&str>,
-        action_type: &str,
-        urgency: &str,
-        based_on: &serde_json::Value,
-        reasoning_trace_id: Option<&uuid::Uuid>,
-        prompt: Option<&str>,
+        row: &RecommendationRow<'_>,
     ) -> Result<uuid::Uuid, String> {
+        // EXHAUSTIVE (#161): a field added to `RecommendationRow` stops this
+        // compiling until someone binds it.
+        let RecommendationRow {
+            project_id,
+            title,
+            why,
+            impact,
+            action_type,
+            urgency,
+            based_on,
+            reasoning_trace_id,
+            prompt,
+        } = row;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO inference.recommendations(project_id, title, why, impact, action_type, urgency, based_on, reasoning_trace_id, prompt)
              VALUES($1, $2, $3, $4, $5, $6::sensei.recommendation_urgency, $7::jsonb, $8, $9) RETURNING id"

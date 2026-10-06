@@ -504,8 +504,18 @@ mod memory;
 mod metrics;
 /// One row of `sensei.nodes`, named rather than positional (#161).
 pub use graph::NodeRow;
+pub use library::LibraryPageRow;
+pub use logs::LogRow;
+// `create_memory` is `#[cfg(test)]` — it has no production caller.
+#[cfg(test)]
+pub use memory::MemoryRow;
 /// One row of `sensei.repository_metrics`, named rather than positional (#161).
 pub use metrics::MetricRow;
+pub use patterns::RecommendationRow;
+pub use playbook::PlaybookRunRow;
+pub use sessions::HookEventRow;
+pub use sessions::SessionMetricsRow;
+pub use sessions::SessionOutcomeRow;
 mod patterns;
 mod personas;
 /// Named outside this module because THREE callers now share it — the scheduled
