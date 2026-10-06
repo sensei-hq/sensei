@@ -22,10 +22,15 @@ anything later; the reasoning is below the list, not implied by it.
         10 row types, 0 functions left at 8+. 41 remain in the 5-7 band,
         left open deliberately — that tail is multi-key lookups, not
         a producer's struct spelled out, so it is a different risk.
-    [ ] #227 fold the 30 queries into PgStore + a grep gate  ← NEXT
+    [x] #227 fold the 30 into PgStore + a gate   4bbd63ae 44256959
+        ZERO production SQL outside db/pg_store/. 25 metric reads in
+        metric_reads/ (one module per group), gateway catalogue + the
+        federation lookup folded, day_filter/bind_day moved and the
+        handler-side duplicates deleted. check-sql-in-layer.py in
+        make test-fast, verified by planting a statement.
 
     -- B. indexing truth (the instrument before the fixes) --
-    [ ] #235 resolution by (language, kind, outcome)
+    [ ] #235 resolution by (language, kind, outcome)        ← NEXT
     [ ] #231 fqn segment 3 is a SYMBOL for some adapters
 
     -- C. screens --
@@ -37,6 +42,13 @@ anything later; the reasoning is below the list, not implied by it.
     [ ] #218 transcript ingestion opt-in
     [ ] #236 dōjō → kavach data routes
     [ ] #225 dōjō team view (needs the sync-shape decision)
+
+    -- new, after the cycle (2026-10-06) --
+    [ ] #238 Claude Code mods — capture, usage at source, model-by-risk,
+        unattended drive, tool gating. Fixes four live defects on its own.
+    [ ] #239 EPIC productionise sensei + dōjō
+          ├ #240 band A — user-scoped metrics have no path to the dōjō
+          └ #241 band C — shipped dōjō screens render fixture values
 
     -- deferred by decision --
     [ ] #237 C#/JS indexing coverage — after #235, so the delta is readable
@@ -81,6 +93,12 @@ Per slice: TDD, mutation-probe each test, full suite + clippy + fmt +
   of `sensei`'s module dependencies and 78% of the largest client project's
   point at a unit that owns no file. Counted as `coverage.unknownUnit`; the
   shipped Structure diagram has the same hole (31 of 213), uncounted.
+- **#238 four live defects in the hook tap, measured**: no token/cost data in
+  ANY hook payload (0 of 5,000 recent rows); `assistant_events.success` dead
+  (31 non-null of 554,999); the SessionStart hook's session creation has NEVER
+  succeeded (0 rows with task='session'); the nudge hook blocks on every tool
+  call (254,404 PreToolUse vs 536 SessionStart). Plus `duration_ms` present on
+  5,000/5,000 payloads and read by no SQL — that one needs no mods.
 - `create_memory` has NO production caller (all 17 sites are tests), and
   `sensei.memories` has three writers. Now `#[cfg(test)]`; which one production
   uses is unanswered.
