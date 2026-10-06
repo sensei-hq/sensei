@@ -157,6 +157,37 @@ export class LayersState {
     return `${units} units · ${drawn} dependencies drawn · ${unknown} with an endpoint that owns no file`;
   }
 
+  /** The grain control, as `@rokkit/ui`'s `Toolbar` reads it.
+   *
+   *  BUILT HERE because the component is a pure template and the toolbar is
+   *  data: `text`, `value`, `active` and `type` are the default field names, so
+   *  no `fields` map is needed. `toggle` rather than `button` is what gives each
+   *  item `aria-pressed` and `data-active`. */
+  get levelItems() {
+    return LEVELS.map((level) => ({
+      // `label` and NOT `text`: `ProxyItem.label` reads `item[fields.label]`,
+      // and the toolbar button renders `proxy.label` for both its visible text
+      // and its `aria-label`. An item carrying only `text` renders a button with
+      // no words in it at all — verified in the browser before this was fixed.
+      label: level,
+      value: level,
+      active: this.level === level,
+      type: 'toggle' as const,
+    }));
+  }
+
+  /** The edge-kind control. Multi-select, where the grain is single-select —
+   *  which is a property of the HANDLER and not of the item shape, so the two
+   *  bars render through one component and dispatch differently. */
+  get kindItems() {
+    return KINDS.map((kind) => ({
+      label: kind,
+      value: kind,
+      active: this.kinds.includes(kind),
+      type: 'toggle' as const,
+    }));
+  }
+
   /** What `layerSource` means, in words, because the distinction decides which
    *  question the reader may ask of the picture. */
   get sourceNote(): string {

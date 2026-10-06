@@ -1,10 +1,12 @@
 <script lang="ts">
     import { LayersDiagram, ViolationsControl } from '@rokkit/graph';
-    import { PageHeader, ToggleChip } from '$lib/components';
+    import { Toolbar } from '@rokkit/ui';
+    import { PageHeader } from '$lib/components';
     import { senseiApi } from '$lib/api.js';
     import { appState } from '$lib/appstate.svelte.js';
     import { DIAGRAM_VIEWS } from '../diagrams-nav.js';
-    import { KINDS, LAYERS_FIELDS, LEVELS, LayersState } from '../layering-state.svelte.js';
+    import { LAYERS_FIELDS, LayersState } from '../layering-state.svelte.js';
+    import type { LayeringLevel } from '$lib/types.js';
 
     let { data } = $props();
 
@@ -25,28 +27,21 @@
 
 <div class="flex flex-col gap-4 p-4" data-testid="layers-screen">
     <div class="flex flex-wrap items-center gap-4">
-        <div class="flex items-center gap-2" role="group" aria-label="Level">
-            {#each LEVELS as level (level)}
-                <ToggleChip
-                    label={level}
-                    pressed={view.level === level}
-                    testid={`layers-level-${level}`}
-                    onpress={() => view.setLevel(level)}
-                />
-            {/each}
-        </div>
+        <Toolbar
+            label="Level"
+            width="fit"
+            compact
+            items={view.levelItems}
+            onclick={(value) => view.setLevel(value as LayeringLevel)}
+        />
 
-        <div class="flex items-center gap-2" role="group" aria-label="Edge kinds">
-            {#each KINDS as kind (kind)}
-                <ToggleChip
-                    label={kind}
-                    size="xs"
-                    pressed={view.kinds.includes(kind)}
-                    testid={`layers-kind-${kind}`}
-                    onpress={() => view.toggleKind(kind)}
-                />
-            {/each}
-        </div>
+        <Toolbar
+            label="Edge kinds"
+            width="fit"
+            compact
+            items={view.kindItems}
+            onclick={(value) => view.toggleKind(value as string)}
+        />
 
         <ViolationsControl
             showEdges={view.showEdges}
