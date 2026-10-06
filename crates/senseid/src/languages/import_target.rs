@@ -595,7 +595,7 @@ mod tests {
         let c =
             local_import_candidates("java", "com.acme.svc", "", "com.acme.core.BaseService", &ext);
         assert!(
-            c.contains(&"java·com.acme.core·BaseService".to_string()),
+            c.contains(&"java·com.acme.core··BaseService".to_string()),
             "a dotted java import must probe its class fqn: {c:?}"
         );
 
@@ -605,7 +605,7 @@ mod tests {
         // instead.
         let jdk = local_import_candidates("java", "com.acme.svc", "", "java.util.List", &ext);
         assert!(
-            jdk.contains(&"java·java.util·List".to_string()),
+            jdk.contains(&"java·java.util··List".to_string()),
             "a JDK import must still be probed, not assumed: {jdk:?}"
         );
 
@@ -807,7 +807,7 @@ mod tests {
             "./util",
             &ImportTarget::Relative,
         );
-        assert_eq!(c[0], "typescript·app·lib/util");
+        assert_eq!(c[0], "typescript·app··lib/util");
 
         // `../` climbs out of the directory.
         let c = local_import_candidates(
@@ -817,7 +817,7 @@ mod tests {
             "../shared/table",
             &ImportTarget::Relative,
         );
-        assert_eq!(c[0], "typescript·app·routes/shared/table");
+        assert_eq!(c[0], "typescript·app··routes/shared/table");
 
         // An extension names the same module as the bare path.
         let c = local_import_candidates(
@@ -827,7 +827,7 @@ mod tests {
             "./Card.svelte",
             &ImportTarget::Relative,
         );
-        assert_eq!(c[0], "svelte·app·lib/Card");
+        assert_eq!(c[0], "svelte·app··lib/Card");
     }
 
     /// Aliases. `@/`,`~/` recover 6,413 of 7,032 edges by prefix strip alone —
@@ -845,7 +845,7 @@ mod tests {
                 "$lib/triage/view",
                 &classify_import("$lib/triage/view")
             )[0],
-            "svelte·app·lib/triage/view"
+            "svelte·app··lib/triage/view"
         );
         assert_eq!(
             local_import_candidates(
@@ -855,7 +855,7 @@ mod tests {
                 "@/lib/x",
                 &classify_import("@/lib/x")
             )[0],
-            "typescript·app·lib/x"
+            "typescript·app··lib/x"
         );
         assert_eq!(
             local_import_candidates(
@@ -865,7 +865,7 @@ mod tests {
                 "~/stores/user",
                 &classify_import("~/stores/user")
             )[0],
-            "typescript·app·stores/user"
+            "typescript·app··stores/user"
         );
 
         // `$app`/`$env` are SvelteKit FRAMEWORK modules — no file exists in the
@@ -924,7 +924,7 @@ mod tests {
             "crate::db::graph",
             &classify_import("crate::db::graph"),
         );
-        assert!(c.contains(&"rust·senseid·db::graph·mod".to_string()), "as a module: {c:?}");
+        assert!(c.contains(&"rust·senseid··db::graph·mod".to_string()), "as a module: {c:?}");
         assert!(c.contains(&"rust·senseid·db·graph·item".to_string()), "as an item: {c:?}");
 
         // `super::` climbs one module per marker, relative to the importer.
@@ -936,7 +936,7 @@ mod tests {
                 "super::common",
                 &classify_import("super::common")
             )[0],
-            "rust·senseid·tasks::handlers::common·mod",
+            "rust·senseid··tasks::handlers::common·mod",
         );
         // TWO markers climb two levels — the fold this test exists to pin.
         assert_eq!(
@@ -947,7 +947,7 @@ mod tests {
                 "super::super::executor",
                 &classify_import("super::super::executor")
             )[0],
-            "rust·senseid·tasks::executor·mod",
+            "rust·senseid··tasks::executor·mod",
             "each leading `super` consumes one level; consuming only the first mints \
              a module path that never existed",
         );
@@ -960,7 +960,7 @@ mod tests {
                 "self::graph",
                 &classify_import("self::graph")
             )[0],
-            "rust·senseid·db::pg_store::graph·mod",
+            "rust·senseid··db::pg_store::graph·mod",
         );
     }
 
@@ -975,14 +975,14 @@ mod tests {
     fn js_family_fans_out_across_unstable_fqn_language_segments() {
         let c =
             local_import_candidates("svelte", "app", "lib/x", "./util", &ImportTarget::Relative);
-        assert_eq!(c[0], "svelte·app·lib/util", "the file's own language ranks first");
-        assert!(c.contains(&"typescript·app·lib/util".to_string()));
-        assert!(c.contains(&"javascript·app·lib/util".to_string()));
+        assert_eq!(c[0], "svelte·app··lib/util", "the file's own language ranks first");
+        assert!(c.contains(&"typescript·app··lib/util".to_string()));
+        assert!(c.contains(&"javascript·app··lib/util".to_string()));
 
         // A non-JS language does NOT fan out — rust modules are not typescript.
         let c =
             local_import_candidates("python", "app", "pkg/mod", "./sib", &ImportTarget::Relative);
-        assert_eq!(c, vec!["python·app·pkg/sib"]);
+        assert_eq!(c, vec!["python·app··pkg/sib"]);
     }
 
     /// THE SHADOW-CLASSIFIER DEFECT. `typescript_fqn` had its OWN
@@ -1091,8 +1091,8 @@ mod tests {
             "../src/lib/x",
             &ImportTarget::Relative,
         );
-        assert!(c.contains(&"typescript·app·src/lib/x".to_string()), "the literal path");
-        assert!(c.contains(&"typescript·app·lib/x".to_string()), "and the src-stripped form");
+        assert!(c.contains(&"typescript·app··src/lib/x".to_string()), "the literal path");
+        assert!(c.contains(&"typescript·app··lib/x".to_string()), "and the src-stripped form");
     }
 
     // ── the two reasons a rust import cannot resolve ───────────────────────
@@ -1155,9 +1155,20 @@ mod tests {
         );
 
         // The OTHER reading of the same path, and half the candidates: the leaf
-        // is itself a module. Pinned against a literal taken from the live graph
-        // rather than from the encoder, because this is the one assertion that
-        // would not notice if both sides of the encoder moved together.
+        // is itself a module. Pinned against a LITERAL rather than against the
+        // encoder, because this is the one assertion that would not notice if
+        // both sides of the encoder moved together.
+        //
+        // THE PIN MOVED ONCE, deliberately, and this note is the record of it.
+        // #231 stopped dropping an empty module segment, so a crate-root module
+        // gained the empty slot: `rust·sensei-bootstrap·config·mod` became
+        // `rust·sensei-bootstrap··config·mod`. Both sides DID move together —
+        // that was the change — and this literal was moved by hand after reading
+        // what the walk now mints, which is the only way a pin like this is ever
+        // allowed to move.
+        //
+        // It will not match the live graph until a re-index has run, because
+        // the placement comes from the walk and no backfill can derive it.
         let as_module = local_import_candidates(
             "rust",
             "sensei-bootstrap",
@@ -1166,7 +1177,7 @@ mod tests {
             &ImportTarget::Internal,
         );
         assert!(
-            as_module.contains(&"rust·sensei-bootstrap·config·mod".to_string()),
+            as_module.contains(&"rust·sensei-bootstrap··config·mod".to_string()),
             "a `use` ending at a module must offer the module's own identity; got {as_module:?}"
         );
     }

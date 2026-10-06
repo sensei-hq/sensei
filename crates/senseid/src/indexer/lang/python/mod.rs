@@ -627,7 +627,7 @@ mod tests {
             // one dot + a name — a sibling module
             ("from .other import x", "python·p·pkg.sub·other·mod"),
             // two dots — one level up from the containing package
-            ("from .. import x", "python·p·pkg·mod"),
+            ("from .. import x", "python·p··pkg·mod"),
             // two dots + a name — that level's child
             ("from ..cousin import x", "python·p·pkg·cousin·mod"),
         ] {
@@ -729,12 +729,12 @@ mod tests {
 
         // A top-level module has no parent segment.
         let top = file_fqn("proj", "pkg", "/w/proj/src/pkg/__init__.py").expect("minted");
-        assert_eq!(top.to_string(), "python·proj·pkg·mod");
+        assert_eq!(top.to_string(), "python·proj··pkg·mod");
 
         // The import root itself falls back to the stem, which is the only
         // name it has.
         let root = file_fqn("proj", "", "/w/proj/src/__init__.py").expect("minted");
-        assert_eq!(root.to_string(), "python·proj·__init__·mod");
+        assert_eq!(root.to_string(), "python·proj··__init__·mod");
     }
 
     /// The name reported beside the identity is the name inside it. Two

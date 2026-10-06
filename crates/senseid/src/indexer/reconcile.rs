@@ -628,7 +628,7 @@ mod tests {
             crate::indexer::persist::read_back(&store, &folder).await.expect("the rows read back");
         assert_eq!(
             stored.symbols.iter().map(|s| s.fqn.as_str()).collect::<Vec<&str>>(),
-            vec!["rust·senseid·bell·kept·item", "rust·senseid·bell·mod"],
+            vec!["rust·senseid·bell·kept·item", "rust·senseid··bell·mod"],
             "only what the file still declares reads back as a definition — which now \
              includes the file's OWN module, because a file is a module and says so"
         );
@@ -927,7 +927,7 @@ mod tests {
                 .iter()
                 .map(|s| s.fqn.as_str())
                 .collect::<Vec<&str>>(),
-            vec!["rust·senseid·bell·mod"],
+            vec!["rust·senseid··bell·mod"],
             "the file states nothing OF ITS OWN, so the graph records nothing but the file \
              itself — which is still there and is still a module"
         );
@@ -1058,7 +1058,7 @@ mod tests {
         .await
         .expect("the child indexes");
 
-        let child_module = "rust·senseid·child·mod";
+        let child_module = "rust·senseid··child·mod";
         let declared_by = node_row(&store, &folder, child_module).await.expect("the module node");
         assert_eq!(
             declared_by["file_path"],
@@ -1302,7 +1302,7 @@ mod tests {
 
         // THE MOVED SYMBOL is the subject, and it is order-independent whole.
         let moved = |rows: &[serde_json::Value]| -> Vec<serde_json::Value> {
-            rows.iter().filter(|r| r["fqn"] != "rust·senseid·shared·mod").cloned().collect()
+            rows.iter().filter(|r| r["fqn"] != "rust·senseid··shared·mod").cloned().collect()
         };
         assert_eq!(
             moved(&old_first),
@@ -1322,7 +1322,7 @@ mod tests {
         // which is a set and merges either way round.
         let claims = |rows: &[serde_json::Value]| -> serde_json::Value {
             rows.iter()
-                .find(|r| r["fqn"] == "rust·senseid·shared·mod")
+                .find(|r| r["fqn"] == "rust·senseid··shared·mod")
                 .expect("the module node")["props"]["claims"]
                 .clone()
         };

@@ -34,11 +34,20 @@
 //! query still gathers every member of a type regardless of reach.
 //!
 //! `module` is ONE segment that may itself contain `::` (`api::handlers::codebase`)
-//! and may be empty at the package root; an empty `module` is dropped rather
-//! than left as a doubled separator. So is an empty `Lib` member, which is how a
-//! bare crate reference is spelled. Every other segment is required, and a
-//! builder handed an empty one returns [`FqnError::EmptySegment`] instead of a
-//! shorter string that means a different symbol.
+//! and may be empty at the package root. **An empty module OCCUPIES ITS SLOT**,
+//! so a crate-root item is `rust·p··main·item` and the module is the third
+//! segment of every local form whether or not there is one. An empty `Lib`
+//! member is still dropped, which is how a bare crate reference is spelled —
+//! [`join`] tells the two apart by POSITION, because a library member is last
+//! and a module never is.
+//!
+//! Dropping the module is what #231 was, and it was not a cosmetic choice. A
+//! dropped segment does not produce a broken string, it produces a valid one
+//! naming a DIFFERENT symbol: `Config::load` at a crate root and a free `load`
+//! in a module called `Config` were one string and merged onto one node, and
+//! every view that decomposes an fqn positionally read a crate-root symbol's
+//! NAME as its module. Every other segment is required, and a builder handed an
+//! empty one returns [`FqnError::EmptySegment`] for the same reason.
 //!
 //! Externals are named, never opened (R5): a library member is
 //! `lib·<package>·<member>` and no dependency source is parsed to produce it.
@@ -58,6 +67,16 @@ pub const SEPARATOR: char = '·';
 
 /// The same character, for this module's own use.
 const SEP: char = SEPARATOR;
+
+/// Where the module sits, counting from zero: after the language and the
+/// package.
+///
+/// Named rather than spelled `2` at the one place that reads it, because it is
+/// the number every structure view in `database/ddl` hard-codes as
+/// `split_part(fqn, '·', 3)` — one-based there, zero-based here. [`join`] keeps
+/// the slot occupied so that number is right whether or not the symbol has a
+/// module (#231).
+const MODULE_AT: usize = 2;
 
 /// The leading segment of an external symbol, standing where a language would
 /// be. An external has no language of ours because we never open it (R5).
@@ -361,20 +380,35 @@ fn check(segment: Segment, value: &str, required: Required) -> Result<(), FqnErr
     Ok(())
 }
 
-/// Join with [`SEP`], dropping empty segments so an absent optional one never
-/// leaves a doubled separator behind.
+/// Join with [`SEP`], dropping a TRAILING empty segment and keeping an interior
+/// one.
+///
+/// POSITION, not form, is what tells the two optional segments apart, and that
+/// is the whole rule. A library member is LAST, so a bare crate reference stays
+/// `lib` + separator + package with nothing after it. A module is INTERIOR and
+/// never last, so it occupies its slot even when the symbol sits at the package
+/// root.
+///
+/// Dropping the module blindly is what #231 was. It did not produce a broken
+/// string — it produced a perfectly valid one naming a different symbol, which
+/// is the hazard [`FqnError::EmptySegment`] already states for every required
+/// segment. The name slid into the module's position, so a C macro at a package
+/// root read as a module, and every view that decomposes an fqn positionally —
+/// `module_of`, `module_edges`, `structure_graph`, `structure_edges`,
+/// `abstractions.component` — attributed its edges to a module no file belongs
+/// to. Measured 2026-10-05: 13.7% of project `sensei`'s module dependencies and
+/// 78% of the largest client project's named an endpoint absent from their own
+/// node universe.
 fn join(segments: &[&str]) -> String {
-    let mut out = String::new();
-    for segment in segments {
-        if segment.is_empty() {
-            continue;
-        }
-        if !out.is_empty() {
-            out.push(SEP);
-        }
-        out.push_str(segment);
-    }
-    out
+    // Trailing empties first, so the loop below has one rule rather than a
+    // lookahead. `split_last` and not `trim_end_matches`, because only the LAST
+    // segment is ever optional-and-trailing: a grammar that grew two of them
+    // would be a different decision, made here rather than absorbed silently.
+    let segments = match segments.split_last() {
+        Some((&"", front)) => front,
+        _ => segments,
+    };
+    segments.join(&SEP.to_string())
 }
 
 /// Whether an fqn names something of ours or something we only ever name (R5).
@@ -411,7 +445,11 @@ pub struct Parsed<'a> {
 pub fn parse(encoded: &str) -> Result<Parsed<'_>, FqnError> {
     let segments: Vec<&str> = encoded.split(SEP).collect();
     let malformed = || FqnError::NotAnFqn { encoded: encoded.to_string() };
-    if segments.iter().any(|s| s.is_empty()) {
+    // ONE position may be empty: the module, at index 2, which [`join`] now
+    // occupies rather than drops (#231). Everywhere else an empty segment is
+    // still something no builder here could have produced — the reader learned
+    // one position, it did not become permissive.
+    if segments.iter().enumerate().any(|(at, s)| s.is_empty() && at != MODULE_AT) {
         return Err(malformed());
     }
 
@@ -468,7 +506,7 @@ mod tests {
                     name: "main",
                     reach: Reach::Item,
                 },
-                "rust·sensei-cli·main·item",
+                "rust·sensei-cli··main·item",
             ),
             (
                 "a module declaration, the one thing no reference ever reaches",
@@ -503,7 +541,7 @@ mod tests {
                     member: "load",
                     reach: Reach::Item,
                 },
-                "rust·senseid·Config·load·item",
+                "rust·senseid··Config·load·item",
             ),
             (
                 "a field, which shares its type, module and package with a method",
@@ -565,7 +603,7 @@ mod tests {
                     member: "fmt",
                     reach: Reach::Item,
                 },
-                "rust·senseid·Config·Debug·fmt·item",
+                "rust·senseid··Config·Debug·fmt·item",
             ),
             (
                 "a macro definition, which only a `name!` can reach",
@@ -616,11 +654,20 @@ mod tests {
     }
 
     /// A crate-root module and a bare external crate are the two places the
-    /// grammar allows an empty segment. Both sides must drop it the same way —
-    /// one side emitting a doubled separator is the same failure as one side
-    /// spelling a name differently.
+    /// grammar allows an empty segment, and they are handled DIFFERENTLY — by
+    /// position, not by form. Both sides must agree on each: one side emitting a
+    /// doubled separator where the other does not is the same failure as one
+    /// side spelling a name differently.
+    ///
+    /// The module KEEPS its slot (#231), so a crate-root symbol does carry a
+    /// doubled separator and that is the point — it is what makes the module the
+    /// third segment of every local form. The library member is TRAILING, so it
+    /// goes, and `lib` + separator + package stays the bare-crate spelling.
+    ///
+    /// Mutation that must break this test: make `join` drop every empty segment,
+    /// or none.
     #[test]
-    fn an_empty_optional_segment_is_dropped_identically_on_both_sides() {
+    fn an_empty_optional_segment_is_handled_identically_on_both_sides() {
         let empty_module = Form::Member {
             lang: Language::Rust,
             package: "senseid",
@@ -631,14 +678,14 @@ mod tests {
         };
         let bare_crate = Form::Lib { package: "tokio", member: "" };
 
-        for (what, form) in [("crate-root module", empty_module), ("bare crate", bare_crate)] {
+        for (what, form, expected) in [
+            ("crate-root module", empty_module, "rust·senseid··Config·load·item"),
+            ("bare crate", bare_crate, "lib·tokio"),
+        ] {
             let defined = define(&form).unwrap_or_else(|e| panic!("{what}: {e:?}"));
             let referred = refer(&form).unwrap_or_else(|e| panic!("{what}: {e:?}"));
-            assert_eq!(defined.as_str(), referred.as_str(), "{what}");
-            assert!(
-                !defined.as_str().contains("··"),
-                "{what}: an empty segment left a doubled separator in {defined}"
-            );
+            assert_eq!(defined.as_str(), referred.as_str(), "{what}: the two doors disagree");
+            assert_eq!(defined.as_str(), expected, "{what}");
         }
     }
 
@@ -668,6 +715,150 @@ mod tests {
         })
         .expect("well-formed");
         assert_ne!(display, debug, "two traits, one member name, one type: still two symbols");
+    }
+
+    /// **THE MODULE IS ALWAYS THE THIRD SEGMENT, whether or not there is one.**
+    ///
+    /// Every structure view decomposes an fqn POSITIONALLY — `module_of`,
+    /// `module_edges`, `structure_graph`, `structure_edges` and
+    /// `abstractions.component` all read the third segment as the module. That
+    /// was correct only while the module was non-empty: a dropped module slid
+    /// the NAME into position 3, so `c·senseid·ACCEPT_INPUT·item` — a C macro at
+    /// a package root — read as a module called `ACCEPT_INPUT`, and the edges of
+    /// that symbol were attributed to a module no file is modal for. The edge
+    /// then named an endpoint absent from its own node universe.
+    ///
+    /// Measured 2026-10-05: 32 of 234 module dependencies on project `sensei`
+    /// (13.7%), 95 of 122 on the largest client project (78%), and 31 of the
+    /// shipped Structure diagram''s 213 edges at `level=module` (#231).
+    ///
+    /// This is the hazard `an_empty_required_segment_is_an_error_not_a_collapsed_fqn`
+    /// already states — a dropped segment is not a broken string, it is a valid
+    /// string naming a DIFFERENT symbol — surviving at the one position where it
+    /// was tolerated. The fix is the same one the rest of the grammar uses:
+    /// occupy the slot.
+    ///
+    /// A LIBRARY MEMBER IS STILL DROPPED, and the two cases are told apart by
+    /// POSITION rather than by form: `join` drops a TRAILING empty and keeps an
+    /// interior one. A library member is last, so `lib·tokio` is unchanged; a
+    /// module never is.
+    ///
+    /// Mutation that must break this test: drop interior empty segments in
+    /// `join`, or widen the drop back to every empty segment.
+    #[test]
+    fn the_module_is_the_third_segment_whether_or_not_there_is_one() {
+        let at_the_root = |form: Form<'static>| -> String {
+            define(&form).expect("well-formed").as_str().to_string()
+        };
+        let third = |encoded: &str| encoded.split(SEP).nth(2).map(str::to_string);
+
+        let cases: Vec<(&str, Form<'static>, &str)> = vec![
+            (
+                "an item at the package root",
+                Form::Item {
+                    lang: Language::C,
+                    package: "senseid",
+                    module: "",
+                    name: "ACCEPT_INPUT",
+                    reach: Reach::Item,
+                },
+                "c·senseid··ACCEPT_INPUT·item",
+            ),
+            (
+                "a member of a type at the package root",
+                Form::Member {
+                    lang: Language::C,
+                    package: "senseid",
+                    module: "",
+                    ty: "TSCharacterRange",
+                    member: "end",
+                    reach: Reach::Field,
+                },
+                "c·senseid··TSCharacterRange·end·field",
+            ),
+            (
+                "a module declared at the package root",
+                Form::Item {
+                    lang: Language::Rust,
+                    package: "p",
+                    module: "",
+                    name: "other",
+                    reach: Reach::Mod,
+                },
+                "rust·p··other·mod",
+            ),
+            (
+                "a trait member at the package root",
+                Form::TraitMember {
+                    lang: Language::Rust,
+                    package: "p",
+                    module: "",
+                    ty: "Pg",
+                    tr: "Store",
+                    member: "put",
+                    reach: Reach::Item,
+                },
+                "rust·p··Pg·Store·put·item",
+            ),
+        ];
+
+        for (what, form, expected) in cases {
+            let encoded = at_the_root(form);
+            assert_eq!(encoded, expected, "{what}");
+            assert_eq!(
+                third(&encoded),
+                Some(String::new()),
+                "{what}: the third segment is the module, and here there is none"
+            );
+        }
+
+        // The SAME position holds when there IS a module, which is what makes
+        // the rule positional rather than two rules.
+        let nested = at_the_root(Form::Item {
+            lang: Language::Rust,
+            package: "senseid",
+            module: "api::handlers::codebase",
+            name: "language_for_ext",
+            reach: Reach::Item,
+        });
+        assert_eq!(third(&nested).as_deref(), Some("api::handlers::codebase"));
+
+        // A LIBRARY MEMBER IS TRAILING, so it still goes. Without this the
+        // bare-crate reference `lib·tokio` would gain a trailing separator and
+        // every external node would be a new identity.
+        assert_eq!(
+            at_the_root(Form::Lib { package: "tokio", member: "" }),
+            "lib·tokio",
+            "a trailing empty is still dropped"
+        );
+    }
+
+    /// A package-root identity READS BACK, which is the other half of occupying
+    /// the slot: `parse` refused every fqn carrying an empty segment, so making
+    /// the encoder emit one without teaching the reader would turn every
+    /// root-level symbol into `NotAnFqn`.
+    ///
+    /// Mutation that must break this test: restore the blanket
+    /// `segments.iter().any(str::is_empty)` rejection in `parse`.
+    #[test]
+    fn a_package_root_identity_parses_back() {
+        let encoded = define(&Form::Item {
+            lang: Language::C,
+            package: "senseid",
+            module: "",
+            name: "ACCEPT_INPUT",
+            reach: Reach::Item,
+        })
+        .expect("well-formed");
+        let parsed = parse(encoded.as_str()).expect("a root identity is an fqn");
+        assert_eq!(parsed.package, "senseid");
+        assert_eq!(parsed.origin, Origin::Local { lang: Language::C, reach: Reach::Item });
+        assert_eq!(parsed.tail, vec!["", "ACCEPT_INPUT"], "the empty module stays in the tail");
+
+        // An empty segment ANYWHERE ELSE is still not an fqn — the reader did
+        // not become permissive, it learned one position.
+        assert!(parse("rust··m·n·item").is_err(), "an empty package is still not an fqn");
+        assert!(parse("rust·p·m··item").is_err(), "an empty name is still not an fqn");
     }
 
     /// Dropping an empty segment is what keeps a crate-root symbol from carrying
@@ -803,11 +994,22 @@ mod tests {
         assert!(bare.tail.is_empty(), "a bare crate has no member, and that is not a failure");
     }
 
-    /// Dropping empty segments makes the encoding non-injective: a crate-root
-    /// method and a module-level item encode alike, and nothing in the string
-    /// says which was meant. `parse` therefore reports the segments it can prove
-    /// and never a form it would have to guess (R4). Recorded here so no later
-    /// pass is written against a form the string does not carry.
+    /// **TWO FORMS THAT USED TO ENCODE ALIKE NOW DO NOT, and `parse` still
+    /// recovers no form.**
+    ///
+    /// Two different things: a crate-root method `Config::load` and a free item
+    /// `load` in a module called `Config` were ONE string while an empty module
+    /// was dropped, so the two merged onto one node — a wrong merge the grammar
+    /// could not see. Occupying the module slot (#231) separates them, and this
+    /// test now states that separation rather than recording the collision.
+    ///
+    /// What has NOT changed is the second half: `parse` reports the segments it
+    /// can prove and never a form it would have to guess (R4). A `Member` and an
+    /// `Item` of one more segment are still the same length, so no later pass
+    /// may be written against a form the string does not carry.
+    ///
+    /// Mutation that must break this test: drop interior empty segments in
+    /// `join`, which puts the collision back.
     #[test]
     fn two_forms_can_encode_alike_so_parse_never_guesses_the_form() {
         let crate_root_method = define(&Form::Member {
@@ -828,14 +1030,17 @@ mod tests {
         })
         .expect("well-formed");
 
-        assert_eq!(
+        assert_ne!(
             crate_root_method.as_str(),
             item_in_a_module.as_str(),
-            "the empty-module drop makes these one string"
+            "`Config::load` at the root and `load` in a module `Config` are two symbols"
         );
+        assert_eq!(crate_root_method.as_str(), "rust·p··Config·load·item");
+        assert_eq!(item_in_a_module.as_str(), "rust·p·Config·load·item");
         assert_eq!(
             parse(crate_root_method.as_str()).expect("well-formed").tail,
-            vec!["Config", "load"]
+            vec!["", "Config", "load"],
+            "the empty module is a segment of the tail, not an absence"
         );
     }
 
@@ -1094,7 +1299,13 @@ mod tests {
                 }
                 Form::Lib { package, member } => [LIB, package, member].into_iter().collect(),
             };
-            let want: Vec<&str> = want.into_iter().filter(|s| !s.is_empty()).collect();
+            // The SAME rule `join` applies, restated rather than imported, so a
+            // change there has to be stated twice before this test agrees with
+            // it: a TRAILING empty goes, an interior one stays (#231).
+            let want: Vec<&str> = match want.split_last() {
+                Some((&"", front)) => front.to_vec(),
+                _ => want,
+            };
             assert_eq!(got, want, "{label}: {minted} is not the segments it was built from");
         }
     }
@@ -1157,29 +1368,34 @@ mod tests {
         let collisions: Vec<(&String, &Vec<String>)> =
             by_string.iter().filter(|(_, who)| who.len() > 1).collect();
 
-        // ONE KNOWN CLASS, in every language: an ITEM in a module named like a
-        // type is spelled the same as a MEMBER of that type at the package
-        // root, because the module segment and the type segment sit in the same
-        // position and nothing marks which is which.
+        // ZERO, and it was one per language until #231.
         //
-        //     Item   { module: "Ty", name: "thing" }
-        //     Member { module: "",   ty: "Ty", member: "thing" }
+        // The class that is now closed: an ITEM in a module named like a type
+        // was spelled the same as a MEMBER of that type at the package root,
+        // because the module segment and the type segment sat in the same
+        // position and nothing marked which was which.
         //
-        // Latent rather than live, for different reasons per language. Rust and
-        // TypeScript need a module named in CamelCase, which is legal and
-        // uncommon. JAVA HAS THE SHAPE EVERYWHERE — its module is empty for
-        // every declaration — but Java has no free items outside a class, so
-        // the `Item` side of the pair is never minted and the two never meet.
+        //     Item   { module: "Ty", name: "thing" }  ->  <lang>·p·Ty·thing·item
+        //     Member { module: "",   ty: "Ty", member: "thing" }  ->  the same
         //
-        // Recorded rather than fixed: closing it means a marker segment in
-        // every fqn this repository has ever written. The ratchet is what makes
-        // a SECOND class fail loudly instead of joining an unexamined list.
-        let known: usize = Language::all().len();
+        // The note here used to read "recorded rather than fixed: closing it
+        // means a marker segment in every fqn this repository has ever written".
+        // That is what #231 did, and it cost one segment rather than a new one:
+        // the module stopped being dropped, so the empty slot IS the marker. The
+        // pair is now `<lang>·p·Ty·thing·item` against `<lang>·p··Ty·thing·item`.
+        //
+        // Java is the measure of how live this was. Its module is empty for
+        // EVERY declaration, so every Java member carried the shape; only Java
+        // having no free items outside a class kept the two from meeting.
+        //
+        // The ratchet stays, now at zero: a new collision class fails loudly
+        // instead of joining an unexamined list.
+        let known: usize = 0;
         assert_eq!(
             collisions.len(),
             known,
-            "the grammar admits {} colliding strings, not the {known} known \
-             (one per language, item-in-a-type-named-module vs member):\n{}",
+            "the grammar admits {} colliding strings, not the {known} it must \
+             (the item-in-a-type-named-module vs member pair was closed by #231):\n{}",
             collisions.len(),
             collisions
                 .iter()

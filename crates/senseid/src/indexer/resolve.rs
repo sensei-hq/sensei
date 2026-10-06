@@ -1857,14 +1857,14 @@ mod tests {
 
         assert_eq!(
             entered,
-            vec!["ThroughAnImport rust·p·other·mod".to_string()],
+            vec!["ThroughAnImport rust·p··other·mod".to_string()],
             "the glob enters `other`, and `other.rs` declares exactly that identity"
         );
 
         // The target is not invented: the other file really does declare it.
         let declared = file_of(&scanned, "src/other.rs");
         assert!(
-            declared.symbols.iter().any(|s| s.fqn.as_str() == "rust·p·other·mod"),
+            declared.symbols.iter().any(|s| s.fqn.as_str() == "rust·p··other·mod"),
             "the module the import landed on is one the other file declares"
         );
     }
@@ -1963,7 +1963,7 @@ mod tests {
             .collect();
         assert_eq!(
             entered,
-            vec!["ThroughAnImport rust·p·other·mod".to_string()],
+            vec!["ThroughAnImport rust·p··other·mod".to_string()],
             "the reference still enters the module `other.rs` declares"
         );
         assert_eq!(
@@ -3477,7 +3477,7 @@ mod tests {
     fn a_sibling_package_resolves_however_the_manifest_spelled_it() {
         let hyphen =
             ladder_among("m", "fn f() { sensei_bootstrap::home_dir(); }", &["sensei-bootstrap"]);
-        assert_placed(&hyphen, "rust·sensei-bootstrap·home_dir·item");
+        assert_placed(&hyphen, "rust·sensei-bootstrap··home_dir·item");
     }
 
     /// A package we do NOT own stays external. The new rung must widen

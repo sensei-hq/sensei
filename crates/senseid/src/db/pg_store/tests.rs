@@ -15305,7 +15305,7 @@ async fn node_id_by_fqn_looks_up_without_creating_and_is_folder_scoped() {
     let a = create_test_folder(&s, &format!("fqnlook_a_{}", uuid::Uuid::new_v4())).await;
     let b = create_test_folder(&s, &format!("fqnlook_b_{}", uuid::Uuid::new_v4())).await;
 
-    let fqn = "typescript·app·lib/util";
+    let fqn = "typescript·app··lib/util";
     let id = s.seed_node_by_fqn(&a, fqn, "module", "util", Some("typescript"), None).await.unwrap();
 
     assert_eq!(s.node_id_by_fqn(&a, fqn).await.unwrap(), Some(id), "finds the node in its folder");
