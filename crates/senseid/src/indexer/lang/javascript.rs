@@ -3055,7 +3055,13 @@ impl Walk<'_> {
         let Some(specifiers) = &i.specifiers else {
             // `import './side-effect.js'` binds no name and is still an import:
             // it states a dependency, which is what the module graph is.
-            self.found.imports.push(Import { path, binds: Binding::Glob, origin, at });
+            self.found.imports.push(Import {
+                target: Import::unplaced(&path),
+                path,
+                binds: Binding::Glob,
+                origin,
+                at,
+            });
             return;
         };
         for specifier in specifiers {
@@ -3087,6 +3093,7 @@ impl Walk<'_> {
                 }
             };
             self.found.imports.push(Import {
+                target: Import::unplaced(&path),
                 path: path.clone(),
                 binds,
                 origin: origin.clone(),
@@ -3117,6 +3124,7 @@ impl Walk<'_> {
             BindingPattern::BindingIdentifier(local) => {
                 self.namespaces.insert(local.name.to_string());
                 self.found.imports.push(Import {
+                    target: Import::unplaced(path),
                     path: path.to_string(),
                     binds: Binding::Name(local.name.to_string()),
                     origin,
@@ -3133,6 +3141,7 @@ impl Walk<'_> {
                         continue;
                     };
                     self.found.imports.push(Import {
+                        target: Import::unplaced(path),
                         path: path.to_string(),
                         binds: Binding::MemberOf {
                             local: local.name.to_string(),
@@ -3170,6 +3179,7 @@ impl Walk<'_> {
                 // calls it and `exported` is what this one passes on, which is
                 // the same two questions an alias asks.
                 self.found.imports.push(Import {
+                    target: Import::unplaced(&path),
                     path: path.clone(),
                     binds: Binding::MemberOf {
                         local: specifier.exported.name().to_string(),
@@ -3207,6 +3217,7 @@ impl Walk<'_> {
         let path = e.source.value.to_string();
         let origin = import_origin(&path);
         self.found.imports.push(Import {
+            target: Import::unplaced(&path),
             path,
             binds: Binding::Glob,
             origin,
