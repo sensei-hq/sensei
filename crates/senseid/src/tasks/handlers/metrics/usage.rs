@@ -41,48 +41,6 @@ const SOURCE_MEASURED: &str = "measured";
 const SCOPE_USER: &str = "user";
 const KEY_CACHE_REUSE: &str = "cache_reuse";
 
-/// One day's cache reuse for one repository: the mean of per-session ratios, the
-/// pooled ratio for comparison, and the session count behind them.
-type DayRow = (chrono::NaiveDate, uuid::Uuid, f64, f64, i64);
-
-/// Per-(day, repository) cache reuse over the window.
-///
-/// Only turns with real token accounting participate (`tokens_in IS NOT NULL`):
-/// the Zed and OpenCode adapters do not yet collect it, and treating an absent
-/// reading as zero would fabricate a cache miss that never happened.
-async fn daily_cache_reuse(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    window_days: u32,
-    as_of: Option<chrono::NaiveDate>,
-) -> Result<Vec<DayRow>, String> {
-    let sql = format!(
-        "WITH per_session AS ( \
-             SELECT date_trunc('day', s.started_at)::date AS day \
-                  , rf.repository_id \
-                  , sum(tt.cache_read)::numeric AS cr \
-                  , sum(tt.tokens_in + tt.cache_write + tt.cache_read)::numeric AS tot \
-               FROM activity.transcript_turns tt \
-               JOIN activity.sessions s  ON s.client_session_id = tt.session_id \
-               JOIN sensei.folders    rf ON rf.id = s.repo_folder_id \
-              WHERE s.project_id = $1 \
-                AND rf.repository_id IS NOT NULL \
-                AND tt.tokens_in IS NOT NULL \
-                AND {} \
-              GROUP BY 1, 2 \
-             HAVING sum(tt.tokens_in + tt.cache_write + tt.cache_read) > 0 \
-         ) \
-         SELECT day, repository_id \
-              , avg(cr / tot)::float8 \
-              , (sum(cr) / sum(tot))::float8 \
-              , count(*)::int8 \
-           FROM per_session GROUP BY 1, 2 ORDER BY 1, 2",
-        super::day_filter("s.started_at", as_of),
-    );
-    let q = sqlx_core::query_as::query_as::<_, DayRow>(&sql).bind(project_id);
-    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
-}
-
 pub(super) async fn compute(
     ctx: &TaskContext,
     project_raw: &str,
@@ -98,7 +56,7 @@ pub(super) async fn compute(
     };
 
     let window_days = crate::tasks::metrics_scheduler::window_days(pg).await;
-    let rows = daily_cache_reuse(pg, &project_id, window_days, as_of).await?;
+    let rows = pg.usage_cache_reuse_by_day(&project_id, window_days, as_of).await?;
 
     let mut written = 0u32;
     for (day, repository_id, mean_ratio, pooled_ratio, sessions) in rows {
