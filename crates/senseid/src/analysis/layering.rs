@@ -33,21 +33,34 @@
 //! vanished from the report entirely, carrying no layer and appearing in no
 //! class, with nothing saying they were dropped.
 //!
-//! ## A derived layering cannot produce a climb, and the payload must say so
+//! ## Only a cycle can climb, and that is the finding
 //!
-//! For every edge of the condensation, `layer(source) < layer(target)` holds by
-//! the definition of longest path. That is not a property of THIS rank function
-//! — any level derived from the graph strictly descends along its own edges — so
-//! [`Conformance::Up`] is unreachable here and
-//! [`a_layering_derived_from_the_graph_can_never_climb`] pins it.
+//! For every edge BETWEEN components, `layer(source) < layer(target)` holds by
+//! the definition of longest path — any level derived from a graph strictly
+//! descends along that graph's own edges. So nothing between components climbs,
+//! and [`only_a_cycle_can_climb`] pins it.
 //!
-//! The consequence is a presentation one and it is the whole reason this is
-//! written down: an empty violations list under a derived layering means "a
-//! climb is not expressible", NOT "this architecture is clean". Telling those
-//! apart needs a DECLARED layering to compare against — the mockup hardcodes one
-//! (`docs/mockups/Sensei/lib/arch-data.js:59-65`) and flags itself
-//! "ILLUSTRATIVE until the index exports them". Callers therefore report which
-//! kind of layering produced a payload.
+//! INSIDE a component is the opposite, and an earlier version of this module got
+//! it wrong. `a → b → c → a` cannot be drawn with every arrow pointing down: one
+//! of the three closes the loop, and that one IS the call breaking the downward
+//! flow. Because a cycle has no internal depth its members share a rank, so
+//! layer arithmetic calls every such edge `level` — true, and useless, because
+//! `ViolationsControl` filters on `up`. A graph whose only violations were its
+//! cycles therefore showed none at all: measured on project `sensei` at module
+//! grain, 88 `level` edges, every one inside the single 22-module component.
+//!
+//! [`feedback_order`] fixes that by ordering each component's members so as few
+//! edges as possible run backwards; the ones that do are marked
+//! [`Conformance::Up`]. Every `up` edge is therefore a loop closing, which is
+//! what makes "these calls break the downward flow" readable rather than a
+//! count.
+//!
+//! What a DECLARED layering is still for is NARROWER than it looks: not
+//! "are there violations" — that is answerable here — but "does the measured
+//! structure match the one you intended". The mockup hardcodes one
+//! (`docs/mockups/Sensei/lib/arch-data.js:59-65`) and flags itself "ILLUSTRATIVE
+//! until the index exports them". Callers still report which kind of layering
+//! produced a payload.
 
 use std::collections::HashMap;
 
@@ -134,6 +147,20 @@ pub struct Cycle {
     pub inner: Vec<Dep>,
     /// The weakest link: fewest occurrences, so cutting it costs least.
     ///
+    /// CHEAPEST, NOT NECESSARILY THE BACK EDGE, and the difference is worth
+    /// knowing before quoting it as "cut here and the loop opens". Every edge
+    /// inside a strongly-connected component lies on SOME cycle — strong
+    /// connectivity guarantees a path back — so removing any of them breaks at
+    /// least one. It does not follow that removing it makes the component
+    /// acyclic: a 22-member component holds many cycles, and only removing the
+    /// whole feedback set (the [`Conformance::Up`] edges) is guaranteed to.
+    ///
+    /// Measured on project `sensei` the two coincide — the cheapest inner edge
+    /// IS the cheapest back edge, `senseid/adapters → senseid/tasks ×2` — but
+    /// that is an observation, not a property. The rule stays the mockup's
+    /// (`…v8.dc.html:2468`) because changing it needs a case where it is wrong,
+    /// and this corpus does not provide one.
+    ///
     /// `None` only when a component of two or more somehow carries no inner
     /// dependency, which cannot happen — mutual reachability requires them.
     pub cut: Option<Dep>,
@@ -194,7 +221,19 @@ pub fn analyse(units: &[String], deps: &[Dep]) -> Layering {
     let sizes = component_sizes(&component_of);
     let units_out = place(&ids, &component_of, &layer_of, &sizes);
     let cuts = weakest_links(&edges, &ids, &component_of);
-    let deps_out = classify(&edges, &ids, &component_of, &layer_of, &cuts);
+    // One feedback order per MULTI-member component. A singleton has no inside,
+    // so it contributes nothing and is skipped rather than ordered trivially.
+    let mut feedback_pos: HashMap<usize, usize> = HashMap::new();
+    let mut by_component: HashMap<usize, Vec<usize>> = HashMap::new();
+    for u in 0..n {
+        if sizes[component_of[u]] > 1 {
+            by_component.entry(component_of[u]).or_default().push(u);
+        }
+    }
+    for members in by_component.values() {
+        feedback_pos.extend(feedback_order(members, &edges));
+    }
+    let deps_out = classify(&edges, &ids, &component_of, &layer_of, &cuts, &feedback_pos);
     let cycles = collapse(&ids, &component_of, &layer_of, &sizes, &edges, &cuts);
     let depth = layer_of.iter().copied().max().map_or(0, |m| m + 1);
 
@@ -409,6 +448,88 @@ fn weakest_links(
     best.into_iter().map(|(c, (_, _, _, s, t))| (c, (s, t))).collect()
 }
 
+/// Order one component's members so that as few edges as possible run backwards
+/// — Eades, Lin and Smyth's greedy linear arrangement (GR, 1993).
+///
+/// WHY A COMPONENT NEEDS AN ORDER AT ALL. Its members share a rank, because a
+/// cycle has no internal depth. But `a → b → c → a` cannot be drawn with every
+/// arrow pointing down: one of the three closes the loop, and THAT is the call
+/// breaking the downward flow. Without an order there is nothing to call the
+/// back edge, and every intra-cycle edge reads as "within the layer" — which is
+/// how a graph whose only violations are its cycles showed none at all.
+///
+/// The edges running backwards in this order are a FEEDBACK ARC SET: remove them
+/// all and the component is acyclic. GR bounds that set at `m/2 − n/6`, which
+/// matters because the minimum one is NP-hard and a heuristic presented as an
+/// optimum would be a worse answer than a stated heuristic.
+///
+/// The order is NOT a layer and must never become one — see
+/// [`the_feedback_order_does_not_become_a_layer`].
+///
+/// Deterministic: ties break on the member's index, and indices come from the
+/// sorted unit list, so the same component always yields the same back edges.
+fn feedback_order(members: &[usize], edges: &[(usize, usize, i64)]) -> HashMap<usize, usize> {
+    let inside: std::collections::HashSet<usize> = members.iter().copied().collect();
+    let within: Vec<(usize, usize)> = edges
+        .iter()
+        .filter(|&&(s, t, _)| inside.contains(&s) && inside.contains(&t) && s != t)
+        .map(|&(s, t, _)| (s, t))
+        .collect();
+
+    let mut alive: std::collections::BTreeSet<usize> = inside.iter().copied().collect();
+    let (mut front, mut back): (Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new());
+
+    // Degrees over the LIVE subgraph only — the whole point of the peel is that
+    // removing a node turns its neighbours into sources and sinks.
+    let degrees = |alive: &std::collections::BTreeSet<usize>| {
+        let mut out: HashMap<usize, (usize, usize)> = alive.iter().map(|&n| (n, (0, 0))).collect();
+        for &(s, t) in &within {
+            if alive.contains(&s) && alive.contains(&t) {
+                out.entry(s).or_default().0 += 1; // out-degree
+                out.entry(t).or_default().1 += 1; // in-degree
+            }
+        }
+        out
+    };
+
+    while !alive.is_empty() {
+        loop {
+            let deg = degrees(&alive);
+            // Sinks go to the BACK, in reverse discovery order, so the first
+            // sink found ends up last — nothing can point away from it.
+            if let Some(&n) = alive.iter().find(|n| deg[n].0 == 0) {
+                alive.remove(&n);
+                back.push(n);
+                continue;
+            }
+            // Sources go to the FRONT: nothing points at them.
+            if let Some(&n) = alive.iter().find(|n| deg[n].1 == 0) {
+                alive.remove(&n);
+                front.push(n);
+                continue;
+            }
+            break;
+        }
+        if alive.is_empty() {
+            break;
+        }
+        // Everything left has both an in- and an out-edge, so the component is
+        // cyclic here and SOME edge has to run backwards. Taking the node whose
+        // out-degree most exceeds its in-degree costs the fewest of them.
+        let deg = degrees(&alive);
+        let pick = *alive
+            .iter()
+            .max_by_key(|n| (deg[n].0 as i64 - deg[n].1 as i64, std::cmp::Reverse(**n)))
+            .expect("alive is non-empty");
+        alive.remove(&pick);
+        front.push(pick);
+    }
+
+    back.reverse();
+    front.extend(back);
+    front.into_iter().enumerate().map(|(pos, n)| (n, pos)).collect()
+}
+
 /// Attach a verdict to every edge.
 fn classify(
     edges: &[(usize, usize, i64)],
@@ -416,13 +537,21 @@ fn classify(
     component_of: &[usize],
     layer_of: &[usize],
     cuts: &HashMap<usize, (usize, usize)>,
+    feedback_pos: &HashMap<usize, usize>,
 ) -> Vec<ClassifiedDep> {
     edges
         .iter()
         .map(|&(s, t, w)| {
             let same = component_of[s] == component_of[t];
             let conformance = if same {
-                Conformance::Level
+                // INSIDE a cycle. The members share a rank, so layer arithmetic
+                // says "level" for all of them — which is true and useless. The
+                // feedback order says which arrow closes the loop, and that one
+                // is the call breaking the downward flow.
+                match (feedback_pos.get(&s), feedback_pos.get(&t)) {
+                    (Some(a), Some(b)) if a > b => Conformance::Up,
+                    _ => Conformance::Level,
+                }
             } else {
                 // Signed, because `Up` has to be REACHABLE in this expression
                 // even though the ranking makes it unreachable in practice. A
@@ -562,7 +691,13 @@ mod tests {
         assert_eq!(a.component, b.component, "a and b are one component");
         assert_eq!(a.component_size, 2);
         assert_eq!(a.layer, b.layer, "a cycle has no internal order to rank by");
-        assert_eq!(verdict(&l, "a", "b"), Conformance::Level);
+        // One of the two closes the loop; which one is the feedback order's
+        // business, so this asserts the PAIR rather than a direction.
+        assert_eq!(
+            l.deps.iter().filter(|d| d.conformance == Conformance::Up).count(),
+            1,
+            "a cycle closes with exactly one edge"
+        );
         assert_eq!(l.cycles.len(), 1);
         assert_eq!(l.cycles[0].members, vec!["a", "b"]);
     }
@@ -610,19 +745,88 @@ mod tests {
         assert_eq!(verdict(&l, "a", "c"), Conformance::Skip, "two layers down is a skip");
     }
 
-    /// NO EDGE CAN CLIMB a layering derived from the graph it describes.
+    /// A MUTUAL PAIR has exactly one climbing edge, not zero.
     ///
-    /// This is the property that decides how the screen must read an empty
-    /// violations list: it means "a climb is not expressible here", never "this
-    /// architecture is clean". It holds for ANY graph-derived rank, not just
-    /// longest path, so no choice of rank function would rescue the view —
-    /// telling the two apart needs a DECLARED layering to compare against.
+    /// `a ↔ b` cannot be drawn with both arrows pointing down — one of them
+    /// closes the loop, and that one IS the call that breaks the downward flow.
+    /// Before [`feedback_order`], both were `Level` (the two share a rank, which
+    /// is correct), and `ViolationsControl` filters on `up` — so the screen
+    /// showed no violations over a graph whose every cycle edge is one.
     ///
-    /// Mutation that must break this test: emit `Conformance::Up` for an
+    /// Mutation that must break this test: return `Conformance::Level` for every
     /// intra-component edge.
     #[test]
-    fn a_layering_derived_from_the_graph_can_never_climb() {
-        // Deliberately gnarly: two cycles, a shared leaf, a long chain, a skip.
+    fn a_mutual_pair_has_exactly_one_climbing_edge() {
+        let l = analyse(&units(&["a", "b"]), &[Dep::new("a", "b", 2), Dep::new("b", "a", 3)]);
+        assert_eq!(
+            l.deps.iter().filter(|d| d.conformance == Conformance::Up).count(),
+            1,
+            "one of the two closes the loop: {:?}",
+            l.deps
+        );
+        // The other is within the layer, because the pair shares a rank.
+        assert_eq!(l.deps.iter().filter(|d| d.conformance == Conformance::Level).count(), 1);
+    }
+
+    /// A three-cycle closes with ONE edge, not three.
+    ///
+    /// The feedback order is what makes this a single back edge rather than
+    /// "every edge in a cycle climbs" — the latter is true of no ordering and
+    /// would make the finding unactionable.
+    ///
+    /// Mutation that must break this test: mark every intra-component edge `Up`.
+    #[test]
+    fn a_three_cycle_closes_with_one_edge() {
+        let l = analyse(
+            &units(&["a", "b", "c"]),
+            &[Dep::new("a", "b", 9), Dep::new("b", "c", 3), Dep::new("c", "a", 5)],
+        );
+        assert_eq!(
+            l.deps.iter().filter(|d| d.conformance == Conformance::Up).count(),
+            1,
+            "exactly one back edge: {:?}",
+            l.deps
+        );
+        assert_eq!(l.deps.iter().filter(|d| d.conformance == Conformance::Level).count(), 2);
+    }
+
+    /// EVERY node of a cycle keeps its rank; only the EDGES are ordered.
+    ///
+    /// The feedback order exists to say which arrow closes the loop. It must not
+    /// leak into the layering — a cycle has no internal depth, and splitting its
+    /// members across bands would invent one.
+    ///
+    /// Mutation that must break this test: add the member's feedback position to
+    /// its layer.
+    #[test]
+    fn the_feedback_order_does_not_become_a_layer() {
+        let l = analyse(
+            &units(&["top", "x", "y", "z", "leaf"]),
+            &[
+                Dep::new("top", "x", 1),
+                Dep::new("x", "y", 1),
+                Dep::new("y", "z", 1),
+                Dep::new("z", "x", 1),
+                Dep::new("y", "leaf", 1),
+            ],
+        );
+        assert_eq!(layer_of(&l, "x"), layer_of(&l, "y"), "cycle members share a rank");
+        assert_eq!(layer_of(&l, "y"), layer_of(&l, "z"));
+        assert_eq!(layer_of(&l, "top"), 0);
+        assert_eq!(layer_of(&l, "leaf"), layer_of(&l, "x") + 1);
+        assert_eq!(l.depth, 3, "three bands, not five");
+    }
+
+    /// Climbing is confined to cycles — NOTHING between components climbs.
+    ///
+    /// This is the half of the original vacuity claim that survives, and it is
+    /// what makes the `up` edges readable: every one of them is a loop closing,
+    /// so "these calls break the downward flow" names cycles and nothing else.
+    ///
+    /// Mutation that must break this test: classify an inter-component edge by
+    /// `layer_of[s] - layer_of[t]` instead of `layer_of[t] - layer_of[s]`.
+    #[test]
+    fn only_a_cycle_can_climb() {
         let l = analyse(
             &units(&["app", "api", "core", "util", "db", "x", "y"]),
             &[
@@ -637,18 +841,23 @@ mod tests {
                 Dep::new("x", "core", 6),
             ],
         );
-        assert!(!l.deps.is_empty(), "the graph is not empty, so the check is not vacuous");
-        assert!(
-            !l.deps.iter().any(|d| d.conformance == Conformance::Up),
-            "a derived layering strictly descends along its own edges"
-        );
-        for d in &l.deps {
-            let (s, t) = (layer_of(&l, &d.source), layer_of(&l, &d.target));
-            match d.conformance {
-                Conformance::Level => assert_eq!(s, t),
-                _ => assert!(t > s, "{} -> {} must descend ({s} -> {t})", d.source, d.target),
-            }
+        let cycle_members: std::collections::HashSet<&str> =
+            l.cycles.iter().flat_map(|c| c.members.iter().map(String::as_str)).collect();
+        assert!(!cycle_members.is_empty(), "the fixture has a cycle, so this is not vacuous");
+        for d in l.deps.iter().filter(|d| d.conformance == Conformance::Up) {
+            assert!(
+                cycle_members.contains(d.source.as_str())
+                    && cycle_members.contains(d.target.as_str()),
+                "{} -> {} climbs but is not inside a cycle",
+                d.source,
+                d.target
+            );
         }
+        assert_eq!(
+            l.deps.iter().filter(|d| d.conformance == Conformance::Up).count(),
+            1,
+            "the one 2-cycle contributes exactly one"
+        );
     }
 
     /// A unit depending on ITSELF is kept as a fact, not silently dropped.

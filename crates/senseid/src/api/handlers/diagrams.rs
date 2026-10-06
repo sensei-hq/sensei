@@ -123,14 +123,19 @@ pub(crate) struct LayeringQuery {
 /// depth over the condensation — so serving them from one payload is what stops
 /// the two screens disagreeing about which modules are in a cycle.
 ///
-/// `layerSource` is `derived`, and the screen MUST NOT read an empty violation
-/// list as a clean architecture. Under a layering derived from the graph it
-/// describes, an edge cannot climb — `layer(source) < layer(target)` holds for
-/// every edge by the definition of longest path, and that is true of any
-/// graph-derived rank, not of this one in particular. Distinguishing "nothing
-/// climbs" from "a climb is not expressible" needs a DECLARED layering to
-/// compare against, which nothing stores yet; the field is here so the screen
-/// can say which it is looking at.
+/// `conformance: "up"` IS the answer to "which calls break the downward flow",
+/// and every one of them is a cycle closing. Between components nothing can
+/// climb — `layer(source) < layer(target)` holds by the definition of longest
+/// path — but inside one, `a → b → c → a` cannot be drawn with every arrow
+/// pointing down, and `analysis::layering`'s feedback order says which arrow
+/// closes the loop. An earlier version marked those `level`, which is true (the
+/// members share a rank) and useless, because `ViolationsControl` filters on
+/// `up`: a graph whose only violations were its cycles showed none.
+///
+/// `layerSource` is still `derived`, and still worth saying. It no longer means
+/// "a violation is not expressible" — it means this layering was MEASURED rather
+/// than declared, so it answers "do these calls flow downward" and not "is this
+/// the architecture you intended". The second needs a declared layering (#230).
 ///
 /// A DB error is a 500, never an empty payload — an empty graph and an
 /// unreachable database must not render the same way.
