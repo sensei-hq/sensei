@@ -48,6 +48,12 @@ pub struct SecurityVerdict {
 /// Resolves the advisory set for a library. `None` = undetermined (fail-closed →
 /// no security flag); `Some(vec![])` = determined clean. A trait so the scheduler
 /// is stub-testable.
+// `async_trait` desugars each method to a `Pin<Box<dyn Future>>` and stamps
+// `#[must_use]` on it; clippy 1.99 added `double_must_use`, which then fires on
+// a return type that is already must-use. The attribute is the macro's, not
+// ours, and clippy's external-macro suppression does not reach proc-macro output
+// that keeps call-site spans.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait VulnSource: Send + Sync {
     async fn advisories(&self, ecosystem: &str, name: &str) -> Option<Vec<Advisory>>;
