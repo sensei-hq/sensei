@@ -501,6 +501,7 @@ mod library;
 mod logs;
 mod mcp;
 mod memory;
+mod metric_reads;
 mod metrics;
 /// One row of `sensei.nodes`, named rather than positional (#161).
 pub use graph::NodeRow;
