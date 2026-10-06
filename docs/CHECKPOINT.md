@@ -47,8 +47,15 @@ anything later; the reasoning is below the list, not implied by it.
         Found and fixed on the way: `upsert_lib_node_by_fqn` stamped
         `modified_at = now()` unconditionally, so a re-scan churned two
         rows per external dependency.
-        NEEDS A RE-INDEX to move the live numbers — the placement comes
-        from the walk, so backfill-edge-verdicts.sh cannot help.
+        Corpus after: 9,640 of 9,654 imports placed (99.86%), 14 faults,
+        ZERO no-verdict; both totals reconcile. 7766dfd1 puts the two
+        tables in the acceptance report so it cannot regress unseen.
+        NEEDS A RE-INDEX to move the live DB — the placement comes from
+        the walk, so backfill-edge-verdicts.sh cannot help, and
+        DEPLOYING IS BLOCKED BY #243.
+    [!] #243 make install-debug cannot build (llama-cpp-sys-2 vs OpenSSL)
+        Nothing reaches the running daemon until this is fixed. Found
+        while re-indexing for #242; unrelated to it.
     [ ] #231 fqn segment 3 is a SYMBOL for some adapters   ← NEXT
 
     -- C. screens --
