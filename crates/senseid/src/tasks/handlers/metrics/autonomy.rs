@@ -48,40 +48,37 @@
 //! is honest-empty, not fabrication.
 //!
 //! ## Repository resolution (never leak another project's data, never fabricate one)
-//! - `interruption_rate`: `activity.assistant_events` carries no project id — its
-//!   `session_id` is the assistant's own session-id string. Events attribute to a
-//!   session through `activity.sessions.client_session_id = assistant_events.
-//!   session_id`, and to a REPOSITORY through that session's `repo_folder_id →
-//!   sensei.folders.repository_id`. Counts are GROUP BY `(day, repository)` and each
-//!   day/repository writes its own row. Events whose session matches no session, a
-//!   session in another project (the `sessions.project_id = $1` scope), or a session
-//!   whose repository cannot be resolved (`repo_folder_id` NULL, or that folder's
-//!   `repository_id` NULL) are EXCLUDED — the row is skipped, never attributed to a
-//!   fabricated repository (I-E).
-//! - `run_completion`: `activity.runs` carries only a direct `project_id` FK and NO
-//!   repository, so its per-day counts are project-wide. A project-wide value has no
-//!   natural per-repository grain, so it is attributed to
+//! - `interruption_rate`: one row per `(day, repository)` returned by
+//!   [`PgStore::autonomy_interruption_counts_by_day`], keyed to the SESSION's
+//!   repository. That read owns the attribution — and the exclusions, since an event
+//!   whose repository cannot be resolved is dropped there rather than attributed to a
+//!   fabricated one (I-E).
+//! - `run_completion`: [`PgStore::autonomy_run_completion_by_day`] returns per-day
+//!   counts that are project-wide, because `activity.runs` carries only a direct
+//!   `project_id` FK and NO repository. A project-wide value has no natural
+//!   per-repository grain, so it is attributed to
 //!   [`PgStore::primary_repository_for_project`] — the project's canonical
 //!   (shallowest-checkout) repository. A project with NO repository-linked folder
 //!   cannot be attributed to a repository, so `run_completion` writes NO row
 //!   (honest-empty — never fabricate a repository), even when runs exist.
 //!
-//! Windowing/day-bucketing uses each source row's TRUE occurrence time — the
-//! event's client clock `assistant_events.ts` (epoch ms →
-//! `to_timestamp(ts / 1000.0)`) for `interruption_rate`, and `runs.started_at` for
-//! `run_completion` — never an insert-time `created_at` (which is `now` for
-//! synthesized/back-dated rows). `as_of=None` keeps the rolling `now() -
-//! make_interval` window; `as_of=Some(D)` selects the single day `D` (backfill) via
-//! the shared [`super::day_filter`] / [`super::bind_day`] `$2` contract.
+//! Windowing and day-bucketing belong to the reads: both bucket on their source row's
+//! TRUE occurrence time (the event's client `ts`, `runs.started_at`) rather than an
+//! insert-time `created_at`, so a synthesized/back-dated row files on its historical
+//! day. `as_of` selects the day-set — see [`compute`].
 //!
 //! Never-fabricate: every DB call propagates `Err`; a metric/day with no data
 //! writes NO row. A ratio with denominator 0 writes NO row (a 0/0 would be a
 //! fabricated zero); a real denominator with 0 numerator writes a real `0.0`. A
 //! repository that cannot be resolved skips the row (never a made-up repository).
+//!
+//! [`PgStore::upsert_project_metric_repo`]: crate::db::pg_store::PgStore::upsert_project_metric_repo
+//! [`PgStore::autonomy_interruption_counts_by_day`]: crate::db::pg_store::PgStore::autonomy_interruption_counts_by_day
+//! [`PgStore::autonomy_run_completion_by_day`]: crate::db::pg_store::PgStore::autonomy_run_completion_by_day
+//! [`PgStore::primary_repository_for_project`]: crate::db::pg_store::PgStore::primary_repository_for_project
 
 use crate::db::pg_store::MetricRow;
 
-use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;
@@ -100,101 +97,9 @@ const SCOPE_USER: &str = "user";
 const KEY_INTERRUPTION_RATE: &str = "interruption_rate";
 const KEY_RUN_COMPLETION: &str = "run_completion";
 
-/// The `assistant_events.event_type` literals `interruption_rate` counts. These are
-/// the raw hook names (`hook_event_name`) as written by the capture path and used
-/// across `analyze` / `verdict_classifier` / the transcript synthesizers.
-const EVENT_STOP: &str = "Stop";
-const EVENT_USER_PROMPT: &str = "UserPromptSubmit";
-
 /// A ratio's denominator below which the day is statistically thin — flagged
 /// `props.low_n = true` (the row is still written).
 const LOW_N_THRESHOLD: i64 = 10;
-
-/// One day's interruption counts for a repository: `(day, repository_id, stop_count,
-/// prompt_count)`. `prompt_count` is the `interruption_rate` denominator; the row is
-/// keyed to the SESSION's resolved repository.
-type DayInterruption = (chrono::NaiveDate, uuid::Uuid, i64, i64);
-
-/// One day's run counts for a project: `(day, done_count, started_count)`.
-/// `started_count` (every run started that day) is the `run_completion` denominator.
-type DayRunCompletion = (chrono::NaiveDate, i64, i64);
-
-/// This group's occurrence-time anchors for the shared [`super::day_filter`] /
-/// [`super::bind_day`] `$2` day-set contract. `interruption_rate` buckets/windows on
-/// the event's CLIENT clock `ts` (epoch ms → `to_timestamp(ts / 1000.0)`, the same
-/// `ae.ts / 1000.0` convention `get_project_sessions_needing_enrichment` uses), NOT
-/// the server insert `created_at` — a synthesized/back-dated event carries its true
-/// occurrence time in `ts` while `created_at` is `now`. `run_completion` buckets on
-/// `runs.started_at`.
-const ANCHOR_INTERRUPTION: &str = "to_timestamp(ae.ts / 1000.0)";
-const ANCHOR_RUN_COMPLETION: &str = "r.started_at";
-
-/// Daily `Stop` / `UserPromptSubmit` counts per REPOSITORY over the selected day-set
-/// (rolling window when `as_of=None`, the single day `D` when `Some(D)`), attributed
-/// to the project via `sessions.client_session_id = assistant_events.session_id` and
-/// to a repository via `sessions.repo_folder_id → sensei.folders.repository_id`.
-/// Events with no matching session, a session in another project, or a session whose
-/// repository cannot resolve (`repo_folder_id` NULL / that folder's `repository_id`
-/// NULL) are excluded. Bucketed by the event's CLIENT `ts` (its true occurrence day),
-/// not the insert `created_at`, and GROUP BY `(day, repository)`.
-async fn daily_interruption(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    window_days: u32,
-    as_of: Option<chrono::NaiveDate>,
-) -> Result<Vec<DayInterruption>, String> {
-    let sql = format!(
-        "SELECT date_trunc('day', to_timestamp(ae.ts / 1000.0))::date      AS day
-              , rf.repository_id                                            AS repository_id
-              , count(*) FILTER (WHERE ae.event_type = $3)::int8           AS stop_count
-              , count(*) FILTER (WHERE ae.event_type = $4)::int8           AS prompt_count
-           FROM activity.assistant_events ae
-           JOIN activity.sessions        s  ON s.client_session_id = ae.session_id
-           JOIN sensei.folders           rf ON rf.id = s.repo_folder_id
-          WHERE s.project_id      = $1
-            AND rf.repository_id IS NOT NULL
-            AND ae.event_type    IN ($3, $4)
-            AND {}
-          GROUP BY 1, 2
-          ORDER BY 1, 2",
-        super::day_filter(ANCHOR_INTERRUPTION, as_of),
-    );
-    let q = sqlx_core::query_as::query_as::<_, DayInterruption>(&sql).bind(project_id);
-    super::bind_day(q, window_days, as_of)
-        .bind(EVENT_STOP)
-        .bind(EVENT_USER_PROMPT)
-        .fetch_all(pg.pool())
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Daily run-completion counts over the selected day-set (rolling window when
-/// `as_of=None`, the single day `D` when `Some(D)`), project-scoped via the direct
-/// `runs.project_id` FK. `done_count` is runs whose terminal `status = 'done'`;
-/// `started_count` is every run started that day (the denominator). Bucketed by
-/// `started_at` — a run counts on the day it started, regardless of when it finished.
-/// Runs carry no repository, so the caller attributes these project-wide counts to
-/// the project's primary repository.
-async fn daily_run_completion(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    window_days: u32,
-    as_of: Option<chrono::NaiveDate>,
-) -> Result<Vec<DayRunCompletion>, String> {
-    let sql = format!(
-        "SELECT date_trunc('day', r.started_at)::date                          AS day
-              , count(*) FILTER (WHERE r.status = 'done'::sensei.run_status)::int8 AS done_count
-              , count(*)::int8                                                  AS started_count
-           FROM activity.runs r
-          WHERE r.project_id  = $1
-            AND {}
-          GROUP BY 1
-          ORDER BY 1",
-        super::day_filter(ANCHOR_RUN_COMPLETION, as_of),
-    );
-    let q = sqlx_core::query_as::query_as::<_, DayRunCompletion>(&sql).bind(project_id);
-    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
-}
 
 /// Build the ratio props for a row: exact `numerator` + `denominator` and the
 /// `low_n` display flag (`denominator < 10`). `value` (computed by the caller) is
@@ -257,7 +162,7 @@ pub(super) async fn compute(
     // ── interruption_rate: # Stop / # UserPromptSubmit, per (day, session-repository) ──
     if let Some(mid) = interruption_id {
         for (day, repository_id, stop_count, prompt_count) in
-            daily_interruption(pg, &project_id, window_days, as_of).await?
+            pg.autonomy_interruption_counts_by_day(&project_id, window_days, as_of).await?
         {
             if prompt_count == 0 {
                 // No UserPromptSubmit that day → no denominator → NO row (a 0/0, e.g.
@@ -294,7 +199,7 @@ pub(super) async fn compute(
         // (honest-empty; never fabricate a repository), even when runs exist.
         if let Some(repository_id) = pg.primary_repository_for_project(&project_id).await? {
             for (day, done_count, started_count) in
-                daily_run_completion(pg, &project_id, window_days, as_of).await?
+                pg.autonomy_run_completion_by_day(&project_id, window_days, as_of).await?
             {
                 if started_count == 0 {
                     // Defensive: GROUP BY only returns days with ≥1 run, so this never

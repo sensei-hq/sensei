@@ -18,7 +18,7 @@
 //!
 //! The engine (day scheduling, watermark sealing, per-day explainer enrichment) lives
 //! in [`planner`]; this module owns the dispatch entry points and the shared helpers
-//! ([`today`], [`is_historical`], [`day_filter`], [`bind_day`], [`MetricGroup`]). An
+//! ([`today`], [`is_historical`], [`MetricGroup`]). An
 //! UNKNOWN `task_name` is an intentional logged no-op that returns `Ok` — a registry
 //! entry the daemon doesn't yet know about degrades to a warning, never a panic or a
 //! stuck queue.
@@ -33,7 +33,7 @@
 //! adds the 31st query. **These are being folded into `db/pg_store/metrics.rs`.**
 //!
 //! Adding a metric before that lands? Put its query in `PgStore` now rather than
-//! here, and take the window as a parameter rather than splicing [`day_filter`]
+//! here, and take the window as a parameter rather than splicing a predicate
 //! into a string — a layer method whose SQL still arrives from outside it is the
 //! same problem wearing a different hat.
 //!
@@ -71,18 +71,12 @@ mod session_outcomes;
 mod session_process;
 mod usage;
 
-/// Today's date (DB `current_date`) — the `computed_on` for the SNAPSHOT metrics
-/// (`churn`'s `rework_density`) that store a point-in-time value rather than a
-/// windowed per-day series. Read from the DB so
-/// the day boundary matches the `date_trunc('day', started_at)::date` the windowed
-/// computers use (same session TZ). Shared by every snapshot computer so the day
-/// source can't drift between groups.
+/// Today's date, from the database. Thin delegate to
+/// [`PgStore::metric_today`] (#227) — the SQL moved into the persistence layer
+/// with the rest of the group reads, and this keeps the `super::today(pg)` call
+/// its nine callers already use.
 pub(super) async fn today(pg: &PgStore) -> Result<chrono::NaiveDate, String> {
-    let (d,): (chrono::NaiveDate,) = sqlx_core::query_as::query_as("SELECT current_date")
-        .fetch_one(pg.pool())
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(d)
+    pg.metric_today().await
 }
 
 /// Whether a forward-only SNAPSHOT computer must SKIP for this `as_of` (Phase 3).
@@ -100,36 +94,6 @@ pub(super) async fn is_historical(
     match as_of {
         Some(d) => Ok(d != today(pg).await?),
         None => Ok(false),
-    }
-}
-
-/// The `$2`-anchored single-day-or-window SQL filter shared by the per-day base
-/// computers. `anchor` is the group's occurrence-time expression — the timestamptz
-/// it buckets/windows on (`s.started_at`, `r.started_at`,
-/// `to_timestamp(ae.ts / 1000.0)`, …). `as_of = None` → the rolling window
-/// (`$2 = window_days::int`, the incremental behavior); `Some(_)` → a single
-/// historical day (`$2 = D::date`, the backfill/gap-fill path). Kept in ONE place so
-/// the window/day SQL (and its `$2` contract with [`bind_day`]) can't drift between
-/// groups. The `day` SELECT column each computer emits must use the SAME `anchor`
-/// (`date_trunc('day', <anchor>)::date`) so `computed_on` matches the filter.
-pub(super) fn day_filter(anchor: &str, as_of: Option<chrono::NaiveDate>) -> String {
-    match as_of {
-        Some(_) => format!("date_trunc('day', {anchor})::date = $2::date"),
-        None => format!("{anchor} >= now() - make_interval(days => $2::int)"),
-    }
-}
-
-/// Bind `$2` for [`day_filter`]: the target day on the `Some` path, else the window
-/// length. Consumes and returns the query so callers stay one-liners. Anchor-agnostic
-/// — the same for every per-day computer, so the `$2` binding lives in ONE place.
-pub(super) fn bind_day<'q, O>(
-    q: sqlx_core::query_as::QueryAs<'q, sqlx_postgres::Postgres, O, sqlx_postgres::PgArguments>,
-    window_days: u32,
-    as_of: Option<chrono::NaiveDate>,
-) -> sqlx_core::query_as::QueryAs<'q, sqlx_postgres::Postgres, O, sqlx_postgres::PgArguments> {
-    match as_of {
-        Some(d) => q.bind(d),
-        None => q.bind(window_days as i32),
     }
 }
 
