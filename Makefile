@@ -176,9 +176,18 @@ db-backup-essential:
 	  echo "sensei DB not present — skipping essential backup"; \
 	  exit 0; \
 	fi
-	@# Rotate essential-backup snapshots: keep only the 5 most recent so a
-	@# 650MB assistant_events export doesn't accumulate unbounded.
-	@keep=5; \
+	@# Rotate essential-backup snapshots: keep the 2 most recent.
+	@#
+	@# TWO, NOT FIVE, and the number that changed the answer is the SIZE. The
+	@# comment here used to say 650MB; measured 2026-10-07 it is 3.7 GB, of which
+	@# 3.6 GB is `assistant_events.jsonl` — `dbd export` writes uncompressed
+	@# JSONL. Five snapshots is an 18.5 GB ceiling, which is the shape of the
+	@# problem that removing the full `pg_dump` was meant to solve.
+	@#
+	@# Two is the smallest retention that still survives a bad export: the
+	@# previous snapshot is intact while the new one is being written, so a
+	@# process killed halfway leaves one good copy. One would not.
+	@keep=2; \
 	  ls -1t database/backup/essential 2>/dev/null | tail -n +$$((keep + 1)) \
 	    | while read d; do rm -rf "database/backup/essential/$$d"; done
 	@ts=$$(date +%Y%m%d-%H%M%S); \
