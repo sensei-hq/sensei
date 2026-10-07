@@ -8,6 +8,7 @@ pub mod layering;
 pub mod metric_day_explainer;
 pub mod metric_narrative;
 pub mod narration_cache;
+pub mod neighbourhood;
 pub mod project_icon;
 pub mod rule_consolidation;
 pub mod session_metric_note;

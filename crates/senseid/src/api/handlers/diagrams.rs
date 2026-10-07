@@ -4,6 +4,7 @@
 //! shape its view already produces, so the screen and any other consumer cannot
 //! disagree about what a span or a level means.
 
+use crate::analysis::neighbourhood::Side;
 use crate::api::state::AppState;
 use axum::{
     extract::{Path, Query, State},
@@ -223,6 +224,170 @@ pub(crate) async fn world(
         }))
     })
     .await
+}
+
+/// How far out the Neighbourhood walks. `@rokkit/graph`'s `DepthControl`
+/// offers 1 to 3, and so does this — a fourth ring of a hub is a census, not a
+/// portrait.
+const MAX_DEPTH: u8 = 3;
+
+/// Cards kept per ring per side. Measured 2026-10-07 on project `sensei`: a
+/// symbol's distinct callers are 1 at the median, 6 at p90 and 60 at p99, so 40
+/// draws ~98% of symbols whole. The rest — `assert_eq` has 2,304 callers — are
+/// cut to their most-called 40 and the cut is COUNTED in the payload.
+const RING_CAP: usize = 40;
+
+#[derive(Deserialize)]
+pub(crate) struct NeighbourhoodQuery {
+    focus: Option<String>,
+    depth: Option<u8>,
+}
+
+/// GET /api/projects/{id}/diagrams/neighbourhood?focus=<node id>&depth=1..3
+///
+/// One symbol, what calls it and what it calls, a ring at a time. Edges are
+/// `kind: "dependency"`, which is what makes the layout word its columns
+/// "called by / calls" rather than an ER diagram's "referenced by".
+///
+/// A missing or malformed focus is a 400 — there is no default symbol, and
+/// picking one would draw a neighbourhood the reader did not ask about. A focus
+/// that is not this project's is a 404.
+///
+/// `coverage` says what the picture CANNOT show, and both counts sit beside it:
+/// `unplacedCallees` are calls the focus makes that the graph could not place
+/// (absent from the right-hand column), and `namedUnplaced` are unplaced calls
+/// elsewhere in the project that use the focus's NAME — some may be calls to it,
+/// so the left-hand column is a floor. `cut` is the cards a capped ring found
+/// and did not draw.
+pub(crate) async fn neighbourhood(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<NeighbourhoodQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let depth = q.depth.unwrap_or(1);
+    if !(1..=MAX_DEPTH).contains(&depth) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let focus_id = q
+        .focus
+        .as_deref()
+        .and_then(|f| uuid::Uuid::parse_str(f).ok())
+        .ok_or(StatusCode::BAD_REQUEST)?;
+    let project_id = resolve_project_id(&state, &id).await?;
+    let focus = state
+        .pg
+        .neighbourhood_focus(&project_id, &focus_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    cached(&state, "neighbourhood", &project_id, format!("{focus_id}|{depth}"), async {
+        let ((left, left_cut), (right, right_cut), unplaced) = tokio::try_join!(
+            walk(&state, &project_id, focus_id, Side::In, depth),
+            walk(&state, &project_id, focus_id, Side::Out, depth),
+            async {
+                state
+                    .pg
+                    .neighbourhood_unplaced(&project_id, &focus_id, &focus.name)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+            },
+        )?;
+
+        // One line per pair, whichever walk found it — a mutual neighbour is
+        // reached by both, and two lines for one relationship would double it.
+        let mut edges: std::collections::BTreeMap<(uuid::Uuid, uuid::Uuid), i64> =
+            std::collections::BTreeMap::new();
+        for c in left.iter().chain(right.iter()) {
+            edges.entry((c.source, c.target)).or_insert(c.occurrences);
+        }
+        let mut ids: std::collections::BTreeSet<uuid::Uuid> =
+            edges.keys().flat_map(|(s, t)| [*s, *t]).collect();
+        ids.insert(focus_id);
+        let ids: Vec<uuid::Uuid> = ids.into_iter().collect();
+        let cards = state
+            .pg
+            .neighbourhood_nodes(&ids)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        let out_edges: Vec<serde_json::Value> = edges
+            .iter()
+            .map(|((s, t), w)| {
+                serde_json::json!({
+                    "id": format!("{s}→{t}"),
+                    "source": s,
+                    "target": t,
+                    "kind": "dependency",
+                    "weight": w,
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "depth": depth,
+            "focus": card(&focus),
+            "nodes": cards.iter().map(card).collect::<Vec<_>>(),
+            "edges": out_edges,
+            "coverage": {
+                "drawn": out_edges.len() as i64,
+                "cut": { "in": left_cut, "out": right_cut },
+                "unplacedCallees": unplaced.callees,
+                "namedUnplaced": unplaced.named,
+            },
+        }))
+    })
+    .await
+}
+
+/// Walk one side `depth` rings out. Returns every call kept, and the cards cut.
+async fn walk(
+    state: &AppState,
+    project_id: &uuid::Uuid,
+    focus: uuid::Uuid,
+    side: Side,
+    depth: u8,
+) -> Result<(Vec<crate::analysis::neighbourhood::Call>, usize), StatusCode> {
+    let mut claimed = std::collections::HashSet::from([focus]);
+    let mut frontier = std::collections::HashSet::from([focus]);
+    let mut calls = vec![];
+    let mut cut = 0;
+    for _ in 0..depth {
+        if frontier.is_empty() {
+            break;
+        }
+        let ids: Vec<uuid::Uuid> = frontier.iter().copied().collect();
+        let hop = state
+            .pg
+            .neighbourhood_hop(project_id, &ids, side)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let ring =
+            crate::analysis::neighbourhood::step(&hop, &frontier, side, &mut claimed, RING_CAP);
+        cut += ring.cut;
+        calls.extend(ring.calls);
+        frontier = ring.frontier.into_iter().collect();
+    }
+    Ok((calls, cut))
+}
+
+/// One card as `@rokkit/graph` reads it. `group` is the PACKAGE, through the
+/// one fqn decoder, so a card's tint says which crate or package it lives in —
+/// the first thing a reader wants to know about a call crossing a boundary.
+fn card(n: &crate::db::pg_store::NeighbourNode) -> serde_json::Value {
+    let parsed = n.fqn.as_deref().and_then(|f| crate::indexer::fqn::parse(f).ok());
+    serde_json::json!({
+        "id": n.id,
+        "label": n.name,
+        "kind": n.kind,
+        "group": parsed.as_ref().map(|p| p.package),
+        "module": parsed.as_ref().and_then(|p| p.tail.first().copied()),
+        "language": n.language,
+        "file": n.file_path,
+        "line": n.line_start,
+        "external": n.locality.as_deref() == Some("external"),
+        "rows": [],
+    })
 }
 
 /// The grains Layers and Cycles can be ranked at.
