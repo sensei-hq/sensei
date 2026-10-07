@@ -22,6 +22,7 @@ import type {
   ProvisionModel, ProvisionPhase,
   StructureLevel, StructurePayload,
   LayeringLevel, LayeringPayload,
+  WorldGroupBy, WorldPayload,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -537,6 +538,19 @@ export function senseiApi(port: number) {
     tryGetProjectLayering: (id: string, level: LayeringLevel, kinds: string[]) =>
       tryGet<LayeringPayload>(
         `/api/projects/${enc(id)}/diagrams/layering?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
+      ),
+
+    /** #219 — the World payload: every indexed declaration, nested.
+     *
+     *  CROSS-PROJECT. The project in the path names the view and does not scope
+     *  it — the picture is all indexed code, with project as its outermost ring.
+     *
+     *  Result-based like its siblings: this screen must tell "nothing indexed"
+     *  apart from "the daemon failed", and on a picture whose whole subject is
+     *  how much there is, an empty canvas is the worse lie. */
+    tryGetProjectWorld: (id: string, groupBy: WorldGroupBy) =>
+      tryGet<WorldPayload>(
+        `/api/projects/${enc(id)}/diagrams/world?groupBy=${enc(groupBy)}`
       ),
 
     getProjectPatterns: (id: string) =>
