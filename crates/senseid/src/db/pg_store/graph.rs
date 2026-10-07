@@ -3798,7 +3798,136 @@ fn structure_group_sql(level: &str, prefix: &str) -> String {
     }
 }
 
+/// One (project, repository, test-or-not) cell of the World diagram (#219).
+///
+/// THE FINEST GRAIN, and the hierarchy is assembled above it. The screen offers
+/// three groupings — project first, repository first, code-vs-tests first — and
+/// they are three readings of ONE set of cells, not three queries. Building the
+/// tree in Rust keeps this a single literal statement that
+/// `check-sql-against-schema.py` can plan, and makes the grouping a pure
+/// function with its own tests.
+/// The `world_cells` select list, in order. A tuple because this crate depends
+/// on `sqlx-core` alone and so has no `FromRow` derive — the same shape
+/// `StructureNodeRow` uses, mapped into the named struct immediately so the
+/// columns are told apart by POSITION exactly once.
+type WorldCellRow = (uuid::Uuid, String, uuid::Uuid, String, bool, i64, i64);
+
+#[derive(Debug, Clone)]
+pub struct WorldCell {
+    pub project_id: uuid::Uuid,
+    pub project: String,
+    pub folder_id: uuid::Uuid,
+    pub repository: String,
+    /// `true` for the test half of a repository. Tests are a PROPERTY of a
+    /// declaration (`nodes.is_test`), so they are a cell and not a third kind of
+    /// container — which is why the "code · tests" grouping can be offered and a
+    /// "docs" one cannot.
+    pub is_test: bool,
+    pub declarations: i64,
+    pub documented: i64,
+}
+
+/// One repository's edge placement, for the "unresolved share" shade (#219).
+///
+/// SEPARATE FROM [`WorldCell`] because the grains differ and mixing them
+/// double-counts: edges belong to the FOLDER, declarations to the
+/// (folder, is_test) cell. Joined in SQL, a repository's edge total would appear
+/// once per cell and summing the tree would report it twice.
+/// The `world_placement` select list, in order. See [`WorldCellRow`].
+type WorldPlacementRow = (uuid::Uuid, i64, i64);
+
+#[derive(Debug, Clone)]
+pub struct WorldPlacement {
+    pub folder_id: uuid::Uuid,
+    pub edges: i64,
+    pub missed: i64,
+}
+
 impl PgStore {
+    /// Every indexed declaration, as cells to nest (#219).
+    ///
+    /// CROSS-PROJECT, deliberately. The screen is "all indexed code, nested by
+    /// what contains it", and PROJECT is its outermost ring — so scoping to one
+    /// project would leave the top level with a single circle. The project a
+    /// reader is viewing from is marked by the caller, not filtered here.
+    ///
+    /// Membership comes through `folder_projects`, never a folder column (#211),
+    /// which is why one repository can legitimately appear under two projects:
+    /// measured on this corpus, one does.
+    ///
+    /// Library nodes are excluded. A `lib·` node is a name for something whose
+    /// source was never opened, so counting it as indexed code would inflate
+    /// every circle by the size of its dependency surface.
+    ///
+    /// 2.7 s corpus-wide, against the 37 s a structure read costs.
+    pub async fn world_cells(&self) -> Result<Vec<WorldCell>, String> {
+        let rows: Vec<WorldCellRow> = sqlx_core::query_as::query_as(
+            "SELECT fp.project_id
+                  , p.name  AS project
+                  , f.id    AS folder_id
+                  , f.name  AS repository
+                  , n.is_test
+                  , count(*)::bigint AS declarations
+                  , count(*) FILTER (WHERE n.docstring IS NOT NULL)::bigint AS documented
+               FROM sensei.nodes n
+               JOIN sensei.folders f          ON f.id = n.folder_id
+               JOIN sensei.folder_projects fp ON fp.folder_id = f.id
+               JOIN sensei.projects p         ON p.id = fp.project_id
+              WHERE n.fqn IS NOT NULL AND n.fqn NOT LIKE 'lib·%'
+              GROUP BY 1, 2, 3, 4, 5",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("world_cells: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    project_id,
+                    project,
+                    folder_id,
+                    repository,
+                    is_test,
+                    declarations,
+                    documented,
+                )| {
+                    WorldCell {
+                        project_id,
+                        project,
+                        folder_id,
+                        repository,
+                        is_test,
+                        declarations,
+                        documented,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    /// How each repository's edges turned out, for the unresolved-share shade.
+    ///
+    /// Keyed on the FOLDER and never joined to [`WorldCell`] in SQL — see that
+    /// type for why. 13 s corpus-wide: a full pass of `sensei.edges`, which is
+    /// 3.3M rows, and the reason this payload is cached like every other
+    /// diagram (#233).
+    pub async fn world_placement(&self) -> Result<Vec<WorldPlacement>, String> {
+        let rows: Vec<WorldPlacementRow> = sqlx_core::query_as::query_as(
+            "SELECT e.folder_id
+                  , count(*)::bigint AS edges
+                  , count(*) FILTER (WHERE e.unresolved_reason IS NOT NULL)::bigint AS missed
+               FROM sensei.edges e
+              GROUP BY 1",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("world_placement: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(folder_id, edges, missed)| WorldPlacement { folder_id, edges, missed })
+            .collect())
+    }
+
     /// Nodes of the Structure diagram for one project, rolled up to `level`.
     ///
     /// Reads `sensei.structure_graph`, which is already internal-only and
