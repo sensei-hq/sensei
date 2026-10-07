@@ -108,7 +108,17 @@ anything later; the reasoning is below the list, not implied by it.
         this version marker to know when it is stale.
         LIVE TIMING PENDING: the cache cannot hit while the re-index
         moves the version every few seconds.
-    [ ] #219 World · #220 Neighbourhood · #221 Schema
+    [x] #219 World                        3f0eadd6 87c770af
+        Containment as area, CROSS-PROJECT (project is the outer ring,
+        so scoping to one leaves a single circle). Two reads not a join:
+        edges belong to a FOLDER, declarations to a (folder,is_test)
+        CELL — joined in SQL a repository's edges double. The unresolved
+        share is None below the repository ring, never 0.0.
+        NOT SEEN RENDERING YET — the installed daemon 404s the route;
+        batched with the next install.
+        → #246 filed: there is no docs ring because documentation is not
+          a declaration. Three groupings, not the mockup's four.
+    [ ] #220 Neighbourhood · #221 Schema      ← NEXT
 
     -- D. consent + dōjō --
     [ ] #218 transcript ingestion opt-in
