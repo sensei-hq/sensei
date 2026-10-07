@@ -69,7 +69,6 @@ anything later; the reasoning is below the list, not implied by it.
         `Config` were one node. Both minters changed; `module_of` answers
         the root case with the package's own name.
         NEEDS A RE-INDEX, like #242 — every package-root identity moved.
-    [ ] #231 fqn segment 3 is a SYMBOL for some adapters   ← NEXT
 
     -- C. screens --
     [x] #232 Layers + Cycles screens          d0f191d7 1690a5d7
@@ -118,6 +117,14 @@ anything later; the reasoning is below the list, not implied by it.
         batched with the next install.
         → #246 filed: there is no docs ring because documentation is not
           a declaration. Three groupings, not the mockup's four.
+    -- SHIPPED, ISSUE STILL OPEN (close with evidence) --
+    [!] #231 #232 #233 — code landed, issues not closed.
+        #231 and #233 need the re-index to settle first: #231 wants the
+        module-dependency percentage off 13.7%, #233 wants a cache-hit
+        timing (it cannot hit while the version moves).
+    [!] #219 — same, plus the one thing never observed: `Graph` under the
+        `world` layout MOUNTING. The installed daemon 404s the route.
+
     [ ] #220 Neighbourhood · #221 Schema      ← NEXT
 
     -- D. consent + dōjō --
