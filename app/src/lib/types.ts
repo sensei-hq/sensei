@@ -1838,6 +1838,67 @@ export interface StructurePayload {
   coverage: StructureCoverage;
 }
 
+// ── Diagrams · World (#219) ─────────────────────────────────────────────────
+
+/** Which ring the World diagram leads with.
+ *
+ *  THREE, NOT FOUR. The mockup's control reads "Code · tests · docs" and only
+ *  the first two are facts — `sensei.nodes` holds declarations and no
+ *  documentation file ever becomes one (#246). An always-empty docs ring is a
+ *  lie the picture would tell confidently, so `kind` is code-vs-tests and
+ *  documentation appears as a SHARE instead, where it is real. */
+export type WorldGroupBy = 'project' | 'repository' | 'kind';
+
+/** What the shade control can colour a circle by.
+ *
+ *  `nothing` is a first-class choice and the default: the picture's first job
+ *  is size, and colouring by a measure before a reader has asked turns every
+ *  glance into an interpretation. */
+export type WorldShadeBy = 'nothing' | 'documentedShare' | 'testShare' | 'unresolvedShare';
+
+export interface WorldMeasures {
+  documentedShare: number;
+  testShare: number;
+  /** NULL below the repository ring, where the question has no answer: edges
+   *  belong to a folder and declarations to a code-or-tests cell, so there is
+   *  no way to say how many of a repository's unresolved edges came from its
+   *  tests. Never 0 as a stand-in — an unshaded circle and a perfectly-resolved
+   *  one must not look alike. */
+  unresolvedShare: number | null;
+}
+
+export interface WorldUnit {
+  id: string;
+  label: string;
+  /** Outermost first, INCLUDING itself — what `@rokkit/graph`'s `world` layout
+   *  reads. A container is an ordinary node whose path other nodes extend. */
+  path: string[];
+  /** Declarations held, directly or through what it contains. */
+  weight: number;
+  measures: WorldMeasures;
+}
+
+export interface WorldTotals {
+  declarations: number;
+  documented: number;
+  tests: number;
+  /** DISTINCT repositories. One repository can belong to two projects and is
+   *  drawn in both — that is what the rings mean — but "how many are there" has
+   *  one answer. */
+  repositories: number;
+  projects: number;
+}
+
+export interface WorldPayload {
+  groupBy: WorldGroupBy;
+  /** The project the reader opened this from. The picture is deliberately
+   *  WIDER than that project — it is all indexed code — so the payload names
+   *  which circle they are standing in. */
+  viewing: string;
+  units: WorldUnit[];
+  totals: WorldTotals;
+}
+
 // ── Diagrams · Layers and Cycles (#232) ─────────────────────────────────────
 
 /** How one dependency sits against the layering.
