@@ -398,6 +398,9 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         event_tx,
         breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         provisioning,
+        diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
+            crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
+        )),
     });
 
     let task_logger = sensei_logger::Logger::new(

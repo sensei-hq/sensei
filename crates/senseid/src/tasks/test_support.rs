@@ -209,6 +209,9 @@ pub(crate) async fn make_ctx() -> Arc<crate::tasks::executor::TaskContext> {
         },
         breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         provisioning: None,
+        diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
+            crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
+        )),
     });
     Arc::new(crate::tasks::executor::TaskContext {
         queue,

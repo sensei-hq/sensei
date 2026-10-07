@@ -64,3 +64,59 @@ async fn a_package_root_symbol_belongs_to_its_package() {
         "no fqn at all is no module identity"
     );
 }
+
+/// A PROJECT WITH NOTHING INDEXED HAS A VERSION, AND IT IS `None` (#233).
+///
+/// Not an error and not a substituted "now". Every diagram payload is cached
+/// against this value, so an `Err` here would 500 the screen for a project that
+/// is merely empty, and a fabricated timestamp would make two empty projects
+/// look like they had changed between one request and the next — a cache that
+/// never hits for exactly the cheapest payload.
+///
+/// The second half is the one with teeth: the version MOVES when a file is
+/// indexed. A version that stood still would serve a stale diagram forever.
+///
+/// Mutation that must break this test: read `max(folders.modified_at)` instead,
+/// or `coalesce(max(fi.indexed_at), now())`.
+#[tokio::test]
+async fn a_projects_graph_version_is_none_until_a_file_is_indexed() {
+    let Ok(pg) = PgStore::connect_test().await else {
+        return;
+    };
+    let tag = uuid::Uuid::new_v4();
+    let root = format!("/_test/version/{tag}");
+    let root_id = pg.add_watch_root(&root, "ver-wt", &serde_json::json!([])).await.unwrap();
+    let folder_id = pg.upsert_repo(&root_id, "ver", &root).await.unwrap();
+    let project_id = pg.create_project(&format!("_test:version:{tag}"), None, None).await.unwrap();
+    crate::tasks::test_support::place_folder_in_project(
+        &pg,
+        &folder_id,
+        &project_id,
+        &format!("ver-{tag}"),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        pg.project_graph_version(&project_id).await.unwrap(),
+        None,
+        "a project whose folders hold no indexed file has no graph yet"
+    );
+
+    pg.upsert_file_row(&folder_id, "a.rs", 1, "seed", None).await.unwrap();
+    let first = pg.project_graph_version(&project_id).await.unwrap();
+    assert!(first.is_some(), "an indexed file gives the project a version");
+
+    // Re-indexing that same file MOVES it — which is the whole contract. A
+    // version that only appeared once would pin the first answer forever.
+    sqlx_core::query::query("UPDATE sensei.files SET indexed_at = now() WHERE folder_id = $1")
+        .bind(folder_id)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+    let second = pg.project_graph_version(&project_id).await.unwrap();
+    assert!(second > first, "re-indexing moves the version: {first:?} -> {second:?}");
+
+    crate::tasks::test_support::cleanup_metrics_fixture(&pg, &project_id, Some(&folder_id), &[])
+        .await;
+}
