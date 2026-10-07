@@ -99,6 +99,13 @@ async fn cached(
     Ok(Json(payload))
 }
 
+/// `?groupBy=project|repository|kind` — which ring the World diagram leads with.
+#[derive(serde::Deserialize)]
+pub(crate) struct WorldQuery {
+    #[serde(rename = "groupBy")]
+    group_by: Option<String>,
+}
+
 /// A DB error is a 500. It is never an empty payload — that would be
 /// indistinguishable from an unindexed project, which is the one thing this
 /// screen must not do.
@@ -137,6 +144,82 @@ pub(crate) async fn structure(
             "nodes": nodes,
             "edges": edges,
             "coverage": coverage,
+        }))
+    })
+    .await
+}
+
+/// GET /api/projects/{id}/diagrams/world?groupBy=project|repository|kind
+///
+/// Containment as area: every indexed declaration, nested by what holds it.
+///
+/// CROSS-PROJECT, and the project in the path scopes nothing. The picture is
+/// "all indexed code" and PROJECT is its outermost ring, so filtering to one
+/// would leave the top level with a single circle. The id is still required and
+/// still resolved, for two reasons that are not decoration: the screen lives in
+/// a project window and the payload names which circle the reader is standing
+/// in, and a bad id must 404 here exactly as it does on every sibling endpoint.
+///
+/// A DB error is a 500. It is never an empty picture — on this screen an empty
+/// picture is indistinguishable from a machine that has indexed nothing.
+pub(crate) async fn world(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<WorldQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::analysis::world::{Cell, GroupFirst, Placement};
+
+    let label = q.group_by.unwrap_or_else(|| "project".to_string());
+    // An unknown grouping is a 400 and never a default. Silently answering a
+    // different question than the one asked is how a control appears to work
+    // while doing nothing.
+    let group = GroupFirst::from_label(&label).ok_or(StatusCode::BAD_REQUEST)?;
+    let project_id = resolve_project_id(&state, &id).await?;
+    // The project's own name, so the payload can say which circle the reader is
+    // standing in. A MISS is a 404 and never an unnamed picture: the id resolved
+    // a moment ago, so a project that has vanished between the two reads is an
+    // inconsistency rather than an anonymous view.
+    let viewing = state
+        .pg
+        .get_project(&project_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .and_then(|p| p.get("name").and_then(|n| n.as_str().map(str::to_string)))
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    cached(&state, "world", &project_id, label.clone(), async {
+        // CONCURRENTLY: the two reads share nothing, and the edge pass is the
+        // slow one — waiting for it in series would add the cell read's time
+        // for no ordering anyone needs.
+        let (cells, placements) =
+            tokio::try_join!(state.pg.world_cells(), state.pg.world_placement())
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        let cells: Vec<Cell> = cells
+            .into_iter()
+            .map(|c| Cell {
+                project: c.project,
+                repository: c.repository,
+                folder: c.folder_id,
+                is_test: c.is_test,
+                declarations: c.declarations,
+                documented: c.documented,
+            })
+            .collect();
+        let placements: Vec<Placement> = placements
+            .into_iter()
+            .map(|p| Placement { folder: p.folder_id, edges: p.edges, missed: p.missed })
+            .collect();
+
+        let nested = crate::analysis::world::nest(&cells, &placements, group);
+        Ok(serde_json::json!({
+            "groupBy": group.as_label(),
+            // Which circle the reader is standing in, so the screen can say
+            // "you are here" on a picture that is deliberately wider than the
+            // project they opened.
+            "viewing": viewing,
+            "units": nested.units,
+            "totals": nested.totals,
         }))
     })
     .await

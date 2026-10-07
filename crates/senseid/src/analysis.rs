@@ -11,3 +11,4 @@ pub mod narration_cache;
 pub mod project_icon;
 pub mod rule_consolidation;
 pub mod session_metric_note;
+pub mod world;
