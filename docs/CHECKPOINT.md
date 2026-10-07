@@ -83,16 +83,31 @@ anything later; the reasoning is below the list, not implied by it.
         Found + fixed on the way: the PRESSED chip was invisible on every
         diagram screen — `[type="button"]` in the preflight ties
         `.bg-primary` on specificity and wins by order (#244).
-    [!] #244 Instruments + Memories still hand-roll their chips
-        NARROWED: the fix is NOT the cascade, it is using rokkit's
-        Toolbar/ButtonGroup. The diagram screens now do (89e465ae) and
-        the `bg-primary!` escape went with the component that needed it.
+    [x] #244 a background utility could not paint a typed button
+        ca691586 — one line: the reset goes in a cascade layer.
+        I was wrong TWICE in that issue and corrected both: the
+        population is 13 sites across 7 screens (not 2), and Observatory
+        Instruments was never affected — its chip has no `type`
+        attribute, so the reset reaches it at (0,0,1) and loses cleanly.
+        The bug is specifically `[type="button"]` at (0,1,0), which TIES
+        the utility and wins on source order.
     [!] #245 the app e2e gate is RED — 117 passed / 21 failed / 17 skipped
         Pre-existing, four unrelated groups (fixture gaps, a harness bug,
         missing surfaces, a11y contrast at 4.47:1 against a 4.5:1 floor).
         Established by diff that none can come from the diagrams work.
         All four new diagram specs pass.
-    [ ] #233 diagram read cost — decide WITH a real screen
+    [x] #233 diagram read cost                              1da79013
+        Decided WITH the screens, which is what the issue asked for:
+        the access pattern is INTERACTIVE (grain + kinds are controls,
+        and Layers/Cycles share one payload), so a cache fixes every
+        request after the first — where the interaction lives. Keyed on
+        `max(files.indexed_at)` per project, so it cannot go stale; NOT
+        `folders.modified_at`, which moves without the data. Bounded at
+        64, LRU. Precomputation (the issue's options 1/2) is still the
+        answer for FIRST paint and is not foreclosed — it needs exactly
+        this version marker to know when it is stale.
+        LIVE TIMING PENDING: the cache cannot hit while the re-index
+        moves the version every few seconds.
     [ ] #219 World · #220 Neighbourhood · #221 Schema
 
     -- D. consent + dōjō --
