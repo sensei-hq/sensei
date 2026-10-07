@@ -34,7 +34,7 @@
 
 .PHONY: crates crates-debug crates-all \
         install install-service install-app install-debug \
-        db-backup db-backup-essential db-backup-rotate \
+        db-backup-essential \
         app-dev app-check \
         website-dev website-build \
         test test-fast test-crates test-crates-fast \
@@ -126,42 +126,24 @@ install: install-service install-app
 	@echo "Reclaiming the build tree..."
 	@$(MAKE) clean
 
-# Snapshot the sensei DB before any install* runs. Custom-format pg_dump
-# (-F c) is binary, compressed, and supports `pg_restore -d sensei -c …`
-# for clean+restore. No-op when the DB doesn't exist yet (first install).
-# Make's target memoisation guarantees this runs exactly once per
-# top-level `make install` invocation even though install-service/-app/
-# -debug each depend on it.
+# Snapshot what cannot be rebuilt, before any install* runs. Make's target
+# memoisation guarantees this runs exactly once per top-level `make install`
+# even though install-service/-app/-debug each depend on it.
 #
-# Restore the latest backup:
-#   pg_restore -d sensei -c $$(ls -t database/backup/backup-*.dump | head -1)
-db-backup: db-backup-rotate
-	@mkdir -p database/backup
-	@# Keep Spotlight from indexing the multi-hundred-MB .dump files. Without
-	@# this, every backup write triggers mds indexing → CPU spike (observed at
-	@# 94%, which starved the e2e health-bootstrap gate and made the suite flaky).
-	@touch database/backup/.metadata_never_index
-	@if psql -d sensei -c "SELECT 1" >/dev/null 2>&1; then \
-	  ts=$$(date +%Y%m%d-%H%M%S); \
-	  out="database/backup/backup-$${ts}.dump"; \
-	  echo "Backing up sensei DB to $$out..."; \
-	  pg_dump -d sensei -F c -f "$$out" && \
-	  echo "DB backed up: $$out ($$(ls -lh $$out | awk '{print $$5}'))"; \
-	else \
-	  echo "sensei DB not present — skipping backup (first-time install)"; \
-	fi
-
-# db-backup-rotate — keep only the 5 most recent full backups. Runs before
-# `db-backup` so the new dump always fits inside the retention window.
-# Each backup is ~350MB compressed; 5 is the sweet spot between rollback
-# headroom and disk consumption.
-db-backup-rotate:
-	@if [ -d database/backup ]; then \
-	  keep=5; \
-	  ls -t database/backup/backup-*.dump 2>/dev/null \
-	    | tail -n +$$((keep + 1)) \
-	    | xargs -I{} rm -f "{}"; \
-	fi
+# THE FULL `pg_dump` IS GONE, and `db-backup-essential` below replaces it.
+#
+# Every install used to take a complete dump first. On 2026-10-06 that produced
+# SIX dumps of 4.2-4.3 GB in one day — 28 GB, more than the 23 GB build tree, for
+# a database whose bulk is derived: `edges` is 4.7 GB and `nodes` 2.6 GB, and
+# both come back from a scan. `activity.task_executions` alone is 5.5 GB of job
+# history that nothing reads twice.
+#
+# What CANNOT be rebuilt is captured activity and LLM-derived learning, and that
+# is precisely what `db-backup-essential` exports — at a fraction of the size,
+# as JSONL laid out for re-import. A full dump was buying rollback for the one
+# part of the database that rebuilds itself.
+#
+# Restore a snapshot with `dbd import` against `database/backup/essential/<ts>/`.
 
 # db-backup-essential — narrow backup that exports ONLY the tables whose
 # contents can't be reconstructed from the source tree:
@@ -226,7 +208,7 @@ db-backup-essential:
 # the read-only file (needs write on parent dir, not on the file itself).
 # Re-sign with hardened runtime so the Tauri sidecar can spawn them (macOS
 # Sequoia Code Signing Monitor level 2 requires this).
-install-service: db-backup crates
+install-service: db-backup-essential crates
 	@# Cold install: ensure the sensei formula is present. Try the release
 	@# tarball first; fall back to --HEAD (build from main) when no release
 	@# is tagged yet (typically right after `make bump` before CI publishes).
@@ -261,7 +243,7 @@ install-service: db-backup crates
 # Stop any running instance first — `cp -R` over a running .app would mix
 # old code with new resources, and the next launch would crash with a
 # code-signature mismatch.
-install-app: db-backup
+install-app: db-backup-essential
 	cd app && bunx tauri build
 	@if [ -d app/src-tauri/target/release/bundle/macos/Sensei.app ]; then \
 	  if pgrep -x sensei-desktop > /dev/null; then \
@@ -277,7 +259,7 @@ install-app: db-backup
 	fi
 
 # Fast iteration variant — debug binaries into the brew prefix (no app).
-install-debug: db-backup crates-debug
+install-debug: db-backup-essential crates-debug
 	@# Stop via brew services FIRST, then pkill any stragglers. `pkill` alone is
 	@# not enough: launchd's keep_alive in the brew service plist respawns the
 	@# daemon within a few ms, so the cp lands while a stale process is still up
