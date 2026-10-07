@@ -116,6 +116,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/diagrams/layering", get(diagrams::layering))
         .route("/api/projects/{id}/diagrams/zones", get(diagrams::zones))
         .route("/api/projects/{id}/diagrams/world", get(diagrams::world))
+        .route("/api/projects/{id}/diagrams/neighbourhood", get(diagrams::neighbourhood))
         .route("/api/projects/{id}/tags", post(observatory::add_solution_tag))
         .route("/api/projects/{id}/tags/{tag}", delete(observatory::remove_solution_tag))
         // Git author identity for a folder + its owning project (MCP
@@ -2712,6 +2713,119 @@ mod tests {
                 .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "there is no docs grouping");
 
+        pg.delete_project(&mine).await.ok();
+    }
+
+    /// **THE NEIGHBOURHOOD ENDPOINT WALKS RINGS BY DEPTH, AND REFUSES WHAT IT
+    /// CANNOT DRAW (#220).**
+    ///
+    /// `analysis::neighbourhood` owns the step and `pg_store::neighbourhood` the
+    /// hop read. What only the endpoint shows is the loop between them: that
+    /// depth 2 reaches a callee's callee and depth 1 does not, that a library
+    /// callee is drawn and never walked through, that every edge points at a
+    /// node the payload carries, and that the refusals are refusals.
+    ///
+    /// Mutations that must break this test: run the loop `depth + 1` times,
+    /// seed the next ring from `reached` instead of `frontier`, or default a
+    /// missing focus.
+    #[tokio::test]
+    async fn the_neighbourhood_endpoint_walks_rings_and_refuses_what_it_cannot_draw() {
+        let (app, state) = test_app().await;
+        let pg = &state.pg;
+        let tag = uuid::Uuid::new_v4();
+        let mine = pg.create_project(&format!("_test:hood:{tag}"), None, None).await.unwrap();
+        let root = format!("/_test/hood-route/{tag}");
+        let root_id = pg.add_watch_root(&root, "hood-wt", &serde_json::json!([])).await.unwrap();
+        let fid = pg.upsert_repo(&root_id, &format!("h-{tag}"), &root).await.unwrap();
+        crate::tasks::test_support::place_folder_in_project(pg, &fid, &mine, &format!("h-{tag}"))
+            .await
+            .unwrap();
+        let node = |fqn: String, name: &'static str| {
+            let def = crate::db::pg_store::FqnDef {
+                file_path: "a.rs",
+                signature: None,
+                line_start: Some(1),
+                line_end: Some(2),
+                is_exported: true,
+                parent_id: None,
+            };
+            async move {
+                pg.seed_node_by_fqn(&fid, &fqn, "function", name, Some("rust"), Some(def))
+                    .await
+                    .unwrap()
+            }
+        };
+        let focus = node(format!("rust·h{tag}·m·focus·item"), "focus").await;
+        let caller = node(format!("rust·h{tag}·m·caller·item"), "caller").await;
+        let callee = node(format!("rust·h{tag}·m·callee·item"), "callee").await;
+        let deeper = node(format!("rust·h{tag}·m·deeper·item"), "deeper").await;
+        let library = node(format!("lib·serde{tag}·json·to_string"), "to_string").await;
+        let beyond = node(format!("rust·h{tag}·m·beyond·item"), "beyond").await;
+        for (s, t) in [(caller, focus), (focus, callee), (callee, deeper), (focus, library)] {
+            pg.insert_edge(&fid, &s, Some(&t), None, None, "calls").await.unwrap();
+        }
+        // Something the library "calls" — only reachable by walking THROUGH it.
+        pg.insert_edge(&fid, &library, Some(&beyond), None, None, "calls").await.unwrap();
+
+        let url = |q: &str| format!("/api/projects/{mine}/diagrams/neighbourhood?{q}");
+        let ids = |body: &serde_json::Value| -> Vec<String> {
+            body["nodes"]
+                .as_array()
+                .expect("nodes")
+                .iter()
+                .map(|n| n["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+
+        let (status, one) = req(app.clone(), "GET", &url(&format!("focus={focus}")), None).await;
+        assert_eq!(status, StatusCode::OK, "{one}");
+        assert_eq!(one["depth"], 1, "depth defaults to one hop");
+        assert_eq!(one["focus"]["id"], focus.to_string());
+        let got = ids(&one);
+        for want in [focus, caller, callee, library] {
+            assert!(got.contains(&want.to_string()), "{want} at depth 1: {got:?}");
+        }
+        assert!(!got.contains(&deeper.to_string()), "a callee's callee is depth 2: {got:?}");
+
+        let (status, two) =
+            req(app.clone(), "GET", &url(&format!("focus={focus}&depth=2")), None).await;
+        assert_eq!(status, StatusCode::OK, "{two}");
+        let got = ids(&two);
+        assert!(got.contains(&deeper.to_string()), "depth 2 reaches the callee's callee");
+        assert!(!got.contains(&beyond.to_string()), "a library is a leaf: {got:?}");
+
+        // Every edge is a dependency between two carried nodes — the layout
+        // words its columns "called by / calls" from that kind, and an edge to a
+        // missing node is a line to nowhere.
+        for e in two["edges"].as_array().expect("edges") {
+            assert_eq!(e["kind"], "dependency", "{e}");
+            assert!(got.contains(&e["source"].as_str().unwrap().to_string()), "{e}");
+            assert!(got.contains(&e["target"].as_str().unwrap().to_string()), "{e}");
+        }
+        assert!(two["coverage"]["unplacedCallees"].is_i64(), "{}", two["coverage"]);
+        assert!(two["coverage"]["namedUnplaced"].is_i64(), "{}", two["coverage"]);
+
+        // The refusals.
+        for (q, want, why) in [
+            (String::new(), StatusCode::BAD_REQUEST, "a neighbourhood needs a focus"),
+            ("focus=not-a-uuid".to_string(), StatusCode::BAD_REQUEST, "a focus is a node id"),
+            (format!("focus={focus}&depth=4"), StatusCode::BAD_REQUEST, "three hops is the most"),
+            (format!("focus={focus}&depth=0"), StatusCode::BAD_REQUEST, "zero hops is no picture"),
+            (
+                format!("focus={}", uuid::Uuid::new_v4()),
+                StatusCode::NOT_FOUND,
+                "not this project's",
+            ),
+        ] {
+            let (status, _) = req(app.clone(), "GET", &url(&q), None).await;
+            assert_eq!(status, want, "{why} ({q})");
+        }
+
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1")
+            .bind(root_id)
+            .execute(pg.pool())
+            .await
+            .ok();
         pg.delete_project(&mine).await.ok();
     }
 
