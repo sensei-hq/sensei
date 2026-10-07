@@ -3,7 +3,7 @@ import type {
   GraphSymbolNode, GraphCallEdge,
   SolutionGraphResponse, SolutionAnalysis, InferredRole,
   IndexQueueStatus, DirtyStatus, IndexError,
-  FunctionDetail, CallNeighbour, TypeDetail, CommunityInfo, DocDrift,
+  FunctionMatch, CallNeighbour, TypeDetail, CommunityInfo, DocDrift,
   LibEntry, LibDoc, DepVersion, SessionData, SessionsDigest,
   ProjectMemory, DriftItem, PatternEntry, Recommendation,
   ProjectSession, CallFlowModule, CallFlowCall,
@@ -23,6 +23,7 @@ import type {
   StructureLevel, StructurePayload,
   LayeringLevel, LayeringPayload,
   WorldGroupBy, WorldPayload,
+  NeighbourhoodPayload,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -553,6 +554,13 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/diagrams/world?groupBy=${enc(groupBy)}`
       ),
 
+    /** #220 — one symbol, its callers and callees, `depth` rings out.
+     *  `focus` is a node id; a missing one is a 400, never a default symbol. */
+    tryGetProjectNeighbourhood: (id: string, focus: string, depth: number) =>
+      tryGet<NeighbourhoodPayload>(
+        `/api/projects/${enc(id)}/diagrams/neighbourhood?focus=${enc(focus)}&depth=${depth}`
+      ),
+
     getProjectPatterns: (id: string) =>
       get<{ followed: PatternEntry[]; antiPatterns: PatternEntry[] }>(
         `/api/projects/${enc(id)}/patterns`, { followed: [], antiPatterns: [] }
@@ -768,8 +776,13 @@ export function senseiApi(port: number) {
         `/api/graph/nodes?repoId=${enc(repoId)}`, { nodes: [], edges: [] },
       ),
 
-    searchFunctions: (repoId: string, q: string) =>
-      get<FunctionDetail[]>(`/api/graph/functions?repoId=${enc(repoId)}&q=${enc(q)}`, []),
+    /** Functions and methods whose name or signature contains `q`.
+     *
+     *  Result-based, unlike the `get(…, [])` it replaces: a picker that shows
+     *  "no matches" when the daemon is down sends the reader looking for a
+     *  symbol that exists. */
+    trySearchFunctions: (repoId: string, q: string) =>
+      tryGet<FunctionMatch[]>(`/api/graph/functions?repoId=${enc(repoId)}&q=${enc(q)}`),
 
     searchTypes: (repoId: string, q: string) =>
       get<TypeDetail[]>(`/api/graph/types?repoId=${enc(repoId)}&q=${enc(q)}`, []),

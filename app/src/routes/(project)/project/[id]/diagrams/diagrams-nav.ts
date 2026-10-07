@@ -6,7 +6,7 @@
  *
  *  Order is coarsening-then-narrowing, which is how a reader arrives: Structure
  *  shows what there is, Layers ranks it, Cycles isolates the part of it that
- *  does not rank.
+ *  does not rank, and Neighbourhood narrows to one symbol.
  */
 export interface DiagramView {
   /** The route segment under `diagrams/`. */
@@ -42,6 +42,12 @@ export const DIAGRAM_VIEWS: DiagramView[] = [
     label: 'Cycles',
     question: 'What depends on itself, and where to cut',
     kanji: '環',
+  },
+  {
+    id: 'neighbourhood',
+    label: 'Neighbourhood',
+    question: 'What calls this, and what does it call',
+    kanji: '隣',
   },
 ];
 
