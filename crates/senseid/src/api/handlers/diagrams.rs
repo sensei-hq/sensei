@@ -52,6 +52,53 @@ pub(crate) struct StructureQuery {
 /// the project's TOTAL edge count as its unplaced one, which is a precise-looking
 /// number that says nothing. It was also 107 of the endpoint's 122 seconds.
 ///
+/// Serve a diagram payload from the cache, or compute it and store it (#233).
+///
+/// ONE PLACE, because the policy is one decision and three endpoints: probe the
+/// project's graph version, return a stored payload only if it was stored
+/// against THAT version, otherwise compute and keep the answer.
+///
+/// `compute` is taken as a future rather than a closure and is LAZY — an `async`
+/// block is not polled until awaited, so a cache hit never starts the 1.5-74 s
+/// read it exists to avoid.
+///
+/// `params` must spell every input that changes the answer. A key missing the
+/// grain would serve the module picture to a file request, which is a wrong
+/// answer rather than a slow one — hence `format!` at each call site, beside the
+/// values, instead of a helper that could fall behind a new parameter.
+///
+/// THE VERSION PROBE IS NOT SKIPPED ON A MISS. It costs 93 ms and it is what the
+/// entry is stored under; computing first and reading the version afterwards
+/// would stamp a fresh payload with a version from after the read, so a change
+/// landing mid-computation would be cached as though it were already included.
+async fn cached(
+    state: &AppState,
+    diagram: &'static str,
+    project_id: &uuid::Uuid,
+    params: String,
+    compute: impl std::future::Future<Output = Result<serde_json::Value, StatusCode>>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::api::diagram_cache::DiagramKey;
+
+    let key = DiagramKey::new(diagram, *project_id, params);
+    // A FAILED PROBE IS A 500, never a silent recompute. If the daemon cannot
+    // say when the graph last changed it cannot say whether an answer is
+    // current, and serving one anyway is the stale read the version exists to
+    // prevent.
+    let version = state
+        .pg
+        .project_graph_version(project_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if let Some(hit) = state.diagrams.get(&key, version) {
+        return Ok(Json(hit));
+    }
+    let payload = compute.await?;
+    state.diagrams.put(key, version, payload.clone());
+    Ok(Json(payload))
+}
+
 /// A DB error is a 500. It is never an empty payload — that would be
 /// indistinguishable from an unindexed project, which is the one thing this
 /// screen must not do.
@@ -66,29 +113,33 @@ pub(crate) async fn structure(
     }
     let kinds = parse_kinds(q.kinds)?;
     let project_id = resolve_project_id(&state, &id).await?;
+    let params = format!("{level}|{}", kinds.join(","));
 
-    // CONCURRENTLY, because the three reads share nothing. Sequentially the
-    // response costs their SUM; the edge query alone dominates, so waiting for
-    // the other two in series adds latency for no ordering anyone needs.
-    let (nodes, edges, unplaced) = tokio::try_join!(
-        state.pg.structure_nodes(&project_id, &level),
-        state.pg.structure_edges(&project_id, &level, &kinds),
-        state.pg.structure_unplaced(&project_id, &kinds),
-    )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    // `drawn` is the payload's OWN edge count, not a second query. The line
-    // sits directly beside the picture, so deriving it twice is how the two
-    // come to disagree — and at a rolled-up level the number on screen is the
-    // rolled-up one, which only this function knows.
-    let coverage = serde_json::json!({ "drawn": edges.len() as i64, "unplaced": unplaced });
+    cached(&state, "structure", &project_id, params, async {
+        // CONCURRENTLY, because the three reads share nothing. Sequentially the
+        // response costs their SUM; the edge query alone dominates, so waiting for
+        // the other two in series adds latency for no ordering anyone needs.
+        let (nodes, edges, unplaced) = tokio::try_join!(
+            state.pg.structure_nodes(&project_id, &level),
+            state.pg.structure_edges(&project_id, &level, &kinds),
+            state.pg.structure_unplaced(&project_id, &kinds),
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        // `drawn` is the payload's OWN edge count, not a second query. The line
+        // sits directly beside the picture, so deriving it twice is how the two
+        // come to disagree — and at a rolled-up level the number on screen is the
+        // rolled-up one, which only this function knows.
+        let coverage = serde_json::json!({ "drawn": edges.len() as i64, "unplaced": unplaced });
 
-    Ok(Json(serde_json::json!({
-        "level": level,
-        "kinds": kinds,
-        "nodes": nodes,
-        "edges": edges,
-        "coverage": coverage,
-    })))
+        Ok(serde_json::json!({
+            "level": level,
+            "kinds": kinds,
+            "nodes": nodes,
+            "edges": edges,
+            "coverage": coverage,
+        }))
+    })
+    .await
 }
 
 /// The grains Layers and Cycles can be ranked at.
@@ -150,85 +201,89 @@ pub(crate) async fn layering(
     }
     let kinds = parse_kinds(q.kinds)?;
     let project_id = resolve_project_id(&state, &id).await?;
+    let params = format!("{level}|{}", kinds.join(","));
 
-    // The node universe comes from `structure_nodes`, NOT from the dependency
-    // rows. A module with no cross-module dependency has no edge to be inferred
-    // from and would silently vanish — measured on project `sensei`, 9 modules
-    // appear only in a dependency on themselves and are exactly that case.
-    let (nodes, deps, unplaced) = tokio::try_join!(
-        state.pg.structure_nodes(&project_id, &level),
-        state.pg.dependency_graph(&project_id, &level, &kinds),
-        state.pg.structure_unplaced(&project_id, &kinds),
-    )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    cached(&state, "layering", &project_id, params, async {
+        // The node universe comes from `structure_nodes`, NOT from the dependency
+        // rows. A module with no cross-module dependency has no edge to be inferred
+        // from and would silently vanish — measured on project `sensei`, 9 modules
+        // appear only in a dependency on themselves and are exactly that case.
+        let (nodes, deps, unplaced) = tokio::try_join!(
+            state.pg.structure_nodes(&project_id, &level),
+            state.pg.dependency_graph(&project_id, &level, &kinds),
+            state.pg.structure_unplaced(&project_id, &kinds),
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let units: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
-    let ranked = crate::analysis::layering::analyse(&units, &deps);
+        let units: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
+        let ranked = crate::analysis::layering::analyse(&units, &deps);
 
-    let placed: std::collections::HashMap<&str, &crate::analysis::layering::Placed> =
-        ranked.units.iter().map(|p| (p.id.as_str(), p)).collect();
-    let out_nodes: Vec<serde_json::Value> = nodes
-        .iter()
-        .map(|n| {
-            let p = placed.get(n.id.as_str());
-            serde_json::json!({
-                "id": n.id,
-                "label": n.label,
-                "group": n.package,
-                // The box's weight on the diagram, same measure the Structure
-                // screen sizes by, so one module is the same size on both.
-                "weight": n.symbols,
-                "files": n.files,
-                "language": n.language,
-                "layer": p.map(|p| p.layer),
-                "component": p.map(|p| p.component),
-                "componentSize": p.map(|p| p.component_size),
+        let placed: std::collections::HashMap<&str, &crate::analysis::layering::Placed> =
+            ranked.units.iter().map(|p| (p.id.as_str(), p)).collect();
+        let out_nodes: Vec<serde_json::Value> = nodes
+            .iter()
+            .map(|n| {
+                let p = placed.get(n.id.as_str());
+                serde_json::json!({
+                    "id": n.id,
+                    "label": n.label,
+                    "group": n.package,
+                    // The box's weight on the diagram, same measure the Structure
+                    // screen sizes by, so one module is the same size on both.
+                    "weight": n.symbols,
+                    "files": n.files,
+                    "language": n.language,
+                    "layer": p.map(|p| p.layer),
+                    "component": p.map(|p| p.component),
+                    "componentSize": p.map(|p| p.component_size),
+                })
             })
-        })
-        .collect();
+            .collect();
 
-    let out_edges: Vec<serde_json::Value> = ranked
-        .deps
-        .iter()
-        .map(|d| {
-            serde_json::json!({
-                "id": format!("{}→{}", d.source, d.target),
-                "source": d.source,
-                "target": d.target,
-                "kind": "dependency",
-                "weight": d.occurrences,
-                "conformance": d.conformance,
-                "weakest": d.weakest,
+        let out_edges: Vec<serde_json::Value> = ranked
+            .deps
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "id": format!("{}→{}", d.source, d.target),
+                    "source": d.source,
+                    "target": d.target,
+                    "kind": "dependency",
+                    "weight": d.occurrences,
+                    "conformance": d.conformance,
+                    "weakest": d.weakest,
+                })
             })
-        })
-        .collect();
+            .collect();
 
-    Ok(Json(serde_json::json!({
-        "level": level,
-        "kinds": kinds,
-        "layerSource": "derived",
-        "depth": ranked.depth,
-        "nodes": out_nodes,
-        "edges": out_edges,
-        "cycles": ranked.cycles,
-        // Kept rather than dropped: at module grain this is two files of one
-        // module referring to each other, which is a fact about the module. It
-        // is empty by construction at file grain — `structure_edges` has no
-        // file-to-itself row to carry.
-        "selfDependencies": ranked.self_deps,
-        "coverage": {
-            "drawn": ranked.deps.len() as i64,
-            "unplaced": unplaced,
-            "units": out_nodes.len() as i64,
-            // Dependencies omitted because an endpoint owns no file and so is
-            // not a unit. NOT decoration: measured 2026-10-05 on project
-            // `sensei`, 32 of 234 module dependencies are in this state,
-            // because an fqn's third segment is the module for most adapters
-            // and a SYMBOL for some. A diagram that drops 13.7% of its edges
-            // without a number beside it reads as a sparse codebase.
-            "unknownUnit": ranked.dropped.len() as i64,
-        },
-    })))
+        Ok(serde_json::json!({
+            "level": level,
+            "kinds": kinds,
+            "layerSource": "derived",
+            "depth": ranked.depth,
+            "nodes": out_nodes,
+            "edges": out_edges,
+            "cycles": ranked.cycles,
+            // Kept rather than dropped: at module grain this is two files of one
+            // module referring to each other, which is a fact about the module. It
+            // is empty by construction at file grain — `structure_edges` has no
+            // file-to-itself row to carry.
+            "selfDependencies": ranked.self_deps,
+            "coverage": {
+                "drawn": ranked.deps.len() as i64,
+                "unplaced": unplaced,
+                "units": out_nodes.len() as i64,
+                // Dependencies omitted because an endpoint owns no file and so is
+                // not a unit. NOT decoration: measured 2026-10-05 on project
+                // `sensei`, 32 of 234 module dependencies are in this state,
+                // because an fqn's third segment is the module for most adapters
+                // and a SYMBOL for some. A diagram that drops 13.7% of its edges
+                // without a number beside it reads as a sparse codebase.
+                "unknownUnit": ranked.dropped.len() as i64,
+            },
+        }))
+    })
+    .await
 }
 
 /// GET /api/projects/{id}/diagrams/zones
@@ -251,27 +306,34 @@ pub(crate) async fn zones(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let project_id = resolve_project_id(&state, &id).await?;
-    let points = state
-        .pg
-        .component_zones(&project_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    // Counted here rather than in SQL: it is how many points the PAYLOAD cannot
-    // place, so it has to be derived from the payload or the two can disagree.
-    let unplaceable = points.iter().filter(|p| p.distance.is_none()).count() as i64;
-    let mean_distance = {
-        let placed: Vec<f64> = points.iter().filter_map(|p| p.distance).collect();
-        // `None`, not 0.0, when nothing is placeable — a mean over no points is
-        // not "perfectly on the sequence".
-        (!placed.is_empty()).then(|| placed.iter().sum::<f64>() / placed.len() as f64)
-    };
+    // NO PARAMETERS, so the key is the empty string — a project's zones are one
+    // picture. Stated rather than omitted: an endpoint that later grows a knob
+    // and forgets this line would serve one answer for every setting.
+    cached(&state, "zones", &project_id, String::new(), async {
+        let points = state
+            .pg
+            .component_zones(&project_id)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(serde_json::json!({
-        "points": points,
-        "meanDistance": mean_distance,
-        "coverage": { "points": points.len() as i64, "unplaceable": unplaceable },
-    })))
+        // Counted here rather than in SQL: it is how many points the PAYLOAD cannot
+        // place, so it has to be derived from the payload or the two can disagree.
+        let unplaceable = points.iter().filter(|p| p.distance.is_none()).count() as i64;
+        let mean_distance = {
+            let placed: Vec<f64> = points.iter().filter_map(|p| p.distance).collect();
+            // `None`, not 0.0, when nothing is placeable — a mean over no points is
+            // not "perfectly on the sequence".
+            (!placed.is_empty()).then(|| placed.iter().sum::<f64>() / placed.len() as f64)
+        };
+
+        Ok(serde_json::json!({
+            "points": points,
+            "meanDistance": mean_distance,
+            "coverage": { "points": points.len() as i64, "unplaceable": unplaceable },
+        }))
+    })
+    .await
 }
 
 /// Validate and split the `kinds` query parameter.

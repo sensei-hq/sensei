@@ -558,6 +558,9 @@ mod tests {
             event_tx,
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             provisioning: None,
+            diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
+                crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
+            )),
         });
         let router = create_router(state.clone());
         (router, state)
@@ -2530,6 +2533,106 @@ mod tests {
         assert_eq!(body["coverage"]["points"], 5);
         // The mean is over the PLACEABLE points only: (1/6 + 3/4 + 1/2) / 3.
         close(&body["meanDistance"], (1.0 / 6.0 + 0.75 + 0.5) / 3.0, "mean distance");
+
+        pg.delete_project(&pid).await.ok();
+    }
+
+    /// **THE DIAGRAM CACHE IS READ, AND IT IS KEYED ON THE GRAPH VERSION (#233).**
+    ///
+    /// Asserted through the HANDLER, because the cache unit tests prove the
+    /// cache works and not that anything uses it. Observed by CHANGING THE
+    /// GRAPH BEHIND THE ENDPOINT'S BACK: a new edge that moves no
+    /// `files.indexed_at` must not appear, because the version did not move and
+    /// the stored answer is still the answer the daemon has. Then touching
+    /// `indexed_at` must bring it in.
+    ///
+    /// That is the only observation that distinguishes a cache being READ from
+    /// one merely being WRITTEN. Timing would be flaky and `cache.len()` would
+    /// pass on a cache nothing ever consults.
+    ///
+    /// It is worth the 1.5-74 s this guards: measured 2026-10-06 on project
+    /// `sensei` at module grain, one layering request is 37 s, and Layers and
+    /// Cycles read the SAME payload — so visiting both paid it twice before.
+    ///
+    /// Mutation that must break this test: drop the `state.diagrams.get` early
+    /// return in `handlers::diagrams::cached`, or key the entry without the
+    /// version.
+    #[tokio::test]
+    async fn the_layering_endpoint_serves_a_cached_payload_until_the_graph_moves() {
+        let (app, state) = test_app().await;
+        let pg = &state.pg;
+        let tag = uuid::Uuid::new_v4();
+        let pid = pg.create_project(&format!("_test:cache:{tag}"), None, None).await.unwrap();
+        let root = format!("/_test/cache/{tag}");
+        let root_id = pg.add_watch_root(&root, "cache-wt", &serde_json::json!([])).await.unwrap();
+        let fid = pg.upsert_repo(&root_id, "cache", &root).await.unwrap();
+        crate::tasks::test_support::place_folder_in_project(pg, &fid, &pid, &format!("ca-{tag}"))
+            .await
+            .unwrap();
+        // A `files` row is what gives the project a version at all — with none,
+        // every request would share the single `None` version and the test
+        // could not tell a hit from a miss.
+        //
+        // ONE FILE PER MODULE, because `structure_graph` takes the MODAL module
+        // across a file's symbols. Three modules declared in one file roll up to
+        // one unit, which is a graph with no edge in it at all — and an endpoint
+        // returning nothing proves nothing about a cache.
+        for path in ["a.rs", "b.rs", "c.rs"] {
+            pg.upsert_file_row(&fid, path, 1, "seed", None).await.unwrap();
+        }
+
+        let def = |path: &'static str| crate::db::pg_store::FqnDef {
+            file_path: path,
+            signature: None,
+            line_start: Some(1),
+            line_end: Some(2),
+            is_exported: true,
+            parent_id: None,
+        };
+        let node = |fqn: &str, name: &str, path: &'static str| {
+            let (fqn, name) = (fqn.to_string(), name.to_string());
+            async move {
+                pg.seed_node_by_fqn(&fid, &fqn, "function", &name, Some("rust"), Some(def(path)))
+                    .await
+                    .unwrap()
+            }
+        };
+        let a = node("rust·p·alpha::core·one", "one", "a.rs").await;
+        let b = node("rust·p·beta/web·two", "two", "b.rs").await;
+        let c = node("rust·p·gamma::util·three", "three", "c.rs").await;
+        pg.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+
+        let url = format!("/api/projects/{pid}/diagrams/layering?level=module&kinds=calls");
+        let (status, first) = req(app.clone(), "GET", &url, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let edges_at_first = first["edges"].as_array().expect("edges").len();
+        assert!(edges_at_first > 0, "the fixture must draw an edge: {first}");
+
+        // BEHIND THE ENDPOINT'S BACK: a real new dependency, and no file
+        // re-indexed. The daemon has not been told the graph moved, so it must
+        // keep answering what it last computed.
+        pg.insert_edge(&fid, &b, Some(&c), None, None, "calls").await.unwrap();
+        let (status, cached) = req(app.clone(), "GET", &url, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            cached["edges"].as_array().unwrap().len(),
+            edges_at_first,
+            "the version did not move, so the stored answer is still the answer"
+        );
+
+        // ...and now it did move. Same request, recomputed, the new edge in it.
+        sqlx_core::query::query("UPDATE sensei.files SET indexed_at = now() WHERE folder_id = $1")
+            .bind(fid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let (status, fresh) = req(app, "GET", &url, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            fresh["edges"].as_array().unwrap().len(),
+            edges_at_first + 1,
+            "a moved version is a miss, and the recomputed answer carries the new dependency"
+        );
 
         pg.delete_project(&pid).await.ok();
     }

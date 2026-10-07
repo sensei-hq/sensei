@@ -3875,6 +3875,42 @@ impl PgStore {
     /// calling each other is an edge at file level and nothing at module level,
     /// and drawing it as a loop asserts a relationship the module does not have
     /// with itself.
+    /// WHEN THIS PROJECT'S GRAPH LAST CHANGED — the version every cached
+    /// diagram payload is keyed on (#233).
+    ///
+    /// The latest `files.indexed_at` across the project's folders. That column
+    /// moves whenever a file is walked and its nodes and edges are rewritten,
+    /// which is the only way anything behind `structure_edges` changes, so a
+    /// matching version means a cached payload is still the right answer.
+    ///
+    /// NOT `folders.modified_at`, which was the cheaper candidate and is the
+    /// wrong one. Measured 2026-10-06 mid-scan on project `sensei`: the folder
+    /// row said 20:53 while its newest indexed file said 20:20 — the folder row
+    /// moves for reasons that are not a graph change, and a version that moves
+    /// without the data is a cache that never hits.
+    ///
+    /// `None` IS A VERSION, not a failure: a project whose folders hold no
+    /// indexed file has no graph yet, and two such states are the same state.
+    /// A failure is an `Err` and is never flattened into it.
+    ///
+    /// 93 ms over 101,266 `files` rows, against the 1.5-74 s read it guards.
+    pub async fn project_graph_version(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
+        let row: (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
+            "SELECT max(fi.indexed_at)
+               FROM sensei.files fi
+               JOIN sensei.folder_projects fp ON fp.folder_id = fi.folder_id
+              WHERE fp.project_id = $1",
+        )
+        .bind(project_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("project_graph_version: {e}"))?;
+        Ok(row.0)
+    }
+
     pub async fn structure_edges(
         &self,
         project_id: &uuid::Uuid,

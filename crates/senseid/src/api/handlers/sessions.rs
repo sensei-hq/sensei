@@ -819,6 +819,9 @@ mod tests {
             },
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             provisioning: None,
+            diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
+                crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
+            )),
         }))
     }
 
