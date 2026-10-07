@@ -83,8 +83,15 @@ anything later; the reasoning is below the list, not implied by it.
         Found + fixed on the way: the PRESSED chip was invisible on every
         diagram screen — `[type="button"]` in the preflight ties
         `.bg-primary` on specificity and wins by order (#244).
-    [!] #244 the preflight disables background utilities on typed buttons
-        Instruments and Memories still render their pressed chip invisible.
+    [!] #244 Instruments + Memories still hand-roll their chips
+        NARROWED: the fix is NOT the cascade, it is using rokkit's
+        Toolbar/ButtonGroup. The diagram screens now do (89e465ae) and
+        the `bg-primary!` escape went with the component that needed it.
+    [!] #245 the app e2e gate is RED — 117 passed / 21 failed / 17 skipped
+        Pre-existing, four unrelated groups (fixture gaps, a harness bug,
+        missing surfaces, a11y contrast at 4.47:1 against a 4.5:1 floor).
+        Established by diff that none can come from the diagrams work.
+        All four new diagram specs pass.
     [ ] #233 diagram read cost — decide WITH a real screen
     [ ] #219 World · #220 Neighbourhood · #221 Schema
 
