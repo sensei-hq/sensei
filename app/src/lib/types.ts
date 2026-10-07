@@ -428,15 +428,19 @@ export interface InferredRole {
 
 // ─── Graph Queries ───────────────────────────────────────────────────────────
 
-export interface FunctionDetail {
+/**
+ * One function or method, as `/api/graph/functions` returns it.
+ *
+ * Was `FunctionDetail` with `file`/`line`/`complexity`, none of which the daemon
+ * sends — the same mistyping `CallNeighbour` below records. It had no caller, so
+ * nothing ever read the `undefined`s; the Neighbourhood picker is the first.
+ */
+export interface FunctionMatch {
   id: string;
   name: string;
-  file: string;
-  line: number;
-  signature?: string;
-  docstring?: string;
-  complexity: number;
-  tags?: string;
+  file_path: string;
+  signature: string | null;
+  line_start: number | null;
 }
 
 /**
@@ -1990,4 +1994,52 @@ export interface LayeringPayload {
    *  it is empty by construction. */
   selfDependencies: LayeringDep[];
   coverage: LayeringCoverage;
+}
+
+// ── Diagrams · Neighbourhood (#220) ─────────────────────────────────────────
+
+/** One card: a symbol the rings reached. `group` is its PACKAGE (crate,
+ *  npm package), so a card's tint says which side of a boundary it sits on. */
+export interface NeighbourCard {
+  id: string;
+  label: string;
+  kind: string | null;
+  group: string | null;
+  module: string | null;
+  language: string | null;
+  file: string | null;
+  line: number | null;
+  /** A library symbol, or another project's: drawn, never walked through. */
+  external: boolean;
+  rows: [];
+}
+
+/** One placed call, folded per (caller, callee) pair. `kind` is always
+ *  `dependency` — that is what makes the layout say "called by / calls". */
+export interface NeighbourEdge {
+  id: string;
+  source: string;
+  target: string;
+  kind: 'dependency';
+  /** Call sites. */
+  weight: number;
+}
+
+export interface NeighbourCoverage {
+  drawn: number;
+  /** Cards a capped ring found and did not draw, per side. */
+  cut: { in: number; out: number };
+  /** Calls the focus makes that the graph could not place. */
+  unplacedCallees: number;
+  /** Unplaced calls elsewhere in the project that use the focus's NAME — some
+   *  may be calls to it, so the callers column is a floor. */
+  namedUnplaced: number;
+}
+
+export interface NeighbourhoodPayload {
+  depth: number;
+  focus: NeighbourCard;
+  nodes: NeighbourCard[];
+  edges: NeighbourEdge[];
+  coverage: NeighbourCoverage;
 }
