@@ -189,7 +189,14 @@ impl PgStore {
         Ok(row.0)
     }
 
-    pub async fn complete_session(&self, row: &SessionOutcomeRow<'_>) -> Result<(), String> {
+    /// Close a session. `id` may be the row id OR the assistant's own session id
+    /// (`client_session_id`) — the second is what an agent holds: its SessionStart
+    /// context names Claude Code's session id, and the row is keyed on it (#238).
+    ///
+    /// Returns whether a session was found. A miss is `Ok(false)`, never a silent
+    /// success: matching `id` alone turned every agent's close into an UPDATE of
+    /// zero rows that answered `{"ok": true}`.
+    pub async fn complete_session(&self, row: &SessionOutcomeRow<'_>) -> Result<bool, String> {
         // EXHAUSTIVE (#161): a field added to `SessionOutcomeRow` stops this
         // compiling until someone binds it.
         let SessionOutcomeRow {
@@ -205,14 +212,14 @@ impl PgStore {
         // summary/tokens are COALESCE'd so a caller that omits them doesn't wipe a
         // previously-set value; these columns exist on activity.sessions and were
         // being silently dropped (the MCP schema advertised them).
-        sqlx_core::query::query(
+        let res = sqlx_core::query::query(
             "UPDATE activity.sessions SET outcome = $2::sensei.session_outcome, ftr = $3, turns = $4, corrections = $5, \
              summary = COALESCE($6, summary), tokens_in = COALESCE($7, tokens_in), tokens_out = COALESCE($8, tokens_out), \
-             completed_at = now() WHERE id = $1"
+             completed_at = now() WHERE id = $1 OR client_session_id = $1::text"
         ).bind(id).bind(outcome).bind(ftr).bind(turns).bind(corrections)
             .bind(summary).bind(tokens_in).bind(tokens_out)
             .execute(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(())
+        Ok(res.rows_affected() > 0)
     }
 
     /// Find-or-create the `activity.sessions` row for an assistant

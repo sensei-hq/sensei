@@ -245,7 +245,10 @@ pub(crate) async fn update_session_handler(
         })
         .await
     {
-        Ok(_) => {
+        // A miss is said. This used to answer `{"ok": true}` for an UPDATE of zero
+        // rows, which is how every agent's close went nowhere unnoticed (#238).
+        Ok(false) => Json(serde_json::json!({"ok": false, "error": "no such session"})),
+        Ok(true) => {
             // Fire-and-forget: enqueue verdict measurement after session ends
             let task = crate::tasks::Task::new(crate::tasks::TaskKind::MeasureVerdicts, "", "");
             state.task_queue.enqueue(task).await;

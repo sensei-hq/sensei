@@ -124,6 +124,11 @@ assert_json "injects lean mindset reminder (agents, not full dump)" "$output" \
   "import sys,json; d=json.load(sys.stdin); c=d['additional_context']; assert '/sensei:agent' in c and 'Analyst' in c and 'Acceptance Tester' in c"
 assert_json "no-rules message when file missing" "$output" \
   "import sys,json; d=json.load(sys.stdin); assert 'No rules' in d['additional_context']"
+# The id the agent is told to close its session with IS Claude Code's session id
+# — the key the session row already has. A minted uuidgen matched no row, so
+# every update_session went nowhere (#238).
+assert_json "injects the assistant's own session id, not a minted one" "$output" \
+  "import sys,json; c=json.load(sys.stdin)['additional_context']; assert 'Session ID: test-session-1' in c and 'sessionId=\"test-session-1\"' in c"
 
 printf '# Rules\n- test-rule-alpha\n' > "$TEMP_PROJECT/.sensei/rules.md"
 output=$(run_hook "session-start" "$SESSION_PAYLOAD")
