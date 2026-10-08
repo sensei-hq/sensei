@@ -42,8 +42,24 @@ pub const REGISTRY: &[RouterEntry] = &[
         id: "ollama",
         name: "Ollama",
         providers: &["ollama"],
-        capabilities: &["text_chat", "text_complete", "text_embed"],
+        capabilities: &["text_chat", "text_complete", "text_embed", "decision"],
         needs_key: false,
+    },
+    // gateway v0.7.0 auto-registers both (facade): OpenRouter as OpenAI-wire
+    // chat + System One decisions, TypeSafe as decisions only (gateway#72).
+    RouterEntry {
+        id: "openrouter",
+        name: "OpenRouter",
+        providers: &["openrouter"],
+        capabilities: &["text_chat", "decision"],
+        needs_key: true,
+    },
+    RouterEntry {
+        id: "typesafe",
+        name: "TypeSafe",
+        providers: &["typesafe"],
+        capabilities: &["decision"],
+        needs_key: true,
     },
     RouterEntry {
         id: "stability",
@@ -95,6 +111,34 @@ mod tests {
     #[test]
     fn ollama_is_keyless() {
         assert!(!find("ollama").unwrap().needs_key);
+    }
+
+    /// The ids are a MIRROR of `gateway::types::capability::Capability`'s serde
+    /// rendering (#202): a mirrored enum drifts silently on a gateway bump — it
+    /// compiles and routes to the wrong capability. Every id must deserialize
+    /// to a real gateway variant.
+    #[test]
+    fn every_capability_id_is_a_real_gateway_capability() {
+        for r in REGISTRY {
+            for cap in r.capabilities {
+                let parsed: Result<gateway::types::capability::Capability, _> =
+                    serde_json::from_value(serde_json::Value::String((*cap).to_string()));
+                assert!(parsed.is_ok(), "{}: '{cap}' is not a gateway Capability", r.id);
+            }
+        }
+    }
+
+    /// gateway v0.7.0 auto-registers System One decision routers (gateway#72).
+    #[test]
+    fn decision_routers_are_listed() {
+        assert!(find("ollama").unwrap().capabilities.contains(&"decision"));
+        let openrouter = find("openrouter").expect("openrouter listed");
+        assert!(openrouter.capabilities.contains(&"decision"));
+        assert!(openrouter.capabilities.contains(&"text_chat"));
+        assert!(openrouter.needs_key);
+        let typesafe = find("typesafe").expect("typesafe listed");
+        assert_eq!(typesafe.capabilities, &["decision"]);
+        assert!(typesafe.needs_key);
     }
 
     #[test]
