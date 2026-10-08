@@ -1,36 +1,34 @@
 # Checkpoint
 
-**Slice:** Observatory diagrams — screens. #220 Neighbourhood in progress.
+**Slice:** diagrams → data hygiene → consent → session integrity. One row per
+issue; closed only with evidence.
 
-**Done this slice:** #215 #216 #224 #222 #223 #217 #161 #227 #235 #242 #243 #231
-#232 #244 #233 #219 (code landed). #220 endpoint `4845e435` — walk + hop reads +
-route, senseid 3317/0, every test mutation-probed.
+| # | item | status | to close |
+|---|---|---|---|
+| 220 | Neighbourhood diagram | CLOSED | — |
+| 219 | World diagram | CLOSED — 3 live defects fixed `3527399a` | — |
+| 231 | fqn segment 3 | CLOSED — unknownUnit 13.7% → 1.0% | — |
+| 233 | diagram cache | CLOSED — hits 21→2.6 ms, 109→3 ms | — |
+| 218 | transcript consent | CLOSED `ea9dd96d` | user switches Claude Code on |
+| 248 | e2e rewrote ~/.claude/CLAUDE.md | CLOSED `5e58b4e3` | — |
+| 247 | pruner + root removal | gates 1–5 done | gate 6: user runs the SQL below |
+| 238 | Claude Code mods | 1 of 4 defects fixed `542cd859` | nudge-guard order (hook-only), then mods steps 1–5 |
+| 221 | Schema diagram | BLOCKED — decision A/B/C | user decision |
+| 236 | dōjō → kavach data routes | BLOCKED — plan invalidated (3/167 fit) | user decision on the reframe |
+| 249 | relay: members read/answer each other's gates | filed | user: intended or not? |
+| 225 | dōjō team view | queued | sync-shape decision |
+| 239 | EPIC productionise (#240 #241) | queued | — |
+| 245 | app e2e red gate | open | 4 groups, separate commits |
 
-**#220 remaining:** page `diagrams/neighbourhood/+page.svelte` + `+page.ts`, nav
-entry in `diagrams-nav.ts`, e2e `app/e2e/tests/diagrams-neighbourhood.spec.ts`,
-spec doc `docs/spec/screen/observatory-diagrams-neighbourhood.md`. State + spec
-are written and green (16/16, 10/10 mutants) but UNCOMMITTED, with
-`FunctionDetail` → `FunctionMatch` and `searchFunctions` → `trySearchFunctions`
-in `app/src/lib/{types,api}.ts`.
+**Next command:** confirm `/tmp/sensei-install6.log` ends `exit=0` (deploys
+`542cd859`), then the #238 nudge-guard reorder in
+`marketplace/plugins/sensei/hooks/nudge` + `test-hooks.sh`.
 
-**Queue after:** #221 Schema → #218 transcript opt-in → #236 #225 dōjō → #238 →
-#239 (#240 #241). Deferred by decision: #237, #230, #234.
+**Orphan cleanup the classifier blocked** (user to run; newest backup
+`database/backup/essential/20261007-200259`):
+`DELETE FROM sensei.repositories r WHERE NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.repository_id = r.id) AND r.synced_at IS NULL AND r.tenant_id IS NULL AND NOT EXISTS (SELECT 1 FROM sensei.repositories_in_projects rp WHERE rp.repository_id = r.id);`
+→ 7,795 rows. The 5,704 in history-bearing projects stay.
 
-**Next command:** `cd app && bun run test:unit -- diagrams/neighbourhood-state`,
-then write the page.
-
-**Environment (2026-10-07):** production DB cut to ONE root,
-`~/Developer/sensei-hq/sensei` (was `~/Developer` + `~/Work`). Graph truncated,
-both roots deleted, new binaries installed, re-indexed (≈2.4k files, 29k nodes).
-Essential backup before the cut: `database/backup/essential/20261007-171121`.
-Sessions (391) and memories (16) untouched. 275 projects and 13,504 repositories
-are now orphaned rows. `prune_empty_projects` only drops `discovery` projects
-with no sessions/memories/recommendations, and there is NO repository pruner.
-
-**Open questions:** whether to prune orphaned repositories (they hold commit
-history); #219 / #231 / #233 can now be closed with evidence against the fresh
-index. Each one still needs its measurement re-run.
-
-**Known broken:** app e2e gate red before this work (#245, 21 failed). Commits
-are not pushed to `develop`. dbd#41 blocks `dbd reconcile` on a deployed DB.
-`--features senseid/embedded-llama-cpp` (#203).
+**Known broken:** e2e #245 (`daemon-verification` hook-configure is one of its
+21). Marketplace hook changes are unpublished until `make bump`. Commits
+unpushed on `develop`.
