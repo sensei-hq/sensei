@@ -190,9 +190,25 @@ impl PgStore {
     /// in-flight, and a boot re-scan may have freshly bumped their `modified_at`.
     /// Returns rows deleted.
     pub async fn prune_empty_projects(&self, grace_secs: i32) -> Result<u64, String> {
+        self.prune_empty_projects_among(grace_secs, None).await
+    }
+
+    /// [`Self::prune_empty_projects`], limited to `among` when given — the ONE
+    /// rule for what an empty project is, with a scope.
+    ///
+    /// The pruner (#247) passes the projects linked to the repositories it just
+    /// deleted, so it removes what IT emptied and nothing else. Unscoped with no
+    /// grace, it deleted every empty discovery project in the database,
+    /// including one the user had just created and not yet given a repository.
+    pub async fn prune_empty_projects_among(
+        &self,
+        grace_secs: i32,
+        among: Option<&[uuid::Uuid]>,
+    ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "DELETE FROM sensei.projects p
               WHERE p.maturity = 'discovery'
+                AND ($2::uuid[] IS NULL OR p.id = ANY($2))
                 AND p.modified_at < now() - make_interval(secs => $1)
                 AND NOT EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = p.id)
                 AND NOT EXISTS (SELECT 1 FROM activity.sessions s     WHERE s.project_id = p.id)
@@ -200,6 +216,7 @@ impl PgStore {
                 AND NOT EXISTS (SELECT 1 FROM sensei.memories m       WHERE m.project_id = p.id)",
         )
         .bind(grace_secs)
+        .bind(among)
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;

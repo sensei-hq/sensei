@@ -1,6 +1,6 @@
 use crate::api::state::AppState;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{Json, Sse, sse::Event},
 };
@@ -205,25 +205,17 @@ pub(crate) async fn exclude_project(
     State(state): State<AppState>,
     Path(repo_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Look up folder path before deleting
+    // A PRUNE, through the same path as `POST /api/scan/prune` (#247). This used
+    // to delete the folder's nodes and its row and add no exclusion, so the next
+    // scan brought the repository straight back.
     let folder =
         state.pg.get_repo_by_name(&repo_id).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let path = folder.as_ref().and_then(|f| f["abs_path"].as_str()).unwrap_or_default().to_string();
-
-    // Clear indexed nodes before deleting the folder record
-    if let Some(folder_id) = folder.as_ref().and_then(|f| crate::api::util::json_uuid(&f["id"]))
-        && let Err(e) = state.pg.delete_nodes_by_folder(&folder_id).await
-    {
-        tracing::warn!(error = %e, %folder_id, "exclude_project: failed to delete nodes for folder");
-    }
-
-    // Delete the folder record (exclusions now handled by watcher)
-    state
-        .pg
-        .delete_repo_by_name(&repo_id)
-        .await
-        .map(|_| Json(serde_json::json!({"ok": true, "excluded": path})))
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    let path = folder
+        .as_ref()
+        .and_then(|f| f["abs_path"].as_str())
+        .map(str::to_string)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    prune_and_exclude(&state, &path).await.map(Json)
 }
 
 // Exclusions are per watch root (`folders_to_watch.excluded`) — managed via
@@ -574,93 +566,254 @@ pub(crate) async fn update_watch_root(
         },
     )?;
 
-    let mut pruned_folders: u64 = 0;
+    let mut pruned = crate::db::pg_store::PruneReport::default();
     if let Some(new_list) = body.excluded.as_ref() {
-        // Added entries → delete the matching subtree (folders + children).
-        for entry in new_list.iter().filter(|e| !old_excluded.contains(*e)) {
-            // The SAME resolver the live watcher is registered with, so a stored
-            // exclusion cannot gate the watcher while pruning nothing. A second
-            // copy of this formula is exactly how that happens.
-            let prefix = crate::db::pg_store::folders::resolve_exclusion(&root_path, entry);
-            pruned_folders += state.pg.prune_under_prefix(&prefix).await.unwrap_or_else(|e| {
-                tracing::warn!(error = %e, entry, "update_watch_root: prune excluded subtree failed"); 0
-            });
-        }
-        if pruned_folders > 0 {
-            let _ = state.pg.prune_empty_projects(0).await;
-        }
-        // Removed entries → re-scan the root so the un-excluded subtree re-indexes.
-        if old_excluded.iter().any(|e| !new_list.contains(e)) {
-            let task = crate::tasks::Task::new(crate::tasks::TaskKind::ScanRoot, "", &root_path);
-            state.task_queue.enqueue(task).await;
-        }
-
-        // Push the resolved absolute prefixes into the live watcher so the change
-        // takes effect immediately, not on next daemon restart.
-        // Fail closed: never register the live watcher with an empty exclusion
-        // set on a read error (it would then watch/index the excluded subtree).
-        let prefixes = state
-            .pg
-            .root_exclusion_prefixes(&root_path)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
-        match w_mutex.lock() {
-            Ok(mut w) => {
-                w.register(std::path::PathBuf::from(&root_path), prefixes);
-                let _ = w.start();
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, %uuid, "update_watch_root: RootWatcher mutex poisoned; DB updated, live state stale")
-            }
-        }
+        pruned = set_root_exclusions(&state, &uuid, &root_path, &old_excluded, new_list).await?;
     }
 
-    Ok(Json(serde_json::json!({ "ok": true, "id": uuid, "prunedFolders": pruned_folders })))
+    // `prunedFolders` stays for the existing reader; `pruned` is the whole report.
+    Ok(Json(serde_json::json!({
+        "ok": true, "id": uuid, "prunedFolders": pruned.folders, "pruned": pruned,
+    })))
 }
 
-/// Delete a watch root by ID.
-pub(crate) async fn delete_watch_root(
+/// Apply a root's NEW exclusion list against its OLD one (#247).
+///
+/// Added entries are PRUNED through the one pruner, so a repository excluded
+/// here loses its folders, its repository row and any project it emptied — not
+/// just its folders, which is what this did before. Removed entries re-scan the
+/// root so the un-excluded subtree comes back. Then the live watcher is
+/// re-registered with the resolved prefixes.
+///
+/// A FAILED PRUNE IS A 500. This used to `unwrap_or_else(|_| 0)`, so a delete
+/// that failed answered `prunedFolders: 0` and the screen said it worked.
+///
+/// The DB list must already be written by the caller — this owns the effects of
+/// a change, not the change itself.
+async fn set_root_exclusions(
+    state: &AppState,
+    uuid: &uuid::Uuid,
+    root_path: &str,
+    old_excluded: &[String],
+    new_list: &[String],
+) -> Result<crate::db::pg_store::PruneReport, StatusCode> {
+    let mut pruned = crate::db::pg_store::PruneReport::default();
+    for entry in new_list.iter().filter(|e| !old_excluded.contains(*e)) {
+        // The SAME resolver the live watcher is registered with, so a stored
+        // exclusion cannot gate the watcher while pruning nothing. A second
+        // copy of this formula is exactly how that happens.
+        let prefix = crate::db::pg_store::folders::resolve_exclusion(root_path, entry);
+        let r = state.pg.prune_repository_root(&prefix).await.map_err(|e| {
+            tracing::error!(error = %e, entry, "set_root_exclusions: prune failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        pruned.folders += r.folders;
+        pruned.repositories += r.repositories;
+        pruned.projects += r.projects;
+    }
+    // Removed entries → re-scan the root so the un-excluded subtree re-indexes.
+    if old_excluded.iter().any(|e| !new_list.contains(e)) {
+        let task = crate::tasks::Task::new(crate::tasks::TaskKind::ScanRoot, "", root_path);
+        state.task_queue.enqueue(task).await;
+    }
+
+    // Push the resolved absolute prefixes into the live watcher so the change
+    // takes effect immediately, not on next daemon restart.
+    // Fail closed: never register the live watcher with an empty exclusion
+    // set on a read error (it would then watch/index the excluded subtree).
+    let prefixes = state
+        .pg
+        .root_exclusion_prefixes(root_path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
+    match w_mutex.lock() {
+        Ok(mut w) => {
+            w.register(std::path::PathBuf::from(root_path), prefixes);
+            let _ = w.start();
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, %uuid, "set_root_exclusions: RootWatcher mutex poisoned; DB updated, live state stale")
+        }
+    }
+    Ok(pruned)
+}
+
+#[derive(Deserialize)]
+pub(crate) struct PruneBody {
+    pub path: String,
+}
+
+/// POST /api/scan/prune `{ path }` — remove a repository (or any folder) and
+/// everything associated with it, and keep it out (#247).
+///
+/// Under a live root the path is ADDED TO THAT ROOT'S EXCLUSIONS, which prunes
+/// it — so a rescan cannot bring back what the user just removed. Pruning a
+/// root's own path is a 409: that is a root removal, and it asks keep-or-remove
+/// first. A path no root encloses holds nothing indexed — every folder belongs
+/// to a root — so it is a 404, not a report of zeros that reads as success.
+pub(crate) async fn prune_path(
+    State(state): State<AppState>,
+    Json(body): Json<PruneBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let path = expand_tilde(&body.path).trim_end_matches('/').to_string();
+    if path.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    prune_and_exclude(&state, &path).await.map(Json)
+}
+
+/// The prune behind both `POST /api/scan/prune` and the per-repository
+/// exclude. One path, so the two cannot disagree about what removing means.
+async fn prune_and_exclude(state: &AppState, path: &str) -> Result<serde_json::Value, StatusCode> {
+    let (root_id, root_path) = state
+        .pg
+        .enclosing_watch_root(path)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let root_path = root_path.trim_end_matches('/').to_string();
+    let Some(entry) = path.strip_prefix(&format!("{root_path}/")).map(str::to_string) else {
+        return Err(StatusCode::CONFLICT);
+    };
+    let (_, old) = state
+        .pg
+        .get_watch_root(&root_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let pruned = if old.contains(&entry) {
+        // Already excluded: nothing to add, but whatever is still indexed under
+        // it is pruned all the same — an exclusion added before the pruner
+        // existed left its repositories behind.
+        state.pg.prune_repository_root(path).await.map_err(|e| {
+            tracing::error!(error = %e, path, "prune_and_exclude: prune failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+    } else {
+        let mut new = old.clone();
+        new.push(entry.clone());
+        let new_json = serde_json::Value::Array(
+            new.iter().map(|s| serde_json::Value::String(s.clone())).collect(),
+        );
+        state.pg.update_watch_root(&root_id, None, Some(&new_json)).await.map_err(|e| {
+            tracing::error!(error = %e, %root_id, "prune_and_exclude: exclusion write failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        set_root_exclusions(state, &root_id, &root_path, &old, &new).await?
+    };
+    Ok(serde_json::json!({ "ok": true, "rootId": root_id, "excluded": entry, "pruned": pruned }))
+}
+
+/// GET /api/scan/roots/{id}/repositories — what stops syncing if this root is
+/// removed, so the screen can ask about each by name before it happens.
+pub(crate) async fn root_repositories(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    // Read the path BEFORE deleting the row — afterwards there is nothing left
-    // to tell the watcher which registration to drop.
-    let path = state.pg.get_watch_root(&uuid).await.ok().flatten().map(|(path, _excluded)| path);
-
-    state.pg.remove_watch_root(&uuid).await.map_err(|e| {
-        tracing::error!("delete_watch_root: {}", e);
+    state
+        .pg
+        .get_watch_root(&uuid)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let rows = state.pg.repositories_under_root(&uuid).await.map_err(|e| {
+        tracing::error!(error = %e, %uuid, "root_repositories failed");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+    Ok(Json(serde_json::json!(
+        rows.into_iter()
+            .map(
+                |(name, path, kind)| serde_json::json!({ "name": name, "path": path, "kind": kind })
+            )
+            .collect::<Vec<_>>()
+    )))
+}
 
-    // AND UNREGISTER IT. Since #216 the watcher resolves a change against its
-    // OWN root list rather than re-reading the database, so a registration that
-    // outlives its row keeps resolving edits under a deleted tree — and
-    // `scan_root` re-creates a missing root row, so the deleted root would come
-    // back. It also stops notify watching a tree nobody asked about.
-    //
-    // The std Mutex must not be held across an await, so the lock scope is
-    // closed before anything else (see `add_watch_root`).
-    if let Some(path) = path {
-        let queue = state.task_queue.clone();
-        let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(queue);
-        match w_mutex.lock() {
-            Ok(mut w) => {
-                w.unregister(&std::path::PathBuf::from(&path));
-                // Re-establish the stream over the remaining roots. `start()` is
-                // a no-op teardown+respawn; with no roots left it simply stops.
-                let _ = w.start();
-            }
-            Err(e) => tracing::warn!(
-                error = %e, %path,
-                "delete_watch_root: RootWatcher mutex poisoned; root stays registered"
-            ),
+#[derive(Deserialize)]
+pub(crate) struct RemoveRootQuery {
+    repositories: Option<String>,
+}
+
+/// DELETE /api/scan/roots/{id}?repositories=keep|remove (#247).
+///
+/// THE DECISION IS REQUIRED. Removing a root used to cascade its folders away
+/// whatever the user wanted, and left their repository rows behind. Now:
+///
+/// - `keep` PAUSES the root: its watcher is unregistered and nothing syncs it,
+///   but its folders and graph stay readable. The row stays because the folder
+///   cascade would otherwise take the data with it.
+/// - `remove` PRUNES everything under the root — folders, repositories no other
+///   checkout uses, projects left empty — then deletes the row.
+///
+/// Anything else, including nothing, is a 400: a default would be a guess about
+/// the user's data.
+pub(crate) async fn delete_watch_root(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<RemoveRootQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let uuid = uuid::Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let keep = match q.repositories.as_deref() {
+        Some("keep") => true,
+        Some("remove") => false,
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+    // Read the path BEFORE changing anything — afterwards there is nothing left
+    // to tell the watcher which registration to drop.
+    let (path, _) = state
+        .pg
+        .get_watch_root(&uuid)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let body = if keep {
+        state.pg.update_watch_status(&uuid, "paused").await.map_err(|e| {
+            tracing::error!(error = %e, %uuid, "delete_watch_root: pause failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        serde_json::json!({ "ok": true, "kept": true })
+    } else {
+        let pruned = state.pg.prune_repository_root(&path).await.map_err(|e| {
+            tracing::error!(error = %e, %uuid, "delete_watch_root: prune failed");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        state.pg.remove_watch_root(&uuid).await.map_err(|e| {
+            tracing::error!("delete_watch_root: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        serde_json::json!({ "ok": true, "kept": false, "pruned": pruned })
+    };
+
+    unregister_root_watcher(&state, &path);
+    Ok(Json(body))
+}
+
+/// Drop a root from the live watcher — on removal AND on pause.
+///
+/// Since #216 the watcher resolves a change against its OWN root list rather
+/// than re-reading the database, so a registration that outlives its row (or
+/// its sync) keeps resolving edits under a tree nobody asked about — and
+/// `scan_root` re-creates a missing root row, so a deleted root would come back.
+///
+/// The std Mutex must not be held across an await, so this is synchronous.
+fn unregister_root_watcher(state: &AppState, path: &str) {
+    let w_mutex = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
+    match w_mutex.lock() {
+        Ok(mut w) => {
+            w.unregister(&std::path::PathBuf::from(path));
+            // Re-establish the stream over the remaining roots. `start()` is a
+            // no-op teardown+respawn; with no roots left it simply stops.
+            let _ = w.start();
         }
+        Err(e) => tracing::warn!(
+            error = %e, %path,
+            "unregister_root_watcher: RootWatcher mutex poisoned; root stays registered"
+        ),
     }
-
-    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 #[derive(Deserialize)]

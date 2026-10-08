@@ -351,7 +351,7 @@ pub async fn audit_index_integrity(
 /// List the watch roots and partition them by disk presence, returning only the
 /// present ones. The absent ones are counted (never operated under).
 async fn partition_present_roots(pg: &PgStore) -> (Vec<WatchRootRef>, u32, u32) {
-    let all = pg.list_watch_roots().await.unwrap_or_else(|e| {
+    let all = pg.list_watch_roots_to_sync().await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "index_audit: list_watch_roots failed; auditing no roots");
         Vec::new()
     });

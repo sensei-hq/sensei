@@ -767,7 +767,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
 async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
     // Get all watch roots from PgStore — (id, path) for roots that still exist
     // on disk (skip stale rows pointing at deleted dirs).
-    let roots = state.pg.list_watch_roots().await.unwrap_or_else(|e| {
+    let roots = state.pg.list_watch_roots_to_sync().await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "spawn_root_watchers: list_watch_roots failed; no roots will be watched");
         Vec::new()
     });

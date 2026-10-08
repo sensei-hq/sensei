@@ -173,7 +173,7 @@ test.describe('Wizard stage verification — real DB state after each commit', (
     expect(added, `root ${testPath} should appear in scan/roots`).toBeTruthy();
 
     // Remove by ID
-    const deleteResp = await fetch(`${DAEMON_URL}/api/scan/roots/${added!.id}`, { method: 'DELETE' });
+    const deleteResp = await fetch(`${DAEMON_URL}/api/scan/roots/${added!.id}?repositories=remove`, { method: 'DELETE' });
     expect(deleteResp.status, 'DELETE scan/roots/{id} should return 200').toBe(200);
 
     // Verify removed
@@ -199,7 +199,7 @@ test.describe('Wizard stage verification — real DB state after each commit', (
 
     // Cleanup
     const id = (await r1.json() as { id: string }).id;
-    await fetch(`${DAEMON_URL}/api/scan/roots/${id}`, { method: 'DELETE' });
+    await fetch(`${DAEMON_URL}/api/scan/roots/${id}?repositories=remove`, { method: 'DELETE' });
   });
 
   // ── Scan ─────────────────────────────────────────────────────────────────
@@ -251,7 +251,7 @@ test.describe('Wizard stage verification — real DB state after each commit', (
     expect(found, 'verify-project should be indexed after scan').toBeTruthy();
 
     // Cleanup
-    await fetch(`${DAEMON_URL}/api/scan/roots/${rootId}`, { method: 'DELETE' });
+    await fetch(`${DAEMON_URL}/api/scan/roots/${rootId}?repositories=remove`, { method: 'DELETE' });
   });
 
   // ── Projects ──────────────────────────────────────────────────────────────
