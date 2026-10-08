@@ -424,6 +424,9 @@ pub fn create_router(state: AppState) -> Router {
             "/api/scan/roots/{id}",
             put(workspace::update_watch_root).delete(workspace::delete_watch_root),
         )
+        // #247: what stops syncing if a root goes, and the one pruner.
+        .route("/api/scan/roots/{id}/repositories", get(workspace::root_repositories))
+        .route("/api/scan/prune", post(workspace::prune_path))
         // Backfill embeddings for already-indexed nodes (EmbedNodes per folder)
         .route("/api/embed/backfill", post(workspace::backfill_embeddings))
         // Knowledge plane
@@ -681,7 +684,8 @@ mod tests {
         };
         assert!(registered, "precondition: POST registers the root with the watcher");
 
-        let (status, _) = req(app, "DELETE", &format!("/api/scan/roots/{id}"), None).await;
+        let (status, _) =
+            req(app, "DELETE", &format!("/api/scan/roots/{id}?repositories=remove"), None).await;
         assert_eq!(status, StatusCode::OK);
 
         // Scoped to THIS path — the watcher singleton is shared across tests (#183).
@@ -691,6 +695,216 @@ mod tests {
             g.roots().contains_key(std::path::Path::new(&path))
         };
         assert!(!still_there, "a deleted root must not stay registered with the watcher");
+    }
+
+    /// Seed a root at a real temp directory with two repository folders `a` and
+    /// `b`, each with its own `repositories` row. Returns (root id, root path,
+    /// the tempdir guard).
+    async fn seed_root_with_two_repos(
+        app: &Router,
+        state: &AppState,
+    ) -> (uuid::Uuid, String, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let (status, body) = req(
+            app.clone(),
+            "POST",
+            "/api/scan/roots",
+            Some(serde_json::json!({ "path": root, "excluded": [] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let id = uuid::Uuid::parse_str(body["id"].as_str().unwrap()).unwrap();
+        let tag = uuid::Uuid::new_v4();
+        for name in ["a", "b"] {
+            crate::tasks::test_support::seed_repo_folder(
+                &state.pg,
+                &id,
+                &format!("{name}-{tag}"),
+                &format!("{root}/{name}"),
+            )
+            .await
+            .unwrap();
+        }
+        (id, root, dir)
+    }
+
+    async fn folder_exists(state: &AppState, abs_path: &str) -> bool {
+        let (n,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.folders WHERE abs_path = $1",
+        )
+        .bind(abs_path)
+        .fetch_one(state.pg.pool())
+        .await
+        .unwrap();
+        n > 0
+    }
+
+    async fn repository_of_folder_named(state: &AppState, abs_path: &str) -> Option<uuid::Uuid> {
+        sqlx_core::query_as::query_as::<_, (Option<uuid::Uuid>,)>(
+            "SELECT repository_id FROM sensei.folders WHERE abs_path = $1",
+        )
+        .bind(abs_path)
+        .fetch_optional(state.pg.pool())
+        .await
+        .unwrap()
+        .and_then(|r| r.0)
+    }
+
+    async fn repository_exists(state: &AppState, id: uuid::Uuid) -> bool {
+        let (n,): (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.repositories WHERE id = $1")
+                .bind(id)
+                .fetch_one(state.pg.pool())
+                .await
+                .unwrap();
+        n > 0
+    }
+
+    /// **PRUNING A REPOSITORY UNDER A LIVE ROOT REMOVES IT AND EXCLUDES IT, SO A
+    /// RESCAN DOES NOT BRING IT BACK (#247).**
+    ///
+    /// Mutations that must break this test: skip adding the exclusion, add it
+    /// twice on a second prune, accept the root's own path, or prune with the
+    /// folder-only `DELETE` that leaves the repository row behind.
+    #[tokio::test]
+    async fn pruning_under_a_live_root_removes_and_excludes_and_refuses_the_root_itself() {
+        let (app, state) = test_app().await;
+        let (id, root, _dir) = seed_root_with_two_repos(&app, &state).await;
+        let a = format!("{root}/a");
+        let a_repo = repository_of_folder_named(&state, &a).await.expect("a has a repository");
+
+        let (status, body) =
+            req(app.clone(), "POST", "/api/scan/prune", Some(serde_json::json!({ "path": a })))
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["pruned"]["folders"], 1, "{body}");
+        assert_eq!(body["pruned"]["repositories"], 1, "{body}");
+        assert_eq!(body["excluded"], "a", "the exclusion is relative to the root: {body}");
+        assert!(!folder_exists(&state, &a).await);
+        assert!(!repository_exists(&state, a_repo).await, "the repository row goes too");
+        assert!(folder_exists(&state, &format!("{root}/b")).await, "its sibling stays");
+
+        let excluded = |state: &AppState| {
+            let pg = state.pg.clone();
+            async move { pg.get_watch_root(&id).await.unwrap().unwrap().1 }
+        };
+        assert_eq!(excluded(&state).await, vec!["a".to_string()]);
+
+        // Again: nothing left to prune, and the exclusion is not duplicated.
+        let (status, body) =
+            req(app.clone(), "POST", "/api/scan/prune", Some(serde_json::json!({ "path": a })))
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["pruned"]["folders"], 0);
+        assert_eq!(excluded(&state).await, vec!["a".to_string()]);
+
+        // The root itself is a ROOT removal, which asks keep-or-remove first.
+        let (status, _) =
+            req(app.clone(), "POST", "/api/scan/prune", Some(serde_json::json!({ "path": root })))
+                .await;
+        assert_eq!(status, StatusCode::CONFLICT, "pruning a whole root goes through DELETE");
+
+        // Nothing indexed lives under a path no root encloses.
+        let nowhere = format!("/_nowhere_{}", uuid::Uuid::new_v4());
+        let (status, _) = req(
+            app.clone(),
+            "POST",
+            "/api/scan/prune",
+            Some(serde_json::json!({ "path": nowhere })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let _ =
+            req(app, "DELETE", &format!("/api/scan/roots/{id}?repositories=remove"), None).await;
+    }
+
+    /// **REMOVING A ROOT ASKS FIRST: keep pauses it with its data, remove prunes
+    /// everything it held (#247).**
+    ///
+    /// Mutations that must break this test: default a missing decision, let
+    /// `keep` delete the row (the folder cascade would take the data), leave a
+    /// kept root registered with the watcher, or remove without pruning the
+    /// repository rows.
+    #[tokio::test]
+    async fn removing_a_root_asks_keep_or_remove_and_does_what_it_was_told() {
+        let (app, state) = test_app().await;
+        let (id, root, _dir) = seed_root_with_two_repos(&app, &state).await;
+        let a = format!("{root}/a");
+        let a_repo = repository_of_folder_named(&state, &a).await.unwrap();
+
+        // What will stop syncing, so the screen can ask about it by name.
+        let (status, body) =
+            req(app.clone(), "GET", &format!("/api/scan/roots/{id}/repositories"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let paths: Vec<&str> =
+            body.as_array().unwrap().iter().filter_map(|r| r["path"].as_str()).collect();
+        assert!(paths.contains(&a.as_str()) && paths.len() == 2, "{body}");
+
+        for bad in ["", "?repositories=maybe"] {
+            let (status, _) =
+                req(app.clone(), "DELETE", &format!("/api/scan/roots/{id}{bad}"), None).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "no decision is not a decision ({bad})");
+        }
+
+        let (status, body) =
+            req(app.clone(), "DELETE", &format!("/api/scan/roots/{id}?repositories=keep"), None)
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(folder_exists(&state, &a).await, "keep leaves the data readable");
+        let synced: Vec<String> = state
+            .pg
+            .list_watch_roots_to_sync()
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["id"].as_str().map(str::to_string))
+            .collect();
+        assert!(!synced.contains(&id.to_string()), "a kept root is paused, not synced");
+        let registered = {
+            let w = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
+            let g = w.lock().unwrap();
+            g.roots().contains_key(std::path::Path::new(&root))
+        };
+        assert!(!registered, "a paused root is not watched");
+
+        let (status, body) =
+            req(app.clone(), "DELETE", &format!("/api/scan/roots/{id}?repositories=remove"), None)
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["pruned"]["folders"], 2, "{body}");
+        assert!(!folder_exists(&state, &a).await);
+        assert!(!repository_exists(&state, a_repo).await, "no orphan repository is left behind");
+        assert!(state.pg.get_watch_root(&id).await.unwrap().is_none(), "the root row is gone");
+    }
+
+    /// `POST /api/repos/{id}/exclude` IS a prune now: it used to delete nodes and
+    /// one folder row and add no exclusion, so the next scan brought it back.
+    ///
+    /// Mutation that must break this test: restore the node-and-row delete.
+    #[tokio::test]
+    async fn excluding_a_repository_prunes_it_and_keeps_it_out() {
+        let (app, state) = test_app().await;
+        let (id, root, _dir) = seed_root_with_two_repos(&app, &state).await;
+        let b = format!("{root}/b");
+        let b_repo = repository_of_folder_named(&state, &b).await.unwrap();
+        let (name,): (String,) =
+            sqlx_core::query_as::query_as("SELECT name FROM sensei.folders WHERE abs_path = $1")
+                .bind(&b)
+                .fetch_one(state.pg.pool())
+                .await
+                .unwrap();
+
+        let (status, body) =
+            req(app.clone(), "POST", &format!("/api/repos/{name}/exclude"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(!folder_exists(&state, &b).await);
+        assert!(!repository_exists(&state, b_repo).await);
+        assert_eq!(state.pg.get_watch_root(&id).await.unwrap().unwrap().1, vec!["b".to_string()]);
+
+        let _ =
+            req(app, "DELETE", &format!("/api/scan/roots/{id}?repositories=remove"), None).await;
     }
 
     /// `/hook/event` must answer with a decodable JSON body. The MCP proxy

@@ -3,27 +3,12 @@
 
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
-use super::scan_logic::{self};
+use super::scan_logic::{self, under};
 use crate::api::events::*;
 use std::path::Path;
 use std::time::Instant;
 
 // ── Scan Root ──────────────────────────────────────────────────────────────
-
-/// Is `repo` the requested path, or inside it?
-///
-/// Compared on a SEGMENT boundary, never as a bare prefix: `/a/sensei-old`
-/// starts with `/a/sensei` and is a different repository. The same rule
-/// `enclosing_watch_root` uses (`$1 = path OR $1 LIKE path || '/%'`), which is
-/// why it is spelled the same way here.
-fn under(repo: &str, requested: &str) -> bool {
-    // BOTH sides are trimmed. Trimming only the requested path made
-    // `under("/a/sensei", "/a/sensei/")` false — the same directory written two
-    // ways, which is exactly how a path arrives from a shell.
-    let repo = repo.trim_end_matches('/');
-    let requested = requested.trim_end_matches('/');
-    repo == requested || repo.starts_with(&format!("{requested}/"))
-}
 
 pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let root = Path::new(&task.path);

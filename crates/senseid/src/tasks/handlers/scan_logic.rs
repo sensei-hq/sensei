@@ -555,8 +555,7 @@ fn trim_path(p: &str) -> &str {
 ///
 /// Compared on a SEGMENT boundary, never as a bare prefix: `/a/sensei-old`
 /// starts with `/a/sensei` and is a different repository. The same rule
-/// `enclosing_watch_root` uses (`$1 = path OR $1 LIKE path || '/%'`), spelled
-/// once here so the SQL and the Rust cannot drift apart.
+/// `enclosing_watch_root` uses (`$1 = path OR starts_with($1, path || '/')`).
 pub fn under(inner: &str, outer: &str) -> bool {
     let (inner, outer) = (trim_path(inner), trim_path(outer));
     inner == outer || inner.starts_with(&format!("{outer}/"))

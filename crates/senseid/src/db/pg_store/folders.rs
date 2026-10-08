@@ -1340,11 +1340,27 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Every watch root, paused ones included — what the settings screen lists,
+    /// so a paused root can still be resumed or removed.
     pub async fn list_watch_roots(&self) -> Result<Vec<serde_json::Value>, String> {
+        self.watch_roots(false).await
+    }
+
+    /// The roots to SYNC: every root that is not `paused` (#247). Boot, the
+    /// reconcile tick, the version rescan and the index audit enumerate through
+    /// this, so a root the user stopped syncing stays stopped across restarts
+    /// while its data stays readable.
+    pub async fn list_watch_roots_to_sync(&self) -> Result<Vec<serde_json::Value>, String> {
+        self.watch_roots(true).await
+    }
+
+    async fn watch_roots(&self, only_synced: bool) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, path, name, status::text, excluded, modified_at FROM sensei.folders_to_watch ORDER BY path"
-            ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+                "SELECT id, path, name, status::text, excluded, modified_at FROM sensei.folders_to_watch
+                  WHERE NOT ($1 AND status = 'paused'::sensei.watch_status)
+                  ORDER BY path"
+            ).bind(only_synced).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, path, name, status, excluded, modified)| {
             serde_json::json!({ "id": id, "path": path, "name": name, "status": status, "excluded": excluded, "modified_at": modified.to_rfc3339() })
         }).collect())
@@ -1360,8 +1376,10 @@ impl PgStore {
         path: &str,
     ) -> Result<Option<(uuid::Uuid, String)>, String> {
         sqlx_core::query_as::query_as(
+            // `starts_with`, never `LIKE path || '/%'`: a `_` in a root's path
+            // is a LIKE wildcard, so `/x/my_dir` claimed `/x/myXdir/…` (#247).
             "SELECT id, path FROM sensei.folders_to_watch
-              WHERE $1 = path OR $1 LIKE path || '/%'
+              WHERE $1 = path OR starts_with($1, path || '/')
               ORDER BY length(path) DESC LIMIT 1",
         )
         .bind(path)

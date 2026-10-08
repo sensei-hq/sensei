@@ -63,7 +63,7 @@ fn parse_stall_secs(cfg: Option<String>) -> i64 {
 /// `scan_folder` API and the version-rescan use. Returns how many were enqueued.
 /// Log-and-skip on a config-read failure (never fatal).
 async fn enqueue_reconcile_scans(queue: &TaskQueue, pg: &PgStore) -> u32 {
-    let roots = match pg.list_watch_roots().await {
+    let roots = match pg.list_watch_roots_to_sync().await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(error = %e, "reconcile_scheduler: list_watch_roots failed; no roots reconciled");

@@ -83,7 +83,7 @@ pub async fn maybe_rescan_on_version_change(
 
     // Re-scan: one ScanRoot per watch root (the trigger `scan_folder` uses).
     // Bounded — one task per root, not per file.
-    match pg.list_watch_roots().await {
+    match pg.list_watch_roots_to_sync().await {
         Ok(roots) => {
             let mut enqueued = 0u32;
             for r in &roots {
