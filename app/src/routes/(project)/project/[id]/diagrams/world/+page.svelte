@@ -5,7 +5,7 @@
     import { senseiApi } from '$lib/api.js';
     import { appState } from '$lib/appstate.svelte.js';
     import { DIAGRAM_VIEWS } from '../diagrams-nav.js';
-    import { ROOT_LABEL, WORLD_FIELDS, WorldState } from '../world-state.svelte.js';
+    import { ROOT_LABEL, WorldState } from '../world-state.svelte.js';
     import type { WorldGroupBy, WorldShadeBy } from '$lib/types.js';
 
     let { data } = $props();
@@ -19,25 +19,19 @@
         void view.load();
     });
 
-    // ONE `GraphState`, UPDATED — not a new `Graph` per change.
+    // ONE `GraphState`, UPDATED — not a new `Graph` per change. `shadeBy`,
+    // `focusPath` and `levels` live on `GraphStateConfig`, so they can only be
+    // set through a shared state, and a fresh one per toggle would re-run the
+    // layout and lose the reader's zoom.
     //
-    // `shadeBy`, `focusPath` and `levels` live on `GraphStateConfig` rather than
-    // on `GraphProps`, so they can only be set through a shared state. Building
-    // a fresh one on every toggle would re-run the layout from scratch and lose
-    // the reader's zoom; `update` is what the class exists for.
-    const graph = new GraphState({
-        fields: WORLD_FIELDS,
-        layout: 'world',
-        sizeBy: 'weight',
-        sizeScale: 'log'
-    });
+    // `update` REPLACES the config, so it is always handed the whole of it
+    // (`view.graphConfig`). Handing it nodes/shade/focus alone reverted the
+    // layout to the default and drew the circle pack as a stack of cards (#219).
+    // svelte-ignore state_referenced_locally
+    const graph = new GraphState(view.graphConfig);
 
     $effect(() => {
-        graph.update({
-            nodes: view.units,
-            shadeBy: view.shadeKey,
-            focusPath: view.focusPath
-        });
+        graph.update(view.graphConfig);
     });
 
     // The toolbars are data, built here rather than in state because they are
@@ -109,12 +103,12 @@
 
         <div class="flex flex-col gap-4 md:flex-row">
             <div class="h-[70vh] flex-1" data-testid="world-diagram">
+                <!-- No `ondrill` props: with a supplied `state` Graph does not wire
+                     them. The drill callbacks travel in `view.graphConfig`. -->
                 <Graph
                     state={graph}
                     zoomable
                     label="All indexed code, nested by what contains it"
-                    ondrill={(path) => view.drillTo(path)}
-                    ondrillup={(path) => view.drillTo(path)}
                 />
             </div>
 

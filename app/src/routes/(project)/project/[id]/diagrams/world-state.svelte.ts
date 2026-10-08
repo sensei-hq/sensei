@@ -196,6 +196,49 @@ export class WorldState {
     return `${Math.round(value * 100)}%`;
   }
 
+  /** The units as the LAYOUT needs them: weight on leaves only (#219).
+   *
+   *  rokkit's world layout treats a declared container's `weight` as its OWN
+   *  measure and sums its children on top. A container here holds no
+   *  declarations of its own — its payload weight is the TOTAL of what it
+   *  contains, which is what the IN VIEW panel reads — so passing it through
+   *  counted every declaration once per ring: 27,295 drew as "81.9K". */
+  get layoutUnits(): WorldUnit[] {
+    const keys = this.units.map((u) => u.path.join('\u0000'));
+    const containers = new Set(
+      keys.filter((k) => keys.some((other) => other.startsWith(k + '\u0000'))),
+    );
+    return this.units.map((u) =>
+      containers.has(u.path.join('\u0000')) ? { ...u, weight: 0 } : u,
+    );
+  }
+
+  /** The WHOLE `GraphState` config, every time (#219).
+   *
+   *  `GraphState.update` replaces the config: anything it is not handed reverts
+   *  to the default layout. The page used to pass nodes, shade and focus alone,
+   *  which threw `layout: 'world'` away on the first update and drew the circle
+   *  pack as a stack of cards. One getter that names everything means no update
+   *  can forget a part. */
+  get graphConfig() {
+    return {
+      fields: WORLD_FIELDS,
+      layout: 'world' as const,
+      sizeBy: 'weight',
+      sizeScale: 'log' as const,
+      nodes: this.layoutUnits,
+      shadeBy: this.shadeKey,
+      focusPath: this.focusPath,
+      // A caller-supplied GraphState takes its callbacks from its OWN config —
+      // `<Graph ondrill>` is wired only into the state Graph creates for itself.
+      // Without these a canvas drill moved the picture and left the panel at the
+      // root (#219, seen live).
+      ondrill: (path: string[]) => this.drillTo(path),
+      ondrillup: (path: string[]) => this.drillTo(path),
+      onfocuspath: (path: string[]) => this.drillTo(path),
+    };
+  }
+
   drillTo(path: string[]) {
     this.focusPath = [...path];
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WorldState, type WorldApi } from './world-state.svelte.js';
+import { WORLD_FIELDS, WorldState, type WorldApi } from './world-state.svelte.js';
 import type { WorldPayload, WorldUnit } from '$lib/types.js';
 
 function unit(path: string[], weight: number, over: Partial<WorldUnit> = {}): WorldUnit {
@@ -150,5 +150,59 @@ describe('WorldState', () => {
     await s.load();
     expect(s.totalsLine).toContain('230 declarations');
     expect(s.totalsLine).toContain('2 repositories');
+  });
+  // `GraphState.update` REPLACES the config — anything it is not given reverts
+  // to the default. The page used to construct the state with `layout: 'world'`
+  // and then update it with nodes/shade/focus alone, so the first update threw
+  // the layout away and the "circle pack" rendered as a stack of cards (#219).
+  // The config is therefore whole, every time.
+  it('the graph config always carries the world layout and its sizing', async () => {
+    const s = new WorldState(okApi(), () => 'p1');
+    await s.load();
+    s.setShadeBy('testShare');
+    s.drillTo(['alpha']);
+    const c = s.graphConfig;
+    expect(c.layout).toBe('world');
+    expect(c.sizeBy).toBe('weight');
+    expect(c.sizeScale).toBe('log');
+    expect(c.fields).toBe(WORLD_FIELDS);
+    expect(c.shadeBy).toBe('testShare');
+    expect(c.focusPath).toEqual(['alpha']);
+    // Every unit is drawn; only container weights differ (see below).
+    expect(c.nodes.map((n) => n.id)).toEqual(s.units.map((u) => u.id));
+  });
+  // rokkit's world layout treats a declared container's `weight` as its OWN
+  // measure and SUMS its children on top. The payload's container weight is its
+  // TOTAL (which the panel needs), so passing it through counted every
+  // declaration once per ring: live, 27,295 declarations drew as "81.9K" — three
+  // rings deep, three times over. The graph gets weight on LEAVES only.
+  it('what the layout sums is the corpus, counted once', async () => {
+    const s = new WorldState(okApi(), () => 'p1');
+    await s.load();
+    const nodes = s.graphConfig.nodes;
+    const paths = nodes.map((n) => n.path.join('/'));
+    const isLeaf = (p: string) => !paths.some((q) => q.startsWith(p + '/'));
+    // What summarise() does: each node's own weight, summed over the tree.
+    const drawn = nodes.reduce((sum, n) => sum + n.weight, 0);
+    expect(drawn).toBe(230);
+    for (const n of nodes) {
+      if (!isLeaf(n.path.join('/'))) expect(n.weight, n.path.join('/')).toBe(0);
+    }
+    // The panel still reads totals.
+    expect(s.units.find((u) => u.path.join('/') === 'alpha')?.weight).toBe(100);
+  });
+  // A CALLER-SUPPLIED GraphState takes its callbacks from its own config; the
+  // `ondrill` props on `<Graph>` are wired only into the state Graph owns. So a
+  // drill on the canvas moved the picture and left the IN VIEW panel standing at
+  // the root (#219, seen live). The config carries the callbacks.
+  it('a drill on the canvas moves the panel with it', async () => {
+    const s = new WorldState(okApi(), () => 'p1');
+    await s.load();
+    s.graphConfig.ondrill?.(['alpha', 'core']);
+    expect(s.inView.label).toBe('core');
+    s.graphConfig.ondrillup?.(['alpha']);
+    expect(s.focusPath).toEqual(['alpha']);
+    s.graphConfig.onfocuspath?.([]);
+    expect(s.inView.label).toBe('All indexed code');
   });
 });
