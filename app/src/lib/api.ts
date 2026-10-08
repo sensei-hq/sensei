@@ -24,6 +24,7 @@ import type {
   LayeringLevel, LayeringPayload,
   WorldGroupBy, WorldPayload,
   NeighbourhoodPayload,
+  RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -123,6 +124,18 @@ export function senseiApi(port: number) {
     try {
       const res = await fetch(`${base}${path}`, { method: 'DELETE' });
       if (res.ok) return { ok: true, data: undefined };
+      return { ok: false, error: { status: res.status, message: res.statusText } };
+    } catch (e) {
+      return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
+    }
+  }
+
+  /** Error-propagating DELETE that returns the parsed body — for a removal
+   *  that reports what it removed. */
+  async function tryDeleteJson<T>(path: string): Promise<ApiResult<T>> {
+    try {
+      const res = await fetch(`${base}${path}`, { method: 'DELETE' });
+      if (res.ok) return { ok: true, data: await res.json() as T };
       return { ok: false, error: { status: res.status, message: res.statusText } };
     } catch (e) {
       return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
@@ -889,9 +902,22 @@ export function senseiApi(port: number) {
         '/api/scan/roots', { path }, { ok: false, id: '', path },
       ),
 
-    /** Remove a watch root from the DB by its UUID. */
-    removeWatchRoot: (id: string) =>
-      del(`/api/scan/roots/${enc(id)}`),
+    /** Remove a watch root (#247). The decision is REQUIRED: `keep` pauses it
+     *  and leaves its data readable, `remove` prunes everything it held. Result-
+     *  based, because the old fire-and-forget `del` let the screen drop a root
+     *  whose removal had failed. */
+    tryRemoveWatchRoot: (id: string, repositories: RootRemovalDecision) =>
+      tryDeleteJson<RootRemovalResult>(
+        `/api/scan/roots/${enc(id)}?repositories=${enc(repositories)}`,
+      ),
+
+    /** What stops syncing if this root is removed. */
+    tryGetRootRepositories: (id: string) =>
+      tryGet<RootRepository[]>(`/api/scan/roots/${enc(id)}/repositories`),
+
+    /** Remove one repository and everything associated with it, and add it to
+     *  its root's exclusions so a rescan does not bring it back. */
+    tryPruneRepository: (path: string) => tryPost<PruneResult>('/api/scan/prune', { path }),
 
     /**
      * Replace one root's scan exclusions.

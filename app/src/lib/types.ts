@@ -2043,3 +2043,35 @@ export interface NeighbourhoodPayload {
   edges: NeighbourEdge[];
   coverage: NeighbourCoverage;
 }
+
+// ── Pruner (#247) ───────────────────────────────────────────────────────────
+
+/** What one prune removed: folders (with their files and graph), repository
+ *  rows no other checkout still uses, and projects that prune left empty. */
+export interface PruneReport {
+  folders: number;
+  repositories: number;
+  projects: number;
+}
+
+/** A repository root under a watch root — what stops syncing if the root goes. */
+export interface RootRepository {
+  name: string;
+  path: string;
+  kind: 'git' | 'standalone';
+}
+
+/** Removing a root REQUIRES a decision: keep the data and stop syncing, or
+ *  remove everything it held. */
+export type RootRemovalDecision = 'keep' | 'remove';
+
+export type RootRemovalResult =
+  | { ok: true; kept: true }
+  | { ok: true; kept: false; pruned: PruneReport };
+
+export interface PruneResult {
+  ok: true;
+  /** The exclusion now on the root, relative to it. */
+  excluded: string;
+  pruned: PruneReport;
+}
