@@ -291,6 +291,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/process/analyze", post(observatory::analyze_process))
         .route("/api/projects/{id}/backfill", post(observatory::backfill_project_sessions))
         .route("/api/transcripts/backfill", post(observatory::ingest_captures))
+        // #218: reading an assistant's history is its own consent, per source.
+        .route("/api/transcripts/consent", get(observatory::transcript_consent))
+        .route("/api/transcripts/consent/{source}", put(observatory::set_transcript_consent))
         .route("/api/metrics/backfill", post(observatory::backfill_metrics))
         .route("/api/projects/{id}/graph", get(observatory::solution_graph))
         .route("/api/projects/{id}/roles", get(observatory::solution_roles))
@@ -3041,6 +3044,51 @@ mod tests {
             .await
             .ok();
         pg.delete_project(&mine).await.ok();
+    }
+
+    /// **READING TRANSCRIPTS IS ITS OWN CONSENT, PER ASSISTANT, OFF UNTIL SAID
+    /// (#218).** The endpoint lists every source with a plain label and its
+    /// state, and a PUT flips one. An unknown source is a 404, never a stored
+    /// key that governs nothing.
+    ///
+    /// Mutations that must break this test: store an unknown source, or report
+    /// `consented` from anything but the stored key.
+    #[tokio::test]
+    async fn transcript_consent_is_listed_per_source_and_set_one_at_a_time() {
+        let (app, state) = test_app().await;
+        let _gate = crate::transcript::consent::CONSENT_KEYS.enter();
+        crate::transcript::consent::set(&state.pg, "zed", false).await.unwrap();
+
+        let (status, body) = req(app.clone(), "GET", "/api/transcripts/consent", None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let rows = body.as_array().expect("a list");
+        assert_eq!(rows.len(), crate::transcript::consent::SOURCES.len());
+        let zed = rows.iter().find(|r| r["source"] == "zed").expect("zed is listed");
+        assert_eq!(zed["label"], "Zed");
+        assert_eq!(zed["consented"], false);
+
+        let (status, _) = req(
+            app.clone(),
+            "PUT",
+            "/api/transcripts/consent/zed",
+            Some(serde_json::json!({ "consented": true })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, body) = req(app.clone(), "GET", "/api/transcripts/consent", None).await;
+        let zed = body.as_array().unwrap().iter().find(|r| r["source"] == "zed").unwrap().clone();
+        assert_eq!(zed["consented"], true);
+
+        let (status, _) = req(
+            app,
+            "PUT",
+            "/api/transcripts/consent/notepad",
+            Some(serde_json::json!({ "consented": true })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "an unknown source is not stored");
+
+        crate::transcript::consent::set(&state.pg, "zed", false).await.unwrap();
     }
 
     #[tokio::test]

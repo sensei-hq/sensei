@@ -25,6 +25,7 @@ import type {
   WorldGroupBy, WorldPayload,
   NeighbourhoodPayload,
   RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
+  TranscriptSourceConsent,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
@@ -914,6 +915,15 @@ export function senseiApi(port: number) {
     tryRemoveWatchRoot: (id: string, repositories: RootRemovalDecision) =>
       tryDeleteJson<RootRemovalResult>(
         `/api/scan/roots/${enc(id)}?repositories=${enc(repositories)}`,
+      ),
+
+    /** #218 — which sources sensei may read conversation history from. */
+    tryGetTranscriptConsent: () =>
+      tryGet<TranscriptSourceConsent[]>('/api/transcripts/consent'),
+
+    trySetTranscriptConsent: (source: string, consented: boolean) =>
+      tryPutJson<{ ok: boolean; source: string; consented: boolean }>(
+        `/api/transcripts/consent/${enc(source)}`, { consented },
       ),
 
     /** What stops syncing if this root is removed. */

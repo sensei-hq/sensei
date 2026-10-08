@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import AssistantCard from '$lib/components/AssistantCard.svelte';
+  import TranscriptConsentCard from '$lib/components/settings/TranscriptConsentCard.svelte';
   import { appState } from '$lib/appstate.svelte.js';
   import { EventManager } from '$lib/events.js';
   import { wizardState } from '$lib/wizard-state.svelte.js';
@@ -114,4 +115,10 @@
       No AI coding assistants detected. Make sure the daemon is running.
     </p>
   {/if}
+
+  <!-- A separate yes (#218): the switches above configure hooks; reading past
+       conversations is asked here, per assistant, and starts off. -->
+  <div class="mt-6">
+    <TranscriptConsentCard />
+  </div>
 </div>

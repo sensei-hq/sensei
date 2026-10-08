@@ -10,6 +10,7 @@
 //! with other work (scans, etc.) and one huge/bad file can't block the rest.
 
 pub mod claude;
+pub mod consent;
 pub mod copilot_cli;
 pub mod cursor;
 pub mod opencode;
@@ -425,6 +426,14 @@ fn adapters() -> Vec<Box<dyn TranscriptAdapter>> {
     ]
 }
 
+/// The adapters the user has consented to (#218) — and ONLY those. `dispatch`
+/// walks this, never `adapters()` directly.
+fn consented_adapters(
+    consented: &std::collections::HashSet<String>,
+) -> Vec<Box<dyn TranscriptAdapter>> {
+    adapters().into_iter().filter(|a| consented.contains(a.source())).collect()
+}
+
 /// Resolve an adapter for a capture source (used by the per-unit handler — the
 /// root/db-path only matters for `units`, which the per-unit path doesn't use).
 fn adapter_for_source(source: &str) -> Option<Box<dyn TranscriptAdapter>> {
@@ -719,7 +728,13 @@ pub async fn backfill(
     parent: Option<u64>,
     since: Option<i64>,
 ) -> BackfillOutcome {
-    let (files_seen, enqueued) = dispatch(queue, parent, since).await;
+    // FAIL CLOSED: a consent that cannot be read is not a yes, so an unreadable
+    // config reads nothing rather than everything (#218).
+    let consented = crate::transcript::consent::consented(pg).await.unwrap_or_else(|e| {
+        tracing::error!(error = %e, "transcript backfill: consent unreadable; reading no transcripts");
+        std::collections::HashSet::new()
+    });
+    let (files_seen, enqueued) = dispatch(queue, parent, since, &consented).await;
     let sessions_repaired = repair_sessions(pg).await;
     BackfillOutcome { files_seen, enqueued, sessions_repaired }
 }
@@ -781,14 +796,19 @@ pub async fn repair_sessions(pg: &crate::db::pg_store::PgStore) -> u32 {
 /// smart skip (cursor for prose + session-has-events for synthesis), so the
 /// dispatcher stays trivial and correct across upgrades. Callable from the
 /// dispatcher task or directly from the trigger endpoint (immediate feedback).
+///
+/// Only CONSENTED sources are walked (#218). Configuring an assistant's hooks is
+/// not consent to read its history, and before this every adapter was read
+/// every tick whatever the user had chosen.
 pub async fn dispatch(
     queue: &crate::tasks::queue::TaskQueue,
     parent: Option<u64>,
     since: Option<i64>,
+    consented: &std::collections::HashSet<String>,
 ) -> (u32, u32) {
     let mut count = 0u32;
     let mut skipped = 0u32;
-    for ad in adapters() {
+    for ad in consented_adapters(consented) {
         for unit in ad.units() {
             // `since` is what makes a backfill a PARAMETER rather than a separate
             // kind: the same coordinator ingests everything (None) or only units
@@ -828,6 +848,17 @@ pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let Some(adapter) = adapter_for_source(task.capture_source()) else {
         return Err(format!("unknown transcript source '{}'", task.folder_path));
     };
+    // Re-checked HERE, not only at dispatch: a task queued before the user
+    // withdrew consent must not read the file afterwards (#218). An unreadable
+    // consent is an error — the task retries — never a yes.
+    let consented = consent::consented(ctx.pg()).await?;
+    if !consented.contains(task.capture_source()) {
+        tracing::info!(
+            source = task.capture_source(),
+            "ingest skipped: no consent to read this source"
+        );
+        return Ok(0);
+    }
     let outcome = ingest_one(ctx.pg(), adapter.as_ref(), &task.path).await?;
     // A freshly-synthesized historical session needs enrichment to light up its
     // FTR/churn/correction signals (#75). AnalyzeProject is idempotent + incremental.
@@ -840,6 +871,48 @@ pub async fn run_ingest_capture(ctx: &TaskContext, task: &Task) -> Result<u32, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A task queued BEFORE consent was withdrawn must not read the file after
+    /// it (#218): the per-file handler re-checks, so "off" takes effect on the
+    /// next task, not the next dispatch.
+    ///
+    /// Mutation that must break this: drop the consent check in
+    /// `run_ingest_capture`.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn a_queued_ingest_reads_nothing_once_consent_is_withdrawn() {
+        let ctx = crate::tasks::test_support::make_ctx().await;
+        let _gate = consent::CONSENT_KEYS.enter();
+        let dir = std::env::temp_dir().join(format!("sensei-consent-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("proj")).unwrap();
+        let file = dir.join("proj").join(format!("_test-consent-{}.jsonl", uuid::Uuid::new_v4()));
+        std::fs::write(&file, SAMPLE).unwrap();
+        let task =
+            Task::for_capture(TaskKind::IngestCapture, "claude_code", &file.to_string_lossy());
+
+        consent::set(ctx.pg(), "claude_code", false).await.unwrap();
+        assert_eq!(run_ingest_capture(&ctx, &task).await.unwrap(), 0, "no consent, no turns read");
+
+        consent::set(ctx.pg(), "claude_code", true).await.unwrap();
+        assert!(
+            run_ingest_capture(&ctx, &task).await.unwrap() > 0,
+            "with consent, the file is read"
+        );
+
+        consent::set(ctx.pg(), "claude_code", false).await.unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `dispatch` walks only what was consented to. Mutation that must break
+    /// this: return `adapters()` unfiltered.
+    #[test]
+    fn only_consented_sources_are_walked() {
+        let none = std::collections::HashSet::new();
+        assert!(consented_adapters(&none).is_empty(), "no consent, nothing read");
+        let zed = std::collections::HashSet::from(["zed".to_string()]);
+        let got: Vec<&str> = consented_adapters(&zed).iter().map(|a| a.source()).collect();
+        assert_eq!(got, vec!["zed"]);
+    }
 
     const SAMPLE: &str = r#"
 {"type":"user","timestamp":"2026-06-22T10:00:00.000Z","message":{"role":"user","content":"add a login page"}}
