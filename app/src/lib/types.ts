@@ -2075,3 +2075,15 @@ export interface PruneResult {
   excluded: string;
   pruned: PruneReport;
 }
+
+// ── Transcript consent (#218) ───────────────────────────────────────────────
+
+/** One source sensei can read conversation history from, and whether the user
+ *  said yes. Separate from configuring the assistant's hooks. */
+export interface TranscriptSourceConsent {
+  /** The capture source: `claude_code`, `zed`, … */
+  source: string;
+  /** What a person calls it. */
+  label: string;
+  consented: boolean;
+}

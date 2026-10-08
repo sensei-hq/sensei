@@ -3,6 +3,7 @@
     import { appState } from "$lib/appstate.svelte.js";
     import { senseiApi } from "$lib/api.js";
     import { PageHeader, StatusDot } from "$lib/components";
+    import TranscriptConsentCard from "$lib/components/settings/TranscriptConsentCard.svelte";
 
     type Assistant = {
         family: string;
@@ -70,8 +71,10 @@
             {/if}
         </div>
     {/if}
+    <div class="mt-6">
+        <TranscriptConsentCard />
+    </div>
 </div>
-
 <style>
     .assistant-row:last-child {
         border-bottom: none;
