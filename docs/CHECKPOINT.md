@@ -5,20 +5,22 @@
 
 | # | item | status | to close |
 |---|---|---|---|
-| 220 219 231 233 218 248 | diagrams, consent, e2e pointer | CLOSED | — |
-| 202 | gateway v0.7.0 | CLOSED — PR #228 merged `ec48c565` | — |
-| 203 205 232 | llama build, Structure, Layers/Cycles | CLOSED — re-verified live | — |
-| — | CodeQL for Rust (archived PR) | MERGED as #250 `1e177907` | baseline appears at next main merge |
+| 220 219 231 233 218 248 202 203 205 232 | done | CLOSED | — |
+| — | CodeQL for Rust | MERGED #250 | baseline at next main merge |
 | 247 | pruner + root removal | gates 1–5 done | gate 6: user runs the SQL below |
-| 238 | Claude Code mods | 2 of 4 defects fixed | `duration_ms`/`agent_id` harvest, `success` column, mods 1–5 |
-| 221 | Schema diagram | DECIDED C — light nodes + separate schema tables; dbd importer + ORM extractors | revise spec 20 → DDL → importer → ER screen |
-| 236 | dōjō data access | DECIDED B — views + RLS, user session; kavach#51 filed | access matrix doc → views+RLS → routes → device-token JWT |
-| 249 | relay access | DECIDED — owner-only; peers see status only | scope 5 relay routes to caller; status-only peer view |
-| 225 | dōjō team view | queued | sync-shape decision |
-| 239 240 241 | productionise epic | queued | — |
-| 245 (+134 dup) | e2e red gate | open | 4 groups, one commit each |
 
-**Next command:** #238 — harvest `duration_ms` / `agent_id` from PostToolUse.
+**Queue, in order** (re-sequenced 2026-10-08 after the #221/#236/#249 decisions):
+
+| # | item | why here | first step |
+|---|---|---|---|
+| 1. 249 | relay: owner-only; peers see status only | live exposure, small | scope 5 relay routes to `caller.membershipId`, route tests A≠B |
+| 2. 238 | Claude Code mods (2 of 4 done) | small, unblocked | harvest `duration_ms` / `agent_id` |
+| 3. 251 | schema store + indexer routing | #221 prerequisite | rewrite spec 20 → DDL → `SchemaFacts` routing → dbd importer |
+| 4. 221 | Schema / ER screen | needs 251 steps 1–5 | `ErDiagram` over the store |
+| 5. 236 | dōjō access: views + RLS, user session | large; kavach#51 upstream | access-matrix doc |
+| 6. 225 · 239–241 · 245 | team view · productionise · e2e red gate | — | — |
+
+**Next command:** #249 — scope `dojo/src/routes/v1/t/[origin]/[org]/relay/{gates,reply,segments,session,review}` to the caller's membership, test-first.
 
 **Orphan cleanup the classifier blocked** (user to run; newest backup
 `database/backup/essential/20261007-200259`):
