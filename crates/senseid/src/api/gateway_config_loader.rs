@@ -652,8 +652,8 @@ mod tests {
 
         let url = std::env::var("GATEWAY_LOADER_TEST_URL")
             .unwrap_or_else(|_| "postgresql://localhost:5432/sensei".to_string());
-        let pool = sqlx_postgres::PgPoolOptions::new().connect(&url).await.expect("connect");
-        let cfg = super::load_gateway_config(&pool).await.expect("load ok").expect("DB has chains");
+        let pg = crate::db::pg_store::PgStore::connect(&url).await.expect("connect");
+        let cfg = super::load_gateway_config(&pg).await.expect("load ok").expect("DB has chains");
         let gw = gateway::FacadeBuilder::new(cfg).build().await.gateway;
 
         let req = InferenceRequest {
