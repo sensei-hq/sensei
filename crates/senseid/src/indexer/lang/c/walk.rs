@@ -487,6 +487,7 @@ impl<'a> Walk<'a> {
         let system = path.kind() == "system_lib_string";
         let spelled = raw.trim_matches(['"', '<', '>'].as_ref()).to_string();
         self.imports.push(Import {
+            target: Import::unplaced(&spelled),
             path: spelled,
             binds: Binding::Glob,
             origin: if system {

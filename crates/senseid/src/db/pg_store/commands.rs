@@ -74,7 +74,8 @@ impl PgStore {
                     "SELECT c.id, c.folder_id, f.name, c.raw_name, c.command_line, c.category, c.ecosystem, c.source_file, c.discovered_at
                        FROM sensei.folder_commands c
                        JOIN sensei.folders f ON f.id = c.folder_id
-                      WHERE f.project_id = $1 AND c.category = $2
+                       JOIN sensei.folder_projects fp ON fp.folder_id = c.folder_id
+                      WHERE fp.project_id = $1 AND c.category = $2
                       ORDER BY c.category NULLS LAST, c.raw_name"
                 ).bind(project_id).bind(cat).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
         } else {
@@ -82,7 +83,8 @@ impl PgStore {
                     "SELECT c.id, c.folder_id, f.name, c.raw_name, c.command_line, c.category, c.ecosystem, c.source_file, c.discovered_at
                        FROM sensei.folder_commands c
                        JOIN sensei.folders f ON f.id = c.folder_id
-                      WHERE f.project_id = $1
+                       JOIN sensei.folder_projects fp ON fp.folder_id = c.folder_id
+                      WHERE fp.project_id = $1
                       ORDER BY c.category NULLS LAST, c.raw_name"
                 ).bind(project_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?
         };

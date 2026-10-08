@@ -6,14 +6,11 @@
 //! `sensei.project_metrics` (via [`PgStore::upsert_project_metric_repo`]) for ONE
 //! project.
 //!
-//! Repo grain: every aggregate GROUPs BY the session's repository — the
-//! `sensei.folders.repository_id` of the session's durable repo anchor
-//! (`activity.sessions.repo_folder_id`) — so ONE project-day yields ONE row per
-//! repository the day's sessions touched (a project is a GROUP of repositories;
-//! the project value is the pooling view over them, not a row this computer
-//! writes). Sessions whose repo can't be resolved (`repo_folder_id` NULL, or that
-//! folder's `repository_id` NULL) are EXCLUDED — never fabricated into a made-up
-//! repository.
+//! Repo grain: ONE project-day yields ONE row per repository the day's sessions
+//! touched (a project is a GROUP of repositories; the project value is the
+//! pooling view over them, not a row this computer writes). How a session is
+//! keyed to a repository — and which sessions that EXCLUDES — belongs to the
+//! reads: `db/pg_store/metric_reads/session_outcomes.rs`.
 //!
 //! v1 registry keys (all `task_name = "session_outcomes"`), all DAILY grain:
 //! - `ftr` (pct): first-try-right rate per repository per day (`numerator` =
@@ -43,12 +40,14 @@
 //!
 //! Never-fabricate: every DB call propagates `Err`; a repository-day/metric with
 //! no data writes NO row (a `0` value is written only when a real denominator
-//! exists). `tool_calls` live on `activity.turns` (per-turn), never on `sessions`.
+//! exists).
+//!
+//! [`PgStore::upsert_project_metric_repo`]: crate::db::pg_store::PgStore::upsert_project_metric_repo
 
-use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;
+use crate::db::pg_store::MetricRow;
 
 /// `sensei.metric_grain` text value — every row this group writes is daily grain
 /// (the per-session grain is retired under the repo-grain identity).
@@ -71,321 +70,6 @@ const KEY_TOKENS_OUT: &str = "tokens_out_per_day";
 const KEY_SESSION_DURATION: &str = "session_duration";
 const KEY_TOKENS_PER_RESULT: &str = "tokens_per_result";
 const KEY_INCOMPLETE_ANALYSIS: &str = "incomplete_analysis_rate";
-
-/// One (day × repository) session-level aggregate for a project: `(day,
-/// repository_id, session_count, ftr_count, correction_count)`. Only
-/// (day, repository) pairs WITH ≥1 measurable session appear, so `session_count`
-/// (the `ftr` denominator) is always ≥ 1.
-type DayAgg = (chrono::NaiveDate, uuid::Uuid, i64, i64, i64);
-
-/// One (day × repository) turn-level aggregate for `rework_ratio`: `(day,
-/// repository_id, corrected_tool_calls, total_tool_calls)` summed from
-/// `activity.turns.tool_calls`.
-type DayRework = (chrono::NaiveDate, uuid::Uuid, i64, i64);
-
-/// One (day × repository) `time_to_useful_result`: `(day, repository_id,
-/// median_seconds, n)`. `n` = the number of sessions that contributed a
-/// first-useful latency that day for that repository.
-type DayTtur = (chrono::NaiveDate, uuid::Uuid, f64, i64);
-
-/// This group's occurrence-time anchor for the shared [`super::day_filter`] /
-/// [`super::bind_day`] `$2` day-set contract: sessions bucket/window on
-/// `s.started_at`.
-const DAY_ANCHOR: &str = "s.started_at";
-
-/// Per-(day × repository) session-level aggregates over the selected day-set
-/// (rolling window when `as_of=None`, the single day `D` when `Some(D)`),
-/// project-scoped via `activity.sessions.project_id`. The session's repository is
-/// its repo anchor's `repository_id` (`sensei.folders.repository_id` WHERE
-/// `folders.id = s.repo_folder_id`); a session whose anchor can't be resolved to a
-/// repository is EXCLUDED (never fabricated into a made-up repository).
-/// `outcome is not null` restricts to measurable (analyzed) sessions — in-flight
-/// sessions whose `ftr`/`outcome` are still `NULL` are excluded from the FTR base.
-async fn daily_session_aggregates(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    window_days: u32,
-    as_of: Option<chrono::NaiveDate>,
-) -> Result<Vec<DayAgg>, String> {
-    let sql = format!(
-        "SELECT date_trunc('day', s.started_at)::date              AS day
-              , rf.repository_id                                    AS repository_id
-              , count(*)::int8                                     AS session_count
-              , count(*) FILTER (WHERE s.ftr)::int8                AS ftr_count
-              , coalesce(sum(s.corrections), 0)::int8              AS correction_count
-           FROM activity.sessions s
-           JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-          WHERE s.project_id  = $1
-            AND rf.repository_id IS NOT NULL
-            AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
-            AND {}
-          GROUP BY 1, 2
-          ORDER BY 1, 2",
-        super::day_filter(DAY_ANCHOR, as_of),
-    );
-    let q = sqlx_core::query_as::query_as::<_, DayAgg>(&sql).bind(project_id);
-    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
-}
-
-/// Per-(day × repository) tool-call sums for `rework_ratio`: `corrected_tool_calls`
-/// (numerator) over sessions with `outcome = 'corrected'`, and `total_tool_calls`
-/// (denominator) over all measurable sessions that day for that repository.
-/// Tool-calls come from `activity.turns`; a session with no turns contributes 0
-/// either way. Same repo-resolution + measurable base as
-/// [`daily_session_aggregates`].
-async fn daily_rework(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    window_days: u32,
-    as_of: Option<chrono::NaiveDate>,
-) -> Result<Vec<DayRework>, String> {
-    let sql = format!(
-        "SELECT date_trunc('day', s.started_at)::date                                         AS day
-              , rf.repository_id                                                               AS repository_id
-              , coalesce(sum(t.tool_calls) FILTER (WHERE s.outcome = 'corrected'::sensei.session_outcome), 0)::int8 AS corrected_tool_calls
-              , coalesce(sum(t.tool_calls), 0)::int8                                           AS total_tool_calls
-           FROM activity.sessions s
-           JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-           JOIN activity.turns    t  ON t.session_id = s.id
-          WHERE s.project_id  = $1
-            AND rf.repository_id IS NOT NULL
-            AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
-            AND {}
-          GROUP BY 1, 2
-          ORDER BY 1, 2",
-        super::day_filter(DAY_ANCHOR, as_of),
-    );
-    let q = sqlx_core::query_as::query_as::<_, DayRework>(&sql).bind(project_id);
-    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
-}
-
-/// Per-(day × repository) median `time_to_useful_result` (seconds). For each
-/// measurable session, the latency is `started_at → ended_at of the FIRST
-/// non-correction turn` (the first usable output). `percentile_cont(0.5)` medians
-/// those per-session latencies within each (day, repository). Sessions whose only
-/// turns are corrections — or that have no turns — produce no usable output and are
-/// dropped by the inner `LIMIT 1` join (never a fabricated 0). `n` is the
-/// contributing session count that day for that repository. Same repo-resolution +
-/// measurable base as [`daily_session_aggregates`].
-async fn daily_time_to_useful(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    window_days: u32,
-    as_of: Option<chrono::NaiveDate>,
-) -> Result<Vec<DayTtur>, String> {
-    let sql = format!(
-        "WITH first_useful AS ( \
-             SELECT date_trunc('day', s.started_at)::date                        AS day \
-                  , rf.repository_id                                             AS repository_id \
-                  , EXTRACT(EPOCH FROM (fu.ended_at - s.started_at))::float8      AS secs \
-               FROM activity.sessions s \
-               JOIN sensei.folders    rf ON rf.id = s.repo_folder_id \
-               JOIN LATERAL ( \
-                      SELECT t.ended_at \
-                        FROM activity.turns t \
-                       WHERE t.session_id     = s.id \
-                         AND t.is_correction  = false \
-                       ORDER BY t.turn_number \
-                       LIMIT 1 \
-                    ) fu ON true \
-              WHERE s.project_id  = $1 \
-                AND rf.repository_id IS NOT NULL \
-                AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome \
-                AND {} \
-         ) \
-         SELECT day \
-              , repository_id \
-              , percentile_cont(0.5) WITHIN GROUP (ORDER BY secs)::float8         AS median_secs \
-              , count(*)::int8                                                     AS n \
-           FROM first_useful \
-          WHERE secs >= 0 \
-          GROUP BY day, repository_id \
-          ORDER BY day, repository_id",
-        super::day_filter(DAY_ANCHOR, as_of),
-    );
-    let q = sqlx_core::query_as::query_as::<_, DayTtur>(&sql).bind(project_id);
-    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
-}
-
-/// Per-(day × repository) context-pressure counts: `(day, repository_id,
-/// pressured, total)` — sessions carrying a context-pressure trouble signal
-/// (Phase D `props.trouble.hint` ∈ {context-pressure, suggested-restart}) over the
-/// measurable base. The rate is `pressured / total`; a (day, repository) with a
-/// real denominator writes a row (even a 0). Same repo-resolution + measurable base
-/// as [`daily_session_aggregates`].
-async fn daily_context_pressure(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    window_days: u32,
-    as_of: Option<chrono::NaiveDate>,
-) -> Result<Vec<(chrono::NaiveDate, uuid::Uuid, i64, i64)>, String> {
-    let sql = format!(
-        "SELECT date_trunc('day', s.started_at)::date                                          AS day
-              , rf.repository_id                                                                AS repository_id
-              , count(*) FILTER (WHERE s.props->'trouble'->>'hint' IN ('context-pressure','suggested-restart'))::int8 AS pressured
-              , count(*)::int8                                                                  AS total
-           FROM activity.sessions s
-           JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-          WHERE s.project_id  = $1
-            AND rf.repository_id IS NOT NULL
-            AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome
-            AND {}
-          GROUP BY 1, 2
-          ORDER BY 1, 2",
-        super::day_filter(DAY_ANCHOR, as_of),
-    );
-    let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64)>(&sql)
-        .bind(project_id);
-    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
-}
-
-/// Per-(day × repository) token-volume sums: `(day, repository_id, sum_in,
-/// sum_out, n)`. Base = sessions that carry token usage (`tokens_in IS NOT NULL`)
-/// — token volume is independent of outcome analysis, so this base is NOT the
-/// measurable-outcome base the rate metrics use; a session with no captured tokens
-/// contributes nothing (never a fabricated 0). `n` = sessions with tokens that day.
-async fn daily_token_volume(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    window_days: u32,
-    as_of: Option<chrono::NaiveDate>,
-) -> Result<Vec<(chrono::NaiveDate, uuid::Uuid, i64, i64, i64)>, String> {
-    let sql = format!(
-        "SELECT date_trunc('day', s.started_at)::date        AS day
-              , rf.repository_id                              AS repository_id
-              , coalesce(sum(s.tokens_in), 0)::int8           AS sum_in
-              , coalesce(sum(s.tokens_out), 0)::int8          AS sum_out
-              , count(*)::int8                                AS n
-           FROM activity.sessions s
-           JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-          WHERE s.project_id  = $1
-            AND rf.repository_id IS NOT NULL
-            AND s.tokens_in IS NOT NULL
-            AND {}
-          GROUP BY 1, 2
-          ORDER BY 1, 2",
-        super::day_filter(DAY_ANCHOR, as_of),
-    );
-    let q =
-        sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64, i64)>(&sql)
-            .bind(project_id);
-    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
-}
-
-/// Per-(day × repository) mean active session duration in SECONDS: `(day,
-/// repository_id, avg_secs, n)`. Base = sessions with a recorded `duration`
-/// interval (gap-aware active work time); a session with no duration contributes
-/// nothing (honest-empty, never a fabricated 0). `n` = contributing sessions.
-async fn daily_session_duration(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    window_days: u32,
-    as_of: Option<chrono::NaiveDate>,
-) -> Result<Vec<(chrono::NaiveDate, uuid::Uuid, f64, i64)>, String> {
-    let sql = format!(
-        "SELECT date_trunc('day', s.started_at)::date                       AS day
-              , rf.repository_id                                            AS repository_id
-              , avg(EXTRACT(EPOCH FROM s.duration))::float8                 AS avg_secs
-              , count(*)::int8                                              AS n
-           FROM activity.sessions s
-           JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-          WHERE s.project_id  = $1
-            AND rf.repository_id IS NOT NULL
-            AND s.duration   IS NOT NULL
-            AND {}
-          GROUP BY 1, 2
-          ORDER BY 1, 2",
-        super::day_filter(DAY_ANCHOR, as_of),
-    );
-    let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, f64, i64)>(&sql)
-        .bind(project_id);
-    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
-}
-
-/// Per-(day × repository) `tokens_per_result`: `(day, repository_id,
-/// sum_out, completed)` — Σ output tokens over COMPLETED sessions (`outcome =
-/// 'completed'`) that carry token usage / count of those sessions. Output-token
-/// based so it isn't inflated by input cache. A (day, repo) with no completed
-/// token-bearing session writes NO row (honest-empty).
-async fn daily_tokens_per_result(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    window_days: u32,
-    as_of: Option<chrono::NaiveDate>,
-) -> Result<Vec<(chrono::NaiveDate, uuid::Uuid, i64, i64)>, String> {
-    let sql = format!(
-        "SELECT date_trunc('day', s.started_at)::date        AS day
-              , rf.repository_id                              AS repository_id
-              , coalesce(sum(s.tokens_out), 0)::int8          AS sum_out
-              , count(*)::int8                                AS completed
-           FROM activity.sessions s
-           JOIN sensei.folders    rf ON rf.id = s.repo_folder_id
-          WHERE s.project_id  = $1
-            AND rf.repository_id IS NOT NULL
-            AND s.outcome    = 'completed'::sensei.session_outcome
-            AND s.tokens_out IS NOT NULL
-            AND {}
-          GROUP BY 1, 2
-          ORDER BY 1, 2",
-        super::day_filter(DAY_ANCHOR, as_of),
-    );
-    let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64)>(&sql)
-        .bind(project_id);
-    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
-}
-
-/// Per-(day × repository) edit-before-read counts for `incomplete_analysis_rate`:
-/// `(day, repository_id, flagged, measurable)`. Over the measurable base, for each
-/// session it compares the first EDIT-like tool event to the first READ/SEARCH-like
-/// one (from `activity.assistant_events`, joined on `client_session_id`); a session
-/// is FLAGGED when it edits before it reads (or edits with no read at all).
-/// `measurable` = sessions with ≥1 edit-like event that day for the repository —
-/// sessions with no edits are not measurable for this signal (excluded, never a
-/// fabricated 0). Tool-name classification is a cross-adapter heuristic (regex on
-/// the normalized `tool_name`), not intent.
-async fn daily_incomplete_analysis(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    window_days: u32,
-    as_of: Option<chrono::NaiveDate>,
-) -> Result<Vec<(chrono::NaiveDate, uuid::Uuid, i64, i64)>, String> {
-    // Heuristic tool-name classes, normalized across adapters (Claude Edit/Read,
-    // Zed edit_file/read_file, OpenCode edit/read, etc.). EDIT-like is restricted to
-    // modifications of existing files (edit/multiedit/str_replace) — NOT `write`,
-    // which is usually new-file creation and has nothing to read first.
-    const EDIT_RE: &str = "^(edit|multiedit|str_replace)";
-    const READ_RE: &str = "^(read|grep|glob|find|ls|list|search|cat)";
-    let sql = format!(
-        "WITH per_session AS ( \
-             SELECT s.id                                              AS sid \
-                  , date_trunc('day', s.started_at)::date             AS day \
-                  , rf.repository_id                                  AS repository_id \
-                  , min(e.ts) FILTER (WHERE e.tool_name ~* '{edit}')  AS edit_min \
-                  , min(e.ts) FILTER (WHERE e.tool_name ~* '{read}')  AS read_min \
-               FROM activity.sessions s \
-               JOIN sensei.folders          rf ON rf.id = s.repo_folder_id \
-               JOIN activity.assistant_events e ON e.session_id = s.client_session_id \
-              WHERE s.project_id  = $1 \
-                AND rf.repository_id IS NOT NULL \
-                AND s.outcome    IS NOT NULL AND s.outcome <> 'empty'::sensei.session_outcome \
-                AND {day} \
-              GROUP BY s.id, 2, 3 \
-         ) \
-         SELECT day \
-              , repository_id \
-              , count(*) FILTER (WHERE edit_min IS NOT NULL AND (read_min IS NULL OR edit_min < read_min))::int8 AS flagged \
-              , count(*) FILTER (WHERE edit_min IS NOT NULL)::int8                                               AS measurable \
-           FROM per_session \
-          GROUP BY day, repository_id \
-          ORDER BY day, repository_id",
-        edit = EDIT_RE,
-        read = READ_RE,
-        day = super::day_filter(DAY_ANCHOR, as_of),
-    );
-    let q = sqlx_core::query_as::query_as::<_, (chrono::NaiveDate, uuid::Uuid, i64, i64)>(&sql)
-        .bind(project_id);
-    super::bind_day(q, window_days, as_of).fetch_all(pg.pool()).await.map_err(|e| e.to_string())
-}
 
 /// Compute the `session_outcomes` group for one project.
 ///
@@ -442,7 +126,7 @@ pub(super) async fn compute(
     // Per-repository daily session-level metrics: ftr (pct) + throughput (count).
     if ftr_id.is_some() || throughput_id.is_some() {
         for (day, repository_id, session_count, ftr_count, correction_count) in
-            daily_session_aggregates(pg, &project_id, window_days, as_of).await?
+            pg.session_outcomes_sessions_by_day(&project_id, window_days, as_of).await?
         {
             if let Some(mid) = ftr_id {
                 // denominator (session_count) is ≥ 1 for any returned (day, repo).
@@ -452,36 +136,36 @@ pub(super) async fn compute(
                     "denominator": session_count,
                     "correction_count": correction_count,
                 });
-                pg.upsert_project_metric_repo(
-                    &mid,
-                    &repository_id,
-                    SCOPE_USER,
-                    None,
-                    None,
-                    day,
-                    GRAIN_DAILY,
+                pg.upsert_project_metric_repo(&MetricRow {
+                    metric_id: &mid,
+                    repository_id: &repository_id,
+                    scope: SCOPE_USER,
+                    identity: None,
+                    commit_sha: None,
+                    computed_on: day,
+                    grain: GRAIN_DAILY,
                     value,
-                    &props,
-                    SOURCE_MEASURED,
-                )
+                    props: &props,
+                    source: SOURCE_MEASURED,
+                })
                 .await?;
                 written += 1;
             }
             if let Some(mid) = throughput_id {
                 // count-type: value IS the count; no numerator/denominator needed.
                 let props = serde_json::json!({});
-                pg.upsert_project_metric_repo(
-                    &mid,
-                    &repository_id,
-                    SCOPE_USER,
-                    None,
-                    None,
-                    day,
-                    GRAIN_DAILY,
-                    session_count as f64,
-                    &props,
-                    SOURCE_MEASURED,
-                )
+                pg.upsert_project_metric_repo(&MetricRow {
+                    metric_id: &mid,
+                    repository_id: &repository_id,
+                    scope: SCOPE_USER,
+                    identity: None,
+                    commit_sha: None,
+                    computed_on: day,
+                    grain: GRAIN_DAILY,
+                    value: session_count as f64,
+                    props: &props,
+                    source: SOURCE_MEASURED,
+                })
                 .await?;
                 written += 1;
             }
@@ -491,7 +175,7 @@ pub(super) async fn compute(
     // Per-repository daily rework_ratio (ratio) — only if active.
     if let Some(mid) = rework_id {
         for (day, repository_id, corrected_tool_calls, total_tool_calls) in
-            daily_rework(pg, &project_id, window_days, as_of).await?
+            pg.session_outcomes_rework_by_day(&project_id, window_days, as_of).await?
         {
             if total_tool_calls == 0 {
                 // No tool-call data that day → no denominator → NO row (a 0/0 would
@@ -503,18 +187,18 @@ pub(super) async fn compute(
                 "numerator": corrected_tool_calls,
                 "denominator": total_tool_calls,
             });
-            pg.upsert_project_metric_repo(
-                &mid,
-                &repository_id,
-                SCOPE_USER,
-                None,
-                None,
-                day,
-                GRAIN_DAILY,
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &repository_id,
+                scope: SCOPE_USER,
+                identity: None,
+                commit_sha: None,
+                computed_on: day,
+                grain: GRAIN_DAILY,
                 value,
-                &props,
-                SOURCE_MEASURED,
-            )
+                props: &props,
+                source: SOURCE_MEASURED,
+            })
             .await?;
             written += 1;
         }
@@ -525,21 +209,21 @@ pub(super) async fn compute(
     // NO row (honest-empty).
     if let Some(mid) = ttur_id {
         for (day, repository_id, median_secs, n) in
-            daily_time_to_useful(pg, &project_id, window_days, as_of).await?
+            pg.session_outcomes_time_to_useful_by_day(&project_id, window_days, as_of).await?
         {
             let props = serde_json::json!({ "n": n });
-            pg.upsert_project_metric_repo(
-                &mid,
-                &repository_id,
-                SCOPE_USER,
-                None,
-                None,
-                day,
-                GRAIN_DAILY,
-                median_secs,
-                &props,
-                SOURCE_MEASURED,
-            )
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &repository_id,
+                scope: SCOPE_USER,
+                identity: None,
+                commit_sha: None,
+                computed_on: day,
+                grain: GRAIN_DAILY,
+                value: median_secs,
+                props: &props,
+                source: SOURCE_MEASURED,
+            })
             .await?;
             written += 1;
         }
@@ -550,25 +234,25 @@ pub(super) async fn compute(
     // measurable session is skipped (honest-empty, never a fabricated 0/0).
     if let Some(mid) = context_id {
         for (day, repository_id, pressured, total) in
-            daily_context_pressure(pg, &project_id, window_days, as_of).await?
+            pg.session_outcomes_context_pressure_by_day(&project_id, window_days, as_of).await?
         {
             if total == 0 {
                 continue;
             }
             let value = pressured as f64 / total as f64;
             let props = serde_json::json!({ "numerator": pressured, "denominator": total });
-            pg.upsert_project_metric_repo(
-                &mid,
-                &repository_id,
-                SCOPE_USER,
-                None,
-                None,
-                day,
-                GRAIN_DAILY,
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &repository_id,
+                scope: SCOPE_USER,
+                identity: None,
+                commit_sha: None,
+                computed_on: day,
+                grain: GRAIN_DAILY,
                 value,
-                &props,
-                SOURCE_MEASURED,
-            )
+                props: &props,
+                source: SOURCE_MEASURED,
+            })
             .await?;
             written += 1;
         }
@@ -579,55 +263,55 @@ pub(super) async fn compute(
     // sums across repositories). Base = sessions carrying token usage.
     if tokens_day_id.is_some() || tokens_in_id.is_some() || tokens_out_id.is_some() {
         for (day, repository_id, sum_in, sum_out, n) in
-            daily_token_volume(pg, &project_id, window_days, as_of).await?
+            pg.session_outcomes_token_volume_by_day(&project_id, window_days, as_of).await?
         {
             let props =
                 serde_json::json!({ "sessions": n, "tokens_in": sum_in, "tokens_out": sum_out });
             if let Some(mid) = tokens_day_id {
-                pg.upsert_project_metric_repo(
-                    &mid,
-                    &repository_id,
-                    SCOPE_USER,
-                    None,
-                    None,
-                    day,
-                    GRAIN_DAILY,
-                    (sum_in + sum_out) as f64,
-                    &props,
-                    SOURCE_MEASURED,
-                )
+                pg.upsert_project_metric_repo(&MetricRow {
+                    metric_id: &mid,
+                    repository_id: &repository_id,
+                    scope: SCOPE_USER,
+                    identity: None,
+                    commit_sha: None,
+                    computed_on: day,
+                    grain: GRAIN_DAILY,
+                    value: (sum_in + sum_out) as f64,
+                    props: &props,
+                    source: SOURCE_MEASURED,
+                })
                 .await?;
                 written += 1;
             }
             if let Some(mid) = tokens_in_id {
-                pg.upsert_project_metric_repo(
-                    &mid,
-                    &repository_id,
-                    SCOPE_USER,
-                    None,
-                    None,
-                    day,
-                    GRAIN_DAILY,
-                    sum_in as f64,
-                    &props,
-                    SOURCE_MEASURED,
-                )
+                pg.upsert_project_metric_repo(&MetricRow {
+                    metric_id: &mid,
+                    repository_id: &repository_id,
+                    scope: SCOPE_USER,
+                    identity: None,
+                    commit_sha: None,
+                    computed_on: day,
+                    grain: GRAIN_DAILY,
+                    value: sum_in as f64,
+                    props: &props,
+                    source: SOURCE_MEASURED,
+                })
                 .await?;
                 written += 1;
             }
             if let Some(mid) = tokens_out_id {
-                pg.upsert_project_metric_repo(
-                    &mid,
-                    &repository_id,
-                    SCOPE_USER,
-                    None,
-                    None,
-                    day,
-                    GRAIN_DAILY,
-                    sum_out as f64,
-                    &props,
-                    SOURCE_MEASURED,
-                )
+                pg.upsert_project_metric_repo(&MetricRow {
+                    metric_id: &mid,
+                    repository_id: &repository_id,
+                    scope: SCOPE_USER,
+                    identity: None,
+                    commit_sha: None,
+                    computed_on: day,
+                    grain: GRAIN_DAILY,
+                    value: sum_out as f64,
+                    props: &props,
+                    source: SOURCE_MEASURED,
+                })
                 .await?;
                 written += 1;
             }
@@ -638,21 +322,21 @@ pub(super) async fn compute(
     // pooling view averages across repositories. Base = sessions with a duration.
     if let Some(mid) = duration_id {
         for (day, repository_id, avg_secs, n) in
-            daily_session_duration(pg, &project_id, window_days, as_of).await?
+            pg.session_outcomes_session_duration_by_day(&project_id, window_days, as_of).await?
         {
             let props = serde_json::json!({ "n": n });
-            pg.upsert_project_metric_repo(
-                &mid,
-                &repository_id,
-                SCOPE_USER,
-                None,
-                None,
-                day,
-                GRAIN_DAILY,
-                avg_secs,
-                &props,
-                SOURCE_MEASURED,
-            )
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &repository_id,
+                scope: SCOPE_USER,
+                identity: None,
+                commit_sha: None,
+                computed_on: day,
+                grain: GRAIN_DAILY,
+                value: avg_secs,
+                props: &props,
+                source: SOURCE_MEASURED,
+            })
             .await?;
             written += 1;
         }
@@ -663,25 +347,25 @@ pub(super) async fn compute(
     // session writes NO row (honest-empty, never a fabricated 0/0).
     if let Some(mid) = tokens_result_id {
         for (day, repository_id, sum_out, completed) in
-            daily_tokens_per_result(pg, &project_id, window_days, as_of).await?
+            pg.session_outcomes_tokens_per_result_by_day(&project_id, window_days, as_of).await?
         {
             if completed == 0 {
                 continue;
             }
             let value = sum_out as f64 / completed as f64;
             let props = serde_json::json!({ "numerator": sum_out, "denominator": completed });
-            pg.upsert_project_metric_repo(
-                &mid,
-                &repository_id,
-                SCOPE_USER,
-                None,
-                None,
-                day,
-                GRAIN_DAILY,
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &repository_id,
+                scope: SCOPE_USER,
+                identity: None,
+                commit_sha: None,
+                computed_on: day,
+                grain: GRAIN_DAILY,
                 value,
-                &props,
-                SOURCE_MEASURED,
-            )
+                props: &props,
+                source: SOURCE_MEASURED,
+            })
             .await?;
             written += 1;
         }
@@ -692,25 +376,25 @@ pub(super) async fn compute(
     // denominator → NO row (honest-empty, never a fabricated 0/0).
     if let Some(mid) = incomplete_id {
         for (day, repository_id, flagged, measurable) in
-            daily_incomplete_analysis(pg, &project_id, window_days, as_of).await?
+            pg.session_outcomes_incomplete_analysis_by_day(&project_id, window_days, as_of).await?
         {
             if measurable == 0 {
                 continue;
             }
             let value = flagged as f64 / measurable as f64;
             let props = serde_json::json!({ "numerator": flagged, "denominator": measurable });
-            pg.upsert_project_metric_repo(
-                &mid,
-                &repository_id,
-                SCOPE_USER,
-                None,
-                None,
-                day,
-                GRAIN_DAILY,
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &repository_id,
+                scope: SCOPE_USER,
+                identity: None,
+                commit_sha: None,
+                computed_on: day,
+                grain: GRAIN_DAILY,
                 value,
-                &props,
-                SOURCE_MEASURED,
-            )
+                props: &props,
+                source: SOURCE_MEASURED,
+            })
             .await?;
             written += 1;
         }
@@ -722,6 +406,7 @@ pub(super) async fn compute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::pg_store::PgStore;
     use crate::tasks::test_support::{
         cleanup_metrics_fixture, daily_project_metric_rows as daily_rows, make_ctx,
         repository_for_folder, seed_assistant_event_tool, seed_metrics_client_session,

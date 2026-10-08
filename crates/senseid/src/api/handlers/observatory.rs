@@ -454,6 +454,54 @@ pub(crate) async fn ingest_captures(
     Json(serde_json::json!({ "ok": true, "queued": true, "taskId": task_id, "from": q.from }))
 }
 
+/// GET /api/transcripts/consent — every source sensei can read history from,
+/// what a person calls it, and whether they said yes (#218).
+///
+/// An unreadable consent is a 500. Reporting "off" for every source on a read
+/// error would look like a choice the user made.
+pub(crate) async fn transcript_consent(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::transcript::consent;
+    let yes = consent::consented(&state.pg).await.map_err(|e| {
+        tracing::error!(error = %e, "transcript_consent: read failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(serde_json::json!(
+        consent::SOURCES
+            .iter()
+            .map(|(source, label)| serde_json::json!({
+                "source": source,
+                "label": label,
+                "consented": yes.contains(*source),
+            }))
+            .collect::<Vec<_>>()
+    )))
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ConsentBody {
+    consented: bool,
+}
+
+/// PUT /api/transcripts/consent/{source} `{ consented }` — a yes or a no for one
+/// source. An unknown source is a 404.
+pub(crate) async fn set_transcript_consent(
+    State(state): State<AppState>,
+    Path(source): Path<String>,
+    Json(body): Json<ConsentBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use crate::transcript::consent;
+    if !consent::is_known(&source) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    consent::set(&state.pg, &source, body.consented).await.map_err(|e| {
+        tracing::error!(error = %e, source, "set_transcript_consent: write failed");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(serde_json::json!({ "ok": true, "source": source, "consented": body.consented })))
+}
+
 /// Enqueue a metrics backfill (Phase 5 — history recovery): one `ComputeProjectMetrics` per
 /// project. The planner then backfills every data day its sources reach and recomputes
 /// today, so the metric charts render months of history. Overlap-guarded

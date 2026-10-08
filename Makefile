@@ -34,7 +34,7 @@
 
 .PHONY: crates crates-debug crates-all \
         install install-service install-app install-debug \
-        db-backup db-backup-essential db-backup-rotate \
+        db-backup-essential \
         app-dev app-check \
         website-dev website-build \
         test test-fast test-crates test-crates-fast \
@@ -59,6 +59,13 @@ VERSION := $(shell cat VERSION)
 # (cmake + clang) on the build host. Opt OUT with `make <target> EMBED=0` for a
 # lean Ollama-only build on a host without that toolchain.
 CRATE_FEATURES := $(if $(filter 0 no off,$(EMBED)),,--features senseid/embedded-llama-cpp)
+
+# llama.cpp's vendored cpp-httplib no longer compiles against OpenSSL 3.5+, and
+# `llama-cpp-sys-2` builds it whether or not anything uses it (#243). The prelude
+# turns its TLS off — see the file, which explains why a toolchain file is the
+# only hook that runs early enough. Honoured only when the caller has not set one
+# of their own, so a cross-compile toolchain still wins.
+export CMAKE_TOOLCHAIN_FILE ?= $(CURDIR)/scripts/llama-cmake-prelude.cmake
 
 crates:
 	cargo build --release -p senseid -p sensei-cli -p sensei-mcp $(CRATE_FEATURES)
@@ -119,42 +126,24 @@ install: install-service install-app
 	@echo "Reclaiming the build tree..."
 	@$(MAKE) clean
 
-# Snapshot the sensei DB before any install* runs. Custom-format pg_dump
-# (-F c) is binary, compressed, and supports `pg_restore -d sensei -c …`
-# for clean+restore. No-op when the DB doesn't exist yet (first install).
-# Make's target memoisation guarantees this runs exactly once per
-# top-level `make install` invocation even though install-service/-app/
-# -debug each depend on it.
+# Snapshot what cannot be rebuilt, before any install* runs. Make's target
+# memoisation guarantees this runs exactly once per top-level `make install`
+# even though install-service/-app/-debug each depend on it.
 #
-# Restore the latest backup:
-#   pg_restore -d sensei -c $$(ls -t database/backup/backup-*.dump | head -1)
-db-backup: db-backup-rotate
-	@mkdir -p database/backup
-	@# Keep Spotlight from indexing the multi-hundred-MB .dump files. Without
-	@# this, every backup write triggers mds indexing → CPU spike (observed at
-	@# 94%, which starved the e2e health-bootstrap gate and made the suite flaky).
-	@touch database/backup/.metadata_never_index
-	@if psql -d sensei -c "SELECT 1" >/dev/null 2>&1; then \
-	  ts=$$(date +%Y%m%d-%H%M%S); \
-	  out="database/backup/backup-$${ts}.dump"; \
-	  echo "Backing up sensei DB to $$out..."; \
-	  pg_dump -d sensei -F c -f "$$out" && \
-	  echo "DB backed up: $$out ($$(ls -lh $$out | awk '{print $$5}'))"; \
-	else \
-	  echo "sensei DB not present — skipping backup (first-time install)"; \
-	fi
-
-# db-backup-rotate — keep only the 5 most recent full backups. Runs before
-# `db-backup` so the new dump always fits inside the retention window.
-# Each backup is ~350MB compressed; 5 is the sweet spot between rollback
-# headroom and disk consumption.
-db-backup-rotate:
-	@if [ -d database/backup ]; then \
-	  keep=5; \
-	  ls -t database/backup/backup-*.dump 2>/dev/null \
-	    | tail -n +$$((keep + 1)) \
-	    | xargs -I{} rm -f "{}"; \
-	fi
+# THE FULL `pg_dump` IS GONE, and `db-backup-essential` below replaces it.
+#
+# Every install used to take a complete dump first. On 2026-10-06 that produced
+# SIX dumps of 4.2-4.3 GB in one day — 28 GB, more than the 23 GB build tree, for
+# a database whose bulk is derived: `edges` is 4.7 GB and `nodes` 2.6 GB, and
+# both come back from a scan. `activity.task_executions` alone is 5.5 GB of job
+# history that nothing reads twice.
+#
+# What CANNOT be rebuilt is captured activity and LLM-derived learning, and that
+# is precisely what `db-backup-essential` exports — at a fraction of the size,
+# as JSONL laid out for re-import. A full dump was buying rollback for the one
+# part of the database that rebuilds itself.
+#
+# Restore a snapshot with `dbd import` against `database/backup/essential/<ts>/`.
 
 # db-backup-essential — narrow backup that exports ONLY the tables whose
 # contents can't be reconstructed from the source tree:
@@ -187,9 +176,18 @@ db-backup-essential:
 	  echo "sensei DB not present — skipping essential backup"; \
 	  exit 0; \
 	fi
-	@# Rotate essential-backup snapshots: keep only the 5 most recent so a
-	@# 650MB assistant_events export doesn't accumulate unbounded.
-	@keep=5; \
+	@# Rotate essential-backup snapshots: keep the 2 most recent.
+	@#
+	@# TWO, NOT FIVE, and the number that changed the answer is the SIZE. The
+	@# comment here used to say 650MB; measured 2026-10-07 it is 3.7 GB, of which
+	@# 3.6 GB is `assistant_events.jsonl` — `dbd export` writes uncompressed
+	@# JSONL. Five snapshots is an 18.5 GB ceiling, which is the shape of the
+	@# problem that removing the full `pg_dump` was meant to solve.
+	@#
+	@# Two is the smallest retention that still survives a bad export: the
+	@# previous snapshot is intact while the new one is being written, so a
+	@# process killed halfway leaves one good copy. One would not.
+	@keep=2; \
 	  ls -1t database/backup/essential 2>/dev/null | tail -n +$$((keep + 1)) \
 	    | while read d; do rm -rf "database/backup/essential/$$d"; done
 	@ts=$$(date +%Y%m%d-%H%M%S); \
@@ -219,7 +217,7 @@ db-backup-essential:
 # the read-only file (needs write on parent dir, not on the file itself).
 # Re-sign with hardened runtime so the Tauri sidecar can spawn them (macOS
 # Sequoia Code Signing Monitor level 2 requires this).
-install-service: db-backup crates
+install-service: db-backup-essential crates
 	@# Cold install: ensure the sensei formula is present. Try the release
 	@# tarball first; fall back to --HEAD (build from main) when no release
 	@# is tagged yet (typically right after `make bump` before CI publishes).
@@ -254,7 +252,7 @@ install-service: db-backup crates
 # Stop any running instance first — `cp -R` over a running .app would mix
 # old code with new resources, and the next launch would crash with a
 # code-signature mismatch.
-install-app: db-backup
+install-app: db-backup-essential
 	cd app && bunx tauri build
 	@if [ -d app/src-tauri/target/release/bundle/macos/Sensei.app ]; then \
 	  if pgrep -x sensei-desktop > /dev/null; then \
@@ -270,7 +268,7 @@ install-app: db-backup
 	fi
 
 # Fast iteration variant — debug binaries into the brew prefix (no app).
-install-debug: db-backup crates-debug
+install-debug: db-backup-essential crates-debug
 	@# Stop via brew services FIRST, then pkill any stragglers. `pkill` alone is
 	@# not enough: launchd's keep_alive in the brew service plist respawns the
 	@# daemon within a few ms, so the cp lands while a stale process is still up
@@ -388,7 +386,7 @@ website-build:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: check-ddl-grants check-ddl-comments check-brew-tokens test-crates-fast test-app-unit
+test-fast: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens test-crates-fast test-app-unit
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
@@ -400,6 +398,11 @@ test-crates-fast:
 # the roles. Instant and needs no database, so it runs in `test-fast` and
 # therefore on every commit; CI calls this same target rather than the script, so
 # there is one entry point to keep correct.
+## Refuse production SQL outside db/pg_store/ (#227). No database needed, so it
+## rides the pre-commit path — the enforcement a documented exception could not give.
+check-sql-in-layer:
+	@scripts/check-sql-in-layer.py
+
 check-ddl-grants:
 	@python3 scripts/check-grant-targets.py
 
@@ -423,7 +426,7 @@ check-ddl-comments:
 check-brew-tokens:
 	@python3 scripts/check-brew-tokens.py
 
-test: check-ddl-grants check-ddl-comments check-brew-tokens test-crates app-check test-app-unit test-dojo test-db-if-reachable
+test: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens test-crates app-check test-app-unit test-dojo test-db-if-reachable
 
 test-crates:
 	cargo test --workspace

@@ -75,6 +75,10 @@ fn report() {
     let mut placed_relations: BTreeMap<&str, usize> = BTreeMap::new();
     let mut imports_local: BTreeMap<&str, usize> = BTreeMap::new();
     let mut imports_external: BTreeMap<&str, usize> = BTreeMap::new();
+    // The same two questions asked of IMPORTS, which this report counted
+    // without ever classifying (#242).
+    let mut import_cells: BTreeMap<(&str, String), usize> = BTreeMap::new();
+    let mut import_rungs: BTreeMap<(&str, &'static str), usize> = BTreeMap::new();
 
     for read in &corpus {
         let language = read.facts.language.as_str();
@@ -96,6 +100,20 @@ fn report() {
                     *imports_external.entry(language).or_default() += 1
                 }
             }
+            // HOW AN IMPORT TURNED OUT, which this report counted imports
+            // without ever saying. An import carried no placement at all until
+            // #242 — the specifier reached the database as a bare name and the
+            // occurrence recorded neither rung nor reason, so the edge's verdict
+            // columns came out NULL for 251,270 of 258,623 rows. A table that
+            // counts a fact but not its outcome is how that went unseen.
+            let row = match &import.target {
+                Resolution::Resolved { via, .. } => {
+                    *import_rungs.entry((language, via.as_label())).or_default() += 1;
+                    "RESOLVED".to_string()
+                }
+                Resolution::Unresolved { reason, .. } => format!("{reason:?}"),
+            };
+            *import_cells.entry((language, row)).or_default() += 1;
         }
         for reference in &read.facts.references {
             let row = match &reference.target {
@@ -206,6 +224,27 @@ fn report() {
     println!("{rule}");
     for rung in crate::indexer::facts::Rung::ALL {
         row(rung.as_label(), &|l| rungs.get(&(l, rung.as_label())).copied().unwrap_or(0));
+    }
+
+    // ── imports, which until #242 had no outcome to report ───────────────────
+    //
+    // Two tables rather than one, matching references: WHETHER it placed, then
+    // BY WHAT. `Unplaced` appearing in the reason table would mean the ladder
+    // never ran on an import, which is the state this section was added to make
+    // impossible to ship unnoticed.
+    println!("\n## Imports, by outcome\n");
+    println!("{header}");
+    println!("{rule}");
+    row("RESOLVED", &|l| import_cells.get(&(l, "RESOLVED".to_string())).copied().unwrap_or(0));
+    for reason in reasons {
+        row(reason, &|l| import_cells.get(&(l, reason.to_string())).copied().unwrap_or(0));
+    }
+
+    println!("\n## Placed imports, by the rung that placed them\n");
+    println!("{header}");
+    println!("{rule}");
+    for rung in crate::indexer::facts::Rung::ALL {
+        row(rung.as_label(), &|l| import_rungs.get(&(l, rung.as_label())).copied().unwrap_or(0));
     }
 
     let total: usize = cells.values().sum();

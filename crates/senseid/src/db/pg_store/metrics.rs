@@ -1,6 +1,48 @@
 use super::*;
 
-#[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
+/// One row of `sensei.repository_metrics`, named rather than positional (#161).
+///
+/// The ten values this carries used to be ten positional arguments, four of them
+/// string-ish and two of them adjacent `Option<&str>`. A call site read
+/// `SCOPE_USER, None, None, day, GRAIN_DAILY, …`, and transposing the two `None`s
+/// — `identity` for `commit_sha` — was invisible to the compiler, to the database
+/// and to every test. Naming them makes that transposition unwriteable.
+///
+/// **No `Default`, deliberately.** `..Default::default()` at a call site is the
+/// same silence in a different place: a field added later would quietly take its
+/// default at every existing site instead of forcing a decision. Every field is
+/// written out, every time; the cost is a longer literal and the benefit is that
+/// adding a dimension is a compile error at all 30-odd call sites rather than a
+/// value that stops arriving.
+#[derive(Debug, Clone)]
+pub struct MetricRow<'a> {
+    pub metric_id: &'a uuid::Uuid,
+    /// The repository the value belongs to. NOT NULL in the table — a metric row
+    /// that joins to nothing is not a reading.
+    pub repository_id: &'a uuid::Uuid,
+    /// `sensei.metric_scope`: `user` | `repo`.
+    pub scope: &'a str,
+    /// The sub-key within the scope, when the metric has one. Part of the
+    /// conflict target, so two identities are two rows.
+    pub identity: Option<&'a str>,
+    /// The commit a point-in-time reading was taken at, when it has one. Also
+    /// part of the conflict target.
+    pub commit_sha: Option<&'a str>,
+    pub computed_on: chrono::NaiveDate,
+    /// `sensei.metric_grain`: `daily` | `session`.
+    pub grain: &'a str,
+    pub value: f64,
+    pub props: &'a serde_json::Value,
+    /// `sensei.metric_source`: `measured` | `estimated` | `federated`.
+    pub source: &'a str,
+}
+
+// `too_many_arguments` is NOT silenced here any more (#161). It was, and that is
+// part of why a ten-argument writer survived: the lint that would have named it
+// was turned off for the whole impl. Measured 2026-10-05 after the `MetricRow`
+// conversion — ZERO functions in this file are still over the limit, so the
+// silence bought nothing and removing it makes the next one a build failure.
+#[allow(dead_code, clippy::type_complexity)]
 impl PgStore {
     pub async fn create_benchmark_report(
         &self,
@@ -417,17 +459,27 @@ impl PgStore {
 
     pub async fn upsert_project_metric_repo(
         &self,
-        metric_id: &uuid::Uuid,
-        repository_id: &uuid::Uuid,
-        scope: &str,
-        identity: Option<&str>,
-        commit_sha: Option<&str>,
-        computed_on: chrono::NaiveDate,
-        grain: &str,
-        value: f64,
-        props: &serde_json::Value,
-        source: &str,
+        row: &MetricRow<'_>,
     ) -> Result<uuid::Uuid, String> {
+        // EXHAUSTIVE, and that is the whole point of the struct (#161). A field
+        // added to `MetricRow` stops this compiling until someone binds it —
+        // and because CI runs `clippy -D warnings`, binding it and then not
+        // using it fails too. The ten positional arguments this replaced had
+        // neither property: a new one simply never arrived, which is how
+        // `extract_return_type` ran on every function for months while no
+        // return type reached a column.
+        let MetricRow {
+            metric_id,
+            repository_id,
+            scope,
+            identity,
+            commit_sha,
+            computed_on,
+            grain,
+            value,
+            props,
+            source,
+        } = row;
         // Writes target the TABLE, never the `project_metrics` compatibility view:
         // the view's project_id is derived and has no inverse, so an insert through
         // it could not know which repository the value belongs to.
@@ -458,41 +510,6 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
         Ok(row.0)
-    }
-
-    /// Project-grain convenience wrapper — `repository_id = NULL`, `scope = 'user'`.
-    /// Convenience wrapper for callers that only vary `(metric, day, value)` —
-    /// tests and the metric-preview route. Fills the scope/identity/commit_sha
-    /// dimensions with the defaults a simple daily value has.
-    ///
-    /// `repository_id` is now REQUIRED rather than defaulted to NULL: the column
-    /// is NOT NULL, because every row in the store did in fact have one and a
-    /// nullable grain column was an invitation to write a row that joins to
-    /// nothing.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn upsert_project_metric(
-        &self,
-        metric_id: &uuid::Uuid,
-        repository_id: &uuid::Uuid,
-        computed_on: chrono::NaiveDate,
-        grain: &str,
-        value: f64,
-        props: &serde_json::Value,
-        source: &str,
-    ) -> Result<uuid::Uuid, String> {
-        self.upsert_project_metric_repo(
-            metric_id,
-            repository_id,
-            "user",
-            None,
-            None,
-            computed_on,
-            grain,
-            value,
-            props,
-            source,
-        )
-        .await
     }
 
     // ── Per-datapoint explainer enrichment (compute-time) ─────────────────
@@ -580,8 +597,8 @@ impl PgStore {
                   , count(*) FILTER (WHERE s.outcome = 'completed'::sensei.session_outcome)::int8   AS completed
                   , count(*) FILTER (WHERE s.ftr)::int8                                             AS first_try
                FROM activity.sessions s
-               JOIN sensei.folders    f ON f.id = s.folder_id
-              WHERE f.project_id = $1
+               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id
+              WHERE fp.project_id = $1
                 AND s.outcome   IS NOT NULL
                 AND s.outcome   <> 'empty'::sensei.session_outcome
                 AND date_trunc('day', s.started_at)::date = $2",

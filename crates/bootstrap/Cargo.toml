@@ -14,7 +14,8 @@ dbd-core = { git = "https://github.com/sensei-hq/dbd", tag = "v0.22.0" }
 chrono = "0.4"
 uuid = { version = "1", features = ["v4", "serde"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "ansi"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "ansi", "registry"] }
+tracing-appender = "0.2.5"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

@@ -14,11 +14,9 @@
 //! fee is incurred: you are billed for a period, not a day. So this is a SNAPSHOT
 //! group — computed today-only, forward-only, no watermark (like `knowledge`).
 //!
-//! ## What counts as a result
-//!
-//! Merged runs + accepted recommendations. Both are things the user shipped or
-//! adopted — a completed *session* is activity, not delivery, and counting it
-//! would make the metric fall simply because someone worked more.
+//! What counts as a result — merged runs + accepted recommendations, and why a
+//! completed session is not one — is documented with the query that counts them,
+//! in `db::pg_store::metric_reads::cost`.
 //!
 //! Honest-empty throughout: no configured subscription → no row (never a
 //! fabricated price); a window that delivered nothing → no row (dividing by zero
@@ -26,39 +24,15 @@
 //! stretch infinitely expensive rather than idle).
 
 use crate::cost::{COST_WINDOW_DAYS, SUBSCRIPTION_CONFIG_KEY, Subscription};
-use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;
+use crate::db::pg_store::MetricRow;
 
 const GRAIN_DAILY: &str = "daily";
 const SOURCE_MEASURED: &str = "measured";
 const SCOPE_USER: &str = "user";
 const KEY_COST_PER_RESULT: &str = "cost_per_result";
-
-/// Results delivered for `project_id` within the trailing window: merged runs +
-/// accepted recommendations. Counted separately so the props can show which
-/// contributed — a cost that moved because recommendations dried up is a
-/// different story from one that moved because runs stopped merging.
-async fn results_in_window(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    window_days: u32,
-) -> Result<(i64, i64), String> {
-    let sql = format!(
-        "SELECT (SELECT count(*) FROM activity.runs \
-                  WHERE project_id = $1 AND status = 'done' \
-                    AND completed_at > now() - interval '{window_days} days')::int8, \
-                (SELECT count(*) FROM inference.recommendations \
-                  WHERE project_id = $1 AND status = 'accepted' \
-                    AND acted_at > now() - interval '{window_days} days')::int8"
-    );
-    sqlx_core::query_as::query_as::<_, (i64, i64)>(&sql)
-        .bind(project_id)
-        .fetch_one(pg.pool())
-        .await
-        .map_err(|e| e.to_string())
-}
 
 pub(super) async fn compute(
     ctx: &TaskContext,
@@ -87,7 +61,8 @@ pub(super) async fn compute(
         return Ok(0);
     };
 
-    let (merged_runs, accepted_recs) = results_in_window(pg, &project_id, COST_WINDOW_DAYS).await?;
+    let (merged_runs, accepted_recs) =
+        pg.cost_results_in_window(&project_id, COST_WINDOW_DAYS).await?;
     let results = merged_runs + accepted_recs;
     let Ok(results_u32) = u32::try_from(results) else {
         return Ok(0);
@@ -113,18 +88,18 @@ pub(super) async fn compute(
         "plan": sub.plan,
     });
     let day = super::today(pg).await?;
-    pg.upsert_project_metric_repo(
-        &mid,
-        &repository_id,
-        SCOPE_USER,
-        None,
-        None,
-        day,
-        GRAIN_DAILY,
+    pg.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &repository_id,
+        scope: SCOPE_USER,
+        identity: None,
+        commit_sha: None,
+        computed_on: day,
+        grain: GRAIN_DAILY,
         value,
-        &props,
-        SOURCE_MEASURED,
-    )
+        props: &props,
+        source: SOURCE_MEASURED,
+    })
     .await?;
 
     Ok(1)
@@ -133,11 +108,22 @@ pub(super) async fn compute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::pg_store::PgStore;
+
+    /// `cost.subscription` is ONE row in a database every test shares (#183), so
+    /// the two tests that set it would otherwise race: one clears the key while
+    /// the other has just written it, and whichever reads second sees the wrong
+    /// plan. Observed as a flake in a full-suite run before this existed.
+    ///
+    /// A tokio `Mutex` rather than a `std` one because both holders `.await`
+    /// across the critical section.
+    static SUBSCRIPTION_KEY: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     #[tokio::test]
     async fn no_configured_plan_writes_no_row() {
         // The honest-empty case that matters most: an unconfigured user must not
         // see a cost of 0.00, which reads as "free" rather than "unknown".
+        let _guard = SUBSCRIPTION_KEY.lock().await;
         let Ok(pg) = PgStore::connect_test().await else { return };
         let before = pg.get_config(SUBSCRIPTION_CONFIG_KEY).await.unwrap();
         pg.set_config(SUBSCRIPTION_CONFIG_KEY, "").await.unwrap();
@@ -156,5 +142,73 @@ mod tests {
     async fn a_bad_project_id_is_an_error_not_a_silent_zero() {
         let ctx = crate::tasks::test_support::make_ctx().await;
         assert!(compute(&ctx, "not-a-uuid", None).await.is_err());
+    }
+
+    /// `PgStore::cost_results_in_window` actually RUNS, and its answer reaches
+    /// the row (#227).
+    ///
+    /// The two tests above both return before it: one at "no plan configured",
+    /// the other at the uuid parse. So the group's only production SQL — four
+    /// schema objects across two schemas, assembled with `format!` and
+    /// therefore invisible to `check-sql-against-schema.py` — was executed by
+    /// nothing, and a column renamed under it would have broken production with
+    /// every test still green. Measured: cross-joining a table that does not
+    /// exist into that query left this module GREEN before this test existed.
+    ///
+    /// Mutation that must break this test: break the `activity.runs` half of
+    /// `cost_results_in_window` — the assertion is on the count it returns, not
+    /// merely on the call succeeding.
+    #[tokio::test]
+    async fn a_configured_plan_counts_delivered_results_through_the_window_query() {
+        let _guard = SUBSCRIPTION_KEY.lock().await;
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let uniq = uuid::Uuid::new_v4();
+        let (pid, fid) = crate::tasks::test_support::seed_metrics_project_folder(&pg, &uniq).await;
+        // Two merged runs inside the window and one outside it, so the row's
+        // `merged_runs` can only be right if the window predicate ran too.
+        //
+        // `completed_at` is set explicitly because the query keys on IT, not on
+        // `started_at` — a run that began inside the window and never finished
+        // delivered nothing. `seed_run` leaves it NULL, which is the state of a
+        // run still going, so a fixture that only sets `started_at` counts zero
+        // results and this test would pass for the wrong reason.
+        let now = chrono::Utc::now();
+        let old = now - chrono::Duration::days(i64::from(COST_WINDOW_DAYS) + 5);
+        for at in [now, now, old] {
+            let rid = crate::tasks::test_support::seed_run(&pg, &pid, "done", at).await;
+            sqlx_core::query::query("UPDATE activity.runs SET completed_at = $2 WHERE id = $1")
+                .bind(rid)
+                .bind(at)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+        }
+
+        let before = pg.get_config(SUBSCRIPTION_CONFIG_KEY).await.unwrap();
+        pg.set_config(
+            SUBSCRIPTION_CONFIG_KEY,
+            r#"{"amount":100.0,"period":"monthly","currency":"USD","plan":"_test"}"#,
+        )
+        .await
+        .unwrap();
+
+        let ctx = crate::tasks::test_support::make_ctx().await;
+        let wrote = compute(&ctx, &pid.to_string(), None).await.unwrap();
+
+        pg.set_config(SUBSCRIPTION_CONFIG_KEY, before.as_deref().unwrap_or("")).await.unwrap();
+
+        assert_eq!(wrote, 1, "a configured plan with results writes one row");
+        let rows = crate::tasks::test_support::daily_project_metric_rows(&pg, &pid).await;
+        let (_, value, props) = rows
+            .iter()
+            .find(|(k, _, _)| k == KEY_COST_PER_RESULT)
+            .unwrap_or_else(|| panic!("no {KEY_COST_PER_RESULT} row in {rows:?}"))
+            .clone();
+        assert_eq!(props["merged_runs"], 2, "the run outside the window is not counted");
+        assert_eq!(props["accepted_recommendations"], 0);
+        assert_eq!(props["denominator"], 2);
+        assert!(value > 0.0, "a positive fee over two results is a positive cost");
+
+        crate::tasks::test_support::cleanup_metrics_fixture(&pg, &pid, Some(&fid), &[]).await;
     }
 }

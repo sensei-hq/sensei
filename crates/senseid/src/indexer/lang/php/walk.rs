@@ -271,6 +271,7 @@ impl<'a> Walk<'a> {
             None => ("php".to_string(), last),
         };
         self.imports.push(Import {
+            target: Import::unplaced(&full),
             path: full,
             binds: Binding::Name(alias.unwrap_or(name)),
             // EXTERNAL naming the namespace it came from, and

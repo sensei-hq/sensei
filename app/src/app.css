@@ -1,4 +1,30 @@
-@import "@unocss/reset/tailwind.css";
+/*
+ * THE RESET IS LAYERED, AND EVERYTHING ELSE IS NOT (#244).
+ *
+ * Unlayered declarations beat layered ones, whatever their specificity — so
+ * putting the reset in a layer makes every utility win on contact with it,
+ * which is what a reset is for.
+ *
+ * Without this, a background utility could not paint a `<button type="button">`
+ * anywhere in the app. The reset is
+ * `button, [type="button"], [type="reset"], [type="submit"] { background-color:
+ * transparent }`, and `[type="button"]` is an ATTRIBUTE selector — specificity
+ * (0,1,0), the same as `.bg-primary` or `.bg-ink`. A tie goes to source order
+ * and the reset came later, so the utility lost. Measured in the browser: the
+ * selected chip on project Sessions carried `bg-ink text-paper` and computed
+ * `rgba(0, 0, 0, 0)` behind `oklch(0.975 0.008 85)` — near-white on paper,
+ * unreadable. 13 sites across seven screens were in that state.
+ *
+ * A `<button>` with NO type attribute was never affected: the bare `button`
+ * selector is (0,0,1) and loses on specificity. That is why the identical chip
+ * on Observatory Instruments rendered correctly, and it is the detail that makes
+ * this look like a styling problem on some screens and not others.
+ *
+ * ONLY THE RESET IS LAYERED. Rokkit's theme CSS and our tokens stay unlayered
+ * and keep the precedence they had — they already won against the reset by
+ * loading after it.
+ */
+@import "@unocss/reset/tailwind.css" layer(reset);
 @import "@rokkit/themes/base.css";
 @import "@rokkit/themes/zen-sumi.css";
 @import "$lib/tokens.css";

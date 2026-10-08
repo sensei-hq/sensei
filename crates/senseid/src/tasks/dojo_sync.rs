@@ -664,6 +664,7 @@ async fn recapture_and_replan(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::pg_store::MetricRow;
 
     /// `forge_visibility_unknown` is the ONE denial the daemon can act on itself.
     ///
@@ -1020,18 +1021,18 @@ mod tests {
         .await
         .unwrap();
         let mid = mid.0;
-        pg.upsert_project_metric_repo(
-            &mid,
-            &rid,
-            "repo",
-            None,
-            None,
-            chrono::NaiveDate::from_ymd_opt(2026, 8, 27).unwrap(),
-            "daily",
-            1.0,
-            &serde_json::json!({}),
-            "measured",
-        )
+        pg.upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "repo",
+            identity: None,
+            commit_sha: None,
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 8, 27).unwrap(),
+            grain: "daily",
+            value: 1.0,
+            props: &serde_json::json!({}),
+            source: "measured",
+        })
         .await
         .unwrap();
         (pid, format!("test/bare-{uniq}"), metric_key)

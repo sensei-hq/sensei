@@ -144,6 +144,21 @@ jobs:
           createdb -h localhost -U postgres sensei_test
           cd database && DATABASE_URL="$TEST_DATABASE_URL" dbd deploy --scope default
 
+      # Every literal SQL statement in the tree, PREPAREd against the schema
+      # just deployed (#227). It runs BEFORE the suite because a statement
+      # naming a dropped column reports itself here in one line, where the same
+      # defect reaching the suite reports as whichever test happened to call it.
+      #
+      # WHAT IT DOES NOT COVER, so nobody reads a green run as more than it is:
+      # a statement assembled with `format!` reaches this as a fragment and is
+      # counted as unverifiable rather than passed. Measured 2026-10-05, 18 of
+      # the 30 production queries living outside `PgStore` are in that state —
+      # the metric computers, which splice a day filter in. Those are covered by
+      # EXECUTING them: every metric group has tests that run its queries
+      # against this database, verified by mutation.
+      - name: Plan every SQL statement against the deployed schema
+        run: scripts/check-sql-against-schema.py --database "$TEST_DATABASE_URL"
+
       # The suite that had no gate. `--bin senseid` because that is where it
       # lives; the other crates are covered separately below.
       - name: Test senseid

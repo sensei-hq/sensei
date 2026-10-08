@@ -109,7 +109,6 @@ pub async fn process_manifest(ctx: &TaskContext, task: &Task) -> Result<u32, Str
     else {
         return Err(format!("process_manifest: repo row for {} has no ids", task.folder_path));
     };
-    let project_id = crate::api::util::json_uuid(&repo["project_id"]);
 
     // Facts belong to the folder that HOLDS the manifest (D11).
     let dir_rel = Path::new(&task.path).parent().unwrap_or(Path::new(""));
@@ -169,7 +168,6 @@ pub async fn process_manifest(ctx: &TaskContext, task: &Task) -> Result<u32, Str
                 &dir_rel.to_string_lossy(),
                 &dir_abs.to_string_lossy(),
                 Some(&repo_folder_id),
-                project_id.as_ref(),
             )
             .await?;
     }
@@ -196,6 +194,13 @@ pub async fn process_repo_files(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let Some(folder_id) = crate::api::util::json_uuid(&repo["id"]) else {
         return Err(format!("process_repo_files: repo row for {} has no id", task.folder_path));
     };
+
+    // THE ONE INVALIDATION POINT for the repo-wide world. This gate runs once
+    // per repo immediately before the file fan-out, so clearing here means every
+    // file of this scan sees one world, built from the pass that finished. A
+    // second invalidation site would let it change mid-scan and reintroduce the
+    // order dependence R6 forbids.
+    crate::indexer::pipeline::TellFile::forget(&folder_id);
 
     // A FORCED scan clears `parsed_at` first, so every file falls back into the
     // unparsed set below. Nothing is deleted — the writer upserts by path, so a
@@ -395,7 +400,6 @@ async fn write_folder_tree(
     ctx: &TaskContext,
     root_id: &uuid::Uuid,
     repo_folder_id: uuid::Uuid,
-    project_id: Option<&uuid::Uuid>,
     repo_abs: &Path,
     tree: &[crate::indexer::repo::PlannedFolder],
 ) -> BTreeMap<PathBuf, uuid::Uuid> {
@@ -422,7 +426,6 @@ async fn write_folder_tree(
                 &f.rel_path.to_string_lossy(),
                 &abs.to_string_lossy(),
                 Some(&parent),
-                project_id,
             )
             .await
         {
@@ -497,11 +500,44 @@ async fn write_file_rows(
                         ctx.pg().upsert_file_row(folder_id, &rel, mtime, &hash, Some(reason)).await
                     }
                     None => {
-                        // Barrier-seeded: this one WILL be fanned out.
+                        // A supported source file, recorded at its REAL fingerprint.
+                        //
+                        // This branch used to write the barrier sentinel over every
+                        // row, every pass, so that a file always "read as changed"
+                        // and was certain to be parsed. It is certain the other way
+                        // too: an ALREADY-PARSED file went `content_hash` real → ''
+                        // , `upsert_file_row` saw `IS DISTINCT FROM`, and reset
+                        // `parsed_at`. Since this pass reruns on every reconcile
+                        // tick, every watcher batch and every FSEvents overflow — a
+                        // `cargo build` overflows FSEvents reliably — an actively
+                        // worked repository could never finish indexing. Measured
+                        // 2026-09-30: sensei reached 1,746 of 1,757 files and
+                        // returned to 0; 55,501 files machine-wide sat at the
+                        // sentinel.
+                        //
+                        // The sentinel was never needed for its stated purpose:
+                        // `list_unparsed_files` selects on `parsed_at IS NULL`, not
+                        // on the hash, so a NEW row is fanned out whatever
+                        // fingerprint it carries. Writing the truth instead lets
+                        // `upsert_file_row` keep its documented contract — unchanged
+                        // keeps its `parsed_at`, changed loses it.
                         out.to_parse += 1;
-                        ctx.pg()
-                            .upsert_file_row(folder_id, &rel, BARRIER_MTIME, BARRIER_HASH, None)
-                            .await
+                        // An unreadable file keeps the sentinel, which here means
+                        // what it says: the fingerprint is UNKNOWN, so the file must
+                        // be parsed. The row still has to exist (R13 fails closed on
+                        // a missing one), so this cannot `continue` the way the
+                        // skip branches do.
+                        let (mtime, hash) = match super::helpers::file_fingerprint(&abs) {
+                            Some(fp) => fp,
+                            None => {
+                                tracing::warn!(
+                                    file = %rel,
+                                    "repo scan: fingerprint unreadable — seeding the barrier sentinel"
+                                );
+                                (BARRIER_MTIME, BARRIER_HASH.to_string())
+                            }
+                        };
+                        ctx.pg().upsert_file_row(folder_id, &rel, mtime, &hash, None).await
                     }
                 }
             }
@@ -623,14 +659,68 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     else {
         return Err(format!("process_git_folder: folder row for {} has no ids", task.folder_path));
     };
-    // The project, resolved and ATTACHED before anything else — a folder with
-    // no `project_id` is invisible to every project surface (UI, list_projects,
-    // metrics), and nothing downstream repairs it.
+    // THE REPOSITORY FIRST, THEN THE PROJECT. Since #211 membership belongs to
+    // the repository (`folders.repository_id` → `repositories_in_projects`), so
+    // `set_folder_project` on a folder with no repository matches no row and
+    // records NOTHING.
+    //
+    // That is not a hypothetical ordering: `scan_root` writes folder rows and
+    // enqueues one `ProcessGitFolder` per repo, and only its RECONCILE — which
+    // runs afterwards — calls `assign_repositories`. So on a fresh install this
+    // handler always ran while `repository_id` was still NULL. Measured on a
+    // from-scratch database against `~/Developer/sensei-hq`: 3 repositories, 3
+    // projects, 27,860 nodes indexed, and `repositories_in_projects` EMPTY — every
+    // project tagged `orphaned` with `repos_count: 0`, and every project-scoped
+    // screen an empty graph over a fully indexed codebase.
+    //
+    // Keyed on the REMOTE via the one reader that answers "what is this repo's
+    // remote" (`pipeline::origin_remote`), so this agrees with the reconcile
+    // rather than minting a second, path-keyed identity for the same checkout.
+    // Both writers are upserts, so whichever runs first wins and the other is
+    // a no-op.
+    let repository_id = match ctx
+        .pg()
+        .upsert_repository(
+            &name,
+            crate::indexer::pipeline::origin_remote(&task.folder_path).as_deref(),
+        )
+        .await
+    {
+        Ok(rid) => {
+            if let Err(e) = ctx.pg().link_folder_to_repository(&folder_id, &rid).await {
+                tracing::warn!(folder_id = %folder_id, error = %e,
+                        "process_git_folder: link_folder_to_repository failed");
+            }
+            Some(rid)
+        }
+        Err(e) => {
+            tracing::warn!(folder_id = %folder_id, error = %e,
+                    "process_git_folder: upsert_repository failed — membership cannot be recorded");
+            None
+        }
+    };
+
+    // The project, resolved and ATTACHED — a repository with no membership is
+    // invisible to every project surface (UI, list_projects, metrics), and
+    // nothing downstream repairs it.
     let (project_uuid, _created) = resolve_project(ctx, repo_abs, &name).await?;
-    if let Err(e) = ctx.pg().set_folder_project(&folder_id, &project_uuid, "root", None).await {
+    if repository_id.is_some()
+        && let Err(e) = ctx.pg().set_folder_project(&folder_id, &project_uuid, "root", None).await
+    {
         tracing::warn!(folder_id = %folder_id, error = %e, "process_git_folder: set_folder_project failed");
     }
-    let project_id = Some(project_uuid);
+
+    // AND ITS HISTORY (#224). Enqueued rather than run inline: a first walk
+    // reads the whole log, and this handler already gates `folders.status`.
+    // `enqueue_unique` because the reconcile re-enqueues ProcessGitFolder every
+    // ~300s and a re-walk, while harmless, is wasted work.
+    ctx.queue
+        .enqueue_unique(crate::tasks::Task::new(
+            crate::tasks::TaskKind::ScanGitHistory,
+            &task.folder_path,
+            "",
+        ))
+        .await;
 
     // The indexed git branch, in the TYPED column. Preferred from the
     // `BranchSwitch` task that triggered this re-index, else read from
@@ -682,8 +772,7 @@ pub async fn process_git_folder(ctx: &TaskContext, task: &Task) -> Result<u32, S
     );
 
     let tree = repo::folder_tree(&contents);
-    let folders =
-        write_folder_tree(ctx, &root_id, folder_id, project_id.as_ref(), repo_abs, &tree).await;
+    let folders = write_folder_tree(ctx, &root_id, folder_id, repo_abs, &tree).await;
     emit(ActivityLevel::Info, msg::repo_folders_saved_message(&name, folders.len()));
 
     // STAGE 3 BARRIER: every `files` row exists before any parse task runs, so
@@ -799,11 +888,87 @@ mod scan_tests {
     use crate::db::pg_store::graph_seed::SeedGraph;
     use crate::tasks::test_support::make_ctx;
 
+    /// A repo folder with NO `repositories` row still ends up in its project.
+    ///
+    /// THE FRESH-INSTALL PATH, and the one that was broken. `scan_root` writes
+    /// folder rows and enqueues a `ProcessGitFolder` per repo; only its
+    /// RECONCILE, which runs afterwards, calls `assign_repositories`. So when
+    /// this handler ran, `folders.repository_id` was still NULL — and since
+    /// #211 membership is the repository's, so `set_folder_project` matched no
+    /// row and recorded nothing. Measured on a from-scratch database against
+    /// `~/Developer/sensei-hq`: 3 repositories, 3 projects, 27,860 nodes, and
+    /// `repositories_in_projects` EMPTY — every project tagged `orphaned` with
+    /// `repos_count: 0`, and the Structure diagram an empty graph.
+    ///
+    /// The handler must therefore establish the repository ITSELF rather than
+    /// depend on a later step having done it.
+    ///
+    /// Mutation that must break this test: drop the `upsert_repository` +
+    /// `link_folder_to_repository` pair from `process_git_folder`.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn a_repo_with_no_repository_row_still_reaches_its_project() {
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path().join("fresh");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn a() {}\n").unwrap();
+
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt-fresh", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "fresh", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        // Exactly what the walk leaves behind, and nothing more.
+        assert_eq!(
+            ctx.pg().repository_id_for_folder(&fid).await.unwrap(),
+            None,
+            "precondition: the walk leaves a repo folder with no repository"
+        );
+
+        let task = Task::new(TaskKind::ProcessGitFolder, &repo.to_string_lossy(), "");
+        super::process_git_folder(&ctx, &task).await.unwrap();
+
+        let rid = ctx
+            .pg()
+            .repository_id_for_folder(&fid)
+            .await
+            .unwrap()
+            .expect("the handler must give the folder a repository");
+
+        // The MEMBERSHIP, which is the whole point — asserted through
+        // `folder_projects`, the view every project-scoped read resolves by,
+        // rather than through the junction it happens to be built from.
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT project_id FROM sensei.folder_projects WHERE folder_id = $1",
+        )
+        .bind(fid)
+        .fetch_all(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "the folder must resolve to exactly one project; repository={rid}"
+        );
+    }
+
     /// The whole pass over a real repository on disk: folder rows with parents,
     /// file rows for supported AND unsupported files, a project attached, and
     /// the manifest gate enqueued with the file fan-out behind it.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn scan_repo_writes_structure_and_enqueues_the_gate() {
+        // This test writes `files` rows and then parses from them. Excluded
+        // against the version-rescan sweep, which deletes them database-wide.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let repo = t.path().join("demo");
@@ -824,6 +989,12 @@ mod scan_tests {
             .upsert_repo_kind(&root_id, "git", "demo", &repo.to_string_lossy())
             .await
             .unwrap();
+        // NO repository is pre-created. That is the real production state:
+        // the walk writes the folder with `upsert_repo_kind`, and
+        // `ProcessGitFolder` runs BEFORE `scan_root`'s reconcile assigns
+        // repositories. Seeding one here is what hid the defect the live run
+        // found — membership recorded against a folder that had no repository
+        // yet, so nothing was recorded at all.
 
         let task = Task::new(TaskKind::ProcessGitFolder, &repo.to_string_lossy(), "");
         let written = super::process_git_folder(&ctx, &task).await.unwrap();
@@ -862,7 +1033,11 @@ mod scan_tests {
     /// looked at, and pruning them destroys the nodes of files that are still
     /// on disk.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn an_event_scope_never_prunes_the_files_it_did_not_examine() {
+        // This test writes `files` rows and then parses from them. Excluded
+        // against the version-rescan sweep, which deletes them database-wide.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let repo = t.path().join("demo");
@@ -881,6 +1056,10 @@ mod scan_tests {
             .upsert_repo_kind(&root_id, "git", "demo", &repo.to_string_lossy())
             .await
             .unwrap();
+        // As a scan leaves it: the repo folder carries a `repositories`
+        // row. `process_git_folder` records membership against that row,
+        // so a fixture without one is a state production never produces.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "demo").await.unwrap();
 
         // A node for a file that is NOT in the event batch, and whose path the
         // walk will still see. `prune_vanished` drops nodes whose file is
@@ -919,7 +1098,11 @@ mod scan_tests {
     /// `scope.deleted()`, and `process_git_folder` applies it. Disabling that
     /// loop left all 75 tests across three modules green.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn an_observed_delete_is_applied_even_under_an_event_scope() {
+        // This test writes `files` rows and then parses from them. Excluded
+        // against the version-rescan sweep, which deletes them database-wide.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let repo = t.path().join("demo");
@@ -937,6 +1120,10 @@ mod scan_tests {
             .upsert_repo_kind(&root_id, "git", "demo", &repo.to_string_lossy())
             .await
             .unwrap();
+        // As a scan leaves it: the repo folder carries a `repositories`
+        // row. `process_git_folder` records membership against that row,
+        // so a fixture without one is a state production never produces.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "demo").await.unwrap();
         ctx.pg()
             .seed_node(&fid, "function", "doomed", "src/gone.rs", None, None, None, None)
             .await
@@ -968,7 +1155,11 @@ mod scan_tests {
     /// through `process_file` and asserts NODES EXIST — the only claim that
     /// distinguishes a working pipeline from one that silently indexes nothing.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn the_gate_fans_out_file_tasks_that_actually_index() {
+        // This test writes `files` rows and then parses from them. Excluded
+        // against the version-rescan sweep, which deletes them database-wide.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
         let repo = t.path().join("demo");
@@ -987,14 +1178,29 @@ mod scan_tests {
             .upsert_repo_kind(&root_id, "git", "demo", &repo.to_string_lossy())
             .await
             .unwrap();
+        // As a scan leaves it: the repo folder carries a `repositories`
+        // row. `process_git_folder` records membership against that row,
+        // so a fixture without one is a state production never produces.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "demo").await.unwrap();
 
         let repo_path = repo.to_string_lossy().to_string();
         super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
             .await
             .unwrap();
-        // BEFORE any parse: a source row must sit on the stage-3 barrier
-        // sentinel. A row bearing its TRUE fingerprint reads as UNCHANGED next
-        // pass and the file is never indexed — the defect 8d488e2a fixed once.
+        // BEFORE any parse, two things must hold, and they are asserted as
+        // PROPERTIES rather than as a magic fingerprint value.
+        //
+        // The row must EXIST — that is the stage-3 barrier, and it is what lets
+        // node persistence fail closed on a missing one (R13). And the file must
+        // be listed unparsed, so the gate actually fans it out.
+        //
+        // This used to pin `(BARRIER_MTIME, BARRIER_HASH)`, on the reasoning that
+        // a row bearing its true fingerprint "reads as UNCHANGED next pass and the
+        // file is never indexed". That reasoning was wrong: `list_unparsed_files`
+        // selects on `parsed_at IS NULL`, never on the hash, so a new row is fanned
+        // out whatever fingerprint it carries. Pinning the sentinel instead locked
+        // in a write that reset `parsed_at` on every rescan — see
+        // `a_second_scan_of_an_unchanged_repo_keeps_the_parse_state`.
         let (mtime, hash): (i64, String) = sqlx_core::query_as::query_as(
             "SELECT mtime, content_hash FROM sensei.files WHERE folder_id=$1 AND file_path=$2",
         )
@@ -1003,13 +1209,15 @@ mod scan_tests {
         .fetch_one(ctx.pg().pool())
         .await
         .unwrap();
-        assert_eq!(
-            (mtime, hash.as_str()),
-            (
-                crate::db::pg_store::folders::BARRIER_MTIME,
-                crate::db::pg_store::folders::BARRIER_HASH
-            ),
-            "a source row must sit on the barrier sentinel until a parse advances it"
+        assert!(
+            mtime > 0 && !hash.is_empty(),
+            "a readable source row must carry its REAL fingerprint, so an unchanged \
+             file keeps its parse next pass; got ({mtime}, {hash:?})"
+        );
+        assert!(
+            ctx.pg().list_unparsed_files(&fid).await.unwrap().iter().any(|p| p == "src/lib.rs"),
+            "the barrier row exists but the gate will not fan it out — the file is \
+             never indexed"
         );
 
         super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
@@ -1048,6 +1256,272 @@ mod scan_tests {
         assert!(
             still_unparsed.is_empty(),
             "an indexed file is still listed unparsed, so it is re-enqueued for ever: {still_unparsed:?}"
+        );
+    }
+
+    /// A SECOND scan of an unchanged repository must leave the parse state alone.
+    ///
+    /// This is the one the index actually broke on. `process_git_folder` runs far
+    /// more often than a person scans: the reconcile tick, every watcher batch,
+    /// and every FSEvents overflow — and a `cargo build` writing into `target/`
+    /// overflows FSEvents reliably. Measured on this machine 2026-09-30: it fired
+    /// four times in twenty-five minutes for one repository.
+    ///
+    /// So when the structure pass wrote the barrier sentinel over EVERY row, an
+    /// already-parsed file went `content_hash = '<real>'` → `''`, the upsert saw
+    /// `IS DISTINCT FROM`, and `parsed_at` was reset. The whole repository
+    /// returned to unparsed on every pass. Sensei reached 1,746 of 1,757 files
+    /// and went back to 0; machine-wide, 55,501 files sat at the sentinel and
+    /// could never converge.
+    ///
+    /// Mutation that must break this test: restore
+    /// `upsert_file_row(.., BARRIER_MTIME, BARRIER_HASH, None)` on the
+    /// barrier-seed branch of `write_file_rows`.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
+    async fn a_second_scan_of_an_unchanged_repo_keeps_the_parse_state() {
+        // This test writes `files` rows and then parses from them. Excluded
+        // against the version-rescan sweep, which deletes them database-wide.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path().join("steady");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"steady\"\n").unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn alpha() {}\n").unwrap();
+
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "steady", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        // As a scan leaves it: the repo folder carries a `repositories`
+        // row. `process_git_folder` records membership against that row,
+        // so a fixture without one is a state production never produces.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "steady")
+            .await
+            .unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+
+        // Full cycle once: structure → gate → parse.
+        super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
+            .await
+            .unwrap();
+        super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
+            .await
+            .unwrap();
+        let file_tasks: Vec<_> = ctx
+            .queue
+            .snapshot()
+            .await
+            .into_iter()
+            .filter(|(k, _, _)| *k == TaskKind::ProcessFile)
+            .collect();
+        for (_, folder_path, path) in &file_tasks {
+            super::super::process_file(&ctx, &Task::new(TaskKind::ProcessFile, folder_path, path))
+                .await
+                .unwrap();
+        }
+        assert!(
+            ctx.pg().list_unparsed_files(&fid).await.unwrap().is_empty(),
+            "precondition: the first cycle must leave nothing unparsed"
+        );
+
+        // NOTHING CHANGES ON DISK. Scan the structure again, as the watcher does.
+        super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
+            .await
+            .unwrap();
+
+        let unparsed = ctx.pg().list_unparsed_files(&fid).await.unwrap();
+        assert!(
+            unparsed.is_empty(),
+            "a rescan of an UNCHANGED repo reset the parse state — the index can never \
+             converge, because this runs on every build: {unparsed:?}"
+        );
+    }
+
+    /// `--force` must reach `mark_folder_unparsed` THROUGH THE WHOLE CHAIN.
+    ///
+    /// Every link was verified in isolation and the force still never fired on the
+    /// live daemon, so this asserts the chain end to end rather than any one hop:
+    /// a forced `ProcessGitFolder` must hand `force` to the manifest gate, the
+    /// gate must hand it to `ProcessRepoFiles`, and that must reopen files a
+    /// previous pass already parsed. Any hop dropping the flag looks exactly like
+    /// the others from outside — the scan "succeeds" and re-parses nothing.
+    ///
+    /// Mutation that must break this test: pass `false` instead of `task.force`
+    /// to `enqueue_manifest_gate`, or drop the `t.force = force` assignment in it.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
+    async fn a_forced_scan_reopens_files_a_previous_pass_already_parsed() {
+        // This test writes `files` rows and then parses from them. Excluded
+        // against the version-rescan sweep, which deletes them database-wide.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path().join("forced");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"forced\"\n").unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn alpha() {}\n").unwrap();
+
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "forced", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        // As a scan leaves it: the repo folder carries a `repositories`
+        // row. `process_git_folder` records membership against that row,
+        // so a fixture without one is a state production never produces.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "forced")
+            .await
+            .unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+
+        // Parse everything once.
+        super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
+            .await
+            .unwrap();
+        super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
+            .await
+            .unwrap();
+        let file_tasks: Vec<_> = ctx
+            .queue
+            .snapshot()
+            .await
+            .into_iter()
+            .filter(|(k, _, _)| *k == TaskKind::ProcessFile)
+            .collect();
+        for (_, folder_path, path) in &file_tasks {
+            super::super::process_file(&ctx, &Task::new(TaskKind::ProcessFile, folder_path, path))
+                .await
+                .unwrap();
+        }
+        assert!(
+            ctx.pg().list_unparsed_files(&fid).await.unwrap().is_empty(),
+            "precondition: everything is parsed, so ONLY a force can reopen it"
+        );
+
+        // Now the forced pass — entered exactly where `scan_root` enters it.
+        super::process_git_folder(
+            &ctx,
+            &Task::new(TaskKind::ProcessGitFolder, &repo_path, "").forced(true),
+        )
+        .await
+        .unwrap();
+
+        // The gate it enqueued must itself be forced. Run the real task the queue
+        // holds, not a hand-built one, or the test proves nothing about the chain.
+        //
+        // The MOST RECENT gate, by id: the unforced first pass left its own gate
+        // in the queue, and taking the first match silently asserted against that
+        // one instead — which is how this test first "found" a bug that was its own.
+        let gate = ctx
+            .queue
+            .snapshot_tasks()
+            .await
+            .into_iter()
+            .filter(|t| t.kind == TaskKind::ProcessRepoFiles && t.folder_path == repo_path)
+            .max_by_key(|t| t.id)
+            .expect("the forced scan enqueued no manifest gate");
+        assert!(gate.force, "ProcessGitFolder did not pass `force` to the gate it enqueued");
+
+        super::process_repo_files(&ctx, &gate).await.unwrap();
+
+        let reopened = ctx.pg().list_unparsed_files(&fid).await.unwrap();
+        assert!(
+            reopened.iter().any(|p| p == "src/lib.rs"),
+            "a FORCED scan did not reopen an already-parsed file — `--force` is a no-op: \
+             {reopened:?}"
+        );
+    }
+
+    /// The other half: a file whose bytes DID change must come back as unparsed.
+    ///
+    /// Stated separately because the fix to the test above could trivially be
+    /// "never reset `parsed_at`", which would make a changed file keep a parse
+    /// describing bytes that are gone. Both properties have to hold at once, and
+    /// only the REAL fingerprint delivers both.
+    ///
+    /// Mutation that must break this test: drop `content_hash` from the upsert's
+    /// `ON CONFLICT` set, or seed the barrier row from the previous hash.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
+    async fn a_rescan_reparses_a_file_whose_content_changed() {
+        // This test writes `files` rows and then parses from them. Excluded
+        // against the version-rescan sweep, which deletes them database-wide.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path().join("moving");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"moving\"\n").unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn alpha() {}\n").unwrap();
+
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "moving", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        // As a scan leaves it: the repo folder carries a `repositories`
+        // row. `process_git_folder` records membership against that row,
+        // so a fixture without one is a state production never produces.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "moving")
+            .await
+            .unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+
+        super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
+            .await
+            .unwrap();
+        super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
+            .await
+            .unwrap();
+        let file_tasks: Vec<_> = ctx
+            .queue
+            .snapshot()
+            .await
+            .into_iter()
+            .filter(|(k, _, _)| *k == TaskKind::ProcessFile)
+            .collect();
+        for (_, folder_path, path) in &file_tasks {
+            super::super::process_file(&ctx, &Task::new(TaskKind::ProcessFile, folder_path, path))
+                .await
+                .unwrap();
+        }
+        assert!(ctx.pg().list_unparsed_files(&fid).await.unwrap().is_empty());
+
+        // Rewrite the file with DIFFERENT bytes. The mtime gate is second-grained
+        // on some filesystems, so the content hash — not the timestamp — has to
+        // be what carries this.
+        std::fs::write(repo.join("src/lib.rs"), "pub fn alpha() {}\npub fn beta() {}\n").unwrap();
+
+        super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
+            .await
+            .unwrap();
+
+        let unparsed = ctx.pg().list_unparsed_files(&fid).await.unwrap();
+        assert!(
+            unparsed.iter().any(|p| p == "src/lib.rs"),
+            "a CHANGED file was not reopened for parsing — its declarations are now \
+             stale but counted as decided: {unparsed:?}"
         );
     }
 }

@@ -273,13 +273,17 @@ pub struct ImportRow {
     pub binds: BindingRow,
     pub origin: OriginRow,
     pub at: Span,
+    /// What the specifier names, as the ladder placed it — the fact that was
+    /// missing from every import this indexer has ever written (#242).
+    pub target: TargetRow,
 }
 
 impl ImportRow {
     /// Destructured EXHAUSTIVELY (R9) — see [`SymbolRow::of`].
     pub fn of(import: &Import, from: &str) -> Self {
-        let Import { path, binds, origin, at } = import;
+        let Import { path, binds, origin, at, target } = import;
         Self {
+            target: target_row_of(target),
             from: from.to_string(),
             path: path.clone(),
             binds: match binds {
@@ -516,9 +520,20 @@ enum Occurrence {
     Use { kind: RefKind, at: Span, outcome: Outcome },
     /// A structural fact (spec §3.3).
     Structure { kind: RelationKind, at: Span, outcome: Outcome },
-    /// An import (spec §2). It brings a name into scope rather than using one,
-    /// so there is no target for the ladder to have proven or missed.
-    Brought { binds: BindingRow, origin: OriginRow, at: Span },
+    /// An import (spec §2).
+    ///
+    /// It carries an [`Outcome`] for the same reason a use site does, and it is
+    /// the fact shape that did not. Measured 2026-10-06, before this: 251,270 of
+    /// 258,623 `imports` edges carried NEITHER `resolved_via` nor
+    /// `unresolved_reason`, against 2 of 1.69M for `references` — because
+    /// `edge_verdict` reduces over `props.occurrences[*].rung|reason` and a
+    /// `brought` occurrence wrote neither key (#242).
+    ///
+    /// The SPECIFIER rides here too, and did not before. It used to be read back
+    /// off the edge's `target_name` column, which only exists while the edge is
+    /// unresolved — so a placed import would have lost the one string the
+    /// source actually wrote.
+    Brought { path: String, binds: BindingRow, origin: OriginRow, at: Span, outcome: Outcome },
 }
 
 /// What the ladder concluded at one occurrence.
@@ -577,11 +592,26 @@ fn edge_rows_of(facts: &FileFacts, file: &str) -> Vec<EdgeRow> {
 
     for import in &facts.imports {
         let row = ImportRow::of(import, file);
-        let ImportRow { from, path, binds, origin, at } = row;
-        grouped
-            .entry((from, "imports", TargetKey::Named(path)))
-            .or_default()
-            .push(Occurrence::Brought { binds, origin, at });
+        let ImportRow { from, path, binds, origin, at, target } = row;
+        // Keyed on what the specifier NAMES and no longer on the specifier
+        // itself. Two consequences, both wanted: a placed import points at the
+        // identity the declaration minted, like every other fact; and the
+        // `RefKind::Imports` reference `common::import_references` emits for the
+        // same statement now lands on the SAME key instead of a second row.
+        //
+        // Measured before this: `db/pg_store/playbook/mod.rs` had seven
+        // `imports` rows for six `use` lines — six named specifiers plus a
+        // seventh, placed, for `use super::*`, which `place_entered` had already
+        // reduced to the module. One statement, two rows, and any count over
+        // `kind = 'imports'` saw both.
+        let (key, outcome) = key_and_outcome_of(target);
+        grouped.entry((from, "imports", key)).or_default().push(Occurrence::Brought {
+            path,
+            binds,
+            origin,
+            at,
+            outcome,
+        });
     }
 
     grouped
@@ -591,7 +621,17 @@ fn edge_rows_of(facts: &FileFacts, file: &str) -> Vec<EdgeRow> {
 }
 
 fn target_key_and_outcome(target: &Resolution) -> (TargetKey, Outcome) {
-    match target_row_of(target) {
+    key_and_outcome_of(target_row_of(target))
+}
+
+/// The edge key and the occurrence verdict ONE placement produces.
+///
+/// Split out of [`target_key_and_outcome`] so an import — which already holds a
+/// [`TargetRow`] by the time it is grouped — reaches the same two answers
+/// through the same code. A second copy here is how a `brought` occurrence and a
+/// `use` occurrence come to disagree about what "placed" means.
+fn key_and_outcome_of(target: TargetRow) -> (TargetKey, Outcome) {
+    match target {
         TargetRow::Resolved { fqn, via } => (TargetKey::Proven(fqn), Outcome::Proven { via }),
         TargetRow::Unresolved { reason, evidence } => {
             (TargetKey::Named(evidence.name.clone()), Outcome::Missed { reason, evidence })
@@ -825,8 +865,13 @@ fn occurrence_prop(occurrence: &Occurrence) -> serde_json::Value {
             }),
             outcome,
         ),
-        Occurrence::Brought { binds, origin, at } => serde_json::json!({
+        Occurrence::Brought { path, binds, origin, at, outcome } => with_outcome(
+            serde_json::json!({
             "fact": "brought",
+            // The specifier VERBATIM. On an unresolved import this duplicates
+            // the edge's `target_name`; on a placed one it is the only copy
+            // left, because that column is null the moment `target_id` is set.
+            "path": path,
             "binds": match binds {
                 BindingRow::Name(name) => serde_json::json!({ "binds": "name", "name": name }),
                 BindingRow::MemberOf { local, member } => {
@@ -841,7 +886,9 @@ fn occurrence_prop(occurrence: &Occurrence) -> serde_json::Value {
                 }
             },
             "at": span_prop(*at),
-        }),
+            }),
+            outcome,
+        ),
     }
 }
 
@@ -911,9 +958,11 @@ fn occurrence_from_prop(value: &serde_json::Value) -> Option<Occurrence> {
             outcome: outcome_from_prop(value)?,
         }),
         "brought" => Some(Occurrence::Brought {
+            path: value.get("path")?.as_str()?.to_string(),
             binds: binds_from_prop(value.get("binds")?)?,
             origin: origin_from_prop(value.get("origin")?)?,
             at: span_from_prop(value.get("at")?)?,
+            outcome: outcome_from_prop(value)?,
         }),
         _ => None,
     }
@@ -1392,21 +1441,24 @@ fn read_edge_into(edge: &EdgeColumns, stored: &mut Stored) -> Result<(), String>
                 };
                 stored.relations.push(RelationRow { kind, child: source_fqn.clone(), parent, at });
             }
-            Occurrence::Brought { binds, origin, at } => {
+            Occurrence::Brought { path, binds, origin, at, outcome } => {
                 filed_as(&[&"an import"], column == "imports")?;
-                // The specifier IS the target name — an import names a path, and
-                // placing that path is the ladder's job, done per NAME rather
-                // than per specifier. Minting an identity for it here would be a
-                // second, weaker resolver (R7).
-                let path = target_name
-                    .clone()
-                    .ok_or_else(|| format!("{source_fqn}: an import row carries no specifier"))?;
+                // The specifier comes off the OCCURRENCE and no longer off
+                // `target_name`. A placed import has no `target_name` — the
+                // column is null the moment `target_id` is set — so reading it
+                // from there would have turned every import the ladder placed
+                // into an error the moment imports gained a verdict (#242).
+                let target = match outcome {
+                    Outcome::Proven { via } => TargetRow::Resolved { fqn: proven("import")?, via },
+                    Outcome::Missed { reason, evidence } => missed("import", reason, evidence)?,
+                };
                 stored.imports.push(ImportRow {
                     from: source_fqn.clone(),
                     path,
                     binds,
                     origin,
                     at,
+                    target,
                 });
             }
         }
@@ -2119,10 +2171,72 @@ pub fn widest(a: u32) -> u32 {
         let expected: Vec<persist::ImportRow> = facts
             .imports
             .iter()
-            .map(|import| persist::ImportRow::of(import, "rust·senseid·gadget·mod"))
+            .map(|import| persist::ImportRow::of(import, "rust·senseid··gadget·mod"))
             .collect();
         assert!(!expected.is_empty(), "the fixture must exercise some imports");
         same_rows(stored.imports.clone(), expected, "every import the walk saw");
+    }
+
+    /// **EVERY IMPORT EDGE CARRIES A VERDICT IN A COLUMN (#242).**
+    ///
+    /// The property the issue states, asserted where the issue measured it:
+    /// `sensei.edges`. `sensei.edge_verdict` reduces over
+    /// `props.occurrences[*].rung|reason`, and a `brought` occurrence wrote
+    /// NEITHER key — so an import edge came out with `resolved_via` and
+    /// `unresolved_reason` both null. Measured 2026-10-06 over the whole corpus:
+    /// 251,270 of 258,623 import edges, against 2 of 1.69M `references`.
+    ///
+    /// This is a column test and not a round trip on purpose. The round trip
+    /// above reads the props back, so it would pass with the columns still
+    /// empty — which is exactly the state that held for months.
+    ///
+    /// The fixture imports `std::collections::BTreeMap`, which places onto
+    /// library surface, so the assertion is on the RUNG and not merely on
+    /// "something non-null": a verdict that said `unplaced` would satisfy a
+    /// null check and still be the walk's own un-run marker.
+    ///
+    /// Mutation that must break this test: drop `outcome` from the `brought`
+    /// occurrence prop.
+    #[tokio::test]
+    async fn every_import_edge_carries_a_verdict_column() {
+        let first_party: BTreeSet<String> = ["senseid".to_string()].into_iter().collect();
+        let scanned = BTreeSet::new();
+        let world = World {
+            first_party: &first_party,
+            first_party_members: &BTreeSet::new(),
+            declared_members: &BTreeSet::new(),
+            returns: &std::collections::BTreeMap::new(),
+            scanned: &scanned,
+        };
+        let facts = resolve(walked(), &rust::GRAMMAR, &world);
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "import_verdicts").await;
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
+
+        let verdicts: Vec<(Option<String>, Option<String>, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT e.resolved_via, e.unresolved_reason, t.fqn
+                   FROM sensei.edges e
+                   LEFT JOIN sensei.nodes t ON t.id = e.target_id
+                  WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind
+                  ORDER BY 1, 2",
+            )
+            .bind(folder)
+            .fetch_all(store.pool())
+            .await
+            .expect("the import edges read back");
+
+        assert!(!verdicts.is_empty(), "the fixture must write some import edges");
+        assert_eq!(
+            verdicts,
+            vec![(
+                Some("fully_qualified_external".to_string()),
+                None,
+                Some("lib\u{b7}std\u{b7}collections::BTreeMap".to_string())
+            )],
+            "an import of a package this scan never opens is PLACED onto library surface, \
+             and the column says by which rung"
+        );
     }
 
     /// A2, carried to the last step. The walk counts every use site; this counts
@@ -3068,7 +3182,7 @@ pub fn widest(a: u32) -> u32 {
         let free = "rust·senseid·gadget·widest·item";
         assert_eq!(
             containment.get(free).map(Option::as_deref),
-            Some(Some("rust·senseid·gadget·mod")),
+            Some(Some("rust·senseid··gadget·mod")),
             "{free} is declared at file scope, so its parent is the FILE and never a type"
         );
     }

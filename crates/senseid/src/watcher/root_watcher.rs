@@ -1,6 +1,9 @@
 //! Root watcher — watches registered directories for file changes and enqueues tasks.
 //! Singleton pattern: use `RootWatcher::instance(queue)` to access.
 
+// TEST-ONLY since #216: the watcher no longer touches the database. Its
+// fixtures still seed one to prove a batch resolves WITHOUT it.
+#[cfg(test)]
 use crate::db::pg_store::PgStore;
 use crate::tasks::queue::TaskQueue;
 use crate::tasks::{Task, TaskKind};
@@ -239,6 +242,66 @@ pub(crate) fn rescan_reconcile_roots(paths: &[PathBuf], roots: &[PathBuf]) -> Ve
     if out.is_empty() { roots.to_vec() } else { out }
 }
 
+/// How long a root rests after an overflow-driven reconcile before another
+/// overflow can trigger one.
+///
+/// Matched to the reconcile SCHEDULER's own 300s cadence, deliberately. That
+/// scheduler is the convergence guarantee; this watcher path is only a fast
+/// catch-up on top of it, so resting for one scheduler period can never delay
+/// convergence past what is already promised — while a burst of overflows
+/// collapses to a single rescan.
+pub(crate) const OVERFLOW_RECONCILE_COOLDOWN_MS: i64 = 300_000;
+
+/// Drop the targets that were reconciled within the cooldown, and stamp those
+/// that pass. Pure/testable apart from the map it updates.
+///
+/// AN OVERFLOW BURST IS ONE EVENT, NOT N REASONS TO RESCAN. `need_rescan` means
+/// "events were lost", and a single `cargo build` writing into `target/` loses
+/// them continuously: measured 2026-09-30, **226 overflow events in six minutes**,
+/// which drove 29 full structure passes over one repository and starved the parse
+/// queue that was supposed to be draining. Every one of those carried the same
+/// information as the first.
+///
+/// The existing per-path overlap guard in [`enqueue_scanroot_reconcile`] cannot
+/// absorb this: it only suppresses a reconcile while one is still PENDING, so the
+/// next overflow after a scan completes enqueues another, for ever.
+pub(crate) fn targets_off_cooldown(
+    targets: Vec<PathBuf>,
+    last_reconcile_ms: &mut HashMap<PathBuf, i64>,
+    now_ms: i64,
+    cooldown_ms: i64,
+) -> Vec<PathBuf> {
+    targets
+        .into_iter()
+        .filter(|t| match last_reconcile_ms.get(t) {
+            Some(prev) if now_ms.saturating_sub(*prev) < cooldown_ms => false,
+            _ => {
+                last_reconcile_ms.insert(t.clone(), now_ms);
+                true
+            }
+        })
+        .collect()
+}
+
+/// What an FSEvents overflow should actually reconcile: the affected roots, less
+/// the ones still resting. The whole decision the watch loop makes on a
+/// `need_rescan` event, so the loop itself is left with a call and an enqueue.
+///
+/// Composing the two matters, and the sharp case is a GLOBAL overflow — one with
+/// no paths, which [`rescan_reconcile_roots`] widens to every root. Without the
+/// per-root throttle a build in one tree would rescan every other tree on the
+/// machine, repeatedly.
+pub(crate) fn overflow_reconcile_targets(
+    paths: &[PathBuf],
+    roots: &[PathBuf],
+    last_reconcile_ms: &mut HashMap<PathBuf, i64>,
+    now_ms: i64,
+    cooldown_ms: i64,
+) -> Vec<PathBuf> {
+    let affected = rescan_reconcile_roots(paths, roots);
+    targets_off_cooldown(affected, last_reconcile_ms, now_ms, cooldown_ms)
+}
+
 /// Enqueue one `ScanRoot` reconcile per target — the same task the `scan_folder`
 /// API, version-rescan, and reconcile-scheduler use. A target is a watch root for
 /// an overflow rescan, or a single REPOSITORY for a branch switch (see
@@ -293,7 +356,6 @@ pub struct RootWatcher {
     /// changed file to its owning indexed repo so incremental tasks target the
     /// right folder_path. `None` before boot wiring (e.g. in isolated tests) — the
     /// watch loop then can't resolve and logs a warning instead of enqueueing.
-    store: Option<PgStore>,
     status: WatcherStatus,
     stop_flag: Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -312,20 +374,11 @@ impl RootWatcher {
         Self {
             roots: HashMap::new(),
             queue,
-            store: None,
             status: WatcherStatus::Stopped("no roots".into()),
             stop_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             thread: None,
             health: Arc::new(WatcherHealth::new()),
         }
-    }
-
-    /// Give the watcher a DB handle so the watch loop can resolve each changed
-    /// file to its owning repo. Called once at boot (where `AppState.pg` exists);
-    /// persists in the singleton across start/stop restarts. `PgStore` is cheaply
-    /// cloneable (Arc'd pool).
-    pub fn set_store(&mut self, store: PgStore) {
-        self.store = Some(store);
     }
 
     pub fn register(&mut self, root: PathBuf, exclusions: Vec<String>) {
@@ -368,7 +421,6 @@ impl RootWatcher {
             self.roots.values().flat_map(|r| r.excluded.clone()).collect();
         let queue = self.queue.clone();
         let health = self.health.clone();
-        let store = self.store.clone();
 
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| "RootWatcher requires tokio runtime".to_string())?;
@@ -408,6 +460,9 @@ impl RootWatcher {
 
             let mut pending: HashMap<PathBuf, ChangeKind> = HashMap::new();
             let mut last_event = std::time::Instant::now();
+            // When each root was last reconciled BECAUSE OF AN OVERFLOW, so a
+            // burst collapses to one rescan. See `targets_off_cooldown`.
+            let mut last_overflow_ms: HashMap<PathBuf, i64> = HashMap::new();
 
             loop {
                 if stop.load(std::sync::atomic::Ordering::Acquire) {
@@ -425,7 +480,24 @@ impl RootWatcher {
                         // silently fold this into a Modify and drop it, so handle
                         // it explicitly: force a reconcile of the affected root(s).
                         if event.need_rescan() {
-                            let targets = rescan_reconcile_roots(&event.paths, &roots);
+                            // THROTTLED PER ROOT. A burst of overflows all carry
+                            // the same information as the first — see
+                            // `targets_off_cooldown` for the measured storm.
+                            let targets = overflow_reconcile_targets(
+                                &event.paths,
+                                &roots,
+                                &mut last_overflow_ms,
+                                chrono::Utc::now().timestamp_millis(),
+                                OVERFLOW_RECONCILE_COOLDOWN_MS,
+                            );
+                            if targets.is_empty() {
+                                tracing::debug!(
+                                    paths = ?event.paths,
+                                    "RootWatcher: FSEvents rescan/overflow — every affected root is resting; \
+                                     the 300s reconcile scheduler still guarantees convergence",
+                                );
+                                continue;
+                            }
                             tracing::warn!(
                                 targets = targets.len(),
                                 paths = ?event.paths,
@@ -478,9 +550,10 @@ impl RootWatcher {
                         {
                             let batch: HashMap<PathBuf, ChangeKind> = std::mem::take(&mut pending);
                             let q = queue.clone();
-                            let s = store.clone();
+                            // The thread's OWN roots — the ones it is watching.
+                            let r = roots.clone();
                             rt.spawn(async move {
-                                RootWatcher::process_batch(batch, &q, s.as_ref()).await;
+                                RootWatcher::process_batch(batch, &q, &r).await;
                             });
                         }
                     }
@@ -565,32 +638,33 @@ impl RootWatcher {
     /// reading "absent from the batch" as "deleted from disk".
     ///
     /// A path under no watch root is dropped: nobody asked us to watch it.
+    /// TAKES THE ROOTS, rather than asking a database for them (#216).
+    ///
+    /// This used to hold an `Option<&PgStore>` and call `list_watch_roots()`,
+    /// with two paths that threw the whole batch away: no store, or a failed
+    /// read. The first fired on every fresh install — `spawn_root_watchers`
+    /// returns before its `set_store` when no root exists yet, and the other
+    /// three register/start paths never set it — and `start()` clones the store
+    /// into the thread, so a later `set_store` could not reach a live watcher.
+    ///
+    /// The read was never necessary. The watch thread is watching these roots;
+    /// it already has their paths. Passing them removes both drop paths and a
+    /// DB round-trip per debounce window, and makes the failure unreachable
+    /// rather than something four call sites must remember to prevent.
+    ///
+    /// It is also the MORE correct set: `list_watch_roots` returns every root in
+    /// the database, including ones this watcher is not watching.
     pub(crate) async fn process_batch(
         changes: HashMap<PathBuf, ChangeKind>,
         queue: &TaskQueue,
-        store: Option<&PgStore>,
+        roots: &[PathBuf],
     ) {
-        let Some(store) = store else {
-            tracing::warn!(
-                count = changes.len(),
-                "process_batch: no PgStore — cannot resolve watch roots; batch dropped"
-            );
-            return;
-        };
-        let roots: Vec<PathBuf> = match store.list_watch_roots().await {
-            Ok(rows) => rows.iter().filter_map(|r| r["path"].as_str().map(PathBuf::from)).collect(),
-            Err(e) => {
-                tracing::warn!(error = %e, "process_batch: list_watch_roots failed; batch dropped");
-                return;
-            }
-        };
-
         // Grouped by watch root, splitting OBSERVED deletions from changes: a
         // delete is something the filesystem told us happened, and it is the
         // only removal a non-exhaustive scan may act on.
         let mut by_root: HashMap<PathBuf, (Vec<PathBuf>, Vec<PathBuf>)> = HashMap::new();
         for (path, kind) in changes {
-            let Some(root) = watch_root_for_path(&path, &roots) else { continue };
+            let Some(root) = watch_root_for_path(&path, roots) else { continue };
             let entry = by_root.entry(root).or_default();
             match kind {
                 ChangeKind::Delete => entry.1.push(path),
@@ -1109,6 +1183,55 @@ mod tests {
 
     // ── process_batch ─────────────────────────────────────────────────
 
+    /// A batch resolves against the watcher's OWN roots, with no database.
+    ///
+    /// This is #216. `process_batch` used to take an `Option<&PgStore>` and ask
+    /// it for `list_watch_roots()`, dropping the whole batch when the store was
+    /// absent — and the store was absent on every fresh install, deterministically:
+    /// `spawn_root_watchers` returns before its `set_store` when no live root
+    /// exists (`api/server.rs`), and the three other register/start paths never
+    /// set it at all. Worse, `start()` CLONES the store into the thread, so a
+    /// later `set_store` could never reach a running watcher.
+    ///
+    /// The database was never needed. The only thing it supplied was the list of
+    /// root paths — which the watch thread already owns, because it is watching
+    /// them. Taking `roots` directly deletes both drop paths (the absent store
+    /// AND a failing `list_watch_roots`) and a DB round-trip per debounce window.
+    ///
+    /// Mutation that must break this test: make `process_batch` take the roots
+    /// from anywhere other than its argument, or restore the early return.
+    #[tokio::test]
+    async fn a_batch_resolves_against_the_watchers_own_roots_without_a_database() {
+        let q = TaskQueue::new();
+        let root = PathBuf::from("/_test/watch/no-db-root");
+
+        let mut changes = HashMap::new();
+        changes.insert(root.join("repo/src/a.rs"), ChangeKind::Modify);
+
+        // No PgStore anywhere in this test — that is the point.
+        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
+
+        let snap = q.snapshot().await;
+        assert_eq!(snap.len(), 1, "the batch must survive without a database; got {snap:?}");
+        assert_eq!(snap[0].0, TaskKind::ScanRoot);
+    }
+
+    /// A path under no watched root is still dropped — the grouping is what
+    /// decides, and it must not become "enqueue everything" once the database
+    /// stops gating it.
+    #[tokio::test]
+    async fn a_change_outside_every_watched_root_enqueues_nothing() {
+        let q = TaskQueue::new();
+        let root = PathBuf::from("/_test/watch/scoped-root");
+
+        let mut changes = HashMap::new();
+        changes.insert(PathBuf::from("/_test/watch/somewhere-else/x.rs"), ChangeKind::Modify);
+
+        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
+
+        assert!(q.snapshot().await.is_empty(), "a path under no root must enqueue nothing");
+    }
+
     /// Seed a `git` repo folder in the DB so `repo_root_for_path` resolves a
     /// change under it. Returns `(pg, repo_abs_path, root_id)`.
     async fn seed_watch_repo() -> (PgStore, String, uuid::Uuid) {
@@ -1135,7 +1258,10 @@ mod tests {
         changes.insert(PathBuf::from(format!("{repo}/src/b.rs")), ChangeKind::Create);
         changes.insert(PathBuf::from(format!("{repo}/src/gone.rs")), ChangeKind::Delete);
 
-        RootWatcher::process_batch(changes, &q, Some(&pg)).await;
+        // The watch root is `repo`'s parent — the thread's own root list, which
+        // is what the watcher now resolves against instead of the database.
+        let root = PathBuf::from(&repo).parent().unwrap().to_path_buf();
+        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
 
         let snap = q.snapshot().await;
         assert_eq!(snap.len(), 1, "one scan for one root, got {snap:?}");
@@ -1156,7 +1282,10 @@ mod tests {
         changes.insert(PathBuf::from(format!("{repo}/keep.rs")), ChangeKind::Modify);
         changes.insert(PathBuf::from(format!("{repo}/gone.rs")), ChangeKind::Delete);
 
-        RootWatcher::process_batch(changes, &q, Some(&pg)).await;
+        // The watch root is `repo`'s parent — the thread's own root list, which
+        // is what the watcher now resolves against instead of the database.
+        let root = PathBuf::from(&repo).parent().unwrap().to_path_buf();
+        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
 
         let task = q.next_task().await;
         match &task.scope {
@@ -1181,7 +1310,10 @@ mod tests {
 
         let mut changes = HashMap::new();
         changes.insert(PathBuf::from(format!("{repo}/a.rs")), ChangeKind::Modify);
-        RootWatcher::process_batch(changes, &q, Some(&pg)).await;
+        // The watch root is `repo`'s parent — the thread's own root list, which
+        // is what the watcher now resolves against instead of the database.
+        let root = PathBuf::from(&repo).parent().unwrap().to_path_buf();
+        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
 
         let task = q.next_task().await;
         assert!(!task.scope.is_exhaustive(), "a batch must not license absence-as-deletion");
@@ -1192,12 +1324,15 @@ mod tests {
     /// A path under no watch root is dropped — nobody asked us to watch it.
     #[tokio::test]
     async fn process_batch_drops_paths_under_no_watch_root() {
-        let (pg, _repo, root_id) = seed_watch_repo().await;
+        let (pg, repo, root_id) = seed_watch_repo().await;
         let q = TaskQueue::new();
 
         let mut changes = HashMap::new();
         changes.insert(PathBuf::from("/somewhere/else/x.rs"), ChangeKind::Modify);
-        RootWatcher::process_batch(changes, &q, Some(&pg)).await;
+        // The watch root is `repo`'s parent — the thread's own root list, which
+        // is what the watcher now resolves against instead of the database.
+        let root = PathBuf::from(&repo).parent().unwrap().to_path_buf();
+        RootWatcher::process_batch(changes, &q, std::slice::from_ref(&root)).await;
 
         assert_eq!(q.status().await.pending, 0, "nothing outside a watch root is scanned");
 
@@ -1267,5 +1402,146 @@ mod tests {
         watcher.start().unwrap();
         assert_eq!(*watcher.status(), WatcherStatus::Watching);
         watcher.stop();
+    }
+
+    // ── overflow cooldown ───────────────────────────────────────────────────
+
+    /// THE STORM PROPERTY: a burst of overflows is ONE reconcile, not N.
+    ///
+    /// Measured 2026-09-30: 226 `need_rescan` events in six minutes — a single
+    /// `cargo build` writing into `target/` — drove 29 full structure passes over
+    /// one repository. Each pass re-walked 2,343 files and re-opened the manifest
+    /// gate, starving the parse queue it was meant to be helping.
+    ///
+    /// Mutation that must break this test: return `targets` unfiltered, or stamp
+    /// the map without consulting it.
+    #[test]
+    fn a_burst_of_overflows_reconciles_a_root_once() {
+        let root = PathBuf::from("/a/dev");
+        let mut last = HashMap::new();
+        let cooldown = super::OVERFLOW_RECONCILE_COOLDOWN_MS;
+
+        let mut reconciles = 0;
+        // 226 overflows arriving across six minutes, the measured shape.
+        for i in 0..226 {
+            let now = 1_000_000 + i * (360_000 / 226);
+            reconciles +=
+                super::targets_off_cooldown(vec![root.clone()], &mut last, now, cooldown).len();
+        }
+        assert_eq!(
+            reconciles, 2,
+            "a six-minute overflow burst must collapse to one reconcile per cooldown \
+             period, not 226"
+        );
+    }
+
+    /// The first overflow is never suppressed — the fast path has to stay fast.
+    ///
+    /// Mutation that must break this test: stamp the map before the lookup, so a
+    /// first sighting reads as already-on-cooldown.
+    #[test]
+    fn the_first_overflow_for_a_root_always_passes() {
+        let mut last = HashMap::new();
+        let out = super::targets_off_cooldown(
+            vec![PathBuf::from("/a/dev")],
+            &mut last,
+            1_000_000,
+            300_000,
+        );
+        assert_eq!(out, vec![PathBuf::from("/a/dev")]);
+    }
+
+    /// Past the cooldown, a root reconciles again — this is a THROTTLE, never a
+    /// mute. Dropped events must still converge.
+    ///
+    /// Mutation that must break this test: never refresh the stamp, so one
+    /// reconcile permanently suppresses the root.
+    #[test]
+    fn a_root_reconciles_again_once_the_cooldown_elapses() {
+        let root = PathBuf::from("/a/dev");
+        let mut last = HashMap::new();
+        assert_eq!(super::targets_off_cooldown(vec![root.clone()], &mut last, 0, 300_000).len(), 1);
+        assert_eq!(
+            super::targets_off_cooldown(vec![root.clone()], &mut last, 299_999, 300_000).len(),
+            0,
+            "one millisecond inside the window is still inside it"
+        );
+        assert_eq!(
+            super::targets_off_cooldown(vec![root.clone()], &mut last, 300_000, 300_000).len(),
+            1,
+            "at the boundary the root is off cooldown"
+        );
+        assert_eq!(
+            super::targets_off_cooldown(vec![root], &mut last, 900_000, 300_000).len(),
+            1,
+            "and it keeps converging on later bursts"
+        );
+    }
+
+    /// The cooldown is PER ROOT. A busy root must not mute a quiet one — that
+    /// would turn a throttle into dropped coverage for an unrelated tree.
+    ///
+    /// Mutation that must break this test: key the map on anything shared (a
+    /// single timestamp, or the target count).
+    #[test]
+    fn one_roots_cooldown_does_not_suppress_another() {
+        let (busy, quiet) = (PathBuf::from("/a/dev"), PathBuf::from("/a/work"));
+        let mut last = HashMap::new();
+
+        super::targets_off_cooldown(vec![busy.clone()], &mut last, 0, 300_000);
+        let out = super::targets_off_cooldown(
+            vec![busy.clone(), quiet.clone()],
+            &mut last,
+            1_000,
+            300_000,
+        );
+        assert_eq!(out, vec![quiet], "the quiet root passes while the busy one rests");
+    }
+
+    /// The composed decision the watch loop makes, on the sharp case: a GLOBAL
+    /// overflow carries no paths, so `rescan_reconcile_roots` widens it to every
+    /// root. Without the throttle, one tree's build rescans every other tree on
+    /// the machine, over and over.
+    ///
+    /// Mutation that must break this test: drop the `targets_off_cooldown` call
+    /// from `overflow_reconcile_targets` and return the affected roots directly.
+    #[test]
+    fn a_global_overflow_widens_to_every_root_but_each_is_throttled() {
+        let roots = vec![PathBuf::from("/a/dev"), PathBuf::from("/a/work")];
+        let mut last = HashMap::new();
+        let cooldown = super::OVERFLOW_RECONCILE_COOLDOWN_MS;
+
+        // No paths ⇒ every root, and the first sighting must not be suppressed.
+        let first = super::overflow_reconcile_targets(&[], &roots, &mut last, 0, cooldown);
+        assert_eq!(first, roots, "a global overflow must reach every root the first time");
+
+        // The burst that follows is the same signal repeated.
+        for i in 1..50 {
+            assert!(
+                super::overflow_reconcile_targets(&[], &roots, &mut last, i * 1_000, cooldown)
+                    .is_empty(),
+                "overflow {i} of the same burst must not re-reconcile the whole machine"
+            );
+        }
+
+        // A path-scoped overflow inside a resting root is still suppressed …
+        assert!(
+            super::overflow_reconcile_targets(
+                &[PathBuf::from("/a/dev/sensei")],
+                &roots,
+                &mut last,
+                60_000,
+                cooldown,
+            )
+            .is_empty(),
+            "a scoped overflow cannot bypass its own root's cooldown"
+        );
+
+        // … and once the window passes, convergence resumes.
+        assert_eq!(
+            super::overflow_reconcile_targets(&[], &roots, &mut last, cooldown, cooldown),
+            roots,
+            "the throttle is a delay, never a mute"
+        );
     }
 }

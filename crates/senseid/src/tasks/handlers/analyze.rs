@@ -20,6 +20,7 @@
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
 use super::prompt_classify::{PromptClass, classify_batch};
+use crate::db::pg_store::SessionMetricsRow;
 use crate::transcript::TranscriptTurn;
 
 /// Idle gap (ms) that separates "still working" from "came back later" — turns
@@ -655,16 +656,16 @@ pub async fn enrich_session(
     match derive_session_metrics(&events, &transcript) {
         Some(m) => {
             ctx.pg()
-                .update_session_metrics(
+                .update_session_metrics(&SessionMetricsRow {
                     session_id,
-                    m.turn_count,
-                    m.corrections,
-                    m.outcome,
-                    m.ftr,
-                    m.duration_ms,
-                    m.module.as_deref(),
-                    &m.tool_usage,
-                )
+                    turns: m.turn_count,
+                    corrections: m.corrections,
+                    outcome: m.outcome,
+                    ftr: m.ftr,
+                    duration_ms: m.duration_ms,
+                    module: m.module.as_deref(),
+                    tool_usage: &m.tool_usage,
+                })
                 .await?;
             ctx.pg().replace_session_turns(session_id, &turns_to_json(&m.turns)).await?;
             // Phase B: record the in-session resume marker so the read path shows
@@ -935,6 +936,7 @@ pub async fn derive_signals(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::pg_store::HookEventRow;
 
     fn ev(event_type: &str, ts: i64) -> HookEvent {
         HookEvent {
@@ -1355,61 +1357,65 @@ mod tests {
             )
             .await
             .unwrap();
-        let fid = pg
-            .upsert_repo(&root, "ana-repo", &format!("/_test/ana-{}", uuid::Uuid::new_v4()))
-            .await
-            .unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            pg,
+            &root,
+            "ana-repo",
+            &format!("/_test/ana-{}", uuid::Uuid::new_v4()),
+        )
+        .await
+        .unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
         let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
 
         // 2 prompts (one a correction) + an edit + a Stop.
         let prompt = |t: &str| serde_json::json!({ "prompt": t });
-        pg.insert_hook_event(
-            &csid,
-            "claude",
-            "UserPromptSubmit",
-            None,
-            None,
-            1000,
-            None,
-            &prompt("build the thing"),
-        )
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "UserPromptSubmit",
+            tool_name: None,
+            cwd: None,
+            ts: 1000,
+            success: None,
+            payload: &prompt("build the thing"),
+        })
         .await
         .unwrap();
-        pg.insert_hook_event(
-            &csid,
-            "claude",
-            "UserPromptSubmit",
-            None,
-            None,
-            2000,
-            None,
-            &prompt("actually, revert that"),
-        )
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "UserPromptSubmit",
+            tool_name: None,
+            cwd: None,
+            ts: 2000,
+            success: None,
+            payload: &prompt("actually, revert that"),
+        })
         .await
         .unwrap();
-        pg.insert_hook_event(
-            &csid,
-            "claude",
-            "PostToolUse",
-            Some("Edit"),
-            None,
-            2500,
-            None,
-            &serde_json::json!({}),
-        )
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "PostToolUse",
+            tool_name: Some("Edit"),
+            cwd: None,
+            ts: 2500,
+            success: None,
+            payload: &serde_json::json!({}),
+        })
         .await
         .unwrap();
-        pg.insert_hook_event(
-            &csid,
-            "claude",
-            "Stop",
-            None,
-            None,
-            3000,
-            None,
-            &serde_json::json!({}),
-        )
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "Stop",
+            tool_name: None,
+            cwd: None,
+            ts: 3000,
+            success: None,
+            payload: &serde_json::json!({}),
+        })
         .await
         .unwrap();
 
@@ -1509,10 +1515,14 @@ mod tests {
             )
             .await
             .unwrap();
-        let fid = pg
-            .upsert_repo(&root, "sig-repo", &format!("/_test/sig-{}", uuid::Uuid::new_v4()))
-            .await
-            .unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            pg,
+            &root,
+            "sig-repo",
+            &format!("/_test/sig-{}", uuid::Uuid::new_v4()),
+        )
+        .await
+        .unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
         let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
 
@@ -1520,103 +1530,103 @@ mod tests {
         let prompt = |t: &str| serde_json::json!({ "prompt": t });
         // hot.rs: 5 edits in one session ⇒ churn anti-pattern (5 >= CHURN_MIN_EDITS).
         for ts in [1100, 1200, 1300, 1400, 1500] {
-            pg.insert_hook_event(
-                &csid,
-                "claude",
-                "PostToolUse",
-                Some("Edit"),
-                None,
+            pg.insert_hook_event(&HookEventRow {
+                session_id: &csid,
+                assistant_family: "claude",
+                event_type: "PostToolUse",
+                tool_name: Some("Edit"),
+                cwd: None,
                 ts,
-                None,
-                &edit("src/hot.rs"),
-            )
+                success: None,
+                payload: &edit("src/hot.rs"),
+            })
             .await
             .unwrap();
         }
         // cold.rs: only 2 edits ⇒ below threshold, not flagged.
-        pg.insert_hook_event(
-            &csid,
-            "claude",
-            "PostToolUse",
-            Some("Edit"),
-            None,
-            1600,
-            None,
-            &edit("src/cold.rs"),
-        )
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "PostToolUse",
+            tool_name: Some("Edit"),
+            cwd: None,
+            ts: 1600,
+            success: None,
+            payload: &edit("src/cold.rs"),
+        })
         .await
         .unwrap();
-        pg.insert_hook_event(
-            &csid,
-            "claude",
-            "PostToolUse",
-            Some("Edit"),
-            None,
-            1700,
-            None,
-            &edit("src/cold.rs"),
-        )
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "PostToolUse",
+            tool_name: Some("Edit"),
+            cwd: None,
+            ts: 1700,
+            success: None,
+            payload: &edit("src/cold.rs"),
+        })
         .await
         .unwrap();
         // prompts: 2 corrections (⇒ correction-prone) + 1 principle (⇒ rule-candidates) + 1 neutral.
-        pg.insert_hook_event(
-            &csid,
-            "claude",
-            "UserPromptSubmit",
-            None,
-            None,
-            1000,
-            None,
-            &prompt("fix hot.rs"),
-        )
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "UserPromptSubmit",
+            tool_name: None,
+            cwd: None,
+            ts: 1000,
+            success: None,
+            payload: &prompt("fix hot.rs"),
+        })
         .await
         .unwrap();
-        pg.insert_hook_event(
-            &csid,
-            "claude",
-            "UserPromptSubmit",
-            None,
-            None,
-            1050,
-            None,
-            &prompt("revert that change"),
-        )
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "UserPromptSubmit",
+            tool_name: None,
+            cwd: None,
+            ts: 1050,
+            success: None,
+            payload: &prompt("revert that change"),
+        })
         .await
         .unwrap();
-        pg.insert_hook_event(
-            &csid,
-            "claude",
-            "UserPromptSubmit",
-            None,
-            None,
-            1075,
-            None,
-            &prompt("that's not right, try again"),
-        )
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "UserPromptSubmit",
+            tool_name: None,
+            cwd: None,
+            ts: 1075,
+            success: None,
+            payload: &prompt("that's not right, try again"),
+        })
         .await
         .unwrap();
-        pg.insert_hook_event(
-            &csid,
-            "claude",
-            "UserPromptSubmit",
-            None,
-            None,
-            1090,
-            None,
-            &prompt("you should always run the tests first"),
-        )
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "UserPromptSubmit",
+            tool_name: None,
+            cwd: None,
+            ts: 1090,
+            success: None,
+            payload: &prompt("you should always run the tests first"),
+        })
         .await
         .unwrap();
-        pg.insert_hook_event(
-            &csid,
-            "claude",
-            "Stop",
-            None,
-            None,
-            2000,
-            None,
-            &serde_json::json!({}),
-        )
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "Stop",
+            tool_name: None,
+            cwd: None,
+            ts: 2000,
+            success: None,
+            payload: &serde_json::json!({}),
+        })
         .await
         .unwrap();
 
@@ -1710,42 +1720,42 @@ mod tests {
             )
             .await
             .unwrap();
-        let fid = pg
-            .upsert_repo(
-                &root,
-                "ana-plan-repo",
-                &format!("/_test/ana-plan-{}", uuid::Uuid::new_v4()),
-            )
-            .await
-            .unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            pg,
+            &root,
+            "ana-plan-repo",
+            &format!("/_test/ana-plan-{}", uuid::Uuid::new_v4()),
+        )
+        .await
+        .unwrap();
         let csid = format!("_test-sid-{}", uuid::Uuid::new_v4());
         let sid = pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();
 
         // A minimal enrichable session (a prompt + a Stop) so analyze_project
         // reaches its success path.
         let prompt = |t: &str| serde_json::json!({ "prompt": t });
-        pg.insert_hook_event(
-            &csid,
-            "claude",
-            "UserPromptSubmit",
-            None,
-            None,
-            1000,
-            None,
-            &prompt("build the thing"),
-        )
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "UserPromptSubmit",
+            tool_name: None,
+            cwd: None,
+            ts: 1000,
+            success: None,
+            payload: &prompt("build the thing"),
+        })
         .await
         .unwrap();
-        pg.insert_hook_event(
-            &csid,
-            "claude",
-            "Stop",
-            None,
-            None,
-            2000,
-            None,
-            &serde_json::json!({}),
-        )
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &csid,
+            assistant_family: "claude",
+            event_type: "Stop",
+            tool_name: None,
+            cwd: None,
+            ts: 2000,
+            success: None,
+            payload: &serde_json::json!({}),
+        })
         .await
         .unwrap();
 

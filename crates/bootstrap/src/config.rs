@@ -329,8 +329,49 @@ impl SenseiLocalConfig {
     }
 }
 
+/// How many days of rolling daemon log files to keep.
+///
+/// Deliberately far shorter than the 30/90-day DATABASE retentions: those hold
+/// rows someone queries, this holds raw trace text nobody reads after the
+/// incident. Measured 2026-09-30: an unrotated daemon log reached **20 GB**.
+pub const DEFAULT_LOG_RETENTION_DAYS: i32 = 7;
+
+/// Read a positive whole number from a config/env string, falling back to
+/// `default`. Missing, unparseable, zero and negative all take the default —
+/// a retention of 0 would mean "delete everything", which is never what an
+/// absent or fat-fingered setting intended.
+///
+/// THE ONE COPY. This existed three times over (`log_pruner::parse_retention`,
+/// `activity_pruner::parse_retention`, `activity_pruner::parse_positive`) with
+/// identical bodies; adding a fourth for log-file retention is what prompted
+/// lifting it here, into the crate both pruners already depend on.
+pub fn positive_or(value: Option<String>, default: i32) -> i32 {
+    value.and_then(|v| v.trim().parse::<i32>().ok()).filter(|n| *n > 0).unwrap_or(default)
+}
+
 #[cfg(test)]
 mod tests {
+    /// A retention setting must never be able to mean "keep nothing".
+    ///
+    /// Zero and negative take the default rather than being honoured: an absent
+    /// or fat-fingered value must not silently become "delete everything", and
+    /// that is the whole reason this is a filter and not a plain parse.
+    ///
+    /// Breaking mutation: drop the `.filter(|n| *n > 0)` — `Some("0")` then
+    /// returns 0 and every pruner deletes its entire table on the next tick.
+    #[test]
+    fn a_retention_setting_can_never_mean_keep_nothing() {
+        use super::positive_or;
+        assert_eq!(positive_or(None, 7), 7, "absent takes the default");
+        assert_eq!(positive_or(Some("".into()), 7), 7, "empty takes the default");
+        assert_eq!(positive_or(Some("nope".into()), 7), 7, "unparseable takes the default");
+        assert_eq!(positive_or(Some("0".into()), 7), 7, "ZERO must not mean keep nothing");
+        assert_eq!(positive_or(Some("-3".into()), 7), 7, "negative must not mean keep nothing");
+
+        assert_eq!(positive_or(Some("14".into()), 7), 14, "a positive value is honoured");
+        assert_eq!(positive_or(Some("  14  ".into()), 7), 14, "surrounding space is trimmed");
+    }
+
     use super::*;
 
     // These assertions pin a compile-time CONTRACT between two consts (a regression

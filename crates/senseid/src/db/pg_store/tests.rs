@@ -650,14 +650,57 @@ async fn tag_file_nodes_by_framework_kind_aggregates_symbol_kinds() {
 }
 
 /// Create a unique test folder for FK tests. Uses suffix for isolation.
+///
+/// CARRIES A REPOSITORY, because every folder does. Since da504332 a folder
+/// inherits `repository_id` from its anchor at write time — measured 13,722 of
+/// 13,722 on the live DB — so a folder without one is a state production can no
+/// longer produce. Modelling it here is not a harmless simplification: it is
+/// what let `version_conflicts_view_flags_multi_version_pins_and_excludes_local`
+/// keep asserting on a view that, resolved through `folder_projects`, could
+/// never have matched its fixture.
+///
+/// The repository is keyed on `suffix`, so the same suffix returns the same
+/// repository exactly as it returns the same folder.
 pub(crate) async fn create_test_folder(s: &PgStore, suffix: &str) -> uuid::Uuid {
     use sqlx_core::query_as::query_as;
     s.execute_raw(
             "INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING"
         ).await.unwrap();
     let abs_path = format!("/_test/{}", suffix);
+    let (rid,): (uuid::Uuid,) = query_as(
+        "INSERT INTO sensei.repositories(repo_key, name) VALUES($1, $2) \
+         ON CONFLICT(repo_key) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+    )
+    .bind(format!("test/{suffix}"))
+    .bind(suffix)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     let row: (uuid::Uuid,) = query_as(
-            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id"
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, repository_id) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name, repository_id = EXCLUDED.repository_id RETURNING id"
+        ).bind(suffix).bind(&abs_path).bind(rid).fetch_one(s.pool()).await.unwrap();
+    row.0
+}
+
+/// A folder with NO repository — the state [`create_test_folder`] deliberately
+/// cannot produce.
+///
+/// `folders.repository_id` is NULLABLE and the production writer guards for it
+/// (`WHERE f.repository_id IS NOT NULL`): a folder whose anchor has no
+/// repository inherits none. So the unattributed bucket stays representable
+/// even though it is currently empty on the live DB, and the views' honest-NULL
+/// behaviour over it is a real property that needs a fixture to assert on.
+///
+/// Use this ONLY to test that behaviour. Everything else wants the default,
+/// which carries a repository exactly as every live folder does.
+pub(crate) async fn create_test_folder_unattributed(s: &PgStore, suffix: &str) -> uuid::Uuid {
+    use sqlx_core::query_as::query_as;
+    s.execute_raw(
+            "INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING"
+        ).await.unwrap();
+    let abs_path = format!("/_test/{}", suffix);
+    let row: (uuid::Uuid,) = query_as(
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name, repository_id = NULL RETURNING id"
         ).bind(suffix).bind(&abs_path).fetch_one(s.pool()).await.unwrap();
     row.0
 }
@@ -666,15 +709,15 @@ pub(crate) async fn create_test_folder(s: &PgStore, suffix: &str) -> uuid::Uuid 
 /// wiring the folder to the project. Used by the pattern tests since
 /// detected_patterns is project-scoped (#82) and needs a non-null
 /// project_id, while `list_patterns_by_folder` still keys on folder.
+///
+/// Goes through `set_folder_project`, the production API, so the membership
+/// reaches `repositories_in_projects` as well as `folders.project_id`. A raw
+/// `UPDATE … SET project_id` writes only the half that `folder_projects` does
+/// not read.
 async fn create_test_project_and_folder(s: &PgStore, suffix: &str) -> (uuid::Uuid, uuid::Uuid) {
     let pid = s.create_project(&format!("_test:{}", suffix), None, None).await.unwrap();
     let fid = create_test_folder(s, suffix).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(pid)
-        .bind(fid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&fid, &pid, "root", None).await.unwrap();
     (pid, fid)
 }
 
@@ -1090,8 +1133,7 @@ async fn docs_are_served_for_the_version_a_folder_pins_and_labelled_when_they_ca
         .await
         .unwrap();
     let abs = format!("/_test/s9-app-{}", uuid::Uuid::new_v4());
-    let folder =
-        s.upsert_folder(&rid, "git", "s9-app", &abs, &abs, None, None, None).await.unwrap();
+    let folder = s.upsert_folder(&rid, "git", "s9-app", &abs, &abs, None, None).await.unwrap();
 
     // Unique per run, like the watch root and the folder above. It was the one
     // FIXED identifier in the test, and `delete_library` at the bottom only
@@ -1205,18 +1247,18 @@ async fn a_docs_read_failure_is_recorded_as_a_gap_and_never_deletes_the_pages() 
     let s = pg_store().await;
     let lib =
         s.upsert_library("_test:stale", "npm", Some("1.0.0"), None, None, None).await.unwrap();
-    s.upsert_library_page(
-        &lib,
-        "Overview",
-        None,
-        Some("/gone/llms/overview.txt"),
-        None,
-        Some("body"),
-        "local",
-        Some("overview"),
-        None,
-        None,
-    )
+    s.upsert_library_page(&LibraryPageRow {
+        library_id: &lib,
+        title: "Overview",
+        url: None,
+        local_path: Some("/gone/llms/overview.txt"),
+        description: None,
+        content: Some("body"),
+        source_type: "local",
+        component: Some("overview"),
+        package_name: None,
+        version: None,
+    })
     .await
     .unwrap();
 
@@ -1270,51 +1312,51 @@ async fn two_packages_of_one_library_can_each_document_the_same_component() {
         s.upsert_library("_test:pagekey", "npm", Some("1.0.0"), None, None, None).await.unwrap();
 
     let ui = s
-        .upsert_library_page(
-            &lib,
-            "List",
-            None,
-            None,
-            None,
-            Some("ui list docs"),
-            "local",
-            Some("List"),
-            Some("@_test/ui"),
-            None,
-        )
+        .upsert_library_page(&LibraryPageRow {
+            library_id: &lib,
+            title: "List",
+            url: None,
+            local_path: None,
+            description: None,
+            content: Some("ui list docs"),
+            source_type: "local",
+            component: Some("List"),
+            package_name: Some("@_test/ui"),
+            version: None,
+        })
         .await
         .unwrap();
     let chart = s
-        .upsert_library_page(
-            &lib,
-            "List",
-            None,
-            None,
-            None,
-            Some("chart list docs"),
-            "local",
-            Some("List"),
-            Some("@_test/chart"),
-            None,
-        )
+        .upsert_library_page(&LibraryPageRow {
+            library_id: &lib,
+            title: "List",
+            url: None,
+            local_path: None,
+            description: None,
+            content: Some("chart list docs"),
+            source_type: "local",
+            component: Some("List"),
+            package_name: Some("@_test/chart"),
+            version: None,
+        })
         .await
         .unwrap();
     assert_ne!(ui, chart, "two packages, two rows — not one evicting the other");
 
     // A LIBRARY-LEVEL page (no package) is a third, distinct row.
     let overview = s
-        .upsert_library_page(
-            &lib,
-            "List",
-            None,
-            None,
-            None,
-            Some("overview"),
-            "local",
-            Some("List"),
-            None,
-            None,
-        )
+        .upsert_library_page(&LibraryPageRow {
+            library_id: &lib,
+            title: "List",
+            url: None,
+            local_path: None,
+            description: None,
+            content: Some("overview"),
+            source_type: "local",
+            component: Some("List"),
+            package_name: None,
+            version: None,
+        })
         .await
         .unwrap();
     assert_ne!(overview, ui);
@@ -1324,18 +1366,18 @@ async fn two_packages_of_one_library_can_each_document_the_same_component() {
     // inserting a duplicate. Postgres treats NULLs as distinct by default, so
     // without that clause every re-ingest would add another overview row.
     let overview_again = s
-        .upsert_library_page(
-            &lib,
-            "List",
-            None,
-            None,
-            None,
-            Some("overview v2"),
-            "local",
-            Some("List"),
-            None,
-            None,
-        )
+        .upsert_library_page(&LibraryPageRow {
+            library_id: &lib,
+            title: "List",
+            url: None,
+            local_path: None,
+            description: None,
+            content: Some("overview v2"),
+            source_type: "local",
+            component: Some("List"),
+            package_name: None,
+            version: None,
+        })
         .await
         .unwrap();
     assert_eq!(overview, overview_again, "library-level pages are still constrained");
@@ -1366,19 +1408,10 @@ async fn a_repo_relative_path_resolves_to_a_file_in_a_module_folder() {
     let base = format!("/tmp/fidfor_{}", uuid::Uuid::new_v4());
     let rid = s.add_watch_root(&base, "fidfor", &serde_json::json!([])).await.unwrap();
 
-    let repo = s.upsert_folder(&rid, "git", "repo", &base, &base, None, None, None).await.unwrap();
+    let repo = s.upsert_folder(&rid, "git", "repo", &base, &base, None, None).await.unwrap();
     let mod_abs = format!("{base}/crates/senseid");
     let module = s
-        .upsert_folder(
-            &rid,
-            "module",
-            "senseid",
-            "crates/senseid",
-            &mod_abs,
-            Some(&repo),
-            None,
-            None,
-        )
+        .upsert_folder(&rid, "module", "senseid", "crates/senseid", &mod_abs, Some(&repo), None)
         .await
         .unwrap();
 
@@ -1430,11 +1463,10 @@ async fn a_file_two_folders_both_track_resolves_to_the_callers_own_folder() {
     let base = format!("/tmp/fidtwo_{}", uuid::Uuid::new_v4());
     let rid = s.add_watch_root(&base, "fidtwo", &serde_json::json!([])).await.unwrap();
 
-    let outer =
-        s.upsert_folder(&rid, "git", "outer", &base, &base, None, None, None).await.unwrap();
+    let outer = s.upsert_folder(&rid, "git", "outer", &base, &base, None, None).await.unwrap();
     let inner_abs = format!("{base}/vendored");
     let inner = s
-        .upsert_folder(&rid, "git", "vendored", "vendored", &inner_abs, Some(&outer), None, None)
+        .upsert_folder(&rid, "git", "vendored", "vendored", &inner_abs, Some(&outer), None)
         .await
         .unwrap();
 
@@ -1472,10 +1504,25 @@ async fn folder_completeness_propagates_incompleteness_up_the_tree() {
     let root_id = s.add_watch_root(&root_path, "fc", &serde_json::json!([])).await.unwrap();
 
     // root ── child ── grandchild
-    let root = s.upsert_repo(&root_id, "fc-root", &root_path).await.unwrap();
-    let child = s.upsert_repo(&root_id, "fc-child", &format!("{root_path}/child")).await.unwrap();
-    let grand =
-        s.upsert_repo(&root_id, "fc-grand", &format!("{root_path}/child/grand")).await.unwrap();
+    let root = crate::tasks::test_support::seed_repo_folder(&s, &root_id, "fc-root", &root_path)
+        .await
+        .unwrap();
+    let child = crate::tasks::test_support::seed_repo_folder(
+        &s,
+        &root_id,
+        "fc-child",
+        &format!("{root_path}/child"),
+    )
+    .await
+    .unwrap();
+    let grand = crate::tasks::test_support::seed_repo_folder(
+        &s,
+        &root_id,
+        "fc-grand",
+        &format!("{root_path}/child/grand"),
+    )
+    .await
+    .unwrap();
     for (c, p) in [(child, root), (grand, child)] {
         sqlx_core::query::query("UPDATE sensei.folders SET parent_id = $2 WHERE id = $1")
             .bind(c)
@@ -1547,7 +1594,9 @@ async fn folder_completeness_counts_a_deliberate_skip_as_decided() {
     let s = pg_store().await;
     let root_path = format!("/tmp/fcskip_{}", uuid::Uuid::new_v4());
     let root_id = s.add_watch_root(&root_path, "fcs", &serde_json::json!([])).await.unwrap();
-    let f = s.upsert_repo(&root_id, "fcs-f", &root_path).await.unwrap();
+    let f = crate::tasks::test_support::seed_repo_folder(&s, &root_id, "fcs-f", &root_path)
+        .await
+        .unwrap();
 
     s.set_folder_expected_files(&f, 1).await.unwrap();
     sqlx_core::query::query(
@@ -1588,7 +1637,9 @@ async fn folder_completeness_separates_a_parse_from_a_skip() {
     let s = pg_store().await;
     let root_path = format!("/tmp/fcsplit_{}", uuid::Uuid::new_v4());
     let root_id = s.add_watch_root(&root_path, "fcsplit", &serde_json::json!([])).await.unwrap();
-    let f = s.upsert_repo(&root_id, "fcsplit-f", &root_path).await.unwrap();
+    let f = crate::tasks::test_support::seed_repo_folder(&s, &root_id, "fcsplit-f", &root_path)
+        .await
+        .unwrap();
 
     // Three files, one of each state — so a column that reported the wrong one
     // cannot coincide with the right answer.
@@ -3772,16 +3823,7 @@ async fn folder_upsert_and_list() {
     let path = format!("/_test/folder_root_{}", uuid::Uuid::new_v4());
     let rid = s.add_watch_root(&path, "test_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(
-            &rid,
-            "git",
-            "myrepo",
-            "myrepo",
-            &format!("{}/myrepo", path),
-            None,
-            None,
-            None,
-        )
+        .upsert_folder(&rid, "git", "myrepo", "myrepo", &format!("{}/myrepo", path), None, None)
         .await
         .unwrap();
     let folders = s.list_folders_by_root(&rid).await.unwrap();
@@ -3809,8 +3851,7 @@ async fn list_pending_folders_returns_only_non_terminal_status() {
     ] {
         let name = format!("repo_{}", suffix);
         let abs_path = format!("{}/{}", root_path, name);
-        let fid =
-            s.upsert_folder(&rid, "git", &name, &name, &abs_path, None, None, None).await.unwrap();
+        let fid = s.upsert_folder(&rid, "git", &name, &name, &abs_path, None, None).await.unwrap();
         s.update_folder_status(&fid, status).await.unwrap();
     }
 
@@ -3855,7 +3896,7 @@ async fn update_folder_status_round_trips() {
     let root_path = format!("/_test/status_{}", uuid::Uuid::new_v4().simple());
     let rid = s.add_watch_root(&root_path, "status_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None, None)
+        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None)
         .await
         .unwrap();
 
@@ -3881,7 +3922,7 @@ async fn get_folder_status_reads_back_status_and_is_none_for_missing() {
     let root_path = format!("/_test/getstatus_{}", uuid::Uuid::new_v4().simple());
     let rid = s.add_watch_root(&root_path, "getstatus_root", &serde_json::json!([])).await.unwrap();
     let fid = s
-        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None, None)
+        .upsert_folder(&rid, "git", "r", "r", &format!("{root_path}/r"), None, None)
         .await
         .unwrap();
 
@@ -3943,18 +3984,18 @@ async fn repositories_view() {
 async fn memory_create_and_get() {
     let s = pg_store().await;
     let id = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "decision",
-            "_test:mem_create",
-            "Always use TDD",
-            Some("Bugs ship to prod"),
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_create",
+            content: "Always use TDD",
+            impact: Some("Bugs ship to prod"),
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     let m = s.get_memory(&id).await.unwrap().unwrap();
@@ -3978,18 +4019,18 @@ async fn create_memory_persists_spine_slot_and_feature() {
         .await
         .unwrap();
     let id = s
-        .create_memory(
-            Some(&pid),
-            "project",
-            None,
-            "decision",
-            "t",
-            "c",
-            None,
-            None,
-            Some("decisions"),
-            Some("auth"),
-        )
+        .create_memory(&MemoryRow {
+            project_id: Some(&pid),
+            scope: "project",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "t",
+            content: "c",
+            impact: None,
+            session_id: None,
+            spine_slot: Some("decisions"),
+            feature: Some("auth"),
+        })
         .await
         .unwrap();
     let row: (Option<String>, Option<String>) = sqlx_core::query_as::query_as(
@@ -4016,18 +4057,18 @@ async fn create_memory_persists_spine_slot_and_feature() {
 async fn memory_reinforce() {
     let s = pg_store().await;
     let id = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "pattern",
-            "_test:mem_reinforce",
-            "rule",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "pattern",
+            title: "_test:mem_reinforce",
+            content: "rule",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     s.reinforce_memory(&id, 1.0).await.unwrap();
@@ -4049,18 +4090,18 @@ async fn memory_reinforce() {
 async fn memory_archive() {
     let s = pg_store().await;
     let id = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "question",
-            "_test:mem_archive",
-            "open q",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "question",
+            title: "_test:mem_archive",
+            content: "open q",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     s.archive_memory(&id).await.unwrap();
@@ -4077,33 +4118,33 @@ async fn memory_archive() {
 async fn memory_list_active() {
     let s = pg_store().await;
     let id1 = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "decision",
-            "_test:mem_list_a",
-            "rule a",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_list_a",
+            content: "rule a",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     let id2 = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "decision",
-            "_test:mem_list_b",
-            "rule b",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_list_b",
+            content: "rule b",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     let active = s.list_active_memories(None, Some("global")).await.unwrap();
@@ -4122,18 +4163,18 @@ async fn memory_list_active() {
 async fn memory_example_add_and_list() {
     let s = pg_store().await;
     let mid = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "pattern",
-            "_test:mem_ex",
-            "rule",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "pattern",
+            title: "_test:mem_ex",
+            content: "rule",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     s.add_memory_example(&mid, "fn:auth_handler", true, Some("canonical auth")).await.unwrap();
@@ -4157,18 +4198,18 @@ async fn memory_evidence_add_and_list() {
     let fid = create_test_folder(&s, &format!("mem_ev_{}", uuid::Uuid::new_v4())).await;
     let sid = s.create_session(&fid, "test", None).await.unwrap();
     let mid = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "decision",
-            "_test:mem_ev",
-            "rule",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_ev",
+            content: "rule",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     s.add_memory_evidence(&mid, Some(&sid), Some("user corrected twice")).await.unwrap();
@@ -4194,48 +4235,48 @@ async fn memory_evidence_add_and_list() {
 async fn memory_links_parent_child() {
     let s = pg_store().await;
     let parent = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "decision",
-            "_test:mem_parent",
-            "combined",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_parent",
+            content: "combined",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     let child1 = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "decision",
-            "_test:mem_child1",
-            "original 1",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_child1",
+            content: "original 1",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     let child2 = s
-        .create_memory(
-            None,
-            "global",
-            None,
-            "decision",
-            "_test:mem_child2",
-            "original 2",
-            None,
-            None,
-            None,
-            None,
-        )
+        .create_memory(&MemoryRow {
+            project_id: None,
+            scope: "global",
+            scope_filter: None,
+            mem_type: "decision",
+            title: "_test:mem_child2",
+            content: "original 2",
+            impact: None,
+            session_id: None,
+            spine_slot: None,
+            feature: None,
+        })
         .await
         .unwrap();
     s.link_memories(&parent, &child1).await.unwrap();
@@ -4449,11 +4490,17 @@ async fn begin_file_materialization_flips_and_returns_prompt_seed() {
         .create_project(&format!("_test:pbmat-{}", uuid::Uuid::new_v4()), None, None)
         .await
         .unwrap();
-    let rid = s.create_recommendation_full(
-            &pid, "Establish DBD Guardian Agent", "cross-layer churn needs a review agent", None,
-            "create_agent", "high", &serde_json::json!({}), None,
-            Some("You are an Architectural Review Agent for dbd. Before any code is accepted, check module boundaries."),
-        ).await.unwrap();
+    let rid = s.create_recommendation_full(&RecommendationRow {
+        project_id: &pid,
+        title: "Establish DBD Guardian Agent",
+        why: "cross-layer churn needs a review agent",
+        impact: None,
+        action_type: "create_agent",
+        urgency: "high",
+        based_on: &serde_json::json!({}),
+        reasoning_trace_id: None,
+        prompt: Some("You are an Architectural Review Agent for dbd. Before any code is accepted, check module boundaries."),
+    }).await.unwrap();
 
     let (action_type, title, why, prompt) =
         s.begin_file_materialization(&rid).await.unwrap().expect("pending → seed");
@@ -4524,17 +4571,17 @@ async fn seed_promote_fixture(
         serde_json::json!({ "patterns": [] })
     };
     let rid = s
-        .create_recommendation_full(
-            &proj_id,
-            "_test:promote",
-            "why",
-            None,
+        .create_recommendation_full(&RecommendationRow {
+            project_id: &proj_id,
+            title: "_test:promote",
+            why: "why",
+            impact: None,
             action_type,
-            "medium",
-            &based_on,
-            None,
-            None,
-        )
+            urgency: "medium",
+            based_on: &based_on,
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
         .unwrap();
     (proj_id, fid, pat_id, rid)
@@ -4733,17 +4780,17 @@ async fn seed_regressed_rec_with_memory(
     let (proj_id, fid, pat_id, mem_id) = seed_pattern_and_sourced_memory(s, suffix, 2.0).await;
     let based_on = serde_json::json!({ "patterns": [pat_id] });
     let rec_id = s
-        .create_recommendation_full(
-            &proj_id,
-            "_test:regressed-rec",
-            "why",
-            None,
-            "promote_pattern",
-            "medium",
-            &based_on,
-            None,
-            None,
-        )
+        .create_recommendation_full(&RecommendationRow {
+            project_id: &proj_id,
+            title: "_test:regressed-rec",
+            why: "why",
+            impact: None,
+            action_type: "promote_pattern",
+            urgency: "medium",
+            based_on: &based_on,
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
         .unwrap();
     sqlx_core::query::query(
@@ -5402,12 +5449,7 @@ async fn pattern_upsert_merges_across_folders_in_same_project() {
     let suffix = format!("pat_project_scope_{}", uuid::Uuid::new_v4());
     let (proj_id, fid_a) = create_test_project_and_folder(&s, &suffix).await;
     let fid_b = create_test_folder(&s, &format!("{}_b", suffix)).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(proj_id)
-        .bind(fid_b)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&fid_b, &proj_id, "root", None).await.unwrap();
 
     let id_a = s
         .upsert_pattern(
@@ -5487,12 +5529,13 @@ async fn merge_projects_moves_folders_sessions_memories_and_deletes_source() {
     assert!(!src_exists.0, "source project should be deleted after merge");
 
     // The source's folder now lives under the target project.
-    let (folder_project,): (Option<uuid::Uuid>,) =
-        sqlx_core::query_as::query_as("SELECT project_id FROM sensei.folders WHERE id = $1")
-            .bind(src_folder)
-            .fetch_one(s.pool())
-            .await
-            .unwrap();
+    let (folder_project,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+        "SELECT sensei.sole_project_of(id) FROM sensei.folders WHERE id = $1",
+    )
+    .bind(src_folder)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     assert_eq!(folder_project, Some(tgt), "folder should be reassigned to target");
 
     // The memory survived and points at the target.
@@ -5568,12 +5611,14 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
     let repo_abs = format!("{root_path}/repo");
     let repo_pid = s.create_project(&format!("_test:heal_repo_{uniq}"), None, None).await.unwrap();
     let repo_fid = s.upsert_repo_kind(&root_id, "git", "repo", &repo_abs).await.unwrap();
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(repo_pid)
-        .bind(repo_fid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    crate::tasks::test_support::give_folder_a_repository(
+        &s,
+        &repo_fid,
+        &format!("heal-repo-{uniq}"),
+    )
+    .await
+    .unwrap();
+    s.set_folder_project(&repo_fid, &repo_pid, "root", None).await.unwrap();
 
     // A sub-crate INSIDE the repo, mis-scoped as its own standalone project
     // (the Bug 3 phantom). Give it a node so we can prove its nodes are dropped.
@@ -5582,12 +5627,14 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
         s.create_project(&format!("_test:heal_phantom_{uniq}"), None, None).await.unwrap();
     let crate_fid =
         s.upsert_repo_kind(&root_id, "standalone", "dojo-mind", &crate_abs).await.unwrap();
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(phantom_pid)
-        .bind(crate_fid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    crate::tasks::test_support::give_folder_a_repository(
+        &s,
+        &crate_fid,
+        &format!("heal-phantom-{uniq}"),
+    )
+    .await
+    .unwrap();
+    s.set_folder_project(&crate_fid, &phantom_pid, "root", None).await.unwrap();
     let node_id = s
         .seed_node(&crate_fid, "struct", "DojoStore", "src/store.rs", None, None, None, None)
         .await
@@ -5607,7 +5654,7 @@ async fn heal_nested_standalone_roots_reabsorbs_and_removes_phantom() {
     // The nested root is now a folder of the repo's project, parented to the repo.
     let (kind, pid, parent): (String, Option<uuid::Uuid>, Option<uuid::Uuid>) =
         sqlx_core::query_as::query_as(
-            "SELECT kind::text, project_id, parent_id FROM sensei.folders WHERE id = $1",
+            "SELECT kind::text, sensei.sole_project_of(id), parent_id FROM sensei.folders WHERE id = $1",
         )
         .bind(crate_fid)
         .fetch_one(s.pool())
@@ -5781,8 +5828,12 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
     // exercises capture-before-reclaim directly.)
     // Repo-grain: the capture guard keys on the session's repository, so give the
     // folder a repository and anchor the session to it via repo_folder_id.
+    // `create_test_folder` already seeded `test/{suffix}` for this same suffix, so
+    // this must adopt that row rather than insert a second one under the unique
+    // `repositories_repo_key_key`.
     let (repo_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'prune-del') RETURNING id",
+        "INSERT INTO sensei.repositories (repo_key, name) VALUES ($1, 'prune-del') \
+         ON CONFLICT (repo_key) DO UPDATE SET name = EXCLUDED.name RETURNING id",
     )
     .bind(format!("test/{suffix}"))
     .fetch_one(s.pool())
@@ -5820,18 +5871,18 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
             .fetch_one(s.pool())
             .await
             .unwrap();
-    s.upsert_project_metric_repo(
-        &ftr_id.0,
-        &repo_id,
-        "user",
-        None,
-        None,
-        day40.0,
-        "daily",
-        1.0,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_id.0,
+        repository_id: &repo_id,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day40.0,
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
     // Seed a child transcript_turn keyed on client_session_id (no FK).
@@ -5859,16 +5910,16 @@ async fn prune_activity_deletes_analyzed_sessions_past_cutoff_and_children() {
     assert_eq!(wm_before.0, 1, "watermark fixture did not land");
 
     // Seed a hook event under the same client_session_id.
-    s.insert_hook_event(
-        &csid,
-        "claude",
-        "UserPromptSubmit",
-        None,
-        None,
-        1000,
-        None,
-        &serde_json::json!({"prompt": "hi"}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: &csid,
+        assistant_family: "claude",
+        event_type: "UserPromptSubmit",
+        tool_name: None,
+        cwd: None,
+        ts: 1000,
+        success: None,
+        payload: &serde_json::json!({"prompt": "hi"}),
+    })
     .await
     .unwrap();
 
@@ -6015,36 +6066,36 @@ async fn prune_activity_captures_before_reclaim_repo_grain() {
 
     // (a) captured on its OWN repo by a scope=user session metric → PRUNED.
     let captured = aged_repo_session(&s, &fid, &suffix, "captured", 40).await;
-    s.upsert_project_metric_repo(
-        &ftr_id.0,
-        &repo_a,
-        "user",
-        None,
-        None,
-        day_ago(&s, 40).await,
-        "daily",
-        1.0,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_id.0,
+        repository_id: &repo_a,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day_ago(&s, 40).await,
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
     // (b) uncaptured on repo_a; a DECOY scope=user session metric for the SAME day
     //     lives on repo_b → KEPT (the guard must match the session's repository).
     let uncaptured = aged_repo_session(&s, &fid, &suffix, "uncaptured", 45).await;
-    s.upsert_project_metric_repo(
-        &ftr_id.0,
-        &repo_b,
-        "user",
-        None,
-        None,
-        day_ago(&s, 45).await,
-        "daily",
-        1.0,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_id.0,
+        repository_id: &repo_b,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day_ago(&s, 45).await,
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -6054,32 +6105,32 @@ async fn prune_activity_captures_before_reclaim_repo_grain() {
     //     cadence='day' (the rework_density row would capture) or drops the
     //     scope='user' filter (the scope=repo ftr row would capture).
     let wrong_signal = aged_repo_session(&s, &fid, &suffix, "wrongsignal", 50).await;
-    s.upsert_project_metric_repo(
-        &rework_id.0,
-        &repo_a,
-        "user",
-        None,
-        None,
-        day_ago(&s, 50).await,
-        "daily",
-        0.2,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &rework_id.0,
+        repository_id: &repo_a,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day_ago(&s, 50).await,
+        grain: "daily",
+        value: 0.2,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
-    s.upsert_project_metric_repo(
-        &ftr_id.0,
-        &repo_a,
-        "repo",
-        None,
-        None,
-        day_ago(&s, 50).await,
-        "daily",
-        1.0,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_id.0,
+        repository_id: &repo_a,
+        scope: "repo",
+        identity: None,
+        commit_sha: None,
+        computed_on: day_ago(&s, 50).await,
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -6156,16 +6207,16 @@ async fn prune_activity_prunes_orphan_events_by_ts() {
     // Insert an assistant_event with no matching session and old ts.
     let old_ts: i64 = (chrono::Utc::now() - chrono::Duration::days(90)).timestamp() * 1000;
     let orphan_csid = format!("orphan_prune_{}", uuid::Uuid::new_v4());
-    s.insert_hook_event(
-        &orphan_csid,
-        "claude",
-        "PostToolUse",
-        Some("Read"),
-        None,
-        old_ts,
-        None,
-        &serde_json::json!({}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: &orphan_csid,
+        assistant_family: "claude",
+        event_type: "PostToolUse",
+        tool_name: Some("Read"),
+        cwd: None,
+        ts: old_ts,
+        success: None,
+        payload: &serde_json::json!({}),
+    })
     .await
     .unwrap();
 
@@ -6242,16 +6293,16 @@ async fn prune_activity_prunes_orphans_despite_a_null_client_session_id() {
 
     let orphan_csid = format!("orphan_null_{uniq}");
     let old_ts: i64 = (chrono::Utc::now() - chrono::Duration::days(90)).timestamp() * 1000;
-    s.insert_hook_event(
-        &orphan_csid,
-        "claude",
-        "PostToolUse",
-        Some("Read"),
-        None,
-        old_ts,
-        None,
-        &serde_json::json!({}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: &orphan_csid,
+        assistant_family: "claude",
+        event_type: "PostToolUse",
+        tool_name: Some("Read"),
+        cwd: None,
+        ts: old_ts,
+        success: None,
+        payload: &serde_json::json!({}),
+    })
     .await
     .unwrap();
 
@@ -6423,26 +6474,20 @@ async fn version_conflicts_view_flags_multi_version_pins_and_excludes_local() {
     // Two folders in the same project, different versions.
     let fid_a = create_test_folder(&s, &format!("vc-a-{suffix}")).await;
     let fid_b = create_test_folder(&s, &format!("vc-b-{suffix}")).await;
-    // Attach folders to the project.
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id IN ($2, $3)")
-        .bind(pid)
-        .bind(fid_a)
-        .bind(fid_b)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    // Attach folders to the project THROUGH THE PRODUCTION API, so membership
+    // reaches `repositories_in_projects`. The view resolves via `folder_projects`,
+    // which reads only the junction — a raw `UPDATE … SET project_id` leaves it
+    // with nothing to find and the assertion below would be measuring an empty
+    // set rather than the exclusion rule it names.
+    s.set_folder_project(&fid_a, &pid, "root", None).await.unwrap();
+    s.set_folder_project(&fid_b, &pid, "root", None).await.unwrap();
 
     s.upsert_referenced_library(&fid_a, &lib, Some("1.2.0"), None).await.unwrap();
     s.upsert_referenced_library(&fid_b, &lib, Some("1.3.0"), None).await.unwrap();
 
     // Third folder pins a local-source variant. This must be excluded.
     let fid_local = create_test_folder(&s, &format!("vc-local-{suffix}")).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(pid)
-        .bind(fid_local)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&fid_local, &pid, "root", None).await.unwrap();
     s.upsert_referenced_library(
         &fid_local,
         &lib,
@@ -6526,12 +6571,7 @@ async fn folder_dependency_records_an_intra_project_edge() {
     let suffix = uuid::Uuid::new_v4();
     let (pid, from_fid) = create_test_project_and_folder(&s, &format!("intra-a-{suffix}")).await;
     let to_fid = create_test_folder(&s, &format!("intra-b-{suffix}")).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(pid)
-        .bind(to_fid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&to_fid, &pid, "root", None).await.unwrap();
 
     s.upsert_folder_dependency(&from_fid, &to_fid, "path", "Cargo.toml", Some("../b"))
         .await
@@ -6874,16 +6914,16 @@ async fn repair_orphaned_sessions_reattaches_via_alias() {
     let fid = create_test_folder(&s, "repair-new").await; // /_test/repair-new
     s.add_folder_path_alias("/_test/repair-old", &fid, "rename").await.unwrap();
     // an orphaned event under the OLD path (a subdir) — no session row.
-    s.insert_hook_event(
-        sess,
-        "claude",
-        "PreToolUse",
-        None,
-        Some("/_test/repair-old/src"),
-        1_700_000_000,
-        None,
-        &serde_json::json!({}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: sess,
+        assistant_family: "claude",
+        event_type: "PreToolUse",
+        tool_name: None,
+        cwd: Some("/_test/repair-old/src"),
+        ts: 1_700_000_000,
+        success: None,
+        payload: &serde_json::json!({}),
+    })
     .await
     .unwrap();
     let repaired = s.repair_orphaned_sessions().await.unwrap();
@@ -6921,28 +6961,28 @@ async fn repair_prefers_the_renamed_subdir_over_a_live_parent() {
     let moved = create_test_folder(&s, "shadow-moved").await; // the renamed subdir's new home
     s.add_folder_path_alias("/_test/shadow-parent/sub", &moved, "rename").await.unwrap();
     // events under BOTH the live parent and the renamed subdir.
-    s.insert_hook_event(
-        sess,
-        "claude",
-        "PreToolUse",
-        None,
-        Some("/_test/shadow-parent"),
-        1_700_000_100,
-        None,
-        &serde_json::json!({}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: sess,
+        assistant_family: "claude",
+        event_type: "PreToolUse",
+        tool_name: None,
+        cwd: Some("/_test/shadow-parent"),
+        ts: 1_700_000_100,
+        success: None,
+        payload: &serde_json::json!({}),
+    })
     .await
     .unwrap();
-    s.insert_hook_event(
-        sess,
-        "claude",
-        "PreToolUse",
-        None,
-        Some("/_test/shadow-parent/sub/x"),
-        1_700_000_200,
-        None,
-        &serde_json::json!({}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: sess,
+        assistant_family: "claude",
+        event_type: "PreToolUse",
+        tool_name: None,
+        cwd: Some("/_test/shadow-parent/sub/x"),
+        ts: 1_700_000_200,
+        success: None,
+        payload: &serde_json::json!({}),
+    })
     .await
     .unwrap();
     s.repair_orphaned_sessions().await.unwrap();
@@ -6966,10 +7006,24 @@ async fn mk_anchor_folder(
     s.execute_raw("INSERT INTO sensei.folders_to_watch(id, path, name, status) VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) ON CONFLICT DO NOTHING").await.unwrap();
     let name = abs_path.rsplit('/').next().unwrap_or(abs_path);
     let row: (uuid::Uuid,) = query_as(
-            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) \
-             VALUES('00000000-0000-0000-0000-000000000001', $1::sensei.folder_kind, $2, $2, $3, $4) \
-             ON CONFLICT(abs_path) DO UPDATE SET kind = EXCLUDED.kind, project_id = EXCLUDED.project_id RETURNING id"
-        ).bind(kind).bind(name).bind(abs_path).bind(project_id).fetch_one(s.pool()).await.unwrap();
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) \
+             VALUES('00000000-0000-0000-0000-000000000001', $1::sensei.folder_kind, $2, $2, $3) \
+             ON CONFLICT(abs_path) DO UPDATE SET kind = EXCLUDED.kind RETURNING id",
+    )
+    .bind(kind)
+    .bind(name)
+    .bind(abs_path)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+    // Membership is the REPOSITORY's (#211), so a fixture that wants this folder
+    // in a project has to give it one and link that — the folder has no column
+    // of its own to stamp.
+    if let Some(pid) = project_id {
+        let rid = s.upsert_repository(&format!("test/{}", row.0), None).await.unwrap();
+        s.link_folder_to_repository(&row.0, &rid).await.unwrap();
+        s.link_project_repository(&pid, &rid).await.unwrap();
+    }
     row.0
 }
 
@@ -7493,6 +7547,194 @@ async fn folder_path_alias_resolves_old_paths_after_a_rename() {
     assert_eq!(s.get_folder_ids_by_path(old).await.unwrap().map(|(id, _)| id), Some(fid));
 }
 
+/// EVERY package the repo owns is first-party — not just the file's own.
+///
+/// `World::first_party` is documented as "Every package this scan owns the source
+/// of, from the manifests". The construction at `pipeline.rs:895` seeded it with
+/// ONE package, so on sensei's own 16-package workspace **zero** edges ever
+/// resolved across a package boundary: `sensei-cli` calls `senseid` and none of
+/// it placed.
+///
+/// `ProcessManifest` already writes one `folders` row per manifest with
+/// `kind='module'`, and `folders.name` IS the package name — so the set is one
+/// indexed query over manifest-derived rows, which is exactly what the contract
+/// asks for.
+///
+/// Breaking mutation: drop the `kind = 'module'` predicate — ordinary `folder`
+/// rows flood in and every directory becomes a first-party "package", so an
+/// import naming any directory resolves local.
+/// A subfolder upsert CANNOT plant a project that contradicts its repository —
+/// and now there is no parameter with which to try.
+///
+/// The upserts used to take `project_id` from the caller, which is how the
+/// intent (`pipeline.rs`: "a module belongs to its repo's project") came to be
+/// violated: the client-q `documentation` checkout ended with its root in
+/// project `client-q` and its 362 subfolders in `documentation`. The first fix
+/// DERIVED the stored column from the repo anchor and ignored the caller.
+///
+/// #211 removed the column and the parameter outright, so the guarantee is now
+/// structural rather than enforced: a subfolder inherits its REPOSITORY, and
+/// its project is whatever that repository's `repositories_in_projects` row says.
+/// There is nothing left to contradict.
+///
+/// Breaking mutation: drop `repository_id` from the inherited CTE — the
+/// subfolder inherits nothing, resolves to no project, and the assertion on
+/// `sole_project_of` goes NULL.
+#[tokio::test]
+async fn a_subfolder_cannot_be_written_into_a_different_project_than_its_repo() {
+    let s = pg_store().await;
+    let root_id =
+        s.add_watch_root(&tkey("inh", "root"), "inh-root", &serde_json::json!([])).await.unwrap();
+    let owner = s.create_project(&tkey("inh", "owner"), None, None).await.unwrap();
+
+    let repo_path = tkey("inh", "/repo");
+    let repo = s.upsert_repo_kind(&root_id, "git", "inh-repo", &repo_path).await.unwrap();
+    let repository = s.upsert_repository("inh-repo", None).await.unwrap();
+    s.link_folder_to_repository(&repo, &repository).await.unwrap();
+    s.set_folder_project(&repo, &owner, "root", None).await.unwrap();
+
+    // The caller cannot name a project at all. The repository says `owner`.
+    let sub_path = format!("{repo_path}/src");
+    let sub = s
+        .upsert_subfolder_kind(&root_id, "folder", "src", &sub_path, &sub_path, Some(&repo))
+        .await
+        .unwrap();
+
+    let stored: (Option<uuid::Uuid>, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
+        "SELECT sensei.sole_project_of(id), repository_id FROM sensei.folders WHERE id = $1",
+    )
+    .bind(sub)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
+
+    assert_eq!(
+        stored.0,
+        Some(owner),
+        "a subfolder did not resolve to its repository's project — this is how \
+         client-q put 362 folders in the wrong project"
+    );
+
+    // AND the repository itself, which is what removes `repo_anchor_for` from
+    // every read. `repository_id` used to be set ONLY on the anchor, so a
+    // folder's repository could be found only by walking ancestors through a
+    // set-returning function — and a predicate cannot be pushed into a function
+    // scan, which made `WHERE project = $1` a seq scan of all 13,715 folders.
+    // Resolving the anchor ONCE at write time makes every read an index lookup.
+    //
+    // Breaking mutation: drop `repository_id` from the inherited CTE — the
+    // subfolder keeps NULL and the function scan comes back.
+    assert_eq!(
+        stored.1,
+        Some(repository),
+        "a subfolder did not inherit its anchor's repository, so its project can \
+         only be found by walking ancestors at read time"
+    );
+
+    s.remove_watch_root(&root_id).await.ok();
+}
+
+/// A folder NEVER carries its own project — it resolves through its repository.
+///
+/// `folders.project_id` was settable independently on all 13,697 rows, so a
+/// repository's folders could disagree about their project, and one did: the
+/// client-q `documentation` checkout's root sat in project `client-q` while its 362
+/// subfolders sat in `documentation`. Membership now lives once in
+/// `repositories_in_projects`, keyed on the repository, and `folder_projects`
+/// resolves it.
+///
+/// SEEDS THE DRIFT RATHER THAN LOOKING FOR IT. The first version of this test
+/// asserted over the live shape and was VACUOUS: the test database is clean, so
+/// there was no drift to find and pointing the view back at `folders.project_id`
+/// did not fail it. Reproducing the client-q shape is what makes the assertion
+/// able to fail.
+///
+/// Breaking mutation: drop `repository_id` from the inherited CTE in
+/// `upsert_subfolder_kind` — the subfolder inherits no repository, resolves
+/// through nothing, and reports no project at all.
+///
+/// (The ORIGINAL mutation — point `folder_projects` at `f.project_id` — is no
+/// longer expressible: #211 removed the column.)
+#[tokio::test]
+async fn a_folder_resolves_the_project_of_its_repository_not_its_own_column() {
+    let s = pg_store().await;
+    let root_id = s
+        .add_watch_root(&tkey("fproj", "root"), "fproj-root", &serde_json::json!([]))
+        .await
+        .unwrap();
+    let owner = s.create_project(&tkey("fproj", "owner"), None, None).await.unwrap();
+
+    let repo_path = tkey("fproj", "/repo");
+    let repo = s.upsert_repo_kind(&root_id, "git", "fproj-repo", &repo_path).await.unwrap();
+    // The anchor needs a `repositories` row: membership is keyed on the
+    // repository, so a checkout with none has nowhere to record it. (Ten real
+    // git folders holding 1,704 nodes are in exactly that state — see #210.)
+    let repository = s.upsert_repository("fproj-repo", None).await.unwrap();
+    s.link_folder_to_repository(&repo, &repository).await.unwrap();
+    // The anchor belongs to `owner`, and this is what also records the junction row.
+    s.set_folder_project(&repo, &owner, "root", None).await.unwrap();
+
+    // A subfolder. It cannot be given a project of its own — there is no
+    // column and no parameter — so the only answer available is its
+    // repository's, which is the whole point.
+    let sub_path = format!("{repo_path}/docs");
+    let sub = s
+        .upsert_subfolder_kind(&root_id, "folder", "docs", &sub_path, &sub_path, Some(&repo))
+        .await
+        .unwrap();
+
+    let resolved: Vec<(Option<String>,)> = sqlx_core::query_as::query_as(
+        "SELECT project FROM sensei.folder_projects WHERE folder_id = $1",
+    )
+    .bind(sub)
+    .fetch_all(s.pool())
+    .await
+    .unwrap();
+
+    let names: Vec<String> = resolved.into_iter().filter_map(|(n,)| n).collect();
+    assert_eq!(
+        names,
+        vec![tkey("fproj", "owner")],
+        "the subfolder did not resolve to its repository's project — this is the \
+         client-q drift, 362 folders in the wrong project"
+    );
+
+    s.remove_watch_root(&root_id).await.ok();
+}
+
+#[tokio::test]
+async fn first_party_packages_are_every_module_the_project_declares() {
+    let s = pg_store().await;
+    let root_id =
+        s.add_watch_root(&tkey("fp", "root"), "fp-root", &serde_json::json!([])).await.unwrap();
+    let repo = s.upsert_repo_kind(&root_id, "git", "fp-repo", &tkey("fp", "/repo")).await.unwrap();
+    crate::tasks::test_support::give_folder_a_repository(&s, &repo, &tkey("fp", "repo"))
+        .await
+        .unwrap();
+    let project = s.create_project(&tkey("fp", "proj"), None, None).await.unwrap();
+    s.set_folder_project(&repo, &project, "root", None).await.unwrap();
+
+    // Two manifest-declared packages, and one ordinary folder that is NOT one.
+    for (name, path) in [("alpha", "/repo/crates/alpha"), ("beta", "/repo/crates/beta")] {
+        let abs = tkey("fp", path);
+        s.upsert_subfolder_kind(&root_id, "module", name, &abs, &abs, Some(&repo)).await.unwrap();
+    }
+    let src = tkey("fp", "/repo/src");
+    s.upsert_subfolder_kind(&root_id, "folder", "src", &src, &src, Some(&repo)).await.unwrap();
+
+    let pkgs = s.first_party_packages(&repo).await.unwrap();
+
+    assert!(pkgs.contains("alpha"), "a manifest-declared package is first-party: {pkgs:?}");
+    assert!(pkgs.contains("beta"), "AND its sibling — the whole point: {pkgs:?}");
+    assert!(
+        !pkgs.contains("src"),
+        "an ordinary folder is not a package; treating it as one makes every \
+         directory resolve local: {pkgs:?}"
+    );
+
+    s.remove_watch_root(&root_id).await.ok();
+}
+
 #[tokio::test]
 async fn repo_root_for_path_resolves_nearest_git_ancestor_skipping_members() {
     // The watcher resolver: a change under a repo → the repo ROOT (git/
@@ -7506,7 +7748,7 @@ async fn repo_root_for_path_resolves_nearest_git_ancestor_skipping_members() {
     let repo_fid = s.upsert_repo_kind(&root_id, "git", "mono", &repo).await.unwrap();
     // A workspace member subdir (not an index owner) — must be skipped.
     let member = format!("{repo}/packages/chart");
-    s.upsert_subfolder(&root_id, "chart", "mono/packages/chart", &member, Some(&repo_fid), None)
+    s.upsert_subfolder(&root_id, "chart", "mono/packages/chart", &member, Some(&repo_fid))
         .await
         .ok();
 
@@ -7552,10 +7794,8 @@ async fn scope_repo_roots_returns_repo_roots_not_structural_subfolders() {
     let repo_fid = s.upsert_repo_kind(&root_id, "git", "app", &repo).await.unwrap();
     // A structural subfolder (kind='folder') under the repo — NOT a repo root.
     let comp = format!("{repo}/src/lib");
-    let comp_fid = s
-        .upsert_subfolder(&root_id, "lib", "app/src/lib", &comp, Some(&repo_fid), None)
-        .await
-        .unwrap();
+    let comp_fid =
+        s.upsert_subfolder(&root_id, "lib", "app/src/lib", &comp, Some(&repo_fid)).await.unwrap();
 
     let roots = s.scope_repo_roots(&[repo_fid, comp_fid]).await.unwrap();
     assert!(roots.contains(&repo), "the git repo root is returned");
@@ -7943,12 +8183,17 @@ async fn get_project_repos_excludes_subfolder_tree() {
     let git_abs = format!("/_test/repos-git-{}", uuid::Uuid::new_v4());
     let sub_abs = format!("/_test/repos-sub-{}", uuid::Uuid::new_v4());
     let mem_abs = format!("/_test/repos-mem-{}", uuid::Uuid::new_v4());
+    // ONE repository for all three, which is the shape under test: the repo root
+    // and the folders beneath it belong to the same repository, and membership
+    // comes from that repository rather than from each folder.
+    let rid = s.upsert_repository(&format!("test/repos-{pid}"), None).await.unwrap();
     sqlx_core::query::query(
-            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) VALUES
+            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, repository_id) VALUES
                ('00000000-0000-0000-0000-000000000001','git'::sensei.folder_kind,'the-repo','the-repo',$1,$3),
                ('00000000-0000-0000-0000-000000000001','folder'::sensei.folder_kind,'subdir','subdir',$2,$3),
                ('00000000-0000-0000-0000-000000000001','module'::sensei.folder_kind,'member','member',$4,$3)"
-        ).bind(&git_abs).bind(&sub_abs).bind(pid).bind(&mem_abs).execute(s.pool()).await.unwrap();
+        ).bind(&git_abs).bind(&sub_abs).bind(rid).bind(&mem_abs).execute(s.pool()).await.unwrap();
+    s.link_project_repository(&pid, &rid).await.unwrap();
 
     let repos = s.get_project_repos(&pid).await.unwrap();
     let kinds: Vec<String> =
@@ -7959,11 +8204,14 @@ async fn get_project_repos_excludes_subfolder_tree() {
     // a monorepo with N members regresses to an N+1-repo project (#62).
     assert!(!kinds.iter().any(|k| k == "module"), "kind=module excluded from repos: {kinds:?}");
 
-    sqlx_core::query::query("DELETE FROM sensei.folders WHERE project_id = $1")
-        .bind(pid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    sqlx_core::query::query(
+        "DELETE FROM sensei.folders f USING sensei.folder_projects fp \
+          WHERE fp.folder_id = f.id AND fp.project_id = $1",
+    )
+    .bind(pid)
+    .execute(s.pool())
+    .await
+    .unwrap();
     sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
         .bind(pid)
         .execute(s.pool())
@@ -7996,15 +8244,15 @@ async fn upsert_subfolder_kind_relabels_structural_but_preserves_root() {
 
     // A plain structural folder → relabel to workspace_member on re-upsert.
     let a = format!("/_test/sfk-a-{}", uuid::Uuid::new_v4());
-    s.upsert_subfolder(&rid, "a", "a", &a, None, None).await.unwrap();
+    s.upsert_subfolder(&rid, "a", "a", &a, None).await.unwrap();
     assert_eq!(kind_at(&s, a.clone()).await, "folder", "first upsert is a plain folder");
-    s.upsert_subfolder_kind(&rid, "module", "a", "a", &a, None, None).await.unwrap();
+    s.upsert_subfolder_kind(&rid, "module", "a", "a", &a, None).await.unwrap();
     assert_eq!(kind_at(&s, a.clone()).await, "module", "relabelled folder → workspace_member");
 
     // A nested project root (subtree) must NOT be reclassified by a member upsert.
     let b = format!("/_test/sfk-b-{}", uuid::Uuid::new_v4());
     s.upsert_repo_kind(&rid, "subtree", "b", &b).await.unwrap();
-    s.upsert_subfolder_kind(&rid, "module", "b", "b", &b, None, None).await.unwrap();
+    s.upsert_subfolder_kind(&rid, "module", "b", "b", &b, None).await.unwrap();
     assert_eq!(
         kind_at(&s, b.clone()).await,
         "subtree",
@@ -8061,16 +8309,16 @@ async fn project_ftr_and_quality_decode_numeric_metrics() {
     let fid = create_test_folder(&s, &format!("ftr-{}", uuid::Uuid::new_v4())).await;
     let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
     let session_id = s.record_session_event(&sid, &fid, Some(&pid), "claude", true).await.unwrap();
-    s.update_session_metrics(
-        &session_id,
-        3,
-        0,
-        "completed",
-        true,
-        1000,
-        None,
-        &serde_json::json!({}),
-    )
+    s.update_session_metrics(&SessionMetricsRow {
+        session_id: &session_id,
+        turns: 3,
+        corrections: 0,
+        outcome: "completed",
+        ftr: true,
+        duration_ms: 1000,
+        module: None,
+        tool_usage: &serde_json::json!({}),
+    })
     .await
     .unwrap();
     // Stored daily ftr row in the 14d window → the headline decodes a real value.
@@ -8089,18 +8337,18 @@ async fn project_ftr_and_quality_decode_numeric_metrics() {
     .await
     .unwrap();
     crate::tasks::test_support::link_repository_to_project(&s, &rid, &pid, "ftr-decode").await;
-    s.upsert_project_metric_repo(
-        &ftr_mid,
-        &rid,
-        "user",
-        None,
-        None,
-        chrono::Utc::now().date_naive(),
-        "daily",
-        1.0,
-        &serde_json::json!({"numerator": 1, "denominator": 1}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: chrono::Utc::now().date_naive(),
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({"numerator": 1, "denominator": 1}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -8174,14 +8422,56 @@ async fn session_create_and_get() {
     assert_eq!(sess["turns"], 0);
 }
 
+/// The agent closes its session with the id its SessionStart context gave it —
+/// Claude Code's own session id, which is `client_session_id`, not the row id.
+/// Before this, `complete_session` matched `id` only, so every agent's close was
+/// an UPDATE of zero rows reported as `{"ok": true}` (#238).
+///
+/// Mutations that must break this: match `id` only, or report a miss as found.
+#[tokio::test]
+async fn a_session_closes_by_its_client_id_and_a_miss_is_a_miss() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, "sess_client_close").await;
+    let client = uuid::Uuid::new_v4();
+    let row =
+        s.record_session_event(&client.to_string(), &fid, None, "claude", false).await.unwrap();
+    assert_ne!(row, client, "the row id is not the client id — which is the whole bug");
+
+    let close = |id| SessionOutcomeRow {
+        id,
+        outcome: "completed",
+        ftr: true,
+        turns: 3,
+        corrections: 0,
+        summary: Some("closed by client id"),
+        tokens_in: None,
+        tokens_out: None,
+    };
+    assert!(s.complete_session(&close(&client)).await.unwrap(), "found by client id");
+    let sess = s.get_session(&row).await.unwrap().unwrap();
+    assert_eq!(sess["outcome"], "completed");
+
+    let nobody = uuid::Uuid::new_v4();
+    assert!(!s.complete_session(&close(&nobody)).await.unwrap(), "a miss is reported, not ok");
+}
+
 #[tokio::test]
 async fn session_complete() {
     let s = pg_store().await;
     let fid = create_test_folder(&s, "sess_complete").await;
     let sid = s.create_session(&fid, "add feature", None).await.unwrap();
-    s.complete_session(&sid, "completed", true, 5, 0, Some("shipped it"), Some(1200), Some(3400))
-        .await
-        .unwrap();
+    s.complete_session(&SessionOutcomeRow {
+        id: &sid,
+        outcome: "completed",
+        ftr: true,
+        turns: 5,
+        corrections: 0,
+        summary: Some("shipped it"),
+        tokens_in: Some(1200),
+        tokens_out: Some(3400),
+    })
+    .await
+    .unwrap();
     let sess = s.get_session(&sid).await.unwrap().unwrap();
     assert_eq!(sess["outcome"], "completed");
     assert_eq!(sess["ftr"], true);
@@ -8231,16 +8521,16 @@ async fn hook_event_insert_and_query() {
         "cwd": "/tmp/test",
     });
     let id = s
-        .insert_hook_event(
-            &session_id,
-            "claude",
-            "PreToolUse",
-            Some("Read"),
-            Some("/tmp/test"),
-            chrono::Utc::now().timestamp_millis(),
-            None,
-            &payload,
-        )
+        .insert_hook_event(&HookEventRow {
+            session_id: &session_id,
+            assistant_family: "claude",
+            event_type: "PreToolUse",
+            tool_name: Some("Read"),
+            cwd: Some("/tmp/test"),
+            ts: chrono::Utc::now().timestamp_millis(),
+            success: None,
+            payload: &payload,
+        })
         .await
         .unwrap();
     assert!(id > 0);
@@ -8252,16 +8542,16 @@ async fn hook_event_post_tool_use_success() {
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let payload = serde_json::json!({"hook_event_name": "PostToolUse", "assistant_family": "claude", "tool_name": "Bash"});
     let id = s
-        .insert_hook_event(
-            &session_id,
-            "claude",
-            "PostToolUse",
-            Some("Bash"),
-            None,
-            chrono::Utc::now().timestamp_millis(),
-            Some(true),
-            &payload,
-        )
+        .insert_hook_event(&HookEventRow {
+            session_id: &session_id,
+            assistant_family: "claude",
+            event_type: "PostToolUse",
+            tool_name: Some("Bash"),
+            cwd: None,
+            ts: chrono::Utc::now().timestamp_millis(),
+            success: Some(true),
+            payload: &payload,
+        })
         .await
         .unwrap();
     assert!(id > 0);
@@ -8273,16 +8563,16 @@ async fn hook_event_no_tool_name() {
     let session_id = format!("test-session-{}", uuid::Uuid::new_v4());
     let payload = serde_json::json!({"hook_event_name": "SessionStart", "assistant_family": "claude", "model": "claude-sonnet-4"});
     let id = s
-        .insert_hook_event(
-            &session_id,
-            "claude",
-            "SessionStart",
-            None,
-            Some("/home/user/project"),
-            chrono::Utc::now().timestamp_millis(),
-            None,
-            &payload,
-        )
+        .insert_hook_event(&HookEventRow {
+            session_id: &session_id,
+            assistant_family: "claude",
+            event_type: "SessionStart",
+            tool_name: None,
+            cwd: Some("/home/user/project"),
+            ts: chrono::Utc::now().timestamp_millis(),
+            success: None,
+            payload: &payload,
+        })
         .await
         .unwrap();
     assert!(id > 0);
@@ -8295,16 +8585,16 @@ async fn hook_event_cursor_family() {
     let payload =
         serde_json::json!({"hook_event_name": "SessionStart", "assistant_family": "cursor"});
     let id = s
-        .insert_hook_event(
-            &session_id,
-            "cursor",
-            "SessionStart",
-            None,
-            Some("/home/user/project"),
-            chrono::Utc::now().timestamp_millis(),
-            None,
-            &payload,
-        )
+        .insert_hook_event(&HookEventRow {
+            session_id: &session_id,
+            assistant_family: "cursor",
+            event_type: "SessionStart",
+            tool_name: None,
+            cwd: Some("/home/user/project"),
+            ts: chrono::Utc::now().timestamp_millis(),
+            success: None,
+            payload: &payload,
+        })
         .await
         .unwrap();
     assert!(id > 0);
@@ -8319,32 +8609,32 @@ async fn unclassified_verdict_sessions_returns_only_in_window_unclassified() {
 
     // (a) in-window PostToolUse, never classified → should appear.
     let pending_sid = format!("_test-unclassified-pending-{}", uuid::Uuid::new_v4());
-    s.insert_hook_event(
-        &pending_sid,
-        "claude",
-        "PostToolUse",
-        Some("Read"),
-        None,
-        now,
-        Some(true),
-        &serde_json::json!({"tool_response": "x"}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: &pending_sid,
+        assistant_family: "claude",
+        event_type: "PostToolUse",
+        tool_name: Some("Read"),
+        cwd: None,
+        ts: now,
+        success: Some(true),
+        payload: &serde_json::json!({"tool_response": "x"}),
+    })
     .await
     .unwrap();
 
     // (b) in-window PostToolUse that already carries a verdict row → excluded.
     let classified_sid = format!("_test-unclassified-classified-{}", uuid::Uuid::new_v4());
     let ev_id = s
-        .insert_hook_event(
-            &classified_sid,
-            "claude",
-            "PostToolUse",
-            Some("Read"),
-            None,
-            now,
-            Some(true),
-            &serde_json::json!({"tool_response": "y"}),
-        )
+        .insert_hook_event(&HookEventRow {
+            session_id: &classified_sid,
+            assistant_family: "claude",
+            event_type: "PostToolUse",
+            tool_name: Some("Read"),
+            cwd: None,
+            ts: now,
+            success: Some(true),
+            payload: &serde_json::json!({"tool_response": "y"}),
+        })
         .await
         .unwrap();
     s.upsert_verdicts_batch(&[(
@@ -8360,16 +8650,16 @@ async fn unclassified_verdict_sessions_returns_only_in_window_unclassified() {
 
     // (c) out-of-window PostToolUse (30 days old), unclassified → excluded.
     let old_sid = format!("_test-unclassified-old-{}", uuid::Uuid::new_v4());
-    s.insert_hook_event(
-        &old_sid,
-        "claude",
-        "PostToolUse",
-        Some("Read"),
-        None,
-        now - 30 * day_ms,
-        Some(true),
-        &serde_json::json!({"tool_response": "z"}),
-    )
+    s.insert_hook_event(&HookEventRow {
+        session_id: &old_sid,
+        assistant_family: "claude",
+        event_type: "PostToolUse",
+        tool_name: Some("Read"),
+        cwd: None,
+        ts: now - 30 * day_ms,
+        success: Some(true),
+        payload: &serde_json::json!({"tool_response": "z"}),
+    })
     .await
     .unwrap();
 
@@ -8421,40 +8711,27 @@ async fn list_projects_under_filters_by_folder_path_boundary() {
 
     // A: folder strictly beneath `under`.
     let a = s.ensure_test_project(&format!("fpu-a-{short}")).await.unwrap();
-    s.upsert_folder(&root, "git", "a", "x/a", &format!("{under}/a"), None, Some(&a), None)
-        .await
-        .unwrap();
+    let fa =
+        s.upsert_folder(&root, "git", "a", "x/a", &format!("{under}/a"), None, None).await.unwrap();
+    crate::tasks::test_support::place_folder_in_project(&s, &fa, &a, "fpu-a").await.unwrap();
     // B: folder exactly equal to `under` (boundary: abs_path == under).
     let b = s.ensure_test_project(&format!("fpu-b-{short}")).await.unwrap();
-    s.upsert_folder(&root, "git", "b", "x", &under, None, Some(&b), None).await.unwrap();
+    let fb = s.upsert_folder(&root, "git", "b", "x", &under, None, None).await.unwrap();
+    crate::tasks::test_support::place_folder_in_project(&s, &fb, &b, "fpu-b").await.unwrap();
     // C: folder elsewhere under base but outside `under`.
     let c = s.ensure_test_project(&format!("fpu-c-{short}")).await.unwrap();
-    s.upsert_folder(
-        &root,
-        "git",
-        "c",
-        "elsewhere",
-        &format!("{base}/elsewhere"),
-        None,
-        Some(&c),
-        None,
-    )
-    .await
-    .unwrap();
+    let fc = s
+        .upsert_folder(&root, "git", "c", "elsewhere", &format!("{base}/elsewhere"), None, None)
+        .await
+        .unwrap();
+    crate::tasks::test_support::place_folder_in_project(&s, &fc, &c, "fpu-c").await.unwrap();
     // D: sibling sharing the `under` prefix textually but across a path boundary.
     let d = s.ensure_test_project(&format!("fpu-d-{short}")).await.unwrap();
-    s.upsert_folder(
-        &root,
-        "git",
-        "d",
-        "x-other",
-        &format!("{under}-other/z"),
-        None,
-        Some(&d),
-        None,
-    )
-    .await
-    .unwrap();
+    let fd = s
+        .upsert_folder(&root, "git", "d", "x-other", &format!("{under}-other/z"), None, None)
+        .await
+        .unwrap();
+    crate::tasks::test_support::place_folder_in_project(&s, &fd, &d, "fpu-d").await.unwrap();
 
     let scoped: Vec<String> = s
         .list_projects_under(Some(&under))
@@ -8512,22 +8789,22 @@ async fn list_root_folders_excludes_nested_folder_descendants() {
     let p = s.ensure_test_project(&format!("rootf-{short}")).await.unwrap();
 
     // One git repo root …
-    s.upsert_folder(&root, "git", "repo", "repo", &format!("{base}/repo"), None, Some(&p), None)
+    // Each ROOT gets its own repository, and both are put in `p`. The 30
+    // descendants below need none: they inherit the repo anchor's repository,
+    // which is where the project lives.
+    let f_repo = s
+        .upsert_folder(&root, "git", "repo", "repo", &format!("{base}/repo"), None, None)
+        .await
+        .unwrap();
+    crate::tasks::test_support::place_folder_in_project(&s, &f_repo, &p, "rootf-repo")
         .await
         .unwrap();
     // … plus one standalone root …
-    s.upsert_folder(
-        &root,
-        "standalone",
-        "lib",
-        "lib",
-        &format!("{base}/lib"),
-        None,
-        Some(&p),
-        None,
-    )
-    .await
-    .unwrap();
+    let f_lib = s
+        .upsert_folder(&root, "standalone", "lib", "lib", &format!("{base}/lib"), None, None)
+        .await
+        .unwrap();
+    crate::tasks::test_support::place_folder_in_project(&s, &f_lib, &p, "rootf-lib").await.unwrap();
     // … plus many nested `kind:'folder'` descendants (the bloat).
     for i in 0..30 {
         s.upsert_folder(
@@ -8537,7 +8814,6 @@ async fn list_root_folders_excludes_nested_folder_descendants() {
             &format!("repo/src/d{i}"),
             &format!("{base}/repo/src/d{i}"),
             None,
-            Some(&p),
             None,
         )
         .await
@@ -8735,12 +9011,7 @@ async fn get_or_create_adopts_folder_bearing_project_no_duplicate() {
 
     let keep = s.create_project(&name, None, None).await.unwrap();
     let fid = create_test_folder(&s, &format!("dupname-{}", uuid::Uuid::new_v4())).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(keep)
-        .bind(fid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&fid, &keep, "root", None).await.unwrap();
 
     let (resolved, created) = s.get_or_create_project_by_name(&name).await.unwrap();
     assert!(!created, "should adopt the existing folder-bearing project");
@@ -8779,12 +9050,7 @@ async fn heal_duplicate_name_projects_prunes_empty_dupe_idempotently() {
     // Survivor: folder-bearing project.
     let keep = s.create_project(&name, None, None).await.unwrap();
     let fid = create_test_folder(&s, &format!("dupheal-{}", uuid::Uuid::new_v4())).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(keep)
-        .bind(fid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&fid, &keep, "root", None).await.unwrap();
 
     // Phantom: second same-name project, 0 folders, maturity=discovery (default),
     // carrying a session so we can prove the heal reassigns FK rows.
@@ -8806,12 +9072,13 @@ async fn heal_duplicate_name_projects_prunes_empty_dupe_idempotently() {
     assert!(s.get_project(&keep).await.unwrap().is_some(), "folder-bearing survivor must remain");
 
     // Survivor still owns its folder; the phantom's session followed it.
-    let (folder_project,): (Option<uuid::Uuid>,) =
-        sqlx_core::query_as::query_as("SELECT project_id FROM sensei.folders WHERE id = $1")
-            .bind(fid)
-            .fetch_one(s.pool())
-            .await
-            .unwrap();
+    let (folder_project,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
+        "SELECT sensei.sole_project_of(id) FROM sensei.folders WHERE id = $1",
+    )
+    .bind(fid)
+    .fetch_one(s.pool())
+    .await
+    .unwrap();
     assert_eq!(folder_project, Some(keep), "survivor keeps its folder");
     let (sess_project,): (Option<uuid::Uuid>,) =
         sqlx_core::query_as::query_as("SELECT project_id FROM activity.sessions WHERE id = $1")
@@ -8868,21 +9135,11 @@ async fn heal_leaves_two_folder_bearing_same_name_projects() {
 
     let a = s.create_project(&name, None, None).await.unwrap();
     let fa = create_test_folder(&s, &format!("dupneg-a-{}", uuid::Uuid::new_v4())).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(a)
-        .bind(fa)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&fa, &a, "root", None).await.unwrap();
 
     let b = s.create_project(&name, None, None).await.unwrap();
     let fb = create_test_folder(&s, &format!("dupneg-b-{}", uuid::Uuid::new_v4())).await;
-    sqlx_core::query::query("UPDATE sensei.folders SET project_id = $1 WHERE id = $2")
-        .bind(b)
-        .bind(fb)
-        .execute(s.pool())
-        .await
-        .unwrap();
+    s.set_folder_project(&fb, &b, "root", None).await.unwrap();
 
     s.heal_duplicate_name_projects().await.unwrap();
 
@@ -9661,21 +9918,19 @@ async fn setup_scope_test(s: &PgStore, suffix: &str) -> (uuid::Uuid, uuid::Uuid,
     // Root repo folder (kind='git', owns root_id = watch_id).
     let root_abs = format!("/_test/scope_{}/root", suffix);
     let root_name = format!("scope_root_{}", suffix);
-    let root_id = s.upsert_repo(&watch_id, &root_name, &root_abs).await.unwrap();
+    // Through the scan-shaped helper: the project is the REPOSITORY's since
+    // #211, so a folder with no `repositories` row can hold no project and
+    // every scoping read below would come back empty.
+    let root_id = crate::tasks::test_support::seed_repo_folder(s, &watch_id, &root_name, &root_abs)
+        .await
+        .unwrap();
     s.set_folder_project(&root_id, &proj_id, "main", None).await.unwrap();
 
     // Child subfolder (kind='folder', parent = root, project = proj_id).
     let child_abs = format!("/_test/scope_{}/root/child", suffix);
     let child_name = format!("scope_child_{}", suffix);
     let child_id = s
-        .upsert_subfolder(
-            &watch_id,
-            &child_name,
-            &child_name,
-            &child_abs,
-            Some(&root_id),
-            Some(&proj_id),
-        )
+        .upsert_subfolder(&watch_id, &child_name, &child_name, &child_abs, Some(&root_id))
         .await
         .unwrap();
 
@@ -9824,16 +10079,16 @@ async fn seed_logs(pg: &PgStore, marker: &str) {
         ("error", format!("{marker}-b"), "analyzer", base + chrono::Duration::minutes(90)),
     ];
     for (level, running_on, module, ts) in rows {
-        pg.insert_log(
+        pg.insert_log(&LogRow {
             level,
-            &running_on,
-            Some(module),
-            &ts.to_rfc3339(),
-            &format!("{marker} {level} message"),
-            &serde_json::json!({}),
-            &None,
-            &None,
-        )
+            running_on: &running_on,
+            module: Some(module),
+            logged_at: &ts.to_rfc3339(),
+            message: &format!("{marker} {level} message"),
+            context: &serde_json::json!({}),
+            data: &None,
+            error: &None,
+        })
         .await
         .unwrap();
     }
@@ -9999,15 +10254,18 @@ async fn upsert_project_metric_is_idempotent() {
     let day = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
 
     let id1 = s
-        .upsert_project_metric(
-            &mid,
-            &rid,
-            day,
-            "daily",
-            0.5,
-            &serde_json::json!({"numerator": 1, "denominator": 2}),
-            "measured",
-        )
+        .upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: None,
+            commit_sha: None,
+            computed_on: day,
+            grain: "daily",
+            value: 0.5,
+            props: &serde_json::json!({"numerator": 1, "denominator": 2}),
+            source: "measured",
+        })
         .await
         .unwrap();
 
@@ -10027,15 +10285,18 @@ async fn upsert_project_metric_is_idempotent() {
             .unwrap();
 
     let id2 = s
-        .upsert_project_metric(
-            &mid,
-            &rid,
-            day,
-            "daily",
-            0.75,
-            &serde_json::json!({"numerator": 3, "denominator": 4}),
-            "estimated",
-        )
+        .upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: None,
+            commit_sha: None,
+            computed_on: day,
+            grain: "daily",
+            value: 0.75,
+            props: &serde_json::json!({"numerator": 3, "denominator": 4}),
+            source: "estimated",
+        })
         .await
         .unwrap();
     assert_eq!(id1, id2, "same identity upserts the same row (no duplicate)");
@@ -10241,26 +10502,32 @@ async fn get_project_metrics_reads_views() {
     let d1 = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
     let d2 = chrono::NaiveDate::from_ymd_opt(2020, 1, 2).unwrap(); // later => latest
 
-    s.upsert_project_metric(
-        &mid,
-        &rid,
-        d1,
-        "daily",
-        0.5,
-        &serde_json::json!({"numerator": 1, "denominator": 2}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: d1,
+        grain: "daily",
+        value: 0.5,
+        props: &serde_json::json!({"numerator": 1, "denominator": 2}),
+        source: "measured",
+    })
     .await
     .unwrap();
-    s.upsert_project_metric(
-        &mid,
-        &rid,
-        d2,
-        "daily",
-        0.75,
-        &serde_json::json!({"numerator": 3, "denominator": 4}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: d2,
+        grain: "daily",
+        value: 0.75,
+        props: &serde_json::json!({"numerator": 3, "denominator": 4}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -10392,17 +10659,20 @@ async fn a_pct_metric_without_numerator_props_still_yields_a_value() {
     let day = chrono::NaiveDate::from_ymd_opt(2020, 3, 4).unwrap();
 
     // Exactly the shape `usage.rs` writes: no numerator, no denominator.
-    s.upsert_project_metric(
-        &mid,
-        &rid,
-        day,
-        "daily",
-        0.957,
-        &serde_json::json!({
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day,
+        grain: "daily",
+        value: 0.957,
+        props: &serde_json::json!({
             "sessions": 12, "pooled_ratio": 0.981, "mean_of_session_ratios": 0.957
         }),
-        "measured",
-    )
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -10440,27 +10710,33 @@ async fn get_project_metrics_excludes_a_retired_metric() {
     let active_mid = seed_metric(&s, &active_key, "ComputeActive", 0, None).await; // active, no end
     let retired_mid = seed_metric(&s, &retired_key, "ComputeRetired", -10, Some(-1)).await; // ended yesterday
     let d = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
-    s.upsert_project_metric(
-        &active_mid,
-        &rid,
-        d,
-        "daily",
-        0.5,
-        &serde_json::json!({"numerator": 1, "denominator": 2}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &active_mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: d,
+        grain: "daily",
+        value: 0.5,
+        props: &serde_json::json!({"numerator": 1, "denominator": 2}),
+        source: "measured",
+    })
     .await
     .unwrap();
     // The retired metric HAS a durable row — it just must not be read as active.
-    s.upsert_project_metric(
-        &retired_mid,
-        &rid,
-        d,
-        "daily",
-        0.9,
-        &serde_json::json!({"numerator": 9, "denominator": 10}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &retired_mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: d,
+        grain: "daily",
+        value: 0.9,
+        props: &serde_json::json!({"numerator": 9, "denominator": 10}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -10642,48 +10918,48 @@ async fn ftr_getters_read_project_metrics() {
     .unwrap();
     crate::tasks::test_support::link_repository_to_project(&s, &rid, &pid, "ftrget").await;
     // day A (today):     3/4 = 0.75
-    s.upsert_project_metric_repo(
-        &ftr_mid,
-        &rid,
-        "user",
-        None,
-        None,
-        today,
-        "daily",
-        0.75,
-        &serde_json::json!({"numerator": 3, "denominator": 4, "correction_count": 1}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: today,
+        grain: "daily",
+        value: 0.75,
+        props: &serde_json::json!({"numerator": 3, "denominator": 4, "correction_count": 1}),
+        source: "measured",
+    })
     .await
     .unwrap();
     // day B (today-3):   1/2 = 0.50
-    s.upsert_project_metric_repo(
-        &ftr_mid,
-        &rid,
-        "user",
-        None,
-        None,
-        d_recent,
-        "daily",
-        0.5,
-        &serde_json::json!({"numerator": 1, "denominator": 2, "correction_count": 2}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: d_recent,
+        grain: "daily",
+        value: 0.5,
+        props: &serde_json::json!({"numerator": 1, "denominator": 2, "correction_count": 2}),
+        source: "measured",
+    })
     .await
     .unwrap();
     // day C (today-20):  1/2 = 0.50 — prior-14d window, excluded from 14d/7d
-    s.upsert_project_metric_repo(
-        &ftr_mid,
-        &rid,
-        "user",
-        None,
-        None,
-        d_prev,
-        "daily",
-        0.5,
-        &serde_json::json!({"numerator": 1, "denominator": 2, "correction_count": 3}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: d_prev,
+        grain: "daily",
+        value: 0.5,
+        props: &serde_json::json!({"numerator": 1, "denominator": 2, "correction_count": 3}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -10824,18 +11100,18 @@ async fn ftr14d_window_reaches_the_8_to_13_day_band() {
     .await
     .unwrap();
     crate::tasks::test_support::link_repository_to_project(&s, &rid, &pid, "ftrwin").await;
-    s.upsert_project_metric_repo(
-        &ftr_mid,
-        &rid,
-        "user",
-        None,
-        None,
-        d10,
-        "daily",
-        1.0,
-        &serde_json::json!({"numerator": 2, "denominator": 2}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: d10,
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({"numerator": 2, "denominator": 2}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -10905,32 +11181,32 @@ async fn holistic_ftr_daily_pools_not_average_of_rates() {
     .unwrap();
     crate::tasks::test_support::link_repository_to_project(&s, &r2, &p2, "ftrpool2").await;
     // P1: 1/1 = 1.0 ; P2: 0/3 = 0.0 → avg-of-rates 0.5, pooled 1/4 = 0.25.
-    s.upsert_project_metric_repo(
-        &ftr_mid,
-        &r1,
-        "user",
-        None,
-        None,
-        day,
-        "daily",
-        1.0,
-        &serde_json::json!({"numerator": 1, "denominator": 1}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_mid,
+        repository_id: &r1,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day,
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({"numerator": 1, "denominator": 1}),
+        source: "measured",
+    })
     .await
     .unwrap();
-    s.upsert_project_metric_repo(
-        &ftr_mid,
-        &r2,
-        "user",
-        None,
-        None,
-        day,
-        "daily",
-        0.0,
-        &serde_json::json!({"numerator": 0, "denominator": 3}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &ftr_mid,
+        repository_id: &r2,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: day,
+        grain: "daily",
+        value: 0.0,
+        props: &serde_json::json!({"numerator": 0, "denominator": 3}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -11407,15 +11683,15 @@ async fn repositories_for_project_lists_repos_primary_first() {
         .await
         .unwrap();
     for (f, r) in [(f_root, r_root), (f_nested, r_nested)] {
-        sqlx_core::query::query(
-            "UPDATE sensei.folders SET repository_id = $2, project_id = $3 WHERE id = $1",
-        )
-        .bind(f)
-        .bind(r)
-        .bind(pid)
-        .execute(s.pool())
-        .await
-        .unwrap();
+        // Only the repository link. The MEMBERSHIP was already written, against
+        // the repository, by the two `link_repository_to_project` calls above —
+        // that is the only place it exists now.
+        sqlx_core::query::query("UPDATE sensei.folders SET repository_id = $2 WHERE id = $1")
+            .bind(f)
+            .bind(r)
+            .execute(s.pool())
+            .await
+            .unwrap();
     }
 
     let repos = s.repositories_for_project(&pid).await.unwrap();
@@ -11456,18 +11732,18 @@ async fn seed_identity_row(
     let pid = s.create_project(&format!("_test:persona:{uniq}"), None, None).await.unwrap();
     let rid = crate::tasks::test_support::seed_bare_repository(s, &pid, uniq).await;
     let mid = seed_metric(s, &format!("_test:persona:{uniq}:ftr"), "ComputeFtr", 0, None).await;
-    s.upsert_project_metric_repo(
-        &mid,
-        &rid,
-        "user",
-        Some(email),
-        None,
-        chrono::NaiveDate::from_ymd_opt(2020, 3, 1).unwrap(),
-        "daily",
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: Some(email),
+        commit_sha: None,
+        computed_on: chrono::NaiveDate::from_ymd_opt(2020, 3, 1).unwrap(),
+        grain: "daily",
         value,
-        &serde_json::json!({}),
-        "measured",
-    )
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
     (pid, rid)
@@ -11633,33 +11909,33 @@ async fn a_held_back_scope_cannot_crowd_the_push_window() {
 
     // The pushable row is OLDER, so a limit applied before the scope filter would
     // hand every slot to the newer user-scoped rows and miss it entirely.
-    s.upsert_project_metric_repo(
-        &mid,
-        &rid,
-        "repo",
-        None,
-        None,
-        chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
-        "daily",
-        1.0,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "repo",
+        identity: None,
+        commit_sha: None,
+        computed_on: chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap(),
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
     for d in 10..14 {
-        s.upsert_project_metric_repo(
-            &mid,
-            &rid,
-            "user",
-            Some("crowd@example.com"),
-            None,
-            chrono::NaiveDate::from_ymd_opt(2026, 8, d).unwrap(),
-            "daily",
-            9.0,
-            &serde_json::json!({}),
-            "measured",
-        )
+        s.upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &rid,
+            scope: "user",
+            identity: Some("crowd@example.com"),
+            commit_sha: None,
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 8, d).unwrap(),
+            grain: "daily",
+            value: 9.0,
+            props: &serde_json::json!({}),
+            source: "measured",
+        })
         .await
         .unwrap();
     }
@@ -11682,18 +11958,18 @@ async fn the_allow_list_cannot_be_crowded_out_either() {
     let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
     let allowed_key = format!("test/bare-{uniq}");
     let mid = seed_metric(&s, &format!("_test:allow:{uniq}"), "ComputeFtr", 0, None).await;
-    s.upsert_project_metric_repo(
-        &mid,
-        &rid,
-        "repo",
-        None,
-        None,
-        chrono::NaiveDate::from_ymd_opt(2019, 1, 1).unwrap(),
-        "daily",
-        1.0,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "repo",
+        identity: None,
+        commit_sha: None,
+        computed_on: chrono::NaiveDate::from_ymd_opt(2019, 1, 1).unwrap(),
+        grain: "daily",
+        value: 1.0,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
 
@@ -11709,18 +11985,18 @@ async fn the_allow_list_cannot_be_crowded_out_either() {
         .await
         .unwrap();
     for d in 20..24 {
-        s.upsert_project_metric_repo(
-            &mid,
-            &other_rid,
-            "repo",
-            None,
-            None,
-            chrono::NaiveDate::from_ymd_opt(2026, 8, d).unwrap(),
-            "daily",
-            5.0,
-            &serde_json::json!({}),
-            "measured",
-        )
+        s.upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &other_rid,
+            scope: "repo",
+            identity: None,
+            commit_sha: None,
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 8, d).unwrap(),
+            grain: "daily",
+            value: 5.0,
+            props: &serde_json::json!({}),
+            source: "measured",
+        })
         .await
         .unwrap();
     }
@@ -11745,18 +12021,18 @@ async fn two_rows_that_differ_in_every_key_field_arrive_different() {
     let (pid, rid) = seed_sync_fixture(&s, &uniq).await;
     let key = format!("test/bare-{uniq}");
     let mid = seed_metric(&s, &format!("_test:contrast:{uniq}"), "ComputeFtr", 0, None).await;
-    s.upsert_project_metric_repo(
-        &mid,
-        &rid,
-        "repo",
-        None,
-        Some("deadbeef"),
-        chrono::NaiveDate::from_ymd_opt(2021, 3, 4).unwrap(),
-        "session",
-        7.5,
-        &serde_json::json!({ "n": 7 }),
-        "estimated",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "repo",
+        identity: None,
+        commit_sha: Some("deadbeef"),
+        computed_on: chrono::NaiveDate::from_ymd_opt(2021, 3, 4).unwrap(),
+        grain: "session",
+        value: 7.5,
+        props: &serde_json::json!({ "n": 7 }),
+        source: "estimated",
+    })
     .await
     .unwrap();
 
@@ -12070,18 +12346,18 @@ async fn seed_sync_fixture_at(
     .await
     .unwrap();
     let mid = seed_metric(s, &format!("_test:sync:{uniq}:ftr"), "ComputeFtr", 0, None).await;
-    s.upsert_project_metric_repo(
-        &mid,
-        &rid,
-        "user",
-        None,
-        None,
-        chrono::NaiveDate::from_ymd_opt(2020, 5, 1).unwrap(),
-        "daily",
-        0.5,
-        &serde_json::json!({}),
-        "measured",
-    )
+    s.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &rid,
+        scope: "user",
+        identity: None,
+        commit_sha: None,
+        computed_on: chrono::NaiveDate::from_ymd_opt(2020, 5, 1).unwrap(),
+        grain: "daily",
+        value: 0.5,
+        props: &serde_json::json!({}),
+        source: "measured",
+    })
     .await
     .unwrap();
     (pid, rid)
@@ -13701,15 +13977,19 @@ async fn folder_branch_is_a_typed_column_and_a_graph_nodes_dimension() {
 ///
 /// Both clauses matter. Without the first, grouping by repository is a join the
 /// caller has to re-derive every time. Without the second, a NULL would be
-/// indistinguishable from a fabricated fallback — and `folders.repository_id` is
-/// genuinely sparse (183 of 193 git folders on 2026-09-23), so the unattributed
-/// bucket is a real population and is exactly the query that finds what still
-/// needs attributing.
+/// indistinguishable from a fabricated fallback. `folders.repository_id` is no
+/// longer sparse — every folder inherits one from its anchor at write time, 0 of
+/// 13,722 null on 2026-10-01 — but the column stays NULLABLE and the writer
+/// guards for it, so the unattributed bucket remains representable and the view
+/// must still answer honestly over it. The fixture uses
+/// `create_test_folder_unattributed` precisely because the default can no longer
+/// produce that state.
 #[tokio::test]
 async fn graph_nodes_names_the_repository_and_leaves_an_unattributed_folder_null() {
     let s = pg_store().await;
     let attributed = create_test_folder(&s, &format!("repoA_{}", uuid::Uuid::new_v4())).await;
-    let orphan = create_test_folder(&s, &format!("repoB_{}", uuid::Uuid::new_v4())).await;
+    let orphan =
+        create_test_folder_unattributed(&s, &format!("repoB_{}", uuid::Uuid::new_v4())).await;
 
     let repo_key = format!("example.test/{}", uuid::Uuid::new_v4());
     let (repo_id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
@@ -15058,7 +15338,7 @@ async fn node_id_by_fqn_looks_up_without_creating_and_is_folder_scoped() {
     let a = create_test_folder(&s, &format!("fqnlook_a_{}", uuid::Uuid::new_v4())).await;
     let b = create_test_folder(&s, &format!("fqnlook_b_{}", uuid::Uuid::new_v4())).await;
 
-    let fqn = "typescript·app·lib/util";
+    let fqn = "typescript·app··lib/util";
     let id = s.seed_node_by_fqn(&a, fqn, "module", "util", Some("typescript"), None).await.unwrap();
 
     assert_eq!(s.node_id_by_fqn(&a, fqn).await.unwrap(), Some(id), "finds the node in its folder");
@@ -16428,6 +16708,190 @@ async fn rewriting_an_identical_return_type_leaves_the_node_untouched() {
         s.set_node_return_type(&uuid::Uuid::new_v4(), "PgStore").await.is_err(),
         "a node that does not exist is still an error, not a silent no-op"
     );
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+// ── Structure diagram (#205) ────────────────────────────────────────────────
+
+/// THE LEVEL ROLLUP IS A DERIVATION, and `module` means the module's TOP
+/// segment — not the whole module path.
+///
+/// Measured on sensei's own corpus before this was written: the fqn's module
+/// segment is per-FILE for most of the tree, so grouping on it whole collapses
+/// 1,751 files into 1,446 groups — 1.21x, with 1,390 of those groups holding
+/// exactly one file. A "module" level that returns a node per file is not a
+/// level at all, and #205's done gate asks for an order of magnitude.
+///
+/// Grouping on the module's FIRST segment (`tasks` of `tasks::metrics`,
+/// `routes` of `routes/(observatory)/insights`) gives 150 groups over the same
+/// 1,751 files — 11.7x — and the groups are the ones a reader would name:
+/// `senseid/tasks`, `senseid/api`, `senseid/indexer`.
+///
+/// This test pins the property on a fixture rather than on the corpus: two
+/// files in different sub-modules of ONE top module must collapse to ONE node,
+/// while a file in another top module stays separate.
+///
+/// Mutation that must break it: group by `module` instead of its first segment.
+#[tokio::test]
+async fn structure_level_module_groups_by_the_modules_top_segment() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, fid) = create_test_project_and_folder(&s, &format!("struct_{uniq}")).await;
+
+    // Three files: two under `tasks`, one under `api`. Same package.
+    let specs = [
+        ("rust·pkg·tasks::alpha·run·item", "src/tasks/alpha.rs"),
+        ("rust·pkg·tasks::beta·run·item", "src/tasks/beta.rs"),
+        ("rust·pkg·api::handler·run·item", "src/api/handler.rs"),
+    ];
+    for (fqn, path) in specs {
+        s.seed_node_by_fqn(
+            &fid,
+            fqn,
+            "function",
+            "run",
+            Some("rust"),
+            Some(crate::db::pg_store::FqnDef {
+                file_path: path,
+                signature: None,
+                line_start: Some(1),
+                line_end: Some(2),
+                is_exported: true,
+                parent_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    }
+
+    let files = s.structure_nodes(&pid, "file").await.unwrap();
+    assert_eq!(files.len(), 3, "file level is one node per file");
+
+    let modules = s.structure_nodes(&pid, "module").await.unwrap();
+    let mut labels: Vec<String> = modules.iter().map(|m| m.id.clone()).collect();
+    labels.sort();
+    assert_eq!(
+        labels,
+        vec!["pkg/api".to_string(), "pkg/tasks".to_string()],
+        "two sub-modules of one top module collapse to ONE node; grouping on the \
+         whole module path would leave three"
+    );
+
+    let packages = s.structure_nodes(&pid, "package").await.unwrap();
+    assert_eq!(packages.len(), 1, "one package");
+    assert_eq!(packages[0].files, 3, "and it carries every file beneath it");
+
+    // THE CONTAINMENT PATH IS THE FQN'S, NOT THE FILESYSTEM'S. The diagram draws
+    // its rim from `path`, and deriving that from directories disagrees with the
+    // call graph for every workspace member — a file's directory says nothing
+    // about the package it declares. Derived here so three consumers cannot each
+    // re-derive it differently.
+    let api = files.iter().find(|n| n.id.ends_with("handler.rs")).expect("the api file");
+    assert_eq!(
+        api.path,
+        vec!["pkg".to_string(), "api".to_string(), "src/api/handler.rs".to_string()],
+        "a file's path is package -> top module -> itself"
+    );
+    let tasks = modules.iter().find(|m| m.id == "pkg/tasks").expect("the tasks module");
+    assert_eq!(
+        tasks.path,
+        vec!["pkg".to_string(), "tasks".to_string()],
+        "a module node stops at the module — it IS the leaf at this level"
+    );
+    assert_eq!(packages[0].path, vec!["pkg".to_string()], "and a package node at the package");
+
+    s.delete_nodes_by_folder(&fid).await.unwrap();
+}
+
+/// COVERAGE COUNTS WHAT COULD NOT BE PLACED, not every edge there is.
+///
+/// The first version of this asked `graph_placement` for
+/// `outcome <> 'resolved'`. That view's outcomes are `placed` / `missed` /
+/// `no verdict` — there is NO `resolved` — so the predicate matched every row
+/// and the screen reported the project's TOTAL edge count as its unplaced one.
+/// Measured on sensei before the fix: 69,747 "unplaced" against 69,747 total,
+/// where the truth is 38,578. A coverage line exists to say what the diagram is
+/// hiding; one that reports the whole population says nothing and looks precise
+/// doing it.
+///
+/// It also cost 107 of the endpoint's 122 seconds, because filtering
+/// `graph_placement` by project cannot push past its window functions.
+///
+/// Mutation that must break this test: drop the `target_id IS NULL` filter.
+#[tokio::test]
+async fn structure_coverage_counts_only_the_edges_that_could_not_be_placed() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, fid) = create_test_project_and_folder(&s, &format!("cov_{uniq}")).await;
+
+    let a = s
+        .seed_node_by_fqn(
+            &fid,
+            "rust·pkg·tasks::a·run·item",
+            "function",
+            "run",
+            Some("rust"),
+            Some(crate::db::pg_store::FqnDef {
+                file_path: "src/tasks/a.rs",
+                signature: None,
+                line_start: Some(1),
+                line_end: Some(2),
+                is_exported: true,
+                parent_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+    let b = s
+        .seed_node_by_fqn(
+            &fid,
+            "rust·pkg·api::b·run·item",
+            "function",
+            "run",
+            Some("rust"),
+            Some(crate::db::pg_store::FqnDef {
+                file_path: "src/api/b.rs",
+                signature: None,
+                line_start: Some(1),
+                line_end: Some(2),
+                is_exported: true,
+                parent_id: None,
+            }),
+        )
+        .await
+        .unwrap();
+
+    // One PLACED edge (a real target) and two that resolved to nothing.
+    s.replace_edges_of_kind(
+        &fid,
+        "calls",
+        &[
+            crate::db::pg_store::EdgeSpec {
+                source_id: a,
+                target_id: Some(b),
+                target_name: None,
+                target_file: None,
+            },
+            crate::db::pg_store::EdgeSpec {
+                source_id: a,
+                target_id: None,
+                target_name: Some("nowhere".into()),
+                target_file: Some("src/gone.rs".into()),
+            },
+            crate::db::pg_store::EdgeSpec {
+                source_id: b,
+                target_id: None,
+                target_name: Some("also_nowhere".into()),
+                target_file: Some("src/gone.rs".into()),
+            },
+        ],
+    )
+    .await
+    .unwrap();
+
+    let unplaced = s.structure_unplaced(&pid, &["calls".to_string()]).await.unwrap();
+    assert_eq!(unplaced, 2, "only the two edges with no target are unplaced — not all three");
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }

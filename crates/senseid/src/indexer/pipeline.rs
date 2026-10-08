@@ -24,6 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::repo;
 use super::scan_repo::{self, RepoScan};
 use super::structure::{self, ChangeKind, FileFacts};
+use crate::db::pg_store::LibraryPageRow;
 use crate::db::pg_store::PgStore;
 use crate::tasks::progress::StageEvents;
 
@@ -98,7 +99,7 @@ impl ScanSummary {
 /// Reuses the walk-level reader in `tasks::handlers::scan` rather than
 /// shelling out a second time — a second copy would be a second place for
 /// "what counts as this repo's remote" to be answered differently.
-fn origin_remote(repo_path: &str) -> Option<String> {
+pub(crate) fn origin_remote(repo_path: &str) -> Option<String> {
     let remotes = crate::tasks::handlers::scan::read_git_remotes(repo_path);
     let pick = remotes.iter().find(|r| r["name"] == "origin").or_else(|| remotes.first())?;
     pick["url"].as_str().map(str::to_string)
@@ -207,12 +208,15 @@ async fn write_one_repo(
         Err(e) => out.errors.push(format!("upsert_repository: {e}")),
     }
 
-    // A repo gets a PROJECT, 1:1, as `folders.project_id` documents. Without it
-    // every folder had project_id NULL, and the chain that answers "which
+    // A repo gets a PROJECT, 1:1. Without it the chain that answers "which
     // projects use this library" — and everything keyed on it, including the
     // update scheduler and therefore the registry-URL extraction — had no input
     // at all. Matched by name, so the 147 projects predating this scan are
     // reused rather than duplicated.
+    //
+    // The project is recorded BELOW, against the repository, once the folder
+    // and its repository both exist. It is deliberately not an argument to the
+    // folder upsert: since #211 there is no `folders.project_id` to put it in.
     let project_id = match pg.get_or_create_project_by_name(&name).await {
         Ok((id, _created)) => Some(id),
         Err(e) => {
@@ -221,10 +225,7 @@ async fn write_one_repo(
         }
     };
 
-    let folder_id = match pg
-        .upsert_folder(root_id, "git", &name, &abs, &abs, None, project_id.as_ref(), None)
-        .await
-    {
+    let folder_id = match pg.upsert_folder(root_id, "git", &name, &abs, &abs, None, None).await {
         Ok(id) => id,
         Err(e) => {
             out.errors.push(format!("upsert_folder(root): {e}"));
@@ -239,6 +240,26 @@ async fn write_one_repo(
         && let Err(e) = pg.link_folder_to_repository(&folder_id, &rid).await
     {
         out.errors.push(format!("link_folder_to_repository: {e}"));
+    }
+
+    // AND THE MEMBERSHIP ITSELF, which is a different fact from either link
+    // above. `repositories_in_projects` says which projects a REPOSITORY belongs
+    // to, and since #210 that junction is the only thing `folder_projects` —
+    // and so every view resolving a project — actually reads. #211 then
+    // dropped `folders.project_id`, so it is not merely the thing read first;
+    // it is the only place the answer exists.
+    //
+    // This write was missing. The scan had both ids in hand right here and
+    // wrote neither into the junction, whose sole writer (`set_folder_project`)
+    // has no production caller at all — every call site is inside `mod tests`.
+    // So the junction held exactly what the one-time 2026-09-30 backfill put
+    // there, and a repository scanned after it resolved to NO project: the inner
+    // join found nothing and the repo's rows vanished from every migrated view,
+    // as an empty result indistinguishable from a genuinely empty one.
+    if let (Some(rid), Some(pid)) = (out.repository_id, project_id)
+        && let Err(e) = pg.link_project_repository(&pid, &rid).await
+    {
+        out.errors.push(format!("link_project_repository: {e}"));
     }
 
     // ── Stage 2 ──────────────────────────────────────────────────────────
@@ -260,24 +281,21 @@ async fn write_one_repo(
     // stop the scan: the other roots are independent and their structure is
     // still correct. `out.errors` non-empty is how a caller tells the
     // difference between "this repo has no files" and "this repo failed".
-    let folder_ids =
-        match write_structure(pg, root_id, root, &folder_id, project_id.as_ref(), &scan, &mut out)
-            .await
-        {
-            Ok(ids) => {
-                // The BARRIER's own number, the same one `folder_completeness`
-                // divides by — not a recount (08 S2).
-                stage.completed(out.files as u64);
-                ids
-            }
-            Err(e) => {
-                // S4: a stage that fails says so. Silence here is what leaves a UI
-                // showing a scan that stopped running minutes ago.
-                stage.failed(&e);
-                out.errors.push(e);
-                BTreeMap::new()
-            }
-        };
+    let folder_ids = match write_structure(pg, root_id, root, &folder_id, &scan, &mut out).await {
+        Ok(ids) => {
+            // The BARRIER's own number, the same one `folder_completeness`
+            // divides by — not a recount (08 S2).
+            stage.completed(out.files as u64);
+            ids
+        }
+        Err(e) => {
+            // S4: a stage that fails says so. Silence here is what leaves a UI
+            // showing a scan that stopped running minutes ago.
+            stage.failed(&e);
+            out.errors.push(e);
+            BTreeMap::new()
+        }
+    };
 
     // ── Stage 2 S8/S11: the dependency edges ─────────────────────────────
     write_dependencies(pg, root, &scan, &folder_ids, &mut out).await;
@@ -649,22 +667,22 @@ async fn ingest_library_pages(
         // A local page's location is a filesystem path, so it belongs in
         // `local_path`; `url` stays null rather than holding a path.
         match pg
-            .upsert_library_page(
+            .upsert_library_page(&LibraryPageRow {
                 library_id,
-                &page.doc.title,
-                None,
-                Some(page.location.as_str()),
-                Some(&page.doc.summary),
-                Some(&page.doc.content),
-                page.source_type,
-                page.doc.component.as_deref(),
-                // package_name: the local walk sees files, not package
-                // membership — nothing in `docs/llms/list.txt` says it
-                // documents `@rokkit/ui`. `None` is "not stated"; inferring it
-                // from the component name would be the R4 guess.
-                None,
-                None,
-            )
+                title: &page.doc.title,
+                url: None,
+                local_path: Some(page.location.as_str()),
+                description: Some(&page.doc.summary),
+                content: Some(&page.doc.content),
+                source_type: page.source_type,
+                component: page.doc.component.as_deref(),
+                // A component is not package membership — nothing in
+                // `docs/llms/list.txt` says it documents `@rokkit/ui`. `None` is
+                // "not stated"; inferring it from the component name would be
+                // the R4 guess.
+                package_name: None,
+                version: None,
+            })
             .await
         {
             Ok(_) => out.library_pages += 1,
@@ -692,7 +710,6 @@ async fn write_structure(
     root_id: &uuid::Uuid,
     repo_root: &std::path::Path,
     root_folder_id: &uuid::Uuid,
-    project_id: Option<&uuid::Uuid>,
     scan: &RepoScan,
     out: &mut RepoResult,
 ) -> Result<BTreeMap<std::path::PathBuf, uuid::Uuid>, String> {
@@ -728,9 +745,10 @@ async fn write_structure(
                 &rel.to_string_lossy(),
                 &f.abs_path.to_string_lossy(),
                 Some(&parent),
-                // A module belongs to its repo's project — the 1:1 rule, with
-                // the modules inheriting rather than each minting its own.
-                project_id,
+                // No project argument: a module belongs to its repo's project
+                // because it inherits the repo's REPOSITORY, which the upsert
+                // resolves from the anchor. The membership itself is written
+                // once, against the repository, by `scan_root`.
                 ws_root.as_ref(),
             )
             .await
@@ -888,11 +906,117 @@ pub struct TellFile {
     scanned: std::collections::BTreeSet<crate::indexer::facts::Fqn>,
 }
 
+/// Per-repo world cache. See [`TellFile::shared`] for why it exists and
+/// [`TellFile::forget`] for who is allowed to clear it.
+fn cache()
+-> &'static std::sync::Mutex<std::collections::HashMap<uuid::Uuid, std::sync::Arc<TellFile>>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<uuid::Uuid, std::sync::Arc<TellFile>>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
 impl TellFile {
-    /// What the scan knows, for a file in `package`.
+    /// What the scan knows, for a file in `package` — and NOTHING ELSE first-party.
+    ///
+    /// Prefer [`TellFile::about_packages`]. A single-package world cannot place
+    /// an edge across a package boundary, because every sibling crate is foreign
+    /// to it; measured on sensei 2026-09-30, that meant ZERO placed edges whose
+    /// source and target packages differ, across 16 packages. This constructor
+    /// remains for tests that deliberately want a one-package world.
     pub fn about(package: &str) -> Self {
         Self {
             first_party: [package.to_string()].into_iter().collect(),
+            members: std::collections::BTreeSet::new(),
+            declared: std::collections::BTreeSet::new(),
+            returns: std::collections::BTreeMap::new(),
+            scanned: std::collections::BTreeSet::new(),
+        }
+    }
+
+    /// Build the repo-wide world ONCE and hand out shared references to it.
+    ///
+    /// The sets are ~15,800 rows on this repository and `process_file` runs per
+    /// FILE, so rebuilding per file would move tens of millions of rows per
+    /// scan. It would also be WRONG: `World` is a barrier artifact built from a
+    /// completed pass, and a world that grew as the scan progressed would let
+    /// file 500 resolve against more knowledge than file 1 — the same repository
+    /// would then index differently depending on order, which is exactly what R6
+    /// forbids. Stale within a scan is the contract, not a compromise.
+    ///
+    /// An `Arc` rather than a clone because `World` BORROWS its collections;
+    /// copying them per file would reintroduce the cost the cache removes.
+    pub async fn shared(
+        pg: &crate::db::pg_store::PgStore,
+        folder_id: &uuid::Uuid,
+    ) -> Result<std::sync::Arc<Self>, String> {
+        if let Some(found) = cache().lock().map_err(|_| "world cache poisoned")?.get(folder_id) {
+            return Ok(found.clone());
+        }
+        let first_party = pg.first_party_packages(folder_id).await?;
+        let (members, declared_names, returns_by_name) =
+            pg.world_sets_for_folder(folder_id).await?;
+
+        // `from_encoded`, because these strings came OUT of the graph, where the
+        // encoder put them. Re-deriving them here would be a second minting site
+        // and the two would drift — which is the whole reason fqn minting has one
+        // owner.
+        let declared =
+            declared_names.into_iter().map(crate::indexer::facts::Fqn::from_encoded).collect();
+        let returns = returns_by_name
+            .into_iter()
+            .map(|(f, t)| (crate::indexer::facts::Fqn::from_encoded(f), t))
+            .collect();
+
+        let built = std::sync::Arc::new(Self {
+            first_party,
+            members,
+            declared,
+            returns,
+            // NEVER POPULATED. `scanned` is the field R6 forbids reading, and a
+            // world that carried it would make placement depend on how much of
+            // the scan had happened yet.
+            scanned: std::collections::BTreeSet::new(),
+        });
+        cache().lock().map_err(|_| "world cache poisoned")?.insert(*folder_id, built.clone());
+        Ok(built)
+    }
+
+    /// Drop the cached world for one repo.
+    ///
+    /// ONE WRITER, and it is `process_repo_files` — the manifest gate, which
+    /// runs once per repo immediately before the file fan-out. A second
+    /// invalidation point would let the world change mid-scan and reintroduce
+    /// the order dependence the cache exists to prevent.
+    pub fn forget(folder_id: &uuid::Uuid) {
+        if let Ok(mut c) = cache().lock() {
+            c.remove(folder_id);
+        }
+    }
+
+    /// Test-only: how many times a world has been built, so a test can assert
+    /// "once per scan" as a COUNT rather than by reading the code.
+    #[cfg(test)]
+    pub fn cached_count() -> usize {
+        cache().lock().map(|c| c.len()).unwrap_or(0)
+    }
+
+    /// What the scan knows, for a file in a repo that owns `packages`.
+    ///
+    /// THIS IS THE CONTRACT `World::first_party` STATES: "Every package this scan
+    /// owns the source of, from the manifests — NOT from what has been read so
+    /// far." The caller reads them from the manifest-derived `kind='module'`
+    /// folders (`PgStore::first_party_packages`); this type does not go looking,
+    /// so a test can hand it any set.
+    ///
+    /// An empty set would be a world that owns nothing, in which every target is
+    /// foreign — strictly worse than the single-package form. The file's own
+    /// package is therefore always included, whatever the caller passes.
+    pub fn about_packages(package: &str, packages: impl IntoIterator<Item = String>) -> Self {
+        let mut first_party: std::collections::BTreeSet<String> = packages.into_iter().collect();
+        first_party.insert(package.to_string());
+        Self {
+            first_party,
             members: std::collections::BTreeSet::new(),
             declared: std::collections::BTreeSet::new(),
             returns: std::collections::BTreeMap::new(),
@@ -960,6 +1084,68 @@ pub fn placement_on_disk(
 #[cfg(test)]
 mod parse_task {
     use super::*;
+
+    /// THE WORLD IS BUILT ONCE PER REPO SCAN, asserted as a count rather than
+    /// read off the code.
+    ///
+    /// ~15,800 rows on this repository and `process_file` runs per FILE, so a
+    /// rebuild per file moves tens of millions of rows per scan. It would also
+    /// be WRONG: `World` is a barrier artifact from a completed pass, and one
+    /// that grew mid-scan would let file 500 resolve against more knowledge than
+    /// file 1 — the same repo indexing differently depending on order, which R6
+    /// forbids.
+    ///
+    /// Breaking mutation: drop the cache lookup at the top of `shared` so every
+    /// call rebuilds — the two Arcs no longer point at one allocation.
+    #[tokio::test]
+    async fn the_world_is_built_once_per_repo_and_shared() {
+        let Ok(pg) = PgStore::connect_test().await else {
+            println!("no database — skipping");
+            return;
+        };
+        let folder = uuid::Uuid::new_v4();
+        TellFile::forget(&folder);
+
+        let first = TellFile::shared(&pg, &folder).await.expect("a world is built");
+        let second = TellFile::shared(&pg, &folder).await.expect("and reused");
+
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &second),
+            "the second call rebuilt the world instead of sharing it — per-file \
+             rebuilds move tens of millions of rows and break order independence"
+        );
+
+        // And the gate clears it: the next scan gets a fresh one.
+        TellFile::forget(&folder);
+        let third = TellFile::shared(&pg, &folder).await.expect("a later scan rebuilds");
+        assert!(
+            !std::sync::Arc::ptr_eq(&first, &third),
+            "forget() did not clear the cache — a later scan would resolve against \
+             a world from before its own changes"
+        );
+        TellFile::forget(&folder);
+    }
+
+    /// `scanned` must stay empty. It is the one field R6 forbids reading, and a
+    /// world carrying it would make placement depend on how much of the scan had
+    /// happened yet.
+    ///
+    /// Breaking mutation: populate `scanned` in `shared`.
+    #[tokio::test]
+    async fn the_shared_world_never_carries_scanned() {
+        let Ok(pg) = PgStore::connect_test().await else {
+            println!("no database — skipping");
+            return;
+        };
+        let folder = uuid::Uuid::new_v4();
+        TellFile::forget(&folder);
+        let world = TellFile::shared(&pg, &folder).await.expect("a world is built");
+        assert!(
+            world.world().scanned.is_empty(),
+            "`scanned` is the field order-independence depends on staying empty"
+        );
+        TellFile::forget(&folder);
+    }
 
     /// **THE ONE MISSING JOIN: `index_file` -> `persist::write`.**
     ///
@@ -1394,18 +1580,18 @@ mod corpus {
                     let mut n = 0;
                     for page in &pages {
                         if pg
-                            .upsert_library_page(
-                                &lib_id,
-                                &page.doc.title,
-                                Some(page.location.as_str()),
-                                None,
-                                Some(&page.doc.summary),
-                                Some(&page.doc.content),
-                                page.source_type,
-                                page.doc.component.as_deref(),
-                                None,
-                                Some(version),
-                            )
+                            .upsert_library_page(&LibraryPageRow {
+                                library_id: &lib_id,
+                                title: &page.doc.title,
+                                url: Some(page.location.as_str()),
+                                local_path: None,
+                                description: Some(&page.doc.summary),
+                                content: Some(&page.doc.content),
+                                source_type: page.source_type,
+                                component: page.doc.component.as_deref(),
+                                package_name: None,
+                                version: Some(version),
+                            })
                             .await
                             .is_ok()
                         {
@@ -1428,21 +1614,21 @@ mod corpus {
                     let mut n = 0;
                     for page in &pages {
                         if pg
-                            .upsert_library_page(
-                                &lib_id,
-                                &page.doc.title,
-                                Some(page.location.as_str()),
-                                None,
-                                Some(&page.doc.summary),
-                                Some(&page.doc.content),
-                                page.source_type,
-                                page.doc.component.as_deref(),
-                                None,
+                            .upsert_library_page(&LibraryPageRow {
+                                library_id: &lib_id,
+                                title: &page.doc.title,
+                                url: Some(page.location.as_str()),
+                                local_path: None,
+                                description: Some(&page.doc.summary),
+                                content: Some(&page.doc.content),
+                                source_type: page.source_type,
+                                component: page.doc.component.as_deref(),
+                                package_name: None,
                                 // A site documents whatever is current. S11:
-                                // `latest` IS a version, and recording it as
-                                // one keeps the dedup key total.
-                                Some("latest"),
-                            )
+                                // `latest` IS a version, and recording it as one
+                                // keeps the dedup key total.
+                                version: Some("latest"),
+                            })
                             .await
                             .is_ok()
                         {
@@ -1489,6 +1675,77 @@ mod corpus {
     /// reason stage 2's corpus check is ignored. Run it deliberately:
     ///
     /// ```text
+    /// A SCANNED REPOSITORY REACHES THE JUNCTION, not just `folders.project_id`.
+    ///
+    /// `sensei.repositories_in_projects` is where membership now lives (#210), and
+    /// every view migrated onto `folder_projects` reads it and nothing else. The
+    /// scan path had both ids in hand — `upsert_repository` returns the
+    /// repository, `get_or_create_project_by_name` the project — and wrote
+    /// neither into the junction: the only writer, `set_folder_project`, has no
+    /// production caller at all, every call site being inside `mod tests`.
+    ///
+    /// So the junction held only what the one-time 2026-09-30 backfill put
+    /// there. A repository scanned after it resolved to NO project, and because
+    /// `folder_projects` inner-joins the junction, that repository's rows simply
+    /// ceased to exist in every migrated view — an empty result indistinguishable
+    /// from a genuinely empty one, which is the exact failure the no-fabrication
+    /// rule exists to prevent, in its silent-absence direction.
+    ///
+    /// Asserted on a repository this test creates, so it cannot pass on the
+    /// backfill's residue.
+    ///
+    /// Mutation that must break this test: drop the `link_project_repository`
+    /// call from `write_one_repo`.
+    #[tokio::test]
+    async fn a_scanned_repository_records_its_project_in_the_junction() {
+        let Ok(pg) = PgStore::connect_test().await else {
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        // A name unique to this run: a shared `sensei_test` carries other runs'
+        // projects, and a fixed name would let a previous run's junction row
+        // satisfy the assertion.
+        let name = format!("junction{}", uuid::Uuid::new_v4().simple());
+        let repo = tmp.path().join(&name);
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), format!("[package]\nname=\"{name}\"\n")).unwrap();
+
+        let root_id = resolve_watch_root(&pg, tmp.path()).await;
+        let summary =
+            scan_and_write_structure(&pg, tmp.path(), &root_id, StageEvents::none()).await;
+        let written =
+            summary.repos.iter().find(|r| r.repository_id.is_some()).expect("repo written");
+        let repository_id = written.repository_id.expect("repository row");
+
+        let linked: Vec<String> = sqlx_core::query_scalar::query_scalar(
+            "SELECT p.name FROM sensei.repositories_in_projects pr
+               JOIN sensei.projects p ON p.id = pr.project_id
+              WHERE pr.repository_id = $1",
+        )
+        .bind(repository_id)
+        .fetch_all(pg.pool())
+        .await
+        .expect("read junction");
+
+        assert_eq!(
+            linked,
+            vec![name.clone()],
+            "a freshly scanned repository is absent from `repositories_in_projects`, so every view \
+             resolving through `folder_projects` silently drops it"
+        );
+
+        // And the resolution the views actually perform must agree, or the
+        // junction row is present but unreachable.
+        let resolved: Vec<String> = sqlx_core::query_scalar::query_scalar(
+            "SELECT DISTINCT project FROM sensei.folder_projects WHERE folder_id = $1",
+        )
+        .bind(written.folder_id.expect("folder row"))
+        .fetch_all(pg.pool())
+        .await
+        .expect("read folder_projects");
+        assert_eq!(resolved, vec![name], "`folder_projects` cannot resolve the scanned repo");
+    }
+
     /// cargo test -p senseid --lib indexer::pipeline::corpus -- --ignored --nocapture
     /// ```
     ///

@@ -130,6 +130,41 @@ use crate::languages::fqn::{sql_is_external, sql_is_not_external};
 /// [`PgStore::get_nodes_by_file`] projects it, before it becomes JSON.
 type NodeOutline = (uuid::Uuid, String, String, Option<uuid::Uuid>, Option<i32>);
 
+/// One row of `sensei.nodes`, named rather than positional (#161).
+///
+/// `upsert_node` took nine positional arguments and carried a comment defending
+/// them: *"The arguments ARE the columns. A struct here would restate the same
+/// names one indirection away without removing a single one."* The verbosity
+/// claim is true and beside the point. The value is not fewer names — it is that
+/// destructuring this EXHAUSTIVELY turns a field added to the producer into a
+/// compile error. The positional list could not, which is how
+/// `extract_return_type` ran on every rust function for months while no return
+/// type reached a column: there was no ninth argument, and nothing failed.
+///
+/// **No `Default`, deliberately.** `..Default::default()` would relocate the
+/// silence rather than remove it: a field added later would quietly take its
+/// default at every existing site instead of forcing a decision. That is why
+/// the defaulting wrapper this replaced (`upsert_node` → `upsert_node_ex` with
+/// `is_exported = false`) is gone — a wrapper whose only job is to supply a
+/// default is the same hazard with a friendlier name.
+#[derive(Debug, Clone)]
+pub struct NodeRow<'a> {
+    pub folder_id: &'a uuid::Uuid,
+    pub kind: &'a str,
+    pub name: &'a str,
+    /// Resolved to `nodes.file_id` by the writer, which FAILS CLOSED on a miss
+    /// (R13): a node naming an untracked file is a bug in the walk, and minting
+    /// a `files` row here would hide it behind a plausible id.
+    pub file_path: &'a str,
+    pub parent_id: Option<&'a uuid::Uuid>,
+    pub signature: Option<&'a str>,
+    /// Part of `nodes_unique_identity`, so moving a symbol within its file is a
+    /// different node rather than an update.
+    pub line_start: Option<i32>,
+    pub line_end: Option<i32>,
+    pub is_exported: bool,
+}
+
 impl PgStore {
     /// BM25-style keyword ranking: matches nodes by name/signature/docstring.
     pub async fn rank_bm25(
@@ -164,9 +199,17 @@ impl PgStore {
         line_end: Option<i32>,
         parent_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_node(
-            folder_id, "function", name, file_path, parent_id, signature, line_start, line_end,
-        )
+        self.upsert_node(&NodeRow {
+            folder_id,
+            kind: "function",
+            name,
+            file_path,
+            parent_id,
+            signature,
+            line_start,
+            line_end,
+            is_exported: false,
+        })
         .await
     }
 
@@ -176,7 +219,18 @@ impl PgStore {
         name: &str,
         file_path: &str,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_node(folder_id, "file", name, file_path, None, None, None, None).await
+        self.upsert_node(&NodeRow {
+            folder_id,
+            kind: "file",
+            name,
+            file_path,
+            parent_id: None,
+            signature: None,
+            line_start: None,
+            line_end: None,
+            is_exported: false,
+        })
+        .await
     }
 
     pub async fn merge_type(
@@ -187,7 +241,18 @@ impl PgStore {
         kind: &str,
         line_start: Option<i32>,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_node(folder_id, kind, name, file_path, None, None, line_start, None).await
+        self.upsert_node(&NodeRow {
+            folder_id,
+            kind,
+            name,
+            file_path,
+            parent_id: None,
+            signature: None,
+            line_start,
+            line_end: None,
+            is_exported: false,
+        })
+        .await
     }
 
     pub async fn merge_doc(
@@ -196,7 +261,18 @@ impl PgStore {
         name: &str,
         file_path: &str,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_node(folder_id, "doc", name, file_path, None, None, None, None).await
+        self.upsert_node(&NodeRow {
+            folder_id,
+            kind: "doc",
+            name,
+            file_path,
+            parent_id: None,
+            signature: None,
+            line_start: None,
+            line_end: None,
+            is_exported: false,
+        })
+        .await
     }
 
     pub async fn project_exists(&self, folder_id: &uuid::Uuid) -> Result<bool, String> {
@@ -601,31 +677,6 @@ impl PgStore {
         Ok(wanted.iter().map(|w| w.as_ref().and_then(|k| sole.get(k).copied())).collect())
     }
 
-    /// Upsert a node (default `is_exported = false`). Thin wrapper over
-    /// [`Self::upsert_node_ex`] for the many callers that don't carry visibility
-    /// (file/section/rationale/module nodes, tests).
-    // The arguments ARE the columns. A struct here would restate the same
-    // names one indirection away without removing a single one; `FqnDef`
-    // above is the case where a struct earned its keep, because that call
-    // has a meaningful default.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn upsert_node(
-        &self,
-        folder_id: &uuid::Uuid,
-        kind: &str,
-        name: &str,
-        file_path: &str,
-        parent_id: Option<&uuid::Uuid>,
-        signature: Option<&str>,
-        line_start: Option<i32>,
-        line_end: Option<i32>,
-    ) -> Result<uuid::Uuid, String> {
-        self.upsert_node_ex(
-            folder_id, kind, name, file_path, parent_id, signature, line_start, line_end, false,
-        )
-        .await
-    }
-
     /// A node that names a DIRECTORY rather than a file — the structural
     /// `module` node the folder pass writes, one per source directory.
     ///
@@ -671,18 +722,23 @@ impl PgStore {
     /// refreshed on the D3 upsert-then-prune conflict, so a symbol that flips
     /// pub↔private is kept current.
     #[allow(clippy::too_many_arguments)]
-    pub async fn upsert_node_ex(
-        &self,
-        folder_id: &uuid::Uuid,
-        kind: &str,
-        name: &str,
-        file_path: &str,
-        parent_id: Option<&uuid::Uuid>,
-        signature: Option<&str>,
-        line_start: Option<i32>,
-        line_end: Option<i32>,
-        is_exported: bool,
-    ) -> Result<uuid::Uuid, String> {
+    pub async fn upsert_node(&self, row: &NodeRow<'_>) -> Result<uuid::Uuid, String> {
+        // EXHAUSTIVE (#161). A field added to `NodeRow` stops this compiling
+        // until someone binds it, and `clippy -D warnings` makes binding it
+        // without using it fail too. The nine positional arguments this replaced
+        // had neither property — which is how `extract_return_type` ran on every
+        // rust function for months while no return type reached a column.
+        let NodeRow {
+            folder_id,
+            kind,
+            name,
+            file_path,
+            parent_id,
+            signature,
+            line_start,
+            line_end,
+            is_exported,
+        } = row;
         // ON CONFLICT targets nodes_unique_identity (folder_id, file_id, kind, name,
         // parent_id, line_start NULLS NOT DISTINCT). DO UPDATE keeps the row STABLE on
         // re-scans — same UUID whether just inserted or pre-existing (D3 upsert-then-
@@ -1119,7 +1175,19 @@ impl PgStore {
              ON CONFLICT (folder_id, fqn) WHERE fqn IS NOT NULL DO UPDATE
                SET resolved = true,
                    language = COALESCE(nodes.language, EXCLUDED.language),
-                   modified_at = now()
+                   -- Moved only when this write CHANGED something. A bare
+                   -- `now()` made every re-scan of an unchanged file churn two
+                   -- rows per external dependency; nothing noticed while only
+                   -- calls reached library surface, and imports placing there
+                   -- (#242) is what surfaced it.
+                   --
+                   -- `DO UPDATE ... WHERE` would be the shorter spelling and is
+                   -- wrong here: a skipped update returns no row, and the
+                   -- RETURNING is what the caller parents the symbol on.
+                   modified_at = CASE
+                     WHEN nodes.resolved IS NOT TRUE
+                       OR (nodes.language IS NULL AND EXCLUDED.language IS NOT NULL)
+                     THEN now() ELSE nodes.modified_at END
              RETURNING id",
         )
         .bind(folder_id)
@@ -1149,7 +1217,17 @@ impl PgStore {
                    -- First writer wins: a lib fqn is language-scoped by
                    -- construction, so a later NULL must not erase it.
                    language    = COALESCE(nodes.language, EXCLUDED.language),
-                   modified_at = now()
+                   -- Moved only when this write CHANGED something — see the
+                   -- container insert above. Each arm names the SET expression
+                   -- directly below it, so a column that stops being written
+                   -- cannot leave a stale condition behind.
+                   modified_at = CASE
+                     WHEN nodes.resolved IS NOT TRUE
+                       OR (nodes.parent_id IS NULL AND EXCLUDED.parent_id IS NOT NULL)
+                       OR (nodes.language IS NULL AND EXCLUDED.language IS NOT NULL)
+                       OR nodes.props IS DISTINCT FROM
+                            (nodes.props || jsonb_build_object('package', $5::text))
+                     THEN now() ELSE nodes.modified_at END
              RETURNING id",
         )
         .bind(folder_id)
@@ -3158,11 +3236,17 @@ impl PgStore {
         #[allow(clippy::type_complexity)]
         let doc_rows: Vec<(uuid::Uuid, uuid::Uuid, String, String)> =
             sqlx_core::query_as::query_as(
+                // `folders` is joined for `abs_path` and `folder_projects` for
+                // the membership — two joins now, because they are two facts.
+                // The migration replaced the single folders join with the
+                // junction and left `f.abs_path` behind it, which Postgres
+                // rejects as a missing FROM-clause entry rather than silently.
                 "SELECT n.id, n.folder_id, f.abs_path, np.file_path
                FROM sensei.nodes n
                JOIN sensei.node_paths np ON np.node_id = n.id
                JOIN sensei.folders f ON f.id = n.folder_id
-              WHERE f.project_id = $1
+               JOIN sensei.folder_projects fp ON fp.folder_id = n.folder_id
+              WHERE fp.project_id = $1
                 AND n.kind = 'doc'
               LIMIT 500",
             )
@@ -3296,8 +3380,8 @@ impl PgStore {
         let open_rows: Vec<(uuid::Uuid, String)> = sqlx_core::query_as::query_as(
             "SELECT di.id, di.detail
                FROM inference.drift_items di
-               JOIN sensei.folders f ON f.id = di.folder_id
-              WHERE f.project_id = $1
+               JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id
+              WHERE fp.project_id = $1
                 AND di.status = 'broken'
                 AND di.resolved_at IS NULL",
         )
@@ -3362,7 +3446,16 @@ impl PgStore {
                   SELECT 1
                     FROM sensei.nodes g
                     JOIN sensei.folders gf ON gf.id = g.folder_id
-                   WHERE gf.project_id = sf.project_id
+                   -- The two folders SHARE a project. Membership is a set
+                   -- now, so this is an intersection rather than an equality,
+                   -- and a repository serving two projects makes that a real
+                   -- difference rather than a spelling one.
+                   WHERE EXISTS (SELECT 1
+                                   FROM sensei.folder_projects a
+                                   JOIN sensei.folder_projects b
+                                     ON b.project_id = a.project_id
+                                  WHERE a.folder_id = gf.id
+                                    AND b.folder_id = sf.id)
                      AND gf.kind IN ('git'::sensei.folder_kind,
                                      'standalone'::sensei.folder_kind,
                                      'subtree'::sensei.folder_kind)
@@ -3604,4 +3697,565 @@ impl PgStore {
     // when set); a chain-with-a-role IS the role assignment. Utility
     // chains (consensus-*) keep role=null and stay invisible to the
     // wizard.
+}
+
+// ── Structure diagram (#205) ────────────────────────────────────────────────
+
+/// `(id, label, package, module, top_module, language, files, symbols)` — the
+/// Structure diagram's node row. Named rather than spelled inline because it is
+/// a wide projection and the columns are told apart by POSITION.
+type StructureNodeRow =
+    (String, String, Option<String>, Option<String>, Option<String>, Option<String>, i64, i64);
+
+/// One node of the Structure diagram, at whichever level was asked for.
+///
+/// `id` is the GROUPING KEY and is what edges reference, so the same struct
+/// serves all three levels: a file path at `file`, `package/top-module` at
+/// `module`, the package alone at `package`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StructureNode {
+    pub id: String,
+    pub label: String,
+    pub package: String,
+    pub module: String,
+    pub language: Option<String>,
+    /// The containment chain the diagram draws its rim from: package -> top
+    /// module -> leaf, truncated at whatever level this node IS.
+    ///
+    /// FROM THE FQN, NEVER THE FILESYSTEM. A workspace member sits at a
+    /// directory path that says nothing about the package it declares, so a
+    /// directory-derived tree disagrees with the call graph for every one of
+    /// them. Derived here rather than client-side so three consumers cannot
+    /// each re-derive it differently.
+    pub path: Vec<String>,
+    /// Files rolled into this node — 1 at `file` level, the group size above it.
+    pub files: i64,
+    /// Symbols declared beneath it. The node's weight on the diagram.
+    pub symbols: i64,
+}
+
+/// The `component_zones` select list, in order. A tuple because this crate
+/// depends on `sqlx-core` alone and so has no `FromRow` derive — the same shape
+/// [`StructureNodeRow`] uses, and the reason the `SELECT` names its columns
+/// explicitly rather than using `*`.
+type ZoneRow = (String, i64, i64, i64, i64, Option<f64>, Option<f64>, Option<f64>, Option<String>);
+
+/// One module's position on Martin's main sequence.
+///
+/// Every derived field is `Option` on purpose — see
+/// [`PgStore::component_zones`].
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Zone {
+    pub component: String,
+    /// Type-declaring symbols. The denominator of `A`, and the point's area.
+    pub types: i64,
+    pub abstract_types: i64,
+    /// Afferent coupling: distinct internal modules depending on this one.
+    pub ca: i64,
+    /// Efferent coupling: distinct internal modules plus library packages.
+    pub ce: i64,
+    /// `abstract_types / types`, or `None` when the module declares no type.
+    pub abstractness: Option<f64>,
+    /// `ce / (ca + ce)`, or `None` when the module has no coupling at all.
+    pub instability: Option<f64>,
+    /// `|A + I − 1|`. `None` when either input is.
+    pub distance: Option<f64>,
+    /// `pain` | `useless` | `risk` | `main`, or `None` with no distance.
+    pub zone: Option<String>,
+}
+
+/// One bundled edge between two [`StructureNode`]s at the requested level.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StructureEdge {
+    pub source: String,
+    pub target: String,
+    pub kind: String,
+    /// `in_module` | `cross_module` | `cross_package`, from `structure_edges`.
+    /// Computed in the view so three consumers cannot each re-derive it.
+    pub span: String,
+    pub occurrences: i64,
+}
+
+/// THE LEVEL EXPRESSION, in one place.
+///
+/// `module` DELEGATES to `sensei.module_of`, which is where the module identity
+/// now lives (#222). The expression used to be spelled out here, and `module_edges`
+/// needs the identical one — the Layers screen draws nodes from this rollup and
+/// edges from that view, so two spellings would put a node on one screen and its
+/// dependencies on another. `module_of` is IMMUTABLE and PostgreSQL inlines it,
+/// so the plan is unchanged; its doc comment carries the measurements behind the
+/// first-segment choice (150 groups over 1,751 files against 1,446 whole-path
+/// ones) and behind taking the package as well as the module.
+fn structure_group_sql(level: &str, prefix: &str) -> String {
+    match level {
+        "package" => format!("{prefix}package"),
+        "module" => format!("sensei.module_of({prefix}package, {prefix}module)"),
+        // `file` and anything unrecognised. The caller validates; this stays
+        // total so a bad level can never produce a SQL fragment that is wrong
+        // rather than merely narrow.
+        _ => format!("{prefix}file_path"),
+    }
+}
+
+/// One (project, repository, test-or-not) cell of the World diagram (#219).
+///
+/// THE FINEST GRAIN, and the hierarchy is assembled above it. The screen offers
+/// three groupings — project first, repository first, code-vs-tests first — and
+/// they are three readings of ONE set of cells, not three queries. Building the
+/// tree in Rust keeps this a single literal statement that
+/// `check-sql-against-schema.py` can plan, and makes the grouping a pure
+/// function with its own tests.
+/// The `world_cells` select list, in order. A tuple because this crate depends
+/// on `sqlx-core` alone and so has no `FromRow` derive — the same shape
+/// `StructureNodeRow` uses, mapped into the named struct immediately so the
+/// columns are told apart by POSITION exactly once.
+type WorldCellRow = (uuid::Uuid, String, uuid::Uuid, String, bool, i64, i64);
+
+#[derive(Debug, Clone)]
+pub struct WorldCell {
+    pub project_id: uuid::Uuid,
+    pub project: String,
+    pub folder_id: uuid::Uuid,
+    pub repository: String,
+    /// `true` for the test half of a repository. Tests are a PROPERTY of a
+    /// declaration (`nodes.is_test`), so they are a cell and not a third kind of
+    /// container — which is why the "code · tests" grouping can be offered and a
+    /// "docs" one cannot.
+    pub is_test: bool,
+    pub declarations: i64,
+    pub documented: i64,
+}
+
+/// One repository's edge placement, for the "unresolved share" shade (#219).
+///
+/// SEPARATE FROM [`WorldCell`] because the grains differ and mixing them
+/// double-counts: edges belong to the FOLDER, declarations to the
+/// (folder, is_test) cell. Joined in SQL, a repository's edge total would appear
+/// once per cell and summing the tree would report it twice.
+/// The `world_placement` select list, in order. See [`WorldCellRow`].
+type WorldPlacementRow = (uuid::Uuid, i64, i64);
+
+#[derive(Debug, Clone)]
+pub struct WorldPlacement {
+    pub folder_id: uuid::Uuid,
+    pub edges: i64,
+    pub missed: i64,
+}
+
+impl PgStore {
+    /// Every indexed declaration, as cells to nest (#219).
+    ///
+    /// CROSS-PROJECT, deliberately. The screen is "all indexed code, nested by
+    /// what contains it", and PROJECT is its outermost ring — so scoping to one
+    /// project would leave the top level with a single circle. The project a
+    /// reader is viewing from is marked by the caller, not filtered here.
+    ///
+    /// Membership comes through `folder_projects`, never a folder column (#211),
+    /// which is why one repository can legitimately appear under two projects:
+    /// measured on this corpus, one does.
+    ///
+    /// Library nodes are excluded. A `lib·` node is a name for something whose
+    /// source was never opened, so counting it as indexed code would inflate
+    /// every circle by the size of its dependency surface.
+    ///
+    /// 2.7 s corpus-wide, against the 37 s a structure read costs.
+    pub async fn world_cells(&self) -> Result<Vec<WorldCell>, String> {
+        let rows: Vec<WorldCellRow> = sqlx_core::query_as::query_as(
+            "SELECT fp.project_id
+                  , p.name  AS project
+                  , f.id    AS folder_id
+                  , f.name  AS repository
+                  , n.is_test
+                  , count(*)::bigint AS declarations
+                  , count(*) FILTER (WHERE n.docstring IS NOT NULL)::bigint AS documented
+               FROM sensei.nodes n
+               JOIN sensei.folders f          ON f.id = n.folder_id
+               JOIN sensei.folder_projects fp ON fp.folder_id = f.id
+               JOIN sensei.projects p         ON p.id = fp.project_id
+              WHERE n.fqn IS NOT NULL AND n.fqn NOT LIKE 'lib·%'
+              GROUP BY 1, 2, 3, 4, 5",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("world_cells: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    project_id,
+                    project,
+                    folder_id,
+                    repository,
+                    is_test,
+                    declarations,
+                    documented,
+                )| {
+                    WorldCell {
+                        project_id,
+                        project,
+                        folder_id,
+                        repository,
+                        is_test,
+                        declarations,
+                        documented,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    /// How each repository's edges turned out, for the unresolved-share shade.
+    ///
+    /// Keyed on the FOLDER and never joined to [`WorldCell`] in SQL — see that
+    /// type for why. 13 s corpus-wide: a full pass of `sensei.edges`, which is
+    /// 3.3M rows, and the reason this payload is cached like every other
+    /// diagram (#233).
+    pub async fn world_placement(&self) -> Result<Vec<WorldPlacement>, String> {
+        let rows: Vec<WorldPlacementRow> = sqlx_core::query_as::query_as(
+            "SELECT e.folder_id
+                  , count(*)::bigint AS edges
+                  , count(*) FILTER (WHERE e.unresolved_reason IS NOT NULL)::bigint AS missed
+               FROM sensei.edges e
+              GROUP BY 1",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("world_placement: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(folder_id, edges, missed)| WorldPlacement { folder_id, edges, missed })
+            .collect())
+    }
+
+    /// Nodes of the Structure diagram for one project, rolled up to `level`.
+    ///
+    /// Reads `sensei.structure_graph`, which is already internal-only and
+    /// already resolves membership through `folder_projects` — so a repository
+    /// serving two projects contributes its files to BOTH, and neither sees the
+    /// other's.
+    pub async fn structure_nodes(
+        &self,
+        project_id: &uuid::Uuid,
+        level: &str,
+    ) -> Result<Vec<StructureNode>, String> {
+        let group = structure_group_sql(level, "");
+        // The module's top segment, spelled by the SAME helper the `module`
+        // level uses, so the path and the grouping can never disagree about
+        // where a module begins.
+        let top = structure_group_sql("module", "");
+        // `mode()` for the descriptive columns: at file level there is exactly
+        // one row per group so it is the identity, and above it the modal value
+        // is the honest summary of a group that spans several.
+        let sql = format!(
+            "SELECT {group} AS id
+                  , {group} AS label
+                  , mode() within group (order by package)  AS package
+                  , mode() within group (order by module)   AS module
+                  , mode() within group (order by {top})    AS top_module
+                  , mode() within group (order by language) AS language
+                  , count(*)::bigint                        AS files
+                  , coalesce(sum(symbols), 0)::bigint       AS symbols
+               FROM sensei.structure_graph
+              WHERE project_id = $1
+              GROUP BY 1, 2
+              ORDER BY symbols DESC, id"
+        );
+        let rows: Vec<StructureNodeRow> = sqlx_core::query_as::query_as(&sql)
+            .bind(project_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, label, package, module, top_module, language, files, symbols)| {
+                let package = package.unwrap_or_default();
+                // `top_module` already carries `package/top`, which is the
+                // module level's own id — take its tail so the chain does not
+                // repeat the package it is nested under.
+                let top = top_module
+                    .as_deref()
+                    .and_then(|t| t.rsplit('/').next())
+                    .unwrap_or_default()
+                    .to_string();
+                let path = match level {
+                    "package" => vec![package.clone()],
+                    "module" => vec![package.clone(), top],
+                    _ => vec![package.clone(), top, id.clone()],
+                };
+                StructureNode {
+                    id,
+                    label,
+                    package,
+                    module: module.unwrap_or_default(),
+                    language,
+                    path,
+                    files,
+                    symbols,
+                }
+            })
+            .collect())
+    }
+
+    /// Edges of the Structure diagram for one project, rolled up to `level` and
+    /// restricted to `kinds`.
+    ///
+    /// A self-loop produced BY the rollup is dropped: two files of one module
+    /// calling each other is an edge at file level and nothing at module level,
+    /// and drawing it as a loop asserts a relationship the module does not have
+    /// with itself.
+    /// WHEN THIS PROJECT'S GRAPH LAST CHANGED — the version every cached
+    /// diagram payload is keyed on (#233).
+    ///
+    /// The latest `files.indexed_at` across the project's folders. That column
+    /// moves whenever a file is walked and its nodes and edges are rewritten,
+    /// which is the only way anything behind `structure_edges` changes, so a
+    /// matching version means a cached payload is still the right answer.
+    ///
+    /// NOT `folders.modified_at`, which was the cheaper candidate and is the
+    /// wrong one. Measured 2026-10-06 mid-scan on project `sensei`: the folder
+    /// row said 20:53 while its newest indexed file said 20:20 — the folder row
+    /// moves for reasons that are not a graph change, and a version that moves
+    /// without the data is a cache that never hits.
+    ///
+    /// `None` IS A VERSION, not a failure: a project whose folders hold no
+    /// indexed file has no graph yet, and two such states are the same state.
+    /// A failure is an `Err` and is never flattened into it.
+    ///
+    /// 93 ms over 101,266 `files` rows, against the 1.5-74 s read it guards.
+    pub async fn project_graph_version(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
+        let row: (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
+            "SELECT max(fi.indexed_at)
+               FROM sensei.files fi
+               JOIN sensei.folder_projects fp ON fp.folder_id = fi.folder_id
+              WHERE fp.project_id = $1",
+        )
+        .bind(project_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("project_graph_version: {e}"))?;
+        Ok(row.0)
+    }
+
+    pub async fn structure_edges(
+        &self,
+        project_id: &uuid::Uuid,
+        level: &str,
+        kinds: &[String],
+    ) -> Result<Vec<StructureEdge>, String> {
+        let src = structure_group_sql(level, "source_");
+        let tgt = structure_group_sql(level, "target_");
+        // `source_file`/`target_file` are the path columns on this view, so the
+        // file-level grouping key has to name them rather than `file_path`.
+        let (src, tgt) = if level == "file" || !matches!(level, "module" | "package") {
+            ("source_file".to_string(), "target_file".to_string())
+        } else {
+            (src, tgt)
+        };
+        let sql = format!(
+            "SELECT {src} AS source
+                  , {tgt} AS target
+                  , kind
+                  , mode() within group (order by span) AS span
+                  , sum(occurrences)::bigint            AS occurrences
+               FROM sensei.structure_edges
+              WHERE project_id = $1
+                AND kind = ANY($2)
+                AND {src} <> {tgt}
+              GROUP BY 1, 2, 3
+              ORDER BY occurrences DESC"
+        );
+        let rows: Vec<(String, String, String, Option<String>, i64)> =
+            sqlx_core::query_as::query_as(&sql)
+                .bind(project_id)
+                .bind(kinds)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(source, target, kind, span, occurrences)| StructureEdge {
+                source,
+                target,
+                kind,
+                span: span.unwrap_or_else(|| "cross_module".to_string()),
+                occurrences,
+            })
+            .collect())
+    }
+
+    /// The dependency graph one Layers or Cycles screen ranks, at `level`.
+    ///
+    /// Returns [`crate::analysis::layering::Dep`] directly rather than a third
+    /// near-identical row struct: `(source, target, occurrences)` is already
+    /// what the analysis takes, and a transform in between would be a place for
+    /// the two to drift.
+    ///
+    /// ## Why the grain branches, and why that is not two definitions
+    ///
+    /// `module` reads `sensei.module_edges`, which KEEPS a module's dependency
+    /// on itself. `file` reads `sensei.structure_edges`, where a file depending
+    /// on itself does not exist — the view drops it at source, because at file
+    /// grain it is the largest population and draws nothing. So the diagonal is
+    /// present at one grain and absent at the other as a property of the DATA,
+    /// not of this function, and `self_deps` is correctly empty for `file`.
+    ///
+    /// `PgStore::structure_edges` cannot serve the module case: it drops every
+    /// self-dependency produced by the rollup, which the Structure diagram needs
+    /// (a module looping to itself draws nothing) and the layering lane must
+    /// not have done for it — a module whose only dependency is on itself would
+    /// otherwise vanish, and 9 modules of project `sensei` are in that state.
+    ///
+    /// Both grains name their units with `sensei.module_of` / the file path, the
+    /// same expressions [`structure_group_sql`] uses, so the units this returns
+    /// are exactly the ones [`PgStore::structure_nodes`] places.
+    pub async fn dependency_graph(
+        &self,
+        project_id: &uuid::Uuid,
+        level: &str,
+        kinds: &[String],
+    ) -> Result<Vec<crate::analysis::layering::Dep>, String> {
+        let sql = if level == "module" {
+            "SELECT source_module, target_module, sum(occurrences)::bigint
+               FROM sensei.module_edges
+              WHERE project_id = $1 AND kind = ANY($2)
+              GROUP BY 1, 2
+              ORDER BY 3 DESC, 1, 2"
+                .to_string()
+        } else {
+            let src = structure_group_sql(level, "source_");
+            let tgt = structure_group_sql(level, "target_");
+            let (src, tgt) = if level == "package" {
+                (src, tgt)
+            } else {
+                ("source_file".to_string(), "target_file".to_string())
+            };
+            format!(
+                "SELECT {src}, {tgt}, sum(occurrences)::bigint
+                   FROM sensei.structure_edges
+                  WHERE project_id = $1 AND kind = ANY($2)
+                  GROUP BY 1, 2
+                  ORDER BY 3 DESC, 1, 2"
+            )
+        };
+        let rows: Vec<(Option<String>, Option<String>, i64)> = sqlx_core::query_as::query_as(&sql)
+            .bind(project_id)
+            .bind(kinds)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
+        // A NULL unit means the symbol carried no package, so `module_of`
+        // propagated. Skipped rather than coalesced to "": a bucket named ""
+        // would collect every unplaceable symbol in the project into one
+        // invented module and sit at the bottom of every layering.
+        Ok(rows
+            .into_iter()
+            .filter_map(|(s, t, w)| match (s, t) {
+                (Some(source), Some(target)) => {
+                    Some(crate::analysis::layering::Dep { source, target, occurrences: w })
+                }
+                _ => None,
+            })
+            .collect())
+    }
+
+    /// One module's position on Martin's main sequence, for the Zones diagram.
+    ///
+    /// `abstractness`, `instability`, `distance` and `zone` are `Option` and
+    /// that is the whole contract: `sensei.component_zones` returns NULL rather
+    /// than 0 when a denominator is empty, because a module declaring no type is
+    /// not "maximally concrete" and one nothing touches is not "maximally
+    /// stable". Decoding into a non-optional field would quietly restore the
+    /// fabrication the view exists to refuse.
+    ///
+    /// Ordered worst-first — a diagram shows every point, but every list beside
+    /// it wants the ones furthest off the sequence, and NULLs last so an
+    /// unplaceable module never heads the table.
+    ///
+    /// `component_zones` is a FUNCTION taking the project, not a view filtered
+    /// by one. Its four halves are outer-joined so a module with no coupling
+    /// survives, and PostgreSQL will not push a predicate across an outer join —
+    /// as a view, each nullable side was computed for the whole corpus and the
+    /// query had not returned after eleven minutes.
+    pub async fn component_zones(&self, project_id: &uuid::Uuid) -> Result<Vec<Zone>, String> {
+        let rows: Vec<ZoneRow> = sqlx_core::query_as::query_as(
+            "SELECT component, types::bigint, abstract_types::bigint, ca::bigint, ce::bigint,
+                    abstractness, instability, distance, zone
+               FROM sensei.component_zones($1)
+              ORDER BY distance DESC NULLS LAST, component",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    component,
+                    types,
+                    abstract_types,
+                    ca,
+                    ce,
+                    abstractness,
+                    instability,
+                    distance,
+                    zone,
+                )| Zone {
+                    component,
+                    types,
+                    abstract_types,
+                    ca,
+                    ce,
+                    abstractness,
+                    instability,
+                    distance,
+                    zone,
+                },
+            )
+            .collect())
+    }
+
+    /// How many edges of these kinds COULD NOT be placed, for the coverage line.
+    ///
+    /// `target_id IS NULL` is the definition: the resolver reached no
+    /// conclusion, so the edge names a relationship the index cannot point at
+    /// and the diagram must not draw. Counted straight off `edges` scoped by
+    /// `folder_projects`.
+    ///
+    /// NOT from `graph_placement`, and that is a correction rather than a
+    /// preference. Asking it for `outcome <> 'resolved'` matched EVERY row,
+    /// because its outcomes are `placed` / `missed` / `no verdict` and none of
+    /// them is `resolved` — so the screen reported the project's total edge
+    /// count as its unplaced one (69,747 of 69,747 on sensei, where the truth
+    /// is 38,578). It was also the whole cost: filtering that view by project
+    /// cannot push past its window functions, which took 107 of the endpoint's
+    /// 122 seconds against 2.9 for this.
+    ///
+    /// `drawn` is NOT computed here. It is how many edges the payload actually
+    /// carries at the requested level, which only the caller knows — deriving a
+    /// second number for it here would let the line disagree with the picture
+    /// beside it.
+    pub async fn structure_unplaced(
+        &self,
+        project_id: &uuid::Uuid,
+        kinds: &[String],
+    ) -> Result<i64, String> {
+        let (unplaced,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*)::bigint FROM sensei.edges ed
+               JOIN sensei.folder_projects fp ON fp.folder_id = ed.folder_id
+              WHERE fp.project_id = $1
+                AND ed.kind::text = ANY($2)
+                AND ed.target_id IS NULL",
+        )
+        .bind(project_id)
+        .bind(kinds)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(unplaced)
+    }
 }

@@ -242,20 +242,25 @@ pub struct FqnFileOutput {
     pub relations: Vec<TypeRelation>,
 }
 
-/// Join non-empty segments with [`SEP`]. Empty segments (e.g. a crate-root
-/// module) are dropped so the encoding never emits a doubled separator.
+/// Join with [`SEP`], dropping a TRAILING empty segment and keeping an interior
+/// one — the same rule, spelled the same way, as `indexer::fqn::join`.
+///
+/// IT HAS TO BE THE SAME RULE. This side mints the CANDIDATES `import_target`
+/// looks up, and the other side minted the node fqns they are looked up
+/// against; a crate-root symbol spelled two ways here is a lookup that misses
+/// every time. See `a_rust_import_candidate_is_spelled_the_way_the_walk_mints_it`,
+/// which is what notices.
+///
+/// Why an interior empty stays at all: dropping a crate-root module does not
+/// produce a broken string, it produces a valid one naming a different symbol,
+/// and it slides the NAME into the module's position — which is what every view
+/// that decomposes an fqn positionally then reads as the module (#231).
 fn encode(segments: &[&str]) -> String {
-    let mut out = String::new();
-    for seg in segments {
-        if seg.is_empty() {
-            continue;
-        }
-        if !out.is_empty() {
-            out.push(SEP);
-        }
-        out.push_str(seg);
-    }
-    out
+    let segments = match segments.split_last() {
+        Some((&"", front)) => front,
+        _ => segments,
+    };
+    segments.join(&SEP.to_string())
 }
 
 /// Free function, constant, or type definition (struct/enum/trait/type alias):
@@ -342,7 +347,7 @@ mod tests {
     #[test]
     fn item_crate_root_drops_empty_module() {
         // src/main.rs (crate root) → no module segment, no doubled separator.
-        assert_eq!(item("rust", "sensei-cli", "", "main"), "rust·sensei-cli·main");
+        assert_eq!(item("rust", "sensei-cli", "", "main"), "rust·sensei-cli··main");
     }
 
     #[test]

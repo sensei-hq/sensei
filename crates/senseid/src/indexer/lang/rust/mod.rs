@@ -1357,7 +1357,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
         // generate trait impls, not associated functions a path call can name.
         assert_eq!(
             got,
-            vec!["rust·p·m·mod", "rust·p·m·T·item", "rust·p·m·T·a·field"],
+            vec!["rust·p··m·mod", "rust·p·m·T·item", "rust·p·m·T·a·field"],
             "an unrecognised derive must not invent members"
         );
     }
@@ -1420,7 +1420,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
             // The FILE's own module. `pub mod inner;` no longer declares
             // `inner` — that module's body is another file, and that file
             // declares it. What this file declares of its own is itself.
-            "rust·p·m·mod",
+            "rust·p··m·mod",
         ];
         expected.sort_unstable();
 
@@ -1729,7 +1729,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
                 "rust·p·a·b·mod",
                 // The file itself, module `a`. The inline `mod b { }` still
                 // declares `b`, because b's body IS here.
-                "rust·p·a·mod",
+                "rust·p··a·mod",
             ]
         );
     }
@@ -1745,7 +1745,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
         let facts = facts("", "pub fn main() {}");
         let mut got = fqns(&facts);
         got.sort_unstable();
-        assert_eq!(got, vec!["rust·p·crate·fixture·mod", "rust·p·main·item"]);
+        assert_eq!(got, vec!["rust·p·crate·fixture·mod", "rust·p··main·item"]);
     }
 
     /// `impl Trait for (A, B)` names no type, so its members have no identity in
@@ -2890,7 +2890,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
         let from_the_file: Vec<&str> = facts
             .references
             .iter()
-            .filter(|r| r.from.as_str() == "rust·p·m·mod")
+            .filter(|r| r.from.as_str() == "rust·p··m·mod")
             .map(|r| r.from.as_str())
             .collect();
         assert_eq!(
@@ -3374,9 +3374,9 @@ fn helper() -> u32 { 0 }
             contains,
             vec![
                 "Contains rust·p·m::inner·deep·item -> rust·p·m·inner·mod".to_string(),
-                "Contains rust·p·m·Widget·item -> rust·p·m·mod".to_string(),
-                "Contains rust·p·m·free·item -> rust·p·m·mod".to_string(),
-                "Contains rust·p·m·inner·mod -> rust·p·m·mod".to_string(),
+                "Contains rust·p·m·Widget·item -> rust·p··m·mod".to_string(),
+                "Contains rust·p·m·free·item -> rust·p··m·mod".to_string(),
+                "Contains rust·p·m·inner·mod -> rust·p··m·mod".to_string(),
             ],
             "the file holds what is written at file scope, the inline `mod` holds its own, \
              and `Widget::new` is owned by `Widget` rather than contained by either"
@@ -3542,7 +3542,7 @@ fn helper() -> u32 { 0 }
             relations(&facts),
             vec![
                 // The trait is written at file scope, so the file holds it.
-                "Contains rust·p·m·Sub·item -> rust·p·m·mod",
+                "Contains rust·p·m·Sub·item -> rust·p··m·mod",
                 "Extends rust·p·m·Sub·item -> Unplaced(Super)",
                 "Extends rust·p·m·Sub·item -> Unplaced(Send)",
             ],
@@ -3596,7 +3596,7 @@ fn helper() -> u32 { 0 }
         assert_eq!(
             relations(&facts),
             vec![
-                "Contains rust·p·m·Draw·item -> rust·p·m·mod",
+                "Contains rust·p·m·Draw·item -> rust·p··m·mod",
                 "Owns rust·p·m·Draw·draw·item -> rust·p·m·Draw·item",
             ],
             "the tuple impl names no type, so it hangs no relation; the trait's own \

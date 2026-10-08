@@ -77,6 +77,7 @@ pub struct AuditSamples {
     /// A folder indexed twice because it is registered inside another holding the
     /// same files, rendered as `inner (n files) inside outer`.
     pub contained_duplicate_folders: Vec<String>,
+    pub misrooted_folders: Vec<String>,
 }
 
 impl AuditSamples {
@@ -121,6 +122,10 @@ pub struct AuditReport {
     /// the same files. REPORTED ONLY: `homebrew/` and `marketplace/` are git
     /// SUBTREES of this repository and are indistinguishable here from a mistake.
     pub contained_duplicate_folders: u64,
+    /// Folders whose `root_id` disagrees with the watch root their own
+    /// `abs_path` sits under. REPORTED ONLY: which half is wrong — the stamp or
+    /// the path — is not knowable here.
+    pub misrooted_folders: u64,
     /// A few example paths/ids per class.
     pub samples: AuditSamples,
 }
@@ -134,6 +139,7 @@ impl AuditReport {
             || self.duplicate_name_projects > 0
             || self.duplicate_repository_paths > 0
             || self.contained_duplicate_folders > 0
+            || self.misrooted_folders > 0
     }
 }
 
@@ -299,6 +305,33 @@ pub async fn audit_index_integrity(
     // intentionally present twice — and nothing here distinguishes them from an
     // accidental nested checkout. Measured live, every case sits at exactly 100%
     // overlap, subtree and accident alike.
+    // Class 7 — A FOLDER WHOSE `root_id` DISAGREES WITH ITS OWN PATH.
+    //
+    // `folders.root_id` caches a derivable fact: the watch root is the longest
+    // `folders_to_watch.path` prefixing the folder's `abs_path`. Nothing today
+    // lets a user set it independently, which is why the live DB measured clean
+    // (13,724 of 13,724 agreeing, 2026-10-02) — but nothing NOTICED either, and
+    // an unchecked cache of a derivable fact is precisely how `project_id` came
+    // to let one repository's folders name two different projects (#210).
+    //
+    // DB-WIDE rather than per-root, deliberately: the drift this looks for is a
+    // folder stamped with the WRONG root, so scoping the check to one root is
+    // the one way to guarantee missing it.
+    //
+    // Reported, never repaired. The stamp may be wrong, or the folder may have
+    // moved on disk; choosing is the user's call, as with the other two
+    // report-only classes.
+    match pg.misrooted_folders().await {
+        Ok(rows) => {
+            report.misrooted_folders = rows.len() as u64;
+            AuditSamples::extend_capped(
+                &mut report.samples.misrooted_folders,
+                rows.iter().map(|(path, root)| format!("{path} is not under {root}")),
+            );
+        }
+        Err(e) => tracing::warn!(error = %e, "index_audit: misrooted_folders failed"),
+    }
+
     match pg.contained_duplicate_folders().await {
         Ok(dups) => {
             report.contained_duplicate_folders = dups.len() as u64;
@@ -318,7 +351,7 @@ pub async fn audit_index_integrity(
 /// List the watch roots and partition them by disk presence, returning only the
 /// present ones. The absent ones are counted (never operated under).
 async fn partition_present_roots(pg: &PgStore) -> (Vec<WatchRootRef>, u32, u32) {
-    let all = pg.list_watch_roots().await.unwrap_or_else(|e| {
+    let all = pg.list_watch_roots_to_sync().await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "index_audit: list_watch_roots failed; auditing no roots");
         Vec::new()
     });
@@ -429,6 +462,74 @@ mod tests {
         (WatchRootRef { id, path }, id)
     }
 
+    /// A FOLDER WHOSE `root_id` DISAGREES WITH ITS OWN PATH.
+    ///
+    /// `folders.root_id` is a cache of a derivable fact: the watch root is the
+    /// longest `folders_to_watch.path` prefixing the folder's `abs_path`. A
+    /// cache that nothing checks is how `folders.project_id` came to have a
+    /// repository's folders naming two different projects (#210) — the drift was
+    /// invisible until someone went looking.
+    ///
+    /// Measured 2026-10-02 the live DB is clean, 13,724 of 13,724 agreeing. That
+    /// is the state this makes an ENFORCED invariant rather than a happy
+    /// accident: nothing today lets a user set `root_id` independently, but
+    /// nothing noticed if a writer did.
+    ///
+    /// Reported, never repaired. Which half is wrong is not knowable here — a
+    /// folder may have been moved on disk, or registered under the wrong root —
+    /// and the other report-only classes set that precedent.
+    ///
+    /// Mutation that must break this test: invert the path test in
+    /// `misrooted_folders` (`NOT starts_with` -> `starts_with`), so it reports
+    /// the folders that ARE correctly rooted. Probed.
+    #[tokio::test]
+    async fn audit_reports_a_folder_whose_root_disagrees_with_its_path() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(home.join("repo")).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+
+        let (root_ref, home_id) = present_root(&pg, &home).await;
+        let (_, other_id) = present_root(&pg, &elsewhere).await;
+
+        // A folder that LIVES under `home` but is stamped with `elsewhere`.
+        let fid = pg
+            .upsert_repo_kind(&other_id, "git", "misrooted", &home.join("repo").to_string_lossy())
+            .await
+            .unwrap();
+
+        let report = audit_index_integrity(&pg, &[root_ref], false).await;
+
+        // ASSERTS ON THE ROW THIS TEST OWNS, not on a total. The check is
+        // DB-WIDE by design (a folder stamped with the wrong root is invisible
+        // to a per-root scan), and the shared test database carries other
+        // tests' folders — so an absolute count is a reading of the whole
+        // database, not of this fixture. Asserting `== 1` failed with `left: 2`
+        // for exactly that reason, which is the house rule this test now
+        // follows: never assert on a global sweep's result, scope the assertion
+        // to rows the test owns.
+        // Read the store directly for THIS test's path rather than the report's
+        // samples: `extend_capped` caps them, so a sibling's rows can push this
+        // one out of the list and turn a real pass into a false failure.
+        let mine = tmp.path().to_string_lossy().to_string();
+        let rows = pg.misrooted_folders().await.unwrap();
+        assert!(
+            rows.iter().any(|(path, _)| path.starts_with(&mine)),
+            "the folder under `home` stamped with the `elsewhere` root must be reported"
+        );
+        assert!(report.has_drift(), "and it counts as drift, so the audit is not clean");
+
+        sqlx_core::query::query("DELETE FROM sensei.folders WHERE id = $1")
+            .bind(fid)
+            .execute(pg.pool())
+            .await
+            .ok();
+        pg.remove_watch_root(&home_id).await.ok();
+        pg.remove_watch_root(&other_id).await.ok();
+    }
+
     #[tokio::test]
     async fn audit_repairs_orphan_nodes() {
         let pg = PgStore::connect_test().await.unwrap();
@@ -480,26 +581,12 @@ mod tests {
         // Live subfolder (dir present) vs ghost subfolder (dir absent, has a node).
         let live_dir = repo.join("live");
         std::fs::create_dir_all(&live_dir).unwrap();
-        pg.upsert_subfolder(
-            &root_id,
-            "live",
-            "live",
-            &live_dir.to_string_lossy(),
-            Some(&repo_fid),
-            None,
-        )
-        .await
-        .unwrap();
+        pg.upsert_subfolder(&root_id, "live", "live", &live_dir.to_string_lossy(), Some(&repo_fid))
+            .await
+            .unwrap();
         let gone = repo.join("gone"); // never created on disk
         let gone_fid = pg
-            .upsert_subfolder(
-                &root_id,
-                "gone",
-                "gone",
-                &gone.to_string_lossy(),
-                Some(&repo_fid),
-                None,
-            )
+            .upsert_subfolder(&root_id, "gone", "gone", &gone.to_string_lossy(), Some(&repo_fid))
             .await
             .unwrap();
         pg.seed_node(&gone_fid, "struct", "Ghost", "gone/x.rs", None, None, None, None)
@@ -556,18 +643,21 @@ mod tests {
             .create_project(&format!("mono-{}", uuid::Uuid::new_v4().simple()), None, None)
             .await
             .unwrap();
-        pg.upsert_folder(
-            &root_id,
-            "git",
-            "monorepo",
-            "monorepo",
-            &repo.to_string_lossy(),
-            None,
-            Some(&gpid),
-            None,
-        )
-        .await
-        .unwrap();
+        let g_fid = pg
+            .upsert_folder(
+                &root_id,
+                "git",
+                "monorepo",
+                "monorepo",
+                &repo.to_string_lossy(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&pg, &g_fid, &gpid, "monorepo")
+            .await
+            .unwrap();
         // A standalone root mis-scoped INSIDE the repo, attributed to a DIFFERENT project.
         let spid = pg
             .create_project(&format!("sub-{}", uuid::Uuid::new_v4().simple()), None, None)
@@ -581,9 +671,11 @@ mod tests {
                 "sub",
                 &nested.to_string_lossy(),
                 None,
-                Some(&spid),
                 None,
             )
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&pg, &s_fid, &spid, "sub")
             .await
             .unwrap();
 
@@ -594,7 +686,7 @@ mod tests {
         // — but after a repair pass MY nested standalone is guaranteed re-absorbed.
         audit_index_integrity(&pg, std::slice::from_ref(&root), true).await;
         let (kind, pid): (String, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
-            "SELECT kind::text, project_id FROM sensei.folders WHERE id = $1",
+            "SELECT kind::text, sensei.sole_project_of(id) FROM sensei.folders WHERE id = $1",
         )
         .bind(s_fid)
         .fetch_one(pg.pool())
@@ -620,18 +712,13 @@ mod tests {
         let name = format!("dupname-{}", uuid::Uuid::new_v4().simple());
         // Survivor: a folder-bearing project.
         let survivor = pg.create_project(&name, None, None).await.unwrap();
-        pg.upsert_folder(
-            &root_id,
-            "git",
-            "repo",
-            "repo",
-            &repo.to_string_lossy(),
-            None,
-            Some(&survivor),
-            None,
-        )
-        .await
-        .unwrap();
+        let sv_fid = pg
+            .upsert_folder(&root_id, "git", "repo", "repo", &repo.to_string_lossy(), None, None)
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&pg, &sv_fid, &survivor, "repo")
+            .await
+            .unwrap();
         // Phantom: a same-name, 0-folder, discovery project.
         let phantom = pg.create_project(&name, None, None).await.unwrap();
 
@@ -683,9 +770,11 @@ mod tests {
                 "monorepo",
                 &repo.to_string_lossy(),
                 None,
-                Some(&gpid),
                 None,
             )
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&pg, &repo_fid, &gpid, "monorepo")
             .await
             .unwrap();
         pg.seed_node(&repo_fid, "function", "a", "live.rs", None, None, None, None).await.unwrap();
@@ -700,7 +789,6 @@ mod tests {
                 "ghost",
                 &ghost_dir.to_string_lossy(),
                 Some(&repo_fid),
-                None,
             )
             .await
             .unwrap();
@@ -715,36 +803,34 @@ mod tests {
             .create_project(&format!("sub-{}", uuid::Uuid::new_v4().simple()), None, None)
             .await
             .unwrap();
-        pg.upsert_folder(
-            &root_id,
-            "standalone",
-            "sub",
-            "sub",
-            &nested.to_string_lossy(),
-            None,
-            Some(&spid),
-            None,
-        )
-        .await
-        .unwrap();
+        let c_fid = pg
+            .upsert_folder(
+                &root_id,
+                "standalone",
+                "sub",
+                "sub",
+                &nested.to_string_lossy(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&pg, &c_fid, &spid, "sub")
+            .await
+            .unwrap();
 
         // (d) duplicate-name phantom project (duplicate-name class).
         let dupname = format!("dupname-{}", uuid::Uuid::new_v4().simple());
         let survivor = pg.create_project(&dupname, None, None).await.unwrap();
         let extra_repo = tmp.path().join("dup");
         std::fs::create_dir_all(&extra_repo).unwrap();
-        pg.upsert_folder(
-            &root_id,
-            "git",
-            "dup",
-            "dup",
-            &extra_repo.to_string_lossy(),
-            None,
-            Some(&survivor),
-            None,
-        )
-        .await
-        .unwrap();
+        let d_fid = pg
+            .upsert_folder(&root_id, "git", "dup", "dup", &extra_repo.to_string_lossy(), None, None)
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&pg, &d_fid, &survivor, "dup")
+            .await
+            .unwrap();
         let phantom = pg.create_project(&dupname, None, None).await.unwrap();
 
         // One repair pass fixes every class it can see. The per-root classes

@@ -54,7 +54,7 @@ impl PgStore {
         let existing: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT p.id FROM sensei.projects p
               WHERE p.name = $1
-              ORDER BY (SELECT count(*) FROM sensei.folders f WHERE f.project_id = p.id) DESC, p.id
+              ORDER BY (SELECT count(*) FROM sensei.folder_projects fp WHERE fp.project_id = p.id) DESC, p.id
               LIMIT 1",
         )
         .bind(name)
@@ -159,13 +159,13 @@ impl PgStore {
         let res = sqlx_core::query::query(
             "UPDATE sensei.projects p
                 SET tags = CASE
-                      WHEN NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = p.id)
+                      WHEN NOT EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = p.id)
                         THEN array(SELECT DISTINCT unnest(p.tags || ARRAY['orphaned']))
                       ELSE array_remove(p.tags, 'orphaned')
                     END,
                     modified_at = now()
               WHERE p.maturity = 'discovery'
-                AND ((NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = p.id))
+                AND ((NOT EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = p.id))
                      <> ('orphaned' = ANY(p.tags)))",
         )
         .execute(&self.pool)
@@ -190,16 +190,33 @@ impl PgStore {
     /// in-flight, and a boot re-scan may have freshly bumped their `modified_at`.
     /// Returns rows deleted.
     pub async fn prune_empty_projects(&self, grace_secs: i32) -> Result<u64, String> {
+        self.prune_empty_projects_among(grace_secs, None).await
+    }
+
+    /// [`Self::prune_empty_projects`], limited to `among` when given — the ONE
+    /// rule for what an empty project is, with a scope.
+    ///
+    /// The pruner (#247) passes the projects linked to the repositories it just
+    /// deleted, so it removes what IT emptied and nothing else. Unscoped with no
+    /// grace, it deleted every empty discovery project in the database,
+    /// including one the user had just created and not yet given a repository.
+    pub async fn prune_empty_projects_among(
+        &self,
+        grace_secs: i32,
+        among: Option<&[uuid::Uuid]>,
+    ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "DELETE FROM sensei.projects p
               WHERE p.maturity = 'discovery'
+                AND ($2::uuid[] IS NULL OR p.id = ANY($2))
                 AND p.modified_at < now() - make_interval(secs => $1)
-                AND NOT EXISTS (SELECT 1 FROM sensei.folders f        WHERE f.project_id = p.id)
+                AND NOT EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = p.id)
                 AND NOT EXISTS (SELECT 1 FROM activity.sessions s     WHERE s.project_id = p.id)
                 AND NOT EXISTS (SELECT 1 FROM inference.recommendations r WHERE r.project_id = p.id)
                 AND NOT EXISTS (SELECT 1 FROM sensei.memories m       WHERE m.project_id = p.id)",
         )
         .bind(grace_secs)
+        .bind(among)
         .execute(&self.pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -250,7 +267,7 @@ impl PgStore {
                (SELECT count(*) FROM sensei.project_drift
                   WHERE project_id = $1 AND status::text IN ('drifted','broken')),
                (SELECT count(DISTINCT di.doc_node_id) FROM inference.drift_items di
-                  JOIN sensei.folders f ON f.id = di.folder_id WHERE f.project_id = $1),
+                  JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id WHERE fp.project_id = $1),
                (SELECT count(*) FROM sensei.memories
                   WHERE project_id = $1
                     AND status::text IN ('active','reinforced','battle_tested')
@@ -318,7 +335,8 @@ impl PgStore {
                 "SELECT p.id, p.name, p.description, p.client, p.maturity::text, p.tags, p.modified_at,
                         p.icon, p.stack, p.goal, p.dojo_id,
                         (SELECT count(*) FROM sensei.folders f
-                          WHERE f.project_id = p.id AND f.kind::text IN ('git','standalone'))::bigint AS repos_count,
+                           JOIN sensei.folder_projects fp ON fp.folder_id = f.id
+                          WHERE fp.project_id = p.id AND f.kind::text IN ('git','standalone'))::bigint AS repos_count,
                         (SELECT count(*) FROM sensei.library_enablement pl
                           WHERE pl.project_id = p.id)::bigint AS libs_count,
                         (SELECT max(s.started_at) FROM activity.sessions s WHERE s.project_id = p.id) AS last_session_at,
@@ -326,10 +344,10 @@ impl PgStore {
                           WHERE s.project_id = p.id AND s.started_at > now() - interval '7 days')::bigint AS sessions7d
                  FROM sensei.projects p
                  WHERE $1::text IS NULL OR EXISTS (
-                          SELECT 1 FROM sensei.folders f
-                           WHERE f.project_id = p.id
-                             AND (f.abs_path = $1::text
-                               OR left(f.abs_path, length($1::text) + 1) = $1::text || '/'))
+                          SELECT 1 FROM sensei.folder_projects fp
+                           WHERE fp.project_id = p.id
+                             AND (fp.folder_abs_path = $1::text
+                               OR left(fp.folder_abs_path, length($1::text) + 1) = $1::text || '/'))
                  ORDER BY p.name"
             ).bind(under).fetch_all(&self.pool).await
             .map_err(|e| { tracing::error!(error = %e, "list_projects failed"); e.to_string() })?;
@@ -470,8 +488,24 @@ impl PgStore {
         // Reassign the data-source rows. Order: folders first (they define
         // the corpus), then sessions, then memories (user-authored — must
         // survive the merge). Derived tables are left for CASCADE to trim.
+        // `folders` is NOT in this list any more: a folder carries no project
+        // (#211), so moving the corpus means moving the REPOSITORY memberships.
+        // `ON CONFLICT DO NOTHING` because the target may already own a
+        // repository the source also claimed — a merge is a union, not a move,
+        // and the source's rows are then deleted with the project by CASCADE.
+        sqlx_core::query::query(
+            "INSERT INTO sensei.repositories_in_projects (project_id, repository_id)
+             SELECT $2, pr.repository_id FROM sensei.repositories_in_projects pr
+              WHERE pr.project_id = $1
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(source)
+        .bind(target)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| format!("merge_projects: move repository membership: {e}"))?;
+
         for stmt in [
-            "UPDATE sensei.folders    SET project_id = $2 WHERE project_id = $1",
             "UPDATE activity.sessions SET project_id = $2 WHERE project_id = $1",
             "UPDATE sensei.memories   SET project_id = $2 WHERE project_id = $1",
         ] {
@@ -590,17 +624,23 @@ impl PgStore {
                 tracing::warn!(folder = %s_id, error = %e, "heal_nested_standalone_roots: delete_scan_state failed");
                 continue;
             }
-            // 2. Re-classify as a folder of the enclosing repo's project, under
-            //    the repo's watch root (it may have been registered under another).
+            // 2. Re-classify as a folder of the enclosing repo, under the repo's
+            //    watch root (it may have been registered under another).
+            //
+            //    NO `project_id`: the folder does not carry one any more (#211).
+            //    Re-parenting it under the repo is the whole re-attribution —
+            //    its project now follows the repo's junction row, so there is no
+            //    second value to keep in step. This step therefore runs whether
+            //    or not the repo resolves to a project; `g_pid` is needed only
+            //    for the phantom-project merge below.
             if let Err(e) = sqlx_core::query::query(
                 "UPDATE sensei.folders
                     SET kind = 'folder'::sensei.folder_kind,
-                        parent_id = $2, project_id = $3, root_id = $4, modified_at = now()
+                        parent_id = $2, root_id = $3, modified_at = now()
                   WHERE id = $1",
             )
             .bind(s_id)
             .bind(g_id)
-            .bind(g_pid)
             .bind(g_root)
             .execute(&self.pool)
             .await
@@ -611,10 +651,15 @@ impl PgStore {
             // 3. Fold the phantom project into the repo's project when it lives
             //    entirely inside the repo (the folder above was already re-pointed
             //    to g_pid, so it no longer counts against s_pid).
-            if let Some(s_pid) = s_pid.filter(|p| *p != g_pid) {
+            // Needs BOTH: a phantom to fold, and a surviving project to fold it
+            // into. A repo with no sole project has no survivor, so the phantom
+            // is left alone rather than merged into a guess.
+            if let (Some(s_pid), Some(g_pid)) = (s_pid.filter(|p| Some(*p) != g_pid), g_pid) {
                 let outside: (i64,) = sqlx_core::query_as::query_as(
-                    "SELECT count(*) FROM sensei.folders
-                      WHERE project_id = $1 AND NOT starts_with(abs_path, $2 || '/')",
+                    "SELECT count(*) FROM sensei.folders f
+                       JOIN sensei.folder_projects fp ON fp.folder_id = f.id
+                      WHERE fp.project_id = $1
+                        AND NOT starts_with(f.abs_path, $2 || '/')",
                 )
                 .bind(s_pid)
                 .bind(&g_abs)
@@ -634,7 +679,7 @@ impl PgStore {
                 }
             }
             healed += 1;
-            tracing::info!(folder = %s_id, project = %g_pid, "heal_nested_standalone_roots: re-absorbed nested standalone root");
+            tracing::info!(folder = %s_id, project = ?g_pid, "heal_nested_standalone_roots: re-absorbed nested standalone root");
         }
         Ok(healed)
     }
@@ -786,9 +831,8 @@ impl PgStore {
     ) -> Result<Vec<(String, String)>, String> {
         let rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
             "SELECT n.scope_key, n.slug
-               FROM sensei.folder_namespaces fn
-               JOIN sensei.namespaces n ON n.id = fn.namespace_id
-              WHERE fn.folder_id = $1",
+               FROM sensei.namespaces n
+              WHERE n.id IN (SELECT sensei.namespaces_for_folder($1))",
         )
         .bind(folder_id)
         .fetch_all(&self.pool)
@@ -807,9 +851,9 @@ impl PgStore {
         }
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT n.id
-               FROM sensei.folder_namespaces fn
-               JOIN sensei.namespaces n ON n.id = fn.namespace_id
-              WHERE fn.folder_id = $1 AND n.scope_key = $2
+               FROM sensei.namespaces n
+              WHERE n.id IN (SELECT sensei.namespaces_for_folder($1))
+                AND n.scope_key = $2
               LIMIT 1",
         )
         .bind(folder_id)
@@ -873,8 +917,10 @@ impl PgStore {
         // projecting the subfolder tree as repos.
         let rows: Vec<(uuid::Uuid, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, name, abs_path, kind::text FROM sensei.folders
-                 WHERE project_id = $1 AND kind::text NOT IN ('folder', 'module') ORDER BY name",
+                "SELECT f.id, f.name, f.abs_path, f.kind::text FROM sensei.folders f
+                   JOIN sensei.folder_projects fp ON fp.folder_id = f.id
+                 WHERE fp.project_id = $1 AND f.kind::text NOT IN ('folder', 'module')
+                 ORDER BY f.name",
             )
             .bind(project_id)
             .fetch_all(&self.pool)
@@ -892,7 +938,9 @@ impl PgStore {
     /// auto-bind suggestion. Reads `sensei.folders.remote_urls`; DB-only.
     pub async fn project_org_owners(&self, project_id: &uuid::Uuid) -> Result<Vec<String>, String> {
         let folders: Vec<(serde_json::Value,)> = sqlx_core::query_as::query_as(
-            "SELECT remote_urls FROM sensei.folders WHERE project_id = $1",
+            "SELECT f.remote_urls FROM sensei.folders f
+               JOIN sensei.folder_projects fp ON fp.folder_id = f.id
+              WHERE fp.project_id = $1",
         )
         .bind(project_id)
         .fetch_all(&self.pool)
@@ -940,7 +988,9 @@ impl PgStore {
         };
 
         let folders: Vec<(String, String, serde_json::Value)> = sqlx_core::query_as::query_as(
-            "SELECT name, abs_path, remote_urls FROM sensei.folders WHERE project_id = $1",
+            "SELECT f.name, f.abs_path, f.remote_urls FROM sensei.folders f
+               JOIN sensei.folder_projects fp ON fp.folder_id = f.id
+              WHERE fp.project_id = $1",
         )
         .bind(project_id)
         .fetch_all(&self.pool)

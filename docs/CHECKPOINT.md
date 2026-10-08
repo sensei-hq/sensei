@@ -1,39 +1,33 @@
 # Checkpoint
 
-**Slice:** the call-graph screen — daemon contract first, then the UI.
+**Slice:** diagrams → data hygiene → consent → session integrity. One row per
+issue; closed only with evidence.
 
-## Done
+| # | item | status | to close |
+|---|---|---|---|
+| 220 | Neighbourhood diagram | CLOSED | — |
+| 219 | World diagram | CLOSED — 3 live defects fixed `3527399a` | — |
+| 231 | fqn segment 3 | CLOSED — unknownUnit 13.7% → 1.0% | — |
+| 233 | diagram cache | CLOSED — hits 21→2.6 ms, 109→3 ms | — |
+| 218 | transcript consent | CLOSED `ea9dd96d` | user switches Claude Code on |
+| 248 | e2e rewrote ~/.claude/CLAUDE.md | CLOSED `5e58b4e3` | — |
+| 247 | pruner + root removal | gates 1–5 done | gate 6: user runs the SQL below |
+| 238 | Claude Code mods | 2 of 4 defects fixed `542cd859` `e72be0e0`, live-verified | dead `success` column + `duration_ms` harvest, then mods steps 1–5 |
+| 221 | Schema diagram | BLOCKED — decision A/B/C | user decision |
+| 236 | dōjō → kavach data routes | BLOCKED — plan invalidated (3/167 fit) | user decision on the reframe |
+| 249 | relay: members read/answer each other's gates | filed | user: intended or not? |
+| 225 | dōjō team view | queued | sync-shape decision |
+| 239 | EPIC productionise (#240 #241) | queued | — |
+| 245 | app e2e red gate | open | 4 groups, separate commits |
 
-- **rokkit 1.4 → 1.6 across the app** (2174b5e0) + `@rokkit/graph`. Its deps are
-  EXACT pins, so the stack moves together. 1,700 tests, build green.
-- **`brew install` was broken both ways** (88797b94, tap b6423fa). README named
-  the formula and cask tokens transposed; the cask token resolved a dead
-  `Casks/sensei.rb` left by the `senseihq` rename and 404'd. Both verified
-  against the live tap after the fix. Gate: `scripts/check-brew-tokens.py`.
-- **Callers AND callees now carry the placement verdict** — `resolved_via` /
-  `unresolved_reason` off `sensei.call_graph`, plus `edge_kind`. `resolved: bool`
-  could not tell `declared_here` from `in_the_prelude`. New `Placement` enum;
-  `callee_row` is now the ONE builder for both callee paths, which fixes a
-  chased row carrying no `resolved` key at all.
-- **rokkit #160–#164 filed**, each with a probe that reproduces it.
-- **Two type errors from the 1.6 upgrade fixed**: `Toggle` takes `label`, not
-  `aria-label`, and has no rest-spread — two Projects toggles had silently lost
-  their accessible name. `make app-check` existed in no gate; now in `make test`
-  and in CI.
+**Next command:** #238 — harvest `duration_ms` / `agent_id` from PostToolUse
+payloads (no mods needed), then settle the mods `.d.ts` for steps 1–5.
 
-## Next command
+**Orphan cleanup the classifier blocked** (user to run; newest backup
+`database/backup/essential/20261007-200259`):
+`DELETE FROM sensei.repositories r WHERE NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.repository_id = r.id) AND r.synced_at IS NULL AND r.tenant_id IS NULL AND NOT EXISTS (SELECT 1 FROM sensei.repositories_in_projects rp WHERE rp.repository_id = r.id);`
+→ 7,795 rows. The 5,704 in history-bearing projects stay.
 
-    cargo test -p senseid        # confirm the full suite before committing
-
-## Open
-
-- **The screen itself is not built.** Three views, three readiness levels:
-  - *Neighbourhood* — data is live NOW (this slice). Buildable next.
-  - *World* — needs a new aggregating endpoint: `/api/graph/{repo}/tree` returns
-    every node unaggregated and carries no counts. Plus rokkit #161/#163/#164.
-  - *Schema (ER)* — no data source at all; the mockup says so itself. Blocked on
-    `docs/spec/indexer/20-schema-entities.md`.
-- **#131 / #132 mockup-drift audit not yet revisited** (asked for alongside the
-  screen). The 1.6 upgrade changes its baseline.
-- **#191** — dojo and website still on rokkit `^1.2.0`; dojo also kavach 1.1.3.
-- **#187** — `app/e2e/**` still outside every static gate.
+**Known broken:** e2e #245 (`daemon-verification` hook-configure is one of its
+21). Marketplace hook changes are unpublished until `make bump`. Commits
+unpushed on `develop`.

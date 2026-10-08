@@ -337,7 +337,7 @@ mod tests {
             .collect();
         assert_eq!(
             modules,
-            vec!["java·p·F·mod"],
+            vec!["java·p··F·mod"],
             "the file is named by its stem under the package it declares"
         );
 
@@ -356,7 +356,7 @@ mod tests {
             .collect();
         assert_eq!(
             contains,
-            vec!["java·p·Holder·item -> java·p·F·mod".to_string()],
+            vec!["java·p··Holder·item -> java·p··F·mod".to_string()],
             "the class is contained by the file; its FIELD is owned by the class instead"
         );
     }
@@ -602,7 +602,7 @@ mod tests {
 
         assert_eq!(
             called,
-            vec!["java·p·Holder·name·item".to_string()],
+            vec!["java·p··Holder·name·item".to_string()],
             "a call names the method's own identity, which is minted at item reach — `peek` is \
              the caller and is never itself called, so it is not in this list"
         );

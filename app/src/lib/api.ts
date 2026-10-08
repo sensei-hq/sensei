@@ -3,7 +3,7 @@ import type {
   GraphSymbolNode, GraphCallEdge,
   SolutionGraphResponse, SolutionAnalysis, InferredRole,
   IndexQueueStatus, DirtyStatus, IndexError,
-  FunctionDetail, CallNeighbour, TypeDetail, CommunityInfo, DocDrift,
+  FunctionMatch, CallNeighbour, TypeDetail, CommunityInfo, DocDrift,
   LibEntry, LibDoc, DepVersion, SessionData, SessionsDigest,
   ProjectMemory, DriftItem, PatternEntry, Recommendation,
   ProjectSession, CallFlowModule, CallFlowCall,
@@ -20,10 +20,17 @@ import type {
   SyncStateResponse,
   IntakeGuide, PlaybookRecommendation,
   ProvisionModel, ProvisionPhase,
+  StructureLevel, StructurePayload,
+  LayeringLevel, LayeringPayload,
+  WorldGroupBy, WorldPayload,
+  NeighbourhoodPayload,
+  RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
+  TranscriptSourceConsent,
 } from './types.js';
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
   ProposalCreateBody, MemoryCreateBody, OutcomeBody, OutcomesBatchResponse,
+  DaemonWatchRoot,
 } from './setup/contracts.js';
 import type {
   ConsolidatedRuleset, ConsolidateResult,
@@ -119,6 +126,18 @@ export function senseiApi(port: number) {
     try {
       const res = await fetch(`${base}${path}`, { method: 'DELETE' });
       if (res.ok) return { ok: true, data: undefined };
+      return { ok: false, error: { status: res.status, message: res.statusText } };
+    } catch (e) {
+      return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
+    }
+  }
+
+  /** Error-propagating DELETE that returns the parsed body — for a removal
+   *  that reports what it removed. */
+  async function tryDeleteJson<T>(path: string): Promise<ApiResult<T>> {
+    try {
+      const res = await fetch(`${base}${path}`, { method: 'DELETE' });
+      if (res.ok) return { ok: true, data: await res.json() as T };
       return { ok: false, error: { status: res.status, message: res.statusText } };
     } catch (e) {
       return { ok: false, error: { status: 0, message: e instanceof Error ? e.message : 'Network error' } };
@@ -234,6 +253,10 @@ export function senseiApi(port: number) {
       get<Array<{ name: string; strategy: string; repo_ids: string[] }>>(
         '/api/scan/suggestions', [],
       ),
+
+    /** Every watch root, paused ones included (#247). Result-based: the
+     *  settings screen must tell "you have no roots" from "the daemon is down". */
+    tryGetScanRoots: () => tryGet<DaemonWatchRoot[]>('/api/scan/roots'),
 
     getScanRoots: () =>
       get<Array<{ path: string; created_at: string | null; repos_found: number; scanned: boolean }>>(
@@ -510,6 +533,53 @@ export function senseiApi(port: number) {
         `/api/projects/${enc(id)}/drift`, { items: [], total: 0, drifted: 0, broken: 0 }
       ),
 
+    /** #205 — the Structure diagram payload.
+     *
+     *  Result-based deliberately. This screen must tell "no edges here" apart
+     *  from "the daemon failed", and the fallback-returning `get` collapses
+     *  both into an empty graph — which is the one thing the spec names as a
+     *  wrong gate, being indistinguishable from an unindexed project. */
+    tryGetProjectStructure: (id: string, level: StructureLevel, kinds: string[]) =>
+      tryGet<StructurePayload>(
+        `/api/projects/${enc(id)}/diagrams/structure?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
+      ),
+
+    /** #232 — the Layers/Cycles payload, one request serving both screens.
+     *
+     *  ONE CALL, TWO SCREENS. The layering, the cycles and the coverage all
+     *  come out of a single `analyse` over one read of `structure_edges`, and
+     *  that read is the whole cost (1.5 s to 74 s per project). Splitting it
+     *  into a layering endpoint and a cycles endpoint would pay it twice for
+     *  answers that have to agree.
+     *
+     *  Result-based for the reason the Structure one is: this screen must tell
+     *  "no cycles here" apart from "the daemon failed", and an empty canvas
+     *  reads as a clean architecture. */
+    tryGetProjectLayering: (id: string, level: LayeringLevel, kinds: string[]) =>
+      tryGet<LayeringPayload>(
+        `/api/projects/${enc(id)}/diagrams/layering?level=${enc(level)}&kinds=${enc(kinds.join(','))}`
+      ),
+
+    /** #219 — the World payload: every indexed declaration, nested.
+     *
+     *  CROSS-PROJECT. The project in the path names the view and does not scope
+     *  it — the picture is all indexed code, with project as its outermost ring.
+     *
+     *  Result-based like its siblings: this screen must tell "nothing indexed"
+     *  apart from "the daemon failed", and on a picture whose whole subject is
+     *  how much there is, an empty canvas is the worse lie. */
+    tryGetProjectWorld: (id: string, groupBy: WorldGroupBy) =>
+      tryGet<WorldPayload>(
+        `/api/projects/${enc(id)}/diagrams/world?groupBy=${enc(groupBy)}`
+      ),
+
+    /** #220 — one symbol, its callers and callees, `depth` rings out.
+     *  `focus` is a node id; a missing one is a 400, never a default symbol. */
+    tryGetProjectNeighbourhood: (id: string, focus: string, depth: number) =>
+      tryGet<NeighbourhoodPayload>(
+        `/api/projects/${enc(id)}/diagrams/neighbourhood?focus=${enc(focus)}&depth=${depth}`
+      ),
+
     getProjectPatterns: (id: string) =>
       get<{ followed: PatternEntry[]; antiPatterns: PatternEntry[] }>(
         `/api/projects/${enc(id)}/patterns`, { followed: [], antiPatterns: [] }
@@ -725,8 +795,13 @@ export function senseiApi(port: number) {
         `/api/graph/nodes?repoId=${enc(repoId)}`, { nodes: [], edges: [] },
       ),
 
-    searchFunctions: (repoId: string, q: string) =>
-      get<FunctionDetail[]>(`/api/graph/functions?repoId=${enc(repoId)}&q=${enc(q)}`, []),
+    /** Functions and methods whose name or signature contains `q`.
+     *
+     *  Result-based, unlike the `get(…, [])` it replaces: a picker that shows
+     *  "no matches" when the daemon is down sends the reader looking for a
+     *  symbol that exists. */
+    trySearchFunctions: (repoId: string, q: string) =>
+      tryGet<FunctionMatch[]>(`/api/graph/functions?repoId=${enc(repoId)}&q=${enc(q)}`),
 
     searchTypes: (repoId: string, q: string) =>
       get<TypeDetail[]>(`/api/graph/types?repoId=${enc(repoId)}&q=${enc(q)}`, []),
@@ -833,9 +908,31 @@ export function senseiApi(port: number) {
         '/api/scan/roots', { path }, { ok: false, id: '', path },
       ),
 
-    /** Remove a watch root from the DB by its UUID. */
-    removeWatchRoot: (id: string) =>
-      del(`/api/scan/roots/${enc(id)}`),
+    /** Remove a watch root (#247). The decision is REQUIRED: `keep` pauses it
+     *  and leaves its data readable, `remove` prunes everything it held. Result-
+     *  based, because the old fire-and-forget `del` let the screen drop a root
+     *  whose removal had failed. */
+    tryRemoveWatchRoot: (id: string, repositories: RootRemovalDecision) =>
+      tryDeleteJson<RootRemovalResult>(
+        `/api/scan/roots/${enc(id)}?repositories=${enc(repositories)}`,
+      ),
+
+    /** #218 — which sources sensei may read conversation history from. */
+    tryGetTranscriptConsent: () =>
+      tryGet<TranscriptSourceConsent[]>('/api/transcripts/consent'),
+
+    trySetTranscriptConsent: (source: string, consented: boolean) =>
+      tryPutJson<{ ok: boolean; source: string; consented: boolean }>(
+        `/api/transcripts/consent/${enc(source)}`, { consented },
+      ),
+
+    /** What stops syncing if this root is removed. */
+    tryGetRootRepositories: (id: string) =>
+      tryGet<RootRepository[]>(`/api/scan/roots/${enc(id)}/repositories`),
+
+    /** Remove one repository and everything associated with it, and add it to
+     *  its root's exclusions so a rescan does not bring it back. */
+    tryPruneRepository: (path: string) => tryPost<PruneResult>('/api/scan/prune', { path }),
 
     /**
      * Replace one root's scan exclusions.
