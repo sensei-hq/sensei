@@ -43,6 +43,8 @@ pub(crate) fn map_capability(db_cap: &str) -> Option<Capability> {
         // #77 — image gen is now a first-class capability; before this landed
         // it lived only in the code-defined baseline and was grafted in.
         "image" => Some(Capability::ImageGenerate),
+        // gateway#72 — System One decision models (probabilities, not text).
+        "decision" => Some(Capability::Decision),
         _ => None,
     }
 }
@@ -182,6 +184,7 @@ pub(crate) fn build_models(rows: &[ModelRow]) -> HashMap<String, ModelConfig> {
                 // Lineage from `gateway.models.family` — powers MOE panel
                 // family-distinctness. `None` ⇒ id is its own family.
                 family: m.family.clone(),
+                catalog: None,
             },
         );
     }
@@ -375,6 +378,9 @@ mod tests {
         assert_eq!(map_capability("vision"), Some(Capability::ImageAnalyze));
         assert_eq!(map_capability("audio"), Some(Capability::AudioTranscribe));
         assert_eq!(map_capability("image"), Some(Capability::ImageGenerate));
+        // gateway v0.7.0 (sensei-hq/gateway#72): System One decision models answer
+        // with probabilities, not text — a capability of their own, NOT TextChat.
+        assert_eq!(map_capability("decision"), Some(Capability::Decision));
         assert_eq!(map_capability("nonsense"), None);
     }
 
@@ -591,12 +597,12 @@ mod tests {
                 assert!(cfg.models.contains_key(&e.model), "{} model {} missing", chain, e.model);
             }
         }
-        // Reasoning is heavy synthesis — it leads with ollama gemma4 (a strong
-        // local model; gemma4 is multimodal and can't be embedded), then
-        // escalates to larger local models + cloud.
+        // Reasoning is heavy synthesis — it leads with gemma4 in-process on
+        // embedded-llama (5cc8c2bc), then the same model on ollama, then larger
+        // local models + cloud.
         let reasoning = &cfg.chains["reasoning"];
         assert_eq!(reasoning.capability, Capability::TextChat);
-        assert_eq!(reasoning.models[0].router.as_deref(), Some("ollama"));
+        assert_eq!(reasoning.models[0].router.as_deref(), Some("embedded-llama"));
         assert_eq!(reasoning.models[0].model, "gemma4");
         assert!(reasoning.models.len() >= 4, "reasoning should have a cloud tail");
         for e in &reasoning.models {
@@ -609,6 +615,81 @@ mod tests {
         assert!(embed.models.iter().all(|e| e.model == "all-minilm-l6-v2"));
         // Embedded chat model carries TextChat.
         assert!(cfg.models["gemma2:2b"].capabilities.contains(&Capability::TextChat));
+
+        // System One (gateway#72): the seeded `decide` chain loads as a Decision
+        // chain — seed + `map_capability` composing, local decision models first.
+        let decide = &cfg.chains["decide"];
+        assert_eq!(decide.capability, Capability::Decision);
+        let legs: Vec<(Option<&str>, &str)> =
+            decide.models.iter().map(|e| (e.router.as_deref(), e.model.as_str())).collect();
+        assert_eq!(
+            legs,
+            [
+                (Some("ollama"), "nimble"),
+                (Some("ollama"), "tev1"),
+                (Some("openrouter"), "jev-1.13")
+            ]
+        );
+        for m in ["nimble", "tev1", "jev-1.13"] {
+            assert_eq!(cfg.models[m].capabilities, [Capability::Decision], "{m}");
+        }
+        // tev1's short window is what lets the gateway route long states past it.
+        assert_eq!(cfg.models["tev1"].context_window, 2048);
+        assert_eq!(cfg.routers["openrouter"].url, "https://openrouter.ai/api");
+        assert_eq!(cfg.routers["typesafe"].url, "https://api.typesafe.ai");
+    }
+
+    /// End to end (#202 "exercise a real inference"): the DB seed → this loader →
+    /// gateway v0.7.0 → a local Ollama ≥ 0.35 with `nimble` pulled answers a
+    /// System One decision through the seeded `decide` chain. Ignored by default:
+    ///   `GATEWAY_LOADER_TEST_URL=<seeded db> cargo test -p senseid \
+    ///    decide_chain_answers -- --ignored`
+    #[tokio::test]
+    #[ignore]
+    async fn decide_chain_answers_a_real_decision_end_to_end() {
+        use gateway::types::decision::{DecisionAnswer, DecisionQuestion, DecisionQuestions};
+        use gateway::types::request::{InferenceRequest, Payload};
+
+        let url = std::env::var("GATEWAY_LOADER_TEST_URL")
+            .unwrap_or_else(|_| "postgresql://localhost:5432/sensei".to_string());
+        let pg = crate::db::pg_store::PgStore::connect(&url).await.expect("connect");
+        let cfg = super::load_gateway_config(&pg).await.expect("load ok").expect("DB has chains");
+        let gw = gateway::FacadeBuilder::new(cfg).build().await.gateway;
+
+        let req = InferenceRequest {
+            capability: Capability::Decision,
+            model: None,
+            router: None,
+            chain: Some("decide".into()),
+            payload: Payload::Decision {
+                state: json!({"ticket": "I was charged twice. Please refund the extra payment."}),
+                questions: DecisionQuestions::from([(
+                    "refund".to_string(),
+                    DecisionQuestion::Noul {
+                        instructions: json!("Is the customer requesting a refund?"),
+                        criteria: None,
+                    },
+                )]),
+                images: vec![],
+                keep_alive: None,
+            },
+            budget: None,
+            auth: None,
+            panel: None,
+            consensus: None,
+            allow_fallback: true,
+            credentials: Default::default(),
+            routing: None,
+        };
+        let resp = gw.execute(&req).await.expect("the decide chain answers");
+        assert!(resp.success, "{resp:?}");
+        assert_eq!(resp.attempts[0].adapter, "ollama", "served locally first: {:?}", resp.attempts);
+        let Some(DecisionAnswer::Noul { noul }) =
+            resp.decisions.as_ref().and_then(|d| d.get("refund"))
+        else {
+            panic!("a noul answer for 'refund': {resp:?}");
+        };
+        assert!(*noul > 0.5, "a refund request reads as a refund: p={noul}");
     }
 
     #[test]

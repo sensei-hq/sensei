@@ -270,6 +270,7 @@ pub(crate) fn build_polish_request(text: &str) -> gateway::types::request::Infer
         consensus: None,
         allow_fallback: true,
         credentials: std::collections::HashMap::new(),
+        routing: None,
     }
 }
 
