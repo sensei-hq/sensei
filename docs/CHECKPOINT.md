@@ -1,33 +1,29 @@
 # Checkpoint
 
-**Slice:** diagrams → data hygiene → consent → session integrity. One row per
-issue; closed only with evidence.
+**State 2026-10-08.** History rewritten to Jerry Thomas (all refs force-pushed,
+`main` protection restored). Open PRs: none. 108 → 101 open issues this run.
 
 | # | item | status | to close |
 |---|---|---|---|
-| 220 | Neighbourhood diagram | CLOSED | — |
-| 219 | World diagram | CLOSED — 3 live defects fixed `3527399a` | — |
-| 231 | fqn segment 3 | CLOSED — unknownUnit 13.7% → 1.0% | — |
-| 233 | diagram cache | CLOSED — hits 21→2.6 ms, 109→3 ms | — |
-| 218 | transcript consent | CLOSED `ea9dd96d` | user switches Claude Code on |
-| 248 | e2e rewrote ~/.claude/CLAUDE.md | CLOSED `5e58b4e3` | — |
+| 220 219 231 233 218 248 | diagrams, consent, e2e pointer | CLOSED | — |
+| 202 | gateway v0.7.0 | CLOSED — PR #228 merged `ec48c565` | — |
+| 203 205 232 | llama build, Structure, Layers/Cycles | CLOSED — re-verified live | — |
+| — | CodeQL for Rust (archived PR) | MERGED as #250 `1e177907` | baseline appears at next main merge |
 | 247 | pruner + root removal | gates 1–5 done | gate 6: user runs the SQL below |
-| 238 | Claude Code mods | 2 of 4 defects fixed `542cd859` `e72be0e0`, live-verified | dead `success` column + `duration_ms` harvest, then mods steps 1–5 |
-| 221 | Schema diagram | BLOCKED — decision A/B/C | user decision |
-| 236 | dōjō → kavach data routes | BLOCKED — plan invalidated (3/167 fit) | user decision on the reframe |
-| 249 | relay: members read/answer each other's gates | filed | user: intended or not? |
+| 238 | Claude Code mods | 2 of 4 defects fixed | `duration_ms`/`agent_id` harvest, `success` column, mods 1–5 |
+| 221 | Schema diagram | BLOCKED | user: A / B / C |
+| 236 | dōjō → kavach data routes | BLOCKED | user: accept the reframe? |
+| 249 | relay cross-member access | BLOCKED | user: intended or not? |
 | 225 | dōjō team view | queued | sync-shape decision |
-| 239 | EPIC productionise (#240 #241) | queued | — |
-| 245 | app e2e red gate | open | 4 groups, separate commits |
+| 239 240 241 | productionise epic | queued | — |
+| 245 (+134 dup) | e2e red gate | open | 4 groups, one commit each |
 
-**Next command:** #238 — harvest `duration_ms` / `agent_id` from PostToolUse
-payloads (no mods needed), then settle the mods `.d.ts` for steps 1–5.
+**Next command:** #238 — harvest `duration_ms` / `agent_id` from PostToolUse.
 
 **Orphan cleanup the classifier blocked** (user to run; newest backup
 `database/backup/essential/20261007-200259`):
 `DELETE FROM sensei.repositories r WHERE NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.repository_id = r.id) AND r.synced_at IS NULL AND r.tenant_id IS NULL AND NOT EXISTS (SELECT 1 FROM sensei.repositories_in_projects rp WHERE rp.repository_id = r.id);`
-→ 7,795 rows. The 5,704 in history-bearing projects stay.
+→ 7,795 rows.
 
-**Known broken:** e2e #245 (`daemon-verification` hook-configure is one of its
-21). Marketplace hook changes are unpublished until `make bump`. Commits
-unpushed on `develop`.
+**Known broken:** e2e #245. Marketplace hook fixes unpublished until `make
+bump`. Old hashes in docs/*.md (22 refs, 10 files) predate the rewrite.
