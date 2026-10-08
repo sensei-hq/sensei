@@ -12,7 +12,7 @@ issue; closed only with evidence.
 | 218 | transcript consent | CLOSED `ea9dd96d` | user switches Claude Code on |
 | 248 | e2e rewrote ~/.claude/CLAUDE.md | CLOSED `5e58b4e3` | — |
 | 247 | pruner + root removal | gates 1–5 done | gate 6: user runs the SQL below |
-| 238 | Claude Code mods | 1 of 4 defects fixed `542cd859` | nudge-guard order (hook-only), then mods steps 1–5 |
+| 238 | Claude Code mods | 2 of 4 defects fixed `542cd859` `e72be0e0`, live-verified | dead `success` column + `duration_ms` harvest, then mods steps 1–5 |
 | 221 | Schema diagram | BLOCKED — decision A/B/C | user decision |
 | 236 | dōjō → kavach data routes | BLOCKED — plan invalidated (3/167 fit) | user decision on the reframe |
 | 249 | relay: members read/answer each other's gates | filed | user: intended or not? |
@@ -20,9 +20,8 @@ issue; closed only with evidence.
 | 239 | EPIC productionise (#240 #241) | queued | — |
 | 245 | app e2e red gate | open | 4 groups, separate commits |
 
-**Next command:** confirm `/tmp/sensei-install6.log` ends `exit=0` (deploys
-`542cd859`), then the #238 nudge-guard reorder in
-`marketplace/plugins/sensei/hooks/nudge` + `test-hooks.sh`.
+**Next command:** #238 — harvest `duration_ms` / `agent_id` from PostToolUse
+payloads (no mods needed), then settle the mods `.d.ts` for steps 1–5.
 
 **Orphan cleanup the classifier blocked** (user to run; newest backup
 `database/backup/essential/20261007-200259`):
