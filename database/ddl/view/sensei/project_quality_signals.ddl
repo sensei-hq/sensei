@@ -4,6 +4,13 @@ set search_path to sensei, activity, inference, extensions;
 -- activity.events (type 'test'), which was never populated — that table is
 -- being retired, so the column is kept (same shape, read by get_quality_signals)
 -- but sourced as NULL until a real test signal is derived from assistant_events.
+--
+-- Folder -> project comes from `folder_projects` (never `folders.project_id`).
+-- That view is multi-valued — a folder of a repository serving two projects
+-- returns two rows — but each row carries a DIFFERENT project_id, and
+-- (folder_id, project_id) is unique there (repositories_in_projects' PK), so the
+-- `GROUP BY project_id` already in `patterns` and `drift` lands each pattern or
+-- drift item once per owning project. No double count, no extra DISTINCT.
 CREATE OR REPLACE VIEW sensei.project_quality_signals AS
 WITH ftr AS (
   SELECT project_id
@@ -14,20 +21,20 @@ WITH ftr AS (
    GROUP BY project_id
 ),
 patterns AS (
-  SELECT f.project_id
+  SELECT fp.project_id
        , COUNT(*) FILTER (WHERE dp.lifecycle = 'rule')    AS rules_count
        , COUNT(*)                                          AS total_patterns
     FROM inference.detected_patterns dp
-    JOIN sensei.folders f ON f.id = dp.folder_id
+    JOIN sensei.folder_projects fp ON fp.folder_id = dp.folder_id
    WHERE NOT dp.is_anti_pattern
-   GROUP BY f.project_id
+   GROUP BY fp.project_id
 ),
 drift AS (
-  SELECT f.project_id
+  SELECT fp.project_id
        , COUNT(*) FILTER (WHERE di.status != 'current') AS open_drift_count
     FROM inference.drift_items di
-    JOIN sensei.folders f ON f.id = di.folder_id
-   GROUP BY f.project_id
+    JOIN sensei.folder_projects fp ON fp.folder_id = di.folder_id
+   GROUP BY fp.project_id
 )
 SELECT p.id                                                AS project_id
      , COALESCE(ftr.ftr_7d, 0)                            AS ftr_7d

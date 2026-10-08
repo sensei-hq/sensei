@@ -16,6 +16,7 @@
 //! for the current finding-set is skipped, so the (expensive) LLM call only
 //! fires when the strongest signals actually change.
 
+use crate::db::pg_store::RecommendationRow;
 use crate::tasks::executor::TaskContext;
 use sha2::{Digest, Sha256};
 
@@ -227,17 +228,17 @@ pub async fn consolidate_for_project(
 
     let based_on = serde_json::json!({ "patterns": pattern_ids });
     ctx.pg()
-        .create_recommendation_full(
+        .create_recommendation_full(&RecommendationRow {
             project_id,
-            &insight.headline,
-            &insight.reasoning,
-            None,
-            &insight.action_type,
-            &insight.urgency,
-            &based_on,
-            Some(&trace_id),
-            Some(&insight.prompt),
-        )
+            title: &insight.headline,
+            why: &insight.reasoning,
+            impact: None,
+            action_type: &insight.action_type,
+            urgency: &insight.urgency,
+            based_on: &based_on,
+            reasoning_trace_id: Some(&trace_id),
+            prompt: Some(&insight.prompt),
+        })
         .await?;
 
     tracing::info!(project = %project_id, "consolidate: wrote 1 reasoned recommendation");

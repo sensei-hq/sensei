@@ -485,6 +485,7 @@ mod config;
 mod dojo;
 mod extensions;
 pub(crate) mod folders;
+mod git_history;
 mod governance;
 mod graph;
 mod indexer;
@@ -496,11 +497,31 @@ pub(crate) use graph::CallDirection;
 #[cfg(test)]
 pub(crate) use indexer::LibColumns;
 pub(crate) use indexer::{Dropped, EdgeColumns, NodeColumns};
+mod gateway_catalog;
 mod library;
 mod logs;
 mod mcp;
 mod memory;
+mod metric_reads;
 mod metrics;
+mod neighbourhood;
+mod pruner;
+/// One row of `sensei.nodes`, named rather than positional (#161).
+pub use graph::NodeRow;
+pub use library::LibraryPageRow;
+pub use logs::LogRow;
+pub use neighbourhood::NeighbourNode;
+pub use pruner::PruneReport;
+// `create_memory` is `#[cfg(test)]` — it has no production caller.
+#[cfg(test)]
+pub use memory::MemoryRow;
+/// One row of `sensei.repository_metrics`, named rather than positional (#161).
+pub use metrics::MetricRow;
+pub use patterns::RecommendationRow;
+pub use playbook::PlaybookRunRow;
+pub use sessions::HookEventRow;
+pub use sessions::SessionMetricsRow;
+pub use sessions::SessionOutcomeRow;
 mod patterns;
 mod personas;
 /// Named outside this module because THREE callers now share it — the scheduled
@@ -524,6 +545,12 @@ pub(crate) mod graph_seed;
 #[cfg(test)]
 mod knowledge_tests;
 #[cfg(test)]
+mod metrics_tests;
+#[cfg(test)]
+mod neighbourhood_tests;
+#[cfg(test)]
+mod node_tests;
+#[cfg(test)]
 mod pack_resolution_tests;
 #[cfg(test)]
 // Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
@@ -532,12 +559,18 @@ mod pack_resolution_tests;
 #[allow(clippy::await_holding_lock)]
 mod playbook_tests;
 #[cfg(test)]
+mod pruner_tests;
+#[cfg(test)]
+mod resolution_tests;
+#[cfg(test)]
 // `resume_test_guard()` is a blocking `std::sync::Mutex` held across awaits on
 // purpose — see `crate::tasks::test_support::TestGate` for why an async mutex loses
 // wakeups here. These are current-thread test runtimes, one per test, so
 // blocking the thread costs nothing and cannot deadlock the runtime.
 #[allow(clippy::await_holding_lock)]
 mod run_tests;
+#[cfg(test)]
+mod structure_tests;
 #[cfg(test)]
 // Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
 // see `crate::tasks::test_support::TestGate` for why an async mutex loses
@@ -621,6 +654,35 @@ impl PgStore {
     /// Get a reference to the connection pool.
     pub fn pool(&self) -> &PgPool {
         &self.pool
+    }
+
+    /// Close the pool: stop handing out connections, then wait for the
+    /// checked-out ones to come back and be closed properly.
+    ///
+    /// Until #212 nothing ever called this. The graceful-shutdown future in
+    /// `api::server` awaited only SIGINT, while both real stop paths
+    /// (`sensei stop` and `brew services stop sensei`) send SIGTERM, so the
+    /// daemon was killed outright and its backends were left for Postgres to
+    /// reap on its own schedule. On 2026-09-30 that left 56 orphaned backends
+    /// alive with no owning process, the oldest close to three hours old,
+    /// against a `max_connections` of 100 — over half the server's budget held
+    /// by nothing.
+    ///
+    /// Idempotent: sqlx's `Pool::close` may be awaited on multiple handles
+    /// concurrently. A second call resolves immediately ONCE the pool has
+    /// drained; while a connection is still checked out it waits alongside the
+    /// first, which is the same wait, not a new one.
+    ///
+    /// IT CAN WAIT FOR EVER, AND THE CALLER MUST BOUND IT. `Pool::close`
+    /// returns a future that completes only when every checked-out connection
+    /// has been returned, and it carries no timeout of its own. A task stuck on
+    /// a long query would hold shutdown open indefinitely — and because the
+    /// SIGTERM handler is process-wide and permanent, a second SIGTERM would be
+    /// caught too, leaving the daemon killable only by SIGKILL. Call this inside
+    /// a `tokio::time::timeout` so a stuck connection degrades to the old
+    /// kill-outright behaviour instead of an unkillable process.
+    pub async fn close(&self) {
+        self.pool.close().await;
     }
 
     // ── Config ────────────────────────────────────────────────────────
@@ -716,11 +778,12 @@ impl PgStore {
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, String, Option<String>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, kind::text, name, path, abs_path, role::text
-             FROM sensei.folders
-             WHERE project_id = $1
-               AND ($2 = false OR kind::text IN ('git','standalone'))
-             ORDER BY path",
+                "SELECT f.id, f.kind::text, f.name, f.path, f.abs_path, f.role::text
+             FROM sensei.folders f
+             JOIN sensei.folder_projects fp ON fp.folder_id = f.id
+             WHERE fp.project_id = $1
+               AND ($2 = false OR f.kind::text IN ('git','standalone'))
+             ORDER BY f.path",
             )
             .bind(project_id)
             .bind(roots_only)
@@ -842,11 +905,11 @@ impl PgStore {
                JOIN sensei.projects keep
                  ON keep.name = empty.name AND keep.id <> empty.id
               WHERE empty.maturity = 'discovery'
-                AND NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = empty.id)
-                AND EXISTS     (SELECT 1 FROM sensei.folders f WHERE f.project_id = keep.id)
+                AND NOT EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = empty.id)
+                AND EXISTS     (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = keep.id)
                 AND (SELECT count(*) FROM sensei.projects k
                        WHERE k.name = empty.name
-                         AND EXISTS (SELECT 1 FROM sensei.folders f WHERE f.project_id = k.id)) = 1",
+                         AND EXISTS (SELECT 1 FROM sensei.folder_projects fp WHERE fp.project_id = k.id)) = 1",
         ).fetch_all(&self.pool).await.map_err(|e| e.to_string())
     }
 
@@ -858,24 +921,44 @@ impl PgStore {
     /// to. Tuple: `(standalone_id, standalone_project, git_id, git_project,
     /// git_root, git_abs_path)`. Shared by the heal (which re-absorbs each) and
     /// [`Self::detect_nested_standalone_roots`] (which reports read-only).
+    /// Every `standalone` folder sitting INSIDE a git repository — mis-scoped by
+    /// structure, whatever its project says.
+    ///
+    /// This used to also require `s.project_id IS DISTINCT FROM g.project_id`,
+    /// using a divergent project as the evidence that the standalone was
+    /// mis-scoped. That proxy is now obsolete and actively wrong: a folder
+    /// inherits its project from its repo anchor at write time (#211), so a
+    /// nested standalone's project MATCHES its enclosing repo by construction
+    /// and the old predicate matched nothing. The repair silently stopped
+    /// happening — caught by `audit_repairs_nested_standalone`, which asserts
+    /// the kind is repaired, not just the project.
+    ///
+    /// Structure is the better rule anyway. A standalone inside a repo is
+    /// mis-scoped because the repo owns that subtree, and that is true whether
+    /// or not the two happen to name the same project.
     #[allow(clippy::type_complexity)]
     async fn nested_standalone_candidates(
         &self,
     ) -> Result<
-        Vec<(uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, uuid::Uuid, uuid::Uuid, String)>,
+        Vec<(uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, Option<uuid::Uuid>, uuid::Uuid, String)>,
         String,
     > {
+        // BOTH project columns are OPTIONAL. `sole_project_of` is NULL whenever
+        // a repository serves no project or two, and 4,129 folders are in that
+        // state live. Decoding the enclosing repo's project as a bare `Uuid`
+        // made ONE such repo abort the whole heal pass with a decode error, so
+        // nothing anywhere was re-absorbed — the re-parenting does not need a
+        // project at all, and only the phantom merge below does.
         sqlx_core::query_as::query_as(
             "SELECT DISTINCT ON (s.id)
-                    s.id, s.project_id, g.id, g.project_id, g.root_id, g.abs_path
+                    s.id, sensei.sole_project_of(s.id), g.id,
+                    sensei.sole_project_of(g.id), g.root_id, g.abs_path
                FROM sensei.folders s
                JOIN sensei.folders g
                  ON g.kind = 'git'::sensei.folder_kind
-                AND g.project_id IS NOT NULL
                 AND s.abs_path <> g.abs_path
                 AND starts_with(s.abs_path, g.abs_path || '/')
               WHERE s.kind = 'standalone'::sensei.folder_kind
-                AND s.project_id IS DISTINCT FROM g.project_id
               ORDER BY s.id, length(g.abs_path) DESC",
         )
         .fetch_all(&self.pool)
@@ -1062,5 +1145,39 @@ impl PgStore {
         ids.sort_unstable();
         ids.dedup();
         Ok(ids)
+    }
+}
+
+#[cfg(test)]
+mod pool_lifecycle_tests {
+    use super::PgStore;
+
+    /// Shutdown runs this twice in the worst case (the signal handler and a
+    /// later drop path both reaching for it), so the second call is asserted,
+    /// not assumed.
+    #[tokio::test]
+    async fn closing_the_store_closes_the_pool_and_is_idempotent() {
+        let Ok(pg) = PgStore::connect_test().await else {
+            println!("no database — skipping");
+            return;
+        };
+
+        // A live pool first, so a closed one afterwards means `close` did it
+        // rather than the connection never having worked.
+        assert!(!pg.pool().is_closed(), "a freshly connected pool is open");
+        sqlx_core::query::query("SELECT 1")
+            .execute(pg.pool())
+            .await
+            .expect("a live pool answers a trivial query");
+
+        pg.close().await;
+
+        assert!(pg.pool().is_closed(), "close() must close the sqlx pool");
+        let after = sqlx_core::query::query("SELECT 1").execute(pg.pool()).await;
+        assert!(after.is_err(), "a closed pool must refuse to hand out connections");
+
+        // Idempotence: the second close must return, not panic or hang.
+        pg.close().await;
+        assert!(pg.pool().is_closed(), "a second close() leaves the pool closed");
     }
 }

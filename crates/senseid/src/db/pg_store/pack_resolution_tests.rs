@@ -67,7 +67,7 @@ async fn adopted_pack_rules_resolve_with_never_weaken() {
              VALUES ($1, $2, 1, 'recommended', 'test')")
             .bind(pack).bind(ns).execute(pool).await.unwrap();
 
-    // Resolve for a folder with NO folder_namespaces — only the general clause matches.
+    // Resolve for a folder with NO namespaces of its own — only the general clause matches.
     let raws = pg.resolve_local_pack_raws(Some(&uuid::Uuid::new_v4())).await.unwrap();
 
     let mine: Vec<_> = raws.iter().filter(|r| r.title == "S1" || r.title == "S2").collect();
@@ -227,19 +227,24 @@ async fn default_constitution_import_adopts_offline_but_not_stack_templates() {
         "stack-templates is seeded but NOT adopted — its rules must not resolve"
     );
 
-    // Cleanup: delete the four packs (cascade rules + adoptions) + the seeded
-    // namespace. Leave the shared 'general' scope.
-    sqlx_core::query::query(
-            "DELETE FROM sensei.rule_packs
-              WHERE owner_namespace_id IS NULL
-                AND slug IN ('default-principles','default-architecture','default-process','stack-templates')")
-            .execute(pool).await.unwrap();
-    sqlx_core::query::query(
-        "DELETE FROM sensei.namespaces WHERE scope_key='general' AND slug='global-dojo'",
-    )
-    .execute(pool)
-    .await
-    .unwrap();
+    // NO CLEANUP, deliberately — and this is a fix, not an omission (#217).
+    //
+    // This test used to delete the four packs and the `global-dojo` namespace on
+    // the way out. They are not rows it created: `dbd deploy` installs exactly
+    // the same ones from exactly the same datafiles, so the delete left the
+    // SHARED test database (#183) permanently short of its governance seed.
+    // Measured 2026-10-05 on a database that had run the suite: 10 rule_packs
+    // and 46 rules against a fresh deploy's 14 and 76, with the missing four
+    // matching this list one-for-one and adoptions at 0 instead of 3.
+    //
+    // That is worse than untidiness. Every later test that resolves a rule ran
+    // against a database no install ever has, and the state depended on whether
+    // this test had run yet — so a governance test could pass alone and fail in
+    // the suite, or the reverse.
+    //
+    // The import is idempotent (asserted above by calling it twice), and it
+    // writes precisely what the deploy writes, so leaving the rows in place
+    // restores the database to its deployed state rather than to an empty one.
 }
 
 #[tokio::test]

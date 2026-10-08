@@ -7,9 +7,22 @@ set search_path to sensei, extensions;
 -- on repository_id; a project is a GROUP of repositories (M:N via the folders
 -- junction) and a project metric is an aggregation view over its repositories.
 --
--- NOT owned by any project (no project_id) — a repository may belong to several
--- projects. folders.repository_id points HERE, and only the repo-root/checkout
--- folder carries it (I16); subfolders resolve via nearest ancestor (repo_anchor_for).
+-- NOT owned by any project (no project_id) — a CANONICAL repository may be
+-- checked out more than once and each checkout serve a different project.
+-- Measured 2026-09-30: 4 repositories do exactly that (`kavach` serves projects
+-- `kavach` and `vite-multi-adapter`; `bridge` serves `bridge` and `sparsh`), so a
+-- project_id here would force those to pick one and silently drop the other.
+--
+-- DECISION CHANGED 2026-09-30 (supersedes the folder-grain junction in D1/D2/D10):
+-- the project is owned by the repo-ANCHOR FOLDER — the checkout — and every folder
+-- beneath it DERIVES its project from that anchor. The junction is therefore
+-- per-checkout, not per-folder. Before this, project_id was settable independently
+-- on all 13,697 folders and one repository had already drifted: the client-q
+-- documentation checkout's root sat in project `client-q` while its 362 subfolders
+-- sat in `documentation`.
+--
+-- folders.repository_id points HERE, and only the repo-root/checkout folder carries
+-- it (I16); subfolders resolve via nearest ancestor (repo_anchor_for).
 create table if not exists repositories (
   id           uuid        primary key default gen_random_uuid()
 , repo_key     text        unique
@@ -28,9 +41,17 @@ comment on table repositories is
 host/org/repo; scheme/creds/port/.git stripped, host lowercased). One row per real
 repository regardless of how many times or where it is checked out. A UNIQUE repo_key
 that is NULL means a local-only repo with no remote — never federated, and multiple
-such rows coexist (nulls distinct). No owning project: folders.repository_id
-references this and a project aggregates repositories via the folders junction
-(D1/D2/D10).';
+such rows coexist (nulls distinct).
+
+NO OWNING PROJECT, and that is about CHECKOUTS rather than ownership: one canonical
+repository can be checked out twice and each checkout belong to a different project.
+Measured 2026-09-30, 4 repositories do — `kavach` serves `kavach` and
+`vite-multi-adapter`, `bridge` serves `bridge` and `sparsh` — so a project_id on
+this table would collapse them.
+
+The project is owned by the repo-ANCHOR FOLDER (the checkout); every folder beneath
+derives from it. One authoritative row per checkout, not per folder. That supersedes
+the folder-grain junction described in D1/D2/D10 — see the header for why.';
 
 comment on column repositories.repo_key
      is 'Normalized remote identity (host/org/repo, lowercased). Unique. NULL = local-only (no remote) — never federated; multiple NULLs coexist.';

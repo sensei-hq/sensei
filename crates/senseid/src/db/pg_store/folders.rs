@@ -125,7 +125,7 @@ impl PgStore {
         name: &str,
         abs_path: &str,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_folder(root_id, "git", name, name, abs_path, None, None, None).await
+        self.upsert_folder(root_id, "git", name, name, abs_path, None, None).await
     }
 
     /// Register a project root with an explicit folder kind — `git` for real
@@ -167,10 +167,8 @@ impl PgStore {
         path: &str,
         abs_path: &str,
         parent_id: Option<&uuid::Uuid>,
-        project_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
-        self.upsert_subfolder_kind(root_id, "folder", name, path, abs_path, parent_id, project_id)
-            .await
+        self.upsert_subfolder_kind(root_id, "folder", name, path, abs_path, parent_id).await
     }
 
     /// Upsert a structural subfolder with an explicit `kind` — `folder` (the
@@ -188,21 +186,44 @@ impl PgStore {
         path: &str,
         abs_path: &str,
         parent_id: Option<&uuid::Uuid>,
-        project_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
+        // THE REPOSITORY IS INHERITED FROM THE REPO ANCHOR, never taken on trust.
+        //
+        // `pipeline.rs` already states the intent — "a module belongs to its
+        // repo's project … the modules inheriting rather than each minting its
+        // own" — but took the value from the caller, so the intent could be
+        // violated. It was: the client-q `documentation` checkout ended with its
+        // root in project `client-q` and its 362 subfolders in `documentation`.
+        //
+        // The caller's value is the FALLBACK, used only when no anchor exists to
+        // inherit from (the repo root's own upsert, which is where the project is
+        // legitimately decided). Anything beneath an anchor takes the anchor's.
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.folders(root_id, kind, status, name, path, abs_path, parent_id, project_id)
-             VALUES($1, $2::sensei.folder_kind, 'indexed'::sensei.folder_status, $3, $4, $5, $6, $7)
+            "WITH inherited AS (
+               SELECT anchor.repository_id
+                 FROM sensei.repo_anchor_for($5) ra
+                 JOIN sensei.folders anchor ON anchor.id = ra.repo_folder_id
+                WHERE anchor.abs_path <> $5
+                LIMIT 1
+             )
+             INSERT INTO sensei.folders(root_id, kind, status, name, path, abs_path, parent_id, repository_id)
+             VALUES($1, $2::sensei.folder_kind, 'indexed'::sensei.folder_status, $3, $4, $5, $6,
+                    (SELECT repository_id FROM inherited))
              ON CONFLICT(abs_path) DO UPDATE SET
                 kind = CASE WHEN folders.kind IN ('folder'::sensei.folder_kind, 'module'::sensei.folder_kind)
                             THEN EXCLUDED.kind ELSE folders.kind END,
                 name = EXCLUDED.name,
                 parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
-                project_id = COALESCE(EXCLUDED.project_id, folders.project_id),
+                -- COALESCE, so an ANCHOR's own repository_id is never cleared:
+                -- its `inherited` CTE is empty by construction (it excludes the
+                -- folder itself), and overwriting with NULL would unlink the one
+                -- row that actually owns the link.
+                repository_id = COALESCE((SELECT repository_id FROM inherited),
+                                         folders.repository_id),
                 modified_at = now()
              RETURNING id"
         )
-            .bind(root_id).bind(kind).bind(name).bind(path).bind(abs_path).bind(parent_id).bind(project_id)
+            .bind(root_id).bind(kind).bind(name).bind(path).bind(abs_path).bind(parent_id)
             .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -214,7 +235,7 @@ impl PgStore {
     ) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, uuid::Uuid, String, String, String, Option<uuid::Uuid>, serde_json::Value, Vec<String>, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, root_id, kind::text, name, abs_path, project_id, props, tags, modified_at FROM sensei.folders WHERE abs_path = $1"
+                "SELECT id, root_id, kind::text, name, abs_path, sensei.sole_project_of(id), props, tags, modified_at FROM sensei.folders WHERE abs_path = $1"
             ).bind(abs_path).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.map(|(id, root_id, kind, name, abs, pid, props, tags, modified)| {
             serde_json::json!({
@@ -229,7 +250,7 @@ impl PgStore {
     pub async fn get_repo_by_name(&self, name: &str) -> Result<Option<serde_json::Value>, String> {
         let row: Option<(uuid::Uuid, String, String, Option<uuid::Uuid>, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, name, abs_path, project_id, props, modified_at FROM sensei.folders WHERE name = $1 AND kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind, 'standalone'::sensei.folder_kind) LIMIT 1"
+                "SELECT id, name, abs_path, sensei.sole_project_of(id), props, modified_at FROM sensei.folders WHERE name = $1 AND kind IN ('git'::sensei.folder_kind, 'subtree'::sensei.folder_kind, 'standalone'::sensei.folder_kind) LIMIT 1"
             ).bind(name).fetch_optional(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.map(|(id, name, abs, pid, props, modified)| {
             serde_json::json!({ "id": id, "name": name, "abs_path": abs, "project_id": pid, "props": props, "modified_at": modified.to_rfc3339() })
@@ -294,9 +315,95 @@ impl PgStore {
         label: Option<&str>,
     ) -> Result<(), String> {
         let props = serde_json::json!({"role": role, "label": label});
+        // The folder row carries the ROLE and LABEL; it no longer carries the
+        // project. `folders.project_id` is gone (#211) — membership lives once,
+        // in the junction, which is the next statement.
         sqlx_core::query::query(
-            "UPDATE sensei.folders SET project_id = $2, props = props || $3, modified_at = now() WHERE id = $1"
-        ).bind(folder_id).bind(project_id).bind(props).execute(&self.pool).await.map_err(|e| e.to_string())?;
+            "UPDATE sensei.folders SET props = props || $2, modified_at = now() WHERE id = $1",
+        )
+        .bind(folder_id)
+        .bind(props)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        self.link_project_repository_for_folder(folder_id, project_id).await
+    }
+
+    /// Record that `repository_id` belongs to `project_id` — THE primitive, and
+    /// the only statement that writes `sensei.repositories_in_projects`.
+    ///
+    /// Both membership paths go through here: the scan path, which has the two
+    /// ids in hand the moment it creates them, and the user-edit path via
+    /// [`Self::set_folder_project`]. Idempotent, so a rescan costs nothing.
+    pub async fn link_project_repository(
+        &self,
+        project_id: &uuid::Uuid,
+        repository_id: &uuid::Uuid,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.repositories_in_projects (project_id, repository_id) \
+             VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(project_id)
+        .bind(repository_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Record that the repository owning `folder_id` belongs to `project_id`.
+    ///
+    /// Reads `folders.repository_id` directly. It used to walk ancestors through
+    /// `repo_anchor_for` because the column was set ONLY on the repo-root folder
+    /// (I16) — that is no longer true: every folder carries its repository,
+    /// inherited from its anchor at write time, which is what made
+    /// `folder_projects` indexable. The walk is now redundant work for the same
+    /// answer.
+    ///
+    /// A folder under no tracked repository records NOTHING rather than guessing
+    /// an anchor — the miss stays a miss.
+    pub async fn link_project_repository_for_folder(
+        &self,
+        folder_id: &uuid::Uuid,
+        project_id: &uuid::Uuid,
+    ) -> Result<(), String> {
+        let res = sqlx_core::query::query(
+            "INSERT INTO sensei.repositories_in_projects (project_id, repository_id) \
+             SELECT $2, f.repository_id FROM sensei.folders f \
+              WHERE f.id = $1 AND f.repository_id IS NOT NULL \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(folder_id)
+        .bind(project_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+        // RECORDING NOTHING IS NOT THE SAME AS SUCCEEDING. Zero rows means
+        // either the membership already existed (fine, this is idempotent) or
+        // the folder carries no repository — in which case the caller asked to
+        // put a folder in a project and nothing happened. That second case used
+        // to be silent, and silence is what let fixtures "assign" a project and
+        // then find no membership at all.
+        if res.rows_affected() == 0 {
+            let (has_repo,): (bool,) = sqlx_core::query_as::query_as(
+                "SELECT repository_id IS NOT NULL FROM sensei.folders WHERE id = $1",
+            )
+            .bind(folder_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?
+            .unwrap_or((false,));
+            if !has_repo {
+                tracing::warn!(
+                    folder = %folder_id, project = %project_id,
+                    "set_folder_project: folder carries no repository, so no membership \
+                     was recorded — membership is the REPOSITORY's since #211"
+                );
+            }
+        }
         Ok(())
     }
 
@@ -348,10 +455,11 @@ impl PgStore {
         project_id: &uuid::Uuid,
     ) -> Result<Vec<String>, String> {
         let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT abs_path
-             FROM sensei.folders
-             WHERE project_id = $1 AND status = 'indexed'::sensei.folder_status
-             ORDER BY abs_path",
+            "SELECT f.abs_path
+             FROM sensei.folders f
+             JOIN sensei.folder_projects fp ON fp.folder_id = f.id
+             WHERE fp.project_id = $1 AND f.status = 'indexed'::sensei.folder_status
+             ORDER BY f.abs_path",
         )
         .bind(project_id)
         .fetch_all(&self.pool)
@@ -373,10 +481,11 @@ impl PgStore {
         project_id: &uuid::Uuid,
     ) -> Result<Option<String>, String> {
         let row: Option<(String,)> = sqlx_core::query_as::query_as(
-            "SELECT abs_path
-             FROM sensei.folders
-             WHERE project_id = $1 AND kind::text IN ('git','standalone')
-             ORDER BY length(abs_path), abs_path
+            "SELECT f.abs_path
+             FROM sensei.folders f
+             JOIN sensei.folder_projects fp ON fp.folder_id = f.id
+             WHERE fp.project_id = $1 AND f.kind::text IN ('git','standalone')
+             ORDER BY length(f.abs_path), f.abs_path
              LIMIT 1",
         )
         .bind(project_id)
@@ -485,7 +594,6 @@ impl PgStore {
         path: &str,
         abs_path: &str,
         parent_id: Option<&uuid::Uuid>,
-        project_id: Option<&uuid::Uuid>,
         workspace_root_id: Option<&uuid::Uuid>,
     ) -> Result<uuid::Uuid, String> {
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
@@ -495,13 +603,32 @@ impl PgStore {
             // member. Leaving it stale was why every folder here kept the
             // `workspace_member` an earlier run wrote, and the derivation
             // silently had no effect.
-            "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, parent_id, project_id, workspace_root_id)
-             VALUES($1, $2::sensei.folder_kind, $3, $4, $5, $6, $7, $8)
+            // THE CALLER CANNOT NAME A PROJECT. There is no parameter, because
+            // since #211 there is no column: membership belongs to the
+            // REPOSITORY (`folders.repository_id` → `repositories_in_projects`),
+            // and the only writer is `link_project_repository`. Taking a
+            // project from the caller is what let the client-q checkout put 362
+            // subfolders in a project its repository does not belong to.
+            //
+            // What IS inherited here is the repository, from the repo anchor —
+            // which is the same fact, resolved one level up where it is true.
+            "WITH inherited AS (
+               SELECT anchor.repository_id
+                 FROM sensei.repo_anchor_for($5) ra
+                 JOIN sensei.folders anchor ON anchor.id = ra.repo_folder_id
+                WHERE anchor.abs_path <> $5
+                LIMIT 1
+             )
+             INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, parent_id, workspace_root_id, repository_id)
+             VALUES($1, $2::sensei.folder_kind, $3, $4, $5, $6, $7,
+                    (SELECT repository_id FROM inherited))
              ON CONFLICT(abs_path) DO UPDATE SET
                kind = EXCLUDED.kind,
                name = EXCLUDED.name,
                parent_id = COALESCE(EXCLUDED.parent_id, folders.parent_id),
-               project_id = COALESCE(EXCLUDED.project_id, folders.project_id),
+               -- See `upsert_subfolder_kind`: COALESCE so an anchor keeps its own.
+               repository_id = COALESCE((SELECT repository_id FROM inherited),
+                                        folders.repository_id),
                -- ASSIGNED, not COALESCEd. Membership is derived, so a module
                -- dropped from a `workspaces` array must stop reading as a
                -- member; COALESCE would pin the first answer forever.
@@ -515,7 +642,6 @@ impl PgStore {
         .bind(path)
         .bind(abs_path)
         .bind(parent_id)
-        .bind(project_id)
         .bind(workspace_root_id)
         .fetch_one(&self.pool)
         .await
@@ -549,7 +675,7 @@ impl PgStore {
         root_id: &uuid::Uuid,
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, String, Option<uuid::Uuid>, serde_json::Value, String)> = sqlx_core::query_as::query_as(
-            "SELECT id, kind::text, name, path, abs_path, project_id, remote_urls, status::text FROM sensei.folders WHERE root_id = $1 ORDER BY path"
+            "SELECT id, kind::text, name, path, abs_path, sensei.sole_project_of(id), remote_urls, status::text FROM sensei.folders WHERE root_id = $1 ORDER BY path"
         ).bind(root_id).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, kind, name, path, abs, pid, remotes, status)| {
             serde_json::json!({ "id": id, "kind": kind, "name": name, "path": path, "abs_path": abs, "project_id": pid, "remote_urls": remotes, "status": status })
@@ -887,7 +1013,8 @@ impl PgStore {
         let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT f.repository_id \
                FROM sensei.folders f \
-              WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
+               JOIN sensei.folder_projects fp ON fp.folder_id = f.id \
+              WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL \
               GROUP BY f.repository_id \
               ORDER BY min(length(f.abs_path))",
         )
@@ -910,7 +1037,8 @@ impl PgStore {
         let row: Option<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
             "SELECT f.repository_id \
                FROM sensei.folders f \
-              WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
+               JOIN sensei.folder_projects fp ON fp.folder_id = f.id \
+              WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL \
               ORDER BY length(f.abs_path) ASC \
               LIMIT 1",
         )
@@ -929,6 +1057,150 @@ impl PgStore {
     /// of repositories). Ordered by path length so the primary (shallowest) repository
     /// is first and iteration is deterministic. Honest-empty when the project has no
     /// repository-linked folder — those repositories are then skipped, never faked (I-E).
+    /// The three repo-wide sets the resolver's `World` needs, for the project
+    /// owning `folder_id`: member NAMES, member IDENTITIES, and declared types.
+    ///
+    /// Read from a COMPLETED pass, which is the contract. `World` is documented
+    /// as a barrier artifact; a file resolves against what the PREVIOUS pass
+    /// learned, which is what makes resolution independent of scan order (R6).
+    /// Reading the database gives exactly that and nothing newer.
+    ///
+    /// `declared_members` comes from the `owns` RELATION, not from a node-kind
+    /// filter. `members_declared_by`'s own doc says a `SymbolKind` filter
+    /// "cannot be stood in for without getting a different answer in each
+    /// language", and the gap is not subtle — measured on sensei 2026-09-30, the
+    /// kind filter answers 8,911 and the relation answers 1,806.
+    ///
+    /// `returns` is normalised through [`crate::indexer::resolve::stated_return_type`],
+    /// the SAME function the fresh-parse builder uses, so a type read back out
+    /// of the database cannot drift from one read off source.
+    ///
+    /// SCOPED BY `repository_id`, NOT BY WALKING THE PATH. All three used to
+    /// resolve the repo through `repo_anchor_for` and then collect its folders
+    /// with `f.abs_path LIKE a.repo_abs_path || '/%'` — a function scan feeding
+    /// a prefix match over all 13,724 folders, which is the exact pair that made
+    /// `folder_projects` unusable before #210. Every folder now carries its own
+    /// `repository_id`, so the same set is one indexed lookup.
+    ///
+    /// The identities query also gets `edges_owns_folder_idx`, partial on the
+    /// `owns` relation and covering `target_id`. Without it the plan seq-scans
+    /// all 3.18M edges for the 408,335 `owns` rows and filters by folder
+    /// AFTERWARDS. Measured 2026-10-02 forced serial: 397,888 buffers before,
+    /// 41,535 after — 9.6x, verified to return the identical 1,812 fqns.
+    ///
+    /// This is not a micro-optimisation. Fifteen of these were observed running
+    /// CONCURRENTLY for over 40 minutes each, blocking DDL — one World rebuild
+    /// per folder being scanned, each scanning a 3.9 GB table.
+    pub async fn world_sets_for_folder(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<
+        (
+            std::collections::BTreeSet<String>,
+            std::collections::BTreeSet<String>,
+            std::collections::BTreeMap<String, String>,
+        ),
+        String,
+    > {
+        // Member NAMES — the weaker question, and a kind filter IS the rule here
+        // (`member_names_of` filters on SymbolKind).
+        let names: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT n.name FROM sensei.nodes n \
+              WHERE n.folder_id IN (SELECT f2.id FROM sensei.folders f2 \
+                     WHERE f2.repository_id = (SELECT f1.repository_id \
+                                                 FROM sensei.folders f1 WHERE f1.id = $1)) \
+                AND n.kind IN ('method', 'field', 'property') \
+                AND n.name <> ''",
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("world member names: {e}"))?;
+
+        // Member IDENTITIES — the `owns` relation, which is the vocabulary.
+        let declared: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT tn.fqn FROM sensei.edges e \
+               JOIN sensei.nodes tn ON tn.id = e.target_id \
+              WHERE e.folder_id IN (SELECT f2.id FROM sensei.folders f2 \
+                     WHERE f2.repository_id = (SELECT f1.repository_id \
+                                                 FROM sensei.folders f1 WHERE f1.id = $1)) \
+                AND e.props->>'relation' = 'owns' \
+                AND tn.fqn IS NOT NULL",
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("world declared members: {e}"))?;
+
+        // Declared types, normalised by the shared rule.
+        let stated: Vec<(String, String, String)> = sqlx_core::query_as::query_as(
+            "SELECT n.fqn, n.name, n.props->>'declared_type' FROM sensei.nodes n \
+              WHERE n.folder_id IN (SELECT f2.id FROM sensei.folders f2 \
+                     WHERE f2.repository_id = (SELECT f1.repository_id \
+                                                 FROM sensei.folders f1 WHERE f1.id = $1)) \
+                AND n.fqn IS NOT NULL \
+                AND coalesce(n.props->>'declared_type', '') <> ''",
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("world returns: {e}"))?;
+
+        let returns = stated
+            .into_iter()
+            .filter_map(|(fqn, name, ty)| {
+                crate::indexer::resolve::stated_return_type(&fqn, &name, &ty).map(|t| (fqn, t))
+            })
+            .collect();
+
+        Ok((
+            names.into_iter().map(|(n,)| n).collect(),
+            declared.into_iter().map(|(f,)| f).collect(),
+            returns,
+        ))
+    }
+
+    /// Every package the project owning `folder_id` declares — the resolver's
+    /// `World::first_party`.
+    ///
+    /// FROM THE MANIFESTS, WHICH IS THE CONTRACT. `World::first_party` is
+    /// documented as "Every package this scan owns the source of, from the
+    /// manifests — NOT from what has been read so far", and `ProcessManifest`
+    /// already writes exactly that: one `folders` row per manifest with
+    /// `kind = 'module'`, whose `name` IS the package name. Reading packages back
+    /// out of resolved fqns instead would be circular — a package no file has
+    /// resolved into yet could never enter its own first-party set.
+    ///
+    /// `kind = 'module'` IS THE WHOLE FILTER, and it is load-bearing. Ordinary
+    /// `folder` rows are directories; admitting them would make every directory a
+    /// "package", so an import naming any directory would resolve local.
+    ///
+    /// Scoped to the PROJECT, not the folder: a workspace member must count its
+    /// siblings as first-party or no edge can cross a package boundary. Measured
+    /// on sensei 2026-09-30 before this existed — 16 packages, and ZERO placed
+    /// edges whose source and target packages differ.
+    pub async fn first_party_packages(
+        &self,
+        folder_id: &uuid::Uuid,
+    ) -> Result<std::collections::BTreeSet<String>, String> {
+        let rows: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "WITH anchor AS (SELECT ra.repo_abs_path FROM sensei.folders f \
+                 CROSS JOIN LATERAL sensei.repo_anchor_for(f.abs_path) ra \
+                WHERE f.id = $1) \
+             SELECT DISTINCT m.name \
+               FROM sensei.folders m \
+              WHERE m.kind = 'module'::sensei.folder_kind \
+                AND EXISTS (SELECT 1 FROM anchor a \
+                             WHERE m.abs_path = a.repo_abs_path \
+                                OR m.abs_path LIKE a.repo_abs_path || '/%')",
+        )
+        .bind(folder_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(|(n,)| n).collect())
+    }
+
     pub async fn repository_roots_for_project(
         &self,
         project_id: &uuid::Uuid,
@@ -937,7 +1209,8 @@ impl PgStore {
             "SELECT roots.repository_id, roots.abs_path FROM ( \
                SELECT DISTINCT ON (f.repository_id) f.repository_id, f.abs_path \
                  FROM sensei.folders f \
-                WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
+                 JOIN sensei.folder_projects fp ON fp.folder_id = f.id \
+                WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL \
                 ORDER BY f.repository_id, length(f.abs_path) ASC \
              ) roots \
              ORDER BY length(roots.abs_path) ASC",
@@ -1022,9 +1295,10 @@ impl PgStore {
     /// index state. Returns 0 when all folders are `indexed` or `failed`.
     pub async fn count_unindexed_folders(&self, project_id: uuid::Uuid) -> Result<i64, String> {
         let row: (i64,) = sqlx_core::query_as::query_as(
-            "SELECT COUNT(*) FROM sensei.folders
-              WHERE project_id = $1
-                AND status NOT IN ('indexed'::sensei.folder_status, 'failed'::sensei.folder_status)"
+            "SELECT COUNT(*) FROM sensei.folders f
+               JOIN sensei.folder_projects fp ON fp.folder_id = f.id
+              WHERE fp.project_id = $1
+                AND f.status NOT IN ('indexed'::sensei.folder_status, 'failed'::sensei.folder_status)"
         ).bind(project_id).fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(row.0)
     }
@@ -1066,11 +1340,27 @@ impl PgStore {
         Ok(row.0)
     }
 
+    /// Every watch root, paused ones included — what the settings screen lists,
+    /// so a paused root can still be resumed or removed.
     pub async fn list_watch_roots(&self) -> Result<Vec<serde_json::Value>, String> {
+        self.watch_roots(false).await
+    }
+
+    /// The roots to SYNC: every root that is not `paused` (#247). Boot, the
+    /// reconcile tick, the version rescan and the index audit enumerate through
+    /// this, so a root the user stopped syncing stays stopped across restarts
+    /// while its data stays readable.
+    pub async fn list_watch_roots_to_sync(&self) -> Result<Vec<serde_json::Value>, String> {
+        self.watch_roots(true).await
+    }
+
+    async fn watch_roots(&self, only_synced: bool) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, String, String, serde_json::Value, chrono::DateTime<chrono::Utc>)> =
             sqlx_core::query_as::query_as(
-                "SELECT id, path, name, status::text, excluded, modified_at FROM sensei.folders_to_watch ORDER BY path"
-            ).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+                "SELECT id, path, name, status::text, excluded, modified_at FROM sensei.folders_to_watch
+                  WHERE NOT ($1 AND status = 'paused'::sensei.watch_status)
+                  ORDER BY path"
+            ).bind(only_synced).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, path, name, status, excluded, modified)| {
             serde_json::json!({ "id": id, "path": path, "name": name, "status": status, "excluded": excluded, "modified_at": modified.to_rfc3339() })
         }).collect())
@@ -1086,8 +1376,10 @@ impl PgStore {
         path: &str,
     ) -> Result<Option<(uuid::Uuid, String)>, String> {
         sqlx_core::query_as::query_as(
+            // `starts_with`, never `LIKE path || '/%'`: a `_` in a root's path
+            // is a LIKE wildcard, so `/x/my_dir` claimed `/x/myXdir/…` (#247).
             "SELECT id, path FROM sensei.folders_to_watch
-              WHERE $1 = path OR $1 LIKE path || '/%'
+              WHERE $1 = path OR starts_with($1, path || '/')
               ORDER BY length(path) DESC LIMIT 1",
         )
         .bind(path)
@@ -1526,6 +1818,41 @@ impl PgStore {
         Ok(())
     }
 
+    /// Folders whose `root_id` names a watch root their `abs_path` is not under.
+    ///
+    /// `folders.root_id` caches a derivable fact, and an unchecked cache of a
+    /// derivable fact is how `folders.project_id` came to let one repository's
+    /// folders name two different projects (#210). This is the check that the
+    /// cache still agrees with the path.
+    ///
+    /// ASKS THE CHEAP DIRECTION. The tempting query — "find the longest watch
+    /// root prefixing this path, compare" — searches every root for every
+    /// folder. That is fine against the live DB's 2 roots and pathological
+    /// against a test database that has accumulated 37,000 of them. Checking a
+    /// folder against ITS OWN root instead is one indexed join and O(folders),
+    /// and it catches the drift that matters: a folder stamped with a root it
+    /// does not live under.
+    ///
+    /// What it deliberately does NOT catch is a folder correctly under root A
+    /// while a MORE specific root B also contains it. Nested watch roots are
+    /// prevented upstream — `resolve_watch_root` always picks the longest
+    /// existing root rather than creating one inside another — so that shape
+    /// should not arise, and looking for it is what costs the full search.
+    ///
+    /// Returns `(abs_path, root_path)` so a report can show the disagreement.
+    pub async fn misrooted_folders(&self) -> Result<Vec<(String, String)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT f.abs_path, w.path
+               FROM sensei.folders f
+               JOIN sensei.folders_to_watch w ON w.id = f.root_id
+              WHERE f.abs_path <> w.path
+                AND NOT starts_with(f.abs_path, w.path || '/')",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
     /// Every folder at or under `repo_abs`, as `abs_path -> id`.
     ///
     /// What the manifest pass needs to turn a `link:`/`workspace:` sibling
@@ -1672,10 +1999,15 @@ impl PgStore {
         // current folder. A live abs_path and an alias of equal length tie-break to
         // the live folder (abs_path row sorts first).
         let row: Option<(uuid::Uuid, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
-            "SELECT id, project_id FROM (
-                 SELECT id, project_id, abs_path AS p, 1 AS live FROM sensei.folders
+            // `project_id` is the SOLE member of the folder's resolved set, or
+            // NULL when its repository serves more than one project — the same
+            // rule every migrated view applies. A session cannot be attributed
+            // to one of two equally-true projects, so it is attributed to
+            // neither and the repository carries it instead.
+            "SELECT id, sensei.sole_project_of(id) FROM (
+                 SELECT id, abs_path AS p, 1 AS live FROM sensei.folders
                  UNION ALL
-                 SELECT f.id, f.project_id, a.alias_abs_path AS p, 0 AS live
+                 SELECT f.id, a.alias_abs_path AS p, 0 AS live
                    FROM sensei.folder_path_aliases a
                    JOIN sensei.folders f ON f.id = a.folder_id
              ) c
@@ -1702,10 +2034,14 @@ impl PgStore {
         path: &str,
     ) -> Result<Option<(String, Option<uuid::Uuid>)>, String> {
         let row: Option<(String, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
-            "SELECT abs_path, project_id FROM sensei.folders
-              WHERE kind IN ('git','standalone','subtree')
-                AND ($1 = abs_path OR $1 LIKE abs_path || '/%')
-              ORDER BY length(abs_path) DESC
+            // `sole_project_of` rather than a join: a repository shared by two
+            // projects has no single answer, and this returns ONE row. NULL is
+            // the honest value there, and the same one an unattributed folder
+            // gives — both mean "no project resolves for this path".
+            "SELECT f.abs_path, sensei.sole_project_of(f.id) FROM sensei.folders f
+              WHERE f.kind IN ('git','standalone','subtree')
+                AND ($1 = f.abs_path OR $1 LIKE f.abs_path || '/%')
+              ORDER BY length(f.abs_path) DESC
               LIMIT 1",
         )
         .bind(path)
@@ -1726,7 +2062,7 @@ impl PgStore {
         abs_path: &str,
     ) -> Result<Option<(uuid::Uuid, Option<uuid::Uuid>)>, String> {
         let row: Option<(uuid::Uuid, Option<uuid::Uuid>)> = sqlx_core::query_as::query_as(
-            "SELECT f.id, f.project_id FROM sensei.folders f
+            "SELECT f.id, sensei.sole_project_of(f.id) FROM sensei.folders f
              WHERE f.abs_path = $1
                 OR f.id = (SELECT folder_id FROM sensei.folder_path_aliases WHERE alias_abs_path = $1)
              ORDER BY (f.abs_path = $1) DESC
@@ -1807,17 +2143,42 @@ impl PgStore {
             .and_then(|(folder_id, project_id)| project_id.map(|p| (folder_id, p))))
     }
 
-    /// Link a folder (repo) to a namespace it belongs to. Idempotent.
-    pub async fn link_folder_namespace(
+    /// A folder's repository, or `None` when it carries none.
+    ///
+    /// `None` is a real answer, not a miss to paper over: `folders.repository_id`
+    /// is nullable, and a caller that needs a repository must decide what to do
+    /// without one rather than be handed a substitute.
+    pub async fn repository_id_for_folder(
         &self,
         folder_id: &uuid::Uuid,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(Option<uuid::Uuid>,)> =
+            sqlx_core::query_as::query_as("SELECT repository_id FROM sensei.folders WHERE id = $1")
+                .bind(folder_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(row.and_then(|(rid,)| rid))
+    }
+
+    /// Link a REPOSITORY to a namespace it belongs to. Idempotent.
+    ///
+    /// Keyed on the repository, not on a folder: a namespace states a fact
+    /// about the checkout ("this repo uses svelte"), and keying it on a
+    /// directory let two clones of one repository disagree about which rules
+    /// governed them. Never pass a `project`-scope namespace — project
+    /// membership is `repositories_in_projects`, and a second writer for it is
+    /// what this grain exists to prevent.
+    pub async fn link_repository_namespace(
+        &self,
+        repository_id: &uuid::Uuid,
         namespace_id: &uuid::Uuid,
     ) -> Result<(), String> {
         sqlx_core::query::query(
-            "INSERT INTO sensei.folder_namespaces(folder_id, namespace_id)
+            "INSERT INTO sensei.repository_namespaces(repository_id, namespace_id)
              VALUES($1, $2) ON CONFLICT DO NOTHING",
         )
-        .bind(folder_id)
+        .bind(repository_id)
         .bind(namespace_id)
         .execute(&self.pool)
         .await
@@ -1847,12 +2208,13 @@ impl PgStore {
         &self,
         folder_id: &uuid::Uuid,
     ) -> Result<Option<uuid::Uuid>, String> {
-        let row: Option<(Option<uuid::Uuid>,)> =
-            sqlx_core::query_as::query_as("SELECT project_id FROM sensei.folders WHERE id = $1")
-                .bind(folder_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| e.to_string())?;
+        let row: Option<(Option<uuid::Uuid>,)> = sqlx_core::query_as::query_as(
+            "SELECT sensei.sole_project_of(id) FROM sensei.folders WHERE id = $1",
+        )
+        .bind(folder_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(row.and_then(|(pid,)| pid))
     }
 

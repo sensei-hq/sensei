@@ -3,6 +3,7 @@
     import { senseiApi } from "$lib/api.js";
     import { appState } from "$lib/appstate.svelte.js";
     import { RootExclusions } from "./root-exclusions.svelte.js";
+    import { RootRemoval } from "./root-removal.svelte.js";
 
     const roots = $derived(wizardState.roots.roots);
     let adding = $state(false);
@@ -34,10 +35,30 @@
         adding = false;
     }
 
-    async function removeRoot(id: string) {
-        const api = senseiApi(appState.port);
-        await api.removeWatchRoot(id);
-        wizardState.roots.roots = roots.filter((r) => r.id !== id);
+    // ── Removal (#247) ────────────────────────────────────────────────────────
+    // The × no longer deletes. It opens a panel that lists what will stop
+    // syncing and asks keep-or-remove; the row only changes once the daemon says
+    // the removal happened, never before.
+    let removingFor = $state<string | null>(null);
+    let removal = $state<RootRemoval | null>(null);
+
+    async function startRemoval(id: string) {
+        openFor = null;
+        removingFor = id;
+        removal = new RootRemoval(id, senseiApi(appState.port));
+        await removal.open();
+    }
+
+    async function decide(id: string, decision: "keep" | "remove") {
+        if (!removal) return;
+        await removal.decide(decision);
+        if (removal.outcome === "removed") {
+            wizardState.roots.roots = roots.filter((r) => r.id !== id);
+        } else if (removal.outcome === "kept") {
+            wizardState.roots.roots = roots.map((r) =>
+                r.id === id ? { ...r, status: "paused" as const } : r,
+            );
+        }
     }
 
     // ── Exclusions ────────────────────────────────────────────────────────────
@@ -115,7 +136,13 @@
                         </div>
                     {/if}
                 </div>
-                {#if r.status === "watching"}
+                {#if r.status === "paused"}
+                    <span
+                        data-testid="root-paused"
+                        class="text-xs text-ink-soft border border-paper-edge rounded-md px-2 py-0.5 whitespace-nowrap"
+                        >paused · not syncing</span
+                    >
+                {:else if r.status === "watching"}
                     <span
                         class="chip-watching text-xs text-success border border-success bg-success-soft rounded-md px-2 py-0.5 whitespace-nowrap"
                         >watching</span
@@ -142,9 +169,73 @@
                 <button
                     data-testid="root-remove"
                     class="text-base text-ink-soft bg-none border-none cursor-pointer px-1 leading-none hover:text-accent"
-                    onclick={() => removeRoot(r.id)}>×</button
+                    aria-label="Remove {r.path}"
+                    onclick={() => startRemoval(r.id)}>×</button
                 >
             </div>
+
+            {#if removingFor === r.id && removal}
+                <div
+                    data-component="root-removal"
+                    data-root={r.id}
+                    class="ml-8 -mt-1 px-5 py-4 bg-paper-soft rounded-lg flex flex-col gap-3"
+                >
+                    {#if removal.failure}
+                        <p class="text-xs text-warning m-0" data-testid="root-removal-error">
+                            {removal.failure}
+                        </p>
+                    {/if}
+                    {#if removal.message}
+                        <p class="text-xs text-ink m-0" data-testid="root-removal-message">
+                            {removal.message}
+                        </p>
+                    {/if}
+
+                    {#if removal.loaded && removal.outcome === null}
+                        <p class="text-xs text-ink-soft m-0" data-testid="root-removal-question">
+                            {removal.question}
+                        </p>
+                        {#if removal.repositories.length > 0}
+                            <ul class="flex flex-col gap-1 list-none p-0 m-0" data-testid="root-removal-repositories">
+                                {#each removal.repositories as repo (repo.path)}
+                                    <li class="flex items-baseline gap-3">
+                                        <span class="text-xs font-mono text-ink truncate flex-1 min-w-0">{repo.path}</span>
+                                        <button
+                                            class="text-xs text-ink-soft bg-none border-none cursor-pointer hover:text-accent"
+                                            disabled={removal.busy}
+                                            onclick={() => removal?.pruneRepository(repo.path)}
+                                            >remove this one</button
+                                        >
+                                    </li>
+                                {/each}
+                            </ul>
+                        {/if}
+                        <div class="flex flex-wrap gap-2">
+                            <button
+                                class="btn-solid text-xs"
+                                data-testid="root-removal-keep"
+                                disabled={!removal.canDecide}
+                                onclick={() => decide(r.id, "keep")}
+                                >Stop syncing, keep the data</button
+                            >
+                            <button
+                                class="text-xs px-3 py-1 rounded-md border border-danger text-danger bg-transparent cursor-pointer"
+                                data-testid="root-removal-remove"
+                                disabled={!removal.canDecide}
+                                onclick={() => decide(r.id, "remove")}
+                                >Remove everything indexed here</button
+                            >
+                            <button
+                                class="text-xs px-3 py-1 rounded-md border border-paper-edge bg-transparent cursor-pointer"
+                                onclick={() => {
+                                    removingFor = null;
+                                    removal = null;
+                                }}>Cancel</button
+                            >
+                        </div>
+                    {/if}
+                </div>
+            {/if}
 
             {#if openFor === r.id}
                 {@const ex = exclusionsFor(r)}

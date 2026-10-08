@@ -428,15 +428,19 @@ export interface InferredRole {
 
 // ─── Graph Queries ───────────────────────────────────────────────────────────
 
-export interface FunctionDetail {
+/**
+ * One function or method, as `/api/graph/functions` returns it.
+ *
+ * Was `FunctionDetail` with `file`/`line`/`complexity`, none of which the daemon
+ * sends — the same mistyping `CallNeighbour` below records. It had no caller, so
+ * nothing ever read the `undefined`s; the Neighbourhood picker is the first.
+ */
+export interface FunctionMatch {
   id: string;
   name: string;
-  file: string;
-  line: number;
-  signature?: string;
-  docstring?: string;
-  complexity: number;
-  tags?: string;
+  file_path: string;
+  signature: string | null;
+  line_start: number | null;
 }
 
 /**
@@ -1786,4 +1790,300 @@ export interface ProvisionModel {
   id: string;
   name: string;
   phase: ProvisionPhase;
+}
+
+// ── Diagrams · Structure (#205) ─────────────────────────────────────────────
+
+/** The three rollups the Structure endpoint serves.
+ *
+ *  `module` is the module's TOP segment, not the whole module path — measured
+ *  on sensei, grouping on the whole path collapses 1,751 files to 1,446 groups
+ *  (1.21x) because that segment is per-file across most of the tree, while its
+ *  first segment gives 150 (11.7x). The daemon owns that decision; this type
+ *  only names the levels it offers. */
+export type StructureLevel = 'file' | 'module' | 'package';
+
+export interface StructureNode {
+  id: string;
+  label: string;
+  package: string;
+  module: string;
+  language: string | null;
+  /** package → top module → leaf, truncated at whatever level this node IS.
+   *  From the fqn, never the filesystem — see the daemon's `structure_nodes`. */
+  path: string[];
+  files: number;
+  symbols: number;
+}
+
+export interface StructureEdge {
+  source: string;
+  target: string;
+  kind: string;
+  /** `in_module` | `cross_module` | `cross_package`, computed in the view. */
+  span: string;
+  occurrences: number;
+}
+
+/** What the diagram is NOT showing. `unplaced` reads from `graph_placement`,
+ *  so this and the resolution surfaces cannot disagree. Shown always, because a
+ *  sparse diagram with no count beside it reads as a simple codebase rather
+ *  than an unresolved one. */
+export interface StructureCoverage {
+  drawn: number;
+  unplaced: number;
+}
+
+export interface StructurePayload {
+  level: StructureLevel;
+  kinds: string[];
+  nodes: StructureNode[];
+  edges: StructureEdge[];
+  coverage: StructureCoverage;
+}
+
+// ── Diagrams · World (#219) ─────────────────────────────────────────────────
+
+/** Which ring the World diagram leads with.
+ *
+ *  THREE, NOT FOUR. The mockup's control reads "Code · tests · docs" and only
+ *  the first two are facts — `sensei.nodes` holds declarations and no
+ *  documentation file ever becomes one (#246). An always-empty docs ring is a
+ *  lie the picture would tell confidently, so `kind` is code-vs-tests and
+ *  documentation appears as a SHARE instead, where it is real. */
+export type WorldGroupBy = 'project' | 'repository' | 'kind';
+
+/** What the shade control can colour a circle by.
+ *
+ *  `nothing` is a first-class choice and the default: the picture's first job
+ *  is size, and colouring by a measure before a reader has asked turns every
+ *  glance into an interpretation. */
+export type WorldShadeBy = 'nothing' | 'documentedShare' | 'testShare' | 'unresolvedShare';
+
+export interface WorldMeasures {
+  documentedShare: number;
+  testShare: number;
+  /** NULL below the repository ring, where the question has no answer: edges
+   *  belong to a folder and declarations to a code-or-tests cell, so there is
+   *  no way to say how many of a repository's unresolved edges came from its
+   *  tests. Never 0 as a stand-in — an unshaded circle and a perfectly-resolved
+   *  one must not look alike. */
+  unresolvedShare: number | null;
+}
+
+export interface WorldUnit {
+  id: string;
+  label: string;
+  /** Outermost first, INCLUDING itself — what `@rokkit/graph`'s `world` layout
+   *  reads. A container is an ordinary node whose path other nodes extend. */
+  path: string[];
+  /** Declarations held, directly or through what it contains. */
+  weight: number;
+  measures: WorldMeasures;
+}
+
+export interface WorldTotals {
+  declarations: number;
+  documented: number;
+  tests: number;
+  /** DISTINCT repositories. One repository can belong to two projects and is
+   *  drawn in both — that is what the rings mean — but "how many are there" has
+   *  one answer. */
+  repositories: number;
+  projects: number;
+}
+
+export interface WorldPayload {
+  groupBy: WorldGroupBy;
+  /** The project the reader opened this from. The picture is deliberately
+   *  WIDER than that project — it is all indexed code — so the payload names
+   *  which circle they are standing in. */
+  viewing: string;
+  units: WorldUnit[];
+  totals: WorldTotals;
+}
+
+// ── Diagrams · Layers and Cycles (#232) ─────────────────────────────────────
+
+/** How one dependency sits against the layering.
+ *
+ *  FOUR VALUES, NOT TWO, and `skip` is the one that matters. A call that skips
+ *  a layer is LEGAL under relaxed layering — rokkit's own vocabulary separates
+ *  it from a climb for exactly that reason — so a screen that colours both as
+ *  violations reports a problem the architecture does not have.
+ *
+ *  `up` is the real one: every `up` edge is a cycle's back edge, the arrow the
+ *  feedback order says to cut. */
+export type Conformance = 'down' | 'skip' | 'up' | 'level';
+
+/** The grains the Layers endpoint serves. `package` is absent on purpose — a
+ *  package graph on this corpus is single digits of nodes, which has no
+ *  layering to show. */
+export type LayeringLevel = 'module' | 'file';
+
+export interface LayeringNode {
+  id: string;
+  label: string;
+  group: string;
+  weight: number;
+  files: number;
+  language: string | null;
+  /** NULL when the unit was not placed — the endpoint keeps the node and says
+   *  so rather than dropping it. */
+  layer: number | null;
+  component: number | null;
+  componentSize: number | null;
+}
+
+export interface LayeringEdge {
+  id: string;
+  source: string;
+  target: string;
+  kind: 'dependency';
+  weight: number;
+  conformance: Conformance;
+  /** The arrow the feedback order says to cut — one per cycle. */
+  weakest: boolean;
+}
+
+/** A dependency with no layering verdict: the two ends and how often. */
+export interface LayeringDep {
+  source: string;
+  target: string;
+  occurrences: number;
+}
+
+export interface LayeringCycle {
+  component: number;
+  members: string[];
+  layer: number;
+  /** Every dependency inside the component, heaviest first. */
+  inner: LayeringDep[];
+  /** The weakest link. NULL when the component has no cuttable edge. */
+  cut: LayeringDep | null;
+}
+
+/** What the picture is NOT showing.
+ *
+ *  `unknownUnit` is the one with teeth and travels with the payload for the
+ *  reason `unplaced` does on Structure: a dependency whose endpoint owns no
+ *  file is not a unit, so it is dropped — and a diagram missing a share of its
+ *  edges with no number beside it reads as a sparse codebase rather than an
+ *  incompletely-indexed one. */
+export interface LayeringCoverage {
+  drawn: number;
+  unplaced: number;
+  units: number;
+  unknownUnit: number;
+}
+
+export interface LayeringPayload {
+  level: LayeringLevel;
+  kinds: string[];
+  /** `derived` means this layering was MEASURED from the call graph rather than
+   *  declared. The screen therefore answers "do these calls flow downward",
+   *  not "is this the architecture you intended" — a declared layering is a
+   *  different question and a different source. */
+  layerSource: 'derived';
+  depth: number;
+  nodes: LayeringNode[];
+  edges: LayeringEdge[];
+  cycles: LayeringCycle[];
+  /** A unit depending on itself. At module grain that is two of its files
+   *  referring to each other, which is a fact about the module; at file grain
+   *  it is empty by construction. */
+  selfDependencies: LayeringDep[];
+  coverage: LayeringCoverage;
+}
+
+// ── Diagrams · Neighbourhood (#220) ─────────────────────────────────────────
+
+/** One card: a symbol the rings reached. `group` is its PACKAGE (crate,
+ *  npm package), so a card's tint says which side of a boundary it sits on. */
+export interface NeighbourCard {
+  id: string;
+  label: string;
+  kind: string | null;
+  group: string | null;
+  module: string | null;
+  language: string | null;
+  file: string | null;
+  line: number | null;
+  /** A library symbol, or another project's: drawn, never walked through. */
+  external: boolean;
+  rows: [];
+}
+
+/** One placed call, folded per (caller, callee) pair. `kind` is always
+ *  `dependency` — that is what makes the layout say "called by / calls". */
+export interface NeighbourEdge {
+  id: string;
+  source: string;
+  target: string;
+  kind: 'dependency';
+  /** Call sites. */
+  weight: number;
+}
+
+export interface NeighbourCoverage {
+  drawn: number;
+  /** Cards a capped ring found and did not draw, per side. */
+  cut: { in: number; out: number };
+  /** Calls the focus makes that the graph could not place. */
+  unplacedCallees: number;
+  /** Unplaced calls elsewhere in the project that use the focus's NAME — some
+   *  may be calls to it, so the callers column is a floor. */
+  namedUnplaced: number;
+}
+
+export interface NeighbourhoodPayload {
+  depth: number;
+  focus: NeighbourCard;
+  nodes: NeighbourCard[];
+  edges: NeighbourEdge[];
+  coverage: NeighbourCoverage;
+}
+
+// ── Pruner (#247) ───────────────────────────────────────────────────────────
+
+/** What one prune removed: folders (with their files and graph), repository
+ *  rows no other checkout still uses, and projects that prune left empty. */
+export interface PruneReport {
+  folders: number;
+  repositories: number;
+  projects: number;
+}
+
+/** A repository root under a watch root — what stops syncing if the root goes. */
+export interface RootRepository {
+  name: string;
+  path: string;
+  kind: 'git' | 'standalone';
+}
+
+/** Removing a root REQUIRES a decision: keep the data and stop syncing, or
+ *  remove everything it held. */
+export type RootRemovalDecision = 'keep' | 'remove';
+
+export type RootRemovalResult =
+  | { ok: true; kept: true }
+  | { ok: true; kept: false; pruned: PruneReport };
+
+export interface PruneResult {
+  ok: true;
+  /** The exclusion now on the root, relative to it. */
+  excluded: string;
+  pruned: PruneReport;
+}
+
+// ── Transcript consent (#218) ───────────────────────────────────────────────
+
+/** One source sensei can read conversation history from, and whether the user
+ *  said yes. Separate from configuring the assistant's hooks. */
+export interface TranscriptSourceConsent {
+  /** The capture source: `claude_code`, `zed`, … */
+  source: string;
+  /** What a person calls it. */
+  label: string;
+  consented: boolean;
 }

@@ -236,8 +236,9 @@ The model rides the schema that already exists — no new axis:
   push; `advisory`/`recommended` pull. The `mandatory` comment already names it
   "the non-overridable constitution tier."
 - **Scope + precedence = `sensei.scopes.level`** (`general=0 … repository=70`) via
-  `sensei.namespaces` (instances) and `sensei.folder_namespaces` (a repo is a
-  *member of a set*, not a tree). Resolution orders by `level` desc within each
+  `sensei.namespaces` (instances) and `sensei.repository_namespaces` (a repo is
+  a *member of a set*, not a tree), with a project's namespace reached through
+  the project rather than through any folder. Resolution orders by `level` desc within each
   enforcement tier; the mandatory-lock means a narrower scope can refine but never
   weaken a `mandatory` rule.
 - **A rule IS a memory** — `sensei.memories.{namespace_id, enforcement, origin,

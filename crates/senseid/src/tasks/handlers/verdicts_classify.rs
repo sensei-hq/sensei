@@ -73,6 +73,7 @@ pub async fn classify_pending_verdicts(ctx: &TaskContext, _task: &Task) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::pg_store::HookEventRow;
 
     /// A classifiable pair (`PostToolUse` answer citing a path → `PreToolUse`
     /// reaction touching that path) on a fresh session with no verdicts:
@@ -87,35 +88,35 @@ mod tests {
         let now = chrono::Utc::now().timestamp_millis();
 
         // Answer: a PostToolUse whose response text cites a distinctive path.
-        pg.insert_hook_event(
-            &sid,
-            "claude",
-            "PostToolUse",
-            Some("Read"),
-            None,
-            now,
-            Some(true),
-            &serde_json::json!({
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &sid,
+            assistant_family: "claude",
+            event_type: "PostToolUse",
+            tool_name: Some("Read"),
+            cwd: None,
+            ts: now,
+            success: Some(true),
+            payload: &serde_json::json!({
                 "tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs"},
                 "tool_response": "the fix is in crates/senseid/src/db/pg_store.rs:3421",
             }),
-        )
+        })
         .await
         .unwrap();
         // Reaction: a PreToolUse whose tool_input cites the same path fragment
         // → the classifier scores this pair `used`.
-        pg.insert_hook_event(
-            &sid,
-            "claude",
-            "PreToolUse",
-            Some("Edit"),
-            None,
-            now + 1,
-            None,
-            &serde_json::json!({
+        pg.insert_hook_event(&HookEventRow {
+            session_id: &sid,
+            assistant_family: "claude",
+            event_type: "PreToolUse",
+            tool_name: Some("Edit"),
+            cwd: None,
+            ts: now + 1,
+            success: None,
+            payload: &serde_json::json!({
                 "tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs", "new_string": "x"},
             }),
-        )
+        })
         .await
         .unwrap();
 

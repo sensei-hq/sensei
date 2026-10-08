@@ -598,6 +598,9 @@ mod tests {
             },
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             provisioning: None,
+            diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
+                crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
+            )),
         });
         Some(Arc::new(TaskContext {
             queue,
@@ -897,15 +900,15 @@ mod tests {
             .add_watch_root(&format!("/_test/drive/{uniq}"), "drive_root", &serde_json::json!([]))
             .await
             .unwrap();
-        pg.upsert_folder(
-            &root_id,
-            "standalone",
-            "repo",
-            "repo",
-            &abs,
-            None,
-            Some(&project_id),
-            None,
+        let folder_id = pg
+            .upsert_folder(&root_id, "standalone", "repo", "repo", &abs, None, None)
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(
+            pg,
+            &folder_id,
+            &project_id,
+            &format!("drive-test-{uniq}"),
         )
         .await
         .unwrap();

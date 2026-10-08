@@ -1,5 +1,23 @@
 use super::*;
 
+/// One row of `inference.recommendations` — a proposal and its evidence.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct RecommendationRow<'a> {
+    pub project_id: &'a uuid::Uuid,
+    pub title: &'a str,
+    pub why: &'a str,
+    pub impact: Option<&'a str>,
+    pub action_type: &'a str,
+    pub urgency: &'a str,
+    pub based_on: &'a serde_json::Value,
+    pub reasoning_trace_id: Option<&'a uuid::Uuid>,
+    pub prompt: Option<&'a str>,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// Cache read for the narration-cache pipeline. Returns the persisted
@@ -380,16 +398,21 @@ impl PgStore {
     /// distinct from raw session/file `evidence`. Used for idempotency.
     pub async fn create_recommendation_full(
         &self,
-        project_id: &uuid::Uuid,
-        title: &str,
-        why: &str,
-        impact: Option<&str>,
-        action_type: &str,
-        urgency: &str,
-        based_on: &serde_json::Value,
-        reasoning_trace_id: Option<&uuid::Uuid>,
-        prompt: Option<&str>,
+        row: &RecommendationRow<'_>,
     ) -> Result<uuid::Uuid, String> {
+        // EXHAUSTIVE (#161): a field added to `RecommendationRow` stops this
+        // compiling until someone binds it.
+        let RecommendationRow {
+            project_id,
+            title,
+            why,
+            impact,
+            action_type,
+            urgency,
+            based_on,
+            reasoning_trace_id,
+            prompt,
+        } = row;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO inference.recommendations(project_id, title, why, impact, action_type, urgency, based_on, reasoning_trace_id, prompt)
              VALUES($1, $2, $3, $4, $5, $6::sensei.recommendation_urgency, $7::jsonb, $8, $9) RETURNING id"
@@ -1131,14 +1154,21 @@ impl PgStore {
     ) -> Result<Vec<serde_json::Value>, String> {
         let rows: Vec<(uuid::Uuid, String, Option<String>, String, i32, Option<uuid::Uuid>)> =
             sqlx_core::query_as::query_as(
-                "SELECT dp.id, dp.name, dp.family, dp.lifecycle::text, dp.instance_count, f.project_id
+                "SELECT dp.id, dp.name, dp.family, dp.lifecycle::text, dp.instance_count,
+                        sensei.sole_project_of(f.id)
                  FROM inference.detected_patterns dp
                  JOIN sensei.folders f ON f.id = dp.folder_id
                  WHERE dp.lifecycle IN ('suggested','rule') AND NOT dp.is_anti_pattern
-                   AND ($1::uuid IS NULL OR f.project_id = $1)
+                   AND ($1::uuid IS NULL
+                        OR EXISTS (SELECT 1 FROM sensei.folder_projects fp
+                                    WHERE fp.folder_id = f.id AND fp.project_id = $1))
                  ORDER BY dp.instance_count DESC
-                 LIMIT 100"
-            ).bind(project).fetch_all(&self.pool).await.map_err(|e| e.to_string())?;
+                 LIMIT 100",
+            )
+            .bind(project)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(|(id, name, family, lifecycle, instance_count, project_id)| {
             serde_json::json!({ "id": id, "name": name, "family": family, "lifecycle": lifecycle,
                                 "instance_count": instance_count, "project_id": project_id })
@@ -1178,7 +1208,9 @@ impl PgStore {
                 "SELECT dp.id, dp.name, dp.family, dp.instance_count, dp.modified_at
              FROM inference.detected_patterns dp
              JOIN sensei.folders f ON f.id = dp.folder_id
-             WHERE f.project_id = $1 AND dp.lifecycle = 'rule' AND NOT dp.is_anti_pattern
+             WHERE EXISTS (SELECT 1 FROM sensei.folder_projects fp
+                            WHERE fp.folder_id = f.id AND fp.project_id = $1)
+               AND dp.lifecycle = 'rule' AND NOT dp.is_anti_pattern
              ORDER BY dp.modified_at DESC LIMIT $2",
             )
             .bind(project_id)

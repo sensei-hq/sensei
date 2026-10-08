@@ -6,6 +6,14 @@ use axum::http::Method;
 use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
 
+/// How long shutdown waits for the connection pool to drain before giving up.
+///
+/// Long enough for an ordinary in-flight query, short enough that a stuck one
+/// cannot make the daemon unkillable by `sensei stop` — which is what an
+/// unbounded wait would do, since the SIGTERM handler is permanent and would
+/// swallow the follow-up signal too.
+const SHUTDOWN_POOL_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Write a single-line startup error to `<sensei_dir>/startup-error.log` so
 /// users can find it without scraping launchd / brew-services log paths.
 fn write_startup_error(msg: &str) {
@@ -161,6 +169,10 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
     // serving degraded. Branch: full router on success; on a persistent failure
     // serve a hot-swappable degraded router and self-heal in the background
     // (no restart) once the DB returns. See `api::resilience`.
+    // A handle for the shutdown path. `pg` is MOVED into `build_full_app`, so the
+    // graceful block cannot reach it otherwise; `PgStore` is Clone over an
+    // Arc-backed sqlx pool, so closing this clone closes the one shared pool.
+    let mut pg_for_shutdown: Option<crate::db::pg_store::PgStore> = None;
     let (app, watcher_queue): (axum::Router, Option<Arc<TaskQueue>>) =
         match crate::api::resilience::connect_with_retry(
             || {
@@ -175,6 +187,7 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
                 clear_startup_error();
                 crate::api::resilience::mark_full();
                 tracing::info!("senseid listening on :{} (full mode)", port);
+                pg_for_shutdown = Some(pg.clone());
                 let (router, queue) = build_full_app(pg).await;
                 (router.layer(cors), Some(queue))
             }
@@ -244,14 +257,20 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            // `.ok()` is deliberate here — ctrl_c() only errors if signal
-            // handler registration fails (rare, non-actionable at runtime).
-            // Either way we want the graceful-shutdown future to complete
-            // so the server drives its teardown flow. Not a silent-error bug.
-            if let Err(e) = tokio::signal::ctrl_c().await {
-                tracing::warn!(error = %e, "ctrl_c handler setup failed — shutdown will still run");
-            }
+            // SIGINT **or SIGTERM**. This used to await `ctrl_c()` alone, which
+            // is SIGINT — and both real stop paths send SIGTERM, so the graceful
+            // block never ran in normal operation and the daemon was killed
+            // outright. Measured 2026-09-30: 56 orphaned Postgres backends, the
+            // oldest nearly three hours, with no owning process alive.
+            crate::shutdown::shutdown_signal().await;
             tracing::info!("Shutting down...");
+
+            // ORDER IS THE DESIGN. Stop taking new work first, so nothing starts
+            // that the remaining time cannot finish; then stop the watcher, which
+            // is what enqueues more; only then release the database.
+            if let Some(q) = &watcher_queue {
+                q.begin_shutdown().await;
+            }
             if let Some(q) = watcher_queue {
                 let watcher = crate::watcher::root_watcher::RootWatcher::instance(q);
                 if let Ok(mut w) = watcher.lock() {
@@ -259,6 +278,25 @@ pub async fn start_server(port: u16) -> std::io::Result<()> {
                     tracing::info!("Watcher stopped");
                 }
             }
+
+            // BOUNDED, AND THAT IS NOT OPTIONAL. `Pool::close` completes only
+            // once every checked-out connection is returned and carries no
+            // timeout; a task stuck on a long query would hold shutdown open for
+            // ever. Catching SIGTERM is process-wide and permanent, so a second
+            // SIGTERM would be caught too and the daemon would be killable only
+            // by SIGKILL — strictly worse than the bug this fixes. The timeout
+            // degrades that case back to today's behaviour: we stop waiting and
+            // let the process go.
+            if let Some(pg) = pg_for_shutdown {
+                match tokio::time::timeout(SHUTDOWN_POOL_GRACE, pg.close()).await {
+                    Ok(()) => tracing::info!("Database pool closed"),
+                    Err(_) => tracing::warn!(
+                        grace_secs = SHUTDOWN_POOL_GRACE.as_secs(),
+                        "pool did not drain in time — exiting with connections still open",
+                    ),
+                }
+            }
+            tracing::info!("Shutdown complete");
         })
         .await
 }
@@ -331,7 +369,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // Table-driven gateway config (#76): load routers/models/chains from the
     // `gateway.*` tables. A load error is logged and degrades to the in-code
     // baseline rather than failing daemon startup.
-    let db_config = match super::gateway_config_loader::load_gateway_config(pg.pool()).await {
+    let db_config = match super::gateway_config_loader::load_gateway_config(&pg).await {
         Ok(Some(cfg)) => {
             tracing::info!(
                 "Gateway: loaded table-driven config ({} routers, {} models, {} chains)",
@@ -360,6 +398,9 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         event_tx,
         breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         provisioning,
+        diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
+            crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
+        )),
     });
 
     let task_logger = sensei_logger::Logger::new(
@@ -538,6 +579,8 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // `analyzed_at IS NOT NULL` so the pruner never drops a session before
     // the analyzer has derived its insights.
     crate::tasks::activity_pruner::spawn(Arc::new(state.pg.clone()));
+    // Git-history retention (#224) — the only thing that deletes a commit.
+    crate::tasks::git_history_pruner::spawn(Arc::new(state.pg.clone()));
 
     // Capture-spool drain: hook events that failed to reach the daemon (daemon
     // down, or a POST slower than the hook's 2s budget) are dead-lettered to
@@ -580,6 +623,15 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
                         rules_path.display()
                     );
                     let claude_md = crate::paths::home().join(".claude/CLAUDE.md");
+                    if !crate::api::handlers::knowledge::writes_user_claude_md(
+                        sensei_bootstrap::SenseiConfig::from_env().is_isolated_instance(),
+                    ) {
+                        tracing::info!(
+                            "startup: isolated instance — leaving {} alone (#248)",
+                            claude_md.display()
+                        );
+                        return;
+                    }
                     match crate::api::handlers::knowledge::upsert_pointer_in_claude_md(
                         &claude_md,
                         &rules_path,
@@ -724,7 +776,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
 async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
     // Get all watch roots from PgStore — (id, path) for roots that still exist
     // on disk (skip stale rows pointing at deleted dirs).
-    let roots = state.pg.list_watch_roots().await.unwrap_or_else(|e| {
+    let roots = state.pg.list_watch_roots_to_sync().await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "spawn_root_watchers: list_watch_roots failed; no roots will be watched");
         Vec::new()
     });
@@ -748,9 +800,6 @@ async fn spawn_root_watchers(state: &Arc<SharedState>, queue: Arc<TaskQueue>) {
         let watcher = crate::watcher::root_watcher::RootWatcher::instance(queue);
         match watcher.lock() {
             Ok(mut w) => {
-                // Give the watcher a DB handle so its loop can resolve each changed
-                // file to its owning repo (else incremental tasks can't be shaped).
-                w.set_store(state.pg.clone());
                 for (_, root) in &live {
                     w.register(std::path::PathBuf::from(root), vec![]);
                     tracing::info!("Root watcher: registered {}", root);

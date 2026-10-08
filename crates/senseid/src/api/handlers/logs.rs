@@ -1,4 +1,5 @@
 use crate::api::state::AppState;
+use crate::db::pg_store::LogRow;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -25,16 +26,16 @@ pub(crate) async fn ingest_log(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     state
         .pg
-        .insert_log(
-            &body.level,
-            &body.running_on,
-            body.module.as_deref(),
-            &body.logged_at,
-            body.message.as_deref().unwrap_or(""),
-            &body.context.unwrap_or(serde_json::json!({})),
-            &body.data,
-            &body.error,
-        )
+        .insert_log(&LogRow {
+            level: &body.level,
+            running_on: &body.running_on,
+            module: body.module.as_deref(),
+            logged_at: &body.logged_at,
+            message: body.message.as_deref().unwrap_or(""),
+            context: &body.context.unwrap_or(serde_json::json!({})),
+            data: &body.data,
+            error: &body.error,
+        })
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

@@ -1,4 +1,5 @@
 use crate::api::state::AppState;
+use crate::db::pg_store::{HookEventRow, SessionOutcomeRow};
 use axum::{
     extract::{Path, Query, State},
     http::{StatusCode, header},
@@ -232,8 +233,8 @@ pub(crate) async fn update_session_handler(
 
     match state
         .pg
-        .complete_session(
-            &session_id,
+        .complete_session(&SessionOutcomeRow {
+            id: &session_id,
             outcome,
             ftr,
             turns,
@@ -241,10 +242,13 @@ pub(crate) async fn update_session_handler(
             summary,
             tokens_in,
             tokens_out,
-        )
+        })
         .await
     {
-        Ok(_) => {
+        // A miss is said. This used to answer `{"ok": true}` for an UPDATE of zero
+        // rows, which is how every agent's close went nowhere unnoticed (#238).
+        Ok(false) => Json(serde_json::json!({"ok": false, "error": "no such session"})),
+        Ok(true) => {
             // Fire-and-forget: enqueue verdict measurement after session ends
             let task = crate::tasks::Task::new(crate::tasks::TaskKind::MeasureVerdicts, "", "");
             state.task_queue.enqueue(task).await;
@@ -279,16 +283,16 @@ pub(crate) async fn ingest_hook_event(
     // Log it so it's inspectable in the daemon log / public.logs.
     if let Err(e) = state
         .pg
-        .insert_hook_event(
-            f.session_id,
-            f.family,
-            f.event_type,
-            f.tool_name,
-            f.cwd,
+        .insert_hook_event(&HookEventRow {
+            session_id: f.session_id,
+            assistant_family: f.family,
+            event_type: f.event_type,
+            tool_name: f.tool_name,
+            cwd: f.cwd,
             ts,
-            f.success,
-            &payload,
-        )
+            success: f.success,
+            payload: &payload,
+        })
         .await
     {
         tracing::warn!(error = %e, event_type = f.event_type, family = f.family, "ingest_hook_event: insert failed");
@@ -819,6 +823,9 @@ mod tests {
             },
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             provisioning: None,
+            diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
+                crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
+            )),
         }))
     }
 

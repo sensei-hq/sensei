@@ -513,7 +513,7 @@ mod tests {
         // `UserRepo` but some other member, or `find` under some other type,
         // would be the failure this is looking for. The trailing segment is the
         // REACH, which is what a method's own declaration mints.
-        assert_eq!(fqn.as_str(), "php·App·UserRepo·find·item", "{}", fqn.as_str());
+        assert_eq!(fqn.as_str(), "php·App··UserRepo·find·item", "{}", fqn.as_str());
     }
 
     /// A trait is MIXED IN, not inherited.

@@ -3,6 +3,7 @@
 use axum::{Json, extract::State, http::StatusCode};
 
 use crate::api::state::AppState;
+use crate::db::pg_store::PlaybookRunRow;
 use crate::playbook::{Axes, Intent, Lifecycle, Risk, recommend};
 
 /// GET /api/playbook/guide -> { frame, axes: [{axis, prompt, help}], playbooks: [...] }
@@ -107,20 +108,20 @@ pub(crate) async fn recommend_playbook(
     if should_persist(&body)
         && let Err(e) = state
             .pg
-            .insert_playbook_run(
+            .insert_playbook_run(&PlaybookRunRow {
                 session_id,
-                body["feature"].as_str(),
-                axes.lifecycle.as_str(),
-                axes.intent.as_str(),
-                axes.risk.as_str(),
-                rec.rule_id,
-                &rec.playbook,
-                &rec.rationale,
+                feature: body["feature"].as_str(),
+                lifecycle: axes.lifecycle.as_str(),
+                intent: axes.intent.as_str(),
+                risk: axes.risk.as_str(),
+                rule_id: rec.rule_id,
+                playbook: &rec.playbook,
+                rationale: &rec.rationale,
                 confirmed,
-                Some(classified_by.as_str()),
+                classified_by: Some(classified_by.as_str()),
                 model_fallback,
                 project_id,
-            )
+            })
             .await
     {
         tracing::error!("recommend_playbook: insert_playbook_run failed: {e}");

@@ -77,6 +77,7 @@ use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;
+use crate::db::pg_store::MetricRow;
 
 /// `sensei.metric_grain` text value (quality writes daily rows only).
 const GRAIN_DAILY: &str = "daily";
@@ -640,7 +641,9 @@ where
             // change it. Only `today` (whose HEAD may advance) is always re-scanned. The
             // repository is GLOBAL, so a day another project already scanned for this
             // repo is skipped here too (the shared code is identical).
-            if day < today && repo_day_fully_covered(pg, &active_ids, &repository_id, day).await? {
+            if day < today
+                && pg.quality_repo_day_fully_covered(&active_ids, &repository_id, day).await?
+            {
                 continue;
             }
             let Some(sha) = resolve_commit_as_of(&abs_path, day) else {
@@ -735,18 +738,18 @@ async fn write_ratio_rows(
             "denominator": denominator,
             "commit": sha,
         });
-        pg.upsert_project_metric_repo(
-            &mid,
+        pg.upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
             repository_id,
             scope,
             identity,
-            Some(sha),
-            day,
-            GRAIN_DAILY,
+            commit_sha: Some(sha),
+            computed_on: day,
+            grain: GRAIN_DAILY,
             value,
-            &props,
-            SOURCE_MEASURED,
-        )
+            props: &props,
+            source: SOURCE_MEASURED,
+        })
         .await?;
         written += 1;
     }
@@ -758,56 +761,22 @@ async fn write_ratio_rows(
             "denominator": denominator,
             "commit": sha,
         });
-        pg.upsert_project_metric_repo(
-            &mid,
+        pg.upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
             repository_id,
             scope,
             identity,
-            Some(sha),
-            day,
-            GRAIN_DAILY,
+            commit_sha: Some(sha),
+            computed_on: day,
+            grain: GRAIN_DAILY,
             value,
-            &props,
-            SOURCE_MEASURED,
-        )
+            props: &props,
+            source: SOURCE_MEASURED,
+        })
         .await?;
         written += 1;
     }
     Ok(written)
-}
-
-/// Whether `day` already has a `scope = repo` daily row for EVERY id in `metric_ids`
-/// ON `repository_id` — so a settled past day is skipped only when the repository's
-/// whole-tree twin is fully captured (a metric newly activated after an earlier scan
-/// still backfills). The whole-tree twin is always written on a successful scan, so it
-/// is the authoritative coverage signal (a `scope = user` row can legitimately be
-/// absent when git resolves no local author). Empty `metric_ids` → trivially not
-/// covered. Propagates the read error; never masks it.
-async fn repo_day_fully_covered(
-    pg: &PgStore,
-    metric_ids: &[uuid::Uuid],
-    repository_id: &uuid::Uuid,
-    day: NaiveDate,
-) -> Result<bool, String> {
-    if metric_ids.is_empty() {
-        return Ok(false);
-    }
-    let (present,): (i64,) = sqlx_core::query_as::query_as(
-        "SELECT count(DISTINCT metric_id)
-           FROM sensei.project_metrics
-          WHERE repository_id = $1
-            AND metric_id = ANY($2)
-            AND scope = 'repo'
-            AND grain = 'daily'
-            AND computed_on = $3",
-    )
-    .bind(repository_id)
-    .bind(metric_ids)
-    .bind(day)
-    .fetch_one(pg.pool())
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(present as usize == metric_ids.len())
 }
 
 #[cfg(test)]
@@ -1155,18 +1124,18 @@ mod tests {
         let ids = pg.active_metric_ids("quality").await.unwrap();
         for key in ["duplication_ratio", "module_quality"] {
             let mid = *ids.get(key).expect("active quality metric");
-            pg.upsert_project_metric_repo(
-                &mid,
-                &rid,
-                "repo",
-                None,
-                Some(&sha),
-                dday,
-                "daily",
-                0.5,
-                &serde_json::json!({"numerator": 1, "denominator": 2, "commit": sha}),
-                "measured",
-            )
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &rid,
+                scope: "repo",
+                identity: None,
+                commit_sha: Some(&sha),
+                computed_on: dday,
+                grain: "daily",
+                value: 0.5,
+                props: &serde_json::json!({"numerator": 1, "denominator": 2, "commit": sha}),
+                source: "measured",
+            })
             .await
             .unwrap();
         }

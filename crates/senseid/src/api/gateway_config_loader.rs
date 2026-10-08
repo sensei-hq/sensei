@@ -22,11 +22,11 @@
 
 use std::collections::HashMap;
 
+use crate::db::pg_store::PgStore;
 use gateway::types::capability::Capability;
 use gateway::types::config::{
     ChainEntry, FallbackChainConfig, FallbackTrigger, GatewayConfig, ModelConfig, RouterConfig,
 };
-use sqlx_postgres::PgPool;
 
 /// Map a DB `model_capability` enum value to a gateway [`Capability`].
 ///
@@ -252,24 +252,10 @@ pub(crate) fn assemble(
 /// Returns `Ok(None)` when the DB defines **no chains** — the signal for the
 /// caller to fall back to the in-code baseline. Any chains present mean the
 /// DB is the source of truth and its config is returned in full.
-// SQL row shapes. Named aliases keep the query result types readable (and
-// satisfy clippy::type_complexity) — the columns map 1:1 to the Row structs.
-type RouterTuple = (String, Option<String>, Option<String>, bool, String, String);
-type ModelTuple =
-    (String, Option<String>, Vec<String>, Option<i32>, Option<i32>, Option<String>, Option<String>);
-type ChainModelTuple = (String, String, String, Option<String>, i32);
-
-pub async fn load_gateway_config(pool: &PgPool) -> Result<Option<GatewayConfig>, String> {
+pub async fn load_gateway_config(pg: &PgStore) -> Result<Option<GatewayConfig>, String> {
     // Routers. jsonb columns are cast to text and parsed in Rust so this
     // doesn't depend on sqlx's optional `json` feature.
-    let router_rows: Vec<RouterTuple> = sqlx_core::query_as::query_as(
-        "SELECT name, api_base_url, api_key_env_var, is_active, \
-                    default_headers::text, config::text \
-             FROM gateway.routers",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("load_gateway_config routers: {e}"))?;
+    let router_rows = pg.gateway_routers().await?;
 
     let routers: Vec<RouterRow> = router_rows
         .into_iter()
@@ -284,24 +270,7 @@ pub async fn load_gateway_config(pool: &PgPool) -> Result<Option<GatewayConfig>,
         .collect();
 
     // Models + their default router (is_default first, then any active).
-    let model_rows: Vec<ModelTuple> =
-        sqlx_core::query_as::query_as(
-            "SELECT m.full_name, m.family, m.capabilities::text[], m.context_window, m.max_output_tokens, \
-                    dr.router_name, dr.router_model_id \
-             FROM gateway.models m \
-             LEFT JOIN LATERAL ( \
-                 SELECT r.name AS router_name, mir.router_model_id \
-                 FROM gateway.models_in_router mir \
-                 JOIN gateway.routers r ON r.id = mir.router_id \
-                 WHERE mir.model_id = m.id AND mir.is_active \
-                 ORDER BY mir.is_default DESC \
-                 LIMIT 1 \
-             ) dr ON true \
-             WHERE m.is_active",
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(|e| format!("load_gateway_config models: {e}"))?;
+    let model_rows = pg.gateway_models().await?;
 
     let models: Vec<ModelRow> = model_rows
         .into_iter()
@@ -329,30 +298,13 @@ pub async fn load_gateway_config(pool: &PgPool) -> Result<Option<GatewayConfig>,
         .collect();
 
     // Chains.
-    let chain_rows: Vec<(String, String)> = sqlx_core::query_as::query_as(
-        "SELECT name, capability::text FROM gateway.fallback_chains WHERE is_active",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("load_gateway_config chains: {e}"))?;
+    let chain_rows = pg.gateway_chains().await?;
 
     let chain_rows: Vec<ChainRow> =
         chain_rows.into_iter().map(|(name, capability)| ChainRow { name, capability }).collect();
 
     // Chain members + the per-(model,router) router_model_id.
-    let chain_model_rows: Vec<ChainModelTuple> = sqlx_core::query_as::query_as(
-        "SELECT fc.name, r.name, m.full_name, mir.router_model_id, fcm.sequence_order \
-             FROM gateway.fallback_chain_models fcm \
-             JOIN gateway.fallback_chains fc ON fc.id = fcm.chain_id \
-             JOIN gateway.routers r ON r.id = fcm.router_id \
-             JOIN gateway.models m ON m.id = fcm.model_id \
-             LEFT JOIN gateway.models_in_router mir \
-                 ON mir.model_id = fcm.model_id AND mir.router_id = fcm.router_id \
-             WHERE fcm.is_active AND fc.is_active",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("load_gateway_config chain_models: {e}"))?;
+    let chain_model_rows = pg.gateway_chain_models().await?;
 
     let chain_models: Vec<ChainModelRow> = chain_model_rows
         .into_iter()
@@ -381,6 +333,41 @@ pub async fn load_gateway_config(pool: &PgPool) -> Result<Option<GatewayConfig>,
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// The four queries in [`load_gateway_config`] actually RUN (#227).
+    ///
+    /// Every other test in this module is a pure-function test, so the only SQL
+    /// here — four statements across five `gateway.*` tables, one of them a
+    /// LATERAL — was executed by nothing. A column renamed under it would have
+    /// left the daemon silently falling back to the baseline config with the
+    /// whole suite green. Measured before this test existed: cross-joining a
+    /// table that does not exist into the first query left this module GREEN.
+    ///
+    /// It asserts the SEEDED CATALOG comes back, not merely that the call
+    /// returned `Ok`. `load_gateway_config` answers `Ok(None)` when it finds no
+    /// active chain, which is its "use the baseline" signal — so an `is_ok()`
+    /// assertion would pass over a query that returned nothing at all.
+    ///
+    /// Mutation that must break this test: drop `WHERE m.is_active` from the
+    /// models query, or break any of the four statements.
+    #[tokio::test]
+    async fn the_four_catalog_queries_return_the_seeded_gateway_config() {
+        let Ok(pg) = crate::db::pg_store::PgStore::connect_test().await else { return };
+        let cfg = load_gateway_config(&pg).await.expect("the catalog queries plan and run");
+        let Some(cfg) = cfg else {
+            panic!("the deployed schema seeds active fallback chains, so this cannot be None");
+        };
+        assert!(!cfg.routers.is_empty(), "routers query returned nothing");
+        assert!(!cfg.models.is_empty(), "models query returned nothing");
+        assert!(!cfg.chains.is_empty(), "chains query returned nothing");
+        // The chain-members query is the only one that can come back empty
+        // while the others do not, so it needs its own assertion: a chain with
+        // no members is a chain the gateway cannot fall back along.
+        assert!(
+            cfg.chains.values().any(|c| !c.models.is_empty()),
+            "chain_models query returned no members for any chain"
+        );
+    }
 
     #[test]
     fn map_capability_collapses_text_purposes_onto_text_chat() {
@@ -584,11 +571,13 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn load_gateway_config_reads_embedded_first_from_db() {
+        // Its own store rather than its own pool: the catalogue read moved into
+        // the persistence layer (#227), so the loader takes a `PgStore`.
         let url = std::env::var("GATEWAY_LOADER_TEST_URL")
             .unwrap_or_else(|_| "postgresql://localhost:5432/sensei".to_string());
-        let pool = sqlx_postgres::PgPoolOptions::new().connect(&url).await.expect("connect");
+        let pg = crate::db::pg_store::PgStore::connect(&url).await.expect("connect");
 
-        let cfg = super::load_gateway_config(&pool).await.expect("load ok").expect("DB has chains");
+        let cfg = super::load_gateway_config(&pg).await.expect("load ok").expect("DB has chains");
 
         // Embedded (single router) + cloud routers loaded.
         for r in ["embedded-llama", "nvidia", "ollama"] {

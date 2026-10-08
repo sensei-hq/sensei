@@ -327,20 +327,39 @@ pub fn returns_declared_by<'a>(
         .flat_map(|facts| facts.symbols.iter())
         .filter_map(|symbol| match &symbol.declared_type {
             DeclaredType::Stated(stated) => {
-                let stated = stated.trim_start_matches('&').trim();
-                if stated != "Self" {
-                    return Some((symbol.fqn.clone(), stated.to_string()));
-                }
-                // `Self` IS the enclosing type, and the member's identity says
-                // which: the segment before the member name.
-                let parsed = fqn::parse(symbol.fqn.as_str()).ok()?;
-                let at = parsed.tail.iter().position(|s| *s == symbol.name)?;
-                let owner = parsed.tail.get(at.checked_sub(1)?)?;
-                Some((symbol.fqn.clone(), (*owner).to_string()))
+                stated_return_type(symbol.fqn.as_str(), &symbol.name, stated)
+                    .map(|ty| (symbol.fqn.clone(), ty))
             }
             DeclaredType::Unstated => None,
         })
         .collect()
+}
+
+/// Normalise one STATED type into what `World::returns` holds.
+///
+/// Extracted so a caller reading declarations back out of the DATABASE produces
+/// the identical string to one reading them off a fresh parse. Two copies of
+/// this rule would disagree the first time either changed, and the symptom
+/// would be a rung that silently stops matching rather than an error.
+///
+/// `&` is stripped, because a reference to a type is that type for the purpose
+/// of asking what its members are — keeping it means `&PgStore` never matches
+/// `PgStore`.
+///
+/// `Self` IS the enclosing type, and the member's identity says which: the
+/// segment before the member name.
+pub fn stated_return_type(fqn: &str, name: &str, stated: &str) -> Option<String> {
+    let stated = stated.trim_start_matches('&').trim();
+    if stated.is_empty() {
+        return None;
+    }
+    if stated != "Self" {
+        return Some(stated.to_string());
+    }
+    let parsed = fqn::parse(fqn).ok()?;
+    let at = parsed.tail.iter().position(|s| *s == name)?;
+    let owner = parsed.tail.get(at.checked_sub(1)?)?;
+    Some((*owner).to_string())
 }
 
 /// Every member identity the scan declares, for [`World::declared_members`].
@@ -423,7 +442,17 @@ pub fn resolve(facts: FileFacts, grammar: &Grammar, world: &World<'_>) -> FileFa
         .iter()
         .map(|r| Relation { parent: ladder.place(&r.parent, r.at), ..r.clone() })
         .collect();
-    FileFacts { references, relations, ..facts }
+    // An IMPORT is placed here too, and until 2026-10-06 it was the one fact
+    // shape that never was. The specifier went to the database as a bare name
+    // and the occurrence recorded neither rung nor reason, so the edge's verdict
+    // columns reduced to NULL: 251,270 of 258,623 `imports` edges carried no
+    // verdict at all, against 2 of 1.69M `references` (#242).
+    let imports: Vec<Import> = facts
+        .imports
+        .iter()
+        .map(|i| Import { target: ladder.place_brought(i), ..i.clone() })
+        .collect();
+    FileFacts { references, relations, imports, ..facts }
 }
 
 /// What a rung concluded. Not an `Option`: "no answer" is a state the caller has
@@ -638,6 +667,13 @@ impl<'a> Ladder<'a> {
         }
         if let Placed::Proven(fqn) = self.rooted_in_this_package(&wanted, at) {
             return Resolution::Resolved { fqn, via: Rung::RootedInThisPackage };
+        }
+        // BELOW this package's own root and ABOVE the external rung: a sibling
+        // we own outranks a library, and the file's own package outranks a
+        // sibling. The external rung already DECLINES an owned package, so
+        // without this arm the reference had nowhere to go.
+        if let Placed::Proven(fqn) = self.rooted_in_a_scanned_package(&wanted) {
+            return Resolution::Resolved { fqn, via: Rung::RootedInAScannedPackage };
         }
         if let Placed::Proven(fqn) = self.a_fully_qualified_external(&wanted) {
             return Resolution::Resolved { fqn, via: Rung::FullyQualifiedExternal };
@@ -1125,6 +1161,37 @@ impl<'a> Ladder<'a> {
 
     /// Rung 3. A path that states its own root needs no import: the root word
     /// says where the package-relative part begins.
+    /// A path whose HEAD names a sibling package this scan owns.
+    ///
+    /// A dependency puts a sibling crate's root in scope without any import
+    /// statement, so `through_an_import` has nothing written down to read and
+    /// `rooted_in_this_package` rejects the head — it requires a root TOKEN
+    /// (`crate` / `self` / `super`), which a package name is not. The external
+    /// rung then declines, correctly, because `owned_by_this_scan` says the
+    /// package is ours. This rung is what catches it.
+    ///
+    /// MINTS IN THE PACKAGE THE HEAD NAMES, not the file's own. Minting in the
+    /// use site's package would point the edge at a same-named symbol in the
+    /// CALLER's crate — the R4 defect already recorded for `ArtifactKind`, where
+    /// `senseid` declares one and `dojo_protocol` declares another.
+    ///
+    /// `owned_by_this_scan` rather than a string compare, because a manifest may
+    /// hyphenate a name that source has to spell with an underscore
+    /// (`sensei-bootstrap` / `sensei_bootstrap`) and the two are one package.
+    fn rooted_in_a_scanned_package(&self, wanted: &Wanted) -> Placed {
+        let Some((head, rest)) = wanted.segments.split_first() else {
+            return Placed::Unbound;
+        };
+        // A bare name is not a rooted path — it has no head to own.
+        if rest.is_empty() {
+            return Placed::Unbound;
+        }
+        let Some(owned) = self.owned_by_this_scan(head) else {
+            return Placed::Unbound;
+        };
+        self.identity(owned, rest, wanted.reach)
+    }
+
     fn rooted_in_this_package(&self, wanted: &Wanted, at: Span) -> Placed {
         let Some(head) = wanted.segments.first() else {
             return Placed::Unbound;
@@ -1384,8 +1451,93 @@ impl<'a> Ladder<'a> {
         }
     }
 
-    /// Place an [`RefKind::Imports`] reference, which climbs no ladder: a
-    /// specifier is not a name to look up, it is a path to reduce.
+    /// Place an IMPORT: what its specifier names, once the ladder has read it.
+    ///
+    /// This climbs no ladder, because a specifier is not a name to look up — it
+    /// is a path to REDUCE, and [`Ladder::specifier`] is the one owner of that
+    /// reduction. What is decided here is only which identity the reduced path
+    /// belongs to, and that turns on two facts the walk already stated: the
+    /// [`ImportOrigin`], and whether the specifier spells a MODULE or the thing
+    /// bound.
+    ///
+    /// EXTERNAL PLACES ONTO LIBRARY SURFACE and is not a refusal. 68,287
+    /// library nodes exist and calls and references already reach them; an
+    /// import declining to was what made "who depends on serde" unanswerable
+    /// from the one edge kind that names a dependency outright. The identity is
+    /// minted by [`Ladder::library`] — the same door a call to that member goes
+    /// through — so the import and those calls meet on ONE node.
+    ///
+    /// INSIDE THE SCAN mints the identity the declaration minted, under
+    /// stub-then-enrich like every other first-party target: a path the file
+    /// WROTE is evidence enough to name, which is the same licence
+    /// [`Ladder::rooted_in_this_package`] runs on.
+    ///
+    /// THE KNOWN RESIDUE, stated rather than hidden: Rust spells `use a::b;` for
+    /// a module and `use a::b::C;` for an item identically, and
+    /// `specifier_names_a_module` refuses to guess between them. So a local
+    /// `Binding::Name` is minted as an ITEM, and the minority that named a
+    /// module lands on an identity no declaration carries. That is a stub, not a
+    /// wrong edge — nothing else mints it — and it is strictly better than the
+    /// state this replaces, where no import carried any verdict at all (#242).
+    fn place_brought(&self, import: &Import) -> Resolution {
+        let Resolution::Unresolved { evidence, .. } = &import.target else {
+            return import.target.clone();
+        };
+        let unresolved = |reason| Resolution::Unresolved { reason, evidence: evidence.clone() };
+        let Rooted::At(segments) = self.specifier(import) else {
+            // The specifier walked out past the package root, so it names
+            // nothing. Source that does this does not compile, and minting a
+            // module for it would be fabrication (R4).
+            return unresolved(Reason::UnhandledForm);
+        };
+        // A package whose source this scan never opens (R5). The WHOLE path is
+        // kept, because "which of their members do we use" is exactly the
+        // question a dependency edge exists to answer.
+        if let ImportOrigin::External { package } = &import.origin
+            && self.owned_by_this_scan(package).is_none()
+        {
+            return match self.library(package, &segments) {
+                Placed::Proven(fqn) => {
+                    Resolution::Resolved { fqn, via: Rung::FullyQualifiedExternal }
+                }
+                // NOT `Unplaced`, which means "the ladder has not run on this
+                // yet". It has run, and the specifier reduced to nothing we can
+                // name. That is where our world ends.
+                Placed::Unbound => unresolved(Reason::ExternalBoundary),
+            };
+        }
+        // Local, or a sibling package this scan owns — either way the source is
+        // ours to read, so the identity is one a declaration can meet.
+        let package = match &import.origin {
+            ImportOrigin::Local => self.package,
+            ImportOrigin::External { package } => match self.owned_by_this_scan(package) {
+                Some(owned) => owned,
+                // Unreachable: the arm above returns for every package this
+                // scan does not own. Saying so beats answering as if it had.
+                None => return unresolved(Reason::UnhandledForm),
+            },
+        };
+        let placed = match super::lang::common::specifier_names_a_module(
+            self.grammar.language,
+            &import.binds,
+        ) {
+            // The identity a FILE declares for itself, minted by the adapter's
+            // own `file_fqn` — the one function both sides of that merge call.
+            true => self.entered_module(import),
+            false => self.identity(package, &segments, Reach::Item),
+        };
+        match placed {
+            Placed::Proven(fqn) => Resolution::Resolved { fqn, via: Rung::ThroughAnImport },
+            Placed::Unbound => unresolved(Reason::UnhandledForm),
+        }
+    }
+
+    /// Place an [`RefKind::Imports`] reference — the file ENTERING a module.
+    ///
+    /// Delegates, and that is the whole point: the reference and the import it
+    /// was minted from write the SAME edge row now that an import carries a
+    /// target, so a second reading here is how the two would come to disagree
+    /// and the row would split in two again.
     ///
     /// The import is found by SPAN because the reference was emitted AT it —
     /// both sides come from one walk over one file, and two imports on one line
@@ -1394,18 +1546,15 @@ impl<'a> Ladder<'a> {
         let Resolution::Unresolved { evidence, .. } = target else {
             return target.clone();
         };
-        let entered = imports.iter().find(|i| i.at == at).map(|i| self.entered_module(i));
-        match entered {
-            Some(Placed::Proven(fqn)) => Resolution::Resolved { fqn, via: Rung::ThroughAnImport },
-            // NOT `Unplaced`, which means "the ladder has not run on this yet".
-            // It has run: the specifier reduced to a module in a package this
-            // scan does not own, or to nothing at all. That is where our world
-            // ends, which is exactly what `ExternalBoundary` records — and an
-            // import of a library module is the commonest reference there is.
-            _ => Resolution::Unresolved {
-                reason: Reason::ExternalBoundary,
-                evidence: evidence.clone(),
-            },
+        match imports.iter().find(|i| i.at == at) {
+            Some(import) => self.place_brought(import),
+            // Unreachable: `common::import_references` mints these references
+            // FROM imports, at their spans. A reference with no import behind it
+            // is a form this ladder cannot read, and recording that is better
+            // than answering as though it had read one.
+            None => {
+                Resolution::Unresolved { reason: Reason::UnhandledForm, evidence: evidence.clone() }
+            }
         }
     }
 
@@ -1708,15 +1857,119 @@ mod tests {
 
         assert_eq!(
             entered,
-            vec!["ThroughAnImport rust·p·other·mod".to_string()],
+            vec!["ThroughAnImport rust·p··other·mod".to_string()],
             "the glob enters `other`, and `other.rs` declares exactly that identity"
         );
 
         // The target is not invented: the other file really does declare it.
         let declared = file_of(&scanned, "src/other.rs");
         assert!(
-            declared.symbols.iter().any(|s| s.fqn.as_str() == "rust·p·other·mod"),
+            declared.symbols.iter().any(|s| s.fqn.as_str() == "rust·p··other·mod"),
             "the module the import landed on is one the other file declares"
+        );
+    }
+
+    /// How a placement reads, for the import tests below. One spelling, so a
+    /// miss and a placement cannot be asserted in two different shapes.
+    fn reads_as(target: &Resolution) -> String {
+        match target {
+            Resolution::Resolved { fqn, via } => format!("{via:?} {}", fqn.as_str()),
+            Resolution::Unresolved { reason, evidence } => {
+                format!("UNRESOLVED({reason:?}) {}", evidence.name)
+            }
+        }
+    }
+
+    /// **AN IMPORT LANDS ON THE IDENTITY THE DECLARING FILE MINTED.**
+    ///
+    /// The merge contract, asserted from the import side for the first time.
+    /// Every import this indexer wrote used to carry no placement at all — the
+    /// specifier went to the database as a bare `target_name` and the occurrence
+    /// recorded neither a rung nor a reason, so `edge_verdict` reduced to NULL.
+    /// Measured 2026-10-06: 251,270 of 258,623 `imports` edges were in exactly
+    /// that state, against 2 of 1.69M `references` (#242).
+    ///
+    /// Two files, because a one-file fixture cannot show the merge: the
+    /// declaration has to come from somewhere this file did not write. And the
+    /// expected string is READ OFF the declaration rather than typed out, so the
+    /// test cannot pass by both sides being wrong in the same way.
+    #[test]
+    fn an_import_lands_on_the_identity_the_declaring_file_minted() {
+        let scanned = scan(&[
+            ("other", "src/other.rs", "pub fn deep() {}\n"),
+            ("m", "src/m.rs", "use crate::other::deep;\npub fn go() { deep() }\n"),
+        ]);
+        let declaration = file_of(&scanned, "src/other.rs")
+            .symbols
+            .iter()
+            .find(|s| s.name == "deep")
+            .expect("other.rs declares `deep`")
+            .fqn
+            .clone();
+
+        let importer = file_of(&scanned, "src/m.rs");
+        assert_eq!(
+            importer.imports.iter().map(|i| reads_as(&i.target)).collect::<Vec<_>>(),
+            vec![format!("ThroughAnImport {}", declaration.as_str())],
+            "the import must land on the very identity the other file declared"
+        );
+    }
+
+    /// An import of a package this scan never opens places onto LIBRARY SURFACE,
+    /// exactly as a call to one does.
+    ///
+    /// Not a refusal. 68,287 `lib·` nodes exist and `calls`/`references` already
+    /// reach them; an import refusing to is what made "who depends on serde"
+    /// unanswerable from the one edge kind that names a dependency outright.
+    ///
+    /// The identity is the SAME `lib·<package>·<member>` shape a call mints, so
+    /// the import and the calls through it meet on one node.
+    #[test]
+    fn an_import_of_a_package_this_scan_never_opens_lands_on_library_surface() {
+        let scanned = scan(&[("m", "src/m.rs", "use serde::Deserialize;\n")]);
+        assert_eq!(
+            file_of(&scanned, "src/m.rs")
+                .imports
+                .iter()
+                .map(|i| reads_as(&i.target))
+                .collect::<Vec<_>>(),
+            vec!["FullyQualifiedExternal lib·serde·Deserialize".to_string()],
+            "an external import names a member of a package, which is a node we do mint"
+        );
+    }
+
+    /// A specifier naming a MODULE enters that module, and the import and the
+    /// `RefKind::Imports` reference for the same statement agree.
+    ///
+    /// They have to, because they now key the same edge row. Before this they
+    /// could not even disagree: the import went to `TargetKey::Named("super::*")`
+    /// and the reference to the module, so one `use` line wrote TWO `imports`
+    /// rows and every count over the kind saw both.
+    #[test]
+    fn a_module_specifier_and_its_import_reference_place_alike() {
+        use crate::indexer::facts::RefKind;
+
+        let scanned = scan(&[
+            ("other", "src/other.rs", "pub fn deep() {}\n"),
+            ("m", "src/m.rs", "use crate::other::*;\npub fn go() { deep() }\n"),
+        ]);
+        let importer = file_of(&scanned, "src/m.rs");
+
+        let entered: Vec<String> = importer
+            .references
+            .iter()
+            .filter(|r| r.kind == RefKind::Imports)
+            .map(|r| reads_as(&r.target))
+            .collect();
+        assert_eq!(
+            entered,
+            vec!["ThroughAnImport rust·p··other·mod".to_string()],
+            "the reference still enters the module `other.rs` declares"
+        );
+        assert_eq!(
+            importer.imports.iter().map(|i| reads_as(&i.target)).collect::<Vec<_>>(),
+            entered,
+            "and the import itself reaches the SAME place, so the two share one edge row"
         );
     }
 
@@ -3116,6 +3369,11 @@ mod tests {
                 "declared_by_its_type",
                 "through_a_glob",
                 "rooted_in_this_package",
+                // Still a path the file spelled out, but rooted in a SIBLING
+                // package rather than its own — so it sits immediately below
+                // this package's own root and above everything that needs a
+                // second source or leaves the scan.
+                "rooted_in_a_scanned_package",
                 // The scope pass, between the last rung a FILE can reach on its
                 // own and the first that leaves the indexed source: a second
                 // fact from elsewhere in the scan had to agree, but it lands on
@@ -3180,6 +3438,60 @@ mod tests {
 
     /// Rung 3. A path that roots itself in the package needs no import at all,
     /// and the root word is what says where the module segment starts.
+    /// A path headed by a SIBLING package resolves, with no import statement.
+    ///
+    /// A Cargo dependency puts a sibling crate's root in scope without anything
+    /// being written down, so `through_an_import` has nothing to read and
+    /// `rooted_in_this_package` rejects the head (it accepts only `crate` /
+    /// `self` / `super`). `a_fully_qualified_external` then correctly DECLINES,
+    /// because `owned_by_this_scan` says the package is ours — and before this
+    /// rung existed there was nowhere left to go, so it fell to
+    /// `NoImportInScope`.
+    ///
+    /// Measured on sensei's converged index 2026-09-30: 11 occurrences of
+    /// `sensei_bootstrap::SenseiConfig::from_env` alone, and `cross_package`
+    /// plateaued at 100 — exactly the references written WITH a `use`.
+    ///
+    /// Breaking mutation: delete the `rooted_in_a_scanned_package` arm from the
+    /// ladder — every inline sibling path falls back to `NoImportInScope`.
+    #[test]
+    fn a_path_headed_by_a_sibling_package_is_placed_without_an_import() {
+        let facts = ladder_among(
+            "m",
+            "fn f() { sensei_bootstrap::config::positive_or(None, 7); }",
+            &["sensei-bootstrap"],
+        );
+        // Minted in the package the HEAD names, not the file's own `p`.
+        assert_placed(&facts, "rust·sensei-bootstrap·config·positive_or·item");
+    }
+
+    /// The separator is not the question, and this pins that.
+    ///
+    /// The manifest spells the package `sensei-bootstrap`; rust source must spell
+    /// the identifier `sensei_bootstrap`. `same_package` folds the two, and the
+    /// rung has to consult it rather than compare strings.
+    ///
+    /// Breaking mutation: compare the head to `first_party` with `==` instead of
+    /// `owned_by_this_scan` — every hyphenated crate stops resolving.
+    #[test]
+    fn a_sibling_package_resolves_however_the_manifest_spelled_it() {
+        let hyphen =
+            ladder_among("m", "fn f() { sensei_bootstrap::home_dir(); }", &["sensei-bootstrap"]);
+        assert_placed(&hyphen, "rust·sensei-bootstrap··home_dir·item");
+    }
+
+    /// A package we do NOT own stays external. The new rung must widen
+    /// first-party, never swallow a library.
+    ///
+    /// Breaking mutation: place the rung before the ownership test, or drop the
+    /// test — `tokio::spawn` becomes a first-party edge into a package with no
+    /// source here, which is the false-external defect in reverse.
+    #[test]
+    fn a_package_the_scan_does_not_own_is_still_external() {
+        let facts = ladder_among("m", "fn f() { tokio::spawn(()); }", &["sensei-bootstrap"]);
+        assert_placed(&facts, "lib·tokio·spawn");
+    }
+
     #[test]
     fn a_path_rooted_in_this_package_is_placed_without_an_import() {
         let facts = ladder("m", "fn f() { crate::db::PgStore::connect(); }");

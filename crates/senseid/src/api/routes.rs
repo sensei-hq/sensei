@@ -11,6 +11,7 @@ use crate::api::handlers::checker;
 use crate::api::handlers::codebase;
 use crate::api::handlers::config;
 use crate::api::handlers::corrections;
+use crate::api::handlers::diagrams;
 use crate::api::handlers::dojo;
 use crate::api::handlers::gateway;
 use crate::api::handlers::gateway_chains;
@@ -111,6 +112,11 @@ pub fn create_router(state: AppState) -> Router {
             get(project_detail::get_project_repos).post(observatory::add_solution_repo),
         )
         .route("/api/projects/{id}/repos/{repo_id}", delete(observatory::remove_solution_repo))
+        .route("/api/projects/{id}/diagrams/structure", get(diagrams::structure))
+        .route("/api/projects/{id}/diagrams/layering", get(diagrams::layering))
+        .route("/api/projects/{id}/diagrams/zones", get(diagrams::zones))
+        .route("/api/projects/{id}/diagrams/world", get(diagrams::world))
+        .route("/api/projects/{id}/diagrams/neighbourhood", get(diagrams::neighbourhood))
         .route("/api/projects/{id}/tags", post(observatory::add_solution_tag))
         .route("/api/projects/{id}/tags/{tag}", delete(observatory::remove_solution_tag))
         // Git author identity for a folder + its owning project (MCP
@@ -285,6 +291,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/process/analyze", post(observatory::analyze_process))
         .route("/api/projects/{id}/backfill", post(observatory::backfill_project_sessions))
         .route("/api/transcripts/backfill", post(observatory::ingest_captures))
+        // #218: reading an assistant's history is its own consent, per source.
+        .route("/api/transcripts/consent", get(observatory::transcript_consent))
+        .route("/api/transcripts/consent/{source}", put(observatory::set_transcript_consent))
         .route("/api/metrics/backfill", post(observatory::backfill_metrics))
         .route("/api/projects/{id}/graph", get(observatory::solution_graph))
         .route("/api/projects/{id}/roles", get(observatory::solution_roles))
@@ -418,6 +427,9 @@ pub fn create_router(state: AppState) -> Router {
             "/api/scan/roots/{id}",
             put(workspace::update_watch_root).delete(workspace::delete_watch_root),
         )
+        // #247: what stops syncing if a root goes, and the one pruner.
+        .route("/api/scan/roots/{id}/repositories", get(workspace::root_repositories))
+        .route("/api/scan/prune", post(workspace::prune_path))
         // Backfill embeddings for already-indexed nodes (EmbedNodes per folder)
         .route("/api/embed/backfill", post(workspace::backfill_embeddings))
         // Knowledge plane
@@ -534,7 +546,9 @@ pub fn create_degraded_router(db_url: String, error: String) -> Router {
 mod tests {
     use super::*;
     use crate::api::state::SharedState;
+    use crate::db::pg_store::MetricRow;
     use crate::db::pg_store::graph_seed::SeedGraph;
+    use crate::db::pg_store::{HookEventRow, MemoryRow};
     use crate::tasks::queue::TaskQueue;
     use crate::tasks::{Task, TaskKind};
     use axum::body::Body;
@@ -552,6 +566,9 @@ mod tests {
             event_tx,
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             provisioning: None,
+            diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
+                crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
+            )),
         });
         let router = create_router(state.clone());
         (router, state)
@@ -577,6 +594,320 @@ mod tests {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
         (status, json)
+    }
+
+    /// Registering a watch root SCANS it (#215).
+    ///
+    /// `add_watch_root` wrote the row and registered the path with the watcher
+    /// but enqueued nothing, so a newly added folder sat unindexed until the
+    /// 5-minute reconcile happened by. Measured on a from-scratch database:
+    /// registered, then 150s of `folders=0 repos=0 files=0 nodes=0`.
+    ///
+    /// Mutation that must break this test: drop the `enqueue_unique` from
+    /// `add_watch_root`.
+    #[tokio::test]
+    async fn registering_a_watch_root_enqueues_a_scan_for_it() {
+        let (app, state) = test_app().await;
+        // A real directory: `scan_root` hard-errors on a missing path and
+        // ScanRoot is NOT retryable, so enqueueing one for a path that does not
+        // exist would mint a permanently-failed task.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_string_lossy().to_string();
+
+        let (status, _) = req(
+            app.clone(),
+            "POST",
+            "/api/scan/roots",
+            Some(serde_json::json!({ "path": path, "excluded": [] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Scoped to the root this test owns — the queue is shared and other
+        // tests enqueue into it (#183).
+        let mine: Vec<_> = state
+            .task_queue
+            .snapshot()
+            .await
+            .into_iter()
+            .filter(|(k, _, p)| *k == crate::tasks::TaskKind::ScanRoot && p == &path)
+            .collect();
+        assert_eq!(mine.len(), 1, "exactly one ScanRoot for the new root; got {mine:?}");
+
+        // Idempotent: re-POSTing the same root must not stack a second walk.
+        let _ = req(
+            app,
+            "POST",
+            "/api/scan/roots",
+            Some(serde_json::json!({ "path": path, "excluded": [] })),
+        )
+        .await;
+        let again: Vec<_> = state
+            .task_queue
+            .snapshot()
+            .await
+            .into_iter()
+            .filter(|(k, _, p)| *k == crate::tasks::TaskKind::ScanRoot && p == &path)
+            .collect();
+        assert_eq!(again.len(), 1, "re-registering must not enqueue a second scan");
+    }
+
+    /// Deleting a watch root UNREGISTERS it from the watcher.
+    ///
+    /// Companion to #216. While `process_batch` asked the database for the root
+    /// list, a deleted row quietly filtered the stale in-memory registration
+    /// out. Now that the watcher resolves against its OWN roots, a registration
+    /// that outlives its row would keep resolving edits under a deleted tree —
+    /// and `scan_root` calls `add_watch_root` when a path has no enclosing root,
+    /// so the row would RESURRECT itself. It also leaves notify watching a tree
+    /// nobody asked about, which is a leak in its own right.
+    ///
+    /// Mutation that must break this test: drop the `unregister` from
+    /// `delete_watch_root`.
+    #[tokio::test]
+    async fn deleting_a_watch_root_unregisters_it_from_the_watcher() {
+        let (app, state) = test_app().await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_string_lossy().to_string();
+
+        let (status, body) = req(
+            app.clone(),
+            "POST",
+            "/api/scan/roots",
+            Some(serde_json::json!({ "path": path, "excluded": [] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let id = body["id"].as_str().unwrap().to_string();
+
+        let registered = {
+            let w = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
+            let g = w.lock().unwrap();
+            g.roots().contains_key(std::path::Path::new(&path))
+        };
+        assert!(registered, "precondition: POST registers the root with the watcher");
+
+        let (status, _) =
+            req(app, "DELETE", &format!("/api/scan/roots/{id}?repositories=remove"), None).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Scoped to THIS path — the watcher singleton is shared across tests (#183).
+        let still_there = {
+            let w = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
+            let g = w.lock().unwrap();
+            g.roots().contains_key(std::path::Path::new(&path))
+        };
+        assert!(!still_there, "a deleted root must not stay registered with the watcher");
+    }
+
+    /// Seed a root at a real temp directory with two repository folders `a` and
+    /// `b`, each with its own `repositories` row. Returns (root id, root path,
+    /// the tempdir guard).
+    async fn seed_root_with_two_repos(
+        app: &Router,
+        state: &AppState,
+    ) -> (uuid::Uuid, String, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let (status, body) = req(
+            app.clone(),
+            "POST",
+            "/api/scan/roots",
+            Some(serde_json::json!({ "path": root, "excluded": [] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let id = uuid::Uuid::parse_str(body["id"].as_str().unwrap()).unwrap();
+        let tag = uuid::Uuid::new_v4();
+        for name in ["a", "b"] {
+            crate::tasks::test_support::seed_repo_folder(
+                &state.pg,
+                &id,
+                &format!("{name}-{tag}"),
+                &format!("{root}/{name}"),
+            )
+            .await
+            .unwrap();
+        }
+        (id, root, dir)
+    }
+
+    async fn folder_exists(state: &AppState, abs_path: &str) -> bool {
+        let (n,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.folders WHERE abs_path = $1",
+        )
+        .bind(abs_path)
+        .fetch_one(state.pg.pool())
+        .await
+        .unwrap();
+        n > 0
+    }
+
+    async fn repository_of_folder_named(state: &AppState, abs_path: &str) -> Option<uuid::Uuid> {
+        sqlx_core::query_as::query_as::<_, (Option<uuid::Uuid>,)>(
+            "SELECT repository_id FROM sensei.folders WHERE abs_path = $1",
+        )
+        .bind(abs_path)
+        .fetch_optional(state.pg.pool())
+        .await
+        .unwrap()
+        .and_then(|r| r.0)
+    }
+
+    async fn repository_exists(state: &AppState, id: uuid::Uuid) -> bool {
+        let (n,): (i64,) =
+            sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.repositories WHERE id = $1")
+                .bind(id)
+                .fetch_one(state.pg.pool())
+                .await
+                .unwrap();
+        n > 0
+    }
+
+    /// **PRUNING A REPOSITORY UNDER A LIVE ROOT REMOVES IT AND EXCLUDES IT, SO A
+    /// RESCAN DOES NOT BRING IT BACK (#247).**
+    ///
+    /// Mutations that must break this test: skip adding the exclusion, add it
+    /// twice on a second prune, accept the root's own path, or prune with the
+    /// folder-only `DELETE` that leaves the repository row behind.
+    #[tokio::test]
+    async fn pruning_under_a_live_root_removes_and_excludes_and_refuses_the_root_itself() {
+        let (app, state) = test_app().await;
+        let (id, root, _dir) = seed_root_with_two_repos(&app, &state).await;
+        let a = format!("{root}/a");
+        let a_repo = repository_of_folder_named(&state, &a).await.expect("a has a repository");
+
+        let (status, body) =
+            req(app.clone(), "POST", "/api/scan/prune", Some(serde_json::json!({ "path": a })))
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["pruned"]["folders"], 1, "{body}");
+        assert_eq!(body["pruned"]["repositories"], 1, "{body}");
+        assert_eq!(body["excluded"], "a", "the exclusion is relative to the root: {body}");
+        assert!(!folder_exists(&state, &a).await);
+        assert!(!repository_exists(&state, a_repo).await, "the repository row goes too");
+        assert!(folder_exists(&state, &format!("{root}/b")).await, "its sibling stays");
+
+        let excluded = |state: &AppState| {
+            let pg = state.pg.clone();
+            async move { pg.get_watch_root(&id).await.unwrap().unwrap().1 }
+        };
+        assert_eq!(excluded(&state).await, vec!["a".to_string()]);
+
+        // Again: nothing left to prune, and the exclusion is not duplicated.
+        let (status, body) =
+            req(app.clone(), "POST", "/api/scan/prune", Some(serde_json::json!({ "path": a })))
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["pruned"]["folders"], 0);
+        assert_eq!(excluded(&state).await, vec!["a".to_string()]);
+
+        // The root itself is a ROOT removal, which asks keep-or-remove first.
+        let (status, _) =
+            req(app.clone(), "POST", "/api/scan/prune", Some(serde_json::json!({ "path": root })))
+                .await;
+        assert_eq!(status, StatusCode::CONFLICT, "pruning a whole root goes through DELETE");
+
+        // Nothing indexed lives under a path no root encloses.
+        let nowhere = format!("/_nowhere_{}", uuid::Uuid::new_v4());
+        let (status, _) = req(
+            app.clone(),
+            "POST",
+            "/api/scan/prune",
+            Some(serde_json::json!({ "path": nowhere })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let _ =
+            req(app, "DELETE", &format!("/api/scan/roots/{id}?repositories=remove"), None).await;
+    }
+
+    /// **REMOVING A ROOT ASKS FIRST: keep pauses it with its data, remove prunes
+    /// everything it held (#247).**
+    ///
+    /// Mutations that must break this test: default a missing decision, let
+    /// `keep` delete the row (the folder cascade would take the data), leave a
+    /// kept root registered with the watcher, or remove without pruning the
+    /// repository rows.
+    #[tokio::test]
+    async fn removing_a_root_asks_keep_or_remove_and_does_what_it_was_told() {
+        let (app, state) = test_app().await;
+        let (id, root, _dir) = seed_root_with_two_repos(&app, &state).await;
+        let a = format!("{root}/a");
+        let a_repo = repository_of_folder_named(&state, &a).await.unwrap();
+
+        // What will stop syncing, so the screen can ask about it by name.
+        let (status, body) =
+            req(app.clone(), "GET", &format!("/api/scan/roots/{id}/repositories"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let paths: Vec<&str> =
+            body.as_array().unwrap().iter().filter_map(|r| r["path"].as_str()).collect();
+        assert!(paths.contains(&a.as_str()) && paths.len() == 2, "{body}");
+
+        for bad in ["", "?repositories=maybe"] {
+            let (status, _) =
+                req(app.clone(), "DELETE", &format!("/api/scan/roots/{id}{bad}"), None).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "no decision is not a decision ({bad})");
+        }
+
+        let (status, body) =
+            req(app.clone(), "DELETE", &format!("/api/scan/roots/{id}?repositories=keep"), None)
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(folder_exists(&state, &a).await, "keep leaves the data readable");
+        let synced: Vec<String> = state
+            .pg
+            .list_watch_roots_to_sync()
+            .await
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["id"].as_str().map(str::to_string))
+            .collect();
+        assert!(!synced.contains(&id.to_string()), "a kept root is paused, not synced");
+        let registered = {
+            let w = crate::watcher::root_watcher::RootWatcher::instance(state.task_queue.clone());
+            let g = w.lock().unwrap();
+            g.roots().contains_key(std::path::Path::new(&root))
+        };
+        assert!(!registered, "a paused root is not watched");
+
+        let (status, body) =
+            req(app.clone(), "DELETE", &format!("/api/scan/roots/{id}?repositories=remove"), None)
+                .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["pruned"]["folders"], 2, "{body}");
+        assert!(!folder_exists(&state, &a).await);
+        assert!(!repository_exists(&state, a_repo).await, "no orphan repository is left behind");
+        assert!(state.pg.get_watch_root(&id).await.unwrap().is_none(), "the root row is gone");
+    }
+
+    /// `POST /api/repos/{id}/exclude` IS a prune now: it used to delete nodes and
+    /// one folder row and add no exclusion, so the next scan brought it back.
+    ///
+    /// Mutation that must break this test: restore the node-and-row delete.
+    #[tokio::test]
+    async fn excluding_a_repository_prunes_it_and_keeps_it_out() {
+        let (app, state) = test_app().await;
+        let (id, root, _dir) = seed_root_with_two_repos(&app, &state).await;
+        let b = format!("{root}/b");
+        let b_repo = repository_of_folder_named(&state, &b).await.unwrap();
+        let (name,): (String,) =
+            sqlx_core::query_as::query_as("SELECT name FROM sensei.folders WHERE abs_path = $1")
+                .bind(&b)
+                .fetch_one(state.pg.pool())
+                .await
+                .unwrap();
+
+        let (status, body) =
+            req(app.clone(), "POST", &format!("/api/repos/{name}/exclude"), None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(!folder_exists(&state, &b).await);
+        assert!(!repository_exists(&state, b_repo).await);
+        assert_eq!(state.pg.get_watch_root(&id).await.unwrap().unwrap().1, vec!["b".to_string()]);
+
+        let _ =
+            req(app, "DELETE", &format!("/api/scan/roots/{id}?repositories=remove"), None).await;
     }
 
     /// `/hook/event` must answer with a decodable JSON body. The MCP proxy
@@ -826,18 +1157,18 @@ mod tests {
             .unwrap();
         state
             .pg
-            .upsert_project_metric_repo(
-                &mid,
-                &rid,
-                "repo",
-                None,
-                None,
-                chrono::Utc::now().date_naive(),
-                "daily",
-                0.5,
-                &serde_json::json!({}),
-                "measured",
-            )
+            .upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &rid,
+                scope: "repo",
+                identity: None,
+                commit_sha: None,
+                computed_on: chrono::Utc::now().date_naive(),
+                grain: "daily",
+                value: 0.5,
+                props: &serde_json::json!({}),
+                source: "measured",
+            })
             .await
             .unwrap();
 
@@ -1270,28 +1601,34 @@ mod tests {
         let w2 = chrono::NaiveDate::from_ymd_opt(2020, 1, 13).unwrap(); // next Monday
         state
             .pg
-            .upsert_project_metric(
-                &mid_a,
-                &rid,
-                w1,
-                "daily",
-                0.5,
-                &serde_json::json!({"numerator": 1, "denominator": 2}),
-                "measured",
-            )
+            .upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid_a,
+                repository_id: &rid,
+                scope: "user",
+                identity: None,
+                commit_sha: None,
+                computed_on: w1,
+                grain: "daily",
+                value: 0.5,
+                props: &serde_json::json!({"numerator": 1, "denominator": 2}),
+                source: "measured",
+            })
             .await
             .unwrap();
         state
             .pg
-            .upsert_project_metric(
-                &mid_a,
-                &rid,
-                w2,
-                "daily",
-                0.75,
-                &serde_json::json!({"numerator": 3, "denominator": 4}),
-                "measured",
-            )
+            .upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid_a,
+                repository_id: &rid,
+                scope: "user",
+                identity: None,
+                commit_sha: None,
+                computed_on: w2,
+                grain: "daily",
+                value: 0.75,
+                props: &serde_json::json!({"numerator": 3, "denominator": 4}),
+                source: "measured",
+            })
             .await
             .unwrap();
 
@@ -1300,15 +1637,18 @@ mod tests {
         let mid_b = seed_metric(&state.pg, &key_b, "ratio", "lower_better").await;
         state
             .pg
-            .upsert_project_metric(
-                &mid_b,
-                &rid,
-                w1,
-                "daily",
-                0.25,
-                &serde_json::json!({"numerator": 1, "denominator": 4}),
-                "measured",
-            )
+            .upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid_b,
+                repository_id: &rid,
+                scope: "user",
+                identity: None,
+                commit_sha: None,
+                computed_on: w1,
+                grain: "daily",
+                value: 0.25,
+                props: &serde_json::json!({"numerator": 1, "denominator": 4}),
+                source: "measured",
+            })
             .await
             .unwrap();
 
@@ -1323,18 +1663,18 @@ mod tests {
         .expect("project_health seeded in registry");
         state
             .pg
-            .upsert_project_metric_repo(
-                &health_mid,
-                &rid,
-                "user",
-                None,
-                None,
-                w2,
-                "daily",
-                82.0,
-                &serde_json::json!({"components": 2}),
-                "measured",
-            )
+            .upsert_project_metric_repo(&MetricRow {
+                metric_id: &health_mid,
+                repository_id: &rid,
+                scope: "user",
+                identity: None,
+                commit_sha: None,
+                computed_on: w2,
+                grain: "daily",
+                value: 82.0,
+                props: &serde_json::json!({"components": 2}),
+                source: "measured",
+            })
             .await
             .unwrap();
 
@@ -1437,18 +1777,18 @@ mod tests {
         let rid_has = crate::tasks::test_support::repository_for_folder(&state.pg, &fid_has).await;
         state
             .pg
-            .upsert_project_metric_repo(
-                &ftr_mid,
-                &rid_has,
-                "user",
-                None,
-                None,
-                today,
-                "daily",
-                0.75,
-                &serde_json::json!({"numerator": 3, "denominator": 4}),
-                "measured",
-            )
+            .upsert_project_metric_repo(&MetricRow {
+                metric_id: &ftr_mid,
+                repository_id: &rid_has,
+                scope: "user",
+                identity: None,
+                commit_sha: None,
+                computed_on: today,
+                grain: "daily",
+                value: 0.75,
+                props: &serde_json::json!({"numerator": 3, "denominator": 4}),
+                source: "measured",
+            })
             .await
             .unwrap();
 
@@ -1544,15 +1884,18 @@ mod tests {
         for (d, num, den) in days {
             state
                 .pg
-                .upsert_project_metric(
-                    &mid,
-                    &rid,
-                    d,
-                    "daily",
-                    num as f64 / den as f64,
-                    &serde_json::json!({"numerator": num, "denominator": den}),
-                    "measured",
-                )
+                .upsert_project_metric_repo(&MetricRow {
+                    metric_id: &mid,
+                    repository_id: &rid,
+                    scope: "user",
+                    identity: None,
+                    commit_sha: None,
+                    computed_on: d,
+                    grain: "daily",
+                    value: num as f64 / den as f64,
+                    props: &serde_json::json!({"numerator": num, "denominator": den}),
+                    source: "measured",
+                })
                 .await
                 .unwrap();
         }
@@ -2011,6 +2354,743 @@ mod tests {
         assert_eq!(json["models"].as_array().map(|a| a.len()), Some(0));
     }
 
+    /// #205 — the Structure endpoint REFUSES a level or kind it does not know,
+    /// rather than quietly answering a narrower question.
+    ///
+    /// `level` reaches a `GROUP BY` expression and `kinds` a `= ANY`, so an
+    /// unrecognised value has two possible readings: a 400, or an empty graph.
+    /// An empty graph is the wrong one — this screen exists to distinguish "no
+    /// edges here" from "nothing resolved", and a third silent meaning ("you
+    /// asked for something that does not exist") makes both unreadable.
+    ///
+    /// Mutation that must break this: drop either `contains` guard.
+    #[tokio::test]
+    async fn structure_diagram_rejects_an_unknown_level_or_kind() {
+        let (app, state) = test_app().await;
+        let pid = state
+            .pg
+            .create_project(&format!("_test:struct:{}", uuid::Uuid::new_v4()), None, None)
+            .await
+            .unwrap();
+
+        let (bad_level, _) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/projects/{pid}/diagrams/structure?level=symbol"),
+            None,
+        )
+        .await;
+        assert_eq!(bad_level, StatusCode::BAD_REQUEST, "an unknown level is refused");
+
+        let (bad_kind, _) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/projects/{pid}/diagrams/structure?kinds=calls,teleports"),
+            None,
+        )
+        .await;
+        assert_eq!(bad_kind, StatusCode::BAD_REQUEST, "an unknown edge kind is refused");
+
+        // And a project that does not exist is a 404, not a 500 and not an
+        // empty graph.
+        let (missing, _) = req(
+            app.clone(),
+            "GET",
+            &format!("/api/projects/{}/diagrams/structure", uuid::Uuid::new_v4()),
+            None,
+        )
+        .await;
+        assert_eq!(missing, StatusCode::NOT_FOUND, "an unknown project is 404");
+
+        // A real but EMPTY project answers 200 with empty arrays and a coverage
+        // block — honest-empty, because it genuinely is empty.
+        let (ok, body) =
+            req(app, "GET", &format!("/api/projects/{pid}/diagrams/structure?level=module"), None)
+                .await;
+        assert_eq!(ok, StatusCode::OK);
+        assert_eq!(body["nodes"].as_array().map(|a| a.len()), Some(0));
+        assert_eq!(body["level"], "module", "the level is echoed, so a client can tell");
+        assert!(body["coverage"]["unplaced"].is_number(), "coverage is always present");
+
+        state.pg.delete_project(&pid).await.ok();
+    }
+
+    /// #222 — the layering endpoint ranks a real seeded graph, end to end.
+    ///
+    /// This is the only test that proves the whole chain AGREES: `module_of`
+    /// names a unit, `module_edges` names its dependencies with the same
+    /// expression, `structure_nodes` supplies the universe, and
+    /// `analysis::layering` ranks them. A unit test of the algorithm cannot
+    /// catch the two SQL expressions drifting apart — that failure shows up as
+    /// nodes with no edges, which renders as a perfectly plausible diagram.
+    ///
+    /// The seeded shape: `alpha` and `beta` depend on each other (a cycle),
+    /// `beta` depends on `gamma` (below it), and `alpha` has two files that
+    /// refer to each other (a module self-dependency, which exists only at
+    /// module grain). `alpha -> beta` is observed twice and `beta -> alpha`
+    /// once, so the weakest link is unambiguous.
+    ///
+    /// Mutation that must break this test: have `structure_group_sql("module")`
+    /// spell the identity itself instead of calling `sensei.module_of` — the
+    /// units stop matching the edges and `cycles` empties.
+    #[tokio::test]
+    async fn layering_endpoint_ranks_a_seeded_graph_and_names_the_cut() {
+        let (app, state) = test_app().await;
+        let pg = &state.pg;
+        let tag = uuid::Uuid::new_v4();
+        let pid = pg.create_project(&format!("_test:layering:{tag}"), None, None).await.unwrap();
+        let root = format!("/_test/layering/{tag}");
+        let root_id = pg.add_watch_root(&root, "lay-wt", &serde_json::json!([])).await.unwrap();
+        let fid = pg.upsert_repo(&root_id, "lay", &root).await.unwrap();
+        crate::tasks::test_support::place_folder_in_project(pg, &fid, &pid, &format!("lay-{tag}"))
+            .await
+            .unwrap();
+
+        // `rust·<package>·<module>·<symbol>` — segment 2 is the package and
+        // segment 3 the module, which is the decomposition every structure view
+        // reads (see `structure_graph`).
+        //
+        // THE MODULE SEGMENTS CARRY BOTH SEPARATORS (`alpha::core`, `beta/web`)
+        // ON PURPOSE. `module_of` takes the first segment after splitting on
+        // `/` AND `::`, so bare names like `alpha` would collapse to the same
+        // id under almost any wrong expression and the drift this test exists
+        // to catch would survive — verified: with bare names, replacing the
+        // `sensei.module_of` call with an inline expression that forgets the
+        // `::` split left the test GREEN.
+        let def = |path: &'static str| crate::db::pg_store::FqnDef {
+            file_path: path,
+            signature: None,
+            line_start: Some(1),
+            line_end: Some(2),
+            is_exported: true,
+            parent_id: None,
+        };
+        let node = |fqn: &str, name: &str, path: &'static str| {
+            let (fqn, name) = (fqn.to_string(), name.to_string());
+            async move {
+                pg.seed_node_by_fqn(&fid, &fqn, "function", &name, Some("rust"), Some(def(path)))
+                    .await
+                    .unwrap()
+            }
+        };
+        let a1 = node("rust·p·alpha::core·one", "one", "a1.rs").await;
+        let a1b = node("rust·p·alpha::core·five", "five", "a1.rs").await;
+        let a2 = node("rust·p·alpha::core·four", "four", "a2.rs").await;
+        let b1 = node("rust·p·beta/web·two", "two", "b1.rs").await;
+        let c1 = node("rust·p·gamma::util·three", "three", "c1.rs").await;
+
+        for (s, t) in [(&a1, &b1), (&a1b, &b1), (&b1, &a1), (&b1, &c1), (&a1, &a2)] {
+            pg.insert_edge(&fid, s, Some(t), None, None, "calls").await.unwrap();
+        }
+
+        let (status, body) =
+            req(app, "GET", &format!("/api/projects/{pid}/diagrams/layering?level=module"), None)
+                .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["layerSource"], "derived", "the screen must know which layering this is");
+
+        let layer = |m: &str| {
+            body["nodes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|n| n["id"] == m)
+                .unwrap_or_else(|| panic!("{m} missing from {}", body["nodes"]))["layer"]
+                .as_u64()
+                .unwrap()
+        };
+        assert_eq!(layer("p/alpha"), layer("p/beta"), "the cycle's members share a rank");
+        assert_eq!(layer("p/gamma"), layer("p/alpha") + 1, "gamma sits one below the cycle");
+
+        let cycles = body["cycles"].as_array().unwrap();
+        assert_eq!(cycles.len(), 1, "one cycle, got {}", body["cycles"]);
+        assert_eq!(cycles[0]["members"], serde_json::json!(["p/alpha", "p/beta"]));
+        assert_eq!(
+            (cycles[0]["cut"]["source"].as_str(), cycles[0]["cut"]["target"].as_str()),
+            (Some("p/beta"), Some("p/alpha")),
+            "the cut is the direction observed once, not the one observed twice"
+        );
+
+        // The self-dependency survives: two files of one module referring to
+        // each other is a fact about the module, and dropping it here is how a
+        // module with no outward dependency disappears from the diagram.
+        let selfs = body["selfDependencies"].as_array().unwrap();
+        assert_eq!(selfs.len(), 1, "got {}", body["selfDependencies"]);
+        assert_eq!(selfs[0]["source"], "p/alpha");
+
+        // ... and it is NOT a graph edge, so it cannot be mistaken for a cycle.
+        let edges = body["edges"].as_array().unwrap();
+        assert!(
+            !edges.iter().any(|e| e["source"] == e["target"]),
+            "a self-dependency is never drawn as an edge"
+        );
+        assert_eq!(
+            edges.iter().find(|e| e["source"] == "p/beta" && e["target"] == "p/gamma").unwrap()["conformance"],
+            "down",
+            "beta -> gamma descends exactly one layer"
+        );
+
+        // Every dependency in this fixture names a known unit, so the omission
+        // counter is zero — and it is PRESENT, which is what lets a screen tell
+        // "nothing was dropped" from "nobody counted".
+        assert_eq!(body["coverage"]["unknownUnit"], 0);
+        assert_eq!(body["coverage"]["units"], 3);
+
+        // An unknown grain is refused rather than silently answered at another.
+        let (bad, _) = req(
+            app_clone(&state),
+            "GET",
+            &format!("/api/projects/{pid}/diagrams/layering?level=package"),
+            None,
+        )
+        .await;
+        assert_eq!(bad, StatusCode::BAD_REQUEST, "package is not a layering grain");
+
+        pg.delete_project(&pid).await.ok();
+    }
+
+    /// A second router over the same state, for a test that needs two requests.
+    fn app_clone(state: &AppState) -> Router {
+        create_router(state.clone())
+    }
+
+    /// #223 — Martin's abstractness against instability, end to end.
+    ///
+    /// The seeded shape makes every number checkable by hand. Dependencies are
+    /// `alpha -> beta` (a call), `gamma -> beta` (a call), `delta -> beta` (a
+    /// call) and `beta -> alpha` (an IMPLEMENTS, which is a dependency too —
+    /// beta implements a contract alpha owns).
+    ///
+    /// - `p/alpha` — 2 types, 1 implemented. A = 1/2. Ca = {beta}; Ce is {beta}
+    ///   plus the library package `extpkg` it calls, and NOT the `$lib` alias it
+    ///   also calls, so Ce = 2, I = 2/3 and D = 1/6.
+    /// - `p/beta` — 1 type, nothing implements it, so A = 0. Ca = {alpha, gamma,
+    ///   delta} = 3, Ce = {alpha} = 1, so I = 1/4 and D = 3/4. `pain`: concrete
+    ///   and widely depended upon.
+    /// - `p/delta` — 2 types, 1 implemented (by its own sibling, which is
+    ///   cohesion and not coupling). A = 1/2. Nothing depends on it and it
+    ///   depends on beta, so I = 1 and D = 1/2. `useless`.
+    /// - `p/gamma` — NO type at all, and it calls beta. A is undefined, so D and
+    ///   the zone are too, even though I is perfectly well defined at 1.
+    /// - `p/zeta` — one type and NO coupling whatsoever. The mirror case: A is
+    ///   defined at 0, I is not, and D is undefined again.
+    ///
+    /// That last one is the case worth having a test for. The mockup computes
+    /// `A = abstract / types`, which is NaN at zero types, and `I = 0` when a
+    /// module has no coupling at all. Both are fabrications — a module that
+    /// declares no type is not maximally concrete, and an isolated one is not
+    /// maximally stable — so this reports NULL and the screen omits the point.
+    ///
+    /// NOT EXERCISED: the `risk` band (0.25 < D <= 0.4). It is the same CASE arm
+    /// as the two tested thresholds with a different constant, and hitting it
+    /// needs coupling ratios that would double the size of this fixture for no
+    /// new behaviour.
+    ///
+    /// Mutation that must break this test: coalesce `abstractness` to 0 when a
+    /// module declares no types.
+    ///
+    /// One property here is guarded TWICE and so needs a two-line mutation to
+    /// break: coupling counts distinct partners both because `me` groups the
+    /// module pairs and because `afferent`/`efferent` count distinct. Removing
+    /// either alone leaves the answer correct. That is deliberate — `module_edges`
+    /// carries one row per KIND, so a future reader who drops the group-by must
+    /// still get the right number.
+    #[tokio::test]
+    async fn zones_endpoint_computes_the_main_sequence_and_refuses_to_invent_one() {
+        let (app, state) = test_app().await;
+        let pg = &state.pg;
+        let tag = uuid::Uuid::new_v4();
+        let pid = pg.create_project(&format!("_test:zones:{tag}"), None, None).await.unwrap();
+        let root = format!("/_test/zones/{tag}");
+        let root_id = pg.add_watch_root(&root, "zone-wt", &serde_json::json!([])).await.unwrap();
+        let fid = pg.upsert_repo(&root_id, "zone", &root).await.unwrap();
+        crate::tasks::test_support::place_folder_in_project(pg, &fid, &pid, &format!("zn-{tag}"))
+            .await
+            .unwrap();
+
+        let def = |path: &'static str| crate::db::pg_store::FqnDef {
+            file_path: path,
+            signature: None,
+            line_start: Some(1),
+            line_end: Some(2),
+            is_exported: true,
+            parent_id: None,
+        };
+        let node = |fqn: &str, kind: &str, name: &str, path: &'static str| {
+            let (fqn, kind, name) = (fqn.to_string(), kind.to_string(), name.to_string());
+            async move {
+                pg.seed_node_by_fqn(&fid, &fqn, &kind, &name, Some("rust"), Some(def(path)))
+                    .await
+                    .unwrap()
+            }
+        };
+        let ifc = node("rust·p·alpha::core·Ifc", "interface", "Ifc", "a.rs").await;
+        let _s1 = node("rust·p·alpha::core·S1", "struct", "S1", "a.rs").await;
+        let fn1 = node("rust·p·alpha::core·one", "function", "one", "a.rs").await;
+        let s2 = node("rust·p·beta/web·S2", "struct", "S2", "b.rs").await;
+        let fn2 = node("rust·p·beta/web·two", "function", "two", "b.rs").await;
+        let fn3 = node("rust·p·gamma::util·three", "function", "three", "c.rs").await;
+        let ifc2 = node("rust·p·delta/x·Ifc2", "interface", "Ifc2", "d.rs").await;
+        let imp2 = node("rust·p·delta/x·Impl2", "struct", "Impl2", "d2.rs").await;
+        let fn4 = node("rust·p·delta/x·four", "function", "four", "d.rs").await;
+        // A module with a type and NO coupling at all — the other half of the
+        // NULL story, and the one the mockup would place at perfect stability.
+        let _s5 = node("rust·p·zeta/none·S5", "struct", "S5", "z.rs").await;
+        // A SYMBOL whose fqn puts it in a module-shaped name no file is modal
+        // for — #231's shape. `a.rs` holds three `alpha::core` symbols and this
+        // one, so `alpha::core` wins the file and `p/Widget` is recognised by
+        // nothing. It must not become a point.
+        let _w = node("rust·p·Widget·inner", "struct", "inner", "a.rs").await;
+        // LIBRARY SURFACE: `lib·<package>·…` with no definition, so `file_id` is
+        // NULL — which is exactly what makes a node library surface rather than
+        // code. `$lib` is SvelteKit's alias for a package's OWN source and must
+        // NOT count as an external dependency; `extpkg` must.
+        let ext = pg
+            .seed_node_by_fqn(&fid, "lib·extpkg·thing", "function", "thing", None, None)
+            .await
+            .unwrap();
+        let alias = pg
+            .seed_node_by_fqn(&fid, "lib·$lib·helper", "function", "helper", None, None)
+            .await
+            .unwrap();
+
+        // `S2 implements Ifc` is what makes Ifc an abstraction — abstractness is
+        // derived from the EDGES, never from the keyword (see `abstractions`).
+        pg.insert_edge(&fid, &s2, Some(&ifc), None, None, "implements").await.unwrap();
+        // Delta's abstraction is implemented by its own sibling, so delta stays
+        // abstract WITHOUT gaining an afferent dependency.
+        pg.insert_edge(&fid, &imp2, Some(&ifc2), None, None, "implements").await.unwrap();
+        for (s, t) in [(&fn1, &fn2), (&fn3, &fn2), (&fn4, &fn2), (&fn1, &ext), (&fn1, &alias)] {
+            pg.insert_edge(&fid, s, Some(t), None, None, "calls").await.unwrap();
+        }
+        // A SECOND edge of a different kind between the same module pair, so
+        // `module_edges` carries two rows for `alpha -> beta`. Coupling counts
+        // DISTINCT partners, so this must not move Ce(alpha) or Ca(beta) —
+        // without it, counting rows and counting partners agree and the
+        // difference is untestable.
+        pg.insert_edge(&fid, &fn1, Some(&fn2), None, None, "references").await.unwrap();
+
+        let (status, body) =
+            req(app, "GET", &format!("/api/projects/{pid}/diagrams/zones"), None).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let point = |m: &str| {
+            body["points"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|p| p["component"] == m)
+                .unwrap_or_else(|| panic!("{m} missing from {}", body["points"]))
+                .clone()
+        };
+        let num = |v: &serde_json::Value| v.as_f64().unwrap();
+        let close = |v: &serde_json::Value, want: f64, what: &str| {
+            assert!((num(v) - want).abs() < 1e-9, "{what}: expected {want}, got {v}")
+        };
+
+        let a = point("p/alpha");
+        assert_eq!((a["types"].as_i64(), a["abstractTypes"].as_i64()), (Some(2), Some(1)));
+        close(&a["abstractness"], 0.5, "A(alpha)");
+        assert_eq!(
+            (a["ca"].as_i64(), a["ce"].as_i64()),
+            (Some(1), Some(2)),
+            "Ce counts the library package too — and NOT the `$lib` alias, which \
+             resolves to the package's own source"
+        );
+        close(&a["instability"], 2.0 / 3.0, "I(alpha)");
+        close(&a["distance"], 1.0 / 6.0, "D(alpha) = |0.5 + 2/3 - 1|");
+        assert_eq!(a["zone"], "main", "abstract in proportion to how unstable it is");
+
+        let b = point("p/beta");
+        close(&b["abstractness"], 0.0, "A(beta) — a type nothing implements");
+        assert_eq!((b["ca"].as_i64(), b["ce"].as_i64()), (Some(3), Some(1)));
+        close(&b["instability"], 0.25, "I(beta)");
+        close(&b["distance"], 0.75, "D(beta)");
+        assert_eq!(b["zone"], "pain", "concrete and depended upon");
+
+        let d = point("p/delta");
+        close(&d["abstractness"], 0.5, "A(delta)");
+        assert_eq!(
+            (d["ca"].as_i64(), d["ce"].as_i64()),
+            (Some(0), Some(1)),
+            "implementing its OWN contract is cohesion, not an afferent dependency"
+        );
+        close(&d["instability"], 1.0, "I(delta)");
+        close(&d["distance"], 0.5, "D(delta)");
+        assert_eq!(d["zone"], "useless", "abstract and depended upon by nothing");
+
+        // The module that declares no type: NULL, not zero, and only for the
+        // half that is genuinely undefined.
+        let g = point("p/gamma");
+        assert_eq!(g["types"].as_i64(), Some(0));
+        assert!(g["abstractness"].is_null(), "no type declared is not 'maximally concrete'");
+        close(&g["instability"], 1.0, "I(gamma) — coupling IS defined for it");
+        assert!(g["distance"].is_null(), "and so D cannot be computed");
+        assert!(g["zone"].is_null());
+
+        // ... and the module nothing touches: A is defined, I is not.
+        let z = point("p/zeta");
+        close(&z["abstractness"], 0.0, "A(zeta)");
+        assert_eq!((z["ca"].as_i64(), z["ce"].as_i64()), (Some(0), Some(0)));
+        assert!(z["instability"].is_null(), "no coupling at all is not 'maximally stable'");
+        assert!(z["distance"].is_null());
+        assert!(z["zone"].is_null());
+
+        // The node universe is the one every other diagram draws: a module is
+        // one `structure_graph` names. Without that, #231's symbol-shaped names
+        // become points — on project `sensei` that is 391 "modules" against a
+        // real 151, with the worst-distance list led by a C struct.
+        assert!(
+            !body["points"].as_array().unwrap().iter().any(|p| p["component"] == "p/Widget"),
+            "a symbol-shaped module no file is modal for is not a point: {}",
+            body["points"]
+        );
+
+        // The count sits beside the picture, so a reader can tell an omitted
+        // point from one that happens to land at the origin.
+        assert_eq!(body["coverage"]["unplaceable"], 2, "gamma has no A, zeta has no I");
+        assert_eq!(body["coverage"]["points"], 5);
+        // The mean is over the PLACEABLE points only: (1/6 + 3/4 + 1/2) / 3.
+        close(&body["meanDistance"], (1.0 / 6.0 + 0.75 + 0.5) / 3.0, "mean distance");
+
+        pg.delete_project(&pid).await.ok();
+    }
+
+    /// **THE DIAGRAM CACHE IS READ, AND IT IS KEYED ON THE GRAPH VERSION (#233).**
+    ///
+    /// Asserted through the HANDLER, because the cache unit tests prove the
+    /// cache works and not that anything uses it. Observed by CHANGING THE
+    /// GRAPH BEHIND THE ENDPOINT'S BACK: a new edge that moves no
+    /// `files.indexed_at` must not appear, because the version did not move and
+    /// the stored answer is still the answer the daemon has. Then touching
+    /// `indexed_at` must bring it in.
+    ///
+    /// That is the only observation that distinguishes a cache being READ from
+    /// one merely being WRITTEN. Timing would be flaky and `cache.len()` would
+    /// pass on a cache nothing ever consults.
+    ///
+    /// It is worth the 1.5-74 s this guards: measured 2026-10-06 on project
+    /// `sensei` at module grain, one layering request is 37 s, and Layers and
+    /// Cycles read the SAME payload — so visiting both paid it twice before.
+    ///
+    /// Mutation that must break this test: drop the `state.diagrams.get` early
+    /// return in `handlers::diagrams::cached`, or key the entry without the
+    /// version.
+    #[tokio::test]
+    async fn the_layering_endpoint_serves_a_cached_payload_until_the_graph_moves() {
+        let (app, state) = test_app().await;
+        let pg = &state.pg;
+        let tag = uuid::Uuid::new_v4();
+        let pid = pg.create_project(&format!("_test:cache:{tag}"), None, None).await.unwrap();
+        let root = format!("/_test/cache/{tag}");
+        let root_id = pg.add_watch_root(&root, "cache-wt", &serde_json::json!([])).await.unwrap();
+        let fid = pg.upsert_repo(&root_id, "cache", &root).await.unwrap();
+        crate::tasks::test_support::place_folder_in_project(pg, &fid, &pid, &format!("ca-{tag}"))
+            .await
+            .unwrap();
+        // A `files` row is what gives the project a version at all — with none,
+        // every request would share the single `None` version and the test
+        // could not tell a hit from a miss.
+        //
+        // ONE FILE PER MODULE, because `structure_graph` takes the MODAL module
+        // across a file's symbols. Three modules declared in one file roll up to
+        // one unit, which is a graph with no edge in it at all — and an endpoint
+        // returning nothing proves nothing about a cache.
+        for path in ["a.rs", "b.rs", "c.rs"] {
+            pg.upsert_file_row(&fid, path, 1, "seed", None).await.unwrap();
+        }
+
+        let def = |path: &'static str| crate::db::pg_store::FqnDef {
+            file_path: path,
+            signature: None,
+            line_start: Some(1),
+            line_end: Some(2),
+            is_exported: true,
+            parent_id: None,
+        };
+        let node = |fqn: &str, name: &str, path: &'static str| {
+            let (fqn, name) = (fqn.to_string(), name.to_string());
+            async move {
+                pg.seed_node_by_fqn(&fid, &fqn, "function", &name, Some("rust"), Some(def(path)))
+                    .await
+                    .unwrap()
+            }
+        };
+        let a = node("rust·p·alpha::core·one", "one", "a.rs").await;
+        let b = node("rust·p·beta/web·two", "two", "b.rs").await;
+        let c = node("rust·p·gamma::util·three", "three", "c.rs").await;
+        pg.insert_edge(&fid, &a, Some(&b), None, None, "calls").await.unwrap();
+
+        let url = format!("/api/projects/{pid}/diagrams/layering?level=module&kinds=calls");
+        let (status, first) = req(app.clone(), "GET", &url, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let edges_at_first = first["edges"].as_array().expect("edges").len();
+        assert!(edges_at_first > 0, "the fixture must draw an edge: {first}");
+
+        // BEHIND THE ENDPOINT'S BACK: a real new dependency, and no file
+        // re-indexed. The daemon has not been told the graph moved, so it must
+        // keep answering what it last computed.
+        pg.insert_edge(&fid, &b, Some(&c), None, None, "calls").await.unwrap();
+        let (status, cached) = req(app.clone(), "GET", &url, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            cached["edges"].as_array().unwrap().len(),
+            edges_at_first,
+            "the version did not move, so the stored answer is still the answer"
+        );
+
+        // ...and now it did move. Same request, recomputed, the new edge in it.
+        sqlx_core::query::query("UPDATE sensei.files SET indexed_at = now() WHERE folder_id = $1")
+            .bind(fid)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        let (status, fresh) = req(app, "GET", &url, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            fresh["edges"].as_array().unwrap().len(),
+            edges_at_first + 1,
+            "a moved version is a miss, and the recomputed answer carries the new dependency"
+        );
+
+        pg.delete_project(&pid).await.ok();
+    }
+
+    /// **THE WORLD ENDPOINT NESTS A SEEDED CORPUS, AND REFUSES A GROUPING IT
+    /// DOES NOT HAVE (#219).**
+    ///
+    /// `analysis::world` owns the nesting invariants and tests them in
+    /// isolation. What only the endpoint can show is the seam: that the two
+    /// reads line up into cells the nester accepts, that the project in the path
+    /// NAMES the view without scoping it, and that an unknown grouping is a 400
+    /// rather than a silent fall back to the default — which is how a control
+    /// comes to look like it works while answering a different question.
+    ///
+    /// Mutation that must break this test: make `GroupFirst::from_label`
+    /// return `Some(Project)` for an unknown label, or filter `world_cells` by
+    /// project.
+    #[tokio::test]
+    async fn the_world_endpoint_nests_every_project_and_refuses_an_unknown_grouping() {
+        let (app, state) = test_app().await;
+        let pg = &state.pg;
+        let tag = uuid::Uuid::new_v4();
+        let mine = pg.create_project(&format!("_test:world:{tag}"), None, None).await.unwrap();
+        let root = format!("/_test/world/{tag}");
+        let root_id = pg.add_watch_root(&root, "world-wt", &serde_json::json!([])).await.unwrap();
+        let fid = pg.upsert_repo(&root_id, &format!("w-{tag}"), &root).await.unwrap();
+        crate::tasks::test_support::place_folder_in_project(pg, &fid, &mine, &format!("w-{tag}"))
+            .await
+            .unwrap();
+        pg.upsert_file_row(&fid, "a.rs", 1, "seed", None).await.unwrap();
+        let def = crate::db::pg_store::FqnDef {
+            file_path: "a.rs",
+            signature: None,
+            line_start: Some(1),
+            line_end: Some(2),
+            is_exported: true,
+            parent_id: None,
+        };
+        pg.seed_node_by_fqn(&fid, "rust·w·m·one", "function", "one", Some("rust"), Some(def))
+            .await
+            .unwrap();
+
+        let url = format!("/api/projects/{mine}/diagrams/world?groupBy=project");
+        let (status, body) = req(app.clone(), "GET", &url, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["groupBy"], "project");
+
+        // The path's project NAMES the view and does not scope it. The corpus
+        // this runs against holds other projects, and the picture is "all
+        // indexed code" — a payload holding only one project's circle would mean
+        // the outermost ring had been filtered away.
+        let name = format!("_test:world:{tag}");
+        assert_eq!(body["viewing"], name, "the payload says which circle you are standing in");
+
+        let units = body["units"].as_array().expect("units");
+        assert!(!units.is_empty(), "the fixture declares a symbol, so something is nested");
+        let roots: Vec<&str> = units
+            .iter()
+            .filter(|u| u["path"].as_array().unwrap().len() == 1)
+            .filter_map(|u| u["label"].as_str())
+            .collect();
+        assert!(roots.contains(&name.as_str()), "the seeded project is a circle: {roots:?}");
+
+        // Every unit carries the three things the layout and the shade control
+        // read. A missing `path` nests nothing; a missing `measures` leaves the
+        // shade control with nothing to colour by.
+        for u in units {
+            assert!(u["path"].is_array(), "every unit carries its own path: {u}");
+            assert!(u["weight"].is_i64(), "{u}");
+            assert!(u["measures"]["documentedShare"].is_number(), "{u}");
+        }
+
+        // A grouping that does not exist is a refusal, not a default.
+        let (status, _) =
+            req(app, "GET", &format!("/api/projects/{mine}/diagrams/world?groupBy=docs"), None)
+                .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "there is no docs grouping");
+
+        pg.delete_project(&mine).await.ok();
+    }
+
+    /// **THE NEIGHBOURHOOD ENDPOINT WALKS RINGS BY DEPTH, AND REFUSES WHAT IT
+    /// CANNOT DRAW (#220).**
+    ///
+    /// `analysis::neighbourhood` owns the step and `pg_store::neighbourhood` the
+    /// hop read. What only the endpoint shows is the loop between them: that
+    /// depth 2 reaches a callee's callee and depth 1 does not, that a library
+    /// callee is drawn and never walked through, that every edge points at a
+    /// node the payload carries, and that the refusals are refusals.
+    ///
+    /// Mutations that must break this test: run the loop `depth + 1` times,
+    /// seed the next ring from `reached` instead of `frontier`, or default a
+    /// missing focus.
+    #[tokio::test]
+    async fn the_neighbourhood_endpoint_walks_rings_and_refuses_what_it_cannot_draw() {
+        let (app, state) = test_app().await;
+        let pg = &state.pg;
+        let tag = uuid::Uuid::new_v4();
+        let mine = pg.create_project(&format!("_test:hood:{tag}"), None, None).await.unwrap();
+        let root = format!("/_test/hood-route/{tag}");
+        let root_id = pg.add_watch_root(&root, "hood-wt", &serde_json::json!([])).await.unwrap();
+        let fid = pg.upsert_repo(&root_id, &format!("h-{tag}"), &root).await.unwrap();
+        crate::tasks::test_support::place_folder_in_project(pg, &fid, &mine, &format!("h-{tag}"))
+            .await
+            .unwrap();
+        let node = |fqn: String, name: &'static str| {
+            let def = crate::db::pg_store::FqnDef {
+                file_path: "a.rs",
+                signature: None,
+                line_start: Some(1),
+                line_end: Some(2),
+                is_exported: true,
+                parent_id: None,
+            };
+            async move {
+                pg.seed_node_by_fqn(&fid, &fqn, "function", name, Some("rust"), Some(def))
+                    .await
+                    .unwrap()
+            }
+        };
+        let focus = node(format!("rust·h{tag}·m·focus·item"), "focus").await;
+        let caller = node(format!("rust·h{tag}·m·caller·item"), "caller").await;
+        let callee = node(format!("rust·h{tag}·m·callee·item"), "callee").await;
+        let deeper = node(format!("rust·h{tag}·m·deeper·item"), "deeper").await;
+        let library = node(format!("lib·serde{tag}·json·to_string"), "to_string").await;
+        let beyond = node(format!("rust·h{tag}·m·beyond·item"), "beyond").await;
+        for (s, t) in [(caller, focus), (focus, callee), (callee, deeper), (focus, library)] {
+            pg.insert_edge(&fid, &s, Some(&t), None, None, "calls").await.unwrap();
+        }
+        // Something the library "calls" — only reachable by walking THROUGH it.
+        pg.insert_edge(&fid, &library, Some(&beyond), None, None, "calls").await.unwrap();
+
+        let url = |q: &str| format!("/api/projects/{mine}/diagrams/neighbourhood?{q}");
+        let ids = |body: &serde_json::Value| -> Vec<String> {
+            body["nodes"]
+                .as_array()
+                .expect("nodes")
+                .iter()
+                .map(|n| n["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+
+        let (status, one) = req(app.clone(), "GET", &url(&format!("focus={focus}")), None).await;
+        assert_eq!(status, StatusCode::OK, "{one}");
+        assert_eq!(one["depth"], 1, "depth defaults to one hop");
+        assert_eq!(one["focus"]["id"], focus.to_string());
+        let got = ids(&one);
+        for want in [focus, caller, callee, library] {
+            assert!(got.contains(&want.to_string()), "{want} at depth 1: {got:?}");
+        }
+        assert!(!got.contains(&deeper.to_string()), "a callee's callee is depth 2: {got:?}");
+
+        let (status, two) =
+            req(app.clone(), "GET", &url(&format!("focus={focus}&depth=2")), None).await;
+        assert_eq!(status, StatusCode::OK, "{two}");
+        let got = ids(&two);
+        assert!(got.contains(&deeper.to_string()), "depth 2 reaches the callee's callee");
+        assert!(!got.contains(&beyond.to_string()), "a library is a leaf: {got:?}");
+
+        // Every edge is a dependency between two carried nodes — the layout
+        // words its columns "called by / calls" from that kind, and an edge to a
+        // missing node is a line to nowhere.
+        for e in two["edges"].as_array().expect("edges") {
+            assert_eq!(e["kind"], "dependency", "{e}");
+            assert!(got.contains(&e["source"].as_str().unwrap().to_string()), "{e}");
+            assert!(got.contains(&e["target"].as_str().unwrap().to_string()), "{e}");
+        }
+        assert!(two["coverage"]["unplacedCallees"].is_i64(), "{}", two["coverage"]);
+        assert!(two["coverage"]["namedUnplaced"].is_i64(), "{}", two["coverage"]);
+
+        // The refusals.
+        for (q, want, why) in [
+            (String::new(), StatusCode::BAD_REQUEST, "a neighbourhood needs a focus"),
+            ("focus=not-a-uuid".to_string(), StatusCode::BAD_REQUEST, "a focus is a node id"),
+            (format!("focus={focus}&depth=4"), StatusCode::BAD_REQUEST, "three hops is the most"),
+            (format!("focus={focus}&depth=0"), StatusCode::BAD_REQUEST, "zero hops is no picture"),
+            (
+                format!("focus={}", uuid::Uuid::new_v4()),
+                StatusCode::NOT_FOUND,
+                "not this project's",
+            ),
+        ] {
+            let (status, _) = req(app.clone(), "GET", &url(&q), None).await;
+            assert_eq!(status, want, "{why} ({q})");
+        }
+
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1")
+            .bind(root_id)
+            .execute(pg.pool())
+            .await
+            .ok();
+        pg.delete_project(&mine).await.ok();
+    }
+
+    /// **READING TRANSCRIPTS IS ITS OWN CONSENT, PER ASSISTANT, OFF UNTIL SAID
+    /// (#218).** The endpoint lists every source with a plain label and its
+    /// state, and a PUT flips one. An unknown source is a 404, never a stored
+    /// key that governs nothing.
+    ///
+    /// Mutations that must break this test: store an unknown source, or report
+    /// `consented` from anything but the stored key.
+    #[tokio::test]
+    async fn transcript_consent_is_listed_per_source_and_set_one_at_a_time() {
+        let (app, state) = test_app().await;
+        let _gate = crate::transcript::consent::CONSENT_KEYS.enter();
+        crate::transcript::consent::set(&state.pg, "zed", false).await.unwrap();
+
+        let (status, body) = req(app.clone(), "GET", "/api/transcripts/consent", None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let rows = body.as_array().expect("a list");
+        assert_eq!(rows.len(), crate::transcript::consent::SOURCES.len());
+        let zed = rows.iter().find(|r| r["source"] == "zed").expect("zed is listed");
+        assert_eq!(zed["label"], "Zed");
+        assert_eq!(zed["consented"], false);
+
+        let (status, _) = req(
+            app.clone(),
+            "PUT",
+            "/api/transcripts/consent/zed",
+            Some(serde_json::json!({ "consented": true })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, body) = req(app.clone(), "GET", "/api/transcripts/consent", None).await;
+        let zed = body.as_array().unwrap().iter().find(|r| r["source"] == "zed").unwrap().clone();
+        assert_eq!(zed["consented"], true);
+
+        let (status, _) = req(
+            app,
+            "PUT",
+            "/api/transcripts/consent/notepad",
+            Some(serde_json::json!({ "consented": true })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "an unknown source is not stored");
+
+        crate::transcript::consent::set(&state.pg, "zed", false).await.unwrap();
+    }
+
     #[tokio::test]
     async fn index_doctor_endpoint_returns_readonly_report() {
         let (app, _) = test_app().await;
@@ -2080,16 +3160,16 @@ mod tests {
             .unwrap();
         state
             .pg
-            .insert_hook_event(
-                "_test-remap-ep-session",
-                "claude",
-                "PreToolUse",
-                None,
-                Some("/_test/remap-ep-old"),
-                1_700_000_500,
-                None,
-                &serde_json::json!({}),
-            )
+            .insert_hook_event(&HookEventRow {
+                session_id: "_test-remap-ep-session",
+                assistant_family: "claude",
+                event_type: "PreToolUse",
+                tool_name: None,
+                cwd: Some("/_test/remap-ep-old"),
+                ts: 1_700_000_500,
+                success: None,
+                payload: &serde_json::json!({}),
+            })
             .await
             .unwrap();
 
@@ -2342,7 +3422,9 @@ mod tests {
             .add_watch_root("/_test/del_proj", "test", &serde_json::json!([]))
             .await
             .unwrap();
-        state.pg.upsert_repo(&root_id, "x", "/_test/del_proj/x").await.unwrap();
+        crate::tasks::test_support::seed_repo_folder(&state.pg, &root_id, "x", "/_test/del_proj/x")
+            .await
+            .unwrap();
         let resp = app
             .oneshot(
                 Request::builder()
@@ -2450,11 +3532,14 @@ mod tests {
         // Setup: root + child folders registered under a project.
         let root_id =
             state.pg.add_watch_root(&root_path, "test", &serde_json::json!([])).await.unwrap();
-        let root_fid = state
-            .pg
-            .upsert_repo(&root_id, &root_name, &format!("{}/{}", root_path, root_name))
-            .await
-            .unwrap();
+        let root_fid = crate::tasks::test_support::seed_repo_folder(
+            &state.pg,
+            &root_id,
+            &root_name,
+            &format!("{}/{}", root_path, root_name),
+        )
+        .await
+        .unwrap();
         let child_fid = state
             .pg
             .upsert_subfolder(
@@ -2463,7 +3548,6 @@ mod tests {
                 &format!("{}/{}", root_name, child_name),
                 &format!("{}/{}/{}", root_path, root_name, child_name),
                 Some(&root_fid),
-                None,
             )
             .await
             .unwrap();
@@ -2653,7 +3737,18 @@ mod tests {
     async fn seed_memory(state: &AppState, title: &str, content: &str) -> uuid::Uuid {
         state
             .pg
-            .create_memory(None, "global", None, "decision", title, content, None, None, None, None)
+            .create_memory(&MemoryRow {
+                project_id: None,
+                scope: "global",
+                scope_filter: None,
+                mem_type: "decision",
+                title,
+                content,
+                impact: None,
+                session_id: None,
+                spine_slot: None,
+                feature: None,
+            })
             .await
             .unwrap()
     }
@@ -3030,9 +4125,12 @@ mod tests {
         let abs_path = "/_test/mcp-seam/repo".to_string();
         let root_id =
             state.pg.add_watch_root(&abs_path, "mcp-seam", &serde_json::json!([])).await.unwrap();
-        state
+        let folder_id = state
             .pg
-            .upsert_folder(&root_id, "git", "repo", "repo", &abs_path, None, Some(&pid), None)
+            .upsert_folder(&root_id, "git", "repo", "repo", &abs_path, None, None)
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&state.pg, &folder_id, &pid, "repo")
             .await
             .unwrap();
 
@@ -3072,18 +4170,18 @@ mod tests {
         // folder's ruleset is non-empty regardless of DB baseline.
         state
             .pg
-            .create_memory(
-                None,
-                "global",
-                None,
-                "convention",
-                "_test:mcp-seam-rule",
-                "seam rule",
-                None,
-                None,
-                None,
-                None,
-            )
+            .create_memory(&MemoryRow {
+                project_id: None,
+                scope: "global",
+                scope_filter: None,
+                mem_type: "convention",
+                title: "_test:mcp-seam-rule",
+                content: "seam rule",
+                impact: None,
+                session_id: None,
+                spine_slot: None,
+                feature: None,
+            })
             .await
             .unwrap();
 
@@ -3236,7 +4334,10 @@ mod tests {
         // Folder name == project name: get_file_tags looks up folders.name.
         let folder_id = state
             .pg
-            .upsert_folder(&root_id, "git", &name, "repo", &abs_path, None, Some(&pid), None)
+            .upsert_folder(&root_id, "git", &name, "repo", &abs_path, None, None)
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&state.pg, &folder_id, &pid, &name)
             .await
             .unwrap();
 
@@ -3279,18 +4380,18 @@ mod tests {
         let rule_title = format!("_test:contract-rule-{short}");
         state
             .pg
-            .create_memory(
-                None,
-                "global",
-                None,
-                "convention",
-                &rule_title,
-                "seam rule",
-                None,
-                None,
-                None,
-                None,
-            )
+            .create_memory(&MemoryRow {
+                project_id: None,
+                scope: "global",
+                scope_filter: None,
+                mem_type: "convention",
+                title: &rule_title,
+                content: "seam rule",
+                impact: None,
+                session_id: None,
+                spine_slot: None,
+                feature: None,
+            })
             .await
             .unwrap();
 
@@ -3598,9 +4699,9 @@ mod tests {
             .add_watch_root(&base, &format!("fp-{short}"), &serde_json::json!([]))
             .await
             .unwrap();
-        state
-            .pg
-            .upsert_folder(&root, "git", &name, "repo", &under, None, Some(&pid), None)
+        let fid =
+            state.pg.upsert_folder(&root, "git", &name, "repo", &under, None, None).await.unwrap();
+        crate::tasks::test_support::place_folder_in_project(&state.pg, &fid, &pid, &name)
             .await
             .unwrap();
 
@@ -3735,18 +4836,15 @@ mod tests {
         let root = state.pg.add_watch_root(&base, &name, &serde_json::json!([])).await.unwrap();
 
         // One git repo root + many nested `kind:'folder'` descendants.
-        state
+        // The ANCHOR is placed first. The 40 descendants below need no
+        // membership of their own — `upsert_folder` resolves their repository
+        // from the anchor, which is where the project now lives.
+        let anchor = state
             .pg
-            .upsert_folder(
-                &root,
-                "git",
-                &pname,
-                "repo",
-                &format!("{base}/repo"),
-                None,
-                Some(&pid),
-                None,
-            )
+            .upsert_folder(&root, "git", &pname, "repo", &format!("{base}/repo"), None, None)
+            .await
+            .unwrap();
+        crate::tasks::test_support::place_folder_in_project(&state.pg, &anchor, &pid, &pname)
             .await
             .unwrap();
         for i in 0..40 {
@@ -3759,7 +4857,6 @@ mod tests {
                     &format!("repo/src/d{i}"),
                     &format!("{base}/repo/src/d{i}"),
                     None,
-                    Some(&pid),
                     None,
                 )
                 .await
@@ -4352,8 +5449,9 @@ mod tests {
         // ── FTR PARITY: store daily == get_ftr_daily == direct base arithmetic; headline == Σnum/Σden ──
         let (direct_rate, direct_count): (f64, i64) = query_as(
             "SELECT avg(CASE WHEN s.ftr THEN 1.0 ELSE 0.0 END)::float8, count(*)::int8 \
-               FROM activity.sessions s JOIN sensei.folders f ON f.id = s.folder_id \
-              WHERE f.project_id = $1 AND s.outcome IS NOT NULL",
+               FROM activity.sessions s \
+               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id \
+              WHERE fp.project_id = $1 AND s.outcome IS NOT NULL",
         )
         .bind(pid)
         .fetch_one(pg.pool())

@@ -183,6 +183,12 @@ pub async fn register_repositories(
 ///
 /// `#[async_trait]` because the cycle holds it as `&dyn UserPlane` — the alternative
 /// (generics) would infect every caller's signature for no gain here.
+// `async_trait` desugars each method to a `Pin<Box<dyn Future>>` and stamps
+// `#[must_use]` on it; clippy 1.99 added `double_must_use`, which then fires on
+// a return type that is already must-use. The attribute is the macro's, not
+// ours, and clippy's external-macro suppression does not reach proc-macro output
+// that keeps call-site spans.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait UserPlane: Send + Sync {
     async fn register_repositories(

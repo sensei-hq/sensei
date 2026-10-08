@@ -336,6 +336,18 @@ pub(crate) fn splice_pointer_block(existing: &str, new_block: &str) -> String {
     out
 }
 
+/// Whether THIS daemon may write the pointer into the user's `~/.claude/CLAUDE.md`.
+///
+/// Only the default instance. An isolated one (the e2e instance, a dev
+/// instance) has its own data dir, but `~/.claude/CLAUDE.md` is the USER's,
+/// shared by every Claude session on the machine: an e2e daemon rewrote it to
+/// point at `~/.sensei-e2e/rules.md` for the length of a run, and an
+/// interrupted run left it there (#248). Same decision, and same shape, as
+/// `transcript_scheduler::ingests_transcripts`.
+pub(crate) fn writes_user_claude_md(isolated_instance: bool) -> bool {
+    !isolated_instance
+}
+
 /// Upsert the sensei pointer block into the user's global `~/.claude/CLAUDE.md`.
 /// Only touches an existing file (no-op if the file is missing) — sensei never
 /// creates a global CLAUDE.md on behalf of the user; if they haven't set up
@@ -1769,6 +1781,14 @@ mod tests {
         let first = splice_pointer_block("# CLAUDE.md\n\nHello.\n", &block);
         let second = splice_pointer_block(&first, &block);
         assert_eq!(first, second, "idempotent: second run leaves the file unchanged");
+    }
+
+    /// An isolated instance never writes the user's CLAUDE.md (#248).
+    /// Mutation that must break this: return `true` unconditionally.
+    #[test]
+    fn only_the_default_instance_writes_the_users_claude_md() {
+        assert!(writes_user_claude_md(false), "the default instance keeps the pointer current");
+        assert!(!writes_user_claude_md(true), "an e2e or dev instance leaves it alone");
     }
 
     #[test]

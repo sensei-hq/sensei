@@ -1,20 +1,52 @@
 use super::*;
 
+/// One row of `sensei.memories` — a learned fact and where it applies.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+// Gated with its writer — see `create_memory`, which has no production caller.
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub struct MemoryRow<'a> {
+    pub project_id: Option<&'a uuid::Uuid>,
+    pub scope: &'a str,
+    pub scope_filter: Option<&'a str>,
+    pub mem_type: &'a str,
+    pub title: &'a str,
+    pub content: &'a str,
+    pub impact: Option<&'a str>,
+    pub session_id: Option<&'a uuid::Uuid>,
+    pub spine_slot: Option<&'a str>,
+    pub feature: Option<&'a str>,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
-    pub async fn create_memory(
-        &self,
-        project_id: Option<&uuid::Uuid>,
-        scope: &str,
-        scope_filter: Option<&str>,
-        mem_type: &str,
-        title: &str,
-        content: &str,
-        impact: Option<&str>,
-        session_id: Option<&uuid::Uuid>,
-        spine_slot: Option<&str>,
-        feature: Option<&str>,
-    ) -> Result<uuid::Uuid, String> {
+    /// NO PRODUCTION CALLER (measured 2026-10-06, #161). Every one of its 17
+    /// call sites is a test. `sensei.memories` has three writers —
+    /// `create_memory`, `insert_memory` (34 sites) and `promote_memory` — and
+    /// which of them production actually uses, and whether three is one too
+    /// many, is a question this refactor surfaced rather than answered.
+    ///
+    /// Marked `#[cfg(test)]` so the fact is visible in the type system instead
+    /// of being hidden behind an `allow` on the unused re-export.
+    #[cfg(test)]
+    pub async fn create_memory(&self, row: &MemoryRow<'_>) -> Result<uuid::Uuid, String> {
+        // EXHAUSTIVE (#161): a field added to `MemoryRow` stops this
+        // compiling until someone binds it.
+        let MemoryRow {
+            project_id,
+            scope,
+            scope_filter,
+            mem_type,
+            title,
+            content,
+            impact,
+            session_id,
+            spine_slot,
+            feature,
+        } = row;
         let row: (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.memories(project_id, scope, scope_filter, type, title, content, impact, session_id, spine_slot, feature)
              VALUES($1, $2::sensei.memory_scope, $3, $4::sensei.memory_type, $5, $6, $7, $8, $9::sensei.spine_slot, $10) RETURNING id"
@@ -911,5 +943,28 @@ impl PgStore {
         }
         tx.commit().await.map_err(|e| e.to_string())?;
         Ok(skipped)
+    }
+}
+
+impl PgStore {
+    /// The namespace a memory belongs to, or `None` when it has none.
+    ///
+    /// Two different `None`s reach the caller here and only the caller can tell
+    /// them apart: a memory with a NULL `namespace_id`, and a memory id that
+    /// names no row. Federation treats both the same — it declines to share —
+    /// so this returns `Option<Option<..>>` flattened rather than inventing a
+    /// distinction neither it nor the schema needs. A DB ERROR is still an
+    /// `Err`: "the lookup failed" must not read as "it has no namespace" (#227).
+    pub async fn memory_namespace_id(
+        &self,
+        memory_id: &uuid::Uuid,
+    ) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(Option<uuid::Uuid>,)> =
+            sqlx_core::query_as::query_as("SELECT namespace_id FROM sensei.memories WHERE id = $1")
+                .bind(memory_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(row.and_then(|(n,)| n))
     }
 }

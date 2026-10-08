@@ -18,11 +18,22 @@ select n.id
      , count(e.id) filter (where e.kind = 'extends')    as extended_by
      , count(e.id) filter (where e.kind = 'implements') as implemented_by
      , count(distinct src.folder_id)                 as implementing_folders
+     -- APPENDED, not inserted beside `project`: `create or replace view`
+     -- accepts new columns only at the end.
+     --
+     -- Carried through because the scalar `project` above is now NULL whenever
+     -- the node's repository serves more than one project — `graph_nodes`
+     -- refuses to pick one of two. Without these, 1,341 of 3,696 rows (36%)
+     -- lost their project outright: policy-management 1,267 -> 0, mycm.net
+     -- 43 -> 0, employee-portal 28 -> 0, kavach 3 -> 0. Filter with
+     -- `= any(projects)`, never `project =`, or those rows vanish silently.
+     , n.project_ids
+     , n.projects
   from sensei.graph_nodes n
   join sensei.edges       e   on e.target_id = n.id and e.kind in ('implements', 'extends')
   join sensei.nodes       src on src.id      = e.source_id
  where n.fqn is not null
- group by n.id, n.folder_id, n.project_id, n.project, n.fqn, n.name, n.kind
+ group by n.id, n.folder_id, n.project_id, n.project, n.project_ids, n.projects, n.fqn, n.name, n.kind
         , n.language, n.file_path, n.line_start, n.is_exported, n.locality;
 
 comment on view abstractions is
@@ -61,10 +72,10 @@ consumer chooses with a WHERE clause.
 
 Common queries:
   -- the polymorphic seams of a project, widest first
-  SELECT name, component, implementers FROM abstractions WHERE project = ''sensei'' ORDER BY implementers DESC
+  SELECT name, component, implementers FROM abstractions WHERE ''sensei'' = any(projects) ORDER BY implementers DESC
   -- Martin''s A per component. OURS only: a std trait we implement is not an
   -- abstraction this codebase offers.
-  SELECT component, count(*) FROM abstractions WHERE project = ''sensei'' AND locality = ''internal'' GROUP BY component
+  SELECT component, count(*) FROM abstractions WHERE ''sensei'' = any(projects) AND locality = ''internal'' GROUP BY component
   -- a seam implemented across folder boundaries is an integration point
   SELECT name, implementing_folders FROM abstractions WHERE implementing_folders > 1';
 

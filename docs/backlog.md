@@ -15,6 +15,130 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+## Indexer — an interrupted scan silently disables cross-package resolution (measured 2026-09-30)
+
+The structure pass downgrades EVERY directory to `kind='folder'`, and
+`ProcessManifest` re-upgrades the manifest-bearing ones to `kind='module'`
+afterwards. `upsert_subfolder_kind`'s conflict rule permits the downgrade:
+
+```sql
+kind = CASE WHEN folders.kind IN ('folder','module') THEN EXCLUDED.kind ELSE folders.kind END
+```
+
+Between those two passes a repository has **no module folders**, and
+`first_party_packages` reads exactly those rows — so `World::first_party` is
+empty and every cross-package edge silently fails to place.
+
+Observed on this machine: stopping the daemon mid-scan left all 18 of sensei's
+module folders as plain `folder`. Restarting restored them, so it is recoverable
+— but until the next COMPLETE scan, #207/#208 are inert and nothing says so.
+
+The normal path is protected only by ordering: the file gate is `blocked_by` the
+manifest tasks, so files are not parsed inside the window. That is a real
+guarantee but an implicit one, and it does not cover an interrupted scan.
+
+**Fix candidates.** Make the downgrade non-destructive (the structure pass should
+not be able to demote a `module`, since only a manifest pass knows one exists);
+or have `first_party_packages` refuse to answer "no packages" for a repo whose
+manifests have not been re-applied, rather than returning an empty set that reads
+as a legitimate answer. The second is the fail-loud shape.
+
+---
+
+## DB — `IS NOT DISTINCT FROM` over a scalar subquery scans the whole table on a miss (measured 2026-09-30)
+
+Written while scoping the resolver's world:
+
+```sql
+WHERE f.project_id IS NOT DISTINCT FROM (SELECT g.project_id FROM folders g WHERE g.id = $1)
+```
+
+For a folder that does not exist the subquery is NULL, and
+`IS NOT DISTINCT FROM NULL` matches **every row whose column is also NULL** — so
+an unknown id silently returns a world assembled from every project-less folder
+in the database. Measured: 105s for what should have been an instant empty
+answer, and the result was wrong as well as slow.
+
+`IS NOT DISTINCT FROM` is the right operator for comparing two possibly-NULL
+values. It is the wrong one for "scope to the thing this id belongs to", where a
+miss must yield NOTHING. Fixed by scoping through `repo_anchor_for` instead
+(0.19s), but the pattern is worth knowing: **a NULL-tolerant comparison against a
+scalar subquery turns a miss into a match-everything.**
+
+---
+
+## Indexer — a scan cannot be cancelled, because `--force` writes its intent into the data (measured 2026-09-30)
+
+**Agreed with the user 2026-09-30: take this up AFTER the empty-`World` defect
+is fixed.** Two parts, and the second is the prerequisite for the first being
+worth anything.
+
+### Part 2 first: `--force` is destructive, so cancelling it cannot undo it
+
+`repo_scan.rs:203-206` expresses "re-parse everything" by **mutating the
+database**: `mark_folder_unparsed` sets `parsed_at = NULL` on every file of the
+folder, and `list_unparsed_files` then returns them. The flag is the work queue.
+
+Measured consequence on this machine (2026-09-30): **86,869 of 95,590 files** sat
+flagged unparsed, and that flag is persisted, so it survived a daemon restart and
+the boot reconcile tick re-enqueued the entire population. **There was no way to
+cancel the run** — the only mechanism that would have worked was stamping
+`parsed_at` on ~84,500 files to a time they were never parsed at, which is
+precisely the plausible-but-wrong write the no-fabrication rule forbids: it makes
+the gate skip files that genuinely need re-parsing.
+
+**CORRECTION (same day, after root-causing it).** That backlog was first
+attributed here to an *interrupted force*. It was not. No force had ever run —
+`enqueue_unique` was dropping every forced task behind the reconcile tick's
+unforced twin, and `mark_folder_unparsed`'s log line appeared zero times in 2 GB
+of daemon log. 55,501 of those files were reset by the STRUCTURE pass writing the
+barrier sentinel over already-parsed rows. Both of those are now fixed (see
+`a_second_scan_of_an_unchanged_repo_keeps_the_parse_state` and
+`a_forced_task_is_not_dropped_behind_an_unforced_twin`).
+
+What survives the correction is the design point below, and it is why the
+misattribution was easy to make: because force is expressed as a DB mutation,
+"who cleared this flag" has no answer after the fact. An interrupted force still
+leaves the index indistinguishable from "everything is stale", forever, with no
+owner — that part was never about which writer did it.
+
+**The fix — force rides the task, never the table.** Replace
+`mark_folder_unparsed` + `list_unparsed_files` with one query that takes the
+flag: `list_files_to_parse(folder_id, force)` → all files when `force`, unparsed
+ones otherwise. Then:
+
+- force is pure in-memory task state, so cancelling the task cancels the force;
+- an interrupted force leaves **zero** residue;
+- the DB stops carrying scheduling intent in a column that means something else.
+
+`mark_folder_unparsed` loses its only caller and goes with it.
+
+### Part 1: cancel the queue over the API, without a restart
+
+`TaskQueue` (`tasks/queue.rs:15-41`) is entirely in-memory — `Mutex<QueueState>`
+holding `pending: VecDeque`, `blocked: Vec`, `running: HashMap`. There is no
+persisted task table and no cancel endpoint, so today "cancel the run" means
+`sensei restart`, which drops the queue but (see above) not the work.
+
+- **Pending and blocked: easy.** Drain both by predicate — task id, kind, or
+  path prefix — under the mutex that already exists. Needs the same segment-
+  boundary containment rule as the scan classifier (`scan_logic::under`), so
+  `/a/sensei-old` is not cancelled by a request naming `/a/sensei`.
+- **Running: needs a token.** One `tokio_util::sync::CancellationToken` per
+  running task, stored beside it in `running`, checked at the await points that
+  matter — `process_git_folder`'s file loop and `process_file`. A cancelled task
+  must complete as *cancelled*, not failed, so `retry.rs` does not treat it as a
+  permanent error and `activity.task_executions` records the truth.
+- **Endpoint:** `POST /api/tasks/cancel {scope}` where scope is a path, a kind,
+  or "all", returning counts per bucket (pending/blocked/running) so a caller can
+  see what it actually stopped.
+
+Note the id-space constraint already documented at `queue.rs:21-29`: `next_id`
+restarts at 1 each daemon session, so a cancel-by-id must be scoped to the
+issuing session.
+
+---
+
 ## Indexer — RETIRE v1 AND MAKE v2 FINAL (decided with the user 2026-09-22)
 
 **Agreed: v1 (`crate::languages`) is retired and v2 (`crate::indexer`) becomes
@@ -1035,7 +1159,8 @@ technology(40) · team(50) · project(60) · repository(70)
 
 A namespace is one instantiated rung — `(organization, "Sensei HQ")`,
 `(technology, "rust")`, `(project, "sensei")` — and a repo belongs to a SET of
-them via `folder_namespaces`. Its purpose is deciding **which rules apply to a
+them via `repository_namespaces` (and, for a `project` rung, via the project
+itself). Its purpose is deciding **which rules apply to a
 repo and which wins** (more specific scope beats less specific). Three of its
 four referents are `rule_packs`, `rule_pack_adoptions` and `shared_rules`.
 `dojo.seats` is the fourth, and is the odd one out: it bills against a rule

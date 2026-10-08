@@ -29,6 +29,46 @@ create index if not exists edges_target_id_idx
 create index if not exists edges_kind_idx
     on edges(kind);
 
+-- The diagram access path: a project's folders, then THEIR edges.
+--
+-- Covering, so the four columns `structure_edges` needs from this table come
+-- out of the index and the 3.9 GB heap is never visited. Measured 2026-10-02
+-- on the `calls` edges of one project, forced serial: the seq-scan plan reads
+-- 610,830 buffers, folder-driven without this index 124,196, and folder-driven
+-- with it 60,432 — 10x. Heap Fetches were still 68,717 because the visibility
+-- map was cold; a vacuumed table makes it a true index-only scan.
+--
+-- `where target_id is not null` matches what every diagram asks for: an
+-- unresolved edge names a relationship the index cannot point at, so no diagram
+-- draws it. That predicate removes 1.96M of 3.18M rows from the index.
+--
+-- THE INDEX ALONE DOES NOTHING. With `structure_edges` written as a plain join
+-- the planner still seq-scans `edges` (verified — 19.6 s, same shape), because
+-- filtering 368,570 `calls` rows out of 3.18M is a fair seq scan on its own
+-- terms. It is the LATERAL in that view that makes the per-folder lookup the
+-- plan, and this index that makes the lookup cheap. Neither half works alone.
+-- The resolver's World, which asks one question per repo scan: "every identity
+-- this repository's code OWNS". Partial on the `owns` relation and covering
+-- `target_id`, so the question is answered from the index.
+--
+-- Without it `world_sets_for_folder` seq-scans all 3.18M edges to find the
+-- 408,335 `owns` rows and applies the folder filter afterwards. Measured
+-- 2026-10-02 forced serial: 397,888 buffers against 41,535 with this index and
+-- the folder filter driving — 9.6x. Fifteen of these were observed running
+-- concurrently for over 40 minutes each, which is 15 simultaneous scans of a
+-- 3.9 GB table.
+--
+-- `props->>'relation'` is an EXPRESSION index: the relation lives in jsonb, so
+-- there is no column to index. That makes it usable only by a predicate written
+-- exactly this way, which is why the three World queries spell it identically.
+create index if not exists edges_owns_folder_idx
+    on edges(folder_id) include (target_id)
+ where (props->>'relation') = 'owns';
+
+create index if not exists edges_folder_kind_cover_idx
+    on edges(folder_id, kind) include (source_id, target_id)
+ where target_id is not null;
+
 create index if not exists edges_confidence_idx
     on edges(confidence);
 

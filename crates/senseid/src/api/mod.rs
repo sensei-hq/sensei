@@ -1,3 +1,4 @@
+pub(crate) mod diagram_cache;
 pub mod events;
 pub mod gateway_config_loader;
 pub mod gateway_embedded;

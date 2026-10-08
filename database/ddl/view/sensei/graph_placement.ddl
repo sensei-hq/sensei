@@ -2,14 +2,13 @@ set search_path to sensei, extensions;
 
 create or replace view graph_placement as
 with e as (
-  select f.project_id
-       , coalesce(p.name, f.name)                     as project
+  select fp.project_id
+       , fp.project
        , ed.kind::text                                as edge_kind
        , ed.resolved_via
        , ed.unresolved_reason
-    from sensei.edges     ed
-    join sensei.folders   f on f.id = ed.folder_id
-    left join sensei.projects p on p.id = f.project_id
+    from sensei.edges           ed
+    join sensei.folder_projects fp on fp.folder_id = ed.folder_id
 )
 select e.project
      , e.project_id
@@ -65,6 +64,36 @@ fixing. (`edge_verdict` cannot be so forgiving — it reduces BY precedence, so 
 unregistered code there is silently lost. That asymmetry is why a new rung must
 be seeded before it is emitted.)
 
+MEMBERSHIP COMES FROM `folder_projects`, NEVER FROM `folders.project_id`. That
+column was settable independently on every folder, so a single repository''s
+folders could disagree about which project they were in — and did. The path is
+now edge -> folder -> repository -> `repositories_in_projects`, which is two indexed
+joins and no function scan, so a repository''s edges cannot be split between
+projects by accident. Measured when this was changed: the `kavach` repository''s
+edges were split 5,347 / 2,834 between two projects and are now 8,181 under each.
+
+WHICH MAKES THIS VIEW MULTI-VALUED, DELIBERATELY. A repository is keyed on its
+REMOTE, and when this was written 8 repositories served two projects each,
+between them holding 436,683 edges. Those edges are now counted under BOTH
+projects. So `sum(edges)` over the WHOLE view (3,615,094 when written) is larger
+than `count(*)` on `sensei.edges` (3,178,411) by exactly those 436,683 — SUM
+WITHIN A PROJECT, NEVER ACROSS ONE.
+
+That is not double counting, and the key is why: `repositories_in_projects` is keyed
+on (project_id, repository_id) and a folder carries exactly one `repository_id`,
+so a folder yields exactly ONE row per distinct project. No
+(project, edge_kind, verdict) row can count the same edge twice, which is why
+the GROUP BY here needs no DISTINCT and every percentage — already partitioned
+by project — is unchanged by the multiplicity. Verified by counting one shared
+project''s edges with and without `count(distinct edges.id)`: identical.
+
+NO FOLDER-NAME FALLBACK ANY MORE. The old `coalesce(p.name, f.name)` labelled a
+folder that had no project with the FOLDER''S OWN NAME, which in a result set is
+indistinguishable from a real project. An edge whose folder sits under no
+tracked repository now produces no row at all, which is what `folder_projects`
+promises. Measured at 0 such edges when this was written, so nothing is lost
+today — but the next one will be plainly absent rather than disguised.
+
 Common queries:
   -- the headline, per edge kind
   SELECT edge_kind, outcome, sum(edges), sum(pct_of_kind) FROM graph_placement WHERE project = ''sensei'' GROUP BY 1, 2
@@ -79,3 +108,7 @@ comment on column graph_placement.code_kind is
 'From reason_codes: normal | refusal | fault. A refusal is correct and needs no work; a fault is a gap someone can close. Null means the code is not registered, which is itself a finding.';
 comment on column graph_placement.pct_of_kind is
 'Share of this edge kind in this project. The denominator to compare resolution quality across kinds, because populations differ by orders of magnitude.';
+comment on column graph_placement.project is
+'From repositories_in_projects via folder_projects, not from folders.project_id. A repository serving two projects contributes its edges to BOTH, so always filter or group by this column — a total taken across projects over-counts the shared repositories.';
+comment on column graph_placement.edges is
+'Edges in this (project, edge_kind, verdict) bucket. Each edge is counted once per project its repository serves, so summing within one project is exact and summing across all of them is not.';

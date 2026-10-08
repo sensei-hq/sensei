@@ -4,6 +4,7 @@ use super::super::executor::TaskContext;
 
 use super::super::Task;
 use super::helpers::{is_binary_ext, is_probably_binary};
+use crate::db::pg_store::NodeRow;
 use std::path::Path;
 
 // ── Process Repo ──────────────────────────────────────────────────────────
@@ -12,7 +13,7 @@ use std::path::Path;
 
 /// Reconcile a project root's identity FROM its README frontmatter — folder
 /// props (incl. the frontmatter snapshot), icons, project identity, role, and
-/// folder_namespaces. Filesystem-READ-ONLY (it never writes the README, so it
+/// repository_namespaces. Filesystem-READ-ONLY (it never writes the README, so it
 /// can't trigger a file-change loop), idempotent, and additive. Shared by the
 /// scan pipeline (process_git_folder) and the watcher's ReconcileRepoMetadata task.
 pub async fn reconcile_repo_identity(
@@ -160,15 +161,39 @@ pub async fn reconcile_repo_identity(
         for lang in &id_stack {
             ns.push(("technology", lang.clone()));
         }
+        // The namespace ROWS are all created — the `project` one included,
+        // because it is the project's governance identity and the dōjō reads
+        // its slug. What differs is what gets BOUND.
+        //
+        // Only repository facts are bound, and they are bound to the
+        // REPOSITORY. A `project`-scope namespace is deliberately NOT bound:
+        // membership is `repositories_in_projects`, and binding it here would be a
+        // second writer for the same fact — which is how eight folders came to
+        // claim a project their repository does not belong to.
+        // `namespaces_for_folder` reaches the project namespace through the
+        // project instead, so nothing downstream loses it.
+        let repository_id = ctx.pg().repository_id_for_folder(&folder_id).await.ok().flatten();
         for (scope, name) in &ns {
             let slug = metadata::slugify(name);
             if slug.is_empty() {
                 continue;
             }
-            if let Ok(ns_id) = ctx.pg().upsert_namespace(scope, name, &slug).await {
-                ctx.pg().link_folder_namespace(&folder_id, &ns_id).await
-                    .unwrap_or_else(|e| tracing::warn!(folder_id = %folder_id, ns_id = %ns_id, error = %e, "link_folder_namespace failed"));
+            let Ok(ns_id) = ctx.pg().upsert_namespace(scope, name, &slug).await else {
+                continue;
+            };
+            if *scope == "project" {
+                continue;
             }
+            let Some(rid) = repository_id else {
+                // A repo-root folder with no `repositories` row cannot hold a
+                // namespace. Say so rather than dropping the binding quietly —
+                // the same silence that hid the missing junction writer.
+                tracing::warn!(folder_id = %folder_id, ns_id = %ns_id, scope,
+                    "namespace not bound: folder carries no repository");
+                continue;
+            };
+            ctx.pg().link_repository_namespace(&rid, &ns_id).await
+                .unwrap_or_else(|e| tracing::warn!(repository_id = %rid, ns_id = %ns_id, error = %e, "link_repository_namespace failed"));
         }
     }
 
@@ -180,7 +205,6 @@ pub async fn reconcile_repo_identity(
     if super::scan_logic::is_monorepo(repo_path)
         && let Some(root_id) = crate::api::util::json_uuid(&folder["root_id"])
     {
-        let project_id = folder["project_id"].as_str().and_then(|s| uuid::Uuid::parse_str(s).ok());
         for sub in super::scan_logic::find_subprojects(repo_path, 3) {
             let Some(role) = super::scan_logic::infer_role(&sub) else { continue };
             let sub_abs = sub.to_string_lossy().to_string();
@@ -192,15 +216,7 @@ pub async fn reconcile_repo_identity(
             // member but never reclassifies a nested project root.
             match ctx
                 .pg()
-                .upsert_subfolder_kind(
-                    &root_id,
-                    "module",
-                    &name,
-                    &rel,
-                    &sub_abs,
-                    Some(&folder_id),
-                    project_id.as_ref(),
-                )
+                .upsert_subfolder_kind(&root_id, "module", &name, &rel, &sub_abs, Some(&folder_id))
                 .await
             {
                 Ok(sub_id) => {
@@ -429,7 +445,27 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 return Ok(0);
             }
         };
-        let told = crate::indexer::pipeline::TellFile::about(&placement.package);
+        // THE REPO-WIDE WORLD, built once per scan and shared.
+        //
+        // Four of World's five fields were empty in production, so three rungs
+        // could never fire — `declared_by_its_type` had 0 rows in the entire
+        // database. It is read from a COMPLETED pass, which is the contract: a
+        // world that grew during the scan would let file 500 resolve against
+        // more knowledge than file 1, and the repo would index differently
+        // depending on order (R6).
+        //
+        // A read failure degrades to this file's own package rather than failing
+        // the parse — the file still indexes, intra-package edges still place.
+        // Logged, because a degraded world loses edges silently.
+        let told = match crate::indexer::pipeline::TellFile::shared(ctx.pg(), fid).await {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::warn!(error = %e, folder_id = %fid,
+                    "world unavailable — resolving with this file's package alone, so \
+                     cross-package and receiver-typed edges will not place");
+                std::sync::Arc::new(crate::indexer::pipeline::TellFile::about(&placement.package))
+            }
+        };
         let written = crate::indexer::pipeline::index_and_persist(
             ctx.pg(),
             fid,
@@ -539,16 +575,17 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         // File node.
         let file_node_id = ctx
             .pg()
-            .upsert_node(
-                &folder_id,
-                &result.kind,
-                &result.rel_path,
-                &result.rel_path,
-                None,
-                None,
-                None,
-                None,
-            )
+            .upsert_node(&NodeRow {
+                folder_id: &folder_id,
+                kind: &result.kind,
+                name: &result.rel_path,
+                file_path: &result.rel_path,
+                parent_id: None,
+                signature: None,
+                line_start: None,
+                line_end: None,
+                is_exported: false,
+            })
             .await
             .map_err(|e| format!("upsert file node: {e}"))?;
 
@@ -697,17 +734,17 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             for sym in &result.symbols {
                 let id = ctx
                     .pg()
-                    .upsert_node_ex(
-                        &folder_id,
-                        &sym.kind,
-                        &sym.name,
-                        &result.rel_path,
-                        Some(&file_node_id),
-                        sym.signature.as_deref(),
-                        Some(sym.line as i32),
-                        Some(sym.line_end as i32),
-                        sym.is_exported,
-                    )
+                    .upsert_node(&NodeRow {
+                        folder_id: &folder_id,
+                        kind: &sym.kind,
+                        name: &sym.name,
+                        file_path: &result.rel_path,
+                        parent_id: Some(&file_node_id),
+                        signature: sym.signature.as_deref(),
+                        line_start: Some(sym.line as i32),
+                        line_end: Some(sym.line_end as i32),
+                        is_exported: sym.is_exported,
+                    })
                     .await
                     .map_err(|e| format!("upsert symbol node {}: {e}", sym.name))?;
                 sym_ids.insert((sym.name.clone(), sym.line as i32), id);
@@ -755,16 +792,17 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             };
             let sec_id = ctx
                 .pg()
-                .upsert_node(
-                    &folder_id,
-                    "section",
-                    &heading_path,
-                    &result.rel_path,
-                    Some(&parent_id),
-                    None,
-                    None,
-                    None,
-                )
+                .upsert_node(&NodeRow {
+                    folder_id: &folder_id,
+                    kind: "section",
+                    name: &heading_path,
+                    file_path: &result.rel_path,
+                    parent_id: Some(&parent_id),
+                    signature: None,
+                    line_start: None,
+                    line_end: None,
+                    is_exported: false,
+                })
                 .await
                 .map_err(|e| format!("upsert section node {}: {e}", heading_path))?;
             let props = serde_json::json!({
@@ -791,16 +829,17 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
         for r in &result.rationales {
             let id = ctx
                 .pg()
-                .upsert_node(
-                    &folder_id,
-                    "rationale",
-                    &r.text,
-                    &result.rel_path,
-                    Some(&file_node_id),
-                    None,
-                    Some(r.line as i32),
-                    Some(r.line as i32),
-                )
+                .upsert_node(&NodeRow {
+                    folder_id: &folder_id,
+                    kind: "rationale",
+                    name: &r.text,
+                    file_path: &result.rel_path,
+                    parent_id: Some(&file_node_id),
+                    signature: None,
+                    line_start: Some(r.line as i32),
+                    line_end: Some(r.line as i32),
+                    is_exported: false,
+                })
                 .await
                 .map_err(|e| format!("upsert rationale node: {e}"))?;
             ctx.pg()
@@ -1477,7 +1516,14 @@ mod tests {
         {
             let root_id =
                 ctx.pg().add_watch_root(&repo_path, "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, folder_name, &repo_path).await.unwrap();
+            crate::tasks::test_support::seed_repo_folder(
+                ctx.pg(),
+                &root_id,
+                folder_name,
+                &repo_path,
+            )
+            .await
+            .unwrap();
         }
 
         let pkg_id = format!("pkg:{}:(root)", folder_name);
@@ -3148,7 +3194,10 @@ mod tests {
         let repo_path = tmp.path().to_string_lossy().to_string();
         let root_id =
             ctx.pg().add_watch_root(&repo_path, "ss", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "ss-repo", &repo_path).await.unwrap();
+        let fid =
+            crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, "ss-repo", &repo_path)
+                .await
+                .unwrap();
 
         ctx.pg().upsert_scan_state(&fid, "a.rs", 111, "hashA").await.unwrap();
         ctx.pg().upsert_scan_state(&fid, "b.rs", 222, "hashB").await.unwrap();
@@ -3176,7 +3225,14 @@ mod tests {
             .add_watch_root(&repo_path, "skipreason", &serde_json::json!([]))
             .await
             .unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "skipreason-repo", &repo_path).await.unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            ctx.pg(),
+            &root_id,
+            "skipreason-repo",
+            &repo_path,
+        )
+        .await
+        .unwrap();
 
         // Skipped: fingerprint + reason recorded (exercises the ::enum cast).
         ctx.pg()
@@ -3228,7 +3284,10 @@ mod tests {
         let repo_path = tmp.path().to_string_lossy().to_string();
         let root_id =
             ctx.pg().add_watch_root(&repo_path, "ur", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "ur-repo", &repo_path).await.unwrap();
+        let fid =
+            crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, "ur-repo", &repo_path)
+                .await
+                .unwrap();
 
         // funcA lives in a.rs; funcB in b.rs calls it. A call starts UNRESOLVED
         // (target_name only); resolve_edge points it at funcA — the production
@@ -3271,7 +3330,14 @@ mod tests {
         {
             let root_id =
                 ctx.pg().add_watch_root("/tmp/test", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, folder_name, "/tmp/test").await.unwrap();
+            crate::tasks::test_support::seed_repo_folder(
+                ctx.pg(),
+                &root_id,
+                folder_name,
+                "/tmp/test",
+            )
+            .await
+            .unwrap();
         }
 
         let task = Task::new(TaskKind::DeleteFile, "/tmp/test", "/tmp/a.rs");
@@ -3289,7 +3355,14 @@ mod tests {
         {
             let root_id =
                 ctx.pg().add_watch_root(repo_path, "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, folder_name, repo_path).await.unwrap();
+            crate::tasks::test_support::seed_repo_folder(
+                ctx.pg(),
+                &root_id,
+                folder_name,
+                repo_path,
+            )
+            .await
+            .unwrap();
         }
 
         let task = Task::new(TaskKind::DeleteFolder, repo_path, "/tmp/myrepo/src");

@@ -48,13 +48,11 @@ const DEFAULT_EXECUTION_FAILED_RETENTION_DAYS: i32 = 90;
 /// Positive-integer config with a default — shared by the two execution-retention
 /// knobs so neither can drift from the other's parsing rules.
 fn parse_positive(cfg: Option<String>, default: i32) -> i32 {
-    cfg.and_then(|v| v.trim().parse::<i32>().ok()).filter(|n| *n > 0).unwrap_or(default)
+    sensei_bootstrap::config::positive_or(cfg, default)
 }
 
 fn parse_retention(cfg: Option<String>) -> i32 {
-    cfg.and_then(|v| v.trim().parse::<i32>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_RETENTION_DAYS)
+    parse_positive(cfg, DEFAULT_RETENTION_DAYS)
 }
 
 /// The capture-before-reclaim backstop: a session older than this is reclaimed

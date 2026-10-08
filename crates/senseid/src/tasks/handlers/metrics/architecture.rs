@@ -29,14 +29,14 @@
 //!
 //! A repository with no edges writes NO `graph_confidence` row rather than 0.0,
 //! because a zero would read as "nothing resolves" when the truth is "nothing was
-//! indexed". Same for the other two. That is the difference between a measurement
-//! and a fabrication, and it is why every query below has a `HAVING` or a
-//! `count(*) > 0` guard rather than a `coalesce(…, 0)`.
+//! indexed". Same for the other two. The reads enforce it — see
+//! [`crate::db::pg_store::metric_reads::architecture`], where each query's guard
+//! lives.
 
-use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;
+use crate::db::pg_store::MetricRow;
 
 const GRAIN_DAILY: &str = "daily";
 const SOURCE_MEASURED: &str = "measured";
@@ -44,91 +44,6 @@ const SCOPE_REPO: &str = "repo";
 const KEY_GRAPH_CONFIDENCE: &str = "graph_confidence";
 const KEY_PUBLIC_SURFACE: &str = "public_surface_ratio";
 const KEY_SYMBOL_SIZE_P95: &str = "symbol_size_p95";
-
-/// `(repository_id, placed, total)` — the counts, not the ratio, so the writer
-/// can put both in props and a reader can see the denominator it was divided by.
-type ConfidenceRow = (uuid::Uuid, i64, i64);
-/// `(repository_id, exported, total)`.
-type SurfaceRow = (uuid::Uuid, i64, i64);
-/// `(repository_id, p95_lines, over_100, callables)`.
-type SizeRow = (uuid::Uuid, f64, i64, i64);
-
-/// Placed vs total edges per repository.
-///
-/// Keyed through `folders.repository_id` because edges carry `folder_id`, and a
-/// folder with no repository is excluded rather than pooled under a NULL key —
-/// an unattributed edge belongs to no repository's score.
-async fn edge_confidence(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-) -> Result<Vec<ConfidenceRow>, String> {
-    sqlx_core::query_as::query_as::<_, ConfidenceRow>(
-        "SELECT f.repository_id \
-              , count(*) FILTER (WHERE e.target_id IS NOT NULL)::int8 \
-              , count(*)::int8 \
-           FROM sensei.edges e \
-           JOIN sensei.folders f ON f.id = e.folder_id \
-          WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
-          GROUP BY 1 \
-         HAVING count(*) > 0",
-    )
-    .bind(project_id)
-    .fetch_all(pg.pool())
-    .await
-    .map_err(|e| e.to_string())
-}
-
-/// Exported vs total DECLARED symbols per repository.
-///
-/// `file_id IS NOT NULL` restricts this to declarations. Reference stubs and
-/// external `lib·` nodes have no file by definition, and counting them would put
-/// every symbol the repository merely MENTIONS into the denominator of a ratio
-/// about what it OWNS.
-async fn public_surface(pg: &PgStore, project_id: &uuid::Uuid) -> Result<Vec<SurfaceRow>, String> {
-    sqlx_core::query_as::query_as::<_, SurfaceRow>(
-        "SELECT f.repository_id \
-              , count(*) FILTER (WHERE n.is_exported)::int8 \
-              , count(*)::int8 \
-           FROM sensei.nodes n \
-           JOIN sensei.folders f ON f.id = n.folder_id \
-          WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
-            AND n.file_id IS NOT NULL \
-            AND NOT n.is_test \
-          GROUP BY 1 \
-         HAVING count(*) > 0",
-    )
-    .bind(project_id)
-    .fetch_all(pg.pool())
-    .await
-    .map_err(|e| e.to_string())
-}
-
-/// p95 line span of callables, with the over-100 count beside it.
-///
-/// Only rows with BOTH span bounds participate. A callable whose span was never
-/// captured is excluded, not treated as zero — a zero-length function would drag
-/// the percentile down and invent an improvement.
-async fn symbol_size(pg: &PgStore, project_id: &uuid::Uuid) -> Result<Vec<SizeRow>, String> {
-    sqlx_core::query_as::query_as::<_, SizeRow>(
-        "SELECT f.repository_id \
-              , percentile_cont(0.95) WITHIN GROUP (ORDER BY (n.line_end - n.line_start + 1))::float8 \
-              , count(*) FILTER (WHERE n.line_end - n.line_start + 1 > 100)::int8 \
-              , count(*)::int8 \
-           FROM sensei.nodes n \
-           JOIN sensei.folders f ON f.id = n.folder_id \
-          WHERE f.project_id = $1 AND f.repository_id IS NOT NULL \
-            AND n.kind IN ('function','method') \
-            AND n.line_start IS NOT NULL AND n.line_end IS NOT NULL \
-            AND n.line_end >= n.line_start \
-            AND NOT n.is_test \
-          GROUP BY 1 \
-         HAVING count(*) > 0",
-    )
-    .bind(project_id)
-    .fetch_all(pg.pool())
-    .await
-    .map_err(|e| e.to_string())
-}
 
 pub(super) async fn compute(
     ctx: &TaskContext,
@@ -144,7 +59,9 @@ pub(super) async fn compute(
     let mut written = 0u32;
 
     if let Some(mid) = ids.get(KEY_GRAPH_CONFIDENCE).copied() {
-        for (repository_id, placed, total) in edge_confidence(pg, &project_id).await? {
+        for (repository_id, placed, total) in
+            pg.architecture_edge_confidence_by_repo(&project_id).await?
+        {
             // `total > 0` is guaranteed by the HAVING, but the division is
             // spelled defensively anyway: a query edited later must not be able
             // to turn this into a NaN that serialises as `null` and reads as
@@ -153,61 +70,65 @@ pub(super) async fn compute(
                 continue;
             }
             let props = serde_json::json!({ "placed": placed, "total": total });
-            pg.upsert_project_metric_repo(
-                &mid,
-                &repository_id,
-                SCOPE_REPO,
-                None,
-                None,
-                day,
-                GRAIN_DAILY,
-                placed as f64 / total as f64,
-                &props,
-                SOURCE_MEASURED,
-            )
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &repository_id,
+                scope: SCOPE_REPO,
+                identity: None,
+                commit_sha: None,
+                computed_on: day,
+                grain: GRAIN_DAILY,
+                value: placed as f64 / total as f64,
+                props: &props,
+                source: SOURCE_MEASURED,
+            })
             .await?;
             written += 1;
         }
     }
 
     if let Some(mid) = ids.get(KEY_PUBLIC_SURFACE).copied() {
-        for (repository_id, exported, total) in public_surface(pg, &project_id).await? {
+        for (repository_id, exported, total) in
+            pg.architecture_public_surface_by_repo(&project_id).await?
+        {
             if total == 0 {
                 continue;
             }
             let props = serde_json::json!({ "exported": exported, "declared": total });
-            pg.upsert_project_metric_repo(
-                &mid,
-                &repository_id,
-                SCOPE_REPO,
-                None,
-                None,
-                day,
-                GRAIN_DAILY,
-                exported as f64 / total as f64,
-                &props,
-                SOURCE_MEASURED,
-            )
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &repository_id,
+                scope: SCOPE_REPO,
+                identity: None,
+                commit_sha: None,
+                computed_on: day,
+                grain: GRAIN_DAILY,
+                value: exported as f64 / total as f64,
+                props: &props,
+                source: SOURCE_MEASURED,
+            })
             .await?;
             written += 1;
         }
     }
 
     if let Some(mid) = ids.get(KEY_SYMBOL_SIZE_P95).copied() {
-        for (repository_id, p95, over_100, callables) in symbol_size(pg, &project_id).await? {
+        for (repository_id, p95, over_100, callables) in
+            pg.architecture_symbol_size_by_repo(&project_id).await?
+        {
             let props = serde_json::json!({ "over_100_lines": over_100, "callables": callables });
-            pg.upsert_project_metric_repo(
-                &mid,
-                &repository_id,
-                SCOPE_REPO,
-                None,
-                None,
-                day,
-                GRAIN_DAILY,
-                p95,
-                &props,
-                SOURCE_MEASURED,
-            )
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &repository_id,
+                scope: SCOPE_REPO,
+                identity: None,
+                commit_sha: None,
+                computed_on: day,
+                grain: GRAIN_DAILY,
+                value: p95,
+                props: &props,
+                source: SOURCE_MEASURED,
+            })
             .await?;
             written += 1;
         }

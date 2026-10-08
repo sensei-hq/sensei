@@ -63,7 +63,7 @@ fn parse_stall_secs(cfg: Option<String>) -> i64 {
 /// `scan_folder` API and the version-rescan use. Returns how many were enqueued.
 /// Log-and-skip on a config-read failure (never fatal).
 async fn enqueue_reconcile_scans(queue: &TaskQueue, pg: &PgStore) -> u32 {
-    let roots = match pg.list_watch_roots().await {
+    let roots = match pg.list_watch_roots_to_sync().await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(error = %e, "reconcile_scheduler: list_watch_roots failed; no roots reconciled");
@@ -201,14 +201,10 @@ async fn watcher_watchdog(queue: &Arc<TaskQueue>, pg: &PgStore, now_ms: i64, sta
     // Re-establish the stream. start() tears down the old thread and spawns a
     // fresh one; on_thread_start resets the stall clock + healthy flag.
     match w_mutex.lock() {
-        Ok(mut w) => {
-            // Ensure the store survives a restart even if boot wiring was skipped.
-            w.set_store(pg.clone());
-            match w.start() {
-                Ok(()) => tracing::info!("watcher_watchdog: watcher restarted"),
-                Err(e) => tracing::warn!(error = %e, "watcher_watchdog: watcher restart failed"),
-            }
-        }
+        Ok(mut w) => match w.start() {
+            Ok(()) => tracing::info!("watcher_watchdog: watcher restarted"),
+            Err(e) => tracing::warn!(error = %e, "watcher_watchdog: watcher restart failed"),
+        },
         Err(_) => tracing::warn!("watcher_watchdog: RootWatcher mutex poisoned; cannot restart"),
     }
 }
