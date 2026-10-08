@@ -5,6 +5,16 @@ date: 2026-09-27
 status: draft
 ---
 
+> **SUPERSEDED IN PART — 2026-10-08, decision recorded in
+> [`docs/plan/decisions.md`](../../plan/decisions.md) and tracked in #251.**
+> Columns do NOT become `field` nodes, and schema detail does NOT go into
+> `nodes.props`. Tables, views and routines stay nodes; columns, indexes,
+> column-level foreign keys, source and naming live in `schema_entities`,
+> `schema_columns`, `schema_indexes` and `schema_refs`, keyed by `node_id`. The
+> sections below on "The node model", "`Symbol::schema`" and the embedding cost
+> are being rewritten to that design; the sources (dbd `SchemaModel` v2, ORM
+> extractors), the identity rule and the `StatedBySchema` rung still stand.
+
 # Schema entities
 
 A database is structure a reader navigates, and today the indexer records almost
