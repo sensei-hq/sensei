@@ -7,7 +7,7 @@
 |---|---|---|---|
 | 220 219 231 233 218 248 202 203 205 232 | done | CLOSED | — |
 | — | CodeQL for Rust | MERGED #250 | baseline at next main merge |
-| 247 | pruner + root removal | gates 1–5 done | gate 6: user runs the SQL below |
+| 247 | pruner + root removal | CLOSED — orphan cleanup dropped; data recreated after the fixes | — |
 
 **Queue, in order** (re-sequenced 2026-10-08 after the #221/#236/#249 decisions):
 
@@ -22,10 +22,8 @@
 
 **Next command:** #249 — scope `dojo/src/routes/v1/t/[origin]/[org]/relay/{gates,reply,segments,session,review}` to the caller's membership, test-first.
 
-**Orphan cleanup the classifier blocked** (user to run; newest backup
-`database/backup/essential/20261007-200259`):
-`DELETE FROM sensei.repositories r WHERE NOT EXISTS (SELECT 1 FROM sensei.folders f WHERE f.repository_id = r.id) AND r.synced_at IS NULL AND r.tenant_id IS NULL AND NOT EXISTS (SELECT 1 FROM sensei.repositories_in_projects rp WHERE rp.repository_id = r.id);`
-→ 7,795 rows.
+**Data:** the leftover orphan rows stay until the full re-index after the
+indexing fixes land (owner decision 2026-10-08).
 
 **Known broken:** e2e #245. Marketplace hook fixes unpublished until `make
 bump`. Old hashes in docs/*.md (22 refs, 10 files) predate the rewrite.
