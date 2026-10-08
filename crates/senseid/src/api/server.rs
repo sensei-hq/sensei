@@ -623,6 +623,15 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
                         rules_path.display()
                     );
                     let claude_md = crate::paths::home().join(".claude/CLAUDE.md");
+                    if !crate::api::handlers::knowledge::writes_user_claude_md(
+                        sensei_bootstrap::SenseiConfig::from_env().is_isolated_instance(),
+                    ) {
+                        tracing::info!(
+                            "startup: isolated instance — leaving {} alone (#248)",
+                            claude_md.display()
+                        );
+                        return;
+                    }
                     match crate::api::handlers::knowledge::upsert_pointer_in_claude_md(
                         &claude_md,
                         &rules_path,
