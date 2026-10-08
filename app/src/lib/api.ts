@@ -29,6 +29,7 @@ import type {
 import type {
   MemoryListResponse, MemoryDetail, ContextResponse,
   ProposalCreateBody, MemoryCreateBody, OutcomeBody, OutcomesBatchResponse,
+  DaemonWatchRoot,
 } from './setup/contracts.js';
 import type {
   ConsolidatedRuleset, ConsolidateResult,
@@ -251,6 +252,10 @@ export function senseiApi(port: number) {
       get<Array<{ name: string; strategy: string; repo_ids: string[] }>>(
         '/api/scan/suggestions', [],
       ),
+
+    /** Every watch root, paused ones included (#247). Result-based: the
+     *  settings screen must tell "you have no roots" from "the daemon is down". */
+    tryGetScanRoots: () => tryGet<DaemonWatchRoot[]>('/api/scan/roots'),
 
     getScanRoots: () =>
       get<Array<{ path: string; created_at: string | null; repos_found: number; scanned: boolean }>>(

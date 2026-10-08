@@ -9,7 +9,7 @@
  * objects; status persists via commitStage; active flips on route change.
  */
 
-import { senseiApi } from './api.js';
+import { senseiApi, type ApiResult } from './api.js';
 import { appState } from './appstate.svelte.js';
 import { hasTauri } from './bootstrap.js';
 import { healthState } from './health-state.svelte.js';
@@ -637,6 +637,27 @@ export class WizardState {
       // contradiction was resolved).
       return false;
     }
+  }
+
+  /**
+   * Re-read the watch roots from the daemon, for a screen outside setup (#247).
+   *
+   * Only the setup layout calls `load()`, so the settings Roots screen used to
+   * start empty and stay empty — and the remove action with it. Returns `null`
+   * on success, else the failure in words; ON FAILURE THE CACHED LIST IS KEPT,
+   * because an emptied list would read as "you have no roots".
+   */
+  async reloadRoots(api: {
+    tryGetScanRoots: () => Promise<ApiResult<DaemonWatchRoot[]>>;
+  }): Promise<string | null> {
+    const res = await api.tryGetScanRoots();
+    if (!res.ok) {
+      return res.error.status === 0
+        ? `Could not reach the daemon — ${res.error.message}`
+        : `The daemon returned ${res.error.status} ${res.error.message}`;
+    }
+    this.roots = { ...this.roots, roots: res.data };
+    return null;
   }
 
   async hydrate(data: WizardLoadData): Promise<void> {
