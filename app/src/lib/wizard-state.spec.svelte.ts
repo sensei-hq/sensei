@@ -10,6 +10,29 @@ describe('WizardState', () => {
     ws = new WizardState();
   });
 
+  // The settings Roots screen never fetched the roots: only the setup layout
+  // calls load(), so outside setup the list started empty and stayed empty —
+  // and with it the remove action (#247). `reloadRoots` is the one read.
+  describe('reloadRoots', () => {
+    it('replaces the cached roots with the daemon\'s', async () => {
+      const fresh = [mockWatchRoot({ id: 'r9', path: '/r9' })];
+      const failure = await ws.reloadRoots({ tryGetScanRoots: async () => ({ ok: true, data: fresh }) });
+      expect(failure).toBeNull();
+      expect(ws.roots.roots.map((r) => r.id)).toEqual(['r9']);
+    });
+
+    // A failed read is said, and the cached list survives it: an empty list
+    // would read as "you have no roots".
+    it('a failed read keeps the cached list and says why', async () => {
+      ws.roots.roots = [mockWatchRoot({ id: 'r1' })];
+      const failure = await ws.reloadRoots({
+        tryGetScanRoots: async () => ({ ok: false, error: { status: 0, message: 'connection refused' } }),
+      });
+      expect(failure).toMatch(/could not reach the daemon/i);
+      expect(ws.roots.roots.map((r) => r.id)).toEqual(['r1']);
+    });
+  });
+
   describe('hydrate', () => {
     it('populates stage status from load data', () => {
       ws.hydrate(mockWizardLoadData());
