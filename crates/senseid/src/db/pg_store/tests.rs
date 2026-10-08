@@ -8422,6 +8422,39 @@ async fn session_create_and_get() {
     assert_eq!(sess["turns"], 0);
 }
 
+/// The agent closes its session with the id its SessionStart context gave it —
+/// Claude Code's own session id, which is `client_session_id`, not the row id.
+/// Before this, `complete_session` matched `id` only, so every agent's close was
+/// an UPDATE of zero rows reported as `{"ok": true}` (#238).
+///
+/// Mutations that must break this: match `id` only, or report a miss as found.
+#[tokio::test]
+async fn a_session_closes_by_its_client_id_and_a_miss_is_a_miss() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, "sess_client_close").await;
+    let client = uuid::Uuid::new_v4();
+    let row =
+        s.record_session_event(&client.to_string(), &fid, None, "claude", false).await.unwrap();
+    assert_ne!(row, client, "the row id is not the client id — which is the whole bug");
+
+    let close = |id| SessionOutcomeRow {
+        id,
+        outcome: "completed",
+        ftr: true,
+        turns: 3,
+        corrections: 0,
+        summary: Some("closed by client id"),
+        tokens_in: None,
+        tokens_out: None,
+    };
+    assert!(s.complete_session(&close(&client)).await.unwrap(), "found by client id");
+    let sess = s.get_session(&row).await.unwrap().unwrap();
+    assert_eq!(sess["outcome"], "completed");
+
+    let nobody = uuid::Uuid::new_v4();
+    assert!(!s.complete_session(&close(&nobody)).await.unwrap(), "a miss is reported, not ok");
+}
+
 #[tokio::test]
 async fn session_complete() {
     let s = pg_store().await;
