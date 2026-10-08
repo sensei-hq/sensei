@@ -16,7 +16,7 @@
 import { test, expect } from '../fixtures';
 import {
   navigateTo, navigateToScreen, waitForDom, DAEMON_URL,
-  installErrorTrap, readErrors, type ErrBuf,
+  installErrorTrap, readErrors, type ErrBuf, seedSetupComplete,
 } from '../helpers';
 
 // Unique run token → our injected rows are the ONLY rows with this source, so
@@ -28,23 +28,6 @@ const MODULE = 'e2e-logtest';
  *  shell is reachable (not rerouted to /setup). Same pattern as the learnings /
  *  knowledge-sources specs; localStorage set as belt-and-suspenders for a cold
  *  webview (this spec sorts first alphabetically). */
-async function seedSetupComplete(tauriPage: any): Promise<void> {
-  await fetch(`${DAEMON_URL}/api/config`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ setup_complete: '1' }),
-  });
-  await tauriPage.evaluate(`
-    (function() {
-      try { localStorage.setItem('sensei:setup-complete', '1'); } catch (e) { /* shim */ }
-      var s = window.__sensei_state__;
-      if (s && s.appState) {
-        s.appState.config = Object.assign({}, s.appState.config, { setup_complete: '1' });
-        s.appState.loaded = true;
-      }
-    })()
-  `);
-}
 
 /** POST one structured log row into the e2e daemon. */
 async function ingestLog(level: string, message: string): Promise<void> {

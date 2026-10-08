@@ -12,7 +12,7 @@
  */
 
 import { test, expect } from '../fixtures';
-import { navigateTo } from '../helpers';
+import { navigateTo, seedSetupComplete } from '../helpers';
 
 async function seedHealth(tauriPage: any): Promise<void> {
   await tauriPage.evaluate(`
@@ -26,6 +26,10 @@ async function seedHealth(tauriPage: any): Promise<void> {
 test.describe('Settings — Rail sub-routes', () => {
   test.beforeEach(async ({ tauriPage }) => {
     await seedHealth(tauriPage);
+    // AFTER seedHealth, which clears the local flag. Setup must be complete or
+    // `hooks.ts` reroutes every page to setup, and a reset e2e DB has no
+    // `setup_complete` row.
+    await seedSetupComplete(tauriPage);
   });
 
   test('/settings redirects to /settings/general', async ({ tauriPage }) => {

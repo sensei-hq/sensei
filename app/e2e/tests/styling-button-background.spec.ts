@@ -34,25 +34,8 @@
  */
 
 import { test, expect } from '../fixtures';
-import { navigateTo, navigateToScreen, installErrorTrap, DAEMON_URL } from '../helpers';
+import { navigateTo, navigateToScreen, installErrorTrap, DAEMON_URL, seedSetupComplete } from '../helpers';
 
-async function seedSetupComplete(tauriPage: any): Promise<void> {
-  await fetch(`${DAEMON_URL}/api/config`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ setup_complete: '1' }),
-  });
-  await tauriPage.evaluate(`
-    (function() {
-      try { localStorage.setItem('sensei:setup-complete', '1'); } catch (e) { /* shim */ }
-      var s = window.__sensei_state__;
-      if (s && s.appState) {
-        s.appState.config = Object.assign({}, s.appState.config, { setup_complete: '1' });
-        s.appState.loaded = true;
-      }
-    })()
-  `);
-}
 
 /** Buttons whose class asks for a background, and what they actually painted. */
 const AUDIT = `
