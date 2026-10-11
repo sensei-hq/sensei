@@ -209,3 +209,47 @@ async fn a_verdict_shows_on_its_own_call_in_the_replay_timeline() {
         .await
         .ok();
 }
+
+/// A failed call is paired with its FAILURE, not left in flight forever. Claude
+/// Code fires `PostToolUseFailure` instead of `PostToolUse` when a call fails, so
+/// a timeline that only pairs PostToolUse showed every failure as still running.
+///
+/// Mutation that must break this: pair only `event_type = 'PostToolUse'`.
+#[tokio::test]
+async fn a_failed_call_is_paired_with_its_failure() {
+    let Ok(pg) = PgStore::connect_test().await else {
+        return;
+    };
+    let session = format!("_test-replay-fail-{}", uuid::Uuid::new_v4());
+    let id = format!("toolu_fail_{session}");
+    let rows = [
+        (session.clone(), "PreToolUse", 4_000_i64, serde_json::json!({ "tool_use_id": id })),
+        (
+            session.clone(),
+            "PostToolUseFailure",
+            4_020_i64,
+            serde_json::json!({ "tool_use_id": id, "error": "Exit code 1" }),
+        ),
+    ];
+    for (s, kind, ts, payload) in &rows {
+        pg.insert_hook_event(&HookEventRow {
+            session_id: s,
+            assistant_family: "claude",
+            event_type: kind,
+            tool_name: Some("Bash"),
+            cwd: None,
+            ts: *ts,
+            success: if *kind == "PostToolUseFailure" { Some(false) } else { None },
+            payload,
+        })
+        .await
+        .unwrap();
+    }
+
+    let calls = pg.get_session_tool_calls(&session, 10).await.unwrap();
+    assert_eq!(calls.len(), 1, "{calls:#?}");
+    let c = &calls[0];
+    assert_eq!(c["inFlight"], false, "a failed call has finished: {c}");
+    assert_eq!(c["success"], false);
+    assert_eq!(c["response"]["error"], "Exit code 1");
+}

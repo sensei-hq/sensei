@@ -150,14 +150,20 @@ pub(super) fn check_hooks(install_path: Option<&Path>) -> AdapterCheck {
     };
     let hooks = v.get("hooks");
     let has = |evt: &str| hooks.and_then(|h| h.get(evt)).is_some();
-    if has("PreToolUse") && has("PostToolUse") {
+    // `PostToolUseFailure` is required alongside the pair: a failed call fires it
+    // INSTEAD of PostToolUse, so without it no failure is ever captured (#238).
+    let missing: Vec<&str> = ["PreToolUse", "PostToolUse", "PostToolUseFailure"]
+        .into_iter()
+        .filter(|e| !has(e))
+        .collect();
+    if missing.is_empty() {
         AdapterCheck::new(id, label, CheckStatus::Ok, None)
     } else {
         AdapterCheck::new(
             id,
             label,
             CheckStatus::Fail,
-            Some("PreToolUse/PostToolUse not declared in plugin.json hooks".into()),
+            Some(format!("{} not declared in plugin.json hooks", missing.join("/"))),
         )
     }
 }
@@ -1282,10 +1288,42 @@ mod tests {
         std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
         std::fs::write(
             dir.join(".claude-plugin/plugin.json"),
-            r#"{"hooks":{"PreToolUse":[{}],"PostToolUse":[{}],"SessionStart":[{}]}}"#,
+            r#"{"hooks":{"PreToolUse":[{}],"PostToolUse":[{}],"PostToolUseFailure":[{}],"SessionStart":[{}]}}"#,
         )
         .unwrap();
         assert_eq!(check_hooks(Some(&dir)).status, CheckStatus::Ok);
+    }
+
+    /// A failed tool call fires `PostToolUseFailure`, NOT `PostToolUse` (#238,
+    /// observed 2026-10-11: 11 failed Bash calls had a PreToolUse and nothing
+    /// else). A plugin that does not register it captures no failure at all —
+    /// every failed call looks in flight forever — so the check fails and says
+    /// which event is missing.
+    ///
+    /// Mutation that must break this: drop `PostToolUseFailure` from the check.
+    #[test]
+    fn check_hooks_fail_when_tool_failures_are_not_captured() {
+        let tmp = make_tmp_home();
+        let dir = tmp.path().join("plugin");
+        std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            dir.join(".claude-plugin/plugin.json"),
+            r#"{"hooks":{"PreToolUse":[{}],"PostToolUse":[{}],"SessionStart":[{}]}}"#,
+        )
+        .unwrap();
+        let check = check_hooks(Some(&dir));
+        assert_eq!(check.status, CheckStatus::Fail);
+        assert!(format!("{:?}", check).contains("PostToolUseFailure"), "{check:?}");
+    }
+
+    /// The plugin this repo SHIPS passes its own check — so a registration
+    /// dropped from `marketplace/plugins/sensei` fails here, not in the field.
+    #[test]
+    fn the_shipped_plugin_registers_every_event_the_check_requires() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../marketplace/plugins/sensei");
+        let check = check_hooks(Some(&dir));
+        assert_eq!(check.status, CheckStatus::Ok, "{check:?}");
     }
     #[test]
     fn check_hooks_fail_when_path_missing() {
