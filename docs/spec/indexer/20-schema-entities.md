@@ -218,12 +218,16 @@ pub struct SchemaFact {
 - `FileFacts` gains `schema: Vec<SchemaFact>` — an ORM extractor is a file walk
   and returns it beside its symbols.
 - The dbd importer is not a file walk (`SchemaModel` has no file attribution),
-  so it produces a `SchemaBatch { package, facts: Vec<SchemaFact> }` for a
-  dbd-managed folder. **Both go through one writer**, `persist::write_schema`, so
-  there is one rule for how detail lands.
-- **Nodes first, then detail, one transaction.** A fact whose fqn has no node
-  is written as the node (the importer may see an object the walk did not), then
-  its detail. The walk's span wins over the importer's absent one: an upsert by
+  so it hands `persist::write_schema(store, folder, &[SchemaFact])` the facts for
+  a dbd-managed folder. `persist::write` routes `FileFacts.schema` through the
+  same body. **One writer**, so there is one rule for how detail lands.
+- **Nodes first, then detail.** A fact whose fqn has no node is written as the
+  node through `node_for` (the importer may see an object the walk did not) —
+  an idempotent upsert, outside the transaction. The DETAIL of the whole batch
+  is one transaction (`PgStore::replace_schema_detail`): entities, columns and
+  indexes, then refs, so a key between two objects of one batch never depends
+  on their order. A key whose target the store does not describe is returned
+  as an `UnplacedRef`, never dropped in silence. The walk's span wins over the importer's absent one: an upsert by
   fqn never erases a location another producer recorded.
 - **Replace, don't merge.** Re-indexing an object deletes and rewrites its
   columns, indexes and refs in that transaction, so a column dropped from the

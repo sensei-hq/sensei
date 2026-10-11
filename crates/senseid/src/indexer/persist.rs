@@ -78,12 +78,13 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::db::pg_store::{EdgeColumns, NodeColumns, PgStore};
+use crate::db::pg_store::{EdgeColumns, NodeColumns, PgStore, StoredSchemaEntity, UnplacedRef};
 use crate::graph_facts::{EdgeFact, OnMiss, TargetRef};
 
 use super::facts::{
-    Binding, DeclaredType, Evidence, FileFacts, Import, ImportOrigin, Language, Observation, Param,
-    Reason, RefKind, Reference, Relation, RelationKind, Resolution, Rung, Span, Symbol, SymbolKind,
+    Binding, DeclaredType, Evidence, FileFacts, FkAction, Import, ImportOrigin, Language, Naming,
+    Observation, Param, Reason, RefKind, Reference, Relation, RelationKind, Resolution, Rung,
+    SchemaColumn, SchemaFact, SchemaIndex, SchemaKind, SchemaSource, Span, Symbol, SymbolKind,
     Visibility,
 };
 use super::fqn::{self, Origin, Reach};
@@ -315,6 +316,116 @@ pub enum OriginRow {
     External(String),
 }
 
+/// One database object's schema detail, as the store holds it (#251).
+///
+/// Identity is the encoded fqn, for the reason [`SymbolRow`] gives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaRow {
+    pub fqn: String,
+    pub kind: SchemaKind,
+    pub db_schema: String,
+    pub source: SchemaSource,
+    pub naming: Naming,
+    pub note: Option<String>,
+    pub note_md: Option<String>,
+    pub columns: Vec<SchemaColumn>,
+    pub indexes: Vec<SchemaIndex>,
+    pub refs: Vec<SchemaRefRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaRefRow {
+    pub from_column: String,
+    pub to: String,
+    pub to_column: String,
+    pub on_delete: Option<FkAction>,
+}
+
+impl SchemaRow {
+    pub fn of(fact: &SchemaFact) -> Self {
+        let SchemaFact {
+            fqn,
+            kind,
+            db_schema,
+            source,
+            naming,
+            note,
+            note_md,
+            columns,
+            indexes,
+            refs,
+        } = fact;
+        Self {
+            fqn: fqn.as_str().to_string(),
+            kind: *kind,
+            db_schema: db_schema.clone(),
+            source: *source,
+            naming: *naming,
+            note: note.clone(),
+            note_md: note_md.clone(),
+            columns: columns.clone(),
+            indexes: indexes.clone(),
+            refs: refs
+                .iter()
+                .map(|r| SchemaRefRow {
+                    from_column: r.from_column.clone(),
+                    to: r.to.as_str().to_string(),
+                    to_column: r.to_column.clone(),
+                    on_delete: r.on_delete,
+                })
+                .collect(),
+        }
+    }
+
+    /// Decode a stored object. An unknown label is an error, never a default:
+    /// the store's enums and these vocabularies are one list, and a label one
+    /// side does not know means they drifted.
+    fn from_stored(stored: StoredSchemaEntity) -> Result<Self, String> {
+        let StoredSchemaEntity {
+            fqn,
+            kind,
+            db_schema,
+            source,
+            naming,
+            note,
+            note_md,
+            columns,
+            indexes,
+            refs,
+        } = stored;
+        let label = |what: &str, value: &str| format!("{fqn}: unknown {what} label {value:?}");
+        let refs = refs
+            .into_iter()
+            .map(|r| {
+                let on_delete = match r.on_delete.as_deref() {
+                    None => None,
+                    Some(a) => Some(FkAction::from_label(a).ok_or_else(|| label("fk_action", a))?),
+                };
+                Ok(SchemaRefRow {
+                    from_column: r.from_column,
+                    to: r.to,
+                    to_column: r.to_column,
+                    on_delete,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Self {
+            kind: SchemaKind::from_label(&kind)
+                .ok_or_else(|| label("schema_object_kind", &kind))?,
+            source: SchemaSource::from_label(&source)
+                .ok_or_else(|| label("schema_source", &source))?,
+            naming: Naming::from_label(&naming).ok_or_else(|| label("schema_naming", &naming))?,
+            fqn,
+            db_schema,
+            note,
+            note_md,
+            columns,
+            indexes,
+            refs,
+        })
+    }
+}
+
 /// Everything one folder's rows read back as.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stored {
@@ -322,6 +433,7 @@ pub struct Stored {
     pub references: Vec<ReferenceRow>,
     pub relations: Vec<RelationRow>,
     pub imports: Vec<ImportRow>,
+    pub schema: Vec<SchemaRow>,
 }
 
 /// The `sensei.nodes` write a [`SymbolRow`] becomes.
@@ -1031,6 +1143,17 @@ pub struct Written {
     /// re-derived from the facts, which is a second copy of `edge_rows_of` and
     /// its target resolution — two producers of one answer (R7).
     pub edge_rows: BTreeSet<uuid::Uuid>,
+    /// What [`write_schema`] did with this file's schema facts.
+    pub schema: SchemaWritten,
+}
+
+/// What one schema write did (#251).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaWritten {
+    pub objects: usize,
+    /// Foreign keys whose referenced object the store does not describe. See
+    /// [`UnplacedRef`].
+    pub unplaced_refs: Vec<UnplacedRef>,
 }
 
 /// One identity that more than one declaration in a single file minted.
@@ -1135,13 +1258,52 @@ pub async fn write(
         store.merge_edge_occurrences(&edge_id, file_path, &occurrences_prop(&row)).await?;
         edges += 1;
     }
+    let schema = write_schema_with(store, folder_id, &mut known, language, &facts.schema).await?;
     Ok(Written {
         symbols: facts.symbols.len(),
         edges,
         collisions,
         edge_collisions,
         edge_rows: merged.into_keys().collect(),
+        schema,
     })
+}
+
+/// Persist schema detail that no file walk produced — the dbd importer's, read
+/// off a whole design rather than one file (spec 20, "Routing").
+///
+/// The one writer for schema detail: [`write`] routes a file's
+/// `FileFacts.schema` through the same body, so there is one rule for how
+/// detail lands whichever producer found it.
+pub async fn write_schema(
+    store: &PgStore,
+    folder_id: &uuid::Uuid,
+    facts: &[SchemaFact],
+) -> Result<SchemaWritten, String> {
+    let mut known = HashMap::new();
+    write_schema_with(store, folder_id, &mut known, Language::Sql.as_str(), facts).await
+}
+
+/// Nodes first, then the detail. A fact whose object has no node yet gets one
+/// through [`node_for`] — the importer can see an object the walk did not — and
+/// an upsert by fqn never erases a span the walk recorded. The detail itself is
+/// one transaction (see `PgStore::replace_schema_detail`).
+async fn write_schema_with(
+    store: &PgStore,
+    folder_id: &uuid::Uuid,
+    known: &mut HashMap<String, uuid::Uuid>,
+    language: &str,
+    facts: &[SchemaFact],
+) -> Result<SchemaWritten, String> {
+    if facts.is_empty() {
+        return Ok(SchemaWritten { objects: 0, unplaced_refs: Vec::new() });
+    }
+    let mut objects = Vec::with_capacity(facts.len());
+    for fact in facts {
+        objects.push((node_for(store, folder_id, known, fact.fqn.as_str(), language).await?, fact));
+    }
+    let unplaced_refs = store.replace_schema_detail(folder_id, &objects).await?;
+    Ok(SchemaWritten { objects: objects.len(), unplaced_refs })
 }
 
 /// The parent each declaration hangs off in `nodes.parent_id`: the TYPE it is a
@@ -1356,8 +1518,19 @@ pub async fn read_back(store: &PgStore, folder_id: &uuid::Uuid) -> Result<Stored
         .iter()
         .map(symbol_row_from_columns)
         .collect::<Result<Vec<_>, String>>()?;
-    let mut stored =
-        Stored { symbols, references: Vec::new(), relations: Vec::new(), imports: Vec::new() };
+    let schema = store
+        .schema_detail(folder_id)
+        .await?
+        .into_iter()
+        .map(SchemaRow::from_stored)
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut stored = Stored {
+        symbols,
+        references: Vec::new(),
+        relations: Vec::new(),
+        imports: Vec::new(),
+        schema,
+    };
     for edge in store.occurrence_edges(folder_id).await? {
         read_edge_into(&edge, &mut stored)?;
     }
@@ -2155,6 +2328,185 @@ pub fn widest(a: u32) -> u32 {
             "the inherent impl contributes no inheritance edge; the trait impl and the \
              supertrait bound each contribute one, and the unplaceable one keeps its reason"
         );
+    }
+
+    /// DDL walked by the real SQL walker, plus the schema detail the dbd importer
+    /// attaches to the same tables, keyed by the fqns the walk minted.
+    fn schema_walked() -> FileFacts {
+        use crate::indexer::facts::{
+            FkAction, Naming, SchemaColumn, SchemaFact, SchemaIndex, SchemaKind, SchemaRef,
+            SchemaSource,
+        };
+        let text = "CREATE TABLE app.customers (id uuid PRIMARY KEY, email text NOT NULL UNIQUE);\n\
+                    CREATE TABLE app.orders (id uuid PRIMARY KEY, customer_id uuid NOT NULL \
+                    REFERENCES app.customers(id) ON DELETE CASCADE, placed_at timestamptz);";
+        let source =
+            Source { package: "pkg", module: "database/app.ddl", path: "database/app.ddl", text };
+        let mut facts = crate::indexer::lang::sql::facts::read(
+            dbd_core::parser::Dialect::PostgreSql,
+            &source,
+            &crate::indexer::lang::TypeHomes::unknown(),
+        )
+        .expect("the fixture parses");
+        let fqn_of = |name: &str| {
+            facts.symbols.iter().find(|s| s.name == name).map(|s| s.fqn.clone()).expect(name)
+        };
+        let (customers, orders) = (fqn_of("customers"), fqn_of("orders"));
+        let col = |name: &str, ty: &str, pk: bool, nn: bool| SchemaColumn {
+            name: name.into(),
+            sql_type: ty.into(),
+            primary_key: pk,
+            not_null: nn,
+            unique_key: false,
+            foreign_key: false,
+            enum_typed: false,
+            default_expr: None,
+            note: None,
+        };
+        facts.schema = vec![
+            SchemaFact {
+                fqn: customers.clone(),
+                kind: SchemaKind::Table,
+                db_schema: "app".into(),
+                source: SchemaSource::Dbd,
+                naming: Naming::Stated,
+                note: Some("who buys".into()),
+                note_md: None,
+                columns: vec![
+                    col("id", "uuid", true, true),
+                    SchemaColumn { unique_key: true, ..col("email", "text", false, true) },
+                ],
+                indexes: vec![],
+                refs: vec![],
+            },
+            SchemaFact {
+                fqn: orders,
+                kind: SchemaKind::Table,
+                db_schema: "app".into(),
+                source: SchemaSource::Dbd,
+                naming: Naming::Stated,
+                note: None,
+                note_md: Some("**orders**".into()),
+                columns: vec![
+                    col("id", "uuid", true, true),
+                    SchemaColumn { foreign_key: true, ..col("customer_id", "uuid", false, true) },
+                    SchemaColumn {
+                        default_expr: Some("now()".into()),
+                        ..col("placed_at", "timestamptz", false, false)
+                    },
+                ],
+                indexes: vec![SchemaIndex {
+                    name: Some("orders_customer_idx".into()),
+                    definition: "(customer_id, placed_at DESC)".into(),
+                    unique: false,
+                }],
+                refs: vec![SchemaRef {
+                    from_column: "customer_id".into(),
+                    to: customers,
+                    to_column: "id".into(),
+                    on_delete: Some(FkAction::Cascade),
+                }],
+            },
+        ];
+        facts
+    }
+
+    /// **SCHEMA DETAIL REACHES THE SCHEMA STORE, WHOLE (#251).**
+    ///
+    /// Before the routing, `persist::write` had no slot for schema facts: an
+    /// extractor's columns were dropped and only nodes and edges landed. Every
+    /// field of every fact — columns in order, indexes, column-level foreign keys
+    /// — is read back out of Postgres and compared to what went in, and NO column
+    /// or index becomes a node.
+    ///
+    /// Mutations that must break this: skip the schema write; drop a column field
+    /// from the writer or the reader; write a ref to the wrong target.
+    #[tokio::test]
+    async fn every_schema_fact_survives_the_round_trip() {
+        let facts = schema_walked();
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "schema").await;
+
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
+        let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
+
+        let expected: Vec<persist::SchemaRow> =
+            facts.schema.iter().map(persist::SchemaRow::of).collect();
+        assert_eq!(expected.len(), 2, "the fixture must exercise two objects");
+        same_rows(stored.schema.clone(), expected, "every schema fact");
+        assert_eq!(stored.symbols.len(), facts.symbols.len(), "no column or index became a node");
+    }
+
+    /// **A RE-INDEX REPLACES AN OBJECT'S DETAIL (#251).** A column dropped from
+    /// the DDL disappears; it does not linger beside the new set.
+    ///
+    /// Mutation that must break this: insert columns without deleting the old.
+    #[tokio::test]
+    async fn re_indexing_replaces_an_objects_detail() {
+        let mut facts = schema_walked();
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "schema_replace").await;
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
+
+        // `placed_at` is dropped from orders, and its index with it.
+        let orders = facts.schema.iter_mut().find(|f| f.fqn.as_str().contains("orders")).unwrap();
+        orders.columns.retain(|c| c.name != "placed_at");
+        orders.indexes.clear();
+        persist::write(&store, &folder, &facts).await.expect("the re-index persists");
+
+        let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
+        let expected: Vec<persist::SchemaRow> =
+            facts.schema.iter().map(persist::SchemaRow::of).collect();
+        same_rows(stored.schema, expected, "the detail after a re-index");
+    }
+
+    /// **A FOREIGN KEY TO AN OBJECT THE STORE DOES NOT DESCRIBE IS REPORTED,
+    /// NOT DROPPED (#251).** `schema_refs.to_node_id` needs a `schema_entities`
+    /// row; a key to a table outside the batch has nothing to point at, and the
+    /// writer says so instead of losing the line in silence. A key to an object
+    /// LATER in the same batch is placed: refs go after every entity.
+    ///
+    /// Mutations that must break this: write refs inside the per-object loop
+    /// (orders then precedes customers' entity row); ignore the insert's
+    /// `RETURNING`.
+    #[tokio::test]
+    async fn a_ref_to_an_undescribed_object_is_reported_not_dropped() {
+        let mut facts = schema_walked();
+        // orders first, so its key to customers precedes customers' entity row.
+        facts.schema.reverse();
+        let elsewhere = crate::indexer::facts::SchemaRef {
+            from_column: "customer_id".into(),
+            to: facts.schema[1].fqn.clone(),
+            to_column: "id".into(),
+            on_delete: None,
+        };
+        // customers' detail is NOT written: only orders goes to the store.
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "schema_unplaced").await;
+        persisted(&store, &folder, &FileFacts { schema: Vec::new(), ..facts.clone() })
+            .await
+            .expect("the nodes persist");
+        let only_orders = persist::write_schema(&store, &folder, &facts.schema[..1])
+            .await
+            .expect("the detail persists");
+        assert_eq!(only_orders.objects, 1);
+        assert_eq!(
+            only_orders.unplaced_refs,
+            vec![crate::db::pg_store::UnplacedRef {
+                from: facts.schema[0].fqn.as_str().to_string(),
+                from_column: elsewhere.from_column.clone(),
+                to: elsewhere.to.as_str().to_string(),
+            }],
+            "the key to an undescribed customers is named"
+        );
+
+        let both =
+            persist::write_schema(&store, &folder, &facts.schema).await.expect("both persist");
+        assert_eq!(both.unplaced_refs, vec![], "a key to a later object of one batch is placed");
+        let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
+        let expected: Vec<persist::SchemaRow> =
+            facts.schema.iter().map(persist::SchemaRow::of).collect();
+        same_rows(stored.schema, expected, "the detail after both writes");
     }
 
     /// An import is what decides externality (spec §2), so losing one loses the

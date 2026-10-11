@@ -1012,6 +1012,136 @@ impl Import {
     }
 }
 
+// ── schema detail (spec 20, #251) ────────────────────────────────────────────
+
+/// Schema detail for one database object a producer declares as a node — a
+/// table, view, materialized view, function or procedure. Keyed by the node's
+/// fqn, so the writer resolves it to the node in the same transaction that
+/// wrote the node. Columns, indexes and foreign keys are NOT nodes; they land in
+/// the `schema_*` tables keyed by this object's node (spec 20, "The schema
+/// store").
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SchemaFact {
+    pub fqn: Fqn,
+    pub kind: SchemaKind,
+    /// The database schema the object lives in (`app`, `sensei`, `dbo`).
+    pub db_schema: String,
+    pub source: SchemaSource,
+    pub naming: Naming,
+    pub note: Option<String>,
+    pub note_md: Option<String>,
+    /// In declaration order.
+    pub columns: Vec<SchemaColumn>,
+    pub indexes: Vec<SchemaIndex>,
+    /// This object's OUTGOING foreign keys, one per column pair.
+    pub refs: Vec<SchemaRef>,
+}
+
+/// dbd SchemaModel v2's `Column`, renamed only where a SQL keyword collides.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SchemaColumn {
+    pub name: String,
+    /// The declared type, verbatim.
+    pub sql_type: String,
+    pub primary_key: bool,
+    pub not_null: bool,
+    pub unique_key: bool,
+    pub foreign_key: bool,
+    pub enum_typed: bool,
+    pub default_expr: Option<String>,
+    pub note: Option<String>,
+}
+
+/// dbd SchemaModel v2's `Index`. `definition` is the column spec as written —
+/// an expression, so text.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SchemaIndex {
+    pub name: Option<String>,
+    pub definition: String,
+    pub unique: bool,
+}
+
+/// One column pair of a foreign key from the owning object.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SchemaRef {
+    pub from_column: String,
+    /// The referenced object's node identity.
+    pub to: Fqn,
+    pub to_column: String,
+    pub on_delete: Option<FkAction>,
+}
+
+/// Generates a closed vocabulary that spells itself one way, in both
+/// directions, matching its Postgres enum exactly — so the writer and the
+/// reader cannot disagree on a label.
+macro_rules! schema_vocabulary {
+    ($(#[$m:meta])* $name:ident { $($variant:ident => $label:literal),+ $(,)? }) => {
+        $(#[$m])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum $name { $($variant),+ }
+
+        impl $name {
+            pub const ALL: &'static [$name] = &[$($name::$variant),+];
+            pub fn as_label(self) -> &'static str {
+                match self { $($name::$variant => $label),+ }
+            }
+            pub fn from_label(label: &str) -> Option<Self> {
+                match label { $($label => Some($name::$variant),)+ _ => None }
+            }
+        }
+    };
+}
+
+schema_vocabulary! {
+    /// `sensei.schema_object_kind` — the five `declared_type` words.
+    SchemaKind {
+        Table => "table",
+        View => "view",
+        MaterializedView => "materialized_view",
+        Function => "function",
+        Procedure => "procedure",
+    }
+}
+
+schema_vocabulary! {
+    /// `sensei.schema_source` — who described the object. The schema
+    /// describing itself (dbd) wins over any ORM's reading of it.
+    SchemaSource {
+        Dbd => "dbd",
+        EfCore => "ef_core",
+        Dapper => "dapper",
+        SqlAlchemy => "sqlalchemy",
+        DjangoOrm => "django_orm",
+        Jpa => "jpa",
+        Prisma => "prisma",
+        Drizzle => "drizzle",
+        TypeOrm => "typeorm",
+        ActiveRecord => "active_record",
+        Gorm => "gorm",
+        Other => "other",
+    }
+}
+
+schema_vocabulary! {
+    /// `sensei.schema_naming` — whether the object's NAME was written by its
+    /// source or supplied by a convention. Never promoted by agreement.
+    Naming {
+        Stated => "stated",
+        Convention => "convention",
+    }
+}
+
+schema_vocabulary! {
+    /// `sensei.fk_action` — a foreign key's ON DELETE action, in v2's words.
+    FkAction {
+        Cascade => "cascade",
+        Restrict => "restrict",
+        SetNull => "set_null",
+        SetDefault => "set_default",
+        NoAction => "no_action",
+    }
+}
+
 // ── the product of one walk (spec §3) ────────────────────────────────────────
 
 /// Everything one parse of one file produced. A file is parsed once and no
@@ -1035,6 +1165,10 @@ pub struct FileFacts {
     pub references: Vec<Reference>,
     pub relations: Vec<Relation>,
     pub imports: Vec<Import>,
+    /// Schema detail for objects this file declares (spec 20). Empty for every
+    /// file that describes no database object — the overwhelming majority.
+    /// Routed by `persist::write` to the `schema_*` tables, never to `nodes`.
+    pub schema: Vec<SchemaFact>,
 }
 
 #[cfg(test)]
@@ -1474,6 +1608,7 @@ mod tests {
             references: vec![reference],
             relations: vec![relation],
             imports: vec![import],
+            schema: Vec::new(),
         };
 
         assert_eq!(facts.symbols.len(), 1);

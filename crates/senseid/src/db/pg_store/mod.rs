@@ -506,12 +506,14 @@ mod metric_reads;
 mod metrics;
 mod neighbourhood;
 mod pruner;
+mod schema_store;
 /// One row of `sensei.nodes`, named rather than positional (#161).
 pub use graph::NodeRow;
 pub use library::LibraryPageRow;
 pub use logs::LogRow;
 pub use neighbourhood::NeighbourNode;
 pub use pruner::PruneReport;
+pub use schema_store::{StoredSchemaEntity, UnplacedRef};
 // `create_memory` is `#[cfg(test)]` — it has no production caller.
 #[cfg(test)]
 pub use memory::MemoryRow;
