@@ -1,19 +1,16 @@
 ---
 name: Schema entities
-description: Carrying database structure — tables, columns, indexes, dependencies — as first-class graph facts, from dbd's SchemaModel v2 and from ORM layers
+description: Database structure — tables, views and routines as graph nodes, columns/indexes/foreign keys in a schema store keyed by them — from dbd's SchemaModel v2 and from ORM layers
 date: 2026-09-27
-status: draft
+revised: 2026-10-08
+status: approved (#251)
 ---
 
-> **SUPERSEDED IN PART — 2026-10-08, decision recorded in
-> [`docs/plan/decisions.md`](../../plan/decisions.md) and tracked in #251.**
-> Columns do NOT become `field` nodes, and schema detail does NOT go into
-> `nodes.props`. Tables, views and routines stay nodes; columns, indexes,
-> column-level foreign keys, source and naming live in `schema_entities`,
-> `schema_columns`, `schema_indexes` and `schema_refs`, keyed by `node_id`. The
-> sections below on "The node model", "`Symbol::schema`" and the embedding cost
-> are being rewritten to that design; the sources (dbd `SchemaModel` v2, ORM
-> extractors), the identity rule and the `StatedBySchema` rung still stand.
+> **Revised 2026-10-08 (#251, decision in [`docs/plan/decisions.md`](../../plan/decisions.md)).**
+> The first draft made every column a `field` node and stored schema detail in
+> `nodes.props`. Both are gone: tables, views and routines stay nodes, and
+> columns, indexes and column-level foreign keys live in four `schema_*` tables
+> keyed by `node_id`. Nodes stay light; the detail is as rich as dbd's model.
 
 # Schema entities
 
@@ -78,51 +75,41 @@ This is not a coincidence worth papering over — it means no translation layer:
 So `deps` maps 1:1 onto references, and an unresolved endpoint becomes an
 `Unresolved` target rather than a dropped edge.
 
-## The node model needs no enum change
+## Where it lives: light nodes, a rich schema store
 
-The SQL adapter already resolves this with a two-level vocabulary: the **generic**
-kind in `node_kind` so cross-language queries work, the **specific word** in
-`declared_type`.
+Two stores, one identity.
 
-| SchemaModel | `SymbolKind` | `declared_type` label |
+**The graph carries the objects.** A table, view, materialized view, function or
+procedure is a node, exactly as the SQL walk already writes it (165 tables, 52
+views and 41 routines on this repository's index). Table-level relationships are
+edges: a foreign key is `references`, a view reading a table and a routine
+calling a routine come from dbd's `deps`. That is what lets callers, impact and
+search answer "what code touches `orders`" across code and schema.
+
+**The schema store carries the detail.** Columns, indexes and column-level
+foreign keys are not nodes. A column node would multiply the SQL half of the
+graph roughly tenfold (1,291 columns over 121 tables in the measured corpus) and
+force an embedding decision per column; detail in `nodes.props` would bloat every
+node read to serve one screen. Both were the first draft; both are rejected.
+
+### The node vocabulary
+
+The two-level vocabulary is unchanged: the **generic** kind in `node_kind`, the
+**specific word** in `declared_type`.
+
+| object | `SymbolKind` | `declared_type` |
 |---|---|---|
-| `TableNode` (kind `table`) | `Struct` | `table` |
-| `EntityNode` kind `view` | `Struct` | `view` |
-| `EntityNode` kind `materialized_view` | `Struct` | `materialized_view` |
-| `EntityNode` kind `function` | `Function` | `function` |
-| `EntityNode` kind `procedure` | `Function` | `procedure` |
-| `Column` | `Field` | `column` |
-| `Index` | `Property` | `index` |
+| table | `Struct` | `table` |
+| view | `Struct` | `view` |
+| materialized view | `Struct` | `materialized_view` |
+| function | `Function` | `function` |
+| procedure | `Function` | `procedure` |
 
-Adding `table`/`column` to `node_kind` would fork a vocabulary every other
-language already shares, and every consumer switching on it would have to learn
-two spellings for one idea. `parent_id` gives column→table containment;
-`docstring` takes `note`/`noteMd`. A foreign key is a `references` edge.
-
-**Nothing in `node_kind` or `edge_kind` changes.**
-
-### The exact values this uses
-
-The shared vocabulary is defined once in
-[`17-vocabulary.md`](17-vocabulary.md) — `SymbolKind` (§2), `RelationKind` (§3)
-and the `Rung` ladder (§4) — and is not restated here. What follows is only what
-a schema object writes, plus the two things that vocabulary does not yet cover.
-
-Of the 25 `node_kind` values, this work writes **four**: `struct` (table, view,
-materialized view), `function` (function, procedure), `field` (column),
-`property` (index). Of the 11 `edge_kind` values it writes **one**:
-`references`, for a foreign key. `edge_confidence` is **`extracted`** — the
-enum's comment glosses that as "AST-certain", and a schema fact arrives from a
-declarative source rather than an AST, but the distinction `confidence` actually
-draws is read-vs-guessed. `inferred` means embeddings and `ambiguous` means
-drift; a table that dbd read is neither.
-
-`declared_type` is a `text` column, so nothing in the database constrains it.
-This spec nevertheless treats it as a **closed set** — `table`, `view`,
-`materialized_view`, `function`, `procedure`, `column`, `index` — because the
-whole point of the two-level vocabulary is that a consumer can switch on the
-specific word. A producer inventing an eighth spelling silently creates a
-category no reader handles.
+`declared_type` is a `text` column but a **closed set** of these five words. A
+producer inventing a sixth silently creates a category no reader handles.
+Columns and indexes write no node, so `field` and `property` are not written by
+this work. **Nothing in `node_kind` or `edge_kind` changes.** `edge_confidence`
+is `extracted`: a fact dbd read, not inferred or ambiguous.
 
 dbd's `deps` map onto `RefKind`, which already has every kind needed:
 `reads` → `Reads`, `writes` → `Writes`, `calls` → `Calls`, `member` → `TypeUse`.
@@ -166,130 +153,95 @@ from convention rather than a stated name is a *weaker* claim than
 than sharing this one. It is left out here because nothing emits it until
 step 4, and a rung with no writer is a vocabulary entry that cannot be audited.
 
-## `Symbol::schema` — the optional prop
+## The schema store
 
-What has no home is the per-kind detail: a column's `pk`, an index's `def`, and —
-for an ORM — whether the name was *stated* or *inferred by convention*. That is
-what this adds.
+Four tables in the `sensei` schema, each keyed to the node it describes, with
+`ON DELETE CASCADE` so a node removed by a re-index takes its detail with it.
+
+| table | one row per | columns |
+|---|---|---|
+| `schema_entities` | schema object node | `node_id` (PK → `nodes.id`), `kind` (the closed set above), `db_schema`, `source`, `naming`, `note`, `note_md` |
+| `schema_columns` | column | `node_id` (→ `schema_entities`), `ordinal`, `name`, `sql_type` (verbatim), `primary_key`, `not_null`, `unique_key`, `foreign_key`, `enum_typed`, `default_expr`, `note`; unique (`node_id`, `name`) |
+| `schema_indexes` | index | `node_id`, `name` (nullable — dbd's may be unnamed), `definition` (`(status, placed_at DESC)` — an expression, so text), `unique_index` |
+| `schema_refs` | column pair of a foreign key | `from_node_id`, `from_column`, `to_node_id`, `to_column`, `on_delete` (`cascade` / `restrict` / `set_null` / `set_default` / `no_action`, or NULL when unstated) |
+
+The fields are dbd `SchemaModel` v2's, renamed only where a SQL keyword
+collides: `Column {ty, pk, nn, en, def, fk, uq, note}`, `Index {def, unique,
+name}`, `Ref {from {s,t,c}, to {s,t,c}, action}`. A composite foreign key is one
+row per column pair, which is how v2 carries it.
+
+`source` and `naming` are enums (`ddl/enum/sensei/`), not free text:
+
+- `source`: `dbd`, `ef_core`, `dapper`, `sqlalchemy`, `django_orm`, `jpa`,
+  `prisma`, `drizzle`, `typeorm`, `active_record`, `gorm`, `other`. `other`
+  keeps the detected dependency name in `note`, because dropping an
+  unenumerated ORM's real mapping to NULL would make it indistinguishable from
+  "no ORM here".
+- `naming`: `stated` (the source wrote the name — DDL, `.ToTable("orders")`)
+  or `convention` (a `DbSet<Order> Orders`, an ActiveRecord class name). Never
+  promoted to `stated` by agreement with another producer: when dbd also
+  declares the table, dbd's row IS the table and the ORM's is a mapping.
+
+**The ER screen reads the store, not the graph.** An endpoint assembles dbd's
+`SchemaModel` shape — `tables` (entities + columns + indexes), `refs`,
+`entities`, `deps` — from these tables and the graph's dependency edges, and
+rokkit's `toGraphInput` takes it from there. The wire shape stays dbd's contract,
+so dbd's viewer and sensei's screen read the same thing.
+
+## Routing: the indexer's output must reach the store
+
+**Today it cannot.** The walk's per-file product is
+`facts::FileFacts { symbols, references, relations, imports }`, and
+`persist::write` turns exactly those into rows. There is no slot for schema
+detail, so a producer that extracted columns would have them dropped before
+persistence and only nodes and edges would land. The routing is therefore part
+of this work, not a follow-up:
 
 ```rust
-/// Database-structure facts for a symbol that IS a schema object, or maps to one.
-///
-/// `None` for every symbol that has nothing to do with a database, which is the
-/// overwhelming majority — so this costs an `Option` discriminant on `Symbol` and
-/// nothing else.
-pub struct SchemaFacts {
-    /// WHO said so. A consumer must be able to tell the schema's own word from an
-    /// ORM's reading of it, because they disagree and the schema wins.
+/// Schema detail for one object the same output declares as a node. Keyed by
+/// the node's fqn, so the writer resolves it to the node id in the same
+/// transaction that wrote the node.
+pub struct SchemaFact {
+    pub fqn: Fqn,
     pub source: SchemaSource,
-    /// Whether the NAME above is what the source wrote, or what a convention
-    /// supplied. Load-bearing: `DbSet<Order> Orders` yields a table name by
-    /// convention and `.ToTable("orders")` states one, and a consumer that cannot
-    /// tell them apart cannot report a mapping as verified.
     pub naming: Naming,
-    /// The per-kind detail. One variant per shape, so a column's flags cannot be
-    /// read off an index.
-    pub detail: SchemaDetail,
-}
-
-pub enum SchemaSource {
-    /// dbd's SchemaModel — the schema describing itself.
-    Dbd,
-    /// An ORM or data-access layer, named. Carried so "this app uses EF Core"
-    /// is a fact about nodes rather than a separate inventory that can drift
-    /// from them.
-    Orm(OrmKind),
-}
-
-/// The ORM that described the mapping.
-///
-/// A CLOSED enum rather than a `String`, for the reason every other vocabulary
-/// here is closed: a consumer asking "is this EF Core" must not have to know
-/// that the detector writes `EfCore` and someone else wrote `ef-core`. The
-/// variants are exactly the ecosystems `ManifestAdapter::stack_labels` can
-/// already name from a dependency, so adding one is a detector change and not
-/// a guess.
-///
-/// `Other(String)` exists because the alternative is worse. An ORM nobody
-/// enumerated yet is a real mapping that was really read, and dropping it to
-/// `None` would make it indistinguishable from "no ORM here" — the same
-/// honest-empty-masks-a-failure trap the no-fabrication rule forbids.
-pub enum OrmKind {
-    /// .NET. `DbSet<T>`, `: DbContext`, `.ToTable(…)`.
-    EfCore,
-    /// .NET, micro-ORM. Raw SQL in string literals, so it yields the
-    /// DEVIATION surface rather than an entity inventory.
-    Dapper,
-    /// Python. `declarative_base()`, `__tablename__`.
-    SqlAlchemy,
-    /// Python, Django's built-in. `models.Model`, `class Meta: db_table`.
-    DjangoOrm,
-    /// JVM. `@Entity`, `@Table(name = …)`.
-    Jpa,
-    /// TypeScript/JavaScript, schema-file-first — `schema.prisma` states the
-    /// whole schema, which is why it needs no walk change at all.
-    Prisma,
-    /// TypeScript/JavaScript. `pgTable(…)` in ordinary source.
-    Drizzle,
-    /// TypeScript/JavaScript. `@Entity()` decorators.
-    TypeOrm,
-    /// Ruby. ActiveRecord, where the table name is pure convention —
-    /// `Naming::Convention` by construction unless `self.table_name` states it.
-    ActiveRecord,
-    /// Go. `gorm:"…"` struct tags.
-    Gorm,
-    /// Detected from a manifest, not yet enumerated here. Carries the
-    /// dependency name that named it.
-    Other(String),
-}
-
-pub enum Naming {
-    /// The source wrote the name: a DDL `create table sensei.orders`, an explicit
-    /// `.ToTable("orders")`.
-    Stated,
-    /// A convention supplied it: a `DbSet<Order> Orders` property, an
-    /// ActiveRecord class name. Never promoted to `Stated` by agreement with
-    /// another producer — if dbd also declares it, the dbd node IS the table and
-    /// this one is the mapping.
-    Convention,
-}
-
-pub enum SchemaDetail {
-    Table,
-    View { materialized: bool },
-    Routine,
-    Column {
-        /// `Column.ty` — the declared SQL type, verbatim.
-        sql_type: String,
-        primary_key: bool,
-        not_null: bool,
-        unique: bool,
-        /// v2's `fk`: this column participates in a foreign key. The EDGE carries
-        /// which one; this is the flag a renderer needs without re-scanning refs.
-        foreign_key: bool,
-        default: Option<String>,
-    },
-    Index {
-        /// `(session_id, created_at DESC)` — an expression, not a name list, so
-        /// it is text and not a structured column set.
-        definition: String,
-        unique: bool,
-    },
+    pub kind: SchemaKind,          // table | view | materialized_view | function | procedure
+    pub db_schema: String,
+    pub note: Option<String>,
+    pub note_md: Option<String>,
+    pub columns: Vec<SchemaColumn>,
+    pub indexes: Vec<SchemaIndex>,
+    pub refs: Vec<SchemaRef>,      // outgoing foreign keys, column pairs
 }
 ```
 
-### Why a typed struct rather than free jsonb
+- `FileFacts` gains `schema: Vec<SchemaFact>` — an ORM extractor is a file walk
+  and returns it beside its symbols.
+- The dbd importer is not a file walk (`SchemaModel` has no file attribution),
+  so it produces a `SchemaBatch { package, facts: Vec<SchemaFact> }` for a
+  dbd-managed folder. **Both go through one writer**, `persist::write_schema`, so
+  there is one rule for how detail lands.
+- **Nodes first, then detail, one transaction.** A fact whose fqn has no node
+  is written as the node (the importer may see an object the walk did not), then
+  its detail. The walk's span wins over the importer's absent one: an upsert by
+  fqn never erases a location another producer recorded.
+- **Replace, don't merge.** Re-indexing an object deletes and rewrites its
+  columns, indexes and refs in that transaction, so a column dropped from the
+  DDL disappears rather than lingering.
+- **`persist::read_back` reads the store back**, so the existing round-trip
+  properties (`no_fact_is_lost_…`, `every_…_survives_the_round_trip`) cover
+  schema facts. A writer that skipped the store must FAIL those tests, not pass
+  them by omission.
 
-`props` is where this lands in the database, and it could have gone straight in as
-jsonb from the walk. It does not, for the reason `DeclaredType` is an enum rather
-than an `Option<String>`: a typed producer cannot emit `primary_key: "yes"`, and
-every consumer reads one spelling. The jsonb is the storage, not the contract.
+Typed rather than free JSON for the reason `DeclaredType` is an enum: a typed
+producer cannot emit `primary_key: "yes"`, and every consumer reads one spelling.
 
-### Why `naming` is not `DeclaredType`
+## Embedding
 
-`DeclaredType` is `Stated | Unstated` and describes a **type**, not a mapping. A
-column whose SQL type is known but whose *name* came from a convention needs both
-facts, and overloading one field for both would make "stated" ambiguous.
+Tables, views and routines are nodes and embed as nodes do. Columns and indexes
+are not nodes, so the per-column embedding question the first draft raised does
+not arise. A table's embedding text may include its column names and notes —
+one vector per table, carrying what a column name alone cannot.
 
 ## ORM layers: what is possible now, and what is not
 
@@ -340,25 +292,30 @@ Migrations are the weakest source in any ecosystem: they are a *history*, so
 current state means replaying them, and a partially-applied history yields a
 schema that exists nowhere.
 
-## Cost to decide before implementing
+## Sequence (#251 — each step its own commit, TDD, mutation-probed)
 
-1,291 columns for 121 tables here — about 10 column nodes per table, an
-order-of-magnitude increase for the SQL half. `nodes` carries
-`embedding vector(384)`, so **whether column nodes are embedded** decides whether
-storage and embed-task cost scale with that multiplier. A column name carries
-little semantic signal on its own; the table's comment carries more. Recommended:
-tables, views and routines embed; columns and indexes do not.
+1. This spec.
+2. DDL: the four tables + the two enums, with grants/RLS per schema
+   conventions; `dbd inspect`, the SQL planner gate.
+3. `SchemaFact` + `FileFacts.schema` + `persist::write_schema` / `read_back`,
+   with the round-trip property extended.
+4. The dbd importer: `dbd_core::schema_model::build(&Design, scope)` for a
+   dbd-managed folder → `SchemaBatch`. This repository's `database/` is the
+   first corpus.
+5. The read endpoint assembling `SchemaModel` v2 from the store.
+6. #221's screen: `ErDiagram` (ER scope) + `EntitiesView` / `EntityView`.
+7. EF Core extractor by convention, then the next ORM by corpus count.
+   Call-argument literals (`.ToTable`) as their own spec, upgrading
+   `convention` to `stated`.
 
-## Sequence
+## Done gate
 
-1. `Symbol::schema` as above, plus persistence into `props` — additive, nothing
-   reads it yet.
-2. Tables, columns, indexes and foreign keys from `SchemaModel` v2 for a
-   dbd-managed folder. Decide the embedding question first.
-3. `deps` as references, mapping `unresolved` onto `Resolution::Unresolved`.
-4. EF Core inventory by convention, plus the deviation query. No new fact.
-5. Call-argument literals as a fact, which upgrades (4) to `Naming::Stated` and
-   unlocks SQLAlchemy and JPA. Its own spec; nothing above depends on it.
+- Indexing this repository's `database/` fills `schema_columns` with exactly the
+  columns dbd's own model reports, `schema_refs` with its foreign keys, and adds
+  **zero** column or index nodes.
+- Dropping a column from the DDL and re-indexing removes exactly that row.
+- Mutating `persist::write` to skip the store fails the round-trip tests.
+- The ER screen renders this repository's schema with columns, keys and FK lines.
 
 ## Not in scope
 
