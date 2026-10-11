@@ -13,14 +13,16 @@
 
 | # | item | why here | first step |
 |---|---|---|---|
-| 1. 249 | relay: owner-only; peers see status only | live exposure, small | scope 5 relay routes to `caller.membershipId`, route tests A≠B |
-| 2. 238 | Claude Code mods (2 of 4 done) | small, unblocked | harvest `duration_ms` / `agent_id` |
+| ~~249~~ | relay owner-only | CLOSED `ada807a2`; peer status view → #252 | — |
+| 1. 238 | Claude Code mods (3 of 4 done; replay mis-pairing 69%→0 `d1196ed1`) | unblocked | register `PostToolUseFailure`; observe a non-zero Bash first; then `success` from event type |
 | 3. 251 | schema store + indexer routing | #221 prerequisite | rewrite spec 20 → DDL → `SchemaFacts` routing → dbd importer |
 | 4. 221 | Schema / ER screen | needs 251 steps 1–5 | `ErDiagram` over the store |
 | 5. 236 | dōjō access: views + RLS, user session | large; kavach#51 upstream | access-matrix doc |
 | 6. 225 · 239–241 · 245 | team view · productionise · e2e red gate | — | — |
 
-**Next command:** #249 — scope `dojo/src/routes/v1/t/[origin]/[org]/relay/{gates,reply,segments,session,review}` to the caller's membership, test-first.
+**Next command:** #238 — observe which event a non-zero Bash exit fires, then register `PostToolUseFailure`.
+
+**Note:** `install-service` deploys the RELEASED DDL; a view/table change reaches the live DB only via a release or by hand (`psql -f`), as done for `session_tool_calls`. Untracked files from another session in the tree (`src/`, `docs/components/`, `docs/rune-usage.md`, `svelte5-runes-*.md`) — not touched.
 
 **Data:** the leftover orphan rows stay until the full re-index after the
 indexing fixes land (owner decision 2026-10-08).
