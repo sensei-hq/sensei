@@ -13,6 +13,10 @@ set search_path to sensei, activity, extensions;
 -- multiply them. An event with NO id pairs with nothing — it is never matched by
 -- order as a guess, so its response and duration stay NULL.
 --
+-- The response side takes PostToolUse OR PostToolUseFailure: Claude Code fires
+-- the failure event INSTEAD of PostToolUse when a call fails, so pairing only
+-- PostToolUse left every failed call looking in flight forever (#238).
+--
 -- `duration_ms` is the ENGINE's measure from the PostToolUse payload, not the
 -- gap between the two hooks' timestamps (which included hook-process delay and,
 -- on a mis-paired row, another call's time).
@@ -46,7 +50,7 @@ post as (
     , payload->>'agent_id'                        as agent_id
     , payload->>'agent_type'                      as agent_type
     from activity.assistant_events
-   where event_type = 'PostToolUse'
+   where event_type in ('PostToolUse', 'PostToolUseFailure')
      and session_id <> ''
      and payload ? 'tool_use_id'
    order by session_id, payload->>'tool_use_id', id
@@ -77,7 +81,8 @@ select
 
 comment on view session_tool_calls is
 'One row per tool invocation in an assistant session: the PreToolUse request
-beside ITS PostToolUse response, paired by `tool_use_id` (never by order).
+beside ITS PostToolUse / PostToolUseFailure response, paired by `tool_use_id`
+(never by order); `success` is false for a failure.
 `duration_ms` is the engine''s measured duration from the PostToolUse payload.
 `agent_id`/`agent_type` name the subagent that made the call (NULL for the main
 loop). `response_id` is the PostToolUse event id — what `tool_call_verdicts`

@@ -45,6 +45,29 @@ pub struct HookEventFields<'a> {
     pub success: Option<bool>,
 }
 
+/// A tool call's outcome, from the most authoritative signal present (#238).
+///
+/// 1. An explicit `exit_code` (assistants that send one).
+/// 2. For Claude Code, WHICH EVENT fired: a failed call fires
+///    `PostToolUseFailure` and never `PostToolUse`, and its payloads carry no
+///    exit code — so the event type is the outcome.
+/// 3. Otherwise unknown. Another family's PostToolUse is reconstructed from a
+///    transcript and may describe a failure; claiming success for it would be a
+///    fabricated value.
+fn outcome(payload: &serde_json::Value) -> Option<bool> {
+    if let Some(code) = payload.get("exit_code").and_then(|v| v.as_i64()) {
+        return Some(code == 0);
+    }
+    if payload["assistant_family"].as_str().unwrap_or("claude") != "claude" {
+        return None;
+    }
+    match payload["hook_event_name"].as_str() {
+        Some("PostToolUse") => Some(true),
+        Some("PostToolUseFailure") => Some(false),
+        _ => None,
+    }
+}
+
 /// Map a raw hook payload to the columns of `activity.assistant_events`.
 ///
 /// The single source of truth for the mapping, shared by the live
@@ -56,7 +79,7 @@ pub fn hook_event_fields(payload: &serde_json::Value) -> HookEventFields<'_> {
         event_type: payload["hook_event_name"].as_str().unwrap_or("unknown"),
         tool_name: payload["tool_name"].as_str(),
         cwd: payload["cwd"].as_str(),
-        success: payload.get("exit_code").and_then(|v| v.as_i64()).map(|c| c == 0),
+        success: outcome(payload),
     }
 }
 
@@ -337,6 +360,35 @@ mod tests {
         let nonzero = json!({"exit_code": 1});
         let f = hook_event_fields(&nonzero);
         assert_eq!(f.success, Some(false));
+    }
+
+    /// Claude Code signals a tool call's outcome by WHICH EVENT fires: a failed
+    /// call fires `PostToolUseFailure` and never `PostToolUse` (#238 — observed
+    /// 2026-10-11, 11 failed Bash calls had only a PreToolUse). Its payloads
+    /// carry no `exit_code`, which is why `success` was 31 non-null of 554,999.
+    ///
+    /// Mutations that must break this: read only `exit_code`; or mark every
+    /// family's PostToolUse a success.
+    #[test]
+    fn claude_codes_outcome_is_the_event_that_fired() {
+        let ok = json!({"assistant_family": "claude", "hook_event_name": "PostToolUse"});
+        assert_eq!(hook_event_fields(&ok).success, Some(true));
+        let failed = json!({"assistant_family": "claude", "hook_event_name": "PostToolUseFailure"});
+        assert_eq!(hook_event_fields(&failed).success, Some(false));
+        let pre = json!({"assistant_family": "claude", "hook_event_name": "PreToolUse"});
+        assert_eq!(
+            hook_event_fields(&pre).success,
+            None,
+            "a call that has not finished has no outcome"
+        );
+        // Another family's PostToolUse is reconstructed from a transcript and may
+        // describe a failure: no outcome is claimed for it without an exit code.
+        let zed = json!({"assistant_family": "zed", "hook_event_name": "PostToolUse"});
+        assert_eq!(hook_event_fields(&zed).success, None);
+        // An explicit exit code still decides, for families that send one.
+        let cursor =
+            json!({"assistant_family": "cursor", "hook_event_name": "PostToolUse", "exit_code": 2});
+        assert_eq!(hook_event_fields(&cursor).success, Some(false));
     }
 
     #[test]
