@@ -800,12 +800,8 @@ impl PgStore {
     /// `sensei.tool_call_verdicts` (#90) on the underlying PostToolUse
     /// event id so each row carries the usage verdict.
     ///
-    /// The existing view [`sensei.session_tool_calls`] keys on the
-    /// PreToolUse event id (call_id); verdicts are keyed on the
-    /// PostToolUse event id. This query recomputes both directly against
-    /// `activity.assistant_events` so we can LEFT JOIN verdicts on the
-    /// PostToolUse id without changing either the view or the verdicts
-    /// table.
+    /// Reads [`sensei.session_tool_calls`] — the one pairing — and joins
+    /// verdicts on its `response_id` (the PostToolUse event id).
     pub async fn get_session_replay_timeline(
         &self,
         session_id: &str,
@@ -826,44 +822,19 @@ impl PgStore {
             Option<f32>,               // confidence
             Option<String>,            // reason
         )> = sqlx_core::query_as::query_as(
-            "WITH pre AS (
-                SELECT session_id, family::text AS family, tool_name,
-                       id AS pre_id, ts AS pre_ts, payload AS request,
-                       row_number() OVER (
-                           PARTITION BY session_id, tool_name
-                           ORDER BY ts, id
-                       ) AS seq
-                  FROM activity.assistant_events
-                 WHERE event_type = 'PreToolUse'
-                   AND tool_name IS NOT NULL
-                   AND session_id = $1
-            ),
-            post AS (
-                SELECT session_id, tool_name,
-                       id AS post_id, ts AS post_ts,
-                       payload AS response, success,
-                       row_number() OVER (
-                           PARTITION BY session_id, tool_name
-                           ORDER BY ts, id
-                       ) AS seq
-                  FROM activity.assistant_events
-                 WHERE event_type = 'PostToolUse'
-                   AND tool_name IS NOT NULL
-                   AND session_id = $1
-            )
-            SELECT pre.pre_id, post.post_id, pre.tool_name, pre.family,
-                   pre.request, post.response, post.success,
-                   pre.pre_ts, post.post_ts,
-                   CASE WHEN post.post_ts IS NULL THEN NULL
-                        ELSE GREATEST(post.post_ts - pre.pre_ts, 0)
-                   END AS duration_ms,
-                   v.verdict, v.confidence, v.reason
-              FROM pre
-              LEFT JOIN post ON pre.session_id = post.session_id
-                            AND pre.tool_name  = post.tool_name
-                            AND pre.seq        = post.seq
-              LEFT JOIN sensei.tool_call_verdicts v ON v.event_id = post.post_id
-             ORDER BY pre.pre_ts ASC
+            // ONE pairing, the view's (by `tool_use_id`). This used to
+            // recompute an order-based pairing of its own, which paired 69% of
+            // parallel calls with another call's response and so hung their
+            // verdicts on the wrong row (#238). `response_id` is the
+            // PostToolUse event id the verdicts key on.
+            "SELECT c.call_id, c.response_id, c.tool_name, c.family::text,
+                    c.request, c.response, c.success,
+                    c.started_at_ms, c.completed_at_ms, c.duration_ms,
+                    v.verdict, v.confidence, v.reason
+               FROM sensei.session_tool_calls c
+               LEFT JOIN sensei.tool_call_verdicts v ON v.event_id = c.response_id
+              WHERE c.session_id = $1
+              ORDER BY c.started_at_ms ASC
              LIMIT $2",
         )
         .bind(session_id)
@@ -1726,10 +1697,10 @@ impl PgStore {
 
     /// Return the paired PreToolUse / PostToolUse timeline for an assistant
     /// session, ordered by call start. Each row carries the request payload,
-    /// the response payload (null when the call is still in-flight or the
-    /// PostToolUse was dropped), the success flag, and duration_ms. Backed
-    /// by the `sensei.session_tool_calls` view — see its DDL for the
-    /// pairing rule.
+    /// the response payload (null when the call is still in-flight, the
+    /// PostToolUse was dropped, or the call carries no `tool_use_id`), the
+    /// engine's duration_ms, and the subagent that made it. Backed by the
+    /// `sensei.session_tool_calls` view, which pairs by `tool_use_id`.
     pub async fn get_session_tool_calls(
         &self,
         session_id: &str,
@@ -1747,10 +1718,13 @@ impl PgStore {
             Option<i64>,                           // duration_ms
             chrono::DateTime<chrono::Utc>,         // started_at
             Option<chrono::DateTime<chrono::Utc>>, // completed_at
+            Option<String>,                        // tool_use_id
+            Option<String>,                        // agent_id
+            Option<String>,                        // agent_type
         )> = sqlx_core::query_as::query_as(
             "SELECT call_id, tool_name, family::text, request, response, success,
                     started_at_ms, completed_at_ms, duration_ms,
-                    started_at, completed_at
+                    started_at, completed_at, tool_use_id, agent_id, agent_type
                FROM sensei.session_tool_calls
               WHERE session_id = $1
               ORDER BY started_at_ms ASC
@@ -1777,9 +1751,17 @@ impl PgStore {
                     duration_ms,
                     started_at,
                     completed_at,
+                    tool_use_id,
+                    agent_id,
+                    agent_type,
                 )| {
                     serde_json::json!({
                         "callId":         call_id,
+                        // The engine's id for the call, the subagent that made
+                        // it (null for the main loop), and its kind (#238).
+                        "toolUseId":      tool_use_id,
+                        "agentId":        agent_id,
+                        "agentType":      agent_type,
                         "toolName":       tool_name,
                         "family":         family,
                         "request":        request,

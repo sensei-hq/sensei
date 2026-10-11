@@ -1077,7 +1077,8 @@ export interface McpToolManifest {
 // ─── Session tool timeline (Instruments Replay tab) ──────────────────────────
 //
 // Wire shape returned by `GET /api/sessions/{id}/tool-timeline`. One row per
-// tool call, paired PreToolUse ↔ PostToolUse. Mirrors the JSON keys the
+// tool call, PreToolUse ↔ PostToolUse paired by `tool_use_id`; `durationMs` is the
+// engine's measure. Mirrors the JSON keys the
 // daemon emits from `pg_store::get_session_tool_calls`.
 
 export interface SessionToolCall {
@@ -1094,6 +1095,12 @@ export interface SessionToolCall {
   completedAt: string | null;
   /** True when the PostToolUse hasn't landed yet (call in-flight or aborted). */
   inFlight: boolean;
+  /** Claude Code's id for the call — what pairs request and response (#238).
+   *  Null on a call captured without one, which is then shown unpaired. */
+  toolUseId: string | null;
+  /** The subagent that made the call; null for the main loop. */
+  agentId: string | null;
+  agentType: string | null;
 }
 
 export interface SessionToolTimeline {
