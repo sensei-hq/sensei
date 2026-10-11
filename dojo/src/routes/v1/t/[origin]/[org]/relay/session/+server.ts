@@ -3,7 +3,8 @@
 // phone/console reading it (Supabase-JWT plane). See docs/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
-import { resolveApiKeyAccess, resolveTenantAccess, membershipIdsForTenant, apiError, ACCESS } from '$lib/server/dojo-auth';
+import { ownMembership } from '$lib/server/relay-owner';
+import { resolveApiKeyAccess, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { sendRelayPushFromEnv } from '$lib/server/relay-push-env';
 import { resolveProjectNamespaceId, openOrRefreshSeat } from '$lib/server/billing-data';
 import { upsertProjectFromRun } from '$lib/server/projects-data';
@@ -134,13 +135,12 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 // Phone/console → read a run's status (optionally filtered by run_id).
 export const GET: RequestHandler = async ({ params, request, locals, url }) => {
 	try {
-		const { tenantId } = await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member);
+		const membershipId = ownMembership(await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member));
 		const db = dojoDb();
-		const membershipIds = await membershipIdsForTenant(db, tenantId);
 		let q = db
 			.from('relay_sessions')
 			.select(COLS)
-			.in('membership_id', membershipIds)
+			.eq('membership_id', membershipId)
 			.order('started_at', { ascending: false });
 		const runId = url.searchParams.get('run_id');
 		if (runId) q = q.eq('run_id', runId);

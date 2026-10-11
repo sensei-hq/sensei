@@ -6,24 +6,24 @@
 // See docs/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
-import { resolveTenantAccess, membershipIdsForTenant, apiError, ACCESS } from '$lib/server/dojo-auth';
+import { ownMembership } from '$lib/server/relay-owner';
+import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { tenantId } = await resolveTenantAccess(
+		const membershipId = ownMembership(await resolveTenantAccess(
 			params.origin,
 			params.org,
 			request,
 			locals,
 			ACCESS.member
-		);
+		));
 		const db = dojoDb();
-		const membershipIds = await membershipIdsForTenant(db, tenantId);
 		// Pending items the agent is waiting on the human for, oldest first.
 		const { data: rows, error } = await db
 			.from('relay_inbox')
 			.select('id, seq, session_id, segment_id, kind, payload, created_at')
-			.in('membership_id', membershipIds)
+			.eq('membership_id', membershipId)
 			.eq('status', 'pending')
 			.eq('direction', 'agent_to_human')
 			.order('seq', { ascending: true });
