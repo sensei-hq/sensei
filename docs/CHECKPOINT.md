@@ -14,13 +14,13 @@
 | # | item | why here | first step |
 |---|---|---|---|
 | ~~249~~ | relay owner-only | CLOSED `ada807a2`; peer status view → #252 | — |
-| 1. 238 | Claude Code mods (3 of 4 done; replay mis-pairing 69%→0 `d1196ed1`) | unblocked | register `PostToolUseFailure`; observe a non-zero Bash first; then `success` from event type |
-| 3. 251 | schema store + indexer routing | #221 prerequisite | rewrite spec 20 → DDL → `SchemaFacts` routing → dbd importer |
-| 4. 221 | Schema / ER screen | needs 251 steps 1–5 | `ErDiagram` over the store |
-| 5. 236 | dōjō access: views + RLS, user session | large; kavach#51 upstream | access-matrix doc |
-| 6. 225 · 239–241 · 245 | team view · productionise · e2e red gate | — | — |
+| 238 | Claude Code mods | 4 of 4 live defects FIXED (`c40cb02b`); Steps 2–5 need the mods API | settle mods `.d.ts`, then usage-at-source |
+| 1. 251 | schema store + indexer routing | #221 prerequisite | rewrite spec 20 → DDL → `SchemaFacts` routing → dbd importer |
+| 2. 221 | Schema / ER screen | needs 251 steps 1–5 | `ErDiagram` over the store |
+| 3. 236 | dōjō access: views + RLS, user session | large; kavach#51 upstream | access-matrix doc |
+| 4. 225 · 239–241 · 245 · 252 | team view · productionise · e2e red gate | — | — |
 
-**Next command:** #238 — observe which event a non-zero Bash exit fires, then register `PostToolUseFailure`.
+**Next command:** #251 step 1 — rewrite `docs/spec/indexer/20-schema-entities.md` to the schema-store design.
 
 **Note:** `install-service` deploys the RELEASED DDL; a view/table change reaches the live DB only via a release or by hand (`psql -f`), as done for `session_tool_calls`. Untracked files from another session in the tree (`src/`, `docs/components/`, `docs/rune-usage.md`, `svelte5-runes-*.md`) — not touched.
 
