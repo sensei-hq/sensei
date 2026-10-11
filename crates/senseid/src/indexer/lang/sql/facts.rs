@@ -180,6 +180,7 @@ pub fn read(
         // search path, and a `search_path` is a resolution setting rather than
         // a statement bringing one name into scope.
         imports: Vec::new(),
+        schema: Vec::new(),
     })
 }
 

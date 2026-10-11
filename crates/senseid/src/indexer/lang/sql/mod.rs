@@ -90,7 +90,7 @@ use crate::indexer::facts::{FileFacts, Fqn, Language};
 use crate::indexer::fqn::{self, Form, FqnError, Reach, Segment};
 use crate::indexer::resolve::Grammar;
 
-mod facts;
+pub(crate) mod facts;
 
 /// WHICH SQL THIS FILE IS WRITTEN IN — dbd's, not a second copy.
 ///
