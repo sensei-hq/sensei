@@ -570,6 +570,8 @@ mod resolution_tests;
 #[allow(clippy::await_holding_lock)]
 mod run_tests;
 #[cfg(test)]
+mod schema_store_tests;
+#[cfg(test)]
 mod structure_tests;
 #[cfg(test)]
 // Test gates are blocking `std::sync::Mutex` held across awaits ON PURPOSE —
