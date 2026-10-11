@@ -577,6 +577,8 @@ mod structure_tests;
 // wakeups across per-test runtimes. One allow per test module, not per site.
 #[allow(clippy::await_holding_lock)]
 pub(crate) mod tests;
+#[cfg(test)]
+mod tool_calls_tests;
 
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 // PgStore API surface — methods wired up incrementally; SQLx tuple return types
