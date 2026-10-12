@@ -20,7 +20,11 @@ const mocks = vi.hoisted(() => ({
 	setElection: vi.fn()
 }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}) }));
+// The service role vs the caller's own JWT — which client the store got.
+vi.mock('$lib/server/dojo-supabase', () => ({
+	dojoDb: () => ({ client: 'service' }),
+	userDb: (token: string) => ({ client: 'user', token })
+}));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveCaller: mocks.resolveCaller,
 	apiError: (status: number, message: string) =>
@@ -34,7 +38,7 @@ vi.mock('$lib/server/elections', () => ({ setElection: mocks.setElection }));
 
 const route = await import('./+server');
 
-const DB = { marker: 'db' };
+const USER = { client: 'user', token: 'jwt-A' };
 const OUT = {
 	repo_key: 'github.com/alice/api',
 	elected: true,
@@ -56,22 +60,22 @@ function patch(body: unknown) {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	mocks.resolveCaller.mockResolvedValue({ userId: 'p-alice', db: DB });
+	mocks.resolveCaller.mockResolvedValue({ userId: 'p-alice', db: { client: 'service' }, accessToken: 'jwt-A' });
 	mocks.setElection.mockResolvedValue(OUT);
 });
 
 describe('PATCH /v1/you/repositories/election', () => {
-	it('elects on behalf of the resolved PRINCIPAL, not anything in the body', async () => {
+	it('elects as the signed-in person, not anything in the body', async () => {
 		// The body cannot name the principal. If it could, one signed-in user could
 		// elect on another's behalf — and under a USER authority the election IS the
-		// consent.
+		// consent. The caller's JWT carries who they are; the database reads it (#236).
 		const res = await patch({
 			repo_key: 'github.com/alice/api',
 			elected: true,
 			principal_id: 'p-mallory'
 		});
 		expect(res.status).toBe(200);
-		expect(mocks.setElection).toHaveBeenCalledWith(DB, 'p-alice', 'github.com/alice/api', true);
+		expect(mocks.setElection).toHaveBeenCalledWith(USER, 'github.com/alice/api', true);
 		expect(await res.json()).toEqual(OUT);
 	});
 
@@ -79,7 +83,7 @@ describe('PATCH /v1/you/repositories/election', () => {
 		// `if (!body.elected)` would make turning sharing OFF indistinguishable from
 		// omitting the field — a 400 on the one operation a user most needs to work.
 		await patch({ repo_key: 'github.com/alice/api', elected: false });
-		expect(mocks.setElection).toHaveBeenCalledWith(DB, 'p-alice', 'github.com/alice/api', false);
+		expect(mocks.setElection).toHaveBeenCalledWith(USER, 'github.com/alice/api', false);
 	});
 
 	it('refuses a non-boolean `elected` instead of coercing it', async () => {
@@ -105,5 +109,14 @@ describe('PATCH /v1/you/repositories/election', () => {
 		const res = await patch({ repo_key: 'github.com/alice/api', elected: true });
 		expect(res.status).toBe(status);
 		expect((await res.json()).error).toBe(message);
+	});
+});
+
+describe('PATCH /v1/you/repositories/election without a session', () => {
+	it('refuses rather than electing as the service role', async () => {
+		mocks.resolveCaller.mockResolvedValueOnce({ userId: 'p-alice', db: { client: 'service' } });
+		const res = await patch({ repo_key: 'github.com/alice/api', elected: true });
+		expect(res.status).toBe(401);
+		expect(mocks.setElection).not.toHaveBeenCalled();
 	});
 });
