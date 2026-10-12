@@ -17,11 +17,11 @@ commits/issues/docs). Open PRs: none. Branches: main + develop.
 
 | # | item | first step |
 |---|---|---|
-| 1. 236 | dōjō access: views + RLS, user session (kavach#51 upstream) | steps 1–2 DONE; prod `dbd deploy --scope dojo` DONE by owner; 3a relay reads under RLS `5147005d`; next 3b relay writes |
+| 1. 236 | dōjō access: views + RLS, user session (kavach#51 upstream) | steps 1–2 DONE; 3a relay reads `5147005d`; 3b relay writes `94326ec7` + push subs/prefs `49be7037`; projects `691b0622` (`callerDb`); next: remaining areas |
 | 2. 225 · 239–241 · 245 · 252 | team view · productionise · e2e red gate | — |
 | 3. 254 | next ORM, call_sites volume | measure |
 
-**Next command:** #236 step 3b — relay WRITES (reply → relay_inbox update, review → relay_segments update, nudge → relay_inbox insert) and push prefs/subscribe: policies + column grants, DB tests, then routes via `ownReads`/userDb; verify with `scripts/relay-roundtrip.sh` (needs `bun run dev` with PUBLIC_SUPABASE_ANON_KEY). **Prod still owed:** `select * from dojo.backfill_shared_rules_tenant()` (report `unprovable`) → Worker deploy. Access findings live in PRIVATE draft advisories — never describe them publicly until fixed + deployed.
+**Next command:** #236 step 3, remaining areas onto `callerDb` (the caller's JWT), one area per commit, each with a `database/tests/dojo/*.sql` policy test + probes: knowledge (artifacts/triage/rules/policies) → metrics → client work (engagements/incidents/audit) → tenancy (members/invites/identities/billing/health). Relay session/segments/inbox POST stay service-role until step 4 (device token → JWT). Verify with `scripts/relay-roundtrip.sh` (dev server with PUBLIC_SUPABASE_ANON_KEY). **Prod owed (owner):** `dbd deploy --scope dojo` again (new policy files: notification_prefs, push_subscriptions, projects; predicate DDL) → `select * from dojo.backfill_shared_rules_tenant()` (report `unprovable`) → Worker deploy. Advisory GHSA-gxvr: all items fixed, waits on deploy. Access findings stay in PRIVATE draft advisories until fixed + deployed.
 
 **Hand-applied to live DB** (installs need a release): `schema_*` tables + enums,
 `call_sites`, task kinds `import_dbd_schema` / `derive_orm_schema`. The daemon
