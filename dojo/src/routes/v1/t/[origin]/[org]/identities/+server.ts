@@ -7,20 +7,20 @@
 // are created by provisioning, with the forge's proof (#236, access matrix
 // "Tenancy, identity, billing").
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { listIdentities, AdminError } from '$lib/server/admin-data';
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { tenantId } = await resolveTenantAccess(
+		const caller = await resolveTenantAccess(
 			params.origin,
 			params.org,
 			request,
 			locals,
 			ACCESS.admin
 		);
-		const identities = await listIdentities(dojoDb(), tenantId);
+		const identities = await listIdentities(callerDb(caller), caller.tenantId);
 		return Response.json({ identities });
 	} catch (e) {
 		if (e instanceof Response) return e;

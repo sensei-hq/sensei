@@ -121,6 +121,30 @@ beforeEach(() => {
 	caller.accessToken = 'jwt-A';
 });
 
+// Members and identities are read — and a role set — as the signed-in admin, so
+// the memberships and identities policies decide (#236). The role change's audit
+// row is the system's.
+describe('members and identities run as the signed-in admin (#236)', () => {
+	it('GET /members, PATCH a role and GET /identities use the caller\'s JWT', async () => {
+		await members.GET(ev());
+		await memberRole.PATCH(ev('http://x/', { role: 'lead' }, { userId: 'u1' }));
+		await identities.GET(ev());
+		for (const m of [mocks.listMembers, mocks.setMemberRole, mocks.listIdentities]) {
+			expect(m.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+		}
+		expect(mocks.recordAudit.mock.calls[0][0]).toEqual({ client: 'service' });
+	});
+	it('refuses a caller with no session rather than acting as the service role', async () => {
+		caller.accessToken = undefined;
+		expect((await members.GET(ev())).status).toBe(401);
+		expect((await memberRole.PATCH(ev('http://x/', { role: 'lead' }, { userId: 'u1' }))).status).toBe(401);
+		expect((await identities.GET(ev())).status).toBe(401);
+		expect(mocks.listMembers).not.toHaveBeenCalled();
+		expect(mocks.setMemberRole).not.toHaveBeenCalled();
+		expect(mocks.listIdentities).not.toHaveBeenCalled();
+	});
+});
+
 describe('GET /audit runs as the signed-in admin (#236)', () => {
 	it('reads with the caller\'s JWT, so the audit_events policy decides the rows', async () => {
 		await audit.GET(ev());
@@ -232,7 +256,7 @@ describe('PATCH /members/{userId}/role', () => {
 	it('sets the role, audits, and returns { user_id, role } at the admin floor', async () => {
 		const res = await memberRole.PATCH(ev('http://x/', { role: 'lead' }, { userId: 'u1' }));
 		expect(await res.json()).toEqual({ user_id: 'u1', role: 'lead' });
-		expect(mocks.setMemberRole.mock.calls[0]).toEqual([{ client: 'service' }, 't1', 'u1', 'lead']);
+		expect(mocks.setMemberRole.mock.calls[0]).toEqual([{ client: 'user', token: 'jwt-A' }, 't1', 'u1', 'lead']);
 		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(4);
 		expect(mocks.recordAudit).toHaveBeenCalledOnce();
 		expect(mocks.recordAudit.mock.calls[0][3]).toMatchObject({ action: 'role_changed', target: 'u1' });
