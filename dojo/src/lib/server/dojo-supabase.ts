@@ -67,3 +67,26 @@ export function roleToAccess(role: string | null | undefined): AccessLevel {
 export function accessLabel(level: AccessLevel): string {
 	return (Object.keys(ACCESS) as (keyof typeof ACCESS)[]).find((k) => ACCESS[k] === level) ?? 'member';
 }
+
+/**
+ * The USER-SESSION client (#236 step 3): the public anon key plus the caller's
+ * own JWT, scoped to the `dojo` schema. Row-level security decides what it
+ * reads — the access matrix's policies, not route code (docs/spec/dojo/
+ * access-matrix.md). Built per request: the token is the caller's.
+ *
+ * A missing token THROWS. Falling back to `dojoDb()` would bypass every policy
+ * in silence, which is the one thing this client exists to stop.
+ */
+export function userDb(accessToken: string) {
+	if (!accessToken) throw new Error('userDb: no access token — refusing to read without the caller');
+	const url = pub.PUBLIC_SUPABASE_URL;
+	const anonKey = pub.PUBLIC_SUPABASE_ANON_KEY;
+	if (!url || !anonKey) {
+		throw new Error('dojo API: PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY must be set');
+	}
+	return createClient(url, anonKey, {
+		auth: { persistSession: false, autoRefreshToken: false },
+		db: { schema: 'dojo' },
+		accessToken: async () => accessToken
+	});
+}

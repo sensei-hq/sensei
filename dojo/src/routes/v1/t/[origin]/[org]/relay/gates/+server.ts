@@ -5,20 +5,18 @@
 // we resolve run_id/title from the session for deep-linking. Reply via relay/reply.
 // See docs/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
-import { ownMembership } from '$lib/server/relay-owner';
+import { ownReads } from '$lib/server/relay-owner';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const membershipId = ownMembership(await resolveTenantAccess(
+		const { membershipId, db } = ownReads(await resolveTenantAccess(
 			params.origin,
 			params.org,
 			request,
 			locals,
 			ACCESS.member
 		));
-		const db = dojoDb();
 		// Pending items the agent is waiting on the human for, oldest first.
 		const { data: rows, error } = await db
 			.from('relay_inbox')

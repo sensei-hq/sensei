@@ -3,7 +3,7 @@
 // phone/console reading it (Supabase-JWT plane). See docs/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
-import { ownMembership } from '$lib/server/relay-owner';
+import { ownReads } from '$lib/server/relay-owner';
 import { resolveApiKeyAccess, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { sendRelayPushFromEnv } from '$lib/server/relay-push-env';
 import { resolveProjectNamespaceId, openOrRefreshSeat } from '$lib/server/billing-data';
@@ -135,8 +135,7 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 // Phone/console → read a run's status (optionally filtered by run_id).
 export const GET: RequestHandler = async ({ params, request, locals, url }) => {
 	try {
-		const membershipId = ownMembership(await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member));
-		const db = dojoDb();
+		const { membershipId, db } = ownReads(await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member));
 		let q = db
 			.from('relay_sessions')
 			.select(COLS)

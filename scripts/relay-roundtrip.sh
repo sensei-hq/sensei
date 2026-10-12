@@ -35,12 +35,18 @@ echo "   user_id=$USER_ID"
 HASH=$(printf '%s' "$TESTTOKEN" | shasum -a 256 | cut -d' ' -f1)
 echo "== seed: tenant + membership (device_token_hash=$HASH) =="
 psql "$DBURL" -v ON_ERROR_STOP=1 <<SQL || fail "seed sql"
-insert into dojo.tenants (key, origin, org, name, dojo_url)
-values ('personal/dev','org','dev','Dev (personal)','$API')
+-- memberships.user_id holds a PRINCIPAL id, not the Supabase login id (spec
+-- dojo-auth-provisioning §VIII.2): the login maps to a principal first.
+insert into dojo.principals (auth_user_id, display_name)
+values ('$USER_ID', 'relay dev')
+on conflict (auth_user_id) do nothing;
+insert into dojo.tenants (key, origin, slug, name, dojo_url)
+values ('personal/dev','personal','dev','Dev (personal)','$API')
 on conflict (key) do nothing;
-insert into dojo.memberships (tenant_id, user_id, dojo_url, role, kind, authenticated_via, device_token_hash)
-select t.id, '$USER_ID', '$API', 'admin', 'personal', 'device_code', '$HASH'
-from dojo.tenants t where t.key='personal/dev'
+insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via, device_token_hash)
+select t.id, p.id, 'admin', 'personal', 'device_code', '$HASH'
+from dojo.tenants t, dojo.principals p
+where t.key='personal/dev' and p.auth_user_id = '$USER_ID'
 on conflict (tenant_id, user_id) do update set device_token_hash = excluded.device_token_hash;
 -- Grant the Supabase API roles access to dojo so PostgREST can read it. PROD
 -- Supabase needs the same one-time grant (see docs/plan/decisions.md). Idempotent.

@@ -27,6 +27,10 @@ export type Caller = {
 	access: AccessLevel;
 	/** Present on the API-key (device-token) plane — the caller's membership row. */
 	membershipId?: string;
+	/** The verified Supabase JWT, on the user (JWT) plane only — what `userDb`
+	 *  reads with, so RLS rather than route code limits the rows (#236 step 3).
+	 *  The device plane has none until it exchanges its token for one. */
+	accessToken?: string;
 };
 
 /** Lowercase hex sha256 (Web Crypto — available in the Worker runtime and Node). */
@@ -94,6 +98,7 @@ export async function resolveCaller(
 	authUserId: string;
 	email: string | null;
 	db: ReturnType<typeof dojoDb>;
+	accessToken: string;
 }> {
 	const token = tokenFrom(request, locals);
 	if (!token) throw apiError(401, 'unauthenticated');
@@ -116,7 +121,7 @@ export async function resolveCaller(
 		throw e;
 	}
 
-	return { userId, authUserId, email: userData.user.email ?? null, db };
+	return { userId, authUserId, email: userData.user.email ?? null, db, accessToken: token };
 }
 
 /** A best-effort human name off the Supabase user, for a principal created on
@@ -144,7 +149,7 @@ export async function resolveTenantAccess(
 	floor: AccessLevel
 ): Promise<Caller> {
 	// Same JWT-plane identity step as a user-wide caller, then tenant + role.
-	const { userId, db } = await resolveCaller(request, locals);
+	const { userId, db, accessToken } = await resolveCaller(request, locals);
 
 	// Resolve the tenant by its `{origin}/{org}` key.
 	const tenantId = await resolveTenantId(db, origin, org);
@@ -172,7 +177,8 @@ export async function resolveTenantAccess(
 		userId,
 		role: mem.role,
 		access,
-		membershipId: mem.id as string
+		membershipId: mem.id as string,
+		accessToken
 	};
 }
 

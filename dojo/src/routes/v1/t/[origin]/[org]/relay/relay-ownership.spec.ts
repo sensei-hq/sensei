@@ -50,12 +50,30 @@ function makeDb() {
 
 const db = makeDb();
 const MINE = 'mem-A';
-let caller: { tenantId: string; userId: string; role: string; access: number; membershipId?: string };
+let caller: {
+	tenantId: string;
+	userId: string;
+	role: string;
+	access: number;
+	membershipId?: string;
+	accessToken?: string;
+};
 const tenantWide = vi.fn(async () => {
 	throw new Error('membershipIdsForTenant must not be called: relay data is the owner\'s');
 });
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => db.builder }));
+// Which client each route read with: the service role, or the CALLER's JWT.
+const clients = { service: 0, userTokens: [] as string[] };
+vi.mock('$lib/server/dojo-supabase', () => ({
+	dojoDb: () => {
+		clients.service += 1;
+		return db.builder;
+	},
+	userDb: (token: string) => {
+		clients.userTokens.push(token);
+		return db.builder;
+	}
+}));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: vi.fn(async () => caller),
 	membershipIdsForTenant: tenantWide,
@@ -121,7 +139,9 @@ const routes: Array<{ name: string; table: string; run: () => Promise<Response>;
 beforeEach(() => {
 	db.reset();
 	tenantWide.mockClear();
-	caller = { tenantId: 't1', userId: 'user-A', role: 'member', access: 0, membershipId: MINE };
+	caller = { tenantId: 't1', userId: 'user-A', role: 'member', access: 0, membershipId: MINE, accessToken: 'jwt-A' };
+	clients.service = 0;
+	clients.userTokens.length = 0;
 });
 
 describe('relay routes are scoped to the caller’s own membership (#249)', () => {
@@ -142,6 +162,22 @@ describe('relay routes are scoped to the caller’s own membership (#249)', () =
 			const res = await r.run();
 			expect(res.status).toBe(403);
 			expect(db.calls.filter((c) => c.table.startsWith('relay_')), 'no relay table is touched').toEqual([]);
+		});
+	}
+});
+
+// The relay READS run as the person, under the own-rows RLS that already exists
+// on relay_sessions / relay_inbox / relay_segments (#236 step 3). The route's
+// membership filter stays, but it is no longer the only thing between one
+// member and another's gates.
+describe('relay reads run as the caller, under RLS (#236 step 3)', () => {
+	const reads = routes.filter((r) => ['gates GET', 'segments GET', 'session GET'].includes(r.name));
+	for (const r of reads) {
+		it(`${r.name} reads with the caller's JWT, never the service role`, async () => {
+			db.queue(...r.queue);
+			await r.run();
+			expect(clients.userTokens).toEqual(['jwt-A']);
+			expect(clients.service).toBe(0);
 		});
 	}
 });
