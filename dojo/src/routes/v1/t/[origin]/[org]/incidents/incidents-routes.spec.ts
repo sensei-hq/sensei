@@ -12,7 +12,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AdminError } from '$lib/server/admin-data';
 
-const caller = { tenantId: 't1', userId: 'lead-uuid', role: 'lead', access: 2, membershipId: 'm1' };
+const caller: Record<string, unknown> = {
+	tenantId: 't1',
+	userId: 'lead-uuid',
+	role: 'lead',
+	access: 3,
+	membershipId: 'm1',
+	accessToken: 'jwt-A'
+};
 
 class IncidentsError extends Error {
 	constructor(
@@ -36,9 +43,10 @@ const mocks = vi.hoisted(() => ({
 	recordAudit: vi.fn()
 }));
 
+// The service role vs the caller's own JWT — which client each store call got.
 vi.mock('$lib/server/dojo-supabase', () => ({
-	dojoDb: () => ({}),
-	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
+	dojoDb: () => ({ client: 'service' }),
+	userDb: (token: string) => ({ client: 'user', token })
 }));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
@@ -90,6 +98,46 @@ beforeEach(() => {
 	mocks.deleteIncident.mockClear().mockResolvedValue(true);
 	mocks.resolveEngagementClientNames.mockClear().mockResolvedValue(new Map());
 	mocks.recordAudit.mockClear().mockResolvedValue(undefined);
+	caller.accessToken = 'jwt-A';
+});
+
+// Incidents are read and changed as the signed-in lead, so the incidents policy
+// decides (and checks every reference). Two things stay the system's: the owner's
+// display name on the detail (the lead holds no read on identities) and the audit
+// row for each change (#236).
+describe('incidents run as the signed-in person (#236)', () => {
+	it('list, detail, open, change and delete use the caller\'s JWT', async () => {
+		await list.GET(ev());
+		await detail.GET(ev(undefined, { id: 'i1' }));
+		await list.POST(ev({ title: 'leak' }));
+		await detail.PATCH(ev({ resolved: true }, { id: 'i1' }));
+		await detail.DELETE(ev(undefined, { id: 'i1' }));
+		for (const m of [
+			mocks.listIncidents,
+			mocks.resolveEngagementClientNames,
+			mocks.getIncidentDetail,
+			mocks.createIncident,
+			mocks.updateIncident,
+			mocks.deleteIncident
+		]) {
+			expect(m.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+		}
+	});
+	it('resolves the detail\'s owner name as the system, and audits as the system', async () => {
+		await detail.GET(ev(undefined, { id: 'i1' }));
+		expect(mocks.getIncidentDetail.mock.calls[0][3]).toEqual({ client: 'service' });
+		await list.POST(ev({ title: 'leak' }));
+		expect(mocks.recordAudit.mock.calls[0][0]).toEqual({ client: 'service' });
+	});
+	it('refuses a caller with no session rather than acting as the service role', async () => {
+		caller.accessToken = undefined;
+		expect((await list.GET(ev())).status).toBe(401);
+		expect((await detail.GET(ev(undefined, { id: 'i1' }))).status).toBe(401);
+		expect((await list.POST(ev({ title: 'leak' }))).status).toBe(401);
+		expect(mocks.listIncidents).not.toHaveBeenCalled();
+		expect(mocks.getIncidentDetail).not.toHaveBeenCalled();
+		expect(mocks.createIncident).not.toHaveBeenCalled();
+	});
 });
 
 describe('GET /incidents', () => {

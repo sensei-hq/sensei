@@ -64,7 +64,7 @@ describe('getIncidentDetail', () => {
 			identities: { data: [{ principal_id: 'u1', display_name: 'Ada', email: 'ada@x.co', last_login_at: null }], error: null },
 			artifacts: { data: { id: 'a1', title: 'the pattern', kind: 'pattern', status: 'archived' }, error: null }
 		});
-		const d = await getIncidentDetail(db, 't1', 'i1');
+		const d = await getIncidentDetail(db, 't1', 'i1', db);
 		expect(d).toMatchObject({
 			id: 'i1',
 			client_name: 'Globex',
@@ -81,13 +81,29 @@ describe('getIncidentDetail', () => {
 			memberships: { data: [], error: null },
 			identities: { data: [{ principal_id: 'outsider', display_name: 'Eve', email: 'eve@y.co', last_login_at: null }], error: null }
 		});
-		const d = await getIncidentDetail(db, 't1', 'i1');
+		const d = await getIncidentDetail(db, 't1', 'i1', db);
 		expect(d.owner_name).toBeNull();
 		expect(d.owner_email).toBeNull();
 	});
+	// The incident is read as the signed-in lead; the owner's name and email are
+	// a system lookup (the lead holds no read on memberships or identities), over
+	// the one id on a row the lead could already read (#236).
+	it('resolves the owner through the system client, not the caller\'s', async () => {
+		const asCaller = makeDetailDb({
+			incidents: { data: inc({ id: 'i1', owner_id: 'u1' }), error: null },
+			memberships: { data: null, error: { message: 'permission denied for table memberships' } },
+			identities: { data: null, error: { message: 'permission denied for table identities' } }
+		});
+		const system = makeDetailDb({
+			memberships: { data: [{ user_id: 'u1' }], error: null },
+			identities: { data: [{ principal_id: 'u1', display_name: 'Ada', email: 'ada@x.co', last_login_at: null }], error: null }
+		});
+		const d = await getIncidentDetail(asCaller, 't1', 'i1', system);
+		expect(d).toMatchObject({ owner_name: 'Ada', owner_email: 'ada@x.co' });
+	});
 	it('leaves client/owner/artifact null when the incident references none (skips those reads)', async () => {
 		const db = makeDetailDb({ incidents: { data: inc({ id: 'i1' }), error: null } });
-		const d = await getIncidentDetail(db, 't1', 'i1');
+		const d = await getIncidentDetail(db, 't1', 'i1', db);
 		expect(d.client_name).toBeNull();
 		expect(d.owner_name).toBeNull();
 		expect(d.owner_email).toBeNull();
@@ -99,14 +115,14 @@ describe('getIncidentDetail', () => {
 	});
 	it('fails closed (500) on the incident query error', async () => {
 		const db = makeDetailDb({ incidents: { data: null, error: { message: 'boom' } } });
-		await expect(getIncidentDetail(db, 't1', 'i1')).rejects.toMatchObject({ status: 500 });
+		await expect(getIncidentDetail(db, 't1', 'i1', db)).rejects.toMatchObject({ status: 500 });
 	});
 	it('fails closed (500) on the linked-artifact query error', async () => {
 		const db = makeDetailDb({
 			incidents: { data: inc({ id: 'i1', artifact_id: 'a1' }), error: null },
 			artifacts: { data: null, error: { message: 'artifact boom' } }
 		});
-		await expect(getIncidentDetail(db, 't1', 'i1')).rejects.toMatchObject({ status: 500 });
+		await expect(getIncidentDetail(db, 't1', 'i1', db)).rejects.toMatchObject({ status: 500 });
 	});
 });
 
@@ -252,8 +268,18 @@ describe('deleteIncident', () => {
 // show whether a reference was checked against THIS tenant before the write.
 function refDb(tables: Record<string, Array<Record<string, unknown>>>) {
 	const writes: Array<{ table: string; op: string; payload: unknown }> = [];
+	const reads: string[] = [];
 	const db = {
+		// dojo.principal_is_member, over the fixture's memberships.
+		rpc(fn: string, args: { p_tenant: string; p_principal: string }) {
+			if (fn !== 'principal_is_member') throw new Error(`unexpected rpc ${fn}`);
+			const hit = (tables.memberships ?? []).some(
+				(m) => m.tenant_id === args.p_tenant && m.user_id === args.p_principal && m.disabled_at === null
+			);
+			return Promise.resolve({ data: hit, error: null });
+		},
 		from(table: string) {
+			reads.push(table);
 			const filters: Array<[string, unknown]> = [];
 			const b: Record<string, unknown> = {};
 			const rows = () =>
@@ -268,7 +294,7 @@ function refDb(tables: Record<string, Array<Record<string, unknown>>>) {
 			return b;
 		}
 	} as unknown as DojoClient;
-	return { db, writes };
+	return { db, writes, reads };
 }
 
 // An incident's references arrive in the request body. Each must name THIS
@@ -305,6 +331,14 @@ describe('incident references belong to the tenant', () => {
 			expect(writes).toHaveLength(0);
 		});
 	}
+
+	// The incident is written as the signed-in lead, who holds no read on
+	// memberships: the owner check asks the database (#236).
+	it('checks the owner with dojo.principal_is_member, never by reading memberships', async () => {
+		const { db, reads } = refDb(tables);
+		await createIncident(db, 't1', open({ owner_id: 'member' }));
+		expect(reads).not.toContain('memberships');
+	});
 
 	it('refuses re-assigning an incident to someone outside the tenant', async () => {
 		const { db, writes } = refDb(tables);
