@@ -6,12 +6,15 @@
 // federated jsonb. `{ constitution: null }` honestly when none is federated yet.
 // Fails closed; never a fixture.
 import type { RequestHandler } from './$types';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { getUserProjectConstitution, AdminError } from '$lib/server/projects-data';
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { userId, db } = await resolveCaller(request, locals);
+		const caller = await resolveCaller(request, locals);
+		const { userId } = caller;
+		const db = callerDb(caller);
 		const constitution = await getUserProjectConstitution(db, userId, params.slug);
 		return Response.json({ constitution });
 	} catch (e) {
