@@ -17,7 +17,7 @@ commits/issues/docs). Open PRs: none. Branches: main + develop.
 
 | # | item | first step |
 |---|---|---|
-| 1. 236 | dōjō access: views + RLS, user session | steps 1–3 DONE + LIVE; step 4 plan `docs/plan/2026-10-12-dojo-device-plane-as-person.md`; 4a relay `7a259d90`, projects `b6c219f8`, artifacts `b90e15ac`, `tenant_pack_rules` `2cfc77eb` — 4a DONE; 4b DONE (`3b2af4ea`…`5f715460`; rules/resolved fixed — `[]` since 2026-08-25); 4c DONE (`c6f5c068` `/v1/you/memberships`, `431b7617` link table, `c4c8b667` binding); 4d DONE `f4624731`; artifacts URL `0256a9af`, rule namespace `cc3339c8`; session round trip passes locally `a0479605`; next: release N |
+| 1. 236 | dōjō access: views + RLS, user session | steps 1–3 DONE + LIVE; step 4 plan `docs/plan/2026-10-12-dojo-device-plane-as-person.md`; 4a relay `7a259d90`, projects `b6c219f8`, artifacts `b90e15ac`, `tenant_pack_rules` `2cfc77eb` — 4a DONE; 4b DONE (`3b2af4ea`…`5f715460`; rules/resolved fixed — `[]` since 2026-08-25); 4c DONE (`c6f5c068` `/v1/you/memberships`, `431b7617` link table, `c4c8b667` binding); 4d DONE `f4624731`; artifacts URL `0256a9af`, rule namespace `cc3339c8`; session round trip passes locally `a0479605`; full local gate green `b6c4f50b`; next: prod deploy |
 | 2. 225 · 239–241 · 245 · 252 | team view · productionise · e2e red gate | — |
 | 3. 254 | next ORM, call_sites volume | measure |
 
