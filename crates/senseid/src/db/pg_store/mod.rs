@@ -210,7 +210,30 @@ pub struct DojoMembership {
     /// pulling chrono into the row tuple. `None` until the first heartbeat.
     pub last_heartbeat_at: Option<String>,
     pub enabled: bool,
+    /// Whose session the membership's tenant calls present (#236 step 4) —
+    /// `None` until a persona is matched to it.
+    pub persona: Option<MembershipPersona>,
 }
+
+/// One `DOJO_SELECT` row, in column order.
+pub(crate) type DojoMembershipRow = (
+    uuid::Uuid,
+    String,
+    String,
+    String,
+    String,
+    Vec<String>,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    Option<String>,
+    bool,
+    Option<uuid::Uuid>,
+    Option<String>,
+);
 
 /// The persona a local Dōjō membership belongs to
 /// (`sensei.dojo_membership_personas`, #236 step 4), with that persona's
@@ -1096,24 +1119,7 @@ impl PgStore {
 
     // ── Raw ──────────────────────────────────────────────────────────
 
-    fn map_dojo_row(
-        row: (
-            uuid::Uuid,
-            String,
-            String,
-            String,
-            String,
-            Vec<String>,
-            String,
-            String,
-            String,
-            String,
-            String,
-            i64,
-            Option<String>,
-            bool,
-        ),
-    ) -> DojoMembership {
+    fn map_dojo_row(row: DojoMembershipRow) -> DojoMembership {
         let (
             id,
             registry_url,
@@ -1129,6 +1135,8 @@ impl PgStore {
             last_seq,
             last_heartbeat_at,
             enabled,
+            persona_id,
+            session_slot,
         ) = row;
         DojoMembership {
             id,
@@ -1145,14 +1153,19 @@ impl PgStore {
             last_seq,
             last_heartbeat_at,
             enabled,
+            persona: persona_id.map(|persona_id| MembershipPersona { persona_id, session_slot }),
         }
     }
 
+    /// Callers append a clause on `m.` — the persona join makes `id` and
+    /// `created_at` ambiguous unqualified.
     const DOJO_SELECT: &'static str =
-        "SELECT id, registry_url, tenant_key, dojo_url, kind, org_slugs, role, authenticated_via,
-                attribution_default, credential_ref, sync_status, last_seq,
-                last_heartbeat_at::text, enabled
-           FROM sensei.dojo_memberships";
+        "SELECT m.id, m.registry_url, m.tenant_key, m.dojo_url, m.kind, m.org_slugs, m.role,
+                m.authenticated_via, m.attribution_default, m.credential_ref, m.sync_status,
+                m.last_seq, m.last_heartbeat_at::text, m.enabled, mp.persona_id, p.session_slot
+           FROM sensei.dojo_memberships m
+           LEFT JOIN sensei.dojo_membership_personas mp ON mp.membership_id = m.id
+           LEFT JOIN sensei.personas p ON p.id = mp.persona_id";
 
     /// Collect all folder ids belonging to a project, deduped.
     async fn folder_ids_for_project(
