@@ -6,20 +6,20 @@
 // invite token. An admin adding an arbitrary principal id put someone in a
 // tenant without it (#236, access matrix "Tenancy, identity, billing").
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { listMembers, AdminError } from '$lib/server/admin-data';
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { tenantId } = await resolveTenantAccess(
+		const caller = await resolveTenantAccess(
 			params.origin,
 			params.org,
 			request,
 			locals,
 			ACCESS.admin
 		);
-		const members = await listMembers(dojoDb(), tenantId);
+		const members = await listMembers(callerDb(caller), caller.tenantId);
 		return Response.json({ members });
 	} catch (e) {
 		if (e instanceof Response) return e;
