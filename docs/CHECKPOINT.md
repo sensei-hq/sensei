@@ -15,12 +15,12 @@
 |---|---|---|---|
 | ~~249~~ | relay owner-only | CLOSED `ada807a2`; peer status view → #252 | — |
 | 238 | Claude Code mods | 4 of 4 live defects FIXED (`c40cb02b`); Steps 2–5 need the mods API | settle mods `.d.ts`, then usage-at-source |
-| 1. 251 | schema store + indexer routing | #221 prerequisite | steps 1–5 DONE + live; step 7 EF Core extractor remains |
+| 1. 251 | schema store + indexer routing | #221 prerequisite | 1–5 DONE + live; 7a spec `597ba875`, 7b call-site fact `62c60ef2`; 7c DeriveOrmSchema → 7d live remain |
 | ~~221~~ | Schema / ER screen | CLOSED `89272517` | — |
 | 3. 236 | dōjō access: views + RLS, user session | large; kavach#51 upstream | access-matrix doc |
 | 4. 225 · 239–241 · 245 · 252 | team view · productionise · e2e red gate | — | — |
 
-**Next command:** #251 step 7 — EF Core extractor: a C# walk emitting `FileFacts.schema` from `DbContext`/`DbSet<T>`/`.ToTable`/attributes (source `ef_core`, naming `convention` where inferred); spec 20 first for the naming rules.
+**Next command:** #251 7c — `DeriveOrmSchema` task (spec 20 §7c): per repo after file tasks, read nodes + `call_sites`, derive EF Core `SchemaFact`s, `persist::write_schema`. Then 7d: add ONE C# repo to scan roots (client names stay out of commits/issues), verify live. `call_sites` DDL is on sensei_test only.
 
 **Note:** `install-service` deploys the RELEASED DDL; a view/table change reaches the live DB only via a release or by hand (`psql -f`), as done for `session_tool_calls`. Untracked files from another session in the tree (`src/`, `docs/components/`, `docs/rune-usage.md`, `svelte5-runes-*.md`) — not touched.
 
