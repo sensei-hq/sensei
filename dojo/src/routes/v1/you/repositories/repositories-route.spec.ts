@@ -69,7 +69,7 @@ beforeEach(() => {
 });
 
 describe('POST /v1/you/repositories', () => {
-	it('registers against the caller PRINCIPAL id and returns mapped + unmapped', async () => {
+	it('registers as the caller and returns mapped + unmapped', async () => {
 		const result = {
 			mapped: [{ repo_key: 'github.com/acme/api', tenant: 'organization/acme', repo_id: 'r1' }],
 			unmapped: [{ repo_key: 'git.internal/x/y', reason: 'unknown_host' }]
@@ -77,14 +77,15 @@ describe('POST /v1/you/repositories', () => {
 		mocks.registerRepositories.mockResolvedValue(result);
 		const res = await register.POST(post({ repos: [{ repo_key: 'github.com/acme/api' }] }));
 		expect(await res.json()).toEqual(result);
-		expect(mocks.registerRepositories.mock.calls[0][1]).toBe('p1');
+		// The caller's own JWT: dojo.register_repository maps to THEIR tenants (#236).
+		expect(mocks.registerRepositories.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
 	});
 
 	it('drops entries with no repo_key instead of inventing an identity for them', async () => {
 		await register.POST(
 			post({ repos: [{ repo_key: 'github.com/acme/api' }, { name: 'nameless' }, { repo_key: '  ' }] })
 		);
-		expect(mocks.registerRepositories.mock.calls[0][2]).toEqual([
+		expect(mocks.registerRepositories.mock.calls[0][1]).toEqual([
 			{ repo_key: 'github.com/acme/api', remote_url: null, name: null }
 		]);
 	});
@@ -159,5 +160,13 @@ describe('GET /v1/you/sync/plan without a session', () => {
 		mocks.resolveCaller.mockResolvedValueOnce({ userId: 'p1', db: { client: 'service' } });
 		expect((await plan.GET(get)).status).toBe(401);
 		expect(mocks.syncPlan).not.toHaveBeenCalled();
+	});
+});
+
+describe('POST /v1/you/repositories without a session', () => {
+	it('refuses rather than registering as the service role', async () => {
+		mocks.resolveCaller.mockResolvedValueOnce({ userId: 'p1', db: { client: 'service' } });
+		expect((await register.POST(post({ repos: [{ repo_key: 'github.com/acme/api' }] }))).status).toBe(401);
+		expect(mocks.registerRepositories).not.toHaveBeenCalled();
 	});
 });
