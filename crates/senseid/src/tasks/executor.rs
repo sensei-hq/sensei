@@ -127,6 +127,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::IndexLibrary => handlers::index_library(ctx, task).await,
             TaskKind::IndexLibraryPage => handlers::index_library_page(ctx, task).await,
             TaskKind::DetectCommunities => handlers::detect_communities(ctx, task).await,
+            TaskKind::ImportDbdSchema => handlers::import_dbd_schema(ctx, task).await,
             TaskKind::ExtractDeps => handlers::extract_deps(ctx, task).await,
             TaskKind::MeasureVerdicts => handlers::measure_verdicts(ctx, task).await,
             TaskKind::ReconcileRepoMetadata => handlers::reconcile_repo_metadata(ctx, task).await,

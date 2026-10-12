@@ -303,9 +303,14 @@ schema that exists nowhere.
    conventions; `dbd inspect`, the SQL planner gate.
 3. `SchemaFact` + `FileFacts.schema` + `persist::write_schema` / `read_back`,
    with the round-trip property extended.
-4. The dbd importer: `dbd_core::schema_model::build(&Design, scope)` for a
-   dbd-managed folder → `SchemaBatch`. This repository's `database/` is the
-   first corpus.
+4. The dbd importer: `dbd_core::schema_model::build(&Design, None)` for each
+   `design.yaml` → `Vec<SchemaFact>` → `persist::write_schema`. Run as the
+   `ImportDbdSchema` task, behind the repo's file tasks (so the detail lands on
+   walked nodes) and ahead of the `DetectCommunities` barrier. Fqns come from
+   the SQL walker's own `object_identity`, with the package the manifest
+   states. dbd's `trigger` kind has no `schema_object_kind`; triggers are
+   reported as skipped, and any other unknown kind or key action is an error.
+   This repository's `database/` is the first corpus.
 5. The read endpoint assembling `SchemaModel` v2 from the store.
 6. #221's screen: `ErDiagram` (ER scope) + `EntitiesView` / `EntityView`.
 7. EF Core extractor by convention, then the next ORM by corpus count.
