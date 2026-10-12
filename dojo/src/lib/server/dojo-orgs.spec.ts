@@ -23,12 +23,17 @@ function makeDb(...results: Terminal[]) {
 }
 
 let stub: unknown;
+const userTokens: string[] = [];
 vi.mock('./dojo-supabase', async (importOriginal) => {
 	const actual = await (importOriginal as () => Promise<Record<string, unknown>>)();
-	return { ...actual, dojoDb: () => stub };
+	return {
+		...actual,
+		dojoDb: () => stub,
+		userDb: (token: string) => (userTokens.push(token), { client: 'user', token })
+	};
 });
 
-const { listUserOrgs, getUserOrg, tenantToOrg, TENANT_COLS } = await import('./dojo-orgs');
+const { listUserOrgs, getUserOrg, tenantToOrg, TENANT_COLS, sessionDb } = await import('./dojo-orgs');
 const { orgKindKanji } = await import('../dojo-data');
 
 const TENANT_ROW = {
@@ -41,35 +46,55 @@ const TENANT_ROW = {
 	origin: 'organization'
 };
 
+// The console chrome and the org picker read the person's memberships and dōjōs
+// with THEIR session JWT, so the memberships and tenants policies decide (#236).
+describe('sessionDb — the page plane reads as the signed-in person', () => {
+	it('is a client on the session\'s access token', () => {
+		userTokens.length = 0;
+		expect(sessionDb({ session: { access_token: 'jwt-page' } })).toEqual({ client: 'user', token: 'jwt-page' });
+		expect(userTokens).toEqual(['jwt-page']);
+	});
+	it('refuses (401) a session with no access token rather than reading as the service role', () => {
+		const err = (() => {
+			try {
+				sessionDb({ session: { user: { id: 'u' } } });
+			} catch (e) {
+				return e as { status?: number };
+			}
+		})();
+		expect(err?.status).toBe(401);
+	});
+});
+
 describe('listUserOrgs — fail closed on a memberships query error', () => {
 	it('throws 500 (never a fabricated empty list) on a DB error', async () => {
 		stub = makeDb({ data: null, error: { message: 'boom' } });
-		const err = await listUserOrgs('u1').catch((e) => e);
+		const err = await listUserOrgs(stub as never, 'u1').catch((e) => e);
 		expect(err?.status).toBe(500);
 	});
 
 	it('returns [] when the user genuinely has no memberships (no error)', async () => {
 		stub = makeDb({ data: [], error: null });
-		expect(await listUserOrgs('u1')).toEqual([]);
+		expect(await listUserOrgs(stub as never, 'u1')).toEqual([]);
 	});
 
 	it('maps real membership rows to DojoOrg records', async () => {
 		stub = makeDb({ data: [{ role: 'admin', tenant: TENANT_ROW }], error: null });
-		const orgs = await listUserOrgs('u1');
+		const orgs = await listUserOrgs(stub as never, 'u1');
 		expect(orgs).toHaveLength(1);
 		expect(orgs[0]).toMatchObject({ id: 't1', url: 'organization/acme', name: 'Acme', role: 'Admin' });
 	});
 
 	it('derives the kind + kanji from the tenant ORIGIN, not the membership tag', async () => {
 		stub = makeDb({ data: [{ role: 'admin', kind: 'employer', tenant: TENANT_ROW }], error: null });
-		const orgs = await listUserOrgs('u1');
+		const orgs = await listUserOrgs(stub as never, 'u1');
 		expect(orgs[0].kind).toBe('Organization');
 		expect(orgs[0].kanji).toBe('社');
 	});
 
 	it('does NOT fabricate counts — members/projects/pending are undefined when not computed', async () => {
 		stub = makeDb({ data: [{ role: 'admin', kind: 'client', tenant: TENANT_ROW }], error: null });
-		const [org] = await listUserOrgs('u1');
+		const [org] = await listUserOrgs(stub as never, 'u1');
 		// `kind: 'client'` in the row is ignored — origin decides.
 		expect(org.kind).toBe('Organization');
 		expect(org.members).toBeUndefined();
@@ -81,29 +106,29 @@ describe('listUserOrgs — fail closed on a memberships query error', () => {
 describe('getUserOrg — fail closed on either lookup error', () => {
 	it('throws 500 when the tenant lookup errors', async () => {
 		stub = makeDb({ data: null, error: { message: 'tenant boom' } });
-		const err = await getUserOrg('u1', 'organization/acme').catch((e) => e);
+		const err = await getUserOrg(stub as never, 'u1', 'organization/acme').catch((e) => e);
 		expect(err?.status).toBe(500);
 	});
 
 	it('throws 500 when the membership lookup errors', async () => {
 		stub = makeDb({ data: TENANT_ROW, error: null }, { data: null, error: { message: 'mem boom' } });
-		const err = await getUserOrg('u1', 'organization/acme').catch((e) => e);
+		const err = await getUserOrg(stub as never, 'u1', 'organization/acme').catch((e) => e);
 		expect(err?.status).toBe(500);
 	});
 
 	it('returns undefined on a genuine tenant miss (no error, no row)', async () => {
 		stub = makeDb({ data: null, error: null });
-		expect(await getUserOrg('u1', 'gh/none')).toBeUndefined();
+		expect(await getUserOrg(stub as never, 'u1', 'gh/none')).toBeUndefined();
 	});
 
 	it('returns undefined when the tenant exists but the user is not a member', async () => {
 		stub = makeDb({ data: TENANT_ROW, error: null }, { data: null, error: null });
-		expect(await getUserOrg('u1', 'organization/acme')).toBeUndefined();
+		expect(await getUserOrg(stub as never, 'u1', 'organization/acme')).toBeUndefined();
 	});
 
 	it('maps to a DojoOrg on a real hit', async () => {
 		stub = makeDb({ data: TENANT_ROW, error: null }, { data: { role: 'lead' }, error: null });
-		const org = await getUserOrg('u1', 'organization/acme');
+		const org = await getUserOrg(stub as never, 'u1', 'organization/acme');
 		expect(org).toMatchObject({ id: 't1', url: 'organization/acme', role: 'Lead' });
 	});
 
@@ -112,7 +137,7 @@ describe('getUserOrg — fail closed on either lookup error', () => {
 			{ data: TENANT_ROW, error: null },
 			{ data: { role: 'lead', kind: 'community' }, error: null }
 		);
-		const org = await getUserOrg('u1', 'organization/acme');
+		const org = await getUserOrg(stub as never, 'u1', 'organization/acme');
 		expect(org?.kind).toBe('Organization');
 		expect(org?.kanji).toBe('社');
 	});
@@ -124,7 +149,7 @@ describe('getUserOrg — fail closed on either lookup error', () => {
 			{ data: { ...TENANT_ROW, key: 'personal/dev', origin: 'personal' }, error: null },
 			{ data: { role: 'admin', kind: 'personal' }, error: null }
 		);
-		const org = await getUserOrg('u1', 'personal/dev');
+		const org = await getUserOrg(stub as never, 'u1', 'personal/dev');
 		expect(org?.kind).toBe('Personal');
 		expect(org?.kanji).toBe('己');
 	});

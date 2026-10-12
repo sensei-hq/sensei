@@ -5,6 +5,7 @@
 import type { PageServerLoad } from './$types';
 import {
 	listUserOrgs,
+	sessionDb,
 	principalIdForSession,
 	userProfile,
 	sessionUser
@@ -18,6 +19,6 @@ export const load: PageServerLoad = async ({ locals }) => {
 	// `principalIdForSession`. Querying memberships with the auth id matched
 	// nothing, so the picker showed no orgs to members who had them.
 	const principalId = await principalIdForSession(locals);
-	const orgs: DojoOrg[] = principalId ? await listUserOrgs(principalId) : [];
+	const orgs: DojoOrg[] = principalId ? await listUserOrgs(sessionDb(locals), principalId) : [];
 	return { user, orgs };
 };

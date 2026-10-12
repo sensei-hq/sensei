@@ -21,6 +21,7 @@ import { TENANT_COOKIE, TENANT_PARAM, type TenantKey } from '$lib/tenant';
 import { deriveConsoleContext } from '$lib/console-context';
 import {
 	getUserOrg,
+	sessionDb,
 	listUserOrgs,
 	principalIdForSession,
 	sessionUser,
@@ -55,7 +56,7 @@ export async function loadConsoleContext({
 	// every user — an empty "My dōjōs", and `hasMembership` false, which treats a
 	// real member as solo.
 	const principalId = await principalIdForSession(locals);
-	const memberships = principalId ? await listUserOrgs(principalId) : [];
+	const memberships = principalId ? await listUserOrgs(sessionDb(locals), principalId) : [];
 	const profile = userProfile(su);
 	const ctx = deriveConsoleContext({
 		memberships,
@@ -65,7 +66,7 @@ export async function loadConsoleContext({
 	});
 	// Resolve the chrome org only when there's a tenant to resolve (a member with
 	// a selection); a membership-less user has no tenant, so no lookup is made.
-	const org = principalId && ctx.tenantKey ? await getUserOrg(principalId, ctx.tenantKey) : undefined;
+	const org = principalId && ctx.tenantKey ? await getUserOrg(sessionDb(locals), principalId, ctx.tenantKey) : undefined;
 	return {
 		tenantKey: ctx.tenantKey,
 		hasMembership: ctx.hasMembership,
