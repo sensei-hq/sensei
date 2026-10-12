@@ -212,6 +212,17 @@ pub struct DojoMembership {
     pub enabled: bool,
 }
 
+/// The persona a local Dōjō membership belongs to
+/// (`sensei.dojo_membership_personas`, #236 step 4), with that persona's
+/// session slot — `None` when the persona is signed out, which is NOT the same
+/// as the membership having no persona: a bound membership never falls back to
+/// its device token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MembershipPersona {
+    pub persona_id: uuid::Uuid,
+    pub session_slot: Option<String>,
+}
+
 /// A row of `sensei.collective_preferences` — the single-row collective sharing
 /// settings backing `GET/PUT /api/preferences/collective`. `categories` is the
 /// raw jsonb toggle map; `updated_at` is RFC-3339 text (SELECTed `::text`).
