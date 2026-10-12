@@ -17,11 +17,11 @@ commits/issues/docs). Open PRs: none. Branches: main + develop.
 
 | # | item | first step |
 |---|---|---|
-| 1. 236 | dōjō access: views + RLS, user session (kavach#51 upstream) | step 1 matrix DONE `5d6cee36`; step 2 helpers + RLS + policy tests |
+| 1. 236 | dōjō access: views + RLS, user session (kavach#51 upstream) | 1 matrix `5d6cee36` · ladder fix `21bd0b7b` · 2a predicates `4f590987` · 2b rules tenancy `707aa37a`+`6396f893` DONE; next 2c (identities, metric activations, seats, metrics team-lead) |
 | 2. 225 · 239–241 · 245 · 252 | team view · productionise · e2e red gate | — |
 | 3. 254 | next ORM, call_sites volume | measure |
 
-**Next command:** #236 step 2 — helper predicates (`is_member`, `tenant_role_at_least`, `on_team_of`, `leads_team_of`, `project_of`), then views + RLS per area with a test pair per matrix cell. Access findings: 6 PRIVATE draft advisories on the repo (Security tab) — never describe them in public issues/docs/commits until fixed + deployed. Email-leak fix `6dfb1ef0` awaits a dōjō deploy.
+**Next command:** #236 step 2c — the next advisory-backed area (identities read-only for tenant admins; metric activations at admin; seat lookup by tenant), each: DB test → policy/route fix → probes. **A dōjō DEPLOY is owed** for `6dfb1ef0`, `21bd0b7b`, `4f590987`, `707aa37a`, `6396f893`: reconcile `dojo.shared_rules` → functions → `dbd policies` → `select * from dojo.backfill_shared_rules_tenant()` (report `unprovable`) → Worker. Access findings: 6 PRIVATE draft advisories (Security tab) — never describe them publicly until fixed + deployed.
 
 **Hand-applied to live DB** (installs need a release): `schema_*` tables + enums,
 `call_sites`, task kinds `import_dbd_schema` / `derive_orm_schema`. The daemon
