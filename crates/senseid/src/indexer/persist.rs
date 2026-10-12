@@ -1366,7 +1366,8 @@ pub async fn write(
         store.merge_edge_occurrences(&edge_id, file_path, &occurrences_prop(&row)).await?;
         edges += 1;
     }
-    let schema = write_schema_with(store, folder_id, &mut known, language, &facts.schema).await?;
+    let schema =
+        write_schema_with(store, folder_id, &mut known, language, &facts.schema, &[]).await?;
     // ALWAYS replaced, even with nothing: a re-index that found no call sites
     // must clear the ones the last pass wrote.
     let mut calls = Vec::with_capacity(facts.calls.len());
@@ -1393,8 +1394,20 @@ pub async fn write(
     })
 }
 
+/// What one batch of schema detail speaks for: a SOURCE (dbd, an ORM) and the
+/// PACKAGE its objects are minted under. A batch replaces exactly this scope in
+/// its folder — another design's objects, or another ORM's, are not its to drop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchScope {
+    pub source: SchemaSource,
+    pub package: String,
+}
+
 /// Persist schema detail that no file walk produced — the dbd importer's, read
 /// off a whole design rather than one file (spec 20, "Routing").
+///
+/// A batch is the WHOLE of what its scope describes: an object of the same
+/// source and package that the batch no longer names is retired.
 ///
 /// The one writer for schema detail: [`write`] routes a file's
 /// `FileFacts.schema` through the same body, so there is one rule for how
@@ -1402,10 +1415,21 @@ pub async fn write(
 pub async fn write_schema(
     store: &PgStore,
     folder_id: &uuid::Uuid,
+    scope: &BatchScope,
     facts: &[SchemaFact],
 ) -> Result<SchemaWritten, String> {
     let mut known = HashMap::new();
-    write_schema_with(store, folder_id, &mut known, Language::Sql.as_str(), facts).await
+    let mut retire = Vec::new();
+    for (node, fqn) in store.schema_objects_of_source(folder_id, scope.source.as_label()).await? {
+        // An identity this store cannot read is not one this batch may judge;
+        // it is an error rather than a skip, since it means storage drifted.
+        let parsed = fqn::parse(&fqn).map_err(|e| format!("schema store: {fqn}: {e:?}"))?;
+        let named = facts.iter().any(|f| f.fqn.as_str() == fqn);
+        if parsed.package == scope.package && !named {
+            retire.push(node);
+        }
+    }
+    write_schema_with(store, folder_id, &mut known, Language::Sql.as_str(), facts, &retire).await
 }
 
 /// Nodes first, then the detail. A fact whose object has no node yet gets one
@@ -1418,15 +1442,16 @@ async fn write_schema_with(
     known: &mut HashMap<String, uuid::Uuid>,
     language: &str,
     facts: &[SchemaFact],
+    retire: &[uuid::Uuid],
 ) -> Result<SchemaWritten, String> {
-    if facts.is_empty() {
+    if facts.is_empty() && retire.is_empty() {
         return Ok(SchemaWritten { objects: 0, unplaced_refs: Vec::new() });
     }
     let mut objects = Vec::with_capacity(facts.len());
     for fact in facts {
         objects.push((node_for(store, folder_id, known, fact.fqn.as_str(), language).await?, fact));
     }
-    let unplaced_refs = store.replace_schema_detail(folder_id, &objects).await?;
+    let unplaced_refs = store.replace_schema_detail(folder_id, &objects, retire).await?;
     Ok(SchemaWritten { objects: objects.len(), unplaced_refs })
 }
 
@@ -1964,7 +1989,8 @@ mod tests {
     use crate::db::pg_store::PgStore;
     use crate::db::pg_store::tests::create_test_folder;
     use crate::indexer::facts::{
-        DeclaredType, FileFacts, Language, Param, Reason, RelationKind, Rung, Symbol,
+        DeclaredType, FileFacts, Language, Param, Reason, RelationKind, Rung, SchemaFact,
+        SchemaSource, Symbol,
     };
     use crate::indexer::lang::Source;
     use crate::indexer::lang::rust;
@@ -2677,7 +2703,8 @@ public class ShopContext : DbContext {
         persisted(&store, &folder, &FileFacts { schema: Vec::new(), ..facts.clone() })
             .await
             .expect("the nodes persist");
-        let only_orders = persist::write_schema(&store, &folder, &facts.schema[..1])
+        let scope = persist::BatchScope { source: SchemaSource::Dbd, package: "pkg".into() };
+        let only_orders = persist::write_schema(&store, &folder, &scope, &facts.schema[..1])
             .await
             .expect("the detail persists");
         assert_eq!(only_orders.objects, 1);
@@ -2691,13 +2718,68 @@ public class ShopContext : DbContext {
             "the key to an undescribed customers is named"
         );
 
-        let both =
-            persist::write_schema(&store, &folder, &facts.schema).await.expect("both persist");
+        let both = persist::write_schema(&store, &folder, &scope, &facts.schema)
+            .await
+            .expect("both persist");
         assert_eq!(both.unplaced_refs, vec![], "a key to a later object of one batch is placed");
         let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
         let expected: Vec<persist::SchemaRow> =
             facts.schema.iter().map(persist::SchemaRow::of).collect();
         same_rows(stored.schema, expected, "the detail after both writes");
+    }
+
+    /// **A BATCH REPLACES ITS SCOPE (#251).** An object the source no longer
+    /// describes leaves the store: a table dropped from a design must not stay on
+    /// the ER screen. The scope is the batch's SOURCE and PACKAGE in the folder,
+    /// so another design's objects — or another ORM's — are left alone.
+    ///
+    /// Mutations that must break this: skip the sweep; sweep without the
+    /// package or source filter.
+    #[tokio::test]
+    async fn a_batch_removes_what_its_source_no_longer_describes() {
+        let facts = schema_walked();
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "schema_sweep").await;
+        persisted(&store, &folder, &FileFacts { schema: Vec::new(), ..facts.clone() })
+            .await
+            .expect("the nodes persist");
+        let scope = persist::BatchScope { source: SchemaSource::Dbd, package: "pkg".into() };
+        persist::write_schema(&store, &folder, &scope, &facts.schema).await.expect("both persist");
+
+        // Two bystanders in the same folder, one per axis of the scope: the SAME
+        // source in another package (a second design), and ANOTHER source in
+        // the same package. Each is protected by exactly one filter.
+        let bystander = |package: &str, name: &str, source: SchemaSource| {
+            let mut f = facts.schema[0].clone();
+            f.fqn =
+                crate::indexer::lang::sql::facts::object_identity(package, "app", name).unwrap();
+            f.source = source;
+            f.refs.clear();
+            f
+        };
+        let other_design = bystander("other", "accounts", SchemaSource::Dbd);
+        let same_package_ef = bystander("pkg", "Invoices", SchemaSource::EfCore);
+        for (f, source, package) in [
+            (&other_design, SchemaSource::Dbd, "other"),
+            (&same_package_ef, SchemaSource::EfCore, "pkg"),
+        ] {
+            let scope = persist::BatchScope { source, package: package.into() };
+            persist::write_schema(&store, &folder, &scope, std::slice::from_ref(f)).await.unwrap();
+        }
+
+        // `orders` leaves the design (its key to customers with it).
+        let kept: Vec<SchemaFact> =
+            facts.schema.iter().filter(|f| !f.fqn.as_str().contains("orders")).cloned().collect();
+        persist::write_schema(&store, &folder, &scope, &kept)
+            .await
+            .expect("the re-import persists");
+
+        let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
+        let mut expected: Vec<persist::SchemaRow> =
+            kept.iter().map(persist::SchemaRow::of).collect();
+        expected.push(persist::SchemaRow::of(&other_design));
+        expected.push(persist::SchemaRow::of(&same_package_ef));
+        same_rows(stored.schema, expected, "the store after a design dropped a table");
     }
 
     /// An import is what decides externality (spec §2), so losing one loses the

@@ -61,6 +61,10 @@ pub async fn import_dbd_schema(ctx: &TaskContext, task: &Task) -> Result<u32, St
         return Ok(0);
     };
 
+    let scope = crate::indexer::persist::BatchScope {
+        source: crate::indexer::facts::SchemaSource::Dbd,
+        package: package.clone(),
+    };
     // Parsing a whole design is CPU-bound; off the runtime, as `process_file`
     // does for one file.
     let imported = {
@@ -73,7 +77,8 @@ pub async fn import_dbd_schema(ctx: &TaskContext, task: &Task) -> Result<u32, St
     };
 
     let written =
-        crate::indexer::persist::write_schema(ctx.pg(), &folder_id, &imported.facts).await?;
+        crate::indexer::persist::write_schema(ctx.pg(), &folder_id, &scope, &imported.facts)
+            .await?;
     if !imported.skipped.is_empty() || !written.unplaced_refs.is_empty() {
         tracing::warn!(
             design = %design.display(),

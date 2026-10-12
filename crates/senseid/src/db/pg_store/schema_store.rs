@@ -71,12 +71,22 @@ impl PgStore {
     /// deleted and rewritten, so a column dropped from the DDL disappears. Refs
     /// go last, after every object of the batch has its entity row, so a key
     /// between two objects of one batch never depends on their order.
+    ///
+    /// `retire` names objects to drop from the store in the same transaction —
+    /// ones the source no longer describes. Their columns, indexes and refs go
+    /// with them by cascade; the NODES stay, because the walk owns those.
     pub async fn replace_schema_detail(
         &self,
         folder_id: &uuid::Uuid,
         objects: &[(uuid::Uuid, &SchemaFact)],
+        retire: &[uuid::Uuid],
     ) -> Result<Vec<UnplacedRef>, String> {
         let mut tx = self.pool.begin().await.map_err(|e| format!("schema store: begin: {e}"))?;
+        sqlx_core::query::query("DELETE FROM sensei.schema_entities WHERE node_id = ANY($1)")
+            .bind(retire)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("schema store: retire: {e}"))?;
 
         for (node, fact) in objects {
             let at = fact.fqn.as_str();
@@ -213,6 +223,26 @@ impl PgStore {
         .await
         .map_err(|e| format!("schema store: folders of project {project_id}: {e}"))?;
         Ok(rows.into_iter().map(|(f,)| f).collect())
+    }
+
+    /// The objects one SOURCE has described in `folder_id` — the candidates a
+    /// new batch from that source may retire.
+    pub async fn schema_objects_of_source(
+        &self,
+        folder_id: &uuid::Uuid,
+        source: &str,
+    ) -> Result<Vec<(uuid::Uuid, String)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT se.node_id, n.fqn
+               FROM sensei.schema_entities se
+               JOIN sensei.nodes n ON n.id = se.node_id
+              WHERE n.folder_id = $1 AND se.source = $2::sensei.schema_source",
+        )
+        .bind(folder_id)
+        .bind(source)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("schema store: objects of {source}: {e}"))
     }
 
     /// When the detail of `folders` was last written — `None` when nothing in
