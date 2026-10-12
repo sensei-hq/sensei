@@ -11,7 +11,14 @@
 // inline in the parent `+server.ts` and unaffected.)
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const caller = { tenantId: 't1', userId: 'lead-uuid', role: 'lead', access: 2, membershipId: 'm1' };
+const caller: Record<string, unknown> = {
+	tenantId: 't1',
+	userId: 'lead-uuid',
+	role: 'lead',
+	access: 3,
+	membershipId: 'm1',
+	accessToken: 'jwt-A'
+};
 
 class EngagementsError extends Error {
 	constructor(
@@ -32,9 +39,10 @@ const mocks = vi.hoisted(() => ({
 	recordAudit: vi.fn()
 }));
 
+// The service role vs the caller's own JWT — which client each store call got.
 vi.mock('$lib/server/dojo-supabase', () => ({
-	dojoDb: () => ({}),
-	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
+	dojoDb: () => ({ client: 'service' }),
+	userDb: (token: string) => ({ client: 'user', token })
 }));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
@@ -76,6 +84,29 @@ beforeEach(() => {
 	mocks.bindEngagementProject.mockClear().mockResolvedValue({ id: 'e1', bound: true });
 	mocks.parseBindProject.mockClear().mockReturnValue({ project_id: 'p1', name: 'One' });
 	mocks.recordAudit.mockClear().mockResolvedValue(undefined);
+	caller.accessToken = 'jwt-A';
+});
+
+// The engagement is changed as the signed-in lead, so the engagements policy
+// decides; the audit row is the system's record of it (#236).
+describe('engagement writes run as the signed-in person (#236)', () => {
+	it('PATCH, DELETE and bind use the caller\'s JWT; the audit rows are the system\'s', async () => {
+		await detail.PATCH(ev({ status: 'ended' }, { id: 'e1' }));
+		await detail.DELETE(ev({}, { id: 'e1' }));
+		await bind.POST(ev({ project_id: 'p1' }, { id: 'e1' }));
+		for (const m of [mocks.updateEngagement, mocks.deleteEngagement, mocks.bindEngagementProject]) {
+			expect(m.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+		}
+		expect(mocks.recordAudit).toHaveBeenCalledTimes(3);
+		for (const call of mocks.recordAudit.mock.calls) expect(call[0]).toEqual({ client: 'service' });
+	});
+	it('refuses a caller with no session rather than acting as the service role', async () => {
+		caller.accessToken = undefined;
+		expect((await detail.PATCH(ev({ status: 'ended' }, { id: 'e1' }))).status).toBe(401);
+		expect((await detail.DELETE(ev({}, { id: 'e1' }))).status).toBe(401);
+		expect((await bind.POST(ev({ project_id: 'p1' }, { id: 'e1' }))).status).toBe(401);
+		expect(mocks.recordAudit).not.toHaveBeenCalled();
+	});
 });
 
 describe('PATCH /engagements/{id}', () => {
