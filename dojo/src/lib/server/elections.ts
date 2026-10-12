@@ -17,7 +17,8 @@
 // The consequence worth stating: **an election cannot be made for a repository
 // the caller cannot see**, because the function reads only the caller's rows.
 // Scoping is the authorization; there is no second membership check to forget.
-import { AdminError, type DojoClient } from './admin-data';
+import { type DojoClient } from './admin-data';
+import { refusal } from './db-refusal';
 
 /** What the view says after the write — the verdict, not an echo of the input. */
 export interface ElectionOutcome {
@@ -31,14 +32,6 @@ export interface ElectionOutcome {
 	/** Why, when it still will not sync. Null when it will. */
 	reason_code: string | null;
 }
-
-/** The database's refusals, by SQLSTATE, as the statuses they mean. Anything
- *  else is a failure (500) — never a softer "not found". */
-const REFUSAL_STATUS: Record<string, number> = {
-	P0002: 404, // no_data_found: not in the caller's view
-	'55000': 409, // object_not_in_prerequisite_state: no authority yet
-	'42501': 403 // insufficient_privilege: not theirs to change
-};
 
 /**
  * Record an election for one repository, as the signed-in person.
@@ -61,9 +54,6 @@ export async function setElection(
 	const { data, error } = await db
 		.rpc('set_repository_election', { p_repo_key: repoKey, p_elected: elected })
 		.single();
-	if (error) {
-		const code = (error as { code?: string }).code ?? '';
-		throw new AdminError(REFUSAL_STATUS[code] ?? 500, error.message);
-	}
+	if (error) throw refusal(error);
 	return data as ElectionOutcome;
 }
