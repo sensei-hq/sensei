@@ -33,7 +33,7 @@ vi.mock('./dojo-supabase', async (importOriginal) => {
 	};
 });
 
-const { listUserOrgs, getUserOrg, tenantToOrg, TENANT_COLS, sessionDb } = await import('./dojo-orgs');
+const { listUserOrgs, listMyMemberships, getUserOrg, tenantToOrg, TENANT_COLS, sessionDb } = await import('./dojo-orgs');
 const { orgKindKanji } = await import('../dojo-data');
 
 const TENANT_ROW = {
@@ -297,5 +297,40 @@ describe('team dōjōs are told apart from organisations', () => {
 	});
 	it('gives a team its own glyph', () => {
 		expect(orgKindKanji('Team')).toBe('組');
+	});
+});
+
+// The daemon records which persona each local membership belongs to by matching
+// membership ids against this list (#236 step 4c). Admins can READ their
+// tenant's other memberships, so the list must filter to the caller's own —
+// RLS alone would hand an admin's daemon every member's id.
+describe('listMyMemberships — the caller’s own active memberships', () => {
+	function recordingDb(result: Terminal) {
+		const filters: Array<[string, string, unknown]> = [];
+		const b: Record<string, unknown> = {};
+		b.from = () => b;
+		b.select = () => b;
+		b.eq = (c: string, v: unknown) => (filters.push(['eq', c, v]), b);
+		b.is = (c: string, v: unknown) => (filters.push(['is', c, v]), b);
+		b.then = (resolve: (v: Terminal) => unknown) => resolve(result);
+		return { db: b, filters };
+	}
+
+	it('returns id, tenant key, role and kind for each of the caller’s active memberships', async () => {
+		const { db, filters } = recordingDb({
+			data: [{ id: 'm1', role: 'maintainer', kind: 'employer', tenant: { key: 'organization/acme' } }],
+			error: null
+		});
+		expect(await listMyMemberships(db as never, 'p1')).toEqual([
+			{ id: 'm1', tenant_key: 'organization/acme', role: 'maintainer', kind: 'employer' }
+		]);
+		expect(filters).toContainEqual(['eq', 'user_id', 'p1']);
+		expect(filters).toContainEqual(['is', 'disabled_at', null]);
+	});
+
+	it('throws 500 on a query error — never an empty list a daemon would read as "no memberships"', async () => {
+		const { db } = recordingDb({ data: null, error: { message: 'boom' } });
+		const err = await listMyMemberships(db as never, 'p1').catch((e) => e);
+		expect(err?.status).toBe(500);
 	});
 });
