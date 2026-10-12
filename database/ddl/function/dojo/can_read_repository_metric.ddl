@@ -26,41 +26,36 @@ stable
 security definer
 set search_path = dojo, pg_temp
 as $$
-  select exists (
-    select 1
-      from dojo.principals p
-      join dojo.team_members tm            on tm.principal_id = p.id
-      join dojo.teams t                    on t.id = tm.team_id
-      join dojo.team_projects tp           on tp.team_id = t.id
-      join dojo.repositories_in_projects r on r.project_id = tp.project_id
-     where p.auth_user_id = auth.uid()
-       and r.repository_id = p_repository_id
-       and (
-         -- Whole-repository numbers: any team member who reaches the repo.
-         p_scope = 'repo'
-         -- One person's own numbers: themselves…
-         or p_principal_id = p.id
-         -- …or a tenant admin. Deliberately NOT the whole team: "metrics by
-         -- user" visible to every peer is surveillance, not transparency.
-         or exists (
-              -- memberships.user_id is a PRINCIPAL id (§VIII.2). This compared it
-              -- to p.auth_user_id — the LOGIN id — so the admin branch never
-              -- matched and a tenant admin silently lost per-user metrics.
-              select 1 from dojo.memberships m
-               where m.tenant_id = p_tenant_id
-                 and m.user_id  = p.id
-                 and m.role     = 'admin'
-                 and m.disabled_at is null)
-       )
-  );
+  select
+       -- a person's own user-scoped numbers, always
+       (p_scope = 'user' and p_principal_id = dojo.current_principal_id())
+       -- management: the whole tenant
+    or dojo.tenant_role_at_least(p_tenant_id, 'admin')
+    or exists (
+         select 1
+           from dojo.repositories_in_projects r
+           join dojo.projects pr on pr.id = r.project_id
+          where r.repository_id = p_repository_id
+            and (
+                 -- repo-scoped: anyone on a team owning the project, or its owner
+                 (p_scope = 'repo' and (dojo.on_team_of(r.project_id)
+                                        or pr.user_id = dojo.current_principal_id()))
+                 -- another person's numbers: a LEAD of a team owning the project
+              or (p_scope = 'user' and dojo.leads_team_of(r.project_id))
+            )
+       );
 $$;
 
 revoke all on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) from public;
 grant execute on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) to authenticated;
 
 comment on function dojo.can_read_repository_metric(uuid, text, uuid, uuid) is
-'Row authorization for dojo.repository_metrics: principal → team_members → team →
-team_projects → project → repositories_in_projects → repository.
+'Row authorization for dojo.repository_metrics, per the access matrix ("Metrics",
+docs/spec/dojo/access-matrix.md): own user-scoped rows always; repo-scoped rows
+for anyone on a team owning a project with the repository, or that project''s
+owner; another person''s user-scoped rows for a TEAM LEAD of such a project; the
+whole tenant for its admins. Composed from current_principal_id, on_team_of,
+leads_team_of and tenant_role_at_least, so the relationships have one definition.
 
 SECURITY DEFINER so the caller needs no grant on the org graph the traversal
 reads — inline in a policy it would have required exposing all of it.';
