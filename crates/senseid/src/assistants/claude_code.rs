@@ -150,22 +150,34 @@ pub(super) fn check_hooks(install_path: Option<&Path>) -> AdapterCheck {
     };
     let hooks = v.get("hooks");
     let has = |evt: &str| hooks.and_then(|h| h.get(evt)).is_some();
-    // `PostToolUseFailure` is required alongside the pair: a failed call fires it
-    // INSTEAD of PostToolUse, so without it no failure is ever captured (#238).
-    let missing: Vec<&str> = ["PreToolUse", "PostToolUse", "PostToolUseFailure"]
-        .into_iter()
-        .filter(|e| !has(e))
-        .collect();
-    if missing.is_empty() {
-        AdapterCheck::new(id, label, CheckStatus::Ok, None)
-    } else {
-        AdapterCheck::new(
+    // The PAIR is capture itself: without it nothing is recorded, a failure.
+    let missing: Vec<&str> =
+        ["PreToolUse", "PostToolUse"].into_iter().filter(|e| !has(e)).collect();
+    if !missing.is_empty() {
+        return AdapterCheck::new(
             id,
             label,
             CheckStatus::Fail,
             Some(format!("{} not declared in plugin.json hooks", missing.join("/"))),
-        )
+        );
     }
+    // `PostToolUseFailure` is fired INSTEAD of PostToolUse for a failed call
+    // (#238), so without it failures go uncaptured — a gap, not broken capture.
+    // A Warn: a Fail sends the watchdog into reinstalling the same published
+    // plugin and raising a Critical on every start.
+    if !has("PostToolUseFailure") {
+        return AdapterCheck::new(
+            id,
+            label,
+            CheckStatus::Warn,
+            Some(
+                "PostToolUseFailure not declared in plugin.json hooks — failed tool calls are \
+                 not captured; update the sensei plugin"
+                    .into(),
+            ),
+        );
+    }
+    AdapterCheck::new(id, label, CheckStatus::Ok, None)
 }
 
 /// Read the recorded installPath for `sensei@*` from installed_plugins.json.
@@ -1296,13 +1308,19 @@ mod tests {
 
     /// A failed tool call fires `PostToolUseFailure`, NOT `PostToolUse` (#238,
     /// observed 2026-10-11: 11 failed Bash calls had a PreToolUse and nothing
-    /// else). A plugin that does not register it captures no failure at all —
-    /// every failed call looks in flight forever — so the check fails and says
-    /// which event is missing.
+    /// else). A plugin that does not register it captures no failure — so the
+    /// check WARNS and names what is lost.
     ///
-    /// Mutation that must break this: drop `PostToolUseFailure` from the check.
+    /// A WARN, not a FAIL. Capture still works for every call that succeeds;
+    /// a Fail made the watchdog treat the plugin as broken config, reinstall
+    /// the same published plugin, fail again and raise a Critical "claude
+    /// capture broken" on every start (seen 4 times on 2026-10-12, while the
+    /// fixed plugin waited on `make bump`). Missing the core pair still fails.
+    ///
+    /// Mutations that must break this: drop `PostToolUseFailure` from the
+    /// check; report it as Fail; let a missing PostToolUse warn.
     #[test]
-    fn check_hooks_fail_when_tool_failures_are_not_captured() {
+    fn check_hooks_warn_when_tool_failures_are_not_captured() {
         let tmp = make_tmp_home();
         let dir = tmp.path().join("plugin");
         std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
@@ -1312,8 +1330,23 @@ mod tests {
         )
         .unwrap();
         let check = check_hooks(Some(&dir));
-        assert_eq!(check.status, CheckStatus::Fail);
-        assert!(format!("{:?}", check).contains("PostToolUseFailure"), "{check:?}");
+        assert_eq!(check.status, CheckStatus::Warn, "{check:?}");
+        let said = format!("{check:?}");
+        assert!(
+            said.contains("PostToolUseFailure") && said.contains("failed tool calls"),
+            "{said}"
+        );
+
+        std::fs::write(
+            dir.join(".claude-plugin/plugin.json"),
+            r#"{"hooks":{"PreToolUse":[{}],"PostToolUseFailure":[{}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            check_hooks(Some(&dir)).status,
+            CheckStatus::Fail,
+            "no PostToolUse is broken capture"
+        );
     }
 
     /// The plugin this repo SHIPS passes its own check — so a registration
