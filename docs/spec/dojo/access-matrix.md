@@ -157,6 +157,27 @@ writes an audit row where it changes tenant state.
 
 Everything not in this table moves to the user session.
 
+## When a session needs facts it may not read
+
+Some answers a person is entitled to are computed from rows they may not read —
+their repository's sync verdict needs the tenant's billing account; registering a
+repository needs every tenant's forge connections to say "not yours" rather than
+"unknown". Granting the session those tables would widen the matrix. Instead, a
+`security definer` function reads them and returns only the caller's answer:
+
+- its principal comes from the session (`dojo.current_principal_id()`), **never
+  from an argument** — a definer function that takes a user id serves anyone who
+  can call it;
+- it returns the caller's rows or a reason code, never another tenant's ids;
+- it refuses with a SQLSTATE naming why (`no_data_found` 404,
+  `object_not_in_prerequisite_state` 409, `insufficient_privilege` 403), which the
+  route keeps as that status (`db-refusal.ts`).
+
+Today: `my_repositories`, `register_repository`, `set_repository_election`,
+`upsert_repository_metrics`, `set_metric_activation`, `set_pack_adoption`,
+`my_adopted_pack_slugs`, `create_dojo`, `tenant_live_session_count`,
+`principal_is_member`. Each has a test under `database/tests/dojo/`.
+
 ## Sequence
 
 1. **This matrix.**
@@ -167,8 +188,9 @@ Everything not in this table moves to the user session.
    gets a test pair: the cell's role CAN, the role below it CANNOT, and a member
    of another tenant cannot.
 3. **Move the routes**, one area at a time, from `dojoDb()` to the user-session
-   client. Data routes where they fit; rpc routes once jerrythomas/kavach#51 is
-   fixed.
+   client (`callerDb`, `asOwner`, `sessionDb`). **Done for every JWT-plane route
+   (2026-10-12)**; what still runs as the service role is the table above, and the
+   device plane below.
 4. **The device plane**: device token → short-lived JWT for its principal, so the
    same policies apply to the daemon.
 
