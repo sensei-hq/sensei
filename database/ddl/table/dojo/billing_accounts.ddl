@@ -33,15 +33,6 @@ comment on column dojo.billing_accounts.seats_used
 comment on column dojo.billing_accounts.external_customer_ref
      is 'The payment provider''s customer identifier. NULL until a provider is chosen — no provider is wired in the unattended run (D-BILLING).';
 
--- RLS deny-by-default: server-only table (the dōjō Worker uses service_role, which
--- bypasses RLS; no client authenticated/anon grant). Locks out any direct PostgREST
--- access while service_role keeps full access; clears the Supabase rls_disabled advisor.
+-- RLS: the access matrix's cells for this table. The policies call the access
+-- predicates and so live in policies/dojo/billing_accounts.sql (see policies/README.md).
 alter table dojo.billing_accounts enable row level security;
-
--- No client access: authenticated/anon are denied all rows + writes; the dōjō Worker
--- reads/writes as service_role, which bypasses RLS. Explicit deny-all so RLS has a
--- policy (clears the rls_enabled_no_policy advisor). Idempotent.
-drop policy if exists billing_accounts_service_only on dojo.billing_accounts;
-create policy billing_accounts_service_only on dojo.billing_accounts
-    for all to authenticated, anon
-    using (false) with check (false);
