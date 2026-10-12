@@ -53,11 +53,15 @@ set search_path to dojo, extensions;
 -- See docs/spec/dojo/daemon-sync.md §8a/§8b/§8c and
 -- docs/requirements/repository-sharing.md.
 --
--- Recreated rather than replaced: `create or replace view` cannot rename
--- `visibility` → `forge_visibility` nor insert columns before `sync_enabled`.
-drop view if exists dojo.all_my_repositories;
-
-create view dojo.all_my_repositories
+-- REPLACED, not dropped. This file once dropped and recreated the view, because
+-- `create or replace view` cannot rename `visibility` → `forge_visibility` nor
+-- insert columns before `sync_enabled`; that reshape has shipped. A drop now
+-- fails the deploy outright — dojo.my_repositories() returns this view's row
+-- type, and Postgres will not drop a view something depends on (#236; it failed
+-- the first redeploy). A future change that renames or reorders columns needs a
+-- one-off migration that drops and recreates the dependents with it; appending a
+-- column at the END does not.
+create or replace view dojo.all_my_repositories
 with (security_invoker = on)
 as
 with member_repo as (
@@ -438,10 +442,9 @@ comment on column dojo.all_my_repositories.last_synced_at
 comment on column dojo.all_my_repositories.denied_reason
      is 'DEPRECATED alias of reason_code, kept until GET /v1/you/sync/plan reads reason_code directly.';
 
--- ACLs DO NOT SURVIVE `drop view`. This file drops and recreates (see the note
--- above on renaming columns), so every deploy discards whatever grants the view
--- had and re-creates it owned by the deploying role. Without this line the live
--- ACL was `postgres` + `service_role` and nothing else — verified, not assumed.
+-- The grants are stated here rather than assumed to survive: a drop-and-recreate
+-- (above) discards them, and that is how the live ACL was once found to be
+-- `postgres` + `service_role` and nothing else.
 --
 -- service_role only. A SESSION reads this through dojo.my_repositories(), never
 -- directly: as the invoker it would see fewer facts than a verdict needs (a
