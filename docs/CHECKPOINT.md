@@ -17,11 +17,11 @@ commits/issues/docs). Open PRs: none. Branches: main + develop.
 
 | # | item | first step |
 |---|---|---|
-| 1. 236 | dōjō access: views + RLS, user session | steps 1–3 DONE — every JWT-plane route reads/writes as the signed-in person (#236 comment 2026-10-12 lists the commits); `Caller.db` gone `dd83e96e`; next: step 4 device token → JWT |
+| 1. 236 | dōjō access: views + RLS, user session | steps 1–3 DONE + LIVE; step 4 plan `docs/plan/2026-10-12-dojo-device-plane-as-person.md`; 4a relay `7a259d90`, projects `b6c219f8`, artifacts `b90e15ac`, `tenant_pack_rules` `2cfc77eb` — 4a DONE; next 4b–4e |
 | 2. 225 · 239–241 · 245 · 252 | team view · productionise · e2e red gate | — |
 | 3. 254 | next ORM, call_sites volume | measure |
 
-**Next command:** #236 step 4 — device token → short-lived JWT for its principal, so the device plane (artifacts, rules, the daemon's relay session/segments/inbox POSTs, still `resolveApiKeyAccess` + service role) runs under the same policies. Start from `docs/spec/dojo/access-matrix.md` "Sequence" 4 and `resolveApiKeyAccess` in `dojo/src/lib/server/dojo-auth.ts`. **Prod:** LIVE — DB (reconciled; `team` origin) and Worker `1a5ef88` (2026-10-12 19:22, built by Cloudflare from the `main` push). Cloudflare Workers Builds fixed: `dojo` Worker root `/dojo`, `bun run build`, main → `wrangler deploy`, other branches → `wrangler versions upload`; deploy = merge develop → main via PR (main is protected). Private advisories: all CLOSED (r872, 2f6q, jjcc, 3956, gxvr, hqv4 — fixed and live; m3c6 withdrawn).
+**Next command:** #236 step 4b — `resolveTenantCaller` (JWT → `resolveTenantAccess` + `callerDb`, else legacy device token; a JWT that fails verification is 401). Move relay session/segments/inbox, artifacts, rules, rules/[id], rules/resolved onto it; rules/resolved calls `dojo.tenant_pack_rules` and its `[]` fallbacks become 500s (it has returned `[]` since 2026-08-25: `rule_packs.source` is gone). Owed prod check for the window: `select count(*) from dojo.memberships where device_token_hash is not null`. **Prod:** LIVE — DB (reconciled; `team` origin) and Worker `1a5ef88` (2026-10-12 19:22, built by Cloudflare from the `main` push). Cloudflare Workers Builds fixed: `dojo` Worker root `/dojo`, `bun run build`, main → `wrangler deploy`, other branches → `wrangler versions upload`; deploy = merge develop → main via PR (main is protected). Private advisories: all CLOSED (r872, 2f6q, jjcc, 3956, gxvr, hqv4 — fixed and live; m3c6 withdrawn).
 
 **Hand-applied to live DB** (installs need a release): `schema_*` tables + enums,
 `call_sites`, task kinds `import_dbd_schema` / `derive_orm_schema`. The daemon
