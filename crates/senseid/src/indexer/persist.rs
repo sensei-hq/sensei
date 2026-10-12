@@ -78,14 +78,17 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::db::pg_store::{EdgeColumns, NodeColumns, PgStore, StoredSchemaEntity, UnplacedRef};
+use crate::db::pg_store::{
+    CallSiteColumns, EdgeColumns, NodeColumns, PgStore, StoredCallSite, StoredSchemaEntity,
+    UnplacedRef,
+};
 use crate::graph_facts::{EdgeFact, OnMiss, TargetRef};
 
 use super::facts::{
-    Binding, DeclaredType, Evidence, FileFacts, FkAction, Import, ImportOrigin, Language, Naming,
-    Observation, Param, Reason, RefKind, Reference, Relation, RelationKind, Resolution, Rung,
-    SchemaColumn, SchemaFact, SchemaIndex, SchemaKind, SchemaSource, Span, Symbol, SymbolKind,
-    Visibility,
+    Binding, CallArg, CallSite, DeclaredType, Evidence, FileFacts, FkAction, Import, ImportOrigin,
+    Language, Naming, Observation, Param, Reason, Receiver, RefKind, Reference, Relation,
+    RelationKind, Resolution, Rung, SchemaColumn, SchemaFact, SchemaIndex, SchemaKind,
+    SchemaSource, Span, Symbol, SymbolKind, Visibility,
 };
 use super::fqn::{self, Origin, Reach};
 
@@ -428,6 +431,106 @@ impl SchemaRow {
     }
 }
 
+/// One call site, as the store holds it (spec 20 §7b). The same type on the
+/// way in and out, for the reason [`SymbolRow`] gives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallSiteRow {
+    pub file_path: String,
+    pub from: String,
+    pub at: Span,
+    pub callee: String,
+    pub type_args: Vec<String>,
+    pub receiver: Receiver,
+    pub args: Vec<CallArg>,
+}
+
+impl CallSiteRow {
+    pub fn of(call: &CallSite, file_path: &str) -> Self {
+        let CallSite { from, at, callee, type_args, receiver, args } = call;
+        Self {
+            file_path: file_path.to_string(),
+            from: from.as_str().to_string(),
+            at: *at,
+            callee: callee.clone(),
+            type_args: type_args.clone(),
+            receiver: receiver.clone(),
+            args: args.clone(),
+        }
+    }
+
+    fn from_stored(stored: StoredCallSite) -> Result<Self, String> {
+        let StoredCallSite { file_path, from_fqn, at, callee, type_args, receiver, args } = stored;
+        let bad = |what: &str, v: &serde_json::Value| {
+            format!("{from_fqn}: unreadable call-site {what} {v} — not one this indexer wrote")
+        };
+        let receiver = receiver_from_prop(&receiver).ok_or_else(|| bad("receiver", &receiver))?;
+        let args = args
+            .as_array()
+            .ok_or_else(|| bad("args", &args))?
+            .iter()
+            .map(|a| call_arg_from_prop(a).ok_or_else(|| bad("argument", a)))
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Self {
+            at: span_from_prop(&at).ok_or_else(|| bad("span", &at))?,
+            file_path,
+            from: from_fqn,
+            callee,
+            type_args,
+            receiver,
+            args,
+        })
+    }
+}
+
+fn receiver_prop(receiver: &Receiver) -> serde_json::Value {
+    match receiver {
+        Receiver::None => serde_json::json!({ "kind": "none" }),
+        Receiver::Call(at) => serde_json::json!({ "kind": "call", "at": span_prop(*at) }),
+        Receiver::Name(name) => serde_json::json!({ "kind": "name", "name": name }),
+        Receiver::Other => serde_json::json!({ "kind": "other" }),
+    }
+}
+
+fn receiver_from_prop(value: &serde_json::Value) -> Option<Receiver> {
+    Some(match value.get("kind")?.as_str()? {
+        "none" => Receiver::None,
+        "call" => Receiver::Call(span_from_prop(value.get("at")?)?),
+        "name" => Receiver::Name(value.get("name")?.as_str()?.to_string()),
+        "other" => Receiver::Other,
+        _ => return None,
+    })
+}
+
+fn call_arg_prop(arg: &CallArg) -> serde_json::Value {
+    match arg {
+        CallArg::Str(s) => serde_json::json!({ "str": s }),
+        CallArg::Lambda { params, member, at } => serde_json::json!({
+            "lambda": { "params": params, "member": member, "at": span_prop(*at) }
+        }),
+        CallArg::Other => serde_json::json!({ "other": true }),
+    }
+}
+
+fn call_arg_from_prop(value: &serde_json::Value) -> Option<CallArg> {
+    if let Some(s) = value.get("str") {
+        return Some(CallArg::Str(s.as_str()?.to_string()));
+    }
+    if let Some(l) = value.get("lambda") {
+        let params = l
+            .get("params")?
+            .as_array()?
+            .iter()
+            .map(|p| p.as_str().map(str::to_string))
+            .collect::<Option<Vec<_>>>()?;
+        let member = match l.get("member")? {
+            serde_json::Value::Null => None,
+            m => Some(m.as_str()?.to_string()),
+        };
+        return Some(CallArg::Lambda { params, member, at: span_from_prop(l.get("at")?)? });
+    }
+    value.get("other").and_then(|o| o.as_bool()).filter(|o| *o).map(|_| CallArg::Other)
+}
+
 /// Everything one folder's rows read back as.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stored {
@@ -436,6 +539,7 @@ pub struct Stored {
     pub relations: Vec<RelationRow>,
     pub imports: Vec<ImportRow>,
     pub schema: Vec<SchemaRow>,
+    pub calls: Vec<CallSiteRow>,
 }
 
 /// The `sensei.nodes` write a [`SymbolRow`] becomes.
@@ -1147,6 +1251,8 @@ pub struct Written {
     pub edge_rows: BTreeSet<uuid::Uuid>,
     /// What [`write_schema`] did with this file's schema facts.
     pub schema: SchemaWritten,
+    /// Call sites written for this file (spec 20 §7b).
+    pub calls: usize,
 }
 
 /// What one schema write did (#251).
@@ -1261,6 +1367,21 @@ pub async fn write(
         edges += 1;
     }
     let schema = write_schema_with(store, folder_id, &mut known, language, &facts.schema).await?;
+    // ALWAYS replaced, even with nothing: a re-index that found no call sites
+    // must clear the ones the last pass wrote.
+    let mut calls = Vec::with_capacity(facts.calls.len());
+    for call in &facts.calls {
+        calls.push(CallSiteColumns {
+            from_node_id: node_for(store, folder_id, &mut known, call.from.as_str(), language)
+                .await?,
+            at: span_prop(call.at),
+            callee: call.callee.clone(),
+            type_args: call.type_args.clone(),
+            receiver: receiver_prop(&call.receiver),
+            args: serde_json::Value::Array(call.args.iter().map(call_arg_prop).collect()),
+        });
+    }
+    store.replace_call_sites(folder_id, file_path, &calls).await?;
     Ok(Written {
         symbols: facts.symbols.len(),
         edges,
@@ -1268,6 +1389,7 @@ pub async fn write(
         edge_collisions,
         edge_rows: merged.into_keys().collect(),
         schema,
+        calls: calls.len(),
     })
 }
 
@@ -1532,6 +1654,12 @@ pub async fn read_back(store: &PgStore, folder_id: &uuid::Uuid) -> Result<Stored
         relations: Vec::new(),
         imports: Vec::new(),
         schema,
+        calls: store
+            .call_sites_of(folder_id)
+            .await?
+            .into_iter()
+            .map(CallSiteRow::from_stored)
+            .collect::<Result<Vec<_>, String>>()?,
     };
     for edge in store.occurrence_edges(folder_id).await? {
         read_edge_into(&edge, &mut stored)?;
@@ -2330,6 +2458,67 @@ pub fn widest(a: u32) -> u32 {
             "the inherent impl contributes no inheritance edge; the trait impl and the \
              supertrait bound each contribute one, and the unplaceable one keeps its reason"
         );
+    }
+
+    /// A C# file whose call sites carry literals, type arguments, lambdas and
+    /// both kinds of receiver — walked by the real C# walker.
+    fn calls_walked(text: &str) -> FileFacts {
+        let source = Source { package: "Shop", module: "", path: "src/ShopContext.cs", text };
+        crate::indexer::lang::adapter_for(Language::CSharp)
+            .read(&source, &crate::indexer::lang::TypeHomes::unknown())
+            .expect("the fixture parses")
+    }
+
+    const SHOP_CONTEXT: &str = r#"namespace Shop;
+public class ShopContext : DbContext {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+        modelBuilder.HasDefaultSchema("sales");
+        modelBuilder.Entity<Order>().ToTable("orders", "sales");
+        modelBuilder.Entity<Customer>(b => { b.ToTable("customers"); b.HasKey(c => c.Code); });
+    }
+}
+"#;
+
+    /// **EVERY CALL SITE SURVIVES THE ROUND TRIP (spec 20 §7b).** The EF Core
+    /// derivation reads these back out of Postgres, so a field lost here is a
+    /// table name or a key the derivation never sees.
+    ///
+    /// Mutations that must break this: skip the call-site write; drop
+    /// `type_args` or a lambda's `member` from the row; read `receiver` back as
+    /// `Other`.
+    #[tokio::test]
+    async fn every_call_site_survives_the_round_trip() {
+        let facts = calls_walked(SHOP_CONTEXT);
+        assert!(facts.calls.len() >= 6, "the fixture must exercise the shapes: {:#?}", facts.calls);
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "calls").await;
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
+
+        let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
+        let expected: Vec<persist::CallSiteRow> =
+            facts.calls.iter().map(|c| persist::CallSiteRow::of(c, &facts.path)).collect();
+        same_rows(stored.calls, expected, "every call site");
+    }
+
+    /// A re-index REPLACES a file's call sites: a `.ToTable` deleted from the
+    /// source stops naming the table.
+    ///
+    /// Mutation that must break this: insert without clearing the file's rows.
+    #[tokio::test]
+    async fn re_indexing_replaces_a_files_call_sites() {
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "calls_replace").await;
+        persisted(&store, &folder, &calls_walked(SHOP_CONTEXT)).await.expect("the facts persist");
+
+        let fewer = calls_walked(
+            &SHOP_CONTEXT
+                .replace(r#"modelBuilder.Entity<Order>().ToTable("orders", "sales");"#, ""),
+        );
+        persist::write(&store, &folder, &fewer).await.expect("the re-index persists");
+        let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
+        let expected: Vec<persist::CallSiteRow> =
+            fewer.calls.iter().map(|c| persist::CallSiteRow::of(c, &fewer.path)).collect();
+        same_rows(stored.calls, expected, "the call sites after a re-index");
     }
 
     /// DDL walked by the real SQL walker, plus the schema detail the dbd importer

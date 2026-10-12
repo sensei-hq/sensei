@@ -96,6 +96,7 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
         relations: walk.relations,
         imports: walk.imports,
         schema: Vec::new(),
+        calls: Vec::new(),
     })
 }
 

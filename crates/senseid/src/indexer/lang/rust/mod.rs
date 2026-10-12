@@ -387,6 +387,7 @@ pub fn read(source: &Source<'_>) -> Result<FileFacts, ReadError> {
         relations: found.relations,
         imports: found.imports,
         schema: Vec::new(),
+        calls: Vec::new(),
     })
 }
 

@@ -497,6 +497,7 @@ pub(crate) use graph::CallDirection;
 #[cfg(test)]
 pub(crate) use indexer::LibColumns;
 pub(crate) use indexer::{Dropped, EdgeColumns, NodeColumns};
+mod call_sites;
 mod gateway_catalog;
 mod library;
 mod logs;
@@ -507,6 +508,7 @@ mod metrics;
 mod neighbourhood;
 mod pruner;
 mod schema_store;
+pub use call_sites::{CallSiteColumns, StoredCallSite};
 /// One row of `sensei.nodes`, named rather than positional (#161).
 pub use graph::NodeRow;
 pub use library::LibraryPageRow;
