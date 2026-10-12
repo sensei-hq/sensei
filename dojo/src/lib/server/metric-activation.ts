@@ -17,9 +17,13 @@
 // role logic means there is no second membership check to forget, and no fourth
 // copy of the rule the view exists to own.
 //
-// `configurable_by_me` is admin-only, which is the right bar: deactivation stops
-// a computation for everyone sharing the repository and is a cost decision, not a
-// per-member display preference.
+// The view's `configurable_by_me` is NOT enough on its own. It is true for any
+// member on a personal repository and on an organisation's PUBLIC repository —
+// right for the per-user share election it was built for. But an activation row
+// has no principal: it stops a computation for EVERY member of the tenant, a
+// cost decision that is the organisation's policy. So on an organisation
+// repository it also takes an admin; in a personal dōjō the tenant is the person
+// (#236, docs/spec/dojo/access-matrix.md "Metrics").
 import { AdminError, type DojoClient } from './admin-data';
 
 /** What the tenant's ruling now is, re-read rather than echoed from the input. */
@@ -36,12 +40,14 @@ interface ViewRow {
 	tenant_id: string;
 	tenant: string;
 	repo_key: string;
+	origin: string;
+	role: string | null;
 	configurable_by_me: boolean;
 }
 
 /** Named rather than `*` so a view column rename fails here instead of silently
  *  reading `undefined` as "not allowed". */
-const VIEW_COLUMNS = 'repository_id, tenant_id, tenant, repo_key, configurable_by_me';
+const VIEW_COLUMNS = 'repository_id, tenant_id, tenant, repo_key, origin, role, configurable_by_me';
 
 async function readMine(
 	db: DojoClient,
@@ -79,7 +85,8 @@ export async function setMetricActivation(
 ): Promise<ActivationOutcome> {
 	const mine = await readMine(db, principalId, repoKey);
 	if (!mine) throw new AdminError(404, `no repository ${repoKey} for this account`);
-	if (!mine.configurable_by_me) {
+	const tenantWideIsTheirs = mine.origin === 'personal' || mine.role === 'admin';
+	if (!mine.configurable_by_me || !tenantWideIsTheirs) {
 		throw new AdminError(403, `you may not change metric activation for ${repoKey}`);
 	}
 
