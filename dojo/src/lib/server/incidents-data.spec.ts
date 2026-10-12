@@ -58,6 +58,9 @@ describe('getIncidentDetail', () => {
 		const db = makeDetailDb({
 			incidents: { data: inc({ id: 'i1', engagement_id: 'e1', owner_id: 'u1', artifact_id: 'a1' }), error: null },
 			engagements: { data: [{ id: 'e1', client_name: 'Globex' }], error: null },
+			// The owner is a member of t1 — the only kind of principal a tenant's
+			// incident may name.
+			memberships: { data: [{ user_id: 'u1' }], error: null },
 			identities: { data: [{ principal_id: 'u1', display_name: 'Ada', email: 'ada@x.co', last_login_at: null }], error: null },
 			artifacts: { data: { id: 'a1', title: 'the pattern', kind: 'pattern', status: 'archived' }, error: null }
 		});
@@ -69,6 +72,18 @@ describe('getIncidentDetail', () => {
 			owner_email: 'ada@x.co',
 			artifact: { id: 'a1', title: 'the pattern', kind: 'pattern', status: 'archived' }
 		});
+	});
+	// `owner_id` arrives from a request body. An owner who is not a member of
+	// this tenant must not resolve to their name or email.
+	it('shows no name or email for an owner outside the tenant', async () => {
+		const db = makeDetailDb({
+			incidents: { data: inc({ id: 'i1', owner_id: 'outsider' }), error: null },
+			memberships: { data: [], error: null },
+			identities: { data: [{ principal_id: 'outsider', display_name: 'Eve', email: 'eve@y.co', last_login_at: null }], error: null }
+		});
+		const d = await getIncidentDetail(db, 't1', 'i1');
+		expect(d.owner_name).toBeNull();
+		expect(d.owner_email).toBeNull();
 	});
 	it('leaves client/owner/artifact null when the incident references none (skips those reads)', async () => {
 		const db = makeDetailDb({ incidents: { data: inc({ id: 'i1' }), error: null } });
