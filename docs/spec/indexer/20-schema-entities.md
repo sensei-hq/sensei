@@ -313,9 +313,98 @@ schema that exists nowhere.
    This repository's `database/` is the first corpus.
 5. The read endpoint assembling `SchemaModel` v2 from the store.
 6. #221's screen: `ErDiagram` (ER scope) + `EntitiesView` / `EntityView`.
-7. EF Core extractor by convention, then the next ORM by corpus count.
-   Call-argument literals (`.ToTable`) as their own spec, upgrading
-   `convention` to `stated`.
+7. EF Core, as a GRAPH DERIVATION — see "EF Core: a derivation, not a walk"
+   below. 7a this section; 7b the call-site fact; 7c `DeriveOrmSchema`; 7d live
+   verification on one C# repository. Then the next ORM by corpus count.
+
+## EF Core: a derivation, not a walk (step 7, revised 2026-10-12)
+
+Step 7 first read "EF Core extractor by convention": a file walk filling
+`FileFacts.schema` from `DbSet<Order> Orders`. Measured over the C# corpus, that
+would be wrong where it matters:
+
+| shape | files |
+|---|---|
+| `DbSet<…>` | 71 |
+| `: DbContext` | 36 |
+| `.ToTable(` | 308 |
+| `HasDefaultSchema(` | 40 |
+| `.csproj` on `EntityFrameworkCore.SqlServer` / `Npgsql` | 13 / 2 |
+
+- **A convention name is wrong wherever fluent config renames the table**, and
+  `.ToTable(` is in four times as many files as `DbSet<`. `naming = convention`
+  would label a wrong row, not a weak one.
+- **The columns are another file's.** They are the entity class's properties;
+  the `DbSet` names only the class. The config usually lives in an
+  `IEntityTypeConfiguration<T>` in yet another file.
+- **The schema is not in the file.** `HasDefaultSchema` is a call literal, and
+  the provider default (`dbo` / `public`) is a `.csproj` dependency.
+
+A walk sees one file (the indexer's first rule). So EF Core is a per-repo
+DERIVATION over what the walks already wrote, run after the file tasks exactly as
+the dbd import is — and it needs one fact the walks do not yet record.
+
+### 7b · the call-site fact
+
+`FileFacts.calls: Vec<CallSite>` — language-neutral, emitted first by the C#
+walk. It knows nothing about EF:
+
+```rust
+pub struct CallSite {
+    pub from: Fqn,              // the enclosing declaration
+    pub at: Span,               // the invocation, as the `Calls` reference spans it
+    pub callee: String,         // the method name as written, without type arguments
+    pub type_args: Vec<String>, // `Entity<Order>()` → ["Order"]
+    pub receiver: Receiver,     // Call(span) | Name(String) | Other | None
+    pub args: Vec<CallArg>,     // positional
+}
+pub enum CallArg {
+    Str(String),                                // a string literal, unescaped
+    Lambda { params: Vec<String>, member: Option<String>, at: Span }, // `x => x.Name` → member "Name"
+    Other,                                      // anything else; kept so positions hold
+}
+```
+
+Recorded only for a call with at least one `Str` or `Lambda` argument or a type
+argument — the shapes a derivation can read; a bare `Foo(x)` carries nothing.
+Persisted in `sensei.call_sites`, keyed by `(folder_id, file_path)` and REPLACED
+per file (the fact belongs to the file that states it, unlike a node), with
+`read_back` round-tripping it.
+
+### 7c · `DeriveOrmSchema`
+
+A per-repo task beside `ImportDbdSchema` (blocked on the file tasks, blocking
+the barrier). For each class that extends `DbContext` (an `Extends` relation,
+resolved or not — `DbContext` is external):
+
+- **Entities**: the `T` of each `DbSet<T>` property (its `declared_type`), each
+  `Entity<T>()` call's type argument, and each `IEntityTypeConfiguration<T>`.
+- **Which entity a call configures**: walk the receiver chain to an
+  `Entity<T>()` call; or a `Name` receiver bound by a lambda parameter of an
+  enclosing `Entity<T>(b => …)` call (by span containment); or a `Name` that is
+  a parameter typed `EntityTypeBuilder<T>` of the enclosing declaration.
+- **Table**: `ToTable("t"[, "schema"])` → `stated`; else the `DbSet` property's
+  name → `convention`.
+- **Schema**: `ToTable`'s second literal; else the context's
+  `HasDefaultSchema("s")`; else the provider default read from the `.csproj`
+  (`dbo` for SQL Server, `public` for Npgsql). **No provider and no statement →
+  the entity is SKIPPED and counted**, never filed under a guessed schema.
+- **Columns**: the entity class's properties, in declaration order, minus
+  navigations (a property typed as another entity, or a collection of one).
+  `sql_type` is the CLR type verbatim — the store's column says *declared type*,
+  and here the declaration is C#. `HasColumnName("c")` on `Property(x => x.P)`
+  renames P. `not_null` only where the type says so (a non-nullable value type);
+  a reference type's nullability depends on a project setting no file states,
+  so it is left false rather than guessed. Primary key: `HasKey(x => x.P)`, else
+  EF's convention `Id` / `<T>Id`.
+- **Keys**: a reference navigation `Customer Customer` with a `CustomerId`
+  property → a ref to the `Customer` entity's key.
+- **Identity**: `sql·<package of the DbContext>·<schema>·<table>·item`. An EF
+  table and a dbd table of one database therefore do not meet — they have
+  different packages — which is correct until something states they are one
+  database.
+
+Source `ef_core`; naming per table as above.
 
 ## Done gate
 
