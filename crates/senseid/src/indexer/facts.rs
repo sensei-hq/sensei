@@ -1012,6 +1012,61 @@ impl Import {
     }
 }
 
+// ── call sites (spec 20 §7b, #251) ────────────────────────────────────────────
+
+/// What one call site was handed, beyond the callee: string literals, lambdas,
+/// type arguments and the receiver it hangs off.
+///
+/// A FACT ABOUT THE SOURCE, not about any library. The walk records the shape;
+/// what a `.ToTable("orders")` MEANS is the EF Core derivation's business (spec
+/// 20 §7c), and a walk that knew EF would be a walk that knew one ORM.
+///
+/// Recorded only when it carries something a derivation can read — a `Str` or
+/// `Lambda` argument, or a type argument. A bare `Foo(x)` is a `Calls`
+/// reference and nothing more.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CallSite {
+    /// The declaration the call sits in.
+    pub from: Fqn,
+    /// The invocation, spanned as its `Calls` reference is.
+    pub at: Span,
+    /// The method name as written, without type arguments.
+    pub callee: String,
+    /// `Entity<Order>()` → `["Order"]`, verbatim.
+    pub type_args: Vec<String>,
+    pub receiver: Receiver,
+    /// Positional; `Other` keeps the positions honest.
+    pub args: Vec<CallArg>,
+}
+
+/// What a call was made ON.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Receiver {
+    /// A free call: `Foo()`.
+    None,
+    /// Another call — `a.Entity<T>().ToTable(…)` hangs `ToTable` off the
+    /// `Entity<T>()` invocation at this span.
+    Call(Span),
+    /// A plain name: `builder.ToTable(…)`.
+    Name(String),
+    /// Anything else — a member chain, an indexer, `this`.
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CallArg {
+    /// A string literal, unescaped.
+    Str(String),
+    /// `x => x.Name` → params `["x"]`, member `Some("Name")`. `member` is the
+    /// accessed member only when the body is exactly `param.Member`.
+    Lambda {
+        params: Vec<String>,
+        member: Option<String>,
+        at: Span,
+    },
+    Other,
+}
+
 // ── schema detail (spec 20, #251) ────────────────────────────────────────────
 
 /// Schema detail for one database object a producer declares as a node — a
@@ -1169,6 +1224,8 @@ pub struct FileFacts {
     /// file that describes no database object — the overwhelming majority.
     /// Routed by `persist::write` to the `schema_*` tables, never to `nodes`.
     pub schema: Vec<SchemaFact>,
+    /// Call sites with readable arguments (spec 20 §7b).
+    pub calls: Vec<CallSite>,
 }
 
 #[cfg(test)]
@@ -1609,6 +1666,7 @@ mod tests {
             relations: vec![relation],
             imports: vec![import],
             schema: Vec::new(),
+            calls: Vec::new(),
         };
 
         assert_eq!(facts.symbols.len(), 1);

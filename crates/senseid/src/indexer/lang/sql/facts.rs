@@ -181,6 +181,7 @@ pub fn read(
         // a statement bringing one name into scope.
         imports: Vec::new(),
         schema: Vec::new(),
+        calls: Vec::new(),
     })
 }
 
