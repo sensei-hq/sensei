@@ -152,6 +152,12 @@ pub(crate) async fn create_membership(
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
 
+    // #236 step 4c: record whose membership this is now, not at the next sync
+    // cycle — that cycle retries whatever this could not reach.
+    for failure in crate::tasks::dojo_sync::bind_all_memberships(&state.pg).await {
+        tracing::warn!(error = %failure, "dojo: membership persona binding deferred to the next sync");
+    }
+
     if let Some(pid) = project_id
         && !memberships::bind_project(&state.pg, &pid, &id)
             .await
