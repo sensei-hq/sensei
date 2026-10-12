@@ -1,10 +1,10 @@
 // POST/GET /v1/t/{origin}/{org}/relay/inbox — the daemon raises gate/decision/
 // chat/nudge/stall rows and polls them back by a monotonic seq cursor. Both the
-// daemon plane (API-key). The seq trigger (dojo.relay_inbox_bump_seq) re-surfaces
+// daemon, as the person (or the legacy device token for one release — #236 step 4). The seq trigger (dojo.relay_inbox_bump_seq) re-surfaces
 // a row whenever it's answered. See docs/plan/relay-engine.md §4/§6.
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
-import { resolveApiKeyAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
+import { tenantCallerDb } from '$lib/server/caller-db';
+import { resolveTenantCaller, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { sendRelayPushFromEnv } from '$lib/server/relay-push-env';
 import type { RelayInboxKind } from '$lib/server/relay-push-send';
 
@@ -21,12 +21,12 @@ const PUSH_KINDS = new Set<RelayInboxKind>(['approval', 'decision', 'stall']);
 // Daemon → raise an inbox row for a run (gate/decision/chat/nudge/stall).
 export const POST: RequestHandler = async ({ params, request, platform }) => {
 	try {
-		const caller = await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.contributor);
+		const caller = await resolveTenantCaller(params.origin, params.org, request, ACCESS.contributor);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const runId = str(body.run_id);
 		const kind = str(body.kind);
 		if (!runId || !kind) return apiError(400, 'run_id and kind are required');
-		const db = dojoDb();
+		const db = tenantCallerDb(caller);
 		// The wire item is keyed by run_id; map it to the cloud session row. `title`
 		// is fetched now so the zero-knowledge push can label "…on <run title>".
 		const { data: sess, error: sErr } = await db
@@ -95,10 +95,10 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 // filters by run) and for daemons older than this route.
 export const GET: RequestHandler = async ({ params, request, url }) => {
 	try {
-		const caller = await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.contributor);
+		const caller = await resolveTenantCaller(params.origin, params.org, request, ACCESS.contributor);
 		const id = url.searchParams.get('id');
 		const since = Number(url.searchParams.get('since') ?? '0') || 0;
-		const db = dojoDb();
+		const db = tenantCallerDb(caller);
 		// membership_id is filtered in BOTH shapes: an id alone must never be
 		// enough to read another tenant's gate.
 		const base = db.from('relay_inbox').select(COLS).eq('membership_id', caller.membershipId);
