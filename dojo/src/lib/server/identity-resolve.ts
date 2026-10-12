@@ -74,17 +74,33 @@ export function pickBestIdentity(rows: IdentityNameRow[]): ResolvedName {
  * "fall back to shortId". A query error throws AdminError(500) (fail-closed, no
  * fabrication).
  *
- * `tenantId` is retained for the audit/log context of callers that have one, and
- * is deliberately NOT a query filter: identities are tenant-independent, and the
- * ids passed in are already scoped by the caller's own tenant read.
+ * Only principals who are MEMBERS of `tenantId` are resolved. Identities carry
+ * no tenant, and an id can come straight from a request body (an incident's
+ * `owner_id`), so "the caller already scoped it" is not a property this
+ * function can assume; an id outside the tenant resolves to nothing.
  */
 export async function resolveDisplayNames(
 	db: DojoClient,
 	tenantId: string,
 	principalIds: string[]
 ): Promise<Map<string, ResolvedName>> {
-	void tenantId;
-	const unique = [...new Set(principalIds.filter((id) => typeof id === 'string' && id.length > 0))];
+	const requested = [
+		...new Set(principalIds.filter((id) => typeof id === 'string' && id.length > 0))
+	];
+	if (requested.length === 0) return new Map();
+	// TENANT FIRST. `identities` has no tenant column, and an id can arrive from
+	// a request body (an incident's owner_id) — so an unscoped read hands the
+	// caller anyone's name and email. Only the tenant's members are resolved; any
+	// other id resolves to nothing, exactly as an unknown id does.
+	const members = await db
+		.from('memberships')
+		.select('user_id')
+		.eq('tenant_id', tenantId)
+		.in('user_id', requested);
+	if (members.error) throw new AdminError(500, members.error.message);
+	const unique = [
+		...new Set(((members.data ?? []) as Array<{ user_id: string }>).map((m) => m.user_id))
+	];
 	if (unique.length === 0) return new Map();
 	const { data, error } = await db
 		.from('identities')
