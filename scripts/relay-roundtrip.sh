@@ -48,13 +48,8 @@ select t.id, p.id, 'admin', 'personal', 'device_code', '$HASH'
 from dojo.tenants t, dojo.principals p
 where t.key='personal/dev' and p.auth_user_id = '$USER_ID'
 on conflict (tenant_id, user_id) do update set device_token_hash = excluded.device_token_hash;
--- Grant the Supabase API roles access to dojo so PostgREST can read it. PROD
--- Supabase needs the same one-time grant (see docs/plan/decisions.md). Idempotent.
-grant usage on schema dojo to service_role, authenticated, anon;
-grant all on all tables in schema dojo to service_role;
-grant all on all sequences in schema dojo to service_role;
-alter default privileges in schema dojo grant all on tables to service_role;
-alter default privileges in schema dojo grant all on sequences to service_role;
+-- The API roles' reach into dojo comes with the deploy now
+-- (database/apply/after/dojo_api_grants.sql), not from this seed.
 SQL
 
 echo "== get user JWT (password grant) =="
