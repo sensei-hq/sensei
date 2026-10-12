@@ -159,16 +159,20 @@ export async function resolveTenantAccess(
 		.eq('tenant_id', tenantId).eq('user_id', userId).is('disabled_at', null)
 		.maybeSingle();
 	if (error) throw apiError(500, 'membership lookup failed');
+	// No ACTIVE membership is no access at any floor — never "level 0". A
+	// signed-in person who is not a member of this tenant reaches nothing of
+	// it (#236, docs/spec/dojo/access-matrix.md "Who").
+	if (!mem) throw apiError(403, 'not a member of this dōjō');
 
-	const access = roleToAccess(mem?.role);
+	const access = roleToAccess(mem.role);
 	if (access < floor) throw apiError(403, `${accessLabel(floor)} role required`);
 
 	return {
 		tenantId,
 		userId,
-		role: mem?.role ?? 'member',
+		role: mem.role,
 		access,
-		membershipId: mem?.id as string | undefined
+		membershipId: mem.id as string
 	};
 }
 

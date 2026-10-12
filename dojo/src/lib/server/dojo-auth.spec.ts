@@ -89,6 +89,19 @@ describe('resolveTenantAccess — fail closed on the membership lookup', () => {
 		expect((err as Response).status).toBe(403);
 	});
 
+	// A missing (or disabled) membership is NO access — never "level 0". The
+	// member floor admitted any signed-in person to any tenant's member-floor
+	// routes; the routes that mattered each patched it locally. One rule here
+	// instead of one per route (#236, access matrix "Who").
+	it('403 for a signed-in non-member even at the MEMBER floor', async () => {
+		stub = makeDb(AUTH_OK, PRINCIPAL_OK, TENANT_OK, { data: null, error: null });
+		const err = await resolveTenantAccess('gh', 'acme', bearerReq(), locals, ACCESS.member).catch(
+			(e) => e
+		);
+		expect(err).toBeInstanceOf(Response);
+		expect((err as Response).status).toBe(403);
+	});
+
 	it('401 when the JWT is invalid (no user)', async () => {
 		stub = makeDb({ data: { user: null }, error: { message: 'bad jwt' } });
 		const err = await resolveTenantAccess('gh', 'acme', bearerReq(), locals, ACCESS.member).catch(
