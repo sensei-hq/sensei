@@ -227,7 +227,7 @@ describe('publishRule', () => {
 			{ data: { id: 'ns-1' }, error: null },
 			{ data: { id: 'rule-1', version: 1, seq: 7 }, error: null }
 		);
-		const resp = await publishRule(db.client, RULE, 'user-uuid');
+		const resp = await publishRule(db.client, 't1', RULE, 'user-uuid');
 		expect(resp).toEqual({ id: 'rule-1', version: 1, seq: 7 });
 
 		const ns = db.calls.find((c) => c.table === 'namespaces')!;
@@ -238,11 +238,14 @@ describe('publishRule', () => {
 
 		const rule = db.calls.find((c) => c.table === 'shared_rules')!;
 		expect(rule.op).toBe('upsert');
-		expect(rule.onConflict).toBe('namespace_id,content_hash');
+		// The rule is the TENANT's: stamped with it, and unique within it — one
+		// tenant's publish can never land on another tenant's row (#236).
+		expect(rule.onConflict).toBe('tenant_id,namespace_id,content_hash');
 		// shared_rules is in the `dojo` schema (the base client) — NOT re-scoped to sensei.
 		expect(rule.schema).toBeUndefined();
 		const p = rule.payload as Record<string, unknown>;
 		expect(p.namespace_id).toBe('ns-1');
+		expect(p.tenant_id).toBe('t1');
 		expect(p.content_hash).toBe('a'.repeat(64));
 		expect(p.status).toBe('active');
 		expect(p.enforcement).toBe('mandatory');
@@ -251,7 +254,7 @@ describe('publishRule', () => {
 	it('stamps published_by from the caller and published_at server-side (not the body)', async () => {
 		const db = makeDb();
 		db.queue({ data: { id: 'ns-1' }, error: null }, { data: { id: 'r', version: 1, seq: 1 }, error: null });
-		await publishRule(db.client, RULE, 'caller-uuid');
+		await publishRule(db.client, 't1', RULE, 'caller-uuid');
 		const p = db.calls.find((c) => c.table === 'shared_rules')!.payload as Record<string, unknown>;
 		expect(p.published_by).toBe('caller-uuid');
 		expect(typeof p.published_at).toBe('string');
@@ -263,7 +266,7 @@ describe('publishRule', () => {
 	it('throws RulesError(500) when the namespace upsert errors (never silent)', async () => {
 		const db = makeDb();
 		db.queue({ data: null, error: { message: 'ns boom' } });
-		await expect(publishRule(db.client, RULE, 'u')).rejects.toMatchObject({
+		await expect(publishRule(db.client, 't1', RULE, 'u')).rejects.toMatchObject({
 			status: 500,
 			message: 'ns boom'
 		});
@@ -273,7 +276,7 @@ describe('publishRule', () => {
 	it('throws RulesError(500) when the rule upsert errors', async () => {
 		const db = makeDb();
 		db.queue({ data: { id: 'ns-1' }, error: null }, { data: null, error: { message: 'rule boom' } });
-		await expect(publishRule(db.client, RULE, 'u')).rejects.toMatchObject({ status: 500 });
+		await expect(publishRule(db.client, 't1', RULE, 'u')).rejects.toMatchObject({ status: 500 });
 	});
 });
 
@@ -301,27 +304,29 @@ describe('pullRules', () => {
 			],
 			error: null
 		});
-		const out = await pullRules(db.client, 3);
+		const out = await pullRules(db.client, 't1', 3);
 		expect(out.cursor).toBe(5);
 		expect(out.rules[0].scope_key).toBe('organization');
 
 		const call = db.calls.find((c) => c.table === 'shared_rules')!;
 		expect(call.select).toBe(PULL_SELECT);
 		expect(call.filters).toContainEqual(['gt', 'seq', 3]);
+		// Only the caller's tenant's rules (#236).
+		expect(call.filters).toContainEqual(['eq', 'tenant_id', 't1']);
 		expect(call.order).toEqual(['seq', { ascending: true }]);
 	});
 
 	it('empty result → { rules: [], cursor: since }', async () => {
 		const db = makeDb();
 		db.queue({ data: [], error: null });
-		const out = await pullRules(db.client, 42);
+		const out = await pullRules(db.client, 't1', 42);
 		expect(out).toEqual({ rules: [], cursor: 42 });
 	});
 
 	it('throws RulesError(500) on a select error', async () => {
 		const db = makeDb();
 		db.queue({ data: null, error: { message: 'pull boom' } });
-		await expect(pullRules(db.client, 0)).rejects.toMatchObject({ status: 500, message: 'pull boom' });
+		await expect(pullRules(db.client, 't1', 0)).rejects.toMatchObject({ status: 500, message: 'pull boom' });
 	});
 });
 
@@ -329,25 +334,27 @@ describe('retractRule', () => {
 	it('sets status→tombstoned with the non-tombstoned guard and returns true on a hit', async () => {
 		const db = makeDb();
 		db.queue({ data: { id: 'rule-1' }, error: null });
-		const ok = await retractRule(db.client, 'rule-1');
+		const ok = await retractRule(db.client, 't1', 'rule-1');
 		expect(ok).toBe(true);
 		const call = db.calls.find((c) => c.table === 'shared_rules')!;
 		expect(call.op).toBe('update');
 		expect((call.payload as Record<string, unknown>).status).toBe('tombstoned');
 		expect(call.filters).toContainEqual(['eq', 'id', 'rule-1']);
+		// A retract reaches only the caller's tenant's rule (#236).
+		expect(call.filters).toContainEqual(['eq', 'tenant_id', 't1']);
 		expect(call.filters).toContainEqual(['neq', 'status', 'tombstoned']);
 	});
 
 	it('returns false when no active row matched (already tombstoned / unknown id)', async () => {
 		const db = makeDb();
 		db.queue({ data: null, error: null });
-		expect(await retractRule(db.client, 'rule-x')).toBe(false);
+		expect(await retractRule(db.client, 't1', 'rule-x')).toBe(false);
 	});
 
 	it('throws RulesError(500) on an update error', async () => {
 		const db = makeDb();
 		db.queue({ data: null, error: { message: 'retract boom' } });
-		await expect(retractRule(db.client, 'r')).rejects.toMatchObject({ status: 500 });
+		await expect(retractRule(db.client, 't1', 'r')).rejects.toMatchObject({ status: 500 });
 	});
 });
 

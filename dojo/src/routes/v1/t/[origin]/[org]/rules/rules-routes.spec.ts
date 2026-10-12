@@ -123,7 +123,8 @@ describe('POST /v1/t/{origin}/{org}/rules — publish', () => {
 	it('server-controls attribution: publishRule is called with the caller, not the body', async () => {
 		await POST(ev('POST', { ...RULE, published_by: 'attacker' }));
 		// publishRule(db, rule, publishedBy) — the 3rd arg is the authenticated caller.
-		expect(publishRule.mock.calls[0][2]).toBe(caller.userId);
+		expect(publishRule.mock.calls[0][1]).toBe(caller.tenantId); // the caller's tenant owns it (#236)
+		expect(publishRule.mock.calls[0][3]).toBe(caller.userId);
 	});
 
 	it('writes a publish audit event (tenant, action=publish, target=rule id)', async () => {
@@ -175,17 +176,18 @@ describe('GET /v1/t/{origin}/{org}/rules?since= — pull', () => {
 
 	it('parses ?since= and forwards it to the store', async () => {
 		await GET(ev('GET', undefined, { url: 'http://x/?since=42' }));
-		expect(pullRules.mock.calls[0][1]).toBe(42);
+		expect(pullRules.mock.calls[0][1]).toBe(caller.tenantId); // only the caller's tenant (#236)
+		expect(pullRules.mock.calls[0][2]).toBe(42);
 	});
 
 	it('defaults since to 0 when the param is absent', async () => {
 		await GET(ev('GET', undefined, { url: 'http://x/' }));
-		expect(pullRules.mock.calls[0][1]).toBe(0);
+		expect(pullRules.mock.calls[0][2]).toBe(0);
 	});
 
 	it('defaults since to 0 when the param is non-numeric', async () => {
 		await GET(ev('GET', undefined, { url: 'http://x/?since=abc' }));
-		expect(pullRules.mock.calls[0][1]).toBe(0);
+		expect(pullRules.mock.calls[0][2]).toBe(0);
 	});
 
 	it('pull requires only the member floor', async () => {
@@ -210,7 +212,8 @@ describe('DELETE /v1/t/{origin}/{org}/rules/{id} — retract', () => {
 	it('tombstones and returns 204', async () => {
 		const res = await DELETE(ev('DELETE', undefined, { id: 'rule-1' }));
 		expect(res.status).toBe(204);
-		expect(retractRule.mock.calls[0][1]).toBe('rule-1');
+		expect(retractRule.mock.calls[0][1]).toBe(caller.tenantId); // only the caller's tenant (#236)
+		expect(retractRule.mock.calls[0][2]).toBe('rule-1');
 	});
 
 	it('writes a retract audit event', async () => {
