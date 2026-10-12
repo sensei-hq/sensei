@@ -7,6 +7,11 @@ status: approved (#236 step 1)
 
 # dōjō access matrix
 
+**Read with** [`docs/architecture/entity-access-model.md`](../../architecture/entity-access-model.md),
+which fixes the AXIS — the person (via memberships) for personal work, the tenant
+for governance and org reads. This document assigns the CELLS under that axis and
+defers to it where they meet.
+
 ## Why this exists
 
 Every dōjō data call runs as `service_role`, which bypasses RLS. Authorization
@@ -45,7 +50,7 @@ decision, and the gap is a missing feature, not a policy to loosen.
 
 | Scope | Rows |
 |---|---|
-| **own** | keyed to the caller's principal, or to the caller's membership in THIS tenant |
+| **own** | keyed to the caller's principal, or to ANY membership the caller owns (`dojo.owns_membership`). On a tenant-addressed route, a membership of that tenant; on `/you`, every dōjō the person belongs to — personal work is not filtered by one tenant ([entity & access model §3](../../architecture/entity-access-model.md)) |
 | **team** | belonging to a project owned by a team the caller is on |
 | **team-lead** | the same projects, restricted to teams where the caller's team role is `lead` |
 | **tenant** | every row of the tenant |
