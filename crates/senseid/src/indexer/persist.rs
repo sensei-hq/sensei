@@ -383,6 +383,8 @@ impl SchemaRow {
     fn from_stored(stored: StoredSchemaEntity) -> Result<Self, String> {
         let StoredSchemaEntity {
             fqn,
+            // The node's own column, read back with the node, not schema detail.
+            name: _,
             kind,
             db_schema,
             source,

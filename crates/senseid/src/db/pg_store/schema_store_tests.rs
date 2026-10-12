@@ -234,3 +234,85 @@ async fn the_vocabularies_are_the_specs() {
         ["cascade", "restrict", "set_null", "set_default", "no_action"]
     );
 }
+
+/// The Schema diagram is a PROJECT's: one project's read never carries
+/// another's objects, and a project's folders are exactly the ones placed in it.
+///
+/// Mutations that must break this: drop the project filter from
+/// `schema_folders_of_project`; read `schema_detail_in` without its folder
+/// filter.
+#[tokio::test]
+async fn a_project_reads_only_its_own_schema() {
+    let Ok(pg) = PgStore::connect_test().await else {
+        return;
+    };
+    let tag = uuid::Uuid::new_v4();
+    let mut placed = vec![];
+    for name in ["mine", "theirs"] {
+        let root = format!("/_test/schema-scope/{tag}/{name}");
+        let root_id = pg.add_watch_root(&root, name, &serde_json::json!([])).await.unwrap();
+        let folder = pg.upsert_repo(&root_id, &format!("{name}-{tag}"), &root).await.unwrap();
+        let project =
+            pg.create_project(&format!("_test:schema:{name}:{tag}"), None, None).await.unwrap();
+        crate::tasks::test_support::place_folder_in_project(
+            &pg,
+            &folder,
+            &project,
+            &format!("{name}-{tag}"),
+        )
+        .await
+        .unwrap();
+        let node = pg
+            .seed_node_by_fqn(
+                &folder,
+                &format!("sql·{name}·app·{name}_table·item"),
+                "struct",
+                &format!("{name}_table"),
+                Some("sql"),
+                None,
+            )
+            .await
+            .unwrap();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.schema_entities (node_id, kind, db_schema, source, naming)
+             VALUES ($1, 'table', 'app', 'dbd', 'stated')",
+        )
+        .bind(node)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        placed.push((root_id, folder, project));
+    }
+    let (_, mine, my_project) = placed[0];
+
+    let folders = pg.schema_folders_of_project(&my_project).await.unwrap();
+    assert_eq!(folders, vec![mine]);
+
+    // THE STORE'S OWN VERSION, for the diagram cache: the import writes after
+    // the file tasks without touching `files`, so the graph's version alone
+    // cannot see it. Every detail write moves it.
+    let before = pg.schema_version_of(&folders).await.unwrap();
+    assert!(before.is_some(), "a described object has a version");
+    let none: Vec<uuid::Uuid> = vec![];
+    assert_eq!(pg.schema_version_of(&none).await.unwrap(), None, "nothing described, no version");
+    sqlx_core::query::query(
+        "UPDATE sensei.schema_entities se SET modified_at = now() + interval '1 second'
+           FROM sensei.nodes n WHERE n.id = se.node_id AND n.folder_id = $1",
+    )
+    .bind(mine)
+    .execute(pg.pool())
+    .await
+    .unwrap();
+    assert!(pg.schema_version_of(&folders).await.unwrap() > before, "a rewrite moves the version");
+    let names: Vec<String> =
+        pg.schema_detail_in(&folders).await.unwrap().into_iter().map(|e| e.name).collect();
+    assert_eq!(names, ["mine_table"]);
+
+    for (root, ..) in placed {
+        sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1")
+            .bind(root)
+            .execute(pg.pool())
+            .await
+            .ok();
+    }
+}

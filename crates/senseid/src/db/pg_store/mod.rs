@@ -513,7 +513,9 @@ pub use library::LibraryPageRow;
 pub use logs::LogRow;
 pub use neighbourhood::NeighbourNode;
 pub use pruner::PruneReport;
-pub use schema_store::{StoredSchemaEntity, UnplacedRef};
+#[cfg(test)]
+pub use schema_store::StoredSchemaRef;
+pub use schema_store::{StoredDep, StoredSchemaEntity, UnplacedRef};
 // `create_memory` is `#[cfg(test)]` — it has no production caller.
 #[cfg(test)]
 pub use memory::MemoryRow;

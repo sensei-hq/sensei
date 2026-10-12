@@ -226,6 +226,50 @@ pub(crate) async fn world(
     .await
 }
 
+/// GET /api/projects/{id}/diagrams/schema
+///
+/// The project's database structure as the ER half of dbd's `SchemaModel` v2
+/// — `{ version, tables, refs, entities, deps }` — read from the schema store
+/// (#251) and handed to `@rokkit/graph`'s `toGraphInput` by the Schema screen
+/// (#221). See `analysis::schema_model` for what is left out and why.
+///
+/// A project with nothing described is `200` with empty lists: no dbd design
+/// or ORM mapping was found, which is a fact about the project. A DB error is a
+/// 500, never that empty payload.
+pub(crate) async fn schema(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let project_id = resolve_project_id(&state, &id).await?;
+    let folders = state
+        .pg
+        .schema_folders_of_project(&project_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // The STORE's version is part of the key: the import lands after the file
+    // tasks and moves no `files` row, so the graph's version cannot see it.
+    let written = state
+        .pg
+        .schema_version_of(&folders)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let params = written.map(|t| t.to_rfc3339()).unwrap_or_default();
+
+    cached(&state, "schema", &project_id, params, async {
+        let (entities, deps) = tokio::try_join!(
+            state.pg.schema_detail_in(&folders),
+            state.pg.schema_deps_in(&folders),
+        )
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let payload = crate::analysis::schema_model::assemble(&entities, &deps).map_err(|e| {
+            tracing::error!(project = %project_id, error = %e, "schema diagram: the store and the graph disagree");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        serde_json::to_value(payload).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    })
+    .await
+}
+
 /// How far out the Neighbourhood walks. `@rokkit/graph`'s `DepthControl`
 /// offers 1 to 3, and so does this — a fourth ring of a hub is a census, not a
 /// portrait.

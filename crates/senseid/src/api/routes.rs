@@ -117,6 +117,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/projects/{id}/diagrams/zones", get(diagrams::zones))
         .route("/api/projects/{id}/diagrams/world", get(diagrams::world))
         .route("/api/projects/{id}/diagrams/neighbourhood", get(diagrams::neighbourhood))
+        .route("/api/projects/{id}/diagrams/schema", get(diagrams::schema))
         .route("/api/projects/{id}/tags", post(observatory::add_solution_tag))
         .route("/api/projects/{id}/tags/{tag}", delete(observatory::remove_solution_tag))
         // Git author identity for a folder + its owning project (MCP
