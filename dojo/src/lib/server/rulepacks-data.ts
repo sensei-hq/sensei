@@ -14,13 +14,13 @@ interface LibraryPackRow {
 	slug: string;
 	kanji: string | null;
 	name: string;
-	source: string;
+	attribution: string;
 	summary: string | null;
 	rules: string[] | null;
 }
 
 /** The select for the library browse (the view already filters + orders rules). */
-export const LIBRARY_SELECT = 'slug, kanji, name, source, summary, rules';
+export const LIBRARY_SELECT = 'slug, kanji, name, attribution, summary, rules';
 
 /** Shape the view rows into the wire form. Pure over its input so the wire-shape is
  *  unit-tested directly. Rules arrive pre-ordered from the view; pass them through. */
@@ -29,7 +29,7 @@ export function shapeLibraryPacks(rows: LibraryPackRow[]): LibraryPackWire[] {
 		slug: r.slug,
 		kanji: r.kanji ?? null,
 		name: r.name,
-		by: r.source,
+		by: r.attribution,
 		note: r.summary ?? '',
 		rules: Array.isArray(r.rules) ? r.rules : []
 	}));

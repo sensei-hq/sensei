@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	shapeLibraryPacks,
+	LIBRARY_SELECT,
 	listLibraryPacks,
 	listAdoptedPackSlugs,
 	setPackAdoption,
@@ -27,9 +28,16 @@ function makeDb(result: Result): DbArg {
 }
 
 describe('shapeLibraryPacks — view rows → library wire', () => {
-	it('maps view fields (source→by, summary→note) and passes rules through', () => {
+	// dojo.rule_pack_library names the column `attribution` (since 13efa1bd); the
+	// read selected `source`, so PostgREST refused the whole library (42703) and
+	// GET /v1/you/rule-packs 500'd. The select must name the view's columns.
+	it('selects the view\'s columns, as the view names them', () => {
+		expect(LIBRARY_SELECT).toBe('slug, kanji, name, attribution, summary, rules');
+	});
+
+	it('maps view fields (attribution→by, summary→note) and passes rules through', () => {
 		const [p] = shapeLibraryPacks([
-			{ slug: 'x', kanji: '技', name: 'X', source: 'src', summary: 's', rules: ['first', 'second'] }
+			{ slug: 'x', kanji: '技', name: 'X', attribution: 'src', summary: 's', rules: ['first', 'second'] }
 		]);
 		expect(p.rules).toEqual(['first', 'second']); // view already ordered by ordinal
 		expect(p.by).toBe('src');
@@ -39,7 +47,7 @@ describe('shapeLibraryPacks — view rows → library wire', () => {
 
 	it('handles null summary / kanji / rules as honest empties', () => {
 		const [p] = shapeLibraryPacks([
-			{ slug: 'y', kanji: null, name: 'Y', source: 'src', summary: null, rules: null }
+			{ slug: 'y', kanji: null, name: 'Y', attribution: 'src', summary: null, rules: null }
 		]);
 		expect(p.note).toBe('');
 		expect(p.kanji).toBeNull();
@@ -49,7 +57,7 @@ describe('shapeLibraryPacks — view rows → library wire', () => {
 
 describe('listLibraryPacks — DB read → shaped wire', () => {
 	it('shapes the rows returned by the library view', async () => {
-		const rows = [{ slug: 'x', kanji: '技', name: 'X', source: 'src', summary: 's', rules: ['a'] }];
+		const rows = [{ slug: 'x', kanji: '技', name: 'X', attribution: 'src', summary: 's', rules: ['a'] }];
 		expect(await listLibraryPacks(makeDb({ data: rows, error: null }))).toEqual([
 			{ slug: 'x', kanji: '技', name: 'X', by: 'src', note: 's', rules: ['a'] }
 		]);
