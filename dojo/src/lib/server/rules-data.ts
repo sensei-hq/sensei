@@ -112,9 +112,29 @@ export class RulesError extends Error {
 }
 
 /**
- * Publish a rule: upsert its namespace (`sensei.namespaces` on `(scope_key,
- * slug)`), then upsert the shared rule (`dojo.shared_rules` on `(namespace_id,
- * content_hash)`). Mirrors `DojoStore::publish`:
+ * Register a rule's namespace (`sensei.namespaces` on `(scope_key, slug)`) and
+ * return its id. The namespace registry is shared across tenants and no session
+ * writes it, so this is the system's (#236 step 4) — `publishRule` then files the
+ * rule under the id as the person.
+ */
+export async function upsertRuleNamespace(db: DojoClient, rule: PublishedRule): Promise<string> {
+	const nsRes = await db
+		.schema('sensei')
+		.from('namespaces')
+		.upsert(
+			{ scope_key: rule.scope_key, slug: rule.namespace_slug, name: rule.namespace_name },
+			{ onConflict: 'scope_key,slug' }
+		)
+		.select('id')
+		.single();
+	if (nsRes.error) throw new RulesError(500, nsRes.error.message);
+	return (nsRes.data as { id: string }).id;
+}
+
+/**
+ * Publish a rule: upsert the shared rule (`dojo.shared_rules` on `(tenant_id,
+ * namespace_id, content_hash)`) under the namespace `upsertRuleNamespace`
+ * registered. Mirrors `DojoStore::publish`:
  *   • first publish → version 1 (the column default);
  *   • republish of the same (namespace, content_hash) bumps version + refreshes
  *     status/attribution/timestamp.
@@ -132,23 +152,10 @@ export async function publishRule(
 	db: DojoClient,
 	tenantId: string,
 	rule: PublishedRule,
-	publishedBy: string
+	publishedBy: string,
+	namespaceId: string
 ): Promise<PublishResponse> {
-	// 1. Upsert the namespace in the `sensei` schema (shared_rules.namespace_id
-	//    FKs sensei.namespaces, not a dojo table).
-	const nsRes = await db
-		.schema('sensei')
-		.from('namespaces')
-		.upsert(
-			{ scope_key: rule.scope_key, slug: rule.namespace_slug, name: rule.namespace_name },
-			{ onConflict: 'scope_key,slug' }
-		)
-		.select('id')
-		.single();
-	if (nsRes.error) throw new RulesError(500, nsRes.error.message);
-	const namespaceId = (nsRes.data as { id: string }).id;
-
-	// 2. Upsert the rule. On first insert the DB defaults version=1 and seq via
+	// On first insert the DB defaults version=1 and seq via
 	//    the sequence; on conflict we bump the version and refresh the snapshot
 	//    (attribution + timestamp server-controlled).
 	const publishedAt = new Date().toISOString();
@@ -181,7 +188,7 @@ export async function publishRule(
 	return { id: row.id, version: row.version, seq: row.seq };
 }
 
-/** One `dojo.shared_rules ⋈ sensei.namespaces` row as returned by the pull select. */
+/** One row of `dojo.tenant_shared_rules` — a shared rule with its namespace. */
 interface RuleRow {
 	id: string;
 	seq: number;
@@ -196,18 +203,23 @@ interface RuleRow {
 	origin_repo: string | null;
 	published_by: string;
 	published_at: string;
-	// The embedded namespace (PostgREST FK-embed). shared_rules → namespaces is a
-	// to-one relationship, so supabase-js returns an object (or, defensively for
-	// PostgREST's array-embed shape, a one-element array).
-	namespaces: { scope_key: string; slug: string; name: string } | { scope_key: string; slug: string; name: string }[] | null;
+	scope_key: string;
+	namespace_slug: string;
+	namespace_name: string;
 }
 
-/** The `select` list for the pull join (shared_rules columns + embedded namespace). */
+/** The legacy select's row: the rule with its namespace EMBEDDED (PostgREST
+ *  FK-embed — an object, or defensively a one-element array). */
+type EmbeddedRuleRow = Omit<RuleRow, 'scope_key' | 'namespace_slug' | 'namespace_name'> & {
+	namespaces: { scope_key: string; slug: string; name: string } | { scope_key: string; slug: string; name: string }[] | null;
+};
+
+/** The `select` list for the legacy pull join (shared_rules columns + embedded namespace). */
 export const PULL_SELECT =
 	'id, seq, status, version, content_hash, rule_type, title, content, impact, enforcement, origin_repo, published_by, published_at, namespaces(scope_key, slug, name)';
 
 /** Normalize PostgREST's embed (object or one-element array) to the single row. */
-function embeddedNamespace(ns: RuleRow['namespaces']): { scope_key: string; slug: string; name: string } | null {
+function embeddedNamespace(ns: EmbeddedRuleRow['namespaces']): { scope_key: string; slug: string; name: string } | null {
 	if (!ns) return null;
 	return Array.isArray(ns) ? (ns[0] ?? null) : ns;
 }
@@ -222,16 +234,15 @@ export function shapePullResponse(rows: RuleRow[], since: number): PullResponse 
 	let cursor = since;
 	const rules: PulledRule[] = rows.map((r) => {
 		if (r.seq > cursor) cursor = r.seq;
-		const ns = embeddedNamespace(r.namespaces);
 		return {
 			id: r.id,
 			seq: r.seq,
 			status: r.status,
 			version: r.version,
 			content_hash: r.content_hash,
-			scope_key: ns?.scope_key ?? '',
-			namespace_slug: ns?.slug ?? '',
-			namespace_name: ns?.name ?? '',
+			scope_key: r.scope_key,
+			namespace_slug: r.namespace_slug,
+			namespace_name: r.namespace_name,
 			rule_type: r.rule_type,
 			title: r.title,
 			content: r.content,
@@ -246,10 +257,28 @@ export function shapePullResponse(rows: RuleRow[], since: number): PullResponse 
 }
 
 /**
- * Pull all rule deltas with `seq > since`, ordered by `seq` — the query half of
- * `DojoStore::pull_since`. Delegates shaping to `shapePullResponse`.
+ * Pull all rule deltas with `seq > since`, in `seq` order, AS THE PERSON —
+ * `dojo.tenant_shared_rules`, which carries each rule's namespace (a session
+ * cannot read `sensei.namespaces` to embed it). The query half of
+ * `DojoStore::pull_since`; shaping is `shapePullResponse`. A refusal (a
+ * non-member, 42501) or any error is a RulesError(500), never an empty page.
  */
 export async function pullRules(
+	db: DojoClient,
+	tenantId: string,
+	since: number
+): Promise<PullResponse> {
+	const { data, error } = await db.rpc('tenant_shared_rules', { p_tenant: tenantId, p_since: since });
+	if (error) throw new RulesError(500, error.message);
+	return shapePullResponse((data ?? []) as RuleRow[], since);
+}
+
+/**
+ * The same pull for the legacy device token (the service role), during the one
+ * release window of #236 step 4 — removed with the device token in 4e. The
+ * route's membership check already scoped the caller to `tenantId`.
+ */
+export async function pullRulesAsSystem(
 	db: DojoClient,
 	tenantId: string,
 	since: number
@@ -261,7 +290,11 @@ export async function pullRules(
 		.gt('seq', since)
 		.order('seq', { ascending: true });
 	if (error) throw new RulesError(500, error.message);
-	return shapePullResponse((data ?? []) as unknown as RuleRow[], since);
+	const rows = ((data ?? []) as unknown as EmbeddedRuleRow[]).map(({ namespaces, ...r }) => {
+		const ns = embeddedNamespace(namespaces);
+		return { ...r, scope_key: ns?.scope_key ?? '', namespace_slug: ns?.slug ?? '', namespace_name: ns?.name ?? '' };
+	});
+	return shapePullResponse(rows, since);
 }
 
 /**
