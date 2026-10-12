@@ -462,6 +462,32 @@ pub fn log_args<S: AsRef<str>>(stop_at: &[S]) -> Result<Vec<String>, GitLogError
     Ok(args)
 }
 
+/// Split the stored cursor into tips the repository still has and tips it does
+/// not (#253), as the module docs require of the caller: `git log ^<sha>` fails
+/// outright on an object that is gone, so one vanished tip — a history rewrite,
+/// a force-push then gc — would fail every scan for ever.
+///
+/// Dropping is safe because re-walking is cheap and insert-only. Only git's own
+/// VERDICT drops a tip: a non-zero `cat-file -e`. git failing to run says
+/// nothing about the repository, so it is an error, never a drop.
+pub fn existing_tips<S: AsRef<str>>(
+    repo: &std::path::Path,
+    tips: &[S],
+) -> Result<(Vec<String>, Vec<String>), crate::git::GitError> {
+    let mut kept = Vec::new();
+    let mut dropped = Vec::new();
+    for tip in tips {
+        let tip = tip.as_ref();
+        let object = format!("{tip}^{{commit}}");
+        match crate::git::run_bytes(repo, &["cat-file", "-e", &object]) {
+            Ok(_) => kept.push(tip.to_string()),
+            Err(crate::git::GitError::Exit { .. }) => dropped.push(tip.to_string()),
+            Err(other) => return Err(other),
+        }
+    }
+    Ok((kept, dropped))
+}
+
 /// The `git` arguments that read the tip set's current object names — the value
 /// to store back into `commit_scans.tips` after a successful scan.
 ///
@@ -667,6 +693,44 @@ pub fn parse_log(stdout: &[u8]) -> Result<Vec<Commit>, GitLogError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A TIP THAT NO LONGER EXISTS IS DROPPED, NOT A POISON PILL (#253).**
+    /// After a history rewrite every stored tip names a commit the repository
+    /// no longer has, and `git log ^<tip>` refuses it — seen live, 622 failed
+    /// scans in a day. The module docs promised the caller drops such tips; it
+    /// did not. A tip that IS a commit is kept, and the walk then succeeds.
+    ///
+    /// Mutations that must break this: keep every tip; drop every tip.
+    #[test]
+    fn a_tip_the_repository_no_longer_has_is_dropped() {
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+                .args(args)
+                .current_dir(repo)
+                .output()
+                .expect("git runs");
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        };
+        git(&["init", "-q"]);
+        std::fs::write(repo.join("a.txt"), "a").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "a"]);
+        let real = git(&["rev-parse", "HEAD"]);
+        let gone = "fc2f555511911064660221c63d24ac382b16b7a7".to_string();
+
+        let (kept, dropped) =
+            existing_tips(repo, &[gone.clone(), real.clone()]).expect("git answers");
+        assert_eq!(kept, vec![real]);
+        assert_eq!(dropped, vec![gone]);
+
+        let args = log_args(&kept).unwrap();
+        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+        assert!(crate::git::run_bytes(repo, &argv).is_ok(), "the walk succeeds on the kept tips");
+    }
 
     /// Build a byte fixture from already-NUL-free pieces. The pieces are written
     /// out literally in each test — this only joins them — so no test can agree
