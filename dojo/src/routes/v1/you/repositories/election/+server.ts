@@ -14,13 +14,14 @@
 // which tenant a repository belongs to — and therefore which authority governs
 // it — is derived, not supplied. See `$lib/server/elections`.
 import type { RequestHandler } from './$types';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { AdminError } from '$lib/server/admin-data';
 import { setElection } from '$lib/server/elections';
 
 export const PATCH: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, db } = await resolveCaller(request, locals);
+		const caller = await resolveCaller(request, locals);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 
 		const repoKey = typeof body.repo_key === 'string' ? body.repo_key.trim() : '';
@@ -33,7 +34,7 @@ export const PATCH: RequestHandler = async ({ request, locals }) => {
 			return apiError(400, 'elected must be true or false');
 		}
 
-		return Response.json(await setElection(db, userId, repoKey, body.elected));
+		return Response.json(await setElection(callerDb(caller), repoKey, body.elected));
 	} catch (e) {
 		if (e instanceof Response) return e;
 		if (e instanceof AdminError) return apiError(e.status, e.message);
