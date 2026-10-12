@@ -152,7 +152,8 @@ writes an audit row where it changes tenant state.
 | invite acceptance | the joining principal has no membership yet; the invite token is the authority |
 | clustering after a publish (`promoteCluster`) | derived maintenance over many members' rows |
 | the audit row for a person's action (`recordAudit`) | the system's record of what the person did, written from the resolved caller; a member never authors ledger rows |
-| a display name for an id on a row the caller already read (`resolveDisplayNames`, e.g. an incident's owner) | names live on memberships/identities, which only an admin reads; the lookup resolves only members of the tenant, and only the ids the caller's own read returned |
+| a display name for an id on a row the caller already read (`resolveDisplayNames`, e.g. an incident's owner; a seat's project name) | names live on memberships/identities/`sensei.namespaces`, which a session does not read; the lookup resolves only the ids the caller's own read returned |
+| the `seats_used` refresh (`POST …/billing`) | a money-facing cache derived from the seats; the system recomputes it after the admin gate, and no session writes the number |
 
 Everything not in this table moves to the user session.
 
