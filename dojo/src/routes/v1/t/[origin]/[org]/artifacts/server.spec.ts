@@ -1,6 +1,6 @@
 // Route specs for POST/GET /v1/t/{origin}/{org}/artifacts — the in-Worker
 // artifact federation. Verifies the auth floors (POST=contributor, GET=member,
-// device-token plane), that publish wires into the inline promote step, that a
+// resolveTenantCaller — the person's session, or the legacy device token), that publish wires into the inline promote step, that a
 // promote failure does NOT fail the already-committed contribution (logged, not
 // thrown — mirrors dojo-mind), and the pull passes the tenant + cursor through
 // and returns the ArtifactPullResponse shape. The `$lib/server` deps
@@ -10,15 +10,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // A shared spy set the mocks close over, reset per test.
 const spies = {
-	resolveApiKeyAccess: vi.fn(),
+	resolveTenantCaller: vi.fn(),
 	publishArtifact: vi.fn(),
 	pullArtifactsSince: vi.fn(),
 	promoteCluster: vi.fn(),
 	parsePublishedArtifact: vi.fn()
 };
 
+// Which client a store call got: the caller's session, or the system. The store
+// fns are mocked, so the clients are opaque markers.
+const SESSION = { as: 'session' };
+const SYSTEM = { as: 'system' };
 vi.mock('$lib/server/dojo-supabase', () => ({
-	dojoDb: () => ({}) // the store fns are mocked, so the client is opaque here
+	dojoDb: () => SYSTEM,
+	userDb: () => SESSION
 }));
 
 vi.mock('$lib/server/dojo-auth', () => ({
@@ -28,7 +33,7 @@ vi.mock('$lib/server/dojo-auth', () => ({
 			status,
 			headers: { 'content-type': 'application/json' }
 		}),
-	resolveApiKeyAccess: (...args: unknown[]) => spies.resolveApiKeyAccess(...args)
+	resolveTenantCaller: (...args: unknown[]) => spies.resolveTenantCaller(...args)
 }));
 
 vi.mock('$lib/server/artifacts-data', async () => {
@@ -71,7 +76,7 @@ const evt = (request: Request, sinceQuery?: string) =>
 
 beforeEach(() => {
 	for (const s of Object.values(spies)) s.mockReset();
-	spies.resolveApiKeyAccess.mockResolvedValue(CALLER);
+	spies.resolveTenantCaller.mockResolvedValue(CALLER);
 	spies.parsePublishedArtifact.mockReturnValue(ARTIFACT);
 	spies.publishArtifact.mockResolvedValue({ id: 'art-1', seq: 7 });
 	spies.promoteCluster.mockResolvedValue({ outcome: 'queued', reason: 'below_score_bar' });
@@ -79,9 +84,9 @@ beforeEach(() => {
 });
 
 describe('POST /artifacts (contribute + promote)', () => {
-	it('enforces the contributor floor on the device-token plane', async () => {
+	it('enforces the contributor floor', async () => {
 		await POST(evt(req(ARTIFACT)));
-		expect(spies.resolveApiKeyAccess).toHaveBeenCalledWith(
+		expect(spies.resolveTenantCaller).toHaveBeenCalledWith(
 			'github',
 			'acme',
 			expect.any(Request),
@@ -96,6 +101,20 @@ describe('POST /artifacts (contribute + promote)', () => {
 		expect(spies.publishArtifact).toHaveBeenCalledWith(expect.anything(), 't1', ARTIFACT, 'user-uuid');
 		// Promotion is triggered on the artifact's signature.
 		expect(spies.promoteCluster).toHaveBeenCalledWith(expect.anything(), 't1', 'a'.repeat(64));
+	});
+
+	// #236 step 4: the contribution is the person's (artifacts_contribute); the
+	// clustering after it is the system's.
+	it('with the person\'s session, contributes as them and clusters as the system', async () => {
+		spies.resolveTenantCaller.mockResolvedValue({ ...CALLER, accessToken: 'jwt' });
+		await POST(evt(req(ARTIFACT)));
+		expect(spies.publishArtifact.mock.calls[0][0]).toBe(SESSION);
+		expect(spies.promoteCluster.mock.calls[0][0]).toBe(SYSTEM);
+	});
+
+	it('with a legacy device token, contributes on the service role (the window)', async () => {
+		await POST(evt(req(ARTIFACT)));
+		expect(spies.publishArtifact.mock.calls[0][0]).toBe(SYSTEM);
 	});
 
 	it('400s when the body fails validation / kind mismatch (parse → null)', async () => {
@@ -118,7 +137,7 @@ describe('POST /artifacts (contribute + promote)', () => {
 	});
 
 	it('propagates the auth Response (e.g. 403) without publishing', async () => {
-		spies.resolveApiKeyAccess.mockRejectedValue(
+		spies.resolveTenantCaller.mockRejectedValue(
 			new Response(JSON.stringify({ error: 'contributor role required' }), { status: 403 })
 		);
 		const res = await POST(evt(req(ARTIFACT)));
@@ -128,9 +147,9 @@ describe('POST /artifacts (contribute + promote)', () => {
 });
 
 describe('GET /artifacts (pull)', () => {
-	it('enforces the member floor on the device-token plane', async () => {
+	it('enforces the member floor', async () => {
 		await GET(evt(req(), '5'));
-		expect(spies.resolveApiKeyAccess).toHaveBeenCalledWith('github', 'acme', expect.any(Request), 0);
+		expect(spies.resolveTenantCaller).toHaveBeenCalledWith('github', 'acme', expect.any(Request), 0);
 	});
 
 	it('passes the tenant + parsed since cursor and returns the pull shape', async () => {
@@ -155,12 +174,18 @@ describe('GET /artifacts (pull)', () => {
 			seesSubmissions: false
 		});
 		spies.pullArtifactsSince.mockClear();
-		spies.resolveApiKeyAccess.mockResolvedValue({ ...CALLER, role: 'maintainer', access: 2 });
+		spies.resolveTenantCaller.mockResolvedValue({ ...CALLER, role: 'maintainer', access: 2 });
 		await GET(evt(req(), '0'));
 		expect(spies.pullArtifactsSince.mock.calls[0][3]).toEqual({
 			principalId: 'user-uuid',
 			seesSubmissions: true
 		});
+	});
+
+	it('with the person\'s session, pulls as them — the read policy decides', async () => {
+		spies.resolveTenantCaller.mockResolvedValue({ ...CALLER, accessToken: 'jwt' });
+		await GET(evt(req(), '0'));
+		expect(spies.pullArtifactsSince.mock.calls[0][0]).toBe(SESSION);
 	});
 
 	it('defaults since to 0 when absent or non-numeric', async () => {
@@ -172,7 +197,7 @@ describe('GET /artifacts (pull)', () => {
 	});
 
 	it('propagates the auth Response (e.g. 401) without pulling', async () => {
-		spies.resolveApiKeyAccess.mockRejectedValue(
+		spies.resolveTenantCaller.mockRejectedValue(
 			new Response(JSON.stringify({ error: 'unauthenticated' }), { status: 401 })
 		);
 		const res = await GET(evt(req()));
