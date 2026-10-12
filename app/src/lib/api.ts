@@ -24,6 +24,7 @@ import type {
   LayeringLevel, LayeringPayload,
   WorldGroupBy, WorldPayload,
   NeighbourhoodPayload,
+  SchemaPayload,
   RootRemovalDecision, RootRemovalResult, RootRepository, PruneResult,
   TranscriptSourceConsent,
 } from './types.js';
@@ -579,6 +580,14 @@ export function senseiApi(port: number) {
       tryGet<NeighbourhoodPayload>(
         `/api/projects/${enc(id)}/diagrams/neighbourhood?focus=${enc(focus)}&depth=${depth}`
       ),
+
+    /** #221 — the project's database structure: tables, keys, views and
+     *  routines, and what depends on what (dbd `SchemaModel` v2's ER half).
+     *
+     *  Result-based like its siblings: "no database described here" and "the
+     *  daemon failed" must stay apart, and an empty canvas reads as the first. */
+    tryGetProjectSchema: (id: string) =>
+      tryGet<SchemaPayload>(`/api/projects/${enc(id)}/diagrams/schema`),
 
     getProjectPatterns: (id: string) =>
       get<{ followed: PatternEntry[]; antiPatterns: PatternEntry[] }>(
