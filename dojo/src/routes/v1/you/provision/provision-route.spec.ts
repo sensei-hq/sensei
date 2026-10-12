@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
 	provisionWithToken: vi.fn()
 }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}) }));
+vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({ client: 'service' }) }));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveCaller: mocks.resolveCaller,
 	apiError: (status: number, message: string) =>
@@ -56,7 +56,7 @@ function ev(opts: { sessionToken?: string | null; body?: unknown } = {}) {
 beforeEach(() => {
 	mocks.resolveCaller
 		.mockClear()
-		.mockResolvedValue({ userId: 'p1', authUserId: 'u1', email: 'j@example.com', db: {} });
+		.mockResolvedValue({ userId: 'p1', authUserId: 'u1', email: 'j@example.com', accessToken: 'jwt-A' });
 	mocks.provisionWithToken.mockClear().mockResolvedValue(RESULT);
 });
 
@@ -134,5 +134,15 @@ describe('POST /v1/you/github/sync', () => {
 		// It re-exports rather than keeping a second copy in step. Asserting
 		// identity is what makes that guarantee real instead of a comment.
 		expect(alias.POST).toBe(route.POST);
+	});
+});
+
+// System work by name (#236, access matrix "What stays service_role"): provisioning
+// establishes the principal and memberships a session would need, so it runs as
+// the service role — named, not borrowed from the caller.
+describe('provisioning is the system\'s', () => {
+	it('provisions with the service role, named', async () => {
+		await route.POST(ev({ sessionToken: 'gh-session' }));
+		expect(mocks.provisionWithToken.mock.calls[0][0]).toEqual({ client: 'service' });
 	});
 });

@@ -9,13 +9,16 @@
 //
 // Idempotent, so calling it again is free and the console may re-run it.
 import type { RequestHandler } from './$types';
+import { dojoDb } from '$lib/server/dojo-supabase';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { AdminError } from '$lib/server/admin-data';
 import { provisionWithToken } from '$lib/server/provisioning';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, email, db } = await resolveCaller(request, locals);
+		const { userId, email } = await resolveCaller(request, locals);
+		// System work, named (access matrix "What stays service_role", #236).
+		const db = dojoDb();
 
 		// Two sources for the forge token, because they have different lifetimes.
 		// The web session's `provider_token` exists only immediately after the
