@@ -1,12 +1,13 @@
 // GET/POST /v1/t/{origin}/{org}/relay/segments — the run's outline
 // (Execution → Segment → Item). POST = the daemon publishing the outline
-// (device-token plane, upsert by session+seq); GET = the phone reading it
+// (as the person, or the legacy device token for one release — #236 step 4;
+// upsert by session+seq); GET = the phone reading it
 // (Supabase-JWT plane). The per-segment review verdicts are phone-owned and NOT
 // touched by the daemon publish. See docs/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
 import { asOwner } from '$lib/server/relay-owner';
-import { resolveApiKeyAccess, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
+import { tenantCallerDb } from '$lib/server/caller-db';
+import { resolveTenantCaller, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 const COLS =
 	'id, session_id, parent_id, seq, title, summary, detail, agent, model, spec_ref, state, is_gate, gate_severity, response_verdict, response_note, submitted_at';
@@ -18,12 +19,12 @@ const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 // per-segment review verdict/note (those columns are absent from the payload).
 export const POST: RequestHandler = async ({ params, request }) => {
 	try {
-		const caller = await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.contributor);
+		const caller = await resolveTenantCaller(params.origin, params.org, request, ACCESS.contributor);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const runId = str(body.run_id);
 		const segments = Array.isArray(body.segments) ? (body.segments as Record<string, unknown>[]) : null;
 		if (!runId || !segments) return apiError(400, 'run_id and segments are required');
-		const db = dojoDb();
+		const db = tenantCallerDb(caller);
 		const { data: sess, error: sErr } = await db
 			.from('relay_sessions')
 			.select('id')
