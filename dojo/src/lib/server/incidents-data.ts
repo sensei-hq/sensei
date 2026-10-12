@@ -127,11 +127,16 @@ async function fetchIncidentArtifact(
  * artifact — the `GET …/incidents/{id}` detail pane read. Throws
  * IncidentsError(404) when the incident doesn't exist; fails closed on any
  * resolve error (never a fabricated name/artifact).
+ *
+ * `db` reads as the caller; `names` resolves the owner's name and email as the
+ * system (a lead holds no read on memberships or identities), for the one id on
+ * a row the caller could already read (#236).
  */
 export async function getIncidentDetail(
 	db: DojoClient,
 	tenantId: string,
-	id: string
+	id: string,
+	names: DojoClient
 ): Promise<IncidentDetail> {
 	const { data, error } = await db
 		.from('incidents')
@@ -148,7 +153,7 @@ export async function getIncidentDetail(
 			? resolveEngagementClientNames(db, tenantId, [incident.engagement_id])
 			: Promise.resolve(new Map<string, string>()),
 		incident.owner_id
-			? resolveDisplayNames(db, tenantId, [incident.owner_id])
+			? resolveDisplayNames(names, tenantId, [incident.owner_id])
 			: Promise.resolve(new Map<string, ResolvedName>()),
 		fetchIncidentArtifact(db, tenantId, incident.artifact_id)
 	]);
@@ -232,8 +237,15 @@ async function assertReferencesInTenant(
 		if (error) throw new IncidentsError(500, error.message);
 		if (!data) throw new IncidentsError(400, `${what} is not part of this dōjō`);
 	};
-	if (refs.owner_id)
-		await check('memberships', { tenant_id: tenantId, user_id: refs.owner_id, disabled_at: null }, 'owner');
+	if (refs.owner_id) {
+		// Asked of the database: the caller holds no read on memberships (#236).
+		const { data, error } = await db.rpc('principal_is_member', {
+			p_tenant: tenantId,
+			p_principal: refs.owner_id
+		});
+		if (error) throw new IncidentsError(500, error.message);
+		if (data !== true) throw new IncidentsError(400, 'owner is not part of this dōjō');
+	}
 	if (refs.engagement_id)
 		await check('engagements', { tenant_id: tenantId, id: refs.engagement_id }, 'engagement');
 	if (refs.artifact_id)

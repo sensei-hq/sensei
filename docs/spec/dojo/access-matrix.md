@@ -152,6 +152,7 @@ writes an audit row where it changes tenant state.
 | invite acceptance | the joining principal has no membership yet; the invite token is the authority |
 | clustering after a publish (`promoteCluster`) | derived maintenance over many members' rows |
 | the audit row for a person's action (`recordAudit`) | the system's record of what the person did, written from the resolved caller; a member never authors ledger rows |
+| a display name for an id on a row the caller already read (`resolveDisplayNames`, e.g. an incident's owner) | names live on memberships/identities, which only an admin reads; the lookup resolves only members of the tenant, and only the ids the caller's own read returned |
 
 Everything not in this table moves to the user session.
 
