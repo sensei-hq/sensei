@@ -63,11 +63,20 @@ a device token, so the window keeps nothing it had.
 2. **4b — dōjō** `resolveTenantCaller`: picks the path by credential shape;
    the device-plane routes move to it, JWT → `callerDb`.
 3. **4c — daemon `persona_id`**: DDL + write at join + one-time backfill.
+   As built: its own table, `sensei.dojo_membership_personas` — an installed
+   daemon upgrades with `dbd apply`, which never alters an existing table. The
+   match source is a new `GET /v1/you/memberships` (the `/v1/you/dojos` GET this
+   plan assumed does not exist); the sync cycle binds while anything is unbound,
+   which is also the backfill.
 4. **4d — daemon credential**: `DojoClient` and federation present the persona's
    access token when the membership has a persona; the device token otherwise
    (the window).
 5. **Release N**, verified live with `scripts/relay-roundtrip.sh` run with a
-   session token instead of a device token.
+   session token instead of a device token (`DAEMON_AUTH=session`; passes on
+   the local stack, with the non-member 403s and rules/artifacts publish-pull).
+   Two pre-existing breaks surfaced on the way and are fixed: artifact
+   publish/pull 404'd (one encoded tenant segment), and rule publish failed
+   (`.schema('sensei')` — sensei is not exposed).
 6. **4e (release N+1)** — remove `resolveApiKeyAccess`, the device-token path in
    the daemon, and `dojo.memberships.device_token_hash`.
 
