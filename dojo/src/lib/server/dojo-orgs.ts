@@ -149,6 +149,35 @@ export async function listUserOrgs(db: ReturnType<typeof userDb>, userId: string
 	});
 }
 
+/** One of the caller's memberships, as the daemon matches it to a persona. */
+export interface MyMembership {
+	id: string;
+	tenant_key: string;
+	role: string;
+	kind: string | null;
+}
+
+/**
+ * The caller's own ACTIVE memberships — id, tenant key, role, kind. The daemon
+ * records which persona each local membership belongs to by matching ids
+ * against this (#236 step 4c). Filtered to `user_id` even under the person's
+ * session: an admin can read their tenant's other memberships, and none of
+ * those is theirs. Fails closed (500), never an empty list.
+ */
+export async function listMyMemberships(db: ReturnType<typeof userDb>, userId: string): Promise<MyMembership[]> {
+	const { data, error: qErr } = await db
+		.from('memberships')
+		.select('id, role, kind, tenant:tenants(key)')
+		.eq('user_id', userId)
+		.is('disabled_at', null);
+	if (qErr) throw error(500, 'memberships lookup failed');
+	return (data ?? []).flatMap((row) => {
+		const t = firstTenant(row);
+		const m = row as { id: string; role: string; kind?: string | null };
+		return t ? [{ id: m.id, tenant_key: t.key, role: m.role, kind: m.kind ?? null }] : [];
+	});
+}
+
 /** The single Dōjō a user is entering (by tenant key), or undefined if they have
  *  no active membership in it. Backs the console chrome. Two queries (tenant by
  *  key, then membership) to avoid embedded-filter quirks. */
