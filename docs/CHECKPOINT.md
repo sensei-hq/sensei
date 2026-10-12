@@ -17,7 +17,7 @@ commits/issues/docs). Open PRs: none. Branches: main + develop.
 
 | # | item | first step |
 |---|---|---|
-| 1. 236 | dōjō access: views + RLS, user session (kavach#51 upstream) | steps 1–2 DONE; 3a relay reads `5147005d`; 3b relay writes `94326ec7` + push subs/prefs `49be7037`; projects `691b0622` (`callerDb`); next: remaining areas |
+| 1. 236 | dōjō access: views + RLS, user session (kavach#51 upstream) | steps 1–2 DONE; 3a relay reads `5147005d`; 3b relay writes `94326ec7` + push subs/prefs `49be7037`; projects `691b0622` (`callerDb`); rules write floor → maintainer `446306a9`; next: remaining areas |
 | 2. 225 · 239–241 · 245 · 252 | team view · productionise · e2e red gate | — |
 | 3. 254 | next ORM, call_sites volume | measure |
 
