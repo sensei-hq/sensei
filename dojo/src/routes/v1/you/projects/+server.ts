@@ -7,12 +7,15 @@
 // daemon upserts rows via the service_role on relay runs. Fails closed, honest-
 // empty until populated; never a fixture.
 import type { RequestHandler } from './$types';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { listUserProjects, AdminError } from '$lib/server/projects-data';
 
 export const GET: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, db } = await resolveCaller(request, locals);
+		const caller = await resolveCaller(request, locals);
+		const { userId } = caller;
+		const db = callerDb(caller);
 		const projects = await listUserProjects(db, userId);
 		return Response.json({ projects });
 	} catch (e) {
