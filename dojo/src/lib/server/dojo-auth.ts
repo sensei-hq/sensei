@@ -97,7 +97,6 @@ export async function resolveCaller(
 	userId: string;
 	authUserId: string;
 	email: string | null;
-	db: ReturnType<typeof dojoDb>;
 	accessToken: string;
 }> {
 	const token = tokenFrom(request, locals);
@@ -121,7 +120,9 @@ export async function resolveCaller(
 		throw e;
 	}
 
-	return { userId, authUserId, email: userData.user.email ?? null, db, accessToken: token };
+	// No database client: a caller is an identity. A session reads as itself
+	// through callerDb; system work names dojoDb() (#236).
+	return { userId, authUserId, email: userData.user.email ?? null, accessToken: token };
 }
 
 /** A best-effort human name off the Supabase user, for a principal created on
@@ -149,7 +150,9 @@ export async function resolveTenantAccess(
 	floor: AccessLevel
 ): Promise<Caller> {
 	// Same JWT-plane identity step as a user-wide caller, then tenant + role.
-	const { userId, db, accessToken } = await resolveCaller(request, locals);
+	const { userId, accessToken } = await resolveCaller(request, locals);
+	// Resolving the caller's tenant and role is auth itself — system work.
+	const db = dojoDb();
 
 	// Resolve the tenant by its `{origin}/{org}` key.
 	const tenantId = await resolveTenantId(db, origin, org);

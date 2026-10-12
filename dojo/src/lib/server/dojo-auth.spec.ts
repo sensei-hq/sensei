@@ -132,6 +132,16 @@ describe('resolveCaller — user-wide JWT identity (no tenant, no role floor)', 
 		expect(authUserId).toBe('u1');
 	});
 
+	// A caller is an identity, not a client. Handing out the service role here
+	// is how a route reads as the system by destructuring one more field; system
+	// work names dojoDb() instead, and a session reads through callerDb (#236).
+	it('hands out no database client — only who the caller is and their JWT', async () => {
+		stub = makeDb(AUTH_OK, PRINCIPAL_OK);
+		const caller = await resolveCaller(bearerReq(), locals);
+		expect(caller).not.toHaveProperty('db');
+		expect(Object.keys(caller).sort()).toEqual(['accessToken', 'authUserId', 'email', 'userId']);
+	});
+
 	it('throws 500 rather than falling back to the login id when the principal lookup fails', async () => {
 		// Fail closed. Degrading to the login id would produce a caller whose
 		// user_id matches no membership — an empty console that looks like "you

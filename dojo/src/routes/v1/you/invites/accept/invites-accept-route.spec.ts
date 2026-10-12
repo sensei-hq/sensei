@@ -14,7 +14,7 @@ class AdminError extends Error {
 
 const mocks = vi.hoisted(() => ({ resolveCaller: vi.fn(), acceptInvite: vi.fn() }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}) }));
+vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({ client: 'service' }) }));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveCaller: mocks.resolveCaller,
 	apiError: (status: number, message: string) =>
@@ -37,7 +37,7 @@ function ev(body: unknown) {
 }
 
 beforeEach(() => {
-	mocks.resolveCaller.mockClear().mockResolvedValue({ userId: 'u1', email: 'ada@acme.co', db: {} });
+	mocks.resolveCaller.mockClear().mockResolvedValue({ userId: 'u1', email: 'ada@acme.co', accessToken: 'jwt-A' });
 	mocks.acceptInvite.mockClear().mockResolvedValue({ tenant_id: 't1', role: 'contributor' });
 });
 
@@ -61,5 +61,14 @@ describe('POST /v1/you/invites/accept', () => {
 		mocks.resolveCaller.mockRejectedValueOnce(new Response('{}', { status: 401 }));
 		expect((await route.POST(ev({ token: 'tok' }))).status).toBe(401);
 		expect(mocks.acceptInvite).not.toHaveBeenCalled();
+	});
+});
+
+// System work by name (#236, access matrix "What stays service_role"): the caller
+// is resolved for WHO they are; the write runs as the service role, explicitly.
+describe('invite acceptance is the system\'s', () => {
+	it('accepts with the service role, named — the joining person has no membership yet', async () => {
+		await route.POST(ev({ token: 'tok' }));
+		expect(mocks.acceptInvite.mock.calls[0][0]).toEqual({ client: 'service' });
 	});
 });
