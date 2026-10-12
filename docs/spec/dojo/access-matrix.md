@@ -39,6 +39,10 @@ is a bug in the policy.
 | **team member / team lead** | `dojo.team_members` (+ `.role = 'lead'`) on a team that owns the project (`dojo.team_projects`) | The PROJECT relationship. "A lead's projects" means projects owned by a team on which the principal's team role is `lead`. |
 | **device** | a daemon's device token, exchanged for a short-lived JWT scoped to its principal (step 4) | Same principal, same matrix. Until step 4 the device plane stays in code. |
 
+**The tenant roles are ordered** `contributor < maintainer < lead < admin` —
+`dojo.member_role`'s declared order and the entity model's. The dōjō's code
+ladder is pinned to that order by `dojo-access-ladder.spec.ts`.
+
 **Two leads, on purpose.** The tenant role `lead` (client work) and the team
 role `lead` (cross-user project data) answer different questions. The second
 was chosen over the tenant role on 2026-10-12. **Consequence:** nothing in the

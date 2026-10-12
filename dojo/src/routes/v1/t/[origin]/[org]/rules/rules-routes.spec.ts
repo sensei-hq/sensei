@@ -42,13 +42,13 @@ const { resolveApiKeyAccess, publishRule, pullRules, retractRule, recordRulesAud
 
 vi.mock('$lib/server/dojo-supabase', () => ({
 	dojoDb: () => ({}),
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveApiKeyAccess: mocks.resolveApiKeyAccess,
 	apiError: (status: number, message: string) =>
 		new Response(JSON.stringify({ error: message }), { status, headers: { 'content-type': 'application/json' } }),
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/rules-data', () => ({
 	parsePublishedRule: mocks.parsePublishedRule,

@@ -20,12 +20,12 @@ const mocks = vi.hoisted(() => ({
 	getKnowledgeLibrary: vi.fn()
 }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}), ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 } }));
+vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}), ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 } }));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
 	apiError: (status: number, message: string) =>
 		new Response(JSON.stringify({ error: message }), { status, headers: { 'content-type': 'application/json' } }),
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/knowledge-data', () => ({
 	getKnowledgeLibrary: mocks.getKnowledgeLibrary,
@@ -54,7 +54,7 @@ describe('GET /knowledge', () => {
 		mocks.getKnowledgeLibrary.mockResolvedValueOnce(lib);
 		const res = await route.GET(ev());
 		expect(await res.json()).toEqual(lib);
-		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(3); // ACCESS.maintainer
+		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(2); // ACCESS.maintainer
 	});
 	it('maps a KnowledgeError(500) to 500 (fail-closed, never a fixture)', async () => {
 		mocks.getKnowledgeLibrary.mockRejectedValueOnce(new KnowledgeError(500, 'boom'));

@@ -60,13 +60,13 @@ const access = { userId: 'user-1', membershipId: 'mem-1', tenantId: 't1', role: 
 
 vi.mock('$lib/server/dojo-supabase', () => ({
 	dojoDb: () => db.builder,
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: vi.fn(async () => access),
 	apiError: (status: number, message: string) =>
 		new Response(JSON.stringify({ error: message }), { status, headers: { 'content-type': 'application/json' } }),
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 
 // Import the handlers AFTER the mocks are registered.

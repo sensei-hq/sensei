@@ -16,12 +16,12 @@ class AdminError extends Error {
 
 const mocks = vi.hoisted(() => ({ resolveTenantAccess: vi.fn(), listOrgProjects: vi.fn() }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}), ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 } }));
+vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}), ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 } }));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
 	apiError: (status: number, message: string) =>
 		new Response(JSON.stringify({ error: message }), { status, headers: { 'content-type': 'application/json' } }),
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/projects-data', () => ({ listOrgProjects: mocks.listOrgProjects, AdminError }));
 
@@ -46,7 +46,7 @@ describe('GET /projects', () => {
 		mocks.listOrgProjects.mockResolvedValueOnce([{ id: 'p1', slug: 'acme/x' }]);
 		const res = await route.GET(ev());
 		expect(await res.json()).toEqual({ projects: [{ id: 'p1', slug: 'acme/x' }] });
-		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(2); // ACCESS.lead
+		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(3); // ACCESS.lead
 	});
 	it('maps an AdminError(500) to 500 (fail-closed, never a fixture)', async () => {
 		mocks.listOrgProjects.mockRejectedValueOnce(new AdminError(500, 'boom'));

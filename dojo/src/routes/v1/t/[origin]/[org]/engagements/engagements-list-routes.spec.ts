@@ -43,7 +43,7 @@ vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
 	apiError: (status: number, message: string) =>
 		new Response(JSON.stringify({ error: message }), { status, headers: { 'content-type': 'application/json' } }),
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 // The per-engagement count aggregate is unit-tested in engagement-artifact-counts.spec;
 // here it's mocked so the route test isolates the GET enrichment shaping.
@@ -86,7 +86,7 @@ describe('GET /engagements', () => {
 			]
 		});
 		expect(mocks.captured.tenantEq).toBe('t1');
-		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(2); // ACCESS.lead
+		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(3); // ACCESS.lead
 	});
 	it('enriches each engagement with its kept/stripped artifact counts', async () => {
 		mocks.db.order = { data: [{ id: 'e1' }, { id: 'e2' }], error: null };

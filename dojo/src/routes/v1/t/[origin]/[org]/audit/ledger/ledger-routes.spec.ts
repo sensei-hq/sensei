@@ -16,12 +16,12 @@ class AdminError extends Error {
 
 const mocks = vi.hoisted(() => ({ resolveTenantAccess: vi.fn(), getClientAuditLedger: vi.fn() }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}), ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 } }));
+vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}), ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 } }));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
 	apiError: (status: number, message: string) =>
 		new Response(JSON.stringify({ error: message }), { status, headers: { 'content-type': 'application/json' } }),
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/client-audit-data', () => ({ getClientAuditLedger: mocks.getClientAuditLedger, AdminError }));
 
@@ -46,7 +46,7 @@ describe('GET /audit/ledger', () => {
 		mocks.getClientAuditLedger.mockResolvedValueOnce([{ id: 1, action: 'publish', client_name: 'Globex' }]);
 		const res = await route.GET(ev());
 		expect(await res.json()).toEqual({ entries: [{ id: 1, action: 'publish', client_name: 'Globex' }] });
-		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(2); // ACCESS.lead
+		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(3); // ACCESS.lead
 	});
 	it('maps an AdminError(500) to 500 (fail-closed)', async () => {
 		mocks.getClientAuditLedger.mockRejectedValueOnce(new AdminError(500, 'boom'));
