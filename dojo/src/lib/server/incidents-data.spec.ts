@@ -247,3 +247,71 @@ describe('deleteIncident', () => {
 		expect(await deleteIncident(makeMutDb({ data: [], error: null }).db, 't1', 'i9')).toBe(false);
 	});
 });
+
+// A per-table stub that applies `eq`/`is` filters and records writes — enough to
+// show whether a reference was checked against THIS tenant before the write.
+function refDb(tables: Record<string, Array<Record<string, unknown>>>) {
+	const writes: Array<{ table: string; op: string; payload: unknown }> = [];
+	const db = {
+		from(table: string) {
+			const filters: Array<[string, unknown]> = [];
+			const b: Record<string, unknown> = {};
+			const rows = () =>
+				(tables[table] ?? []).filter((r) => filters.every(([c, v]) => r[c] === v));
+			b.select = () => b;
+			b.eq = (c: string, v: unknown) => (filters.push([c, v]), b);
+			b.is = (c: string, v: unknown) => (filters.push([c, v]), b);
+			b.insert = (p: unknown) => (writes.push({ table, op: 'insert', payload: p }), b);
+			b.update = (p: unknown) => (writes.push({ table, op: 'update', payload: p }), b);
+			b.maybeSingle = () => Promise.resolve({ data: rows()[0] ?? null, error: null });
+			b.single = () => Promise.resolve({ data: { id: 'i1', severity: 'high' }, error: null });
+			return b;
+		}
+	} as unknown as DojoClient;
+	return { db, writes };
+}
+
+// An incident's references arrive in the request body. Each must name THIS
+// tenant's object: an owner who is an active member, an engagement and an
+// artifact of the tenant. Anything else is a 400 and nothing is written (#236).
+describe('incident references belong to the tenant', () => {
+	const tables = {
+		memberships: [
+			{ tenant_id: 't1', user_id: 'member', disabled_at: null },
+			{ tenant_id: 't2', user_id: 'outsider', disabled_at: null }
+		],
+		engagements: [{ id: 'e1', tenant_id: 't1' }, { id: 'e2', tenant_id: 't2' }],
+		artifacts: [{ id: 'a1', tenant_id: 't1' }, { id: 'a2', tenant_id: 't2' }]
+	};
+	const open = (over: Record<string, unknown>) =>
+		parseNewIncident({ title: 'leak', severity: 'high', ...over });
+
+	it('opens an incident whose owner, engagement and artifact are the tenant\'s', async () => {
+		const { db, writes } = refDb(tables);
+		await createIncident(db, 't1', open({ owner_id: 'member', engagement_id: 'e1', artifact_id: 'a1' }));
+		expect(writes.filter((w) => w.table === 'incidents')).toHaveLength(1);
+	});
+
+	for (const [field, value] of [
+		['owner_id', 'outsider'],
+		['engagement_id', 'e2'],
+		['artifact_id', 'a2']
+	] as const) {
+		it(`refuses an ${field} from another tenant, writing nothing`, async () => {
+			const { db, writes } = refDb(tables);
+			const err = await createIncident(db, 't1', open({ [field]: value })).catch((e) => e);
+			expect(err).toBeInstanceOf(IncidentsError);
+			expect((err as IncidentsError).status).toBe(400);
+			expect(writes).toHaveLength(0);
+		});
+	}
+
+	it('refuses re-assigning an incident to someone outside the tenant', async () => {
+		const { db, writes } = refDb(tables);
+		const err = await updateIncident(db, 't1', 'i1', parsePatchIncident({ owner_id: 'outsider' })).catch(
+			(e) => e
+		);
+		expect((err as IncidentsError).status).toBe(400);
+		expect(writes).toHaveLength(0);
+	});
+});
