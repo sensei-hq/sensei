@@ -282,8 +282,8 @@ describe('PATCH /members/{userId}/role', () => {
 // A person joins a dōjō by accepting an invite — their consent is the invite
 // token. An admin adding an arbitrary principal id directly put someone in a
 // tenant without their consent (#236, access matrix "Tenancy, identity,
-// billing"). The console never called it; invites and dōjō creation keep using
-// the server's addMember internally.
+// billing"). The console never called it. Invite acceptance provisions through
+// the server's addMember; dōjō creation makes its admin inside dojo.create_dojo.
 describe('members are added by invitation, not by id', () => {
 	it('the members route answers GET and nothing else', () => {
 		expect(members.GET).toBeDefined();
