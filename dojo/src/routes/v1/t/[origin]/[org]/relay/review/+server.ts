@@ -4,18 +4,16 @@
 // to the run's session (segments carry no tenant_id — the session does, so we
 // resolve run_id → session under the caller's tenant first). See relay-engine §6.
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
-import { ownMembership } from '$lib/server/relay-owner';
+import { asOwner } from '$lib/server/relay-owner';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 export const POST: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const membershipId = ownMembership(await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member));
+		const { membershipId, db } = asOwner(await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member));
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const runId = typeof body.run_id === 'string' ? body.run_id : '';
 		const reviews = Array.isArray(body.reviews) ? (body.reviews as Record<string, unknown>[]) : null;
 		if (!runId || !reviews) return apiError(400, 'run_id and reviews are required');
-		const db = dojoDb();
 		const { data: sess, error: sErr } = await db
 			.from('relay_sessions')
 			.select('id')

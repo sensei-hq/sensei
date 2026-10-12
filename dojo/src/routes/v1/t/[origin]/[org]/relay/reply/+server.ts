@@ -3,18 +3,16 @@
 // dojo.relay_inbox_bump_seq trigger advances seq on this UPDATE, so the daemon's
 // `?since=<cursor>` poll re-surfaces the now-answered row and consumes the reply.
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
-import { ownMembership } from '$lib/server/relay-owner';
+import { asOwner } from '$lib/server/relay-owner';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 export const POST: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const membershipId = ownMembership(await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member));
+		const { membershipId, db } = asOwner(await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member));
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const inboxId = typeof body.inbox_id === 'string' ? body.inbox_id : '';
 		if (!inboxId) return apiError(400, 'inbox_id is required');
 		if (body.reply === undefined) return apiError(400, 'reply is required');
-		const db = dojoDb();
 		const { data, error } = await db
 			.from('relay_inbox')
 			.update({

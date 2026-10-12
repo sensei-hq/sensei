@@ -5,7 +5,7 @@
 // touched by the daemon publish. See docs/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
-import { ownReads } from '$lib/server/relay-owner';
+import { asOwner } from '$lib/server/relay-owner';
 import { resolveApiKeyAccess, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 const COLS =
@@ -90,7 +90,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
 // Phone → read a run's outline, ordered by seq.
 export const GET: RequestHandler = async ({ params, request, locals, url }) => {
 	try {
-		const { membershipId, db } = ownReads(await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member));
+		const { membershipId, db } = asOwner(await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member));
 		const runId = url.searchParams.get('run_id');
 		if (!runId) return apiError(400, 'run_id query param is required');
 		const { data: sess, error: sErr } = await db

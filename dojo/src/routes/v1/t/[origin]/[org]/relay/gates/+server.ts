@@ -5,12 +5,12 @@
 // we resolve run_id/title from the session for deep-linking. Reply via relay/reply.
 // See docs/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
-import { ownReads } from '$lib/server/relay-owner';
+import { asOwner } from '$lib/server/relay-owner';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { membershipId, db } = ownReads(await resolveTenantAccess(
+		const { membershipId, db } = asOwner(await resolveTenantAccess(
 			params.origin,
 			params.org,
 			request,
