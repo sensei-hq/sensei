@@ -87,6 +87,7 @@ const { POST: replyPOST } = await import('./reply/+server');
 const { GET: segmentsGET } = await import('./segments/+server');
 const { GET: sessionGET } = await import('./session/+server');
 const { POST: reviewPOST } = await import('./review/+server');
+const { POST: nudgePOST } = await import('./nudge/+server');
 
 function ev(opts: { body?: unknown; query?: string } = {}) {
 	const url = new URL(`http://x/${opts.query ? `?${opts.query}` : ''}`);
@@ -133,6 +134,12 @@ const routes: Array<{ name: string; table: string; run: () => Promise<Response>;
 		table: 'relay_sessions',
 		run: async () => reviewPOST(ev({ body: { run_id: 'run-1', reviews: [] } })),
 		queue: [{ data: null, error: null }]
+	},
+	{
+		name: 'nudge POST',
+		table: 'relay_sessions',
+		run: async () => nudgePOST(ev({ body: { run_id: 'run-1', text: 'focus' } })),
+		queue: [{ data: { id: 's1' }, error: null }, { data: { id: 'n1', seq: 1 }, error: null }]
 	}
 ];
 
@@ -170,10 +177,14 @@ describe('relay routes are scoped to the caller’s own membership (#249)', () =
 // on relay_sessions / relay_inbox / relay_segments (#236 step 3). The route's
 // membership filter stays, but it is no longer the only thing between one
 // member and another's gates.
-describe('relay reads run as the caller, under RLS (#236 step 3)', () => {
-	const reads = routes.filter((r) => ['gates GET', 'segments GET', 'session GET'].includes(r.name));
+describe('relay reads and writes run as the caller, under RLS (#236 step 3)', () => {
+	const reads = routes.filter((r) =>
+		['gates GET', 'segments GET', 'session GET', 'reply POST', 'review POST', 'nudge POST'].includes(
+			r.name
+		)
+	);
 	for (const r of reads) {
-		it(`${r.name} reads with the caller's JWT, never the service role`, async () => {
+		it(`${r.name} runs with the caller's JWT, never the service role`, async () => {
 			db.queue(...r.queue);
 			await r.run();
 			expect(clients.userTokens).toEqual(['jwt-A']);
