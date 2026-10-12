@@ -1910,6 +1910,80 @@ export interface WorldPayload {
   totals: WorldTotals;
 }
 
+// ── Diagrams · Schema (#221) ────────────────────────────────────────────────
+//
+// The ER half of dbd's `SchemaModel` v2, as `GET …/diagrams/schema` serves it
+// and `@rokkit/graph/schema`'s `toGraphInput` reads it. Spelled exactly as dbd
+// serializes: a `false` flag and an absent note are OMITTED, so every flag is
+// optional and absent means false.
+
+export interface SchemaColumn {
+  name: string;
+  type: string;
+  pk?: boolean;
+  nn?: boolean;
+  /** Typed by an enum. */
+  en?: boolean;
+  def?: string;
+  fk?: boolean;
+  uq?: boolean;
+  note?: string;
+}
+
+export interface SchemaIndex {
+  def: string;
+  unique?: boolean;
+  name?: string;
+}
+
+export interface SchemaTable {
+  schema: string;
+  name: string;
+  kind: 'table';
+  note?: string;
+  noteMd?: string;
+  columns: SchemaColumn[];
+  indexes?: SchemaIndex[];
+}
+
+/** A view, materialized view, function or procedure — no columns. */
+export interface SchemaEntity {
+  schema: string;
+  name: string;
+  kind: 'view' | 'materialized_view' | 'function' | 'procedure';
+  note?: string;
+  noteMd?: string;
+}
+
+export interface SchemaRefEnd {
+  s: string;
+  t: string;
+  c: string;
+}
+
+/** One column pair of a foreign key. */
+export interface SchemaRef {
+  from: SchemaRefEnd;
+  to: SchemaRefEnd;
+  action?: 'cascade' | 'restrict' | 'set_null' | 'set_default' | 'no_action';
+}
+
+export interface SchemaDep {
+  from: { s: string; n: string };
+  to: { s: string; n: string };
+  kind: 'reads' | 'writes' | 'calls' | 'member';
+  /** The target is no described object — a built-in or a dangle. Dim, never drop. */
+  unresolved?: boolean;
+}
+
+export interface SchemaPayload {
+  version: number;
+  tables: SchemaTable[];
+  refs: SchemaRef[];
+  entities: SchemaEntity[];
+  deps: SchemaDep[];
+}
+
 // ── Diagrams · Layers and Cycles (#232) ─────────────────────────────────────
 
 /** How one dependency sits against the layering.

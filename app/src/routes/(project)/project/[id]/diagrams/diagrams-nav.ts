@@ -6,7 +6,8 @@
  *
  *  Order is coarsening-then-narrowing, which is how a reader arrives: Structure
  *  shows what there is, Layers ranks it, Cycles isolates the part of it that
- *  does not rank, and Neighbourhood narrows to one symbol.
+ *  does not rank, and Neighbourhood narrows to one symbol. Schema is last because
+ *  it changes subject — the database rather than the code.
  */
 export interface DiagramView {
   /** The route segment under `diagrams/`. */
@@ -48,6 +49,12 @@ export const DIAGRAM_VIEWS: DiagramView[] = [
     label: 'Neighbourhood',
     question: 'What calls this, and what does it call',
     kanji: '隣',
+  },
+  {
+    id: 'schema',
+    label: 'Schema',
+    question: 'Which tables exist, and how their keys connect them',
+    kanji: '表',
   },
 ];
 
