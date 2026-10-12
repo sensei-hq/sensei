@@ -76,10 +76,12 @@ export async function createInvite(
 			invited_by: invitedBy,
 			expires_at: expiresAt
 		})
-		.select('id, token, email, role, expires_at')
+		// Not `token`: no session reads an invite's token back (the read grant leaves
+		// it out, #236). The admin is handed the one minted above.
+		.select('id, email, role, expires_at')
 		.single();
 	if (error) throw new AdminError(500, error.message);
-	return data as { id: string; token: string; email: string; role: string; expires_at: string };
+	return { ...(data as { id: string; email: string; role: string; expires_at: string }), token };
 }
 
 /** One invite as the accept path reads it (before validating). */

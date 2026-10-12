@@ -17,7 +17,11 @@ const mocks = vi.hoisted(() => ({
 	parseNewInvite: vi.fn()
 }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}) }));
+// The service role vs the caller's own JWT — which client the store got.
+vi.mock('$lib/server/dojo-supabase', () => ({
+	dojoDb: () => ({ client: 'service' }),
+	userDb: (token: string) => ({ client: 'user', token })
+}));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
 	apiError: (status: number, message: string) =>
@@ -46,9 +50,25 @@ function ev(body: unknown) {
 }
 
 beforeEach(() => {
-	mocks.resolveTenantAccess.mockClear().mockResolvedValue({ tenantId: 't1', userId: 'admin-uid', role: 'admin', access: 4 });
+	mocks.resolveTenantAccess
+		.mockClear()
+		.mockResolvedValue({ tenantId: 't1', userId: 'admin-uid', role: 'admin', access: 4, accessToken: 'jwt-A' });
 	mocks.parseNewInvite.mockClear().mockImplementation((b) => ({ email: b.email, role: 'contributor', kind: b.kind }));
 	mocks.createInvite.mockClear().mockResolvedValue({ id: 'inv1', token: 'tok', email: 'a@b.co', role: 'contributor', expires_at: 'x' });
+});
+
+// Issued as the signed-in admin, so the invites policy holds the invite to their
+// tenant and their own name (#236).
+describe('POST /invites runs as the signed-in admin (#236)', () => {
+	it('issues with the caller\'s JWT, never the service role', async () => {
+		await route.POST(ev({ email: 'a@b.co', kind: 'client' }));
+		expect(mocks.createInvite.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+	});
+	it('refuses a caller with no session rather than issuing as the service role', async () => {
+		mocks.resolveTenantAccess.mockResolvedValueOnce({ tenantId: 't1', userId: 'admin-uid', role: 'admin', access: 4 });
+		expect((await route.POST(ev({ email: 'a@b.co', kind: 'client' }))).status).toBe(401);
+		expect(mocks.createInvite).not.toHaveBeenCalled();
+	});
 });
 
 describe('POST /v1/t/{origin}/{org}/invites', () => {
