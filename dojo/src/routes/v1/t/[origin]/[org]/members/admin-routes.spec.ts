@@ -40,8 +40,6 @@ const mocks = vi.hoisted(() => ({
 	getHealth: vi.fn(),
 	getContribVsApprove: vi.fn(),
 	setMemberRole: vi.fn(),
-	addMember: vi.fn(),
-	parseNewMember: vi.fn(),
 	upsertPolicy: vi.fn(),
 	parseUpsertPolicy: vi.fn(),
 	patchPolicy: vi.fn(),
@@ -68,8 +66,6 @@ vi.mock('$lib/server/admin-data', () => ({
 	listAudit: mocks.listAudit,
 	getHealth: mocks.getHealth,
 	setMemberRole: mocks.setMemberRole,
-	addMember: mocks.addMember,
-	parseNewMember: mocks.parseNewMember,
 	upsertPolicy: mocks.upsertPolicy,
 	parseUpsertPolicy: mocks.parseUpsertPolicy,
 	patchPolicy: mocks.patchPolicy,
@@ -110,8 +106,6 @@ beforeEach(() => {
 	mocks.getHealth.mockClear().mockResolvedValue({ connections: 0, queue_depth: 0, publish_rate_1h: 0, error_rate_1h: 0 });
 	mocks.getContribVsApprove.mockClear().mockResolvedValue([]);
 	mocks.setMemberRole.mockClear().mockResolvedValue({ user_id: 'u1', role: 'lead' });
-	mocks.addMember.mockClear().mockResolvedValue({ id: 'm1', role: 'contributor' });
-	mocks.parseNewMember.mockClear().mockReturnValue({ user_id: 'u1', kind: 'client', authenticated_via: 'sso', role: 'contributor' });
 	mocks.upsertPolicy.mockClear().mockResolvedValue({ id: 'p1', scope_key: 'all-org' });
 	mocks.parseUpsertPolicy.mockClear().mockReturnValue({ scope_key: 'all-org' });
 	mocks.patchPolicy.mockClear().mockResolvedValue({ id: 'p1' });
