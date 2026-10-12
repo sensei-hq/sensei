@@ -13,7 +13,6 @@ import {
 	getHealth,
 	setMemberRole,
 	addMember,
-	parseNewMember,
 	upsertPolicy,
 	parseUpsertPolicy,
 	patchPolicy,
@@ -202,27 +201,10 @@ describe('setMemberRole', () => {
 	});
 });
 
-describe('parseNewMember', () => {
-	it('requires user_id, a known kind, and a known auth method', () => {
-		expect(() => parseNewMember({})).toThrow(AdminError);
-		expect(() => parseNewMember({ user_id: 'u1', kind: 'nope', authenticated_via: 'sso' })).toThrow();
-		expect(() => parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'x' })).toThrow();
-	});
-	it('defaults role to contributor and prefers an explicit role', () => {
-		expect(parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso' }).role).toBe('contributor');
-		expect(
-			parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso', role: 'lead' }).role
-		).toBe('lead');
-		expect(
-			parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso', git_provider_role: 'maintainer' }).role
-		).toBe('maintainer');
-	});
-});
-
 describe('addMember', () => {
 	it('inserts the membership with the tenant and returns { id, role } (no dojo_url — derived from the tenant)', async () => {
 		const { db, captured } = makeMutDb({ data: { id: 'm1', role: 'contributor' }, error: null });
-		const input = parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso' });
+		const input = { user_id: 'u1', kind: 'client', authenticated_via: 'sso', role: 'contributor' as const };
 		expect(await addMember(db, 't1', input)).toEqual({ id: 'm1', role: 'contributor' });
 		const payload = captured.payload as Record<string, unknown>;
 		expect(payload.tenant_id).toBe('t1');
@@ -231,7 +213,7 @@ describe('addMember', () => {
 	});
 	it('maps a unique-violation (23505) to 409', async () => {
 		const { db } = makeMutDb({ data: null, error: { code: '23505', message: 'dup' } });
-		const input = parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso' });
+		const input = { user_id: 'u1', kind: 'client', authenticated_via: 'sso', role: 'contributor' as const };
 		await expect(addMember(db, 't1', input)).rejects.toMatchObject({ status: 409 });
 	});
 });

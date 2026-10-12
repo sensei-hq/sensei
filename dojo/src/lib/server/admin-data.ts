@@ -327,36 +327,6 @@ export interface NewMemberInput {
 export const MEMBERSHIP_KINDS = ['employer', 'client', 'community', 'personal'] as const;
 
 /**
- * Validate an untrusted `POST …/members` body into a {@link NewMemberInput}, or
- * throw AdminError(400). `role` defaults to `contributor` when neither `role` nor
- * `git_provider_role` resolves to a known role (dojo-mind derives from the
- * `dojo.roles` map; the console always sends an explicit role for the override).
- */
-export function parseNewMember(body: Record<string, unknown>): NewMemberInput {
-	const userId = typeof body.user_id === 'string' ? body.user_id.trim() : '';
-	if (!userId) throw new AdminError(400, 'user_id is required');
-	const kind = typeof body.kind === 'string' ? body.kind : '';
-	if (!(MEMBERSHIP_KINDS as readonly string[]).includes(kind)) {
-		throw new AdminError(400, 'kind must be employer, client, community, or personal');
-	}
-	const via = body.authenticated_via;
-	if (!isAuthMethod(via)) {
-		throw new AdminError(400, 'authenticated_via must be sso, github_oauth, or device_code');
-	}
-	// Explicit `role` wins; else the git-provider-derived role; else contributor.
-	const role = isMemberRole(body.role)
-		? body.role
-		: isMemberRole(body.git_provider_role)
-			? body.git_provider_role
-			: 'contributor';
-	const out: NewMemberInput = { user_id: userId, kind, authenticated_via: via as string, role };
-	if (isAttributionMode(body.attribution_default)) {
-		out.attribution_default = body.attribution_default as string;
-	}
-	return out;
-}
-
-/**
  * Provision a membership (`POST …/members`) — the port of dojo-mind's
  * `add_membership`. Returns `{ id, role }` (the shape `admin-data.ts addMember()`
  * unwraps). A duplicate `(tenant, user)` is a 409. (Rule C: the dōjō url is

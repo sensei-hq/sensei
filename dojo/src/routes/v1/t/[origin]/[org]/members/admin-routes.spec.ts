@@ -203,19 +203,15 @@ describe('PATCH /members/{userId}/role', () => {
 	});
 });
 
-describe('POST /members (provision)', () => {
-	it('provisions, audits, and returns { id, role }', async () => {
-		const res = await members.POST(ev('http://x/', { user_id: 'u1', kind: 'client', authenticated_via: 'sso' }));
-		expect(await res.json()).toEqual({ id: 'm1', role: 'contributor' });
-		// Rule C: no dojo_url arg — the store gets (db, tenantId, input); dōjō url
-		// is derived from the tenant. The parsed member input is forwarded.
-		expect(mocks.addMember.mock.calls[0][1]).toBe('t1');
-		expect(mocks.addMember.mock.calls[0][2]).toMatchObject({ user_id: 'u1', kind: 'client' });
-		expect(mocks.recordAudit.mock.calls[0][3]).toMatchObject({ action: 'member_added' });
-	});
-	it('maps a 409 duplicate from the store', async () => {
-		mocks.addMember.mockRejectedValueOnce(new AdminError(409, 'already a member'));
-		expect((await members.POST(ev('http://x/', {}))).status).toBe(409);
+// A person joins a dōjō by accepting an invite — their consent is the invite
+// token. An admin adding an arbitrary principal id directly put someone in a
+// tenant without their consent (#236, access matrix "Tenancy, identity,
+// billing"). The console never called it; invites and dōjō creation keep using
+// the server's addMember internally.
+describe('members are added by invitation, not by id', () => {
+	it('the members route answers GET and nothing else', () => {
+		expect(members.GET).toBeDefined();
+		expect((members as Record<string, unknown>).POST).toBeUndefined();
 	});
 });
 

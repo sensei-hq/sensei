@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	AdminApiError,
-	addMember,
 	deletePolicy,
 	dojoApiUrl,
 	getHealth,
@@ -85,20 +84,6 @@ describe('listMembers', () => {
 		});
 		const again = fakeFetch(403, { error: 'admin role required' });
 		await expect(listMembers('t/x', { fetch: again.fn })).rejects.toBeInstanceOf(AdminApiError);
-	});
-});
-
-describe('addMember', () => {
-	it('POSTs the membership body with the bearer + json content-type', async () => {
-		const { fn, calls } = fakeFetch(200, { id: 'm9', role: 'contributor' });
-		const body = { user_id: 'u1', kind: 'human', authenticated_via: 'sso', git_provider_role: 'write' };
-		const out = await addMember('github/globex', body, { fetch: fn, accessToken: 'jwt' });
-		expect(out).toEqual({ id: 'm9', role: 'contributor' });
-		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/github/globex/members`);
-		expect(calls[0].init?.method).toBe('POST');
-		expect(headersOf(calls[0].init)['content-type']).toBe('application/json');
-		expect(headersOf(calls[0].init).Authorization).toBe('Bearer jwt');
-		expect(JSON.parse(String(calls[0].init?.body))).toEqual(body);
 	});
 });
 

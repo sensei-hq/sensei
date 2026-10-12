@@ -3,7 +3,6 @@
 // Binds to the real admin endpoints (crates/dojo-mind/src/api.rs :495-955), all
 // behind the ADMIN role-floor (`resolve_admin` → 403 for a non-admin):
 //   GET    …/members                       → { members: Membership[] }
-//   POST   …/members                       → { id, role }
 //   PATCH  …/members/{user_id}/role        → { user_id, role }
 //   GET    …/identities                    → { identities: Identity[] }
 //   GET    …/policies                      → { policies: Policy[] }
@@ -128,17 +127,6 @@ export interface AuditEvent {
 
 // ── request bodies (mirror the api.rs Deserialize structs) ───────────────────
 
-/** `POST …/members` body — `NewMembership` (api.rs:507). */
-export interface NewMembershipBody {
-	user_id: string;
-	kind: string;
-	authenticated_via: string;
-	/** derives the role from the `dojo.roles` map when no explicit `role`. */
-	git_provider_role?: string;
-	/** explicit admin override; wins over the git-derived role. */
-	role?: string;
-}
-
 /** `POST …/policies` body — `UpsertPolicy` (api.rs:774). Upserts on `scope_key`. */
 export interface UpsertPolicyBody {
 	scope_key: string;
@@ -193,15 +181,6 @@ export async function listMembers(
 ): Promise<Membership[]> {
 	const data = await getJson<{ members?: Membership[] }>(adminUrl(tenantKey, '/members'), opts);
 	return data.members ?? [];
-}
-
-/** `POST …/members` — provision a membership (admin). */
-export async function addMember(
-	tenantKey: string,
-	body: NewMembershipBody,
-	opts: DojoCallOpts = {}
-): Promise<{ id: string; role: string }> {
-	return sendJson(adminUrl(tenantKey, '/members'), 'POST', body, opts);
 }
 
 /** `PATCH …/members/{user_id}/role` — override a member's role (admin). */
