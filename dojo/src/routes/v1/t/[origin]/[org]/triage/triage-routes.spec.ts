@@ -9,12 +9,13 @@
 // `triage-data.spec.ts`); this proves the handler wiring. No live Worker/DB.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const caller = {
+const caller: Record<string, unknown> = {
 	tenantId: 't1',
 	userId: 'user-uuid',
 	role: 'maintainer',
-	access: 3,
-	membershipId: 'm1'
+	access: 2,
+	membershipId: 'm1',
+	accessToken: 'jwt-A'
 };
 
 class TriageError extends Error {
@@ -33,9 +34,10 @@ const mocks = vi.hoisted(() => ({
 	decideTriage: vi.fn()
 }));
 
+// The service role vs the caller's own JWT — which client each store call got.
 vi.mock('$lib/server/dojo-supabase', () => ({
-	dojoDb: () => ({}),
-	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
+	dojoDb: () => ({ client: 'service' }),
+	userDb: (token: string) => ({ client: 'user', token })
 }));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
@@ -74,6 +76,25 @@ beforeEach(() => {
 	mocks.listTriage.mockClear().mockResolvedValue([]);
 	mocks.parseDecideBody.mockClear().mockImplementation((b: Record<string, unknown>) => ({ status: b.status }));
 	mocks.decideTriage.mockClear().mockResolvedValue({ status: 'approved', artifact_id: 'a1' });
+	caller.accessToken = 'jwt-A';
+});
+
+describe('triage runs as the signed-in person (#236)', () => {
+	it('GET reads the queue with the caller\'s JWT', async () => {
+		await GET(ev('GET'));
+		expect(mocks.listTriage.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+	});
+	it('decide records the decision with the caller\'s JWT, so the policy holds them to their own name', async () => {
+		await POST(ev('POST', { status: 'approve' }));
+		expect(mocks.decideTriage.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+	});
+	it('refuses a caller with no session rather than acting as the service role', async () => {
+		caller.accessToken = undefined;
+		expect((await GET(ev('GET'))).status).toBe(401);
+		expect((await POST(ev('POST', { status: 'approve' }))).status).toBe(401);
+		expect(mocks.listTriage).not.toHaveBeenCalled();
+		expect(mocks.decideTriage).not.toHaveBeenCalled();
+	});
 });
 
 describe('GET /triage', () => {
