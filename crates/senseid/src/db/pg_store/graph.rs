@@ -2112,6 +2112,8 @@ impl PgStore {
             return Ok(0); // genuine: no folders in scope, nothing to collect
         }
         let res = sqlx_core::query::query(&format!(
+            // A node the schema store DESCRIBES is referenced by it: an ORM's
+            // table has no file and often no edge, and is not an orphan (#251).
             "DELETE FROM sensei.nodes n
               WHERE n.folder_id = ANY($1)
                 AND n.file_id IS NULL
@@ -2120,7 +2122,9 @@ impl PgStore {
                     SELECT 1 FROM sensei.edges e
                      WHERE e.target_id = n.id OR e.source_id = n.id)
                 AND NOT EXISTS (
-                    SELECT 1 FROM sensei.nodes c WHERE c.parent_id = n.id)",
+                    SELECT 1 FROM sensei.nodes c WHERE c.parent_id = n.id)
+                AND NOT EXISTS (
+                    SELECT 1 FROM sensei.schema_entities se WHERE se.node_id = n.id)",
             ext = sql_is_not_external("n.fqn"),
         ))
         .bind(folder_ids)
