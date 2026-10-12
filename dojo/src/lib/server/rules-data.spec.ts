@@ -27,10 +27,8 @@ import {
 	recordRulesAudit,
 	RulesError,
 	PULL_SELECT,
-	maxTier,
-	effectivePackRuleTier,
 	parseNamespacePairs,
-	composeAdoptedPackRules,
+	resolveTenantPackRules,
 	type DojoClient
 } from './rules-data';
 
@@ -429,23 +427,8 @@ describe('recordRulesAudit', () => {
 	});
 });
 
-describe('rule-pack tier precedence', () => {
-	it('maxTier returns the stronger enforcement tier', () => {
-		expect(maxTier('advisory', 'required')).toBe('required');
-		expect(maxTier('mandatory', 'required')).toBe('mandatory');
-		expect(maxTier('recommended', 'recommended')).toBe('recommended');
-	});
-
-	it('an adoption override raises a rule but never weakens it', () => {
-		// adopt an advisory pack as required → the rule is raised
-		expect(effectivePackRuleTier('advisory', 'required')).toBe('required');
-		// a mandatory rule can never be lowered by a weaker override
-		expect(effectivePackRuleTier('mandatory', 'required')).toBe('mandatory');
-		// no override → the rule keeps its own tier
-		expect(effectivePackRuleTier('required', null)).toBe('required');
-	});
-
-	it('parseNamespacePairs splits scope:slug and drops malformed', () => {
+describe('parseNamespacePairs', () => {
+	it('splits scope:slug and drops malformed', () => {
 		expect(parseNamespacePairs('organization:acme, stack:react')).toEqual([
 			{ scope_key: 'organization', slug: 'acme' },
 			{ scope_key: 'stack', slug: 'react' }
@@ -459,62 +442,75 @@ describe('rule-pack tier precedence', () => {
 	});
 });
 
-describe('composeAdoptedPackRules — pack rules carry their ADOPTION scope', () => {
-	const packs = [{ id: 'pk1', area: 'security', source: 'OWASP' }];
-	const rules = [
-		{ id: 'r1', pack_id: 'pk1', ordinal: 1, statement: 'S1', body: 'B1', rationale: 'why', enforcement: 'advisory', verification: 'manual', checker_ref: null, remediation: null, skill_ref: null, applies_to: null },
-		{ id: 'r2', pack_id: 'pk1', ordinal: 2, statement: 'S2', body: 'B2', rationale: null, enforcement: 'mandatory', verification: 'manual', checker_ref: null, remediation: null, skill_ref: null, applies_to: null }
-	];
+// The tier override (never weaker), the adoption scope and which namespaces a
+// tenant owns are dojo.tenant_pack_rules' to decide — covered against a real
+// database by database/tests/dojo/tenant_pack_rules.sql. This is the wiring.
+describe('resolveTenantPackRules', () => {
+	const ROW = {
+		pack_id: 'pk1',
+		rule_id: 'r1',
+		ordinal: 1,
+		statement: 'S1',
+		body: 'B1',
+		rationale: 'why',
+		enforcement: 'required',
+		verification: 'manual',
+		checker_ref: null,
+		remediation: null,
+		skill_ref: null,
+		applies_to: null,
+		attribution: 'OWASP',
+		area: 'security',
+		scope_key: 'organization'
+	};
 
-	it('scopes a rule by the adoption namespace scope_key, NOT the pack area', () => {
-		const out = composeAdoptedPackRules(
-			[{ pack_id: 'pk1', namespace_id: 'ns-org', enforcement: null }],
-			[{ id: 'ns-org', scope_key: 'organization' }],
-			packs,
-			rules
-		);
-		expect(out.map((r) => r.scope_key)).toEqual(['organization', 'organization']);
-		expect(out.every((r) => r.scope_key !== 'security')).toBe(true); // never the pack area
-		expect(out.map((r) => r.statement)).toEqual(['S1', 'S2']); // ordinal order
-		expect(out[0].source).toBe('OWASP');
+	it('asks dojo.tenant_pack_rules for the tenant and the folder\'s scope:slug pairs', async () => {
+		const db = makeDb();
+		db.queue({ data: [ROW], error: null });
+		const out = await resolveTenantPackRules(db.client, 't1', [
+			{ scope_key: 'organization', slug: 'acme' },
+			{ scope_key: 'technology', slug: 'react' }
+		]);
+		expect(db.calls).toEqual([
+			expect.objectContaining({
+				rpc: 'tenant_pack_rules',
+				args: { p_tenant: 't1', p_namespaces: ['organization:acme', 'technology:react'] }
+			})
+		]);
+		// The wire shape the daemon's PackRuleWire reads; `source` is the pack's attribution.
+		expect(out).toEqual([
+			{
+				pack_id: 'pk1',
+				rule_id: 'r1',
+				ordinal: 1,
+				statement: 'S1',
+				body: 'B1',
+				rationale: 'why',
+				enforcement: 'required',
+				verification: 'manual',
+				checker_ref: null,
+				remediation: null,
+				skill_ref: null,
+				applies_to: null,
+				source: 'OWASP',
+				area: 'security',
+				scope_key: 'organization'
+			}
+		]);
 	});
 
-	it('applies the adoption override never-weaken (raises advisory, keeps mandatory)', () => {
-		const out = composeAdoptedPackRules(
-			[{ pack_id: 'pk1', namespace_id: 'ns-org', enforcement: 'required' }],
-			[{ id: 'ns-org', scope_key: 'organization' }],
-			packs,
-			rules
-		);
-		expect(out.find((r) => r.statement === 'S1')?.enforcement).toBe('required'); // advisory → required
-		expect(out.find((r) => r.statement === 'S2')?.enforcement).toBe('mandatory'); // not weakened
+	it('names no namespace → no rules, without asking', async () => {
+		const db = makeDb();
+		expect(await resolveTenantPackRules(db.client, 't1', [])).toEqual([]);
+		expect(db.calls).toEqual([]);
 	});
 
-	it('emits a rule per adopting namespace, each at its own scope (daemon dedups downstream)', () => {
-		const out = composeAdoptedPackRules(
-			[
-				{ pack_id: 'pk1', namespace_id: 'ns-org', enforcement: null },
-				{ pack_id: 'pk1', namespace_id: 'ns-proj', enforcement: null }
-			],
-			[
-				{ id: 'ns-org', scope_key: 'organization' },
-				{ id: 'ns-proj', scope_key: 'project' }
-			],
-			packs,
-			rules
-		);
-		// r1 + r2 at organization, r1 + r2 at project.
-		expect(out.filter((r) => r.scope_key === 'organization').length).toBe(2);
-		expect(out.filter((r) => r.scope_key === 'project').length).toBe(2);
-	});
-
-	it('skips an adoption whose namespace is not in the resolved set', () => {
-		const out = composeAdoptedPackRules(
-			[{ pack_id: 'pk1', namespace_id: 'ns-unknown', enforcement: null }],
-			[{ id: 'ns-org', scope_key: 'organization' }],
-			packs,
-			rules
-		);
-		expect(out).toEqual([]);
+	it('throws RulesError(500) on an error — never an empty list that reads as "no packs"', async () => {
+		const db = makeDb();
+		db.queue({ data: null, error: { message: 'boom' } });
+		await expect(resolveTenantPackRules(db.client, 't1', [{ scope_key: 'organization', slug: 'acme' }])).rejects.toMatchObject({
+			status: 500,
+			message: 'boom'
+		});
 	});
 });
