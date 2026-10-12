@@ -7,6 +7,7 @@
 // `…/incidents/{id}`. The store logic lives in `$lib/server/incidents-data`.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { listIncidents, createIncident, parseNewIncident, IncidentsError } from '$lib/server/incidents-data';
 import { resolveEngagementClientNames } from '$lib/server/engagement-client-names';
@@ -15,14 +16,15 @@ import { recordAudit } from '$lib/server/audit';
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { tenantId } = await resolveTenantAccess(
+		const caller = await resolveTenantAccess(
 			params.origin,
 			params.org,
 			request,
 			locals,
 			ACCESS.lead
 		);
-		const db = dojoDb();
+		const { tenantId } = caller;
+		const db = callerDb(caller);
 		const { incidents, open_count } = await listIncidents(db, tenantId);
 		// Resolve each incident's engagement → client name (Rule C); the row
 		// otherwise carries only the engagement uuid (rendered as a short id).
@@ -55,9 +57,8 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const input = parseNewIncident(body);
-		const db = dojoDb();
-		const result = await createIncident(db, caller.tenantId, input);
-		await recordAudit(db, caller.tenantId, caller.userId, {
+		const result = await createIncident(callerDb(caller), caller.tenantId, input);
+		await recordAudit(dojoDb(), caller.tenantId, caller.userId, {
 			action: 'incident_opened',
 			target: result.id,
 			detail: { severity: result.severity, title: input.title },

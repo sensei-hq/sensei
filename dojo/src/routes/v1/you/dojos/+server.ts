@@ -3,15 +3,16 @@
 // tenant). Body: { name, kind }. A name collision is a 409; an invalid body a 400.
 // Fails closed; never a fabricated tenant.
 import type { RequestHandler } from './$types';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { createDojo, parseNewDojo, AdminError } from '$lib/server/admin-data';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, db } = await resolveCaller(request, locals);
+		const caller = await resolveCaller(request, locals);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const input = parseNewDojo(body);
-		const dojo = await createDojo(db, userId, input);
+		const dojo = await createDojo(callerDb(caller), input);
 		return Response.json(dojo, { status: 201 });
 	} catch (e) {
 		if (e instanceof Response) return e;

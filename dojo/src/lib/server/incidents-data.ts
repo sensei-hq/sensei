@@ -127,11 +127,16 @@ async function fetchIncidentArtifact(
  * artifact — the `GET …/incidents/{id}` detail pane read. Throws
  * IncidentsError(404) when the incident doesn't exist; fails closed on any
  * resolve error (never a fabricated name/artifact).
+ *
+ * `db` reads as the caller; `names` resolves the owner's name and email as the
+ * system (a lead holds no read on memberships or identities), for the one id on
+ * a row the caller could already read (#236).
  */
 export async function getIncidentDetail(
 	db: DojoClient,
 	tenantId: string,
-	id: string
+	id: string,
+	names: DojoClient
 ): Promise<IncidentDetail> {
 	const { data, error } = await db
 		.from('incidents')
@@ -148,7 +153,7 @@ export async function getIncidentDetail(
 			? resolveEngagementClientNames(db, tenantId, [incident.engagement_id])
 			: Promise.resolve(new Map<string, string>()),
 		incident.owner_id
-			? resolveDisplayNames(db, tenantId, [incident.owner_id])
+			? resolveDisplayNames(names, tenantId, [incident.owner_id])
 			: Promise.resolve(new Map<string, ResolvedName>()),
 		fetchIncidentArtifact(db, tenantId, incident.artifact_id)
 	]);
@@ -214,6 +219,40 @@ export function parseNewIncident(body: Record<string, unknown>): NewIncidentInpu
 }
 
 /**
+ * Refuse a reference that does not name THIS tenant's object (#236). An
+ * incident's owner, engagement and artifact arrive in the request body; an owner
+ * outside the tenant was a read of their name and email through a side door, and
+ * an engagement or artifact of another tenant a cross-tenant link. A 400, before
+ * anything is written.
+ */
+async function assertReferencesInTenant(
+	db: DojoClient,
+	tenantId: string,
+	refs: { owner_id?: string; engagement_id?: string; artifact_id?: string }
+): Promise<void> {
+	const check = async (table: string, cond: Record<string, unknown>, what: string) => {
+		let q = db.from(table).select('tenant_id');
+		for (const [c, v] of Object.entries(cond)) q = v === null ? q.is(c, null) : q.eq(c, v);
+		const { data, error } = await q.maybeSingle();
+		if (error) throw new IncidentsError(500, error.message);
+		if (!data) throw new IncidentsError(400, `${what} is not part of this dōjō`);
+	};
+	if (refs.owner_id) {
+		// Asked of the database: the caller holds no read on memberships (#236).
+		const { data, error } = await db.rpc('principal_is_member', {
+			p_tenant: tenantId,
+			p_principal: refs.owner_id
+		});
+		if (error) throw new IncidentsError(500, error.message);
+		if (data !== true) throw new IncidentsError(400, 'owner is not part of this dōjō');
+	}
+	if (refs.engagement_id)
+		await check('engagements', { tenant_id: tenantId, id: refs.engagement_id }, 'engagement');
+	if (refs.artifact_id)
+		await check('artifacts', { tenant_id: tenantId, id: refs.artifact_id }, 'artifact');
+}
+
+/**
  * Open a confidentiality incident (`POST …/incidents`) — the port of dojo-mind's
  * `open_incident`. Returns `{ id, severity }` (the shape `client-data.ts
  * createIncident()` unwraps).
@@ -223,6 +262,7 @@ export async function createIncident(
 	tenantId: string,
 	input: NewIncidentInput
 ): Promise<{ id: string; severity: string }> {
+	await assertReferencesInTenant(db, tenantId, input);
 	const { data, error } = await db
 		.from('incidents')
 		.insert({
@@ -310,6 +350,7 @@ export async function updateIncident(
 	id: string,
 	input: PatchIncidentInput
 ): Promise<{ id: string }> {
+	await assertReferencesInTenant(db, tenantId, { owner_id: input.owner_id });
 	const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
 	if (input.severity !== undefined) row.severity = input.severity;
 	if (input.status !== undefined) row.status = input.status;

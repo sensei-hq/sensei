@@ -7,6 +7,7 @@
 // `$lib/server/admin-data`.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { setMemberRole, AdminError } from '$lib/server/admin-data';
 import { recordAudit } from '$lib/server/audit';
@@ -21,9 +22,8 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 			ACCESS.admin
 		);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-		const db = dojoDb();
-		const result = await setMemberRole(db, caller.tenantId, params.userId, body.role);
-		await recordAudit(db, caller.tenantId, caller.userId, {
+		const result = await setMemberRole(callerDb(caller), caller.tenantId, params.userId, body.role);
+		await recordAudit(dojoDb(), caller.tenantId, caller.userId, {
 			action: 'role_changed',
 			target: result.user_id,
 			detail: { role: result.role }

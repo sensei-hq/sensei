@@ -43,3 +43,7 @@ comment on column repository_elections.principal_id
 The electing member. NULL when the ORGANISATION elected — an org speaks as itself, not as the admin who happened to click.';
 comment on column repository_elections.tenant_id
      is 'A surrogate key because the natural one cannot serve: `principal_id` is NULL by design for an organisation''s election, and a primary key admits no NULLs.';
+
+-- RLS on, and no session grant: a person elects through
+-- dojo.set_repository_election, which decides from their own verdict row (#236).
+alter table dojo.repository_elections enable row level security;

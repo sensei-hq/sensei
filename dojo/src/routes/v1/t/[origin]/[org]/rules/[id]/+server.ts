@@ -1,5 +1,5 @@
 // DELETE /v1/t/{origin}/{org}/rules/{id} — tombstone (retract) a shared rule.
-// The in-Worker port of dojo-mind's `retract_rule` (api.rs): contributor+
+// The in-Worker port of dojo-mind's `retract_rule` (api.rs): maintainer+
 // (device-token plane), status → tombstoned, audit-stamped. 204 on success,
 // 404 when no active row matched (unknown id / already tombstoned). See
 // docs/plan/2026-07-23-retire-dojo-mind.md.
@@ -10,12 +10,12 @@ import { retractRule, recordRulesAudit, RulesError } from '$lib/server/rules-dat
 
 export const DELETE: RequestHandler = async ({ params, request }) => {
 	try {
-		const caller = await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.contributor);
+		const caller = await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.maintainer);
 		const id = params.id;
 		if (!id) return apiError(400, 'rule id is required');
 
 		const db = dojoDb();
-		const tombstoned = await retractRule(db, id);
+		const tombstoned = await retractRule(db, caller.tenantId, id);
 		if (!tombstoned) return apiError(404, 'no such rule');
 		// Audit is fire-and-forget (mirrors dojo-mind) but logged on failure.
 		await recordRulesAudit(db, caller.tenantId, 'retract', id, caller.userId);

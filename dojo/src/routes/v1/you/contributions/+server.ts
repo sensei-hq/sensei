@@ -4,6 +4,7 @@
 // JWT, authorized by contributed_by = caller + membership ownership. Read-only;
 // fails closed; honest-empty until the contribute pipeline federates. Never a fixture.
 import type { RequestHandler } from './$types';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import {
 	userMembershipIds,
@@ -14,7 +15,9 @@ import {
 
 export const GET: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, db } = await resolveCaller(request, locals);
+		const caller = await resolveCaller(request, locals);
+		const { userId } = caller;
+		const db = callerDb(caller);
 		const [mine, membershipIds] = await Promise.all([
 			listUserContributions(db, userId),
 			userMembershipIds(db, userId)

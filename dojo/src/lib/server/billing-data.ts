@@ -84,8 +84,16 @@ export function summarizeSeatUsage(rows: SeatRow[]): SeatUsage {
 /** Load a tenant's ACTIVE seats (ended_at IS NULL) joined to their project
  *  namespace (visibility + name). Cross-schema (dojo.seats → dojo.namespaces, a
  *  dojo view over sensei.namespaces), so it joins in two queries rather than a
- *  PostgREST embed. Orphan seats (the namespace was deleted) are dropped. */
-export async function loadActiveSeatRows(db: DojoClient, tenantId: string): Promise<SeatRow[]> {
+ *  PostgREST embed. Orphan seats (the namespace was deleted) are dropped.
+ *
+ *  `db` reads the seats (as the caller, under the seats policy); `names` reads
+ *  the namespaces as the system — no session reads sensei.namespaces, whose
+ *  names can be clients' — for the ids on the seats `db` returned (#236). */
+export async function loadActiveSeatRows(
+	db: DojoClient,
+	tenantId: string,
+	names: DojoClient
+): Promise<SeatRow[]> {
 	const { data: seats, error } = await db
 		.from('seats')
 		.select('user_id, role, namespace_id')
@@ -96,7 +104,7 @@ export async function loadActiveSeatRows(db: DojoClient, tenantId: string): Prom
 	if (rows.length === 0) return [];
 
 	const ids = [...new Set(rows.map((s) => s.namespace_id))];
-	const { data: ns, error: nsErr } = await db
+	const { data: ns, error: nsErr } = await names
 		.from('namespaces')
 		.select('id, name, slug, visibility')
 		.in('id', ids);

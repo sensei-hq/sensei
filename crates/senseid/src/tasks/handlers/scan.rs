@@ -3,7 +3,7 @@
 
 use super::super::executor::TaskContext;
 use super::super::{Task, TaskKind};
-use super::scan_logic::{self};
+use super::scan_logic::{self, under};
 use crate::api::events::*;
 use std::path::Path;
 use std::time::Instant;
@@ -139,6 +139,14 @@ pub async fn scan_root(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             .queue
             .enqueue_unique(
                 Task::for_folder(TaskKind::ProcessGitFolder, &path_str)
+                    // FORCE IS SCOPED TO THE PATH ASKED FOR, not to the walk.
+                    // Discovery widens to the enclosing WATCH ROOT — a scan of
+                    // one repo under `~/Developer` walks all 129 repos under it
+                    // — which is right for discovery and catastrophic for force:
+                    // `--force <one repo>` would re-parse every repository on
+                    // the machine. The flag therefore rides only the repos at or
+                    // under the requested path.
+                    .forced(task.force && under(&path_str, &task.path))
                     .with_parent(task.id)
                     // Each repository gets the slice of the batch that lies
                     // under it — and, with it, whether its own file walk may
@@ -671,6 +679,7 @@ pub async fn branch_switch(ctx: &TaskContext, task: &Task) -> Result<u32, String
     // old branch but not the new one are dropped as "removed". process_git_folder
     // records the new branch (from the task) in props.branch.
     let git_task = Task::new(TaskKind::ProcessGitFolder, &task.folder_path, &task.path)
+        .forced(task.force)
         .with_parent(task.id)
         .with_branch(new_branch);
     // NOTE: branch_switch deliberately uses plain `enqueue`, NOT the single-writer
@@ -777,6 +786,9 @@ mod tests {
             event_tx,
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             provisioning: None,
+            diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
+                crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
+            )),
         });
         Arc::new(TaskContext {
             queue,
@@ -798,6 +810,9 @@ mod tests {
             event_tx,
             breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             provisioning: None,
+            diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
+                crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
+            )),
         });
         let ctx = Arc::new(TaskContext {
             queue,
@@ -806,6 +821,34 @@ mod tests {
             logger: sensei_logger::Logger::noop(),
         });
         (ctx, event_rx)
+    }
+
+    /// **`--force` REACHES ONLY THE PATH ASKED FOR.**
+    ///
+    /// Discovery deliberately widens: a scan of one repository inside an
+    /// existing watch root walks from that ROOT, so a redundant sub-root is not
+    /// registered. Measured on this machine, `~/Developer` is a watch root with
+    /// 129 git repositories under it — so a force flag that rode the walk would
+    /// turn `sensei scan --force <one repo>` into a re-parse of every
+    /// repository on the disk.
+    ///
+    /// The boundary is a SEGMENT, not a prefix: `/a/sensei-old` starts with
+    /// `/a/sensei` and is a different repository.
+    ///
+    /// Mutation that must break this test: use `starts_with(requested)` without
+    /// the trailing separator, or drop the `under()` guard entirely.
+    #[test]
+    fn force_is_scoped_to_the_requested_path_not_the_whole_watch_root() {
+        assert!(under("/a/sensei", "/a/sensei"), "the repository itself");
+        assert!(under("/a/sensei/crates/cli", "/a/sensei"), "and anything inside it");
+        assert!(under("/a/sensei", "/a/sensei/"), "a trailing separator is not a different path");
+
+        assert!(!under("/a/sensei-old", "/a/sensei"), "a SIBLING sharing a prefix is not inside");
+        assert!(!under("/a/other", "/a/sensei"), "nor is an unrelated repository");
+        assert!(
+            !under("/a", "/a/sensei"),
+            "nor is the PARENT — which is the watch root, and the whole point"
+        );
     }
 
     #[tokio::test]
@@ -856,6 +899,12 @@ mod tests {
             .upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy())
             .await
             .unwrap();
+        // The repo needs its `repositories` row before the project: membership
+        // is the repository's, so without one `set_folder_project` records
+        // nothing and the twin-guard's project intersection finds no overlap.
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &repo_fid, "dedup-repo")
+            .await
+            .unwrap();
         ctx.pg().set_folder_project(&repo_fid, &pid, "root", None).await.unwrap();
 
         // The canonical git-root copies, stored repo-relative: a code symbol AND
@@ -900,7 +949,6 @@ mod tests {
                 "crates/member",
                 &member.to_string_lossy(),
                 Some(&repo_fid),
-                Some(&pid),
             )
             .await
             .unwrap();
@@ -1007,6 +1055,9 @@ mod tests {
             .upsert_repo_kind(&root_id, "git", "repo", &repo.to_string_lossy())
             .await
             .unwrap();
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &repo_fid, "gcorder-repo")
+            .await
+            .unwrap();
         ctx.pg().set_folder_project(&repo_fid, &pid, "root", None).await.unwrap();
         let member_fid = ctx
             .pg()
@@ -1016,7 +1067,6 @@ mod tests {
                 "crates/member",
                 &member.to_string_lossy(),
                 Some(&repo_fid),
-                Some(&pid),
             )
             .await
             .unwrap();
@@ -1127,7 +1177,6 @@ mod tests {
                 "repo/sub",
                 &root.join("repo/sub").to_string_lossy(),
                 Some(&repo_fid),
-                None,
             )
             .await
             .unwrap();
@@ -1167,6 +1216,9 @@ mod tests {
         let repo_fid = ctx
             .pg()
             .upsert_repo_kind(&root_id, "git", "live", &tmp.path().join("live").to_string_lossy())
+            .await
+            .unwrap();
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &repo_fid, "live-repo")
             .await
             .unwrap();
         ctx.pg().set_folder_project(&repo_fid, &live, "root", None).await.unwrap();
@@ -1450,7 +1502,7 @@ mod tests {
 
         // A subtree must NOT be clobbered by a root re-registration.
         let p2 = tmp.path().join("b").to_string_lossy().to_string();
-        ctx.pg().upsert_folder(&root_id, "subtree", "b", "b", &p2, None, None, None).await.unwrap();
+        ctx.pg().upsert_folder(&root_id, "subtree", "b", "b", &p2, None, None).await.unwrap();
         ctx.pg().upsert_repo_kind(&root_id, "git", "b", &p2).await.unwrap();
         assert_eq!(ctx.pg().get_repo_by_path(&p2).await.unwrap().unwrap()["kind"], "subtree");
     }
@@ -1462,7 +1514,10 @@ mod tests {
         let repo_path = tmp.path().to_string_lossy().to_string();
         let root_id =
             ctx.pg().add_watch_root(&repo_path, "pv", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "pv-repo", &repo_path).await.unwrap();
+        let fid =
+            crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, "pv-repo", &repo_path)
+                .await
+                .unwrap();
 
         // Two indexed files: a.rs (still on disk) and a moved-away b.rs (orphan),
         // plus a module node (abs dir path) that must never be pruned.
@@ -1528,7 +1583,6 @@ mod tests {
                 "live",
                 &live_dir.to_string_lossy(),
                 Some(&repo_fid),
-                None,
             )
             .await
             .unwrap();
@@ -1550,7 +1604,6 @@ mod tests {
                 "gone",
                 &gone_dir.to_string_lossy(),
                 Some(&repo_fid),
-                None,
             )
             .await
             .unwrap();
@@ -1562,7 +1615,6 @@ mod tests {
                 "gone/sub",
                 &gone_sub.to_string_lossy(),
                 Some(&gone_fid),
-                None,
             )
             .await
             .unwrap();
@@ -1678,7 +1730,6 @@ mod tests {
                 "packages/live",
                 &live.to_string_lossy(),
                 Some(&repo_fid),
-                None,
             )
             .await
             .unwrap();
@@ -1691,7 +1742,6 @@ mod tests {
                 "packages/gone",
                 &gone.to_string_lossy(),
                 Some(&repo_fid),
-                None,
             )
             .await
             .unwrap();
@@ -1735,7 +1785,7 @@ mod tests {
         let sub = absent_repo.join("src"); // also absent
         let sub_fid = ctx
             .pg()
-            .upsert_subfolder(&root_id, "src", "src", &sub.to_string_lossy(), Some(&repo_fid), None)
+            .upsert_subfolder(&root_id, "src", "src", &sub.to_string_lossy(), Some(&repo_fid))
             .await
             .unwrap();
         let node = ctx

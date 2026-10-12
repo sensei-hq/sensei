@@ -45,21 +45,14 @@ fn process_fixture_subtree(
     .unwrap()
 }
 
-// ═══ Code files (from crate source — these exist in this repo) ═══
-
-#[test]
-fn rust_adapter_svelte_rs() {
-    let root = workspace_root();
-    let abs = root.join("crates/senseid/src/indexer/lang/svelte.rs");
-    assert!(abs.exists(), "Source file not found: {}", abs.display());
-    let r = process_file(&abs.to_string_lossy(), &root.to_string_lossy(), "sensei").unwrap();
-    assert_eq!(r.kind, "file");
-    assert_eq!(r.tags, "src");
-    assert_eq!(r.language.as_deref(), Some("rust"));
-    assert!(!r.symbols.is_empty());
-    let names: Vec<&str> = r.symbols.iter().map(|s| s.name.as_str()).collect();
-    assert!(names.contains(&"SvelteAdapter"), "should find SvelteAdapter struct");
-}
+// ═══ Code files ═════════════════════════════════════════════════
+//
+// There are none, and that is the point. This router does not parse code — the
+// indexer claims every code extension, so `process_file` sends those files
+// there and never reaches here. A test that fed it a `.rs` file and asserted
+// rust symbols was asserting the retired producer's behaviour; the same
+// property now belongs to `indexer::lang::rust`, which tests it against a
+// grammar rather than a line scanner.
 
 // ═══ Code fixtures ═══════════════════════════════════════════════// ═══ Doc fixtures ════════════════════════════════════════════════
 
@@ -155,40 +148,39 @@ fn sensei_mcp_cargo_toml() {
 #[test]
 fn a_utf16_file_is_read_rather_than_refused() {
     let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("Issues.sql");
-    // `CREATE TABLE`, terminated, and unbracketed — because what is under test
-    // is the DECODE reaching a parser, not how much of T-SQL v1's line-based
-    // `sql.rs` understands. It reads no `CREATE PROCEDURE` and needs the `;`,
-    // which is two of the reasons `indexer::lang::sql::tsql` exists.
-    //
-    // The UTF-8 comparison below is what keeps this honest: if both sides
-    // returned nothing the assertion would hold vacuously, so the symbol is
-    // asserted by name as well.
+    // MARKDOWN, not SQL. The property is the DECODE reaching a parser, and it
+    // needs a route this router still owns: every code extension is claimed by
+    // `indexer::lang`, so a `.sql` file never arrives here any more. Both
+    // producers call `classifiers::decode_source`, which is the one owner of
+    // this rule — see the note on the indexer's own read in `process_file`.
+    let file = dir.path().join("Issues.md");
+    let text = "# Issues\r\n\r\nBody text.\r\n";
     let mut bytes = vec![0xFFu8, 0xFE];
-    for c in "CREATE TABLE Issues (Id int);\r\n".chars() {
+    for c in text.chars() {
         bytes.extend_from_slice(&(c as u16).to_le_bytes());
     }
     std::fs::write(&file, &bytes).unwrap();
 
     let r = process_file(&file.to_string_lossy(), &dir.path().to_string_lossy(), "sensei")
         .expect("a UTF-16 file is text");
-    assert_eq!(r.language.as_deref(), Some("sql"));
 
     // THE SAME CONTENT AS UTF-8, so a difference isolates the decode from what
-    // the parser does or does not understand.
-    let plain = dir.path().join("Issues8.sql");
-    std::fs::write(&plain, "CREATE TABLE Issues (Id int);\r\n").unwrap();
+    // the processor does or does not understand — and a vacuous pass, where
+    // both sides yield nothing, is ruled out by the named assertion below.
+    let plain = dir.path().join("Issues8.md");
+    std::fs::write(&plain, text).unwrap();
     let p8 = process_file(&plain.to_string_lossy(), &dir.path().to_string_lossy(), "sensei")
         .expect("utf-8 reads");
+
     assert_eq!(
-        r.symbols.iter().map(|s| &s.name).collect::<Vec<_>>(),
-        p8.symbols.iter().map(|s| &s.name).collect::<Vec<_>>(),
-        "UTF-16 and UTF-8 of the same text must yield the same symbols"
+        r.sections.iter().map(|s| &s.heading).collect::<Vec<_>>(),
+        p8.sections.iter().map(|s| &s.heading).collect::<Vec<_>>(),
+        "UTF-16 and UTF-8 of the same text must yield the same sections"
     );
     assert!(
-        r.symbols.iter().any(|s| s.name.contains("Issues")),
-        "the table is found, so the decoded text reached the parser: {:?}",
-        r.symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+        r.sections.iter().any(|s| s.heading.contains("Issues")),
+        "the heading is found, so the decoded text reached the parser: {:?}",
+        r.sections.iter().map(|s| &s.heading).collect::<Vec<_>>()
     );
 }
 

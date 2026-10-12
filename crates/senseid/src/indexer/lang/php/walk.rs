@@ -104,6 +104,8 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
         references: walk.references,
         relations: walk.relations,
         imports: walk.imports,
+        schema: Vec::new(),
+        calls: Vec::new(),
     })
 }
 
@@ -271,6 +273,7 @@ impl<'a> Walk<'a> {
             None => ("php".to_string(), last),
         };
         self.imports.push(Import {
+            target: Import::unplaced(&full),
             path: full,
             binds: Binding::Name(alias.unwrap_or(name)),
             // EXTERNAL naming the namespace it came from, and

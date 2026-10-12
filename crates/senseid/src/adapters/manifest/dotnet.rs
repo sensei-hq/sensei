@@ -30,6 +30,15 @@ impl ManifestAdapter for DotnetManifestAdapter {
         &["csproj", "fsproj", "sln"]
     }
 
+    /// MSBuild's `$(MSBuildProjectName)`: a project that states no
+    /// `<AssemblyName>` is named by its file. A solution is not a package.
+    fn name_by_tool_default(&self, filename: &str) -> Option<String> {
+        let (stem, ext) = filename.rsplit_once('.')?;
+        (ext.eq_ignore_ascii_case("csproj") || ext.eq_ignore_ascii_case("fsproj"))
+            .then(|| stem.to_string())
+            .filter(|s| !s.is_empty())
+    }
+
     fn ecosystem(&self) -> &'static str {
         "nuget"
     }

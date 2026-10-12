@@ -13,17 +13,19 @@
 // election route.
 //
 // User-scoped rather than tenant-scoped: which tenant owns the repository, and
-// therefore whose ruling this is, is DERIVED from `dojo.all_my_repositories`, not
+// therefore whose ruling this is, is DERIVED from the caller's own row of
+// `dojo.all_my_repositories` (by dojo.set_metric_activation, as them), not
 // supplied. A body that could name the tenant would let a member of one dōjō
 // write another's cost decision.
 import type { RequestHandler } from './$types';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { AdminError } from '$lib/server/admin-data';
 import { setMetricActivation } from '$lib/server/metric-activation';
 
 export const PATCH: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, db } = await resolveCaller(request, locals);
+		const caller = await resolveCaller(request, locals);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 
 		const repoKey = typeof body.repo_key === 'string' ? body.repo_key.trim() : '';
@@ -40,7 +42,7 @@ export const PATCH: RequestHandler = async ({ request, locals }) => {
 			return apiError(400, 'enabled must be true or false');
 		}
 
-		return Response.json(await setMetricActivation(db, userId, repoKey, metric, body.enabled));
+		return Response.json(await setMetricActivation(callerDb(caller), repoKey, metric, body.enabled));
 	} catch (e) {
 		if (e instanceof Response) return e;
 		if (e instanceof AdminError) return apiError(e.status, e.message);

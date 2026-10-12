@@ -29,14 +29,9 @@
 // a multi-statement transaction, take an advisory lock, nor call `nextval`
 // inline. So:
 //   • seq is assigned by the `dojo.artifacts.seq` column DEFAULT
-//     (`nextval('dojo.artifacts_seq')`) on INSERT — matching dojo-mind's
-//     first-write seq exactly. Promotion (submitted→published) keeps that
-//     insert-time seq rather than re-stamping it (the SAME divergence the rules
-//     endpoint documents for republish/retract); advancing seq on the UPDATE
-//     path needs an in-DB trigger (precedent: `dojo.relay_inbox_seq_bump`) — a
-//     shared DDL follow-up for both federation endpoints. In practice the
-//     published row still rides a puller's delta at its insert seq (pull returns
-//     all statuses with `seq > since`); see `publishRepresentative`.
+//     (`nextval('dojo.artifacts_seq')`) on INSERT, and advanced on every UPDATE
+//     by the `dojo.artifacts_seq_bump` trigger — so promotion re-surfaces the
+//     row in every puller's delta, as dojo-mind's inline nextval did (#236).
 //   • the promote step is a sequence of PostgREST calls rather than one txn. It
 //     is still idempotent (guards on artifact `status` / triage `state` exactly
 //     as dojo-mind does), so a re-run neither double-publishes nor double-decides.
@@ -395,17 +390,32 @@ export function shapeArtifactPullResponse(rows: ArtifactRow[], since: number): A
  * one tenant never sees another's artifacts. Delegates shaping to
  * `shapeArtifactPullResponse`.
  */
+/** Who is pulling: their principal, and whether they see OTHER members'
+ *  pre-triage submissions (maintainer and above — triage is their work). */
+export interface ArtifactViewer {
+	principalId: string;
+	seesSubmissions: boolean;
+}
+
 export async function pullArtifactsSince(
 	db: DojoClient,
 	tenantId: string,
-	since: number
+	since: number,
+	viewer: ArtifactViewer
 ): Promise<ArtifactPullResponse> {
-	const { data, error } = await db
+	let query = db
 		.from('artifacts')
 		.select(ARTIFACT_PULL_SELECT)
-		.eq('tenant_id', tenantId)
-		.gt('seq', since)
-		.order('seq', { ascending: true });
+		.eq('tenant_id', tenantId);
+	// Before triage a submission is its contributor's and the maintainers' —
+	// not every member's (#236, access matrix "Knowledge"). Safe for the cursor:
+	// `dojo.artifacts_seq_bump` re-stamps seq on publish, so a submission this
+	// puller skipped arrives once it is published. `principalId` is the
+	// authenticated principal from the membership lookup, never request input.
+	if (!viewer.seesSubmissions) {
+		query = query.or(`status.neq.submitted,contributed_by.eq.${viewer.principalId}`);
+	}
+	const { data, error } = await query.gt('seq', since).order('seq', { ascending: true });
 	if (error) throw new ArtifactError(500, error.message);
 	return shapeArtifactPullResponse((data ?? []) as unknown as ArtifactRow[], since);
 }
@@ -504,16 +514,10 @@ async function alreadyPublishedId(
  * re-publish. Returns the row's seq, or null when nothing was in `submitted`
  * (an idempotent re-run, or a concurrent promote already won the row).
  *
- * Seq on publish: dojo-mind re-stamps `seq = nextval('dojo.artifacts_seq')`
- * inside the promote transaction so the published row re-surfaces in a puller's
- * delta. PostgREST can't call `nextval` inline on an UPDATE, so this keeps the
- * insert-time seq — the SAME divergence the rules endpoint documents
- * (`rules-data.ts::publishRule`). In practice the published row still rides the
- * puller's delta at its insert seq (the pull returns all statuses with `seq >
- * since`), unless a puller had already advanced past that seq while the artifact
- * was still `submitted`. Advancing seq on UPDATE needs an in-DB trigger
- * (precedent: `dojo.relay_inbox_seq_bump`) — a shared DDL follow-up for both
- * federation endpoints, not a per-endpoint workaround.
+ * Seq on publish: the `dojo.artifacts_seq_bump` trigger advances `seq` on the
+ * status UPDATE, so the published row re-surfaces in every puller's delta —
+ * including one that advanced past its insert seq while it was `submitted`,
+ * which is what lets the pull leave other members' submissions out.
  */
 async function publishRepresentative(db: DojoClient, repId: string): Promise<number | null> {
 	const { data, error } = await db

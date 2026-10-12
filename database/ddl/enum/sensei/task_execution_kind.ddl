@@ -40,6 +40,7 @@ set search_path to sensei, extensions;
 create type task_execution_kind as enum (
   -- ── index pipeline ──
   'scan_root'
+  , 'scan_git_history'
 , 'process_git_folder'
 , 'process_folder'
 , 'process_file'
@@ -93,4 +94,6 @@ create type task_execution_kind as enum (
 , 'reconcile_identity'
 , 'backfill_transcripts'
 , 'backfill_transcript_file'
+, 'import_dbd_schema'
+, 'derive_orm_schema'
 );

@@ -78,13 +78,17 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::db::pg_store::{EdgeColumns, NodeColumns, PgStore};
+use crate::db::pg_store::{
+    CallSiteColumns, EdgeColumns, NodeColumns, PgStore, StoredCallSite, StoredSchemaEntity,
+    UnplacedRef,
+};
 use crate::graph_facts::{EdgeFact, OnMiss, TargetRef};
 
 use super::facts::{
-    Binding, DeclaredType, Evidence, FileFacts, Import, ImportOrigin, Language, Observation, Param,
-    Reason, RefKind, Reference, Relation, RelationKind, Resolution, Rung, Span, Symbol, SymbolKind,
-    Visibility,
+    Binding, CallArg, CallSite, DeclaredType, Evidence, FileFacts, FkAction, Import, ImportOrigin,
+    Language, Naming, Observation, Param, Reason, Receiver, RefKind, Reference, Relation,
+    RelationKind, Resolution, Rung, SchemaColumn, SchemaFact, SchemaIndex, SchemaKind,
+    SchemaSource, Span, Symbol, SymbolKind, Visibility,
 };
 use super::fqn::{self, Origin, Reach};
 
@@ -273,13 +277,17 @@ pub struct ImportRow {
     pub binds: BindingRow,
     pub origin: OriginRow,
     pub at: Span,
+    /// What the specifier names, as the ladder placed it — the fact that was
+    /// missing from every import this indexer has ever written (#242).
+    pub target: TargetRow,
 }
 
 impl ImportRow {
     /// Destructured EXHAUSTIVELY (R9) — see [`SymbolRow::of`].
     pub fn of(import: &Import, from: &str) -> Self {
-        let Import { path, binds, origin, at } = import;
+        let Import { path, binds, origin, at, target } = import;
         Self {
+            target: target_row_of(target),
             from: from.to_string(),
             path: path.clone(),
             binds: match binds {
@@ -311,6 +319,218 @@ pub enum OriginRow {
     External(String),
 }
 
+/// One database object's schema detail, as the store holds it (#251).
+///
+/// Identity is the encoded fqn, for the reason [`SymbolRow`] gives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaRow {
+    pub fqn: String,
+    pub kind: SchemaKind,
+    pub db_schema: String,
+    pub source: SchemaSource,
+    pub naming: Naming,
+    pub note: Option<String>,
+    pub note_md: Option<String>,
+    pub columns: Vec<SchemaColumn>,
+    pub indexes: Vec<SchemaIndex>,
+    pub refs: Vec<SchemaRefRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaRefRow {
+    pub from_column: String,
+    pub to: String,
+    pub to_column: String,
+    pub on_delete: Option<FkAction>,
+}
+
+impl SchemaRow {
+    pub fn of(fact: &SchemaFact) -> Self {
+        let SchemaFact {
+            fqn,
+            kind,
+            db_schema,
+            source,
+            naming,
+            note,
+            note_md,
+            columns,
+            indexes,
+            refs,
+        } = fact;
+        Self {
+            fqn: fqn.as_str().to_string(),
+            kind: *kind,
+            db_schema: db_schema.clone(),
+            source: *source,
+            naming: *naming,
+            note: note.clone(),
+            note_md: note_md.clone(),
+            columns: columns.clone(),
+            indexes: indexes.clone(),
+            refs: refs
+                .iter()
+                .map(|r| SchemaRefRow {
+                    from_column: r.from_column.clone(),
+                    to: r.to.as_str().to_string(),
+                    to_column: r.to_column.clone(),
+                    on_delete: r.on_delete,
+                })
+                .collect(),
+        }
+    }
+
+    /// Decode a stored object. An unknown label is an error, never a default:
+    /// the store's enums and these vocabularies are one list, and a label one
+    /// side does not know means they drifted.
+    fn from_stored(stored: StoredSchemaEntity) -> Result<Self, String> {
+        let StoredSchemaEntity {
+            fqn,
+            // The node's own column, read back with the node, not schema detail.
+            name: _,
+            kind,
+            db_schema,
+            source,
+            naming,
+            note,
+            note_md,
+            columns,
+            indexes,
+            refs,
+        } = stored;
+        let label = |what: &str, value: &str| format!("{fqn}: unknown {what} label {value:?}");
+        let refs = refs
+            .into_iter()
+            .map(|r| {
+                let on_delete = match r.on_delete.as_deref() {
+                    None => None,
+                    Some(a) => Some(FkAction::from_label(a).ok_or_else(|| label("fk_action", a))?),
+                };
+                Ok(SchemaRefRow {
+                    from_column: r.from_column,
+                    to: r.to,
+                    to_column: r.to_column,
+                    on_delete,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Self {
+            kind: SchemaKind::from_label(&kind)
+                .ok_or_else(|| label("schema_object_kind", &kind))?,
+            source: SchemaSource::from_label(&source)
+                .ok_or_else(|| label("schema_source", &source))?,
+            naming: Naming::from_label(&naming).ok_or_else(|| label("schema_naming", &naming))?,
+            fqn,
+            db_schema,
+            note,
+            note_md,
+            columns,
+            indexes,
+            refs,
+        })
+    }
+}
+
+/// One call site, as the store holds it (spec 20 §7b). The same type on the
+/// way in and out, for the reason [`SymbolRow`] gives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallSiteRow {
+    pub file_path: String,
+    pub from: String,
+    pub at: Span,
+    pub callee: String,
+    pub type_args: Vec<String>,
+    pub receiver: Receiver,
+    pub args: Vec<CallArg>,
+}
+
+impl CallSiteRow {
+    pub fn of(call: &CallSite, file_path: &str) -> Self {
+        let CallSite { from, at, callee, type_args, receiver, args } = call;
+        Self {
+            file_path: file_path.to_string(),
+            from: from.as_str().to_string(),
+            at: *at,
+            callee: callee.clone(),
+            type_args: type_args.clone(),
+            receiver: receiver.clone(),
+            args: args.clone(),
+        }
+    }
+
+    fn from_stored(stored: StoredCallSite) -> Result<Self, String> {
+        let StoredCallSite { file_path, from_fqn, at, callee, type_args, receiver, args } = stored;
+        let bad = |what: &str, v: &serde_json::Value| {
+            format!("{from_fqn}: unreadable call-site {what} {v} — not one this indexer wrote")
+        };
+        let receiver = receiver_from_prop(&receiver).ok_or_else(|| bad("receiver", &receiver))?;
+        let args = args
+            .as_array()
+            .ok_or_else(|| bad("args", &args))?
+            .iter()
+            .map(|a| call_arg_from_prop(a).ok_or_else(|| bad("argument", a)))
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok(Self {
+            at: span_from_prop(&at).ok_or_else(|| bad("span", &at))?,
+            file_path,
+            from: from_fqn,
+            callee,
+            type_args,
+            receiver,
+            args,
+        })
+    }
+}
+
+fn receiver_prop(receiver: &Receiver) -> serde_json::Value {
+    match receiver {
+        Receiver::None => serde_json::json!({ "kind": "none" }),
+        Receiver::Call(at) => serde_json::json!({ "kind": "call", "at": span_prop(*at) }),
+        Receiver::Name(name) => serde_json::json!({ "kind": "name", "name": name }),
+        Receiver::Other => serde_json::json!({ "kind": "other" }),
+    }
+}
+
+fn receiver_from_prop(value: &serde_json::Value) -> Option<Receiver> {
+    Some(match value.get("kind")?.as_str()? {
+        "none" => Receiver::None,
+        "call" => Receiver::Call(span_from_prop(value.get("at")?)?),
+        "name" => Receiver::Name(value.get("name")?.as_str()?.to_string()),
+        "other" => Receiver::Other,
+        _ => return None,
+    })
+}
+
+fn call_arg_prop(arg: &CallArg) -> serde_json::Value {
+    match arg {
+        CallArg::Str(s) => serde_json::json!({ "str": s }),
+        CallArg::Lambda { params, member, at } => serde_json::json!({
+            "lambda": { "params": params, "member": member, "at": span_prop(*at) }
+        }),
+        CallArg::Other => serde_json::json!({ "other": true }),
+    }
+}
+
+fn call_arg_from_prop(value: &serde_json::Value) -> Option<CallArg> {
+    if let Some(s) = value.get("str") {
+        return Some(CallArg::Str(s.as_str()?.to_string()));
+    }
+    if let Some(l) = value.get("lambda") {
+        let params = l
+            .get("params")?
+            .as_array()?
+            .iter()
+            .map(|p| p.as_str().map(str::to_string))
+            .collect::<Option<Vec<_>>>()?;
+        let member = match l.get("member")? {
+            serde_json::Value::Null => None,
+            m => Some(m.as_str()?.to_string()),
+        };
+        return Some(CallArg::Lambda { params, member, at: span_from_prop(l.get("at")?)? });
+    }
+    value.get("other").and_then(|o| o.as_bool()).filter(|o| *o).map(|_| CallArg::Other)
+}
+
 /// Everything one folder's rows read back as.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stored {
@@ -318,6 +538,8 @@ pub struct Stored {
     pub references: Vec<ReferenceRow>,
     pub relations: Vec<RelationRow>,
     pub imports: Vec<ImportRow>,
+    pub schema: Vec<SchemaRow>,
+    pub calls: Vec<CallSiteRow>,
 }
 
 /// The `sensei.nodes` write a [`SymbolRow`] becomes.
@@ -516,9 +738,20 @@ enum Occurrence {
     Use { kind: RefKind, at: Span, outcome: Outcome },
     /// A structural fact (spec §3.3).
     Structure { kind: RelationKind, at: Span, outcome: Outcome },
-    /// An import (spec §2). It brings a name into scope rather than using one,
-    /// so there is no target for the ladder to have proven or missed.
-    Brought { binds: BindingRow, origin: OriginRow, at: Span },
+    /// An import (spec §2).
+    ///
+    /// It carries an [`Outcome`] for the same reason a use site does, and it is
+    /// the fact shape that did not. Measured 2026-10-06, before this: 251,270 of
+    /// 258,623 `imports` edges carried NEITHER `resolved_via` nor
+    /// `unresolved_reason`, against 2 of 1.69M for `references` — because
+    /// `edge_verdict` reduces over `props.occurrences[*].rung|reason` and a
+    /// `brought` occurrence wrote neither key (#242).
+    ///
+    /// The SPECIFIER rides here too, and did not before. It used to be read back
+    /// off the edge's `target_name` column, which only exists while the edge is
+    /// unresolved — so a placed import would have lost the one string the
+    /// source actually wrote.
+    Brought { path: String, binds: BindingRow, origin: OriginRow, at: Span, outcome: Outcome },
 }
 
 /// What the ladder concluded at one occurrence.
@@ -577,11 +810,26 @@ fn edge_rows_of(facts: &FileFacts, file: &str) -> Vec<EdgeRow> {
 
     for import in &facts.imports {
         let row = ImportRow::of(import, file);
-        let ImportRow { from, path, binds, origin, at } = row;
-        grouped
-            .entry((from, "imports", TargetKey::Named(path)))
-            .or_default()
-            .push(Occurrence::Brought { binds, origin, at });
+        let ImportRow { from, path, binds, origin, at, target } = row;
+        // Keyed on what the specifier NAMES and no longer on the specifier
+        // itself. Two consequences, both wanted: a placed import points at the
+        // identity the declaration minted, like every other fact; and the
+        // `RefKind::Imports` reference `common::import_references` emits for the
+        // same statement now lands on the SAME key instead of a second row.
+        //
+        // Measured before this: `db/pg_store/playbook/mod.rs` had seven
+        // `imports` rows for six `use` lines — six named specifiers plus a
+        // seventh, placed, for `use super::*`, which `place_entered` had already
+        // reduced to the module. One statement, two rows, and any count over
+        // `kind = 'imports'` saw both.
+        let (key, outcome) = key_and_outcome_of(target);
+        grouped.entry((from, "imports", key)).or_default().push(Occurrence::Brought {
+            path,
+            binds,
+            origin,
+            at,
+            outcome,
+        });
     }
 
     grouped
@@ -591,7 +839,17 @@ fn edge_rows_of(facts: &FileFacts, file: &str) -> Vec<EdgeRow> {
 }
 
 fn target_key_and_outcome(target: &Resolution) -> (TargetKey, Outcome) {
-    match target_row_of(target) {
+    key_and_outcome_of(target_row_of(target))
+}
+
+/// The edge key and the occurrence verdict ONE placement produces.
+///
+/// Split out of [`target_key_and_outcome`] so an import — which already holds a
+/// [`TargetRow`] by the time it is grouped — reaches the same two answers
+/// through the same code. A second copy here is how a `brought` occurrence and a
+/// `use` occurrence come to disagree about what "placed" means.
+fn key_and_outcome_of(target: TargetRow) -> (TargetKey, Outcome) {
+    match target {
         TargetRow::Resolved { fqn, via } => (TargetKey::Proven(fqn), Outcome::Proven { via }),
         TargetRow::Unresolved { reason, evidence } => {
             (TargetKey::Named(evidence.name.clone()), Outcome::Missed { reason, evidence })
@@ -825,8 +1083,13 @@ fn occurrence_prop(occurrence: &Occurrence) -> serde_json::Value {
             }),
             outcome,
         ),
-        Occurrence::Brought { binds, origin, at } => serde_json::json!({
+        Occurrence::Brought { path, binds, origin, at, outcome } => with_outcome(
+            serde_json::json!({
             "fact": "brought",
+            // The specifier VERBATIM. On an unresolved import this duplicates
+            // the edge's `target_name`; on a placed one it is the only copy
+            // left, because that column is null the moment `target_id` is set.
+            "path": path,
             "binds": match binds {
                 BindingRow::Name(name) => serde_json::json!({ "binds": "name", "name": name }),
                 BindingRow::MemberOf { local, member } => {
@@ -841,7 +1104,9 @@ fn occurrence_prop(occurrence: &Occurrence) -> serde_json::Value {
                 }
             },
             "at": span_prop(*at),
-        }),
+            }),
+            outcome,
+        ),
     }
 }
 
@@ -911,9 +1176,11 @@ fn occurrence_from_prop(value: &serde_json::Value) -> Option<Occurrence> {
             outcome: outcome_from_prop(value)?,
         }),
         "brought" => Some(Occurrence::Brought {
+            path: value.get("path")?.as_str()?.to_string(),
             binds: binds_from_prop(value.get("binds")?)?,
             origin: origin_from_prop(value.get("origin")?)?,
             at: span_from_prop(value.get("at")?)?,
+            outcome: outcome_from_prop(value)?,
         }),
         _ => None,
     }
@@ -982,6 +1249,19 @@ pub struct Written {
     /// re-derived from the facts, which is a second copy of `edge_rows_of` and
     /// its target resolution — two producers of one answer (R7).
     pub edge_rows: BTreeSet<uuid::Uuid>,
+    /// What [`write_schema`] did with this file's schema facts.
+    pub schema: SchemaWritten,
+    /// Call sites written for this file (spec 20 §7b).
+    pub calls: usize,
+}
+
+/// What one schema write did (#251).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaWritten {
+    pub objects: usize,
+    /// Foreign keys whose referenced object the store does not describe. See
+    /// [`UnplacedRef`].
+    pub unplaced_refs: Vec<UnplacedRef>,
 }
 
 /// One identity that more than one declaration in a single file minted.
@@ -1086,13 +1366,93 @@ pub async fn write(
         store.merge_edge_occurrences(&edge_id, file_path, &occurrences_prop(&row)).await?;
         edges += 1;
     }
+    let schema =
+        write_schema_with(store, folder_id, &mut known, language, &facts.schema, &[]).await?;
+    // ALWAYS replaced, even with nothing: a re-index that found no call sites
+    // must clear the ones the last pass wrote.
+    let mut calls = Vec::with_capacity(facts.calls.len());
+    for call in &facts.calls {
+        calls.push(CallSiteColumns {
+            from_node_id: node_for(store, folder_id, &mut known, call.from.as_str(), language)
+                .await?,
+            at: span_prop(call.at),
+            callee: call.callee.clone(),
+            type_args: call.type_args.clone(),
+            receiver: receiver_prop(&call.receiver),
+            args: serde_json::Value::Array(call.args.iter().map(call_arg_prop).collect()),
+        });
+    }
+    store.replace_call_sites(folder_id, file_path, &calls).await?;
     Ok(Written {
         symbols: facts.symbols.len(),
         edges,
         collisions,
         edge_collisions,
         edge_rows: merged.into_keys().collect(),
+        schema,
+        calls: calls.len(),
     })
+}
+
+/// What one batch of schema detail speaks for: a SOURCE (dbd, an ORM) and the
+/// PACKAGE its objects are minted under. A batch replaces exactly this scope in
+/// its folder — another design's objects, or another ORM's, are not its to drop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchScope {
+    pub source: SchemaSource,
+    pub package: String,
+}
+
+/// Persist schema detail that no file walk produced — the dbd importer's, read
+/// off a whole design rather than one file (spec 20, "Routing").
+///
+/// A batch is the WHOLE of what its scope describes: an object of the same
+/// source and package that the batch no longer names is retired.
+///
+/// The one writer for schema detail: [`write`] routes a file's
+/// `FileFacts.schema` through the same body, so there is one rule for how
+/// detail lands whichever producer found it.
+pub async fn write_schema(
+    store: &PgStore,
+    folder_id: &uuid::Uuid,
+    scope: &BatchScope,
+    facts: &[SchemaFact],
+) -> Result<SchemaWritten, String> {
+    let mut known = HashMap::new();
+    let mut retire = Vec::new();
+    for (node, fqn) in store.schema_objects_of_source(folder_id, scope.source.as_label()).await? {
+        // An identity this store cannot read is not one this batch may judge;
+        // it is an error rather than a skip, since it means storage drifted.
+        let parsed = fqn::parse(&fqn).map_err(|e| format!("schema store: {fqn}: {e:?}"))?;
+        let named = facts.iter().any(|f| f.fqn.as_str() == fqn);
+        if parsed.package == scope.package && !named {
+            retire.push(node);
+        }
+    }
+    write_schema_with(store, folder_id, &mut known, Language::Sql.as_str(), facts, &retire).await
+}
+
+/// Nodes first, then the detail. A fact whose object has no node yet gets one
+/// through [`node_for`] — the importer can see an object the walk did not — and
+/// an upsert by fqn never erases a span the walk recorded. The detail itself is
+/// one transaction (see `PgStore::replace_schema_detail`).
+async fn write_schema_with(
+    store: &PgStore,
+    folder_id: &uuid::Uuid,
+    known: &mut HashMap<String, uuid::Uuid>,
+    language: &str,
+    facts: &[SchemaFact],
+    retire: &[uuid::Uuid],
+) -> Result<SchemaWritten, String> {
+    if facts.is_empty() && retire.is_empty() {
+        return Ok(SchemaWritten { objects: 0, unplaced_refs: Vec::new() });
+    }
+    let mut objects = Vec::with_capacity(facts.len());
+    for fact in facts {
+        objects.push((node_for(store, folder_id, known, fact.fqn.as_str(), language).await?, fact));
+    }
+    let unplaced_refs = store.replace_schema_detail(folder_id, &objects, retire).await?;
+    Ok(SchemaWritten { objects: objects.len(), unplaced_refs })
 }
 
 /// The parent each declaration hangs off in `nodes.parent_id`: the TYPE it is a
@@ -1301,18 +1661,49 @@ fn target_ref_of(target: &TargetKey) -> Result<TargetRef, String> {
 /// filled in a blank would make the round-trip test pass on data the database
 /// does not hold, which is the one thing it exists to catch (R4).
 pub async fn read_back(store: &PgStore, folder_id: &uuid::Uuid) -> Result<Stored, String> {
-    let symbols = store
-        .definition_nodes(folder_id)
+    let symbols = symbols_of(store, folder_id).await?;
+    let schema = store
+        .schema_detail(folder_id)
         .await?
-        .iter()
-        .map(symbol_row_from_columns)
+        .into_iter()
+        .map(SchemaRow::from_stored)
         .collect::<Result<Vec<_>, String>>()?;
-    let mut stored =
-        Stored { symbols, references: Vec::new(), relations: Vec::new(), imports: Vec::new() };
+    let mut stored = Stored {
+        symbols,
+        references: Vec::new(),
+        relations: Vec::new(),
+        imports: Vec::new(),
+        schema,
+        calls: call_sites_of(store, folder_id).await?,
+    };
     for edge in store.occurrence_edges(folder_id).await? {
         read_edge_into(&edge, &mut stored)?;
     }
     Ok(stored)
+}
+
+/// One folder's declarations, decoded — the read `read_back` and the ORM
+/// derivation share, so there is one decoder.
+pub async fn symbols_of(store: &PgStore, folder_id: &uuid::Uuid) -> Result<Vec<SymbolRow>, String> {
+    store
+        .definition_nodes(folder_id)
+        .await?
+        .iter()
+        .map(symbol_row_from_columns)
+        .collect::<Result<Vec<_>, String>>()
+}
+
+/// One folder's call sites, decoded (spec 20 §7b).
+pub async fn call_sites_of(
+    store: &PgStore,
+    folder_id: &uuid::Uuid,
+) -> Result<Vec<CallSiteRow>, String> {
+    store
+        .call_sites_of(folder_id)
+        .await?
+        .into_iter()
+        .map(CallSiteRow::from_stored)
+        .collect::<Result<Vec<_>, String>>()
 }
 
 /// Every fact one edge row records.
@@ -1392,21 +1783,24 @@ fn read_edge_into(edge: &EdgeColumns, stored: &mut Stored) -> Result<(), String>
                 };
                 stored.relations.push(RelationRow { kind, child: source_fqn.clone(), parent, at });
             }
-            Occurrence::Brought { binds, origin, at } => {
+            Occurrence::Brought { path, binds, origin, at, outcome } => {
                 filed_as(&[&"an import"], column == "imports")?;
-                // The specifier IS the target name — an import names a path, and
-                // placing that path is the ladder's job, done per NAME rather
-                // than per specifier. Minting an identity for it here would be a
-                // second, weaker resolver (R7).
-                let path = target_name
-                    .clone()
-                    .ok_or_else(|| format!("{source_fqn}: an import row carries no specifier"))?;
+                // The specifier comes off the OCCURRENCE and no longer off
+                // `target_name`. A placed import has no `target_name` — the
+                // column is null the moment `target_id` is set — so reading it
+                // from there would have turned every import the ladder placed
+                // into an error the moment imports gained a verdict (#242).
+                let target = match outcome {
+                    Outcome::Proven { via } => TargetRow::Resolved { fqn: proven("import")?, via },
+                    Outcome::Missed { reason, evidence } => missed("import", reason, evidence)?,
+                };
                 stored.imports.push(ImportRow {
                     from: source_fqn.clone(),
                     path,
                     binds,
                     origin,
                     at,
+                    target,
                 });
             }
         }
@@ -1609,7 +2003,8 @@ mod tests {
     use crate::db::pg_store::PgStore;
     use crate::db::pg_store::tests::create_test_folder;
     use crate::indexer::facts::{
-        DeclaredType, FileFacts, Language, Param, Reason, RelationKind, Rung, Symbol,
+        DeclaredType, FileFacts, Language, Param, Reason, RelationKind, Rung, SchemaFact,
+        SchemaSource, Symbol,
     };
     use crate::indexer::lang::Source;
     use crate::indexer::lang::rust;
@@ -2105,6 +2500,302 @@ pub fn widest(a: u32) -> u32 {
         );
     }
 
+    /// A C# file whose call sites carry literals, type arguments, lambdas and
+    /// both kinds of receiver — walked by the real C# walker.
+    fn calls_walked(text: &str) -> FileFacts {
+        let source = Source { package: "Shop", module: "", path: "src/ShopContext.cs", text };
+        crate::indexer::lang::adapter_for(Language::CSharp)
+            .read(&source, &crate::indexer::lang::TypeHomes::unknown())
+            .expect("the fixture parses")
+    }
+
+    const SHOP_CONTEXT: &str = r#"namespace Shop;
+public class ShopContext : DbContext {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+        modelBuilder.HasDefaultSchema("sales");
+        modelBuilder.Entity<Order>().ToTable("orders", "sales");
+        modelBuilder.Entity<Customer>(b => { b.ToTable("customers"); b.HasKey(c => c.Code); });
+    }
+}
+"#;
+
+    /// **EVERY CALL SITE SURVIVES THE ROUND TRIP (spec 20 §7b).** The EF Core
+    /// derivation reads these back out of Postgres, so a field lost here is a
+    /// table name or a key the derivation never sees.
+    ///
+    /// Mutations that must break this: skip the call-site write; drop
+    /// `type_args` or a lambda's `member` from the row; read `receiver` back as
+    /// `Other`.
+    #[tokio::test]
+    async fn every_call_site_survives_the_round_trip() {
+        let facts = calls_walked(SHOP_CONTEXT);
+        assert!(facts.calls.len() >= 6, "the fixture must exercise the shapes: {:#?}", facts.calls);
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "calls").await;
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
+
+        let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
+        let expected: Vec<persist::CallSiteRow> =
+            facts.calls.iter().map(|c| persist::CallSiteRow::of(c, &facts.path)).collect();
+        same_rows(stored.calls, expected, "every call site");
+    }
+
+    /// A re-index REPLACES a file's call sites: a `.ToTable` deleted from the
+    /// source stops naming the table.
+    ///
+    /// Mutation that must break this: insert without clearing the file's rows.
+    #[tokio::test]
+    async fn re_indexing_replaces_a_files_call_sites() {
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "calls_replace").await;
+        persisted(&store, &folder, &calls_walked(SHOP_CONTEXT)).await.expect("the facts persist");
+
+        let fewer = calls_walked(
+            &SHOP_CONTEXT
+                .replace(r#"modelBuilder.Entity<Order>().ToTable("orders", "sales");"#, ""),
+        );
+        persist::write(&store, &folder, &fewer).await.expect("the re-index persists");
+        let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
+        let expected: Vec<persist::CallSiteRow> =
+            fewer.calls.iter().map(|c| persist::CallSiteRow::of(c, &fewer.path)).collect();
+        same_rows(stored.calls, expected, "the call sites after a re-index");
+    }
+
+    /// DDL walked by the real SQL walker, plus the schema detail the dbd importer
+    /// attaches to the same tables, keyed by the fqns the walk minted.
+    fn schema_walked() -> FileFacts {
+        use crate::indexer::facts::{
+            FkAction, Naming, SchemaColumn, SchemaFact, SchemaIndex, SchemaKind, SchemaRef,
+            SchemaSource,
+        };
+        let text = "CREATE TABLE app.customers (id uuid PRIMARY KEY, email text NOT NULL UNIQUE);\n\
+                    CREATE TABLE app.orders (id uuid PRIMARY KEY, customer_id uuid NOT NULL \
+                    REFERENCES app.customers(id) ON DELETE CASCADE, placed_at timestamptz);";
+        let source =
+            Source { package: "pkg", module: "database/app.ddl", path: "database/app.ddl", text };
+        let mut facts = crate::indexer::lang::sql::facts::read(
+            dbd_core::parser::Dialect::PostgreSql,
+            &source,
+            &crate::indexer::lang::TypeHomes::unknown(),
+        )
+        .expect("the fixture parses");
+        let fqn_of = |name: &str| {
+            facts.symbols.iter().find(|s| s.name == name).map(|s| s.fqn.clone()).expect(name)
+        };
+        let (customers, orders) = (fqn_of("customers"), fqn_of("orders"));
+        let col = |name: &str, ty: &str, pk: bool, nn: bool| SchemaColumn {
+            name: name.into(),
+            sql_type: ty.into(),
+            primary_key: pk,
+            not_null: nn,
+            unique_key: false,
+            foreign_key: false,
+            enum_typed: false,
+            default_expr: None,
+            note: None,
+        };
+        facts.schema = vec![
+            SchemaFact {
+                fqn: customers.clone(),
+                kind: SchemaKind::Table,
+                db_schema: "app".into(),
+                source: SchemaSource::Dbd,
+                naming: Naming::Stated,
+                note: Some("who buys".into()),
+                note_md: None,
+                columns: vec![
+                    col("id", "uuid", true, true),
+                    SchemaColumn { unique_key: true, ..col("email", "text", false, true) },
+                ],
+                indexes: vec![],
+                refs: vec![],
+            },
+            SchemaFact {
+                fqn: orders,
+                kind: SchemaKind::Table,
+                db_schema: "app".into(),
+                source: SchemaSource::Dbd,
+                naming: Naming::Stated,
+                note: None,
+                note_md: Some("**orders**".into()),
+                columns: vec![
+                    col("id", "uuid", true, true),
+                    SchemaColumn { foreign_key: true, ..col("customer_id", "uuid", false, true) },
+                    SchemaColumn {
+                        default_expr: Some("now()".into()),
+                        ..col("placed_at", "timestamptz", false, false)
+                    },
+                ],
+                indexes: vec![SchemaIndex {
+                    name: Some("orders_customer_idx".into()),
+                    definition: "(customer_id, placed_at DESC)".into(),
+                    unique: false,
+                }],
+                refs: vec![SchemaRef {
+                    from_column: "customer_id".into(),
+                    to: customers,
+                    to_column: "id".into(),
+                    on_delete: Some(FkAction::Cascade),
+                }],
+            },
+        ];
+        facts
+    }
+
+    /// **SCHEMA DETAIL REACHES THE SCHEMA STORE, WHOLE (#251).**
+    ///
+    /// Before the routing, `persist::write` had no slot for schema facts: an
+    /// extractor's columns were dropped and only nodes and edges landed. Every
+    /// field of every fact — columns in order, indexes, column-level foreign keys
+    /// — is read back out of Postgres and compared to what went in, and NO column
+    /// or index becomes a node.
+    ///
+    /// Mutations that must break this: skip the schema write; drop a column field
+    /// from the writer or the reader; write a ref to the wrong target.
+    #[tokio::test]
+    async fn every_schema_fact_survives_the_round_trip() {
+        let facts = schema_walked();
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "schema").await;
+
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
+        let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
+
+        let expected: Vec<persist::SchemaRow> =
+            facts.schema.iter().map(persist::SchemaRow::of).collect();
+        assert_eq!(expected.len(), 2, "the fixture must exercise two objects");
+        same_rows(stored.schema.clone(), expected, "every schema fact");
+        assert_eq!(stored.symbols.len(), facts.symbols.len(), "no column or index became a node");
+    }
+
+    /// **A RE-INDEX REPLACES AN OBJECT'S DETAIL (#251).** A column dropped from
+    /// the DDL disappears; it does not linger beside the new set.
+    ///
+    /// Mutation that must break this: insert columns without deleting the old.
+    #[tokio::test]
+    async fn re_indexing_replaces_an_objects_detail() {
+        let mut facts = schema_walked();
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "schema_replace").await;
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
+
+        // `placed_at` is dropped from orders, and its index with it.
+        let orders = facts.schema.iter_mut().find(|f| f.fqn.as_str().contains("orders")).unwrap();
+        orders.columns.retain(|c| c.name != "placed_at");
+        orders.indexes.clear();
+        persist::write(&store, &folder, &facts).await.expect("the re-index persists");
+
+        let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
+        let expected: Vec<persist::SchemaRow> =
+            facts.schema.iter().map(persist::SchemaRow::of).collect();
+        same_rows(stored.schema, expected, "the detail after a re-index");
+    }
+
+    /// **A FOREIGN KEY TO AN OBJECT THE STORE DOES NOT DESCRIBE IS REPORTED,
+    /// NOT DROPPED (#251).** `schema_refs.to_node_id` needs a `schema_entities`
+    /// row; a key to a table outside the batch has nothing to point at, and the
+    /// writer says so instead of losing the line in silence. A key to an object
+    /// LATER in the same batch is placed: refs go after every entity.
+    ///
+    /// Mutations that must break this: write refs inside the per-object loop
+    /// (orders then precedes customers' entity row); ignore the insert's
+    /// `RETURNING`.
+    #[tokio::test]
+    async fn a_ref_to_an_undescribed_object_is_reported_not_dropped() {
+        let mut facts = schema_walked();
+        // orders first, so its key to customers precedes customers' entity row.
+        facts.schema.reverse();
+        let elsewhere = crate::indexer::facts::SchemaRef {
+            from_column: "customer_id".into(),
+            to: facts.schema[1].fqn.clone(),
+            to_column: "id".into(),
+            on_delete: None,
+        };
+        // customers' detail is NOT written: only orders goes to the store.
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "schema_unplaced").await;
+        persisted(&store, &folder, &FileFacts { schema: Vec::new(), ..facts.clone() })
+            .await
+            .expect("the nodes persist");
+        let scope = persist::BatchScope { source: SchemaSource::Dbd, package: "pkg".into() };
+        let only_orders = persist::write_schema(&store, &folder, &scope, &facts.schema[..1])
+            .await
+            .expect("the detail persists");
+        assert_eq!(only_orders.objects, 1);
+        assert_eq!(
+            only_orders.unplaced_refs,
+            vec![crate::db::pg_store::UnplacedRef {
+                from: facts.schema[0].fqn.as_str().to_string(),
+                from_column: elsewhere.from_column.clone(),
+                to: elsewhere.to.as_str().to_string(),
+            }],
+            "the key to an undescribed customers is named"
+        );
+
+        let both = persist::write_schema(&store, &folder, &scope, &facts.schema)
+            .await
+            .expect("both persist");
+        assert_eq!(both.unplaced_refs, vec![], "a key to a later object of one batch is placed");
+        let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
+        let expected: Vec<persist::SchemaRow> =
+            facts.schema.iter().map(persist::SchemaRow::of).collect();
+        same_rows(stored.schema, expected, "the detail after both writes");
+    }
+
+    /// **A BATCH REPLACES ITS SCOPE (#251).** An object the source no longer
+    /// describes leaves the store: a table dropped from a design must not stay on
+    /// the ER screen. The scope is the batch's SOURCE and PACKAGE in the folder,
+    /// so another design's objects — or another ORM's — are left alone.
+    ///
+    /// Mutations that must break this: skip the sweep; sweep without the
+    /// package or source filter.
+    #[tokio::test]
+    async fn a_batch_removes_what_its_source_no_longer_describes() {
+        let facts = schema_walked();
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "schema_sweep").await;
+        persisted(&store, &folder, &FileFacts { schema: Vec::new(), ..facts.clone() })
+            .await
+            .expect("the nodes persist");
+        let scope = persist::BatchScope { source: SchemaSource::Dbd, package: "pkg".into() };
+        persist::write_schema(&store, &folder, &scope, &facts.schema).await.expect("both persist");
+
+        // Two bystanders in the same folder, one per axis of the scope: the SAME
+        // source in another package (a second design), and ANOTHER source in
+        // the same package. Each is protected by exactly one filter.
+        let bystander = |package: &str, name: &str, source: SchemaSource| {
+            let mut f = facts.schema[0].clone();
+            f.fqn =
+                crate::indexer::lang::sql::facts::object_identity(package, "app", name).unwrap();
+            f.source = source;
+            f.refs.clear();
+            f
+        };
+        let other_design = bystander("other", "accounts", SchemaSource::Dbd);
+        let same_package_ef = bystander("pkg", "Invoices", SchemaSource::EfCore);
+        for (f, source, package) in [
+            (&other_design, SchemaSource::Dbd, "other"),
+            (&same_package_ef, SchemaSource::EfCore, "pkg"),
+        ] {
+            let scope = persist::BatchScope { source, package: package.into() };
+            persist::write_schema(&store, &folder, &scope, std::slice::from_ref(f)).await.unwrap();
+        }
+
+        // `orders` leaves the design (its key to customers with it).
+        let kept: Vec<SchemaFact> =
+            facts.schema.iter().filter(|f| !f.fqn.as_str().contains("orders")).cloned().collect();
+        persist::write_schema(&store, &folder, &scope, &kept)
+            .await
+            .expect("the re-import persists");
+
+        let stored = persist::read_back(&store, &folder).await.expect("the rows read back");
+        let mut expected: Vec<persist::SchemaRow> =
+            kept.iter().map(persist::SchemaRow::of).collect();
+        expected.push(persist::SchemaRow::of(&other_design));
+        expected.push(persist::SchemaRow::of(&same_package_ef));
+        same_rows(stored.schema, expected, "the store after a design dropped a table");
+    }
+
     /// An import is what decides externality (spec §2), so losing one loses the
     /// evidence the ladder's answers rest on.
     #[tokio::test]
@@ -2119,10 +2810,72 @@ pub fn widest(a: u32) -> u32 {
         let expected: Vec<persist::ImportRow> = facts
             .imports
             .iter()
-            .map(|import| persist::ImportRow::of(import, "rust·senseid·gadget·mod"))
+            .map(|import| persist::ImportRow::of(import, "rust·senseid··gadget·mod"))
             .collect();
         assert!(!expected.is_empty(), "the fixture must exercise some imports");
         same_rows(stored.imports.clone(), expected, "every import the walk saw");
+    }
+
+    /// **EVERY IMPORT EDGE CARRIES A VERDICT IN A COLUMN (#242).**
+    ///
+    /// The property the issue states, asserted where the issue measured it:
+    /// `sensei.edges`. `sensei.edge_verdict` reduces over
+    /// `props.occurrences[*].rung|reason`, and a `brought` occurrence wrote
+    /// NEITHER key — so an import edge came out with `resolved_via` and
+    /// `unresolved_reason` both null. Measured 2026-10-06 over the whole corpus:
+    /// 251,270 of 258,623 import edges, against 2 of 1.69M `references`.
+    ///
+    /// This is a column test and not a round trip on purpose. The round trip
+    /// above reads the props back, so it would pass with the columns still
+    /// empty — which is exactly the state that held for months.
+    ///
+    /// The fixture imports `std::collections::BTreeMap`, which places onto
+    /// library surface, so the assertion is on the RUNG and not merely on
+    /// "something non-null": a verdict that said `unplaced` would satisfy a
+    /// null check and still be the walk's own un-run marker.
+    ///
+    /// Mutation that must break this test: drop `outcome` from the `brought`
+    /// occurrence prop.
+    #[tokio::test]
+    async fn every_import_edge_carries_a_verdict_column() {
+        let first_party: BTreeSet<String> = ["senseid".to_string()].into_iter().collect();
+        let scanned = BTreeSet::new();
+        let world = World {
+            first_party: &first_party,
+            first_party_members: &BTreeSet::new(),
+            declared_members: &BTreeSet::new(),
+            returns: &std::collections::BTreeMap::new(),
+            scanned: &scanned,
+        };
+        let facts = resolve(walked(), &rust::GRAMMAR, &world);
+        let store = PgStore::connect_test().await.expect("the test database must be reachable");
+        let folder = a_folder(&store, "import_verdicts").await;
+        persisted(&store, &folder, &facts).await.expect("the facts persist");
+
+        let verdicts: Vec<(Option<String>, Option<String>, Option<String>)> =
+            sqlx_core::query_as::query_as(
+                "SELECT e.resolved_via, e.unresolved_reason, t.fqn
+                   FROM sensei.edges e
+                   LEFT JOIN sensei.nodes t ON t.id = e.target_id
+                  WHERE e.folder_id = $1 AND e.kind = 'imports'::sensei.edge_kind
+                  ORDER BY 1, 2",
+            )
+            .bind(folder)
+            .fetch_all(store.pool())
+            .await
+            .expect("the import edges read back");
+
+        assert!(!verdicts.is_empty(), "the fixture must write some import edges");
+        assert_eq!(
+            verdicts,
+            vec![(
+                Some("fully_qualified_external".to_string()),
+                None,
+                Some("lib\u{b7}std\u{b7}collections::BTreeMap".to_string())
+            )],
+            "an import of a package this scan never opens is PLACED onto library surface, \
+             and the column says by which rung"
+        );
     }
 
     /// A2, carried to the last step. The walk counts every use site; this counts
@@ -2427,7 +3180,7 @@ pub fn widest(a: u32) -> u32 {
         use std::collections::{BTreeMap, BTreeSet};
 
         let mut sites: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        for read in crate::indexer::acceptance::read_the_corpus() {
+        for read in crate::indexer::quality::corpus::read_the_corpus() {
             if read.facts.language != Language::TypeScript {
                 continue;
             }
@@ -3068,7 +3821,7 @@ pub fn widest(a: u32) -> u32 {
         let free = "rust·senseid·gadget·widest·item";
         assert_eq!(
             containment.get(free).map(Option::as_deref),
-            Some(Some("rust·senseid·gadget·mod")),
+            Some(Some("rust·senseid··gadget·mod")),
             "{free} is declared at file scope, so its parent is the FILE and never a type"
         );
     }

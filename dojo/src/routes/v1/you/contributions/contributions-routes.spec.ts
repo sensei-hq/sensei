@@ -20,7 +20,11 @@ const mocks = vi.hoisted(() => ({
 	adoptDownstream: vi.fn()
 }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}) }));
+// The service role vs the caller's own JWT — which client each store call got.
+vi.mock('$lib/server/dojo-supabase', () => ({
+	dojoDb: () => ({ client: 'service' }),
+	userDb: (token: string) => ({ client: 'user', token })
+}));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveCaller: mocks.resolveCaller,
 	apiError: (status: number, message: string) =>
@@ -50,7 +54,7 @@ function ev(body?: unknown) {
 }
 
 beforeEach(() => {
-	mocks.resolveCaller.mockClear().mockResolvedValue({ userId: 'u1', db: {} });
+	mocks.resolveCaller.mockClear().mockResolvedValue({ userId: 'u1', db: { client: 'service' }, accessToken: 'jwt-A' });
 	mocks.userMembershipIds.mockClear().mockResolvedValue(['m1']);
 	mocks.listUserContributions.mockClear().mockResolvedValue([]);
 	mocks.listUserDownstream.mockClear().mockResolvedValue([]);
@@ -86,5 +90,26 @@ describe('POST /v1/you/contributions/adopt', () => {
 	it('maps an AdminError(403 no membership) → 403', async () => {
 		mocks.adoptDownstream.mockRejectedValueOnce(new AdminError(403, 'no membership'));
 		expect((await adoptRoute.POST(ev({ artifactId: 'a' }))).status).toBe(403);
+	});
+});
+
+// A person's contributions are read — and adopted — with THEIR JWT, so the
+// downstream_inbox, artifacts and tenants policies decide (#236).
+describe('contributions run as the signed-in person (#236)', () => {
+	const USER = { client: 'user', token: 'jwt-A' };
+	it('GET and adopt use the caller\'s JWT for every read and write', async () => {
+		await getRoute.GET(ev());
+		await adoptRoute.POST(ev({ artifactId: 'art-1' }));
+		expect(mocks.listUserContributions.mock.calls[0][0]).toEqual(USER);
+		expect(mocks.listUserDownstream.mock.calls[0][0]).toEqual(USER);
+		for (const call of mocks.userMembershipIds.mock.calls) expect(call[0]).toEqual(USER);
+		expect(mocks.adoptDownstream.mock.calls[0][0]).toEqual(USER);
+	});
+	it('refuses a caller with no session rather than acting as the service role', async () => {
+		mocks.resolveCaller.mockResolvedValue({ userId: 'u1', db: { client: 'service' } });
+		expect((await getRoute.GET(ev())).status).toBe(401);
+		expect((await adoptRoute.POST(ev({ artifactId: 'art-1' }))).status).toBe(401);
+		expect(mocks.listUserContributions).not.toHaveBeenCalled();
+		expect(mocks.adoptDownstream).not.toHaveBeenCalled();
 	});
 });

@@ -18,7 +18,8 @@ create table if not exists dojo.shared_rules (
 , published_by  text        not null
 , published_at  timestamptz not null
 , updated_at    timestamptz not null default now()
-, constraint shared_rules_ns_content unique (namespace_id, content_hash)
+, tenant_id     uuid        references dojo.tenants(id) on delete cascade
+, constraint shared_rules_tenant_ns_content unique (tenant_id, namespace_id, content_hash)
 );
 
 create index if not exists shared_rules_seq_idx on dojo.shared_rules(seq);
@@ -29,17 +30,12 @@ rule (no memory graph). seq is a monotonic cursor advanced on every insert,
 republish, and tombstone (the store sets seq = nextval on every write — bigserial
 alone would only fire on insert). Self-contained: no FK to projects/folders/sessions.';
 
--- RLS deny-by-default: server-only table (the dōjō Worker uses service_role, which
--- bypasses RLS; no client authenticated/anon grant). Locks out any direct PostgREST
--- access while service_role keeps full access; clears the Supabase rls_disabled advisor.
+-- RLS: database/policies/dojo/shared_rules.sql — it calls functions, so it is
+-- applied after them (database/policies/README.md). Members read their tenant's
+-- rules; maintainers and above write them.
 alter table dojo.shared_rules enable row level security;
 
--- No client access: authenticated/anon are denied all rows + writes; the dōjō Worker
--- reads/writes as service_role, which bypasses RLS. Explicit deny-all so RLS has a
--- policy (clears the rls_enabled_no_policy advisor). Idempotent.
-drop policy if exists shared_rules_service_only on dojo.shared_rules;
-create policy shared_rules_service_only on dojo.shared_rules
-    for all to authenticated, anon
-    using (false) with check (false);
 comment on column shared_rules.seq
      is '`::regclass` is not decoration. Postgres NORMALISES a sequence default to nextval(''...''::regclass) in the catalog, so a design written without the cast never matches what the database reports: `dbd diff` reports a difference forever and `reconcile` re-applies the same ALTER on every run without converging. That also makes `dbd diff --exit-code` unusable as a CI gate, which is what surfaced it.';
+comment on column shared_rules.tenant_id
+     is 'The tenant that OWNS the rule (decision 2026-10-12, #236). Members read their tenant''s rules; maintainers and above write them. NULL only for a rule whose owner the backfill could not prove (no publish audit event) — visible to no one until a maintainer re-publishes it. Becomes NOT NULL once no such row remains.';

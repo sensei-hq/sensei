@@ -12,6 +12,7 @@
 // whole batch — would let one unmappable repository block a machine's entire
 // history indefinitely.
 import type { RequestHandler } from './$types';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { AdminError } from '$lib/server/admin-data';
 import { ingestMetrics, type MetricInput } from '$lib/server/metrics-ingest';
@@ -30,7 +31,7 @@ const MAX_BYTES = 2 * 1024 * 1024;
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, db } = await resolveCaller(request, locals);
+		const caller = await resolveCaller(request, locals);
 		// Before the parse, so an oversized body is refused rather than absorbed.
 		const declared = Number(request.headers.get('content-length') ?? '0');
 		if (Number.isFinite(declared) && declared > MAX_BYTES) {
@@ -44,7 +45,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		if (rows.length > MAX_ROWS) {
 			return apiError(413, `at most ${MAX_ROWS} metrics per request, got ${rows.length}`);
 		}
-		return Response.json(await ingestMetrics(db, userId, rows as MetricInput[]));
+		return Response.json(await ingestMetrics(callerDb(caller), rows as MetricInput[]));
 	} catch (e) {
 		if (e instanceof Response) return e;
 		if (e instanceof AdminError) return apiError(e.status, e.message);

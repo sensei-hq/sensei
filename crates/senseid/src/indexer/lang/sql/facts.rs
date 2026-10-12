@@ -180,6 +180,8 @@ pub fn read(
         // search path, and a `search_path` is a resolution setting rather than
         // a statement bringing one name into scope.
         imports: Vec::new(),
+        schema: Vec::new(),
+        calls: Vec::new(),
     })
 }
 
@@ -195,6 +197,19 @@ struct Walk<'a> {
     references: Vec<Reference>,
     relations: Vec<Relation>,
     file: Fqn,
+}
+
+/// The identity of a database object: the schema is the module segment, the
+/// object the item. The ONE rule for it — the dbd importer names the objects it
+/// describes through this, so its detail lands on the node this walk wrote.
+pub(crate) fn object_identity(package: &str, schema: &str, name: &str) -> Result<Fqn, FqnError> {
+    fqn::define(&Form::Item {
+        lang: Language::Sql,
+        package,
+        module: schema,
+        name,
+        reach: Reach::Item,
+    })
 }
 
 impl Walk<'_> {
@@ -217,13 +232,7 @@ impl Walk<'_> {
     /// A `Result`, not an `Option`: the only failure is `fqn::define` refusing
     /// a segment, and that is a typed error rather than an absence (R2).
     fn identity(&self, schema: &str, name: &str) -> Result<Fqn, FqnError> {
-        fqn::define(&Form::Item {
-            lang: Language::Sql,
-            package: self.package,
-            module: schema,
-            name,
-            reach: Reach::Item,
-        })
+        object_identity(self.package, schema, name)
     }
 
     /// A reference the walk read but could not place. The ladder takes it.

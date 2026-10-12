@@ -63,17 +63,8 @@ comment on column dojo.artifacts.muted_count
 comment on column dojo.artifacts.pinned_count
      is 'Downstream landing telemetry: consumers who pinned this.';
 
--- RLS deny-by-default: server-only table (the dōjō Worker uses service_role, which
--- bypasses RLS; no client authenticated/anon grant). Locks out any direct PostgREST
--- access while service_role keeps full access; clears the Supabase rls_disabled advisor.
+-- RLS: the access matrix's cells for this table. The policies call the access
+-- predicates and so live in policies/dojo/artifacts.sql (see policies/README.md).
 alter table dojo.artifacts enable row level security;
-
--- No client access: authenticated/anon are denied all rows + writes; the dōjō Worker
--- reads/writes as service_role, which bypasses RLS. Explicit deny-all so RLS has a
--- policy (clears the rls_enabled_no_policy advisor). Idempotent.
-drop policy if exists artifacts_service_only on dojo.artifacts;
-create policy artifacts_service_only on dojo.artifacts
-    for all to authenticated, anon
-    using (false) with check (false);
 comment on column artifacts.seq
      is '`::regclass` is not decoration. Postgres NORMALISES a sequence default to nextval(''...''::regclass) in the catalog, so a design written without the cast never matches what the database reports: `dbd diff` reports a difference forever and `reconcile` re-applies the same ALTER on every run without converging. That also makes `dbd diff --exit-code` unusable as a CI gate, which is what surfaced it.';

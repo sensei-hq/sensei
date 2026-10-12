@@ -28,7 +28,7 @@ DDL changed.
 hold many repositories. So:
 
 ```sql
-create table project_repositories (
+create table repositories_in_projects (
   project_id     uuid not null references projects(id)     on delete cascade
 , repository_id  uuid not null references repositories(id) on delete cascade
 , role           text
@@ -281,7 +281,7 @@ Identity work is independent of the metrics rename and can proceed in parallel.
 
 **Local (senseid):**
 1. Drop dead columns; `project_metrics` → `repository_metrics` + view.
-2. `project_repositories` with `unique(repository_id)`; backfill from `folders`.
+2. `repositories_in_projects` with `unique(repository_id)`; backfill from `folders`.
 3. `visibility`/`synced_at`, `origin`/`shared_at`.
 4. `sync_state`.
 

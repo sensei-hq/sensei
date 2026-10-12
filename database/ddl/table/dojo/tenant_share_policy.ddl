@@ -30,3 +30,7 @@ comment on column tenant_share_policy.private_repos_shared
 FALSE deliberately: an organisation that has not decided has not mandated. The absence of a policy is not consent.';
 comment on column tenant_share_policy.set_by
      is 'The admin who set it. Nullable so removing a member does not erase the policy they set.';
+
+-- RLS on, and no session grant: read only by the definer functions over
+-- dojo.all_my_repositories (#236).
+alter table dojo.tenant_share_policy enable row level security;

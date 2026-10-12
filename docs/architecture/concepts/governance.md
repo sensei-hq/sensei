@@ -96,7 +96,9 @@ flowchart TD
     REPO -. implicit .- N7["general<br/>level 0"]
 ```
 
-Membership is explicit (a `folder_namespaces` join), plus the always-present `user` and `general` namespaces. Resolution unions the rules from every member namespace and orders them by `level` — no tree-walking, multi-path falls out for free, and a repo can belong to two clients or two technology namespaces without special cases.
+Membership is explicit on two axes — the REPOSITORY's own namespaces (a `repository_namespaces` join) and the namespace of each PROJECT its repository belongs to — plus the always-present `user` and `general` namespaces. `sensei.namespaces_for_folder()` is the single lift from a cwd's folder to that set. Resolution unions the rules from every member namespace and orders them by `level` — no tree-walking, multi-path falls out for free, and a repo can belong to two clients or two technology namespaces without special cases.
+
+Neither axis is a folder. Membership used to key on one, and every live row sat on a repo-root folder anyway: the grain bought nothing and let two checkouts of one repository disagree about which rules governed them.
 
 ---
 
@@ -202,7 +204,7 @@ sequenceDiagram
     D->>D: auto-reorganize (memberships, role, icons)
 ```
 
-- On **scan or pull**, the daemon parses frontmatter and reconciles `projects`, `folder_namespaces`, role and icons **from** the README — silently and automatically. Because the no-tree membership model means a reorg only adjusts membership/role/icon *metadata* (never destructive tree surgery), auto-apply is safe and reversible via the versioned history.
+- On **scan or pull**, the daemon parses frontmatter and reconciles `projects`, `repository_namespaces`, role and icons **from** the README — silently and automatically. Because the no-tree membership model means a reorg only adjusts membership/role/icon *metadata* (never destructive tree surgery), auto-apply is safe and reversible via the versioned history.
 - On **UI edit**, the daemon writes back into a **fenced managed block** within the frontmatter — never touching the README body — for the user to commit. Push it, teammates pull, their scanners re-derive. The whole team converges on the same project organization, icons, and namespace membership without anyone configuring it twice.
 - When a repo can't declare frontmatter, the user configures namespaced tags in the UI and Sensei offers to write them back.
 

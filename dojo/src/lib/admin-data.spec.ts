@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
 	AdminApiError,
-	addMember,
-	createIdentity,
-	deleteIdentity,
 	deletePolicy,
 	dojoApiUrl,
 	getHealth,
@@ -13,7 +10,6 @@ import {
 	listPolicies,
 	patchPolicy,
 	setMemberRole,
-	updateIdentity,
 	upsertPolicy
 } from '$lib/admin-data';
 
@@ -91,20 +87,6 @@ describe('listMembers', () => {
 	});
 });
 
-describe('addMember', () => {
-	it('POSTs the membership body with the bearer + json content-type', async () => {
-		const { fn, calls } = fakeFetch(200, { id: 'm9', role: 'contributor' });
-		const body = { user_id: 'u1', kind: 'human', authenticated_via: 'sso', git_provider_role: 'write' };
-		const out = await addMember('github/globex', body, { fetch: fn, accessToken: 'jwt' });
-		expect(out).toEqual({ id: 'm9', role: 'contributor' });
-		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/github/globex/members`);
-		expect(calls[0].init?.method).toBe('POST');
-		expect(headersOf(calls[0].init)['content-type']).toBe('application/json');
-		expect(headersOf(calls[0].init).Authorization).toBe('Bearer jwt');
-		expect(JSON.parse(String(calls[0].init?.body))).toEqual(body);
-	});
-});
-
 describe('setMemberRole', () => {
 	it('PATCHes the member role path with the role body (user id encoded)', async () => {
 		const { fn, calls } = fakeFetch(200, { user_id: 'u/1', role: 'maintainer' });
@@ -131,28 +113,6 @@ describe('identities', () => {
 		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/t/x/identities`);
 	});
 
-	it('POSTs a new identity body', async () => {
-		const { fn, calls } = fakeFetch(200, { id: 'i2' });
-		const body = { principal_id: 'p1', provider: 'sso', subject: 'okta|abc', email: 'a@b.co' };
-		await createIdentity('t/x', body, { fetch: fn });
-		expect(calls[0].init?.method).toBe('POST');
-		expect(JSON.parse(String(calls[0].init?.body))).toEqual(body);
-	});
-
-	it('PATCHes an identity by id (id encoded)', async () => {
-		const { fn, calls } = fakeFetch(200, { id: 'i 3' });
-		await updateIdentity('t/x', 'i 3', { display_name: 'Kei' }, { fetch: fn });
-		expect(calls[0].url).toBe(`${dojoApiUrl}/v1/t/t/x/identities/i%203`);
-		expect(calls[0].init?.method).toBe('PATCH');
-		expect(JSON.parse(String(calls[0].init?.body))).toEqual({ display_name: 'Kei' });
-	});
-
-	it('DELETEs an identity by id with no body', async () => {
-		const { fn, calls } = fakeFetch(200, { deleted: true });
-		expect(await deleteIdentity('t/x', 'i1', { fetch: fn })).toEqual({ deleted: true });
-		expect(calls[0].init?.method).toBe('DELETE');
-		expect(calls[0].init?.body).toBeUndefined();
-	});
 });
 
 describe('policies', () => {

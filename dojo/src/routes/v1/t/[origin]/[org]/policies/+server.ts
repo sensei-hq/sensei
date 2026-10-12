@@ -6,20 +6,21 @@
 // live at `…/policies/{id}`. The store logic lives in `$lib/server/admin-data`.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { listPolicies, upsertPolicy, parseUpsertPolicy, AdminError } from '$lib/server/admin-data';
 import { recordAudit } from '$lib/server/audit';
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { tenantId } = await resolveTenantAccess(
+		const caller = await resolveTenantAccess(
 			params.origin,
 			params.org,
 			request,
 			locals,
 			ACCESS.admin
 		);
-		const policies = await listPolicies(dojoDb(), tenantId);
+		const policies = await listPolicies(callerDb(caller), caller.tenantId);
 		return Response.json({ policies });
 	} catch (e) {
 		if (e instanceof Response) return e;
@@ -39,9 +40,8 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const input = parseUpsertPolicy(body);
-		const db = dojoDb();
-		const result = await upsertPolicy(db, caller.tenantId, input);
-		await recordAudit(db, caller.tenantId, caller.userId, {
+		const result = await upsertPolicy(callerDb(caller), caller.tenantId, input);
+		await recordAudit(dojoDb(), caller.tenantId, caller.userId, {
 			action: 'policy_edited',
 			target: result.scope_key
 		});

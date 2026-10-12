@@ -27,7 +27,7 @@
 //! These are `#[cfg(test)]`: there is no path from a shipped binary to a
 //! `files` row minted on demand.
 
-use super::PgStore;
+use super::{NodeRow, PgStore};
 
 pub(crate) use super::folders::BARRIER_MTIME;
 
@@ -93,9 +93,17 @@ impl SeedGraph for PgStore {
         line_end: Option<i32>,
     ) -> Result<uuid::Uuid, String> {
         seed_file(self, folder_id, file_path).await?;
-        self.upsert_node(
-            folder_id, kind, name, file_path, parent_id, signature, line_start, line_end,
-        )
+        self.upsert_node(&NodeRow {
+            folder_id,
+            kind,
+            name,
+            file_path,
+            parent_id,
+            signature,
+            line_start,
+            line_end,
+            is_exported: false,
+        })
         .await
     }
 

@@ -122,18 +122,15 @@ export class RulesError extends Error {
  * `publishedBy` is the authenticated caller (never the body); `published_at` is
  * stamped `now()` server-side. Returns `PublishResponse { id, version, seq }`.
  *
- * Seq on republish: `seq` is assigned by the `dojo.shared_rules_seq`
- * column default, which fires on INSERT (first publish). PostgREST cannot run
- * `nextval()` inline on the UPDATE (republish) path, so a republish keeps its
- * prior `seq` rather than advancing it — a divergence from dojo-mind, whose
- * store re-runs `seq = nextval(...)` on republish so a re-publish re-surfaces in
- * a puller's delta. Advancing seq on UPDATE needs an in-DB trigger (precedent:
- * `dojo.relay_inbox_seq_bump`), which is a DDL follow-up. First-publish + pull +
- * retract match dojo-mind exactly; content re-sync of an already-known rule is a
- * known follow-up on the daemon side too (`federation/mod.rs` RuleOutcome::Linked).
+ * Seq on republish: an upsert that updates an existing row advances `seq`
+ * through the `dojo.shared_rules_seq_bump` trigger, so a republish re-surfaces
+ * in a puller's delta exactly as dojo-mind's inline `nextval` did.
+ * Content re-sync of an already-known rule is a known follow-up on the daemon
+ * side (`federation/mod.rs` RuleOutcome::Linked).
  */
 export async function publishRule(
 	db: DojoClient,
+	tenantId: string,
 	rule: PublishedRule,
 	publishedBy: string
 ): Promise<PublishResponse> {
@@ -159,6 +156,9 @@ export async function publishRule(
 		.from('shared_rules')
 		.upsert(
 			{
+				// The rule is the publishing TENANT's (#236): stamped with it and
+				// unique within it, so no tenant's publish lands on another's row.
+				tenant_id: tenantId,
 				namespace_id: namespaceId,
 				content_hash: rule.content_hash,
 				rule_type: rule.rule_type,
@@ -172,7 +172,7 @@ export async function publishRule(
 				published_at: publishedAt,
 				updated_at: publishedAt
 			},
-			{ onConflict: 'namespace_id,content_hash' }
+			{ onConflict: 'tenant_id,namespace_id,content_hash' }
 		)
 		.select('id, version, seq')
 		.single();
@@ -249,10 +249,15 @@ export function shapePullResponse(rows: RuleRow[], since: number): PullResponse 
  * Pull all rule deltas with `seq > since`, ordered by `seq` — the query half of
  * `DojoStore::pull_since`. Delegates shaping to `shapePullResponse`.
  */
-export async function pullRules(db: DojoClient, since: number): Promise<PullResponse> {
+export async function pullRules(
+	db: DojoClient,
+	tenantId: string,
+	since: number
+): Promise<PullResponse> {
 	const { data, error } = await db
 		.from('shared_rules')
 		.select(PULL_SELECT)
+		.eq('tenant_id', tenantId)
 		.gt('seq', since)
 		.order('seq', { ascending: true });
 	if (error) throw new RulesError(500, error.message);
@@ -265,15 +270,16 @@ export async function pullRules(db: DojoClient, since: number): Promise<PullResp
  * (`false` → the handler 404s). Mirrors dojo-mind's `WHERE id = $1 AND status <>
  * 'tombstoned'` guard.
  *
- * Seq on retract: as with republish, PostgREST can't advance `seq` inline
- * on this UPDATE; the same in-DB-trigger follow-up applies. The tombstone itself
- * (status flip + audit) matches dojo-mind.
+ * Seq on retract: the `dojo.shared_rules_seq_bump` trigger advances `seq` on
+ * this UPDATE, so a puller already past the rule's insert seq still learns of
+ * the tombstone. The status flip + audit matches dojo-mind.
  */
-export async function retractRule(db: DojoClient, id: string): Promise<boolean> {
+export async function retractRule(db: DojoClient, tenantId: string, id: string): Promise<boolean> {
 	const { data, error } = await db
 		.from('shared_rules')
 		.update({ status: 'tombstoned', updated_at: new Date().toISOString() })
 		.eq('id', id)
+		.eq('tenant_id', tenantId)
 		.neq('status', 'tombstoned')
 		.select('id')
 		.maybeSingle();

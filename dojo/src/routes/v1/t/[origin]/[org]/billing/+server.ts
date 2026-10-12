@@ -6,8 +6,14 @@
 //          (seats_used + seats_computed_at), returning { seats_used }.
 // Billing is org-financial data → admin-gated. Per-seat model + the seat table
 // are D-BILLING (schema + route only); no payment provider is wired.
+//
+// GET reads the seats and the account as the signed-in admin (their policies
+// decide); the seats' project names are a system lookup. POST is the system's:
+// seats_used is a money-facing cache derived from the seats, never a number a
+// session writes (#236, access matrix "What stays service_role").
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import {
 	loadActiveSeatRows,
@@ -19,15 +25,16 @@ import {
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { tenantId } = await resolveTenantAccess(
+		const caller = await resolveTenantAccess(
 			params.origin,
 			params.org,
 			request,
 			locals,
 			ACCESS.admin
 		);
-		const db = dojoDb();
-		const usage = summarizeSeatUsage(await loadActiveSeatRows(db, tenantId));
+		const { tenantId } = caller;
+		const db = callerDb(caller);
+		const usage = summarizeSeatUsage(await loadActiveSeatRows(db, tenantId, dojoDb()));
 		const account = await getBillingAccount(db, tenantId);
 		return Response.json({ account, usage });
 	} catch (e) {
@@ -47,7 +54,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 			ACCESS.admin
 		);
 		const db = dojoDb();
-		const usage = summarizeSeatUsage(await loadActiveSeatRows(db, tenantId));
+		const usage = summarizeSeatUsage(await loadActiveSeatRows(db, tenantId, db));
 		await refreshSeatsUsed(db, tenantId, usage.seats_used, new Date().toISOString());
 		return Response.json({ seats_used: usage.seats_used });
 	} catch (e) {

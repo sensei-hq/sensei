@@ -115,15 +115,12 @@ impl DayKeyedGroup {
     /// its source rows carry (never an insert-time `created_at`). Matches the
     /// measurable base each computer writes over, so a planned day is one that can
     /// actually produce a row. This is the source-day DISCOVERY — its earliest day is
-    /// the group's `min_date`, so an unset watermark fills from real history:
-    /// - `session_outcomes` — days of measurable (`outcome is not null`) sessions,
-    ///   bucketed on `sessions.started_at`.
-    /// - `autonomy` — the UNION of run-started days (`runs.started_at`) and
-    ///   `UserPromptSubmit`-event days (client `ts`, attributed via
-    ///   `sessions.client_session_id`). Only `UserPromptSubmit` — NOT `Stop` — anchors
-    ///   the event arm: `interruption_rate` (`Stop / UserPromptSubmit`) emits NO row on
-    ///   a `UserPromptSubmit = 0` day (a 0/0 would be fabricated), so a `Stop`-only day
-    ///   is not a measurable data day.
+    /// the group's `min_date`, so an unset watermark fills from real history.
+    ///
+    /// The session-sourced sets (`session_outcomes`, `autonomy`, `usage`,
+    /// `session_process`) are read by the `planner` group's [`PgStore`] methods, which
+    /// document what each one keys on and excludes. The two GIT-sourced sets are not
+    /// SQL at all and are resolved here:
     /// - `churn` — the distinct GIT committer-days in the project's repo (via
     ///   [`super::churn::git_commit_days`] on the repo root from
     ///   [`PgStore::project_root_path`]). Not a SQL read: churn is git-derived. A
@@ -149,56 +146,16 @@ impl DayKeyedGroup {
                 _ => commit_days,
             });
         }
-        let sql = match self {
-            DayKeyedGroup::SessionOutcomes => {
-                "SELECT DISTINCT date_trunc('day', s.started_at)::date AS day
-                   FROM activity.sessions s
-                  WHERE s.project_id = $1
-                    AND s.outcome   IS NOT NULL"
-            }
-            DayKeyedGroup::Autonomy => {
-                "SELECT DISTINCT day FROM (
-                     SELECT date_trunc('day', r.started_at)::date AS day
-                       FROM activity.runs r
-                      WHERE r.project_id = $1
-                     UNION
-                     SELECT date_trunc('day', to_timestamp(ae.ts / 1000.0))::date AS day
-                       FROM activity.assistant_events ae
-                       JOIN activity.sessions        s ON s.client_session_id = ae.session_id
-                      WHERE s.project_id   = $1
-                        AND ae.event_type  = 'UserPromptSubmit'
-                 ) u"
-            }
-            DayKeyedGroup::Usage => {
-                // Days with token-accounted turns. Only claude_code carries the
-                // split so far, so a day of Zed/OpenCode-only work has no data day
-                // and is not planned — which is honest: we cannot measure reuse we
-                // never captured.
-                "SELECT DISTINCT date_trunc('day', s.started_at)::date AS day
-                   FROM activity.transcript_turns tt
-                   JOIN activity.sessions         s ON s.client_session_id = tt.session_id
-                  WHERE s.project_id  = $1
-                    AND tt.tokens_in IS NOT NULL"
-            }
-            DayKeyedGroup::SessionProcess => {
-                // Days of sessions the LLM analyzer has SCORED (props ? 'process'),
-                // bucketed on started_at — the base the process computer writes over.
-                "SELECT DISTINCT date_trunc('day', s.started_at)::date AS day
-                   FROM activity.sessions s
-                  WHERE s.project_id = $1
-                    AND s.props ? 'process'"
-            }
+        match self {
+            DayKeyedGroup::SessionOutcomes => pg.planner_session_outcome_days(project_id).await,
+            DayKeyedGroup::Autonomy => pg.planner_autonomy_days(project_id).await,
+            DayKeyedGroup::Usage => pg.planner_usage_days(project_id).await,
+            DayKeyedGroup::SessionProcess => pg.planner_session_process_days(project_id).await,
             // Handled by the git early-return above (churn/quality are not SQL day-sets).
             DayKeyedGroup::Churn | DayKeyedGroup::Quality => {
                 unreachable!("churn/quality data_days are git-sourced above")
             }
-        };
-        let rows: Vec<(NaiveDate,)> = sqlx_core::query_as::query_as(sql)
-            .bind(project_id)
-            .fetch_all(pg.pool())
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(rows.into_iter().map(|(d,)| d).collect())
+        }
     }
 }
 

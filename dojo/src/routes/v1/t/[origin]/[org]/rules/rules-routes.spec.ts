@@ -42,13 +42,13 @@ const { resolveApiKeyAccess, publishRule, pullRules, retractRule, recordRulesAud
 
 vi.mock('$lib/server/dojo-supabase', () => ({
 	dojoDb: () => ({}),
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveApiKeyAccess: mocks.resolveApiKeyAccess,
 	apiError: (status: number, message: string) =>
 		new Response(JSON.stringify({ error: message }), { status, headers: { 'content-type': 'application/json' } }),
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/rules-data', () => ({
 	parsePublishedRule: mocks.parsePublishedRule,
@@ -111,19 +111,20 @@ describe('POST /v1/t/{origin}/{org}/rules — publish', () => {
 		expect(await res.json()).toEqual({ id: 'rule-1', version: 1, seq: 7 });
 	});
 
-	it('auths on the device-token plane at the contributor floor', async () => {
+	it('auths on the device-token plane at the maintainer floor (access matrix: rules W = maintainer)', async () => {
 		await POST(ev('POST', RULE));
 		expect(resolveApiKeyAccess).toHaveBeenCalledTimes(1);
 		const args = resolveApiKeyAccess.mock.calls[0];
 		expect(args[0]).toBe('github'); // origin
 		expect(args[1]).toBe('sensei-hq'); // org
-		expect(args[3]).toBe(1); // ACCESS.contributor
+		expect(args[3]).toBe(2); // ACCESS.maintainer
 	});
 
 	it('server-controls attribution: publishRule is called with the caller, not the body', async () => {
 		await POST(ev('POST', { ...RULE, published_by: 'attacker' }));
 		// publishRule(db, rule, publishedBy) — the 3rd arg is the authenticated caller.
-		expect(publishRule.mock.calls[0][2]).toBe(caller.userId);
+		expect(publishRule.mock.calls[0][1]).toBe(caller.tenantId); // the caller's tenant owns it (#236)
+		expect(publishRule.mock.calls[0][3]).toBe(caller.userId);
 	});
 
 	it('writes a publish audit event (tenant, action=publish, target=rule id)', async () => {
@@ -175,17 +176,18 @@ describe('GET /v1/t/{origin}/{org}/rules?since= — pull', () => {
 
 	it('parses ?since= and forwards it to the store', async () => {
 		await GET(ev('GET', undefined, { url: 'http://x/?since=42' }));
-		expect(pullRules.mock.calls[0][1]).toBe(42);
+		expect(pullRules.mock.calls[0][1]).toBe(caller.tenantId); // only the caller's tenant (#236)
+		expect(pullRules.mock.calls[0][2]).toBe(42);
 	});
 
 	it('defaults since to 0 when the param is absent', async () => {
 		await GET(ev('GET', undefined, { url: 'http://x/' }));
-		expect(pullRules.mock.calls[0][1]).toBe(0);
+		expect(pullRules.mock.calls[0][2]).toBe(0);
 	});
 
 	it('defaults since to 0 when the param is non-numeric', async () => {
 		await GET(ev('GET', undefined, { url: 'http://x/?since=abc' }));
-		expect(pullRules.mock.calls[0][1]).toBe(0);
+		expect(pullRules.mock.calls[0][2]).toBe(0);
 	});
 
 	it('pull requires only the member floor', async () => {
@@ -210,7 +212,8 @@ describe('DELETE /v1/t/{origin}/{org}/rules/{id} — retract', () => {
 	it('tombstones and returns 204', async () => {
 		const res = await DELETE(ev('DELETE', undefined, { id: 'rule-1' }));
 		expect(res.status).toBe(204);
-		expect(retractRule.mock.calls[0][1]).toBe('rule-1');
+		expect(retractRule.mock.calls[0][1]).toBe(caller.tenantId); // only the caller's tenant (#236)
+		expect(retractRule.mock.calls[0][2]).toBe('rule-1');
 	});
 
 	it('writes a retract audit event', async () => {
@@ -228,9 +231,9 @@ describe('DELETE /v1/t/{origin}/{org}/rules/{id} — retract', () => {
 		expect(recordRulesAudit).not.toHaveBeenCalled();
 	});
 
-	it('requires the contributor floor', async () => {
+	it('requires the maintainer floor (access matrix: rules W = maintainer)', async () => {
 		await DELETE(ev('DELETE', undefined, { id: 'r' }));
-		expect(resolveApiKeyAccess.mock.calls[0][3]).toBe(1); // ACCESS.contributor
+		expect(resolveApiKeyAccess.mock.calls[0][3]).toBe(2); // ACCESS.maintainer
 	});
 
 	it('maps a store RulesError(500) to 500', async () => {

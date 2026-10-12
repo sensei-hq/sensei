@@ -107,6 +107,8 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
         references: found.references,
         relations: found.relations,
         imports: found.imports,
+        schema: Vec::new(),
+        calls: Vec::new(),
     })
 }
 

@@ -5,20 +5,20 @@
 // — the shape the shipped `(console)` client `triage-data.ts listTriage()`
 // unwraps. The query + rank logic lives in `$lib/server/triage-data`.
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { listTriage, TriageError } from '$lib/server/triage-data';
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { tenantId } = await resolveTenantAccess(
+		const caller = await resolveTenantAccess(
 			params.origin,
 			params.org,
 			request,
 			locals,
 			ACCESS.maintainer
 		);
-		const queue = await listTriage(dojoDb(), tenantId);
+		const queue = await listTriage(callerDb(caller), caller.tenantId);
 		return Response.json({ queue });
 	} catch (e) {
 		if (e instanceof Response) return e;

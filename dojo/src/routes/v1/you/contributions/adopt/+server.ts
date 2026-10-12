@@ -3,12 +3,15 @@
 // row(s) for that artifact to `pinned` (authorized by membership ownership).
 // Fails closed; a missing artifactId is a 400.
 import type { RequestHandler } from './$types';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { userMembershipIds, adoptDownstream, AdminError } from '$lib/server/contributions-data';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, db } = await resolveCaller(request, locals);
+		const caller = await resolveCaller(request, locals);
+		const { userId } = caller;
+		const db = callerDb(caller);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const artifactId = typeof body.artifactId === 'string' ? body.artifactId : '';
 		if (!artifactId) return apiError(400, 'artifactId required');

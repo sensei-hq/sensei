@@ -4,15 +4,16 @@
 // (/v1/you plane): resolved from the JWT, adopts into the caller's own namespace.
 // 404 when the slug isn't a known global library pack; fails closed.
 import type { RequestHandler } from './$types';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { setPackAdoption, RulePacksError } from '$lib/server/rulepacks-data';
 
 export const POST: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { userId, email, db } = await resolveCaller(request, locals);
+		const caller = await resolveCaller(request, locals);
 		const body = await request.json().catch(() => ({}));
 		const adopt = body?.adopt !== false; // default: adopt
-		const ok = await setPackAdoption(db, params.slug, userId, email, adopt);
+		const ok = await setPackAdoption(callerDb(caller), params.slug, caller.email, adopt);
 		if (!ok) return apiError(404, 'unknown rule pack');
 		return Response.json({ adopted: adopt });
 	} catch (e) {

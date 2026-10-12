@@ -4,12 +4,15 @@
 // caller email that doesn't match the invite) and only provisions the membership
 // when all pass. Returns { tenant_id, role }. Never a fabricated membership.
 import type { RequestHandler } from './$types';
+import { dojoDb } from '$lib/server/dojo-supabase';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { acceptInvite, AdminError } from '$lib/server/invites-data';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, email, db } = await resolveCaller(request, locals);
+		const { userId, email } = await resolveCaller(request, locals);
+		// System work, named (access matrix "What stays service_role", #236).
+		const db = dojoDb();
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const token = typeof body.token === 'string' ? body.token : '';
 		const result = await acceptInvite(db, userId, email, token, Date.now());

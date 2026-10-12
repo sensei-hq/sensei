@@ -12,7 +12,8 @@ function makeDb(...results: { data?: unknown; error: unknown }[]) {
 		inserts: { table?: string; payload: Record<string, unknown> }[];
 		updates: { table?: string; payload: Record<string, unknown> }[];
 		eqs: [string, unknown][];
-	} = { inserts: [], updates: [], eqs: [] };
+		selects: string[];
+	} = { inserts: [], updates: [], eqs: [], selects: [] };
 	const b: Record<string, unknown> = {};
 	b.from = (t: string) => {
 		captured.table = t;
@@ -26,7 +27,10 @@ function makeDb(...results: { data?: unknown; error: unknown }[]) {
 		captured.updates.push({ table: captured.table, payload: p });
 		return b;
 	};
-	b.select = () => b;
+	b.select = (cols?: string) => {
+		if (cols !== undefined) captured.selects.push(cols);
+		return b;
+	};
 	b.eq = (c: string, v: unknown) => {
 		captured.eqs.push([c, v]);
 		return b;
@@ -70,6 +74,17 @@ describe('createInvite', () => {
 		expect(typeof payload.token).toBe('string');
 		expect((payload.token as string).length).toBeGreaterThan(20); // crypto.randomUUID
 		expect(Date.parse(payload.expires_at as string)).toBe(NOW + 7 * 24 * 60 * 60 * 1000);
+	});
+	// The token is a bearer: no session reads it back (the invites read grant leaves
+	// it out, #236). The admin gets the token the server minted, not a read of it.
+	it('returns the token it minted without reading the column back', async () => {
+		const { db, captured } = makeDb({
+			data: { id: 'inv1', email: 'a@b.co', role: 'contributor', expires_at: FUTURE },
+			error: null
+		});
+		const out = await createInvite(db, 't1', 'admin-uid', { email: 'a@b.co', role: 'contributor', kind: 'client' }, NOW);
+		expect(out.token).toBe(captured.inserts[0].payload.token);
+		for (const cols of captured.selects) expect(cols).not.toMatch(/\btoken\b/);
 	});
 });
 

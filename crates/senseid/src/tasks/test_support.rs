@@ -12,6 +12,7 @@
 
 use std::sync::Arc;
 
+use crate::db::pg_store::NodeRow;
 use crate::db::pg_store::PgStore;
 
 /// A cross-test serialisation gate.
@@ -88,6 +89,58 @@ pub(crate) static CORRECTIONS_TABLE_LOCK: TestGate = TestGate::new();
 /// the call under test.
 pub(crate) static ACTIVITY_PRUNE_GATE: TestGate = TestGate::new();
 
+/// A [`TestGate`] that admits many readers but only one writer.
+///
+/// [`TestGate`] is the right shape when every participant mutates the shared
+/// thing. It is the wrong shape when ONE test is destructive and many are merely
+/// vulnerable: a plain mutex would serialise the victims against each other too,
+/// and the scan tests below cost ~50-100 s apiece.
+pub(crate) struct TestSweepGate(std::sync::RwLock<()>);
+
+impl TestSweepGate {
+    pub(crate) const fn new() -> Self {
+        Self(std::sync::RwLock::new(()))
+    }
+
+    /// Taken by the test that performs the DATABASE-WIDE sweep. Excludes every
+    /// holder of [`Self::using`].
+    pub(crate) fn sweeping(&self) -> std::sync::RwLockWriteGuard<'_, ()> {
+        self.0.write().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Taken by a test whose own `files` rows must survive. Concurrent with
+    /// every other reader — only the sweep is excluded.
+    pub(crate) fn using(&self) -> std::sync::RwLockReadGuard<'_, ()> {
+        self.0.read().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// Serialises `maybe_rescan_on_version_change` against every test that depends
+/// on its own `files` rows surviving.
+///
+/// The sweep is DATABASE-WIDE and correctly so: a version bump must re-derive
+/// every root, so it walks `list_watch_roots()` and calls
+/// `clear_scan_state_for_root` on each, which is
+/// `DELETE FROM sensei.files … WHERE f.root_id = $1`. Being global is the
+/// behaviour under test, so the sweeping test cannot be scoped to its own root.
+///
+/// Concurrently it deletes a sibling's barrier rows between the scan that writes
+/// them and the parse that reads them. The victim does not fail where the row was
+/// deleted — it fails later and elsewhere, as R13 refusing to let a definition
+/// name an untracked file: `upsert_node_by_fqn(rust·forced·crate·lib·mod): no
+/// files row for src/lib.rs`. Measured: `repo_scan::scan_tests` passes alone and
+/// as a whole module, and all four of its parse-dependent tests fail when run
+/// alongside `version_rescan`.
+///
+/// Note which side is new. The sweep predates this; the tests it damages were
+/// added with the stage-3 barrier fix, so the race was exposed rather than
+/// introduced — which is also why the failing set grows with load rather than
+/// being stable.
+///
+/// Hold [`TestSweepGate::using`] for the whole span between writing scan state
+/// and the last assertion that depends on it, not merely around the parse.
+pub(crate) static SCAN_STATE_SWEEP_GATE: TestSweepGate = TestSweepGate::new();
+
 /// Serialises the tests that edit a SEEDED `sensei.schedules` row, or run the
 /// seed import.
 ///
@@ -156,6 +209,9 @@ pub(crate) async fn make_ctx() -> Arc<crate::tasks::executor::TaskContext> {
         },
         breaker: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         provisioning: None,
+        diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
+            crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
+        )),
     });
     Arc::new(crate::tasks::executor::TaskContext {
         queue,
@@ -197,13 +253,12 @@ pub(crate) async fn seed_project_folder_at(
     ensure_test_watch_root(pg).await;
     let name = format!("metrics-{uniq}");
     let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) \
-         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) \
-         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id RETURNING id",
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) \
+         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) \
+         ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id",
     )
     .bind(&name)
     .bind(abs_path)
-    .bind(pid)
     .fetch_one(pg.pool())
     .await
     .unwrap();
@@ -228,6 +283,13 @@ pub(crate) async fn seed_project_folder_at(
         .execute(pg.pool())
         .await
         .unwrap();
+    // AND THE JUNCTION, through the production primitive. Since #210 membership
+    // lives in `sensei.repositories_in_projects`, and `folder_projects` — which
+    // every migrated view resolves through — reads ONLY that. A fixture that
+    // sets `folders.project_id` alone models a state production can no longer
+    // produce, so the view under test reads nothing and the test asserts
+    // against an empty set it mistakes for a real one.
+    pg.link_project_repository(&pid, &rid).await.unwrap();
     (pid, fid)
 }
 
@@ -332,18 +394,21 @@ pub(crate) async fn link_repository_to_project(
     ensure_test_watch_root(pg).await;
     let abs = format!("/_test/link-{name}-{repository_id}");
     sqlx_core::query::query(
-        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id, repository_id) \
-         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3, $4) \
-         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id, \
-                                             repository_id = EXCLUDED.repository_id",
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, repository_id) \
+         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) \
+         ON CONFLICT(abs_path) DO UPDATE SET repository_id = EXCLUDED.repository_id",
     )
     .bind(name)
     .bind(&abs)
-    .bind(project_id)
     .bind(repository_id)
     .execute(pg.pool())
     .await
     .unwrap();
+    // AND THE JUNCTION, through the production primitive — see
+    // `seed_project_folder_at`. `folder_projects` reads only
+    // `repositories_in_projects`, so setting `folders.project_id` alone leaves the
+    // view under test with nothing to find.
+    pg.link_project_repository(project_id, repository_id).await.unwrap();
 }
 
 /// A repository for tests that need a valid `repository_id` to hang metric rows
@@ -376,18 +441,21 @@ pub(crate) async fn seed_bare_repository(
     .await
     .unwrap();
     sqlx_core::query::query(
-        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id, repository_id) \
-         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3, $4) \
-         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id, \
-                                             repository_id = EXCLUDED.repository_id",
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, repository_id) \
+         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) \
+         ON CONFLICT(abs_path) DO UPDATE SET repository_id = EXCLUDED.repository_id",
     )
     .bind(format!("bare-{uniq}"))
     .bind(format!("/_test/bare-{uniq}"))
-    .bind(project_id)
     .bind(rid)
     .execute(pg.pool())
     .await
     .unwrap();
+    // AND THE JUNCTION, through the production primitive — see
+    // `seed_project_folder_at`. `folder_projects` reads only
+    // `repositories_in_projects`, so setting `folders.project_id` alone leaves the
+    // view under test with nothing to find.
+    pg.link_project_repository(project_id, &rid).await.unwrap();
     rid
 }
 
@@ -400,13 +468,12 @@ pub(crate) async fn seed_second_repository(
     let name = format!("metrics-{uniq}-b");
     let abs_path = format!("/_test/metrics-{uniq}-b");
     let (fid,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path, project_id) \
-         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2, $3) \
-         ON CONFLICT(abs_path) DO UPDATE SET project_id = EXCLUDED.project_id RETURNING id",
+        "INSERT INTO sensei.folders(root_id, kind, name, path, abs_path) \
+         VALUES('00000000-0000-0000-0000-000000000001', 'git'::sensei.folder_kind, $1, $1, $2) \
+         ON CONFLICT(abs_path) DO UPDATE SET name = EXCLUDED.name RETURNING id",
     )
     .bind(&name)
     .bind(&abs_path)
-    .bind(project_id)
     .fetch_one(pg.pool())
     .await
     .unwrap();
@@ -425,6 +492,13 @@ pub(crate) async fn seed_second_repository(
         .execute(pg.pool())
         .await
         .unwrap();
+    // AND THE JUNCTION, through the production primitive. Since #210 membership
+    // lives in `sensei.repositories_in_projects`, and `folder_projects` — which
+    // every migrated view resolves through — reads ONLY that. A fixture that
+    // sets `folders.project_id` alone models a state production can no longer
+    // produce, so the view under test reads nothing and the test asserts
+    // against an empty set it mistakes for a real one.
+    pg.link_project_repository(project_id, &rid).await.unwrap();
     (fid, rid)
 }
 
@@ -872,8 +946,9 @@ pub(crate) async fn cleanup_metrics_fixture(
     // Covers both the primary folder and any `seed_second_repository`; deleted at the
     // end (folders.repository_id is ON DELETE SET NULL, so the ordering is safe).
     let repo_ids: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
-        "SELECT DISTINCT repository_id FROM sensei.folders \
-          WHERE project_id = $1 AND repository_id IS NOT NULL",
+        "SELECT DISTINCT f.repository_id FROM sensei.folders f \
+           JOIN sensei.folder_projects fp ON fp.folder_id = f.id \
+          WHERE fp.project_id = $1 AND f.repository_id IS NOT NULL",
     )
     .bind(pid)
     .fetch_all(pg.pool())
@@ -952,8 +1027,18 @@ pub async fn seed_node(
     line_end: Option<i32>,
 ) -> Result<uuid::Uuid, String> {
     seed_file(pg, folder_id, file_path).await?;
-    pg.upsert_node(folder_id, kind, name, file_path, parent_id, signature, line_start, line_end)
-        .await
+    pg.upsert_node(&NodeRow {
+        folder_id,
+        kind,
+        name,
+        file_path,
+        parent_id,
+        signature,
+        line_start,
+        line_end,
+        is_exported: false,
+    })
+    .await
 }
 
 /// The barrier half on its own, for fixtures that write nodes by raw SQL.
@@ -968,4 +1053,64 @@ pub async fn seed_file(
     file_path: &str,
 ) -> Result<uuid::Uuid, String> {
     pg.upsert_file_row(folder_id, file_path, 1, "seed", None).await
+}
+
+/// Give a repo-root folder its `repositories` row and link it, as a scan does.
+///
+/// `upsert_folder`/`upsert_repo` alone write a `git` folder with
+/// `repository_id = NULL`, which is a state production never produces —
+/// `write_one_repo` creates the repository and links it on every scan.
+///
+/// The difference did not matter while `folders.project_id` existed, because a
+/// folder carried its project directly. Since #211 the project is the
+/// REPOSITORY's (`folders.repository_id` → `repositories_in_projects` →
+/// `projects`), so a folder with no repository can hold no project at all:
+/// `set_folder_project` records the props and nothing else, and every scoping
+/// read comes back empty.
+///
+/// Keyless (`remote = None`) on purpose. `upsert_repository` keys on the
+/// normalised REMOTE and nulls are distinct, so each fixture gets its own row
+/// instead of colliding with every other keyless one.
+pub async fn give_folder_a_repository(
+    pg: &crate::db::pg_store::PgStore,
+    folder_id: &uuid::Uuid,
+    name: &str,
+) -> Result<uuid::Uuid, String> {
+    let repository_id = pg.upsert_repository(name, None).await?;
+    pg.link_folder_to_repository(folder_id, &repository_id).await?;
+    Ok(repository_id)
+}
+
+/// Put a repo-root folder in a project — the whole chain, in the order a scan
+/// writes it.
+///
+/// This is what a fixture used to express by passing `Some(&project_id)` to
+/// `upsert_folder`. That parameter is gone with the column, and the three facts
+/// it used to stand for are now distinct: the folder exists, the folder has a
+/// repository, and the repository belongs to a project. Only the last of those
+/// is membership, and `link_project_repository` is its only writer.
+pub async fn place_folder_in_project(
+    pg: &crate::db::pg_store::PgStore,
+    folder_id: &uuid::Uuid,
+    project_id: &uuid::Uuid,
+    name: &str,
+) -> Result<(), String> {
+    let repository_id = give_folder_a_repository(pg, folder_id, name).await?;
+    pg.link_project_repository(project_id, &repository_id).await
+}
+
+/// Register a repo-root folder the way a SCAN does: the folder, its
+/// `repositories` row, and the link between them.
+///
+/// Same shape, and same reason, as [`seed_node`]'s file barrier: ~30 fixtures
+/// were each forgetting the same prerequisite, so it lives in one place.
+pub async fn seed_repo_folder(
+    pg: &crate::db::pg_store::PgStore,
+    root_id: &uuid::Uuid,
+    name: &str,
+    abs_path: &str,
+) -> Result<uuid::Uuid, String> {
+    let folder_id = pg.upsert_repo(root_id, name, abs_path).await?;
+    give_folder_a_repository(pg, &folder_id, name).await?;
+    Ok(folder_id)
 }

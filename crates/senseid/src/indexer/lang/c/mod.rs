@@ -440,9 +440,9 @@ mod tests {
         // an external-linkage item is `<lang>·<package>·<name>·<reach>` and a
         // file-scoped one carries the path between them. The two shapes have
         // different segment counts, which is why they can never be confused.
-        assert_eq!(fqn_of(&facts, "parse"), "c·pkg·parse·item");
+        assert_eq!(fqn_of(&facts, "parse"), "c·pkg··parse·item");
         assert_eq!(fqn_of(&facts, "helper"), "c·pkg·src/lexer.c·helper·item");
-        assert_eq!(fqn_of(&facts, "total"), "c·pkg·total·item");
+        assert_eq!(fqn_of(&facts, "total"), "c·pkg··total·item");
         assert_eq!(fqn_of(&facts, "count"), "c·pkg·src/lexer.c·count·item");
     }
 
@@ -489,9 +489,9 @@ mod tests {
     #[test]
     fn an_enum_constant_is_an_item_because_c_writes_it_bare() {
         let facts = read_header("enum color { RED, GREEN };\n");
-        assert_eq!(fqn_of(&facts, "enum color"), "c·pkg·enum color·item");
-        assert_eq!(fqn_of(&facts, "RED"), "c·pkg·RED·item");
-        assert_eq!(fqn_of(&facts, "GREEN"), "c·pkg·GREEN·item");
+        assert_eq!(fqn_of(&facts, "enum color"), "c·pkg··enum color·item");
+        assert_eq!(fqn_of(&facts, "RED"), "c·pkg··RED·item");
+        assert_eq!(fqn_of(&facts, "GREEN"), "c·pkg··GREEN·item");
     }
 
     /// A struct's FIELDS are members of it, and they are reached at field reach.
@@ -502,9 +502,9 @@ mod tests {
     #[test]
     fn a_struct_owns_its_fields_at_field_reach() {
         let facts = read_header("struct point { int x; int y; };\n");
-        assert_eq!(fqn_of(&facts, "struct point"), "c·pkg·struct point·item");
-        assert_eq!(fqn_of(&facts, "x"), "c·pkg·struct point·x·field");
-        assert_eq!(fqn_of(&facts, "y"), "c·pkg·struct point·y·field");
+        assert_eq!(fqn_of(&facts, "struct point"), "c·pkg··struct point·item");
+        assert_eq!(fqn_of(&facts, "x"), "c·pkg··struct point·x·field");
+        assert_eq!(fqn_of(&facts, "y"), "c·pkg··struct point·y·field");
     }
 
     /// The declarator is a NEST, and the name is at the bottom of it.
@@ -518,7 +518,7 @@ mod tests {
              static int *const *deep;\n\
              struct box { char *(*handlers[4])(int); };\n",
         );
-        assert_eq!(fqn_of(&facts, "make"), "c·pkg·make·item");
+        assert_eq!(fqn_of(&facts, "make"), "c·pkg··make·item");
         assert_eq!(fqn_of(&facts, "deep"), "c·pkg·src/lexer.c·deep·item");
         assert_eq!(fqn_of(&facts, "handlers"), "c·pkg·src/lexer.c·struct box·handlers·field");
     }
@@ -582,7 +582,7 @@ mod tests {
         let Resolution::Resolved { fqn, .. } = &read_x.target else {
             panic!("`p` states its type, so the read resolves: {:?}", read_x.target)
         };
-        assert_eq!(fqn.as_str(), "c·pkg·struct point·x·field");
+        assert_eq!(fqn.as_str(), "c·pkg··struct point·x·field");
     }
 
     /// `#include` binds a GLOB, because textual inclusion brings in every name
@@ -620,7 +620,7 @@ mod tests {
     #[test]
     fn a_typedef_of_an_anonymous_struct_is_one_declaration() {
         let facts = read_header("typedef struct { int x; } point_t;\n");
-        assert_eq!(fqn_of(&facts, "point_t"), "c·pkg·point_t·item");
+        assert_eq!(fqn_of(&facts, "point_t"), "c·pkg··point_t·item");
         let kinds: Vec<SymbolKind> =
             facts.symbols.iter().filter(|s| s.name == "point_t").map(|s| s.kind).collect();
         assert_eq!(kinds, vec![SymbolKind::TypeAlias]);
@@ -636,8 +636,8 @@ mod tests {
     #[test]
     fn a_macro_is_a_declaration_and_its_body_is_not_walked() {
         let facts = read_header("#define MAX 10\n#define LOG(x) fprintf(stderr, x)\n");
-        assert_eq!(fqn_of(&facts, "MAX"), "c·pkg·MAX·item");
-        assert_eq!(fqn_of(&facts, "LOG"), "c·pkg·LOG·item");
+        assert_eq!(fqn_of(&facts, "MAX"), "c·pkg··MAX·item");
+        assert_eq!(fqn_of(&facts, "LOG"), "c·pkg··LOG·item");
         assert!(
             !facts.references.iter().any(|r| r.kind == RefKind::Calls),
             "a replacement list is tokens, not a call"
@@ -657,8 +657,8 @@ mod tests {
     #[test]
     fn a_tag_and_a_typedef_of_it_are_two_names() {
         let facts = read_header("typedef struct node { int id; } node;\n");
-        assert_eq!(fqn_of(&facts, "struct node"), "c·pkg·struct node·item");
-        assert_eq!(fqn_of(&facts, "node"), "c·pkg·node·item");
+        assert_eq!(fqn_of(&facts, "struct node"), "c·pkg··struct node·item");
+        assert_eq!(fqn_of(&facts, "node"), "c·pkg··node·item");
         assert_ne!(fqn_of(&facts, "struct node"), fqn_of(&facts, "node"));
 
         // And a USE of the tag mints the TAGGED name, so it meets the tag
@@ -689,9 +689,9 @@ mod tests {
     fn a_no_linkage_declaration_is_private_to_a_c_file_and_shared_by_a_header() {
         let src = "#define TAG 1\ntypedef int id_t;\nenum state { IDLE };\n";
         let header = read_header(src);
-        assert_eq!(fqn_of(&header, "TAG"), "c·pkg·TAG·item");
-        assert_eq!(fqn_of(&header, "id_t"), "c·pkg·id_t·item");
-        assert_eq!(fqn_of(&header, "IDLE"), "c·pkg·IDLE·item");
+        assert_eq!(fqn_of(&header, "TAG"), "c·pkg··TAG·item");
+        assert_eq!(fqn_of(&header, "id_t"), "c·pkg··id_t·item");
+        assert_eq!(fqn_of(&header, "IDLE"), "c·pkg··IDLE·item");
 
         let implementation = read(src);
         assert_eq!(fqn_of(&implementation, "TAG"), "c·pkg·src/lexer.c·TAG·item");
@@ -700,8 +700,8 @@ mod tests {
 
         // A FUNCTION is NOT scoped this way — it has real linkage, and only
         // `static` narrows it. The extension says nothing about it.
-        assert_eq!(fqn_of(&read_header("void parse(void) { }\n"), "parse"), "c·pkg·parse·item");
-        assert_eq!(fqn_of(&read("void parse(void) { }\n"), "parse"), "c·pkg·parse·item");
+        assert_eq!(fqn_of(&read_header("void parse(void) { }\n"), "parse"), "c·pkg··parse·item");
+        assert_eq!(fqn_of(&read("void parse(void) { }\n"), "parse"), "c·pkg··parse·item");
     }
 
     /// No two declarations in one file mint one identity — A7, at file grain.

@@ -99,56 +99,23 @@ function nameFromKey(repoKey: string): string {
 	return parts[parts.length - 1] ?? repoKey;
 }
 
-/** The caller's tenants, as `{ id → key }`. One query, reused across every repo
- *  in the batch — and it is also the authorization boundary: a repo can only be
- *  registered into a tenant the caller actually belongs to.
- *
- *  `disabled_at` is part of that boundary, not decoration. Without it an
- *  offboarded person's daemon — which keeps running and keeps posting every 60s
- *  — went on INSERTING rows into `dojo.repositories` for their former
- *  employer's tenant and receiving the tenant id back. Six other membership
- *  reads in this codebase already filtered it; this one and `ingestMetrics` did
- *  not. */
-async function callerTenants(
-	db: DojoClient,
-	principalId: string
-): Promise<Map<string, string>> {
-	const mem = await db
-		.from('memberships')
-		.select('tenant_id')
-		.eq('user_id', principalId)
-		.is('disabled_at', null);
-	if (mem.error) throw new AdminError(500, mem.error.message);
-	const ids = (mem.data ?? []).map((m) => (m as { tenant_id: string }).tenant_id);
-	if (ids.length === 0) return new Map();
-
-	const t = await db.from('tenants').select('id, key').in('id', ids);
-	if (t.error) throw new AdminError(500, t.error.message);
-	const out = new Map<string, string>();
-	for (const row of (t.data ?? []) as { id: string; key: string }[]) out.set(row.id, row.key);
-	return out;
-}
-
 /**
  * Register the caller's shared repositories and map each to its tenant.
  *
- * Mapping goes `repo_key → (provider, org) → tenant_connections → tenant`. The
- * connection is matched on `external_slug`, because a git remote carries the
- * org's NAME and never its stable id — which is also why a slug resolving to
- * more than one connection is reported `ambiguous` rather than guessed at. A
- * wrong guess here attaches a private repository to somebody else's dōjō.
+ * Mapping goes `repo_key → (provider, org)` here (repo-mapping.ts knows the
+ * forge hosts), then `(provider, org) → tenant_connections → tenant` in
+ * dojo.register_repository, as the caller (#236). The connection is matched on
+ * `external_slug`, because a git remote carries the org's NAME and never its
+ * stable id — which is also why a slug resolving to more than one of the
+ * caller's tenants is reported `ambiguous` rather than guessed at. A wrong
+ * guess here attaches a private repository to somebody else's dōjō.
  *
  * An unmapped repository gets NO row. `dojo.repositories.tenant_id` is NOT NULL,
  * so there is nowhere to put one — which matches §II.6 exactly: it stays
  * local-only until its org is connected, and is never defaulted to the personal
  * tenant.
  */
-export async function registerRepositories(
-	db: DojoClient,
-	principalId: string,
-	repos: RepoInput[]
-): Promise<RegisterResult> {
-	const tenants = await callerTenants(db, principalId);
+export async function registerRepositories(db: DojoClient, repos: RepoInput[]): Promise<RegisterResult> {
 	const mapped: MappedRepo[] = [];
 	const unmapped: { repo_key: string; reason: UnmappedReason }[] = [];
 
@@ -162,96 +129,37 @@ export async function registerRepositories(
 			continue;
 		}
 
-		const conns = await db
-			.from('tenant_connections')
-			.select('tenant_id, external_slug')
-			.eq('provider', ref.provider);
-		if (conns.error) throw new AdminError(500, conns.error.message);
-
-		const hits = ((conns.data ?? []) as { tenant_id: string; external_slug: string }[]).filter(
-			(c) => (c.external_slug ?? '').toLowerCase() === ref.org
-		);
-		if (hits.length === 0) {
-			unmapped.push({ repo_key: repoKey, reason: 'no_connection' });
-			continue;
-		}
-		// A slug can only resolve to several tenants if an org was renamed and the
-		// name re-registered upstream. Picking one would attach real code to the
-		// wrong governance boundary.
-		const inMine = hits.filter((h) => tenants.has(h.tenant_id));
-		if (inMine.length === 0) {
-			unmapped.push({ repo_key: repoKey, reason: 'not_a_member' });
-			continue;
-		}
-		if (inMine.length > 1) {
-			unmapped.push({ repo_key: repoKey, reason: 'ambiguous' });
-			continue;
-		}
-
-		const tenantId = inMine[0].tenant_id;
-		const tenantKey = tenants.get(tenantId) as string;
-
-		const existing = await db
-			.from('repositories')
-			.select('id')
-			.eq('tenant_id', tenantId)
-			.eq('repo_key', repoKey)
-			.maybeSingle();
-		if (existing.error) throw new AdminError(500, existing.error.message);
-
-		if (existing.data) {
-			mapped.push({
-				repo_key: repoKey,
-				tenant: tenantKey,
-				tenant_id: tenantId,
-				repo_id: (existing.data as { id: string }).id
-			});
-			continue;
-		}
-
-		const ins = await db
-			.from('repositories')
-			.insert({
-				tenant_id: tenantId,
-				repo_key: repoKey,
-				remote_url: repo.remote_url ?? null,
-				name: (repo.name ?? '').trim() || nameFromKey(repoKey),
-				// Stored, not re-derived. `dojo.repositories.provider` is NOT NULL, and
-				// keeping the host→provider mapping in this one place is the reason:
-				// a second copy in a view or query would be another thing to keep in
-				// step with `repo-mapping.ts`.
-				provider: ref.provider
+		// The mapping is the database's (#236): dojo.register_repository files the
+		// repository under the ONE tenant of the caller's its org is connected to,
+		// or says why not — it can read every tenant's connections to tell
+		// `no_connection` from `not_a_member`; this session cannot, and need not.
+		const { data, error } = await db
+			.rpc('register_repository', {
+				p_repo_key: repoKey,
+				p_provider: ref.provider,
+				p_org: ref.org,
+				p_name: (repo.name ?? '').trim() || nameFromKey(repoKey),
+				p_remote_url: repo.remote_url ?? null
 			})
-			.select('id')
 			.single();
-		if (ins.error) {
-			// A concurrent register won the (tenant_id, repo_key) unique — read it.
-			if ((ins.error as { code?: string }).code === '23505') {
-				const again = await db
-					.from('repositories')
-					.select('id')
-					.eq('tenant_id', tenantId)
-					.eq('repo_key', repoKey)
-					.maybeSingle();
-				if (again.error) throw new AdminError(500, again.error.message);
-				if (again.data) {
-					mapped.push({
-						repo_key: repoKey,
-						tenant: tenantKey,
-						tenant_id: tenantId,
-						repo_id: (again.data as { id: string }).id
-					});
-					continue;
-				}
-			}
-			throw new AdminError(500, ins.error.message);
+		// An error is not a reason: reporting it as `no_connection` would tell the
+		// person to connect an org that IS connected.
+		if (error) throw new AdminError(500, error.message);
+		const row = data as {
+			tenant_id: string | null;
+			tenant_key: string | null;
+			repository_id: string | null;
+			reason: UnmappedReason | null;
+		};
+		if (row.reason) {
+			unmapped.push({ repo_key: repoKey, reason: row.reason });
+			continue;
 		}
-
 		mapped.push({
 			repo_key: repoKey,
-			tenant: tenantKey,
-			tenant_id: tenantId,
-			repo_id: (ins.data as { id: string }).id
+			tenant: row.tenant_key as string,
+			tenant_id: row.tenant_id as string,
+			repo_id: row.repository_id as string
 		});
 	}
 
@@ -335,16 +243,11 @@ const MY_REPO_COLUMNS =
  * FAILS CLOSED. A read error throws rather than returning `[]`, because an empty
  * list reads as "you have no repositories" — a different and load-bearing claim.
  */
-export async function listMyRepositories(
-	db: DojoClient,
-	principalId: string
-): Promise<MyRepository[]> {
+export async function listMyRepositories(db: DojoClient): Promise<MyRepository[]> {
+	// dojo.my_repositories() pins the CALLER's principal in the database (#236):
+	// no consumer-side filter to forget.
 	return readAllPages<MyRepository>((from, to) =>
-		db
-			.from('all_my_repositories')
-			.select(MY_REPO_COLUMNS)
-			.eq('principal_id', principalId)
-			.range(from, to)
+		db.rpc('my_repositories').select(MY_REPO_COLUMNS).range(from, to)
 	);
 }
 
@@ -432,7 +335,7 @@ async function disabledMetricsByRepo(
 	return out;
 }
 
-export async function syncPlan(db: DojoClient, principalId: string): Promise<SyncPlan> {
+export async function syncPlan(db: DojoClient): Promise<SyncPlan> {
 	const data = await readAllPages<{
 		repository_id: string;
 		repo_key: string;
@@ -442,9 +345,8 @@ export async function syncPlan(db: DojoClient, principalId: string): Promise<Syn
 		denied_reason?: string | null;
 	}>((from, to) =>
 		db
-			.from('all_my_repositories')
+			.rpc('my_repositories')
 			.select('repository_id, repo_key, tenant, tenant_id, sync_enabled, denied_reason')
-			.eq('principal_id', principalId)
 			.range(from, to)
 	);
 

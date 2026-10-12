@@ -209,6 +209,7 @@ pub async fn generate_plan(
             consensus: None,
             allow_fallback: true,
             credentials: std::collections::HashMap::new(),
+            routing: None,
         };
         match gateway.execute(&request).await {
             Ok(resp) if resp.success => {

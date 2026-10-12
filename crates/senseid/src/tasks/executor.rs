@@ -127,6 +127,8 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::IndexLibrary => handlers::index_library(ctx, task).await,
             TaskKind::IndexLibraryPage => handlers::index_library_page(ctx, task).await,
             TaskKind::DetectCommunities => handlers::detect_communities(ctx, task).await,
+            TaskKind::ImportDbdSchema => handlers::import_dbd_schema(ctx, task).await,
+            TaskKind::DeriveOrmSchema => handlers::derive_orm_schema(ctx, task).await,
             TaskKind::ExtractDeps => handlers::extract_deps(ctx, task).await,
             TaskKind::MeasureVerdicts => handlers::measure_verdicts(ctx, task).await,
             TaskKind::ReconcileRepoMetadata => handlers::reconcile_repo_metadata(ctx, task).await,
@@ -147,6 +149,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
             TaskKind::ComputeProjectMetrics => handlers::metrics::compute_project(ctx, task).await,
             TaskKind::ComputeGroupMetrics => handlers::metrics::compute_group(ctx, task).await,
             TaskKind::ComputeHealth => handlers::metrics::compute_health(ctx, task).await,
+            TaskKind::ScanGitHistory => handlers::git_history::scan_git_history(ctx, task).await,
             TaskKind::IngestCaptures => crate::transcript::run_backfill(ctx, task).await,
             TaskKind::IngestCapture => crate::transcript::run_ingest_capture(ctx, task).await,
             TaskKind::BackfillCoverage => {
@@ -210,6 +213,7 @@ async fn execute_task(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::pg_store::HookEventRow;
 
     /// Build a TaskContext backed by PgStore and a fresh TaskQueue.
     use crate::tasks::test_support::make_ctx;
@@ -248,7 +252,9 @@ mod tests {
         {
             let root_id =
                 ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
+            crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, "repo", "/tmp/repo")
+                .await
+                .unwrap();
         }
         let task = Task::new(TaskKind::DeleteFolder, "repo", "/tmp/repo/src");
         let result = execute_task(&ctx, &task).await;
@@ -261,7 +267,9 @@ mod tests {
         {
             let root_id =
                 ctx.pg().add_watch_root("/tmp/repo", "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, "repo", "/tmp/repo").await.unwrap();
+            crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, "repo", "/tmp/repo")
+                .await
+                .unwrap();
         }
         let task = Task::new(TaskKind::ResolveLibs, "repo", "");
         let result = execute_task(&ctx, &task).await;
@@ -308,25 +316,31 @@ mod tests {
         let sid = format!("_test-exec-classify-{}", uuid::Uuid::new_v4());
         let now = chrono::Utc::now().timestamp_millis();
         ctx.pg()
-            .insert_hook_event(
-                &sid,
-                "claude",
-                "PostToolUse",
-                Some("Read"),
-                None,
-                now,
-                Some(true),
-                &serde_json::json!({
+            .insert_hook_event(&HookEventRow {
+                session_id: &sid,
+                assistant_family: "claude",
+                event_type: "PostToolUse",
+                tool_name: Some("Read"),
+                cwd: None,
+                ts: now,
+                success: Some(true),
+                payload: &serde_json::json!({
                     "tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs"},
                     "tool_response": "see crates/senseid/src/db/pg_store.rs:3421",
                 }),
-            )
+            })
             .await
             .unwrap();
-        ctx.pg().insert_hook_event(
-            &sid, "claude", "PreToolUse", Some("Edit"), None, now + 1, None,
-            &serde_json::json!({"tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs"}}),
-        ).await.unwrap();
+        ctx.pg().insert_hook_event(&HookEventRow {
+            session_id: &sid,
+            assistant_family: "claude",
+            event_type: "PreToolUse",
+            tool_name: Some("Edit"),
+            cwd: None,
+            ts: now + 1,
+            success: None,
+            payload: &serde_json::json!({"tool_input": {"file_path": "crates/senseid/src/db/pg_store.rs"}}),
+        }).await.unwrap();
 
         let window = crate::tasks::handlers::tool_insights::HEALTH_VERDICT_WINDOW_DAYS;
         assert!(ctx.pg().unclassified_verdict_sessions(window).await.unwrap().contains(&sid));
@@ -420,7 +434,9 @@ mod tests {
             let repo_path = tmp.path().to_string_lossy().to_string();
             let root_id =
                 ctx.pg().add_watch_root(&repo_path, "test", &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, "repo", &repo_path).await.unwrap();
+            crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, "repo", &repo_path)
+                .await
+                .unwrap();
         }
 
         let mut task = Task::new(TaskKind::ProcessFolder, "repo", &src_dir.to_string_lossy());
@@ -484,7 +500,9 @@ mod tests {
         {
             let root_id =
                 ctx.pg().add_watch_root(&path, &unique, &serde_json::json!([])).await.unwrap();
-            ctx.pg().upsert_repo(&root_id, &unique, &path).await.unwrap();
+            crate::tasks::test_support::seed_repo_folder(ctx.pg(), &root_id, &unique, &path)
+                .await
+                .unwrap();
             let p = ctx.pg().get_repo_by_name(&unique).await.unwrap();
             assert!(p.is_some());
         }

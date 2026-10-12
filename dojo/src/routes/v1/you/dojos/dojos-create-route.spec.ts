@@ -14,7 +14,11 @@ class AdminError extends Error {
 
 const mocks = vi.hoisted(() => ({ resolveCaller: vi.fn(), createDojo: vi.fn(), parseNewDojo: vi.fn() }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}) }));
+// The service role vs the caller's own JWT — which client the store got.
+vi.mock('$lib/server/dojo-supabase', () => ({
+	dojoDb: () => ({ client: 'service' }),
+	userDb: (token: string) => ({ client: 'user', token })
+}));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveCaller: mocks.resolveCaller,
 	apiError: (status: number, message: string) =>
@@ -41,7 +45,7 @@ function ev(body: unknown) {
 }
 
 beforeEach(() => {
-	mocks.resolveCaller.mockClear().mockResolvedValue({ userId: 'u1', db: {} });
+	mocks.resolveCaller.mockClear().mockResolvedValue({ userId: 'u1', db: { client: 'service' }, accessToken: 'jwt-A' });
 	mocks.parseNewDojo.mockClear().mockImplementation((b) => ({ name: b.name, kind: b.kind }));
 	mocks.createDojo.mockClear().mockResolvedValue({ id: 't-new', key: 'org/acme', name: 'Acme' });
 });
@@ -51,8 +55,8 @@ describe('POST /v1/you/dojos', () => {
 		const res = await route.POST(ev({ name: 'Acme', kind: 'employer' }));
 		expect(res.status).toBe(201);
 		expect(await res.json()).toEqual({ id: 't-new', key: 'org/acme', name: 'Acme' });
-		expect(mocks.createDojo.mock.calls[0][1]).toBe('u1');
-		expect(mocks.createDojo.mock.calls[0][2]).toEqual({ name: 'Acme', kind: 'employer' });
+		// As the caller: the database makes the SESSION's principal admin (#236).
+		expect(mocks.createDojo.mock.calls[0]).toEqual([{ client: 'user', token: 'jwt-A' }, { name: 'Acme', kind: 'employer' }]);
 	});
 	it('maps a parse 400 without creating', async () => {
 		mocks.parseNewDojo.mockImplementationOnce(() => {
@@ -68,6 +72,14 @@ describe('POST /v1/you/dojos', () => {
 	it('propagates a 401 without creating', async () => {
 		mocks.resolveCaller.mockRejectedValueOnce(new Response('{}', { status: 401 }));
 		expect((await route.POST(ev({ name: 'Acme', kind: 'client' }))).status).toBe(401);
+		expect(mocks.createDojo).not.toHaveBeenCalled();
+	});
+});
+
+describe('POST /v1/you/dojos without a session', () => {
+	it('refuses rather than creating as the service role', async () => {
+		mocks.resolveCaller.mockResolvedValueOnce({ userId: 'u1', db: { client: 'service' } });
+		expect((await route.POST(ev({ name: 'Acme', kind: 'employer' }))).status).toBe(401);
 		expect(mocks.createDojo).not.toHaveBeenCalled();
 	});
 });

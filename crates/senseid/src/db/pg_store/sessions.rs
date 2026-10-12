@@ -1,5 +1,55 @@
 use super::*;
 
+/// The measured outcome of one session, written when it closes.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct SessionMetricsRow<'a> {
+    pub session_id: &'a uuid::Uuid,
+    pub turns: i32,
+    pub corrections: i32,
+    pub outcome: &'a str,
+    pub ftr: bool,
+    pub duration_ms: i64,
+    pub module: Option<&'a str>,
+    pub tool_usage: &'a serde_json::Value,
+}
+
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct HookEventRow<'a> {
+    pub session_id: &'a str,
+    pub assistant_family: &'a str,
+    pub event_type: &'a str,
+    pub tool_name: Option<&'a str>,
+    pub cwd: Option<&'a str>,
+    pub ts: i64,
+    pub success: Option<bool>,
+    pub payload: &'a serde_json::Value,
+}
+
+/// How a session ended, written once at completion.
+///
+/// Named rather than positional (#161): destructured exhaustively by its
+/// writer, so a field added here is a compile error until someone binds it.
+/// No `Default` — that would relocate the silence to the call sites.
+#[derive(Debug, Clone)]
+pub struct SessionOutcomeRow<'a> {
+    pub id: &'a uuid::Uuid,
+    pub outcome: &'a str,
+    pub ftr: bool,
+    pub turns: i32,
+    pub corrections: i32,
+    pub summary: Option<&'a str>,
+    pub tokens_in: Option<i32>,
+    pub tokens_out: Option<i32>,
+}
+
 #[allow(dead_code, clippy::too_many_arguments, clippy::type_complexity)]
 impl PgStore {
     /// List all sessions across all folders.
@@ -139,28 +189,37 @@ impl PgStore {
         Ok(row.0)
     }
 
-    pub async fn complete_session(
-        &self,
-        id: &uuid::Uuid,
-        outcome: &str,
-        ftr: bool,
-        turns: i32,
-        corrections: i32,
-        summary: Option<&str>,
-        tokens_in: Option<i32>,
-        tokens_out: Option<i32>,
-    ) -> Result<(), String> {
+    /// Close a session. `id` may be the row id OR the assistant's own session id
+    /// (`client_session_id`) — the second is what an agent holds: its SessionStart
+    /// context names Claude Code's session id, and the row is keyed on it (#238).
+    ///
+    /// Returns whether a session was found. A miss is `Ok(false)`, never a silent
+    /// success: matching `id` alone turned every agent's close into an UPDATE of
+    /// zero rows that answered `{"ok": true}`.
+    pub async fn complete_session(&self, row: &SessionOutcomeRow<'_>) -> Result<bool, String> {
+        // EXHAUSTIVE (#161): a field added to `SessionOutcomeRow` stops this
+        // compiling until someone binds it.
+        let SessionOutcomeRow {
+            id,
+            outcome,
+            ftr,
+            turns,
+            corrections,
+            summary,
+            tokens_in,
+            tokens_out,
+        } = row;
         // summary/tokens are COALESCE'd so a caller that omits them doesn't wipe a
         // previously-set value; these columns exist on activity.sessions and were
         // being silently dropped (the MCP schema advertised them).
-        sqlx_core::query::query(
+        let res = sqlx_core::query::query(
             "UPDATE activity.sessions SET outcome = $2::sensei.session_outcome, ftr = $3, turns = $4, corrections = $5, \
              summary = COALESCE($6, summary), tokens_in = COALESCE($7, tokens_in), tokens_out = COALESCE($8, tokens_out), \
-             completed_at = now() WHERE id = $1"
+             completed_at = now() WHERE id = $1 OR client_session_id = $1::text"
         ).bind(id).bind(outcome).bind(ftr).bind(turns).bind(corrections)
             .bind(summary).bind(tokens_in).bind(tokens_out)
             .execute(&self.pool).await.map_err(|e| e.to_string())?;
-        Ok(())
+        Ok(res.rows_affected() > 0)
     }
 
     /// Find-or-create the `activity.sessions` row for an assistant
@@ -285,17 +344,19 @@ impl PgStore {
     /// Insert a hook event payload into activity.assistant_events.
     /// session_id is the assistant's string session ID (not a DB UUID).
     /// assistant_family identifies the source (claude, cursor, zed, …); defaults to 'claude'.
-    pub async fn insert_hook_event(
-        &self,
-        session_id: &str,
-        assistant_family: &str,
-        event_type: &str,
-        tool_name: Option<&str>,
-        cwd: Option<&str>,
-        ts: i64,
-        success: Option<bool>,
-        payload: &serde_json::Value,
-    ) -> Result<i64, String> {
+    pub async fn insert_hook_event(&self, row: &HookEventRow<'_>) -> Result<i64, String> {
+        // EXHAUSTIVE (#161): a field added to `HookEventRow` stops this
+        // compiling until someone binds it.
+        let HookEventRow {
+            session_id,
+            assistant_family,
+            event_type,
+            tool_name,
+            cwd,
+            ts,
+            success,
+            payload,
+        } = row;
         let row: (i64,) = sqlx_core::query_as::query_as(
             "INSERT INTO activity.assistant_events \
              (session_id, family, event_type, tool_name, cwd, ts, success, payload) \
@@ -325,15 +386,20 @@ impl PgStore {
     #[allow(clippy::too_many_arguments)]
     pub async fn insert_hook_event_if_absent(
         &self,
-        session_id: &str,
-        assistant_family: &str,
-        event_type: &str,
-        tool_name: Option<&str>,
-        cwd: Option<&str>,
-        ts: i64,
-        success: Option<bool>,
-        payload: &serde_json::Value,
+        row: &HookEventRow<'_>,
     ) -> Result<Option<i64>, String> {
+        // EXHAUSTIVE (#161): a field added to `HookEventRow` stops this
+        // compiling until someone binds it.
+        let HookEventRow {
+            session_id,
+            assistant_family,
+            event_type,
+            tool_name,
+            cwd,
+            ts,
+            success,
+            payload,
+        } = row;
         let row: Option<(i64,)> = sqlx_core::query_as::query_as(
             "INSERT INTO activity.assistant_events \
              (session_id, family, event_type, tool_name, cwd, ts, success, payload) \
@@ -478,8 +544,9 @@ impl PgStore {
     ) -> Result<u64, String> {
         let res = sqlx_core::query::query(
             "UPDATE activity.sessions s SET analyzed_at = NULL
-               FROM sensei.folders f
-              WHERE f.id = s.folder_id AND f.project_id = $1 AND s.client_session_id IS NOT NULL",
+               FROM sensei.folder_projects fp
+              WHERE fp.folder_id = s.folder_id AND fp.project_id = $1
+                AND s.client_session_id IS NOT NULL",
         )
         .bind(project_id)
         .execute(&self.pool)
@@ -505,9 +572,9 @@ impl PgStore {
                     coalesce(sum((e.v->>'failed')::int), 0)::int8 AS failed,
                     count(*)::int8                                AS sessions
                FROM activity.sessions s
-               JOIN sensei.folders f ON f.id = s.folder_id,
+               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id,
                     jsonb_each(s.props->'tool_usage') AS e(tool, v)
-              WHERE f.project_id = $1
+              WHERE fp.project_id = $1
                 AND s.props ? 'tool_usage'
                 AND jsonb_typeof(s.props->'tool_usage') = 'object'
               GROUP BY e.tool
@@ -733,12 +800,8 @@ impl PgStore {
     /// `sensei.tool_call_verdicts` (#90) on the underlying PostToolUse
     /// event id so each row carries the usage verdict.
     ///
-    /// The existing view [`sensei.session_tool_calls`] keys on the
-    /// PreToolUse event id (call_id); verdicts are keyed on the
-    /// PostToolUse event id. This query recomputes both directly against
-    /// `activity.assistant_events` so we can LEFT JOIN verdicts on the
-    /// PostToolUse id without changing either the view or the verdicts
-    /// table.
+    /// Reads [`sensei.session_tool_calls`] — the one pairing — and joins
+    /// verdicts on its `response_id` (the PostToolUse event id).
     pub async fn get_session_replay_timeline(
         &self,
         session_id: &str,
@@ -759,44 +822,19 @@ impl PgStore {
             Option<f32>,               // confidence
             Option<String>,            // reason
         )> = sqlx_core::query_as::query_as(
-            "WITH pre AS (
-                SELECT session_id, family::text AS family, tool_name,
-                       id AS pre_id, ts AS pre_ts, payload AS request,
-                       row_number() OVER (
-                           PARTITION BY session_id, tool_name
-                           ORDER BY ts, id
-                       ) AS seq
-                  FROM activity.assistant_events
-                 WHERE event_type = 'PreToolUse'
-                   AND tool_name IS NOT NULL
-                   AND session_id = $1
-            ),
-            post AS (
-                SELECT session_id, tool_name,
-                       id AS post_id, ts AS post_ts,
-                       payload AS response, success,
-                       row_number() OVER (
-                           PARTITION BY session_id, tool_name
-                           ORDER BY ts, id
-                       ) AS seq
-                  FROM activity.assistant_events
-                 WHERE event_type = 'PostToolUse'
-                   AND tool_name IS NOT NULL
-                   AND session_id = $1
-            )
-            SELECT pre.pre_id, post.post_id, pre.tool_name, pre.family,
-                   pre.request, post.response, post.success,
-                   pre.pre_ts, post.post_ts,
-                   CASE WHEN post.post_ts IS NULL THEN NULL
-                        ELSE GREATEST(post.post_ts - pre.pre_ts, 0)
-                   END AS duration_ms,
-                   v.verdict, v.confidence, v.reason
-              FROM pre
-              LEFT JOIN post ON pre.session_id = post.session_id
-                            AND pre.tool_name  = post.tool_name
-                            AND pre.seq        = post.seq
-              LEFT JOIN sensei.tool_call_verdicts v ON v.event_id = post.post_id
-             ORDER BY pre.pre_ts ASC
+            // ONE pairing, the view's (by `tool_use_id`). This used to
+            // recompute an order-based pairing of its own, which paired 69% of
+            // parallel calls with another call's response and so hung their
+            // verdicts on the wrong row (#238). `response_id` is the
+            // PostToolUse event id the verdicts key on.
+            "SELECT c.call_id, c.response_id, c.tool_name, c.family::text,
+                    c.request, c.response, c.success,
+                    c.started_at_ms, c.completed_at_ms, c.duration_ms,
+                    v.verdict, v.confidence, v.reason
+               FROM sensei.session_tool_calls c
+               LEFT JOIN sensei.tool_call_verdicts v ON v.event_id = c.response_id
+              WHERE c.session_id = $1
+              ORDER BY c.started_at_ms ASC
              LIMIT $2",
         )
         .bind(session_id)
@@ -988,8 +1026,8 @@ impl PgStore {
                     s.evidence, (s.props->>'resumed')::bool AS resumed, s.props->'trouble' AS trouble,
                     s.tokens_in, s.tokens_out, EXTRACT(EPOCH FROM s.duration)::float8, s.provider, s.model
                FROM activity.sessions s
-               JOIN sensei.folders  f ON f.id = s.folder_id
-              WHERE f.project_id = $1
+               JOIN sensei.folder_projects fp ON fp.folder_id = s.folder_id
+              WHERE fp.project_id = $1
                 AND s.outcome   IS NOT NULL
                 AND s.outcome   <> 'empty'::sensei.session_outcome
                 AND date_trunc('day', s.started_at)::date = $2
@@ -1396,17 +1434,19 @@ impl PgStore {
     /// Write enrichment metrics onto a session (#66). Sets the derived fields
     /// and merges `tool_usage` into `props` — deliberately does NOT touch
     /// `completed_at` (owned by the hook-stream session derivation, #31).
-    pub async fn update_session_metrics(
-        &self,
-        session_id: &uuid::Uuid,
-        turns: i32,
-        corrections: i32,
-        outcome: &str,
-        ftr: bool,
-        duration_ms: i64,
-        module: Option<&str>,
-        tool_usage: &serde_json::Value,
-    ) -> Result<(), String> {
+    pub async fn update_session_metrics(&self, row: &SessionMetricsRow<'_>) -> Result<(), String> {
+        // EXHAUSTIVE (#161): a field added to `SessionMetricsRow` stops this
+        // compiling until someone binds it.
+        let SessionMetricsRow {
+            session_id,
+            turns,
+            corrections,
+            outcome,
+            ftr,
+            duration_ms,
+            module,
+            tool_usage,
+        } = row;
         sqlx_core::query::query(
             "UPDATE activity.sessions
                 SET outcome = $2::sensei.session_outcome, ftr = $3, turns = $4,
@@ -1657,10 +1697,10 @@ impl PgStore {
 
     /// Return the paired PreToolUse / PostToolUse timeline for an assistant
     /// session, ordered by call start. Each row carries the request payload,
-    /// the response payload (null when the call is still in-flight or the
-    /// PostToolUse was dropped), the success flag, and duration_ms. Backed
-    /// by the `sensei.session_tool_calls` view — see its DDL for the
-    /// pairing rule.
+    /// the response payload (null when the call is still in-flight, the
+    /// PostToolUse was dropped, or the call carries no `tool_use_id`), the
+    /// engine's duration_ms, and the subagent that made it. Backed by the
+    /// `sensei.session_tool_calls` view, which pairs by `tool_use_id`.
     pub async fn get_session_tool_calls(
         &self,
         session_id: &str,
@@ -1678,10 +1718,13 @@ impl PgStore {
             Option<i64>,                           // duration_ms
             chrono::DateTime<chrono::Utc>,         // started_at
             Option<chrono::DateTime<chrono::Utc>>, // completed_at
+            Option<String>,                        // tool_use_id
+            Option<String>,                        // agent_id
+            Option<String>,                        // agent_type
         )> = sqlx_core::query_as::query_as(
             "SELECT call_id, tool_name, family::text, request, response, success,
                     started_at_ms, completed_at_ms, duration_ms,
-                    started_at, completed_at
+                    started_at, completed_at, tool_use_id, agent_id, agent_type
                FROM sensei.session_tool_calls
               WHERE session_id = $1
               ORDER BY started_at_ms ASC
@@ -1708,9 +1751,17 @@ impl PgStore {
                     duration_ms,
                     started_at,
                     completed_at,
+                    tool_use_id,
+                    agent_id,
+                    agent_type,
                 )| {
                     serde_json::json!({
                         "callId":         call_id,
+                        // The engine's id for the call, the subagent that made
+                        // it (null for the main loop), and its kind (#238).
+                        "toolUseId":      tool_use_id,
+                        "agentId":        agent_id,
+                        "agentType":      agent_type,
                         "toolName":       tool_name,
                         "family":         family,
                         "request":        request,

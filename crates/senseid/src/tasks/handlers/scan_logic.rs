@@ -542,6 +542,109 @@ pub fn decide_stale_root(
     }
 }
 
+// ── What a scan was actually asked to do ────────────────────────────────────
+
+/// A directory path with any trailing separator removed, so the same directory
+/// written two ways compares equal. A shell completing a directory name appends
+/// the separator; the DB never stores one.
+fn trim_path(p: &str) -> &str {
+    p.trim().trim_end_matches('/')
+}
+
+/// Is `inner` the same directory as `outer`, or inside it?
+///
+/// Compared on a SEGMENT boundary, never as a bare prefix: `/a/sensei-old`
+/// starts with `/a/sensei` and is a different repository. The same rule
+/// `enclosing_watch_root` uses (`$1 = path OR starts_with($1, path || '/')`).
+pub fn under(inner: &str, outer: &str) -> bool {
+    let (inner, outer) = (trim_path(inner), trim_path(outer));
+    inner == outer || inner.starts_with(&format!("{outer}/"))
+}
+
+/// What a scan request resolved to. The scope is decided ONCE, up front, from
+/// the path the caller named — rather than every downstream step re-deriving it
+/// from a predicate over the walk's output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScanTarget {
+    /// No path named — reconcile every registered watch root.
+    AllRoots,
+    /// The path is a registered watch root. Full root semantics: walk, discover
+    /// repositories, prune phantoms, reconcile stale roots.
+    Root(String),
+    /// The path is (or sits inside) an indexed repository. Scan that ONE repo —
+    /// no `.git` walk, no fan-out to siblings.
+    Repo(String),
+    /// A subtree of a registered root that is not itself a repository. Walk it
+    /// for repositories, attributed to the enclosing root rather than becoming
+    /// a second, nested one.
+    Subtree { path: String, root: String },
+    /// Under no registered root — onboarding. The only variant that may create
+    /// a watch root.
+    NewRoot(String),
+}
+
+impl ScanTarget {
+    /// Does acting on this target register a NEW watch root?
+    ///
+    /// Exists so a caller can refuse root creation (`--no-create`) without
+    /// re-deriving the rule, and so the guarantee "only onboarding creates a
+    /// root" is a property a test can assert over every variant at once.
+    pub fn creates_a_watch_root(&self) -> bool {
+        matches!(self, ScanTarget::NewRoot(_))
+    }
+
+    /// The path this target acts on, for logging and for the task's `path`.
+    pub fn path(&self) -> Option<&str> {
+        match self {
+            ScanTarget::AllRoots => None,
+            ScanTarget::Root(p) | ScanTarget::Repo(p) | ScanTarget::NewRoot(p) => Some(p),
+            ScanTarget::Subtree { path, .. } => Some(path),
+        }
+    }
+}
+
+/// Resolve a scan request to the scope it actually names. Pure: the two DB
+/// lookups are injected, so the policy is unit-testable without a database.
+///
+/// - `requested` — the path the caller named; `None`/blank means "everything".
+/// - `indexed_repo` — `repo_root_for_path`: the nearest INDEXED git repository
+///   at or above `requested`, if any.
+/// - `enclosing_root` — `enclosing_watch_root`: the registered watch root at or
+///   above `requested`, if any.
+///
+/// ORDER IS THE POLICY, and each step is load-bearing:
+/// 1. nothing named ⇒ every root;
+/// 2. the path IS a root ⇒ root semantics WIN over repo semantics, because only
+///    the root pass prunes phantoms and reconciles stale roots, and a
+///    single-repo watch root is both;
+/// 3. at or inside an indexed repo ⇒ that repo alone, because a repository is
+///    the indexable unit (a manifest and its resolution are repo-wide, so half
+///    a repo cannot be re-indexed coherently);
+/// 4. inside a root but not a repo ⇒ a scoped walk under that root;
+/// 5. otherwise ⇒ onboarding.
+pub fn classify_scan_target(
+    requested: Option<&str>,
+    indexed_repo: Option<&str>,
+    enclosing_root: Option<&str>,
+) -> ScanTarget {
+    let Some(path) = requested.map(trim_path).filter(|p| !p.is_empty()) else {
+        return ScanTarget::AllRoots;
+    };
+
+    if let Some(root) = enclosing_root.map(trim_path)
+        && root == path
+    {
+        return ScanTarget::Root(path.to_string());
+    }
+    if let Some(repo) = indexed_repo.map(trim_path) {
+        return ScanTarget::Repo(repo.to_string());
+    }
+    match enclosing_root.map(trim_path) {
+        Some(root) => ScanTarget::Subtree { path: path.to_string(), root: root.to_string() },
+        None => ScanTarget::NewRoot(path.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -1340,5 +1443,143 @@ mod tests {
         std::fs::create_dir_all(nested.join("src/api")).unwrap();
         std::fs::write(nested.join("src/api/handler.rs"), "fn h() {}").unwrap();
         assert!(dir_has_indexable_content(&nested), "source in a subdir => content");
+    }
+
+    // ── classify_scan_target ────────────────────────────────────────────────
+
+    /// No path asked for means every registered root, not "nothing to do".
+    ///
+    /// Breaking mutation: return `NewRoot(String::new())` for `None` — the scan
+    /// registers a watch root at the empty path and indexes the filesystem root.
+    #[test]
+    fn no_path_means_every_registered_root() {
+        assert_eq!(classify_scan_target(None, None, None), ScanTarget::AllRoots);
+        // A blank string is the same request as no string: it arrives that way
+        // from an HTTP body whose field defaulted.
+        assert_eq!(classify_scan_target(Some("   "), None, None), ScanTarget::AllRoots);
+    }
+
+    /// The path IS a registered watch root ⇒ root semantics (walk, discover,
+    /// prune phantoms), never repo semantics.
+    ///
+    /// Breaking mutation: drop the `same_path` arm so a root falls through to
+    /// the repo arm — pruning and stale-root reconcile stop running entirely,
+    /// because only `ScanRoot` performs them.
+    #[test]
+    fn an_exact_watch_root_is_scanned_as_a_root() {
+        assert_eq!(
+            classify_scan_target(Some("/a/dev"), None, Some("/a/dev")),
+            ScanTarget::Root("/a/dev".into())
+        );
+        // A trailing separator is the same directory written two ways, which is
+        // exactly how a path arrives from a shell completing a directory name.
+        assert_eq!(
+            classify_scan_target(Some("/a/dev/"), None, Some("/a/dev")),
+            ScanTarget::Root("/a/dev".into())
+        );
+    }
+
+    /// A path that is ALSO an indexed repository still resolves as a root when
+    /// it is registered as one. Root wins: the user made it a root deliberately,
+    /// and only the root pass prunes what the repo pass cannot see.
+    ///
+    /// Breaking mutation: order the repo arm first — a single-repo watch root
+    /// (the shape `sensei scan ~/one-repo` creates) never reconciles again.
+    #[test]
+    fn a_root_that_is_also_a_repo_resolves_as_the_root() {
+        assert_eq!(
+            classify_scan_target(Some("/a/solo"), Some("/a/solo"), Some("/a/solo")),
+            ScanTarget::Root("/a/solo".into())
+        );
+    }
+
+    /// An indexed repository is scanned as ONE repo — no `.git` walk of the
+    /// subtree, no fan-out to its siblings.
+    ///
+    /// Breaking mutation: return `Subtree` here — `--force` on one repo re-parses
+    /// every repository under the enclosing watch root, which is the 194-repo
+    /// blast radius this classification exists to prevent.
+    #[test]
+    fn an_indexed_repository_is_scanned_alone() {
+        assert_eq!(
+            classify_scan_target(Some("/a/dev/sensei"), Some("/a/dev/sensei"), Some("/a/dev")),
+            ScanTarget::Repo("/a/dev/sensei".into())
+        );
+    }
+
+    /// Pointing at a directory INSIDE a repo scans that repo. The repository is
+    /// the indexable unit — a manifest and its resolution are repo-wide, so half
+    /// a repo cannot be re-indexed coherently.
+    ///
+    /// Breaking mutation: require an exact match (`indexed_repo == requested`)
+    /// — `sensei scan crates/senseid` silently becomes a NEW WATCH ROOT nested
+    /// inside an existing repository, the exact shape `heal_nested_standalone_roots`
+    /// exists to clean up after.
+    #[test]
+    fn a_path_inside_a_repository_scans_that_repository() {
+        assert_eq!(
+            classify_scan_target(
+                Some("/a/dev/sensei/crates/senseid"),
+                Some("/a/dev/sensei"),
+                Some("/a/dev")
+            ),
+            ScanTarget::Repo("/a/dev/sensei".into())
+        );
+    }
+
+    /// A subtree of a root that holds repositories but is not one itself gets a
+    /// scoped walk ATTRIBUTED TO THE ENCLOSING ROOT — it must not become a second,
+    /// nested watch root.
+    ///
+    /// Breaking mutation: return `NewRoot(path)` — `sensei scan ~/Developer/acme`
+    /// registers a redundant sub-root, and the same repositories are then owned
+    /// by two roots.
+    #[test]
+    fn a_subtree_of_a_root_is_walked_under_that_root() {
+        assert_eq!(
+            classify_scan_target(Some("/a/dev/acme"), None, Some("/a/dev")),
+            ScanTarget::Subtree { path: "/a/dev/acme".into(), root: "/a/dev".into() }
+        );
+    }
+
+    /// Under no registered root and not an indexed repo ⇒ onboarding. This is
+    /// the ONLY branch that may create a watch root, which is what makes root
+    /// creation something a caller can see coming and refuse.
+    ///
+    /// Breaking mutation: return `Subtree` with an empty root — the scan is
+    /// attributed to a root that does not exist and indexes nothing.
+    #[test]
+    fn a_path_under_no_root_is_the_only_branch_that_creates_one() {
+        assert_eq!(
+            classify_scan_target(Some("/elsewhere/proj"), None, None),
+            ScanTarget::NewRoot("/elsewhere/proj".into())
+        );
+        assert_eq!(
+            classify_scan_target(Some("/elsewhere/proj/"), None, None),
+            ScanTarget::NewRoot("/elsewhere/proj".into())
+        );
+    }
+
+    /// Exactly one variant may register a root. Asserted as a PROPERTY over
+    /// every variant rather than as a list, so a variant added later is covered
+    /// by this test without editing it.
+    ///
+    /// Breaking mutation: make `creates_a_watch_root` return true for `Subtree`
+    /// — nested sub-roots reappear and nothing fails except this assertion.
+    #[test]
+    fn only_the_onboarding_branch_creates_a_watch_root() {
+        let every = [
+            ScanTarget::AllRoots,
+            ScanTarget::Root("/a".into()),
+            ScanTarget::Repo("/a".into()),
+            ScanTarget::Subtree { path: "/a/b".into(), root: "/a".into() },
+            ScanTarget::NewRoot("/a".into()),
+        ];
+        let creating: Vec<_> = every.iter().filter(|t| t.creates_a_watch_root()).cloned().collect();
+        assert_eq!(
+            creating,
+            vec![ScanTarget::NewRoot("/a".into())],
+            "exactly one variant may create a watch root"
+        );
     }
 }

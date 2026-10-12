@@ -8,7 +8,7 @@
 // `parseDecideBody`, 400 on failure). The store logic lives in
 // `$lib/server/triage-data`.
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { parseDecideBody, decideTriage, TriageError } from '$lib/server/triage-data';
 
@@ -26,7 +26,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		const decision = parseDecideBody(body);
 		// The maintainer is the authenticated caller, never the body.
 		const result = await decideTriage(
-			dojoDb(),
+			callerDb(caller),
 			caller.tenantId,
 			params.signature,
 			decision,

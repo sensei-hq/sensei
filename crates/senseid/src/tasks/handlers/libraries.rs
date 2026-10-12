@@ -2,7 +2,7 @@
 
 use super::super::Task;
 use super::super::executor::TaskContext;
-use crate::languages;
+use crate::db::pg_store::LibraryPageRow;
 
 // ── Resolve Libs ──────────────────────────────────────────────────────────
 
@@ -39,7 +39,10 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     .and_then(|e| e.to_str())
                     .map(|e| format!(".{}", e))
                     .unwrap_or_default();
-                let adapter = match languages::adapter_for_ext(&ext) {
+                // The INDEXER's registry, which is the only one now. Its
+                // adapters read a whole file into facts rather than exposing a
+                // bespoke `parse`, so the import list comes off `FileFacts`.
+                let adapter = match crate::indexer::lang::adapter_for_ext(&ext) {
                     Some(a) => a,
                     None => continue,
                 };
@@ -54,10 +57,23 @@ pub async fn resolve_libs(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                     .unwrap_or(entry.path())
                     .to_string_lossy()
                     .to_string();
-                let parsed = adapter.parse(&content, &rel_path);
+                // Package and module are irrelevant here: this asks only what
+                // the file IMPORTS, and a specifier is the same string whatever
+                // the file is called. An unreadable file is skipped, as before.
+                let source = crate::indexer::lang::Source {
+                    package: "",
+                    module: "",
+                    path: &rel_path,
+                    text: &content,
+                };
+                let parsed =
+                    match adapter.read(&source, &crate::indexer::lang::TypeHomes::unknown()) {
+                        Ok(facts) => facts,
+                        Err(_) => continue,
+                    };
 
                 for imp in &parsed.imports {
-                    let path = &imp.target_path;
+                    let path = &imp.path;
                     // Skip relative, absolute, node builtins, framework aliases
                     if path.starts_with('.') || path.starts_with('/') || path.starts_with("node:") {
                         continue;
@@ -309,21 +325,21 @@ pub async fn index_library(ctx: &TaskContext, task: &Task) -> Result<u32, String
         };
         match ctx
             .pg()
-            .upsert_library_page(
-                &lib_id,
-                &page.doc.title,
+            .upsert_library_page(&LibraryPageRow {
+                library_id: &lib_id,
+                title: &page.doc.title,
                 url,
                 local_path,
-                Some(&page.doc.summary),
-                Some(&page.doc.content),
-                page.source_type,
-                page.doc.component.as_deref(),
-                // package_name: no ingestion route reports which package a
-                // page documents yet — 02b S1's manifest read supplies it.
-                // `None` is "not stated", never inferred from the title.
-                None,
-                None,
-            )
+                description: Some(&page.doc.summary),
+                content: Some(&page.doc.content),
+                source_type: page.source_type,
+                component: page.doc.component.as_deref(),
+                // No ingestion route reports which package a page documents yet
+                // — 02b S1's manifest read supplies it. `None` is "not stated",
+                // never inferred from the title.
+                package_name: None,
+                version: None,
+            })
             .await
         {
             Ok(_) => pages_stored += 1,
@@ -401,20 +417,20 @@ pub async fn index_library_page(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let summary = &summary[..summary.len().min(200)];
 
     ctx.pg()
-        .upsert_library_page(
-            &lib_id,
+        .upsert_library_page(&LibraryPageRow {
+            library_id: &lib_id,
             title,
             url,
-            None,
-            Some(summary),
-            Some(content),
-            "http",
-            None,
-            // package_name: the http route does not state one (02b S1)
-            None,
-            // version: this path is handed a URL with no release attached.
-            None,
-        )
+            local_path: None,
+            description: Some(summary),
+            content: Some(content),
+            source_type: "http",
+            component: None,
+            // The http route does not state one (02b S1).
+            package_name: None,
+            // This path is handed a URL with no release attached.
+            version: None,
+        })
         .await
         .map_err(|e| format!("upsert_library_page failed: {}", e))?;
 
@@ -968,7 +984,14 @@ mod tests {
         let folder_path = tmp.path().to_string_lossy().to_string();
         let root_id =
             ctx.pg().add_watch_root(&folder_path, "rl_fc", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "rl-fc-repo", &folder_path).await.unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            ctx.pg(),
+            &root_id,
+            "rl-fc-repo",
+            &folder_path,
+        )
+        .await
+        .unwrap();
         ctx.pg().update_folder_status(&fid, "failed").await.unwrap();
 
         let task = Task::new(TaskKind::ResolveLibs, &folder_path, &folder_path);

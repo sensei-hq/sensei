@@ -36,7 +36,7 @@ brew services start sensei-hq/tap/sensei
 ## Install the desktop app
 
 ```sh
-brew install --cask sensei-hq/tap/sensei-app
+brew install --cask sensei-hq/tap/senseihq
 ```
 
 ## Install everything (CLI + app + prerequisites)

@@ -52,19 +52,11 @@ comment on column dojo.seats.last_active_at
 comment on column dojo.seats.ended_at
      is 'NULL = active seat (counts toward billing). Set to the removal time when the user leaves the project — the row is retained for audit, never deleted.';
 
--- Read by the security_invoker view dojo.tenant_seat_usage as service_role (billing route,
--- server-only; service_role bypasses RLS). Not exposed to authenticated.
+-- Read by the security_invoker view dojo.tenant_seat_usage as service_role (the
+-- seats_used refresh, server-only; service_role bypasses RLS). A tenant admin reads the
+-- tenant's seats under policies/dojo/seats.sql.
 grant select on dojo.seats to service_role;
 
--- RLS deny-by-default: server-only table (the dōjō Worker uses service_role, which
--- bypasses RLS; no client authenticated/anon grant). Locks out any direct PostgREST
--- access while service_role keeps full access; clears the Supabase rls_disabled advisor.
+-- RLS: the access matrix's cells for this table. The policies call the access
+-- predicates and so live in policies/dojo/seats.sql (see policies/README.md).
 alter table dojo.seats enable row level security;
-
--- No client access: authenticated/anon are denied all rows + writes; the dōjō Worker
--- reads/writes as service_role, which bypasses RLS. Explicit deny-all so RLS has a
--- policy (clears the rls_enabled_no_policy advisor). Idempotent.
-drop policy if exists seats_service_only on dojo.seats;
-create policy seats_service_only on dojo.seats
-    for all to authenticated, anon
-    using (false) with check (false);

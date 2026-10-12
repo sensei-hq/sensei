@@ -35,20 +35,21 @@ echo "   user_id=$USER_ID"
 HASH=$(printf '%s' "$TESTTOKEN" | shasum -a 256 | cut -d' ' -f1)
 echo "== seed: tenant + membership (device_token_hash=$HASH) =="
 psql "$DBURL" -v ON_ERROR_STOP=1 <<SQL || fail "seed sql"
-insert into dojo.tenants (key, origin, org, name, dojo_url)
-values ('personal/dev','org','dev','Dev (personal)','$API')
+-- memberships.user_id holds a PRINCIPAL id, not the Supabase login id (spec
+-- dojo-auth-provisioning §VIII.2): the login maps to a principal first.
+insert into dojo.principals (auth_user_id, display_name)
+values ('$USER_ID', 'relay dev')
+on conflict (auth_user_id) do nothing;
+insert into dojo.tenants (key, origin, slug, name, dojo_url)
+values ('personal/dev','personal','dev','Dev (personal)','$API')
 on conflict (key) do nothing;
-insert into dojo.memberships (tenant_id, user_id, dojo_url, role, kind, authenticated_via, device_token_hash)
-select t.id, '$USER_ID', '$API', 'admin', 'personal', 'device_code', '$HASH'
-from dojo.tenants t where t.key='personal/dev'
+insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via, device_token_hash)
+select t.id, p.id, 'admin', 'personal', 'device_code', '$HASH'
+from dojo.tenants t, dojo.principals p
+where t.key='personal/dev' and p.auth_user_id = '$USER_ID'
 on conflict (tenant_id, user_id) do update set device_token_hash = excluded.device_token_hash;
--- Grant the Supabase API roles access to dojo so PostgREST can read it. PROD
--- Supabase needs the same one-time grant (see docs/plan/decisions.md). Idempotent.
-grant usage on schema dojo to service_role, authenticated, anon;
-grant all on all tables in schema dojo to service_role;
-grant all on all sequences in schema dojo to service_role;
-alter default privileges in schema dojo grant all on tables to service_role;
-alter default privileges in schema dojo grant all on sequences to service_role;
+-- The API roles' reach into dojo comes with the deploy now
+-- (database/apply/after/dojo_api_grants.sql), not from this seed.
 SQL
 
 echo "== get user JWT (password grant) =="
@@ -93,7 +94,7 @@ sleep 0.6
 
 echo "== 1. daemon POST session =="
 S=$(req POST "$WORKER/v1/t/personal/dev/relay/session" "$AUTH_DEV" \
-  "{\"run_id\":\"$RUN\",\"title\":\"Round-trip\",\"status\":\"running\",\"progress_done\":0,\"progress_total\":1,\"current_phase\":\"P1\"}")
+  "{\"run_id\":\"$RUN\",\"title\":\"Round-trip\",\"status\":\"running\",\"progress_done\":0,\"progress_total\":1,\"current_phase\":\"P1\",\"project\":{\"slug\":\"roundtrip-$RUN\",\"name\":\"Round-trip\",\"classification\":\"company\"}}")
 echo "   $S"; echo "$S" | jq -e '.id' >/dev/null || fail "session ($S)"
 
 echo "== 1b. daemon POST segments (outline) =="
@@ -140,6 +141,30 @@ echo "   $N"; NUDGE_ID=$(echo "$N" | jq -r '.id // empty'); [ -n "$NUDGE_ID" ] |
 PN=$(req GET "$WORKER/v1/t/personal/dev/relay/inbox?since=$CURSOR" "$AUTH_DEV")
 echo "$PN" | jq -e '.items[] | select(.id=="'"$NUDGE_ID"'" and .direction=="human_to_agent" and .kind=="nudge" and .payload.text=="focus on the API first")' >/dev/null \
   || fail "nudge not visible to the daemon poll / not trimmed ($PN)"
+
+echo "== 3d. phone POST relay/push/subscribe twice (JWT — registers once, refreshes in place) =="
+EP="https://push.example/roundtrip-$RUN"
+SUB='{"endpoint":"'"$EP"'","keys":{"p256dh":"PK","auth":"AK"},"platform":"web"}'
+S1=$(req POST "$WORKER/v1/t/personal/dev/relay/push/subscribe" "$AUTH_JWT" "$SUB")
+S2=$(req POST "$WORKER/v1/t/personal/dev/relay/push/subscribe" "$AUTH_JWT" "$SUB")
+echo "   $S1 $S2"; SUB_ID=$(echo "$S1" | jq -r '.id // empty')
+[ -n "$SUB_ID" ] && [ "$(echo "$S2" | jq -r '.id // empty')" = "$SUB_ID" ] || fail "push subscribe ($S1 / $S2)"
+
+echo "== 3e. phone POST relay/push/prefs twice (JWT — merged opt-ins) =="
+req POST "$WORKER/v1/t/personal/dev/relay/push/prefs" "$AUTH_JWT" '{"events":{"approvals":true}}' >/dev/null
+PR=$(req POST "$WORKER/v1/t/personal/dev/relay/push/prefs" "$AUTH_JWT" '{"events":{"stalls":true}}')
+echo "   $PR"
+echo "$PR" | jq -e '.events.approvals == true and .events.stalls == true' >/dev/null || fail "push prefs ($PR)"
+
+echo "== 3f. phone GET projects (JWT — the run's project, read under the projects policy) =="
+# The session POST files the run's project in the background; give it a moment.
+for _ in 1 2 3 4 5; do
+  PJ=$(req GET "$WORKER/v1/t/personal/dev/projects" "$AUTH_JWT")
+  echo "$PJ" | jq -e '.projects[] | select(.slug=="roundtrip-'"$RUN"'")' >/dev/null && break
+  sleep 1
+done
+echo "   $(echo "$PJ" | jq -c '[.projects[] | select(.slug=="roundtrip-'"$RUN"'")]')"
+echo "$PJ" | jq -e '.projects[] | select(.slug=="roundtrip-'"$RUN"'")' >/dev/null || fail "projects ($PJ)"
 
 echo "== 4. phone POST reply (JWT) =="
 R=$(req POST "$WORKER/v1/t/personal/dev/relay/reply" "$AUTH_JWT" \
