@@ -39,10 +39,9 @@ Disabling skips the computation, not just the display. A repository shared with
 several dōjōs is computed while ANY of them still wants the metric — one tenant
 opting out never degrades another.';
 
+-- RLS: the access matrix's cells for this table. The policies call the access
+-- predicates and so live in policies/dojo/metric_activations.sql (see policies/README.md).
 alter table metric_activations enable row level security;
-drop policy if exists metric_activations_service_only on metric_activations;
-create policy metric_activations_service_only on metric_activations
-    for all to authenticated, anon using (false) with check (false);
 comment on column metric_activations.repository_id
      is 'The repository this ruling applies to. A tenant''s answer for one repository says nothing about another: churn may be worth paying for on the service you operate and noise on a vendored mirror.';
 comment on column metric_activations.metric_id

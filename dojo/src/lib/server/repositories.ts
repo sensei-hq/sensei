@@ -335,16 +335,11 @@ const MY_REPO_COLUMNS =
  * FAILS CLOSED. A read error throws rather than returning `[]`, because an empty
  * list reads as "you have no repositories" — a different and load-bearing claim.
  */
-export async function listMyRepositories(
-	db: DojoClient,
-	principalId: string
-): Promise<MyRepository[]> {
+export async function listMyRepositories(db: DojoClient): Promise<MyRepository[]> {
+	// dojo.my_repositories() pins the CALLER's principal in the database (#236):
+	// no consumer-side filter to forget.
 	return readAllPages<MyRepository>((from, to) =>
-		db
-			.from('all_my_repositories')
-			.select(MY_REPO_COLUMNS)
-			.eq('principal_id', principalId)
-			.range(from, to)
+		db.rpc('my_repositories').select(MY_REPO_COLUMNS).range(from, to)
 	);
 }
 
@@ -432,7 +427,7 @@ async function disabledMetricsByRepo(
 	return out;
 }
 
-export async function syncPlan(db: DojoClient, principalId: string): Promise<SyncPlan> {
+export async function syncPlan(db: DojoClient): Promise<SyncPlan> {
 	const data = await readAllPages<{
 		repository_id: string;
 		repo_key: string;
@@ -442,9 +437,8 @@ export async function syncPlan(db: DojoClient, principalId: string): Promise<Syn
 		denied_reason?: string | null;
 	}>((from, to) =>
 		db
-			.from('all_my_repositories')
+			.rpc('my_repositories')
 			.select('repository_id, repo_key, tenant, tenant_id, sync_enabled, denied_reason')
-			.eq('principal_id', principalId)
 			.range(from, to)
 	);
 

@@ -215,6 +215,11 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 
 	return {
 		from: (table: string) => builder(table),
+		/** A set-returning function, read like a table: `rpc('my_repositories')`
+		 *  addresses the fixture table `'rpc:my_repositories'`. What the function
+		 *  itself returns (e.g. that it pins the caller's principal) is the
+		 *  database's to prove, in database/tests; here the fixture IS its result. */
+		rpc: (fn: string) => builder(`rpc:${fn}`),
 		/** Re-scope the next `.from()` to another Postgres schema, as supabase-js
 		 *  does. Modelled because NOT modelling it hid a real defect: the metric
 		 *  catalogue lives in `sensei.metrics`, a bare `.from('metrics')` resolves
