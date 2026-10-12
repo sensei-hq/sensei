@@ -19,6 +19,8 @@ const viewRow = (over: Record<string, unknown> = {}) => ({
 	repo_key: 'github.com/acme/api',
 	tenant: 'organization/acme',
 	principal_id: ALICE,
+	origin: 'organization',
+	role: 'admin',
 	configurable_by_me: true,
 	...over
 });
@@ -88,6 +90,30 @@ describe('setMetricActivation', () => {
 			setMetricActivation(db as never, ALICE, 'github.com/acme/api', 'ftr', false)
 		).rejects.toThrow(/may not/i);
 		expect(db.tables.metric_activations.rows).toHaveLength(0);
+	});
+
+	// The view says a member MAY configure an organisation's PUBLIC repository —
+	// right for the per-user share election. But an activation row has no
+	// principal: it switches the metric off for every member. On an organisation
+	// repository that is the org's policy, so it takes an admin (#236 matrix).
+	it('refuses a non-admin on an organisation repository, even one the view lets them configure', async () => {
+		const db = fakeDojoDb(
+			tables([viewRow({ role: 'contributor', forge_visibility: 'public', configurable_by_me: true })])
+		);
+		await expect(
+			setMetricActivation(db as never, ALICE, 'github.com/acme/api', 'ftr', false)
+		).rejects.toThrow(/may not/i);
+		expect(db.tables.metric_activations.rows).toHaveLength(0);
+	});
+
+	// In a personal dōjō the tenant IS the person, so "everyone" is just them.
+	it('lets a member switch a metric in their personal dōjō', async () => {
+		const db = fakeDojoDb(
+			tables([viewRow({ origin: 'personal', role: 'contributor', tenant: 'personal/alice' })])
+		);
+		const out = await setMetricActivation(db as never, ALICE, 'github.com/acme/api', 'ftr', false);
+		expect(out.enabled).toBe(false);
+		expect(db.tables.metric_activations.rows).toHaveLength(1);
 	});
 
 	it('refuses a repository that is not the callers at all', async () => {
