@@ -19,11 +19,16 @@ type DbArg = Parameters<typeof listLibraryPacks>[0];
  * resolves the supplied `{ data, error }`. `.rpc()` resolves it directly.
  */
 type Result = { data?: unknown; error: unknown };
+const rpcCalls: { fn: string; args?: Record<string, unknown> }[] = [];
 function makeDb(result: Result): DbArg {
+	rpcCalls.length = 0;
 	const b: Record<string, unknown> = {};
 	for (const m of ['from', 'select', 'eq', 'order', 'limit']) b[m] = () => b;
 	b.then = (resolve: (r: Result) => unknown) => resolve(result);
-	b.rpc = () => Promise.resolve(result);
+	b.rpc = (fn: string, args?: Record<string, unknown>) => {
+		rpcCalls.push({ fn, args });
+		return Promise.resolve(result);
+	};
 	return b as unknown as DbArg;
 }
 
@@ -74,36 +79,44 @@ describe('listLibraryPacks — DB read → shaped wire', () => {
 	});
 });
 
-describe('listAdoptedPackSlugs — user-scoped adoption read', () => {
-	it('maps rows to their pack_slug', async () => {
-		const db = makeDb({ data: [{ pack_slug: 'a' }, { pack_slug: 'b' }], error: null });
-		expect(await listAdoptedPackSlugs(db, 'user-1')).toEqual(['a', 'b']);
+// The caller's own adoptions, pinned to them in the database by
+// dojo.my_adopted_pack_slugs() (#236; database/tests/dojo/rule_packs_access.sql).
+describe('listAdoptedPackSlugs — the caller\'s own adoptions', () => {
+	it('reads them through dojo.my_adopted_pack_slugs(), with no user to pass', async () => {
+		const db = makeDb({ data: ['a', 'b'], error: null });
+		expect(await listAdoptedPackSlugs(db)).toEqual(['a', 'b']);
+		expect(rpcCalls).toEqual([{ fn: 'my_adopted_pack_slugs', args: undefined }]);
 	});
 
 	it('returns [] when the caller has adopted nothing (data null)', async () => {
-		expect(await listAdoptedPackSlugs(makeDb({ data: null, error: null }), 'user-1')).toEqual([]);
+		expect(await listAdoptedPackSlugs(makeDb({ data: null, error: null }))).toEqual([]);
 	});
 
 	it('throws RulePacksError on a read error', async () => {
-		await expect(
-			listAdoptedPackSlugs(makeDb({ data: null, error: { message: 'boom' } }), 'user-1')
-		).rejects.toThrow(RulePacksError);
+		await expect(listAdoptedPackSlugs(makeDb({ data: null, error: { message: 'boom' } }))).rejects.toThrow(
+			RulePacksError
+		);
 	});
 });
 
 describe('setPackAdoption — adopt/drop via SECURITY DEFINER rpc', () => {
-	it('returns true when the definer function reports the pack existed', async () => {
+	// The function derives the user from the session; a user id in the call is
+	// what let a caller of the old signature adopt into anyone's namespace (#236).
+	it('passes the pack, the display name and the choice — never a user id', async () => {
 		const db = makeDb({ data: true, error: null });
-		expect(await setPackAdoption(db, 'slug', 'user-1', 'Ada', true)).toBe(true);
+		expect(await setPackAdoption(db, 'slug', 'Ada', true)).toBe(true);
+		expect(rpcCalls).toEqual([
+			{ fn: 'set_pack_adoption', args: { p_pack_slug: 'slug', p_user_name: 'Ada', p_adopt: true } }
+		]);
 	});
 
 	it('returns false for an unknown/unavailable slug (data false)', async () => {
 		const db = makeDb({ data: false, error: null });
-		expect(await setPackAdoption(db, 'nope', 'user-1', null, true)).toBe(false);
+		expect(await setPackAdoption(db, 'nope', null, true)).toBe(false);
 	});
 
 	it('throws RulePacksError on an rpc error', async () => {
 		const db = makeDb({ data: null, error: { message: 'boom' } });
-		await expect(setPackAdoption(db, 'slug', 'user-1', null, false)).rejects.toThrow(RulePacksError);
+		await expect(setPackAdoption(db, 'slug', null, false)).rejects.toThrow(RulePacksError);
 	});
 });

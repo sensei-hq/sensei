@@ -5,16 +5,14 @@
 // never a fixture. Per-caller adoption state is layered by the browse loader/adopt
 // endpoint, not here.
 import type { RequestHandler } from './$types';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { listLibraryPacks, listAdoptedPackSlugs, RulePacksError } from '$lib/server/rulepacks-data';
 
 export const GET: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, db } = await resolveCaller(request, locals);
-		const [packs, adopted] = await Promise.all([
-			listLibraryPacks(db),
-			listAdoptedPackSlugs(db, userId)
-		]);
+		const db = callerDb(await resolveCaller(request, locals));
+		const [packs, adopted] = await Promise.all([listLibraryPacks(db), listAdoptedPackSlugs(db)]);
 		return Response.json({ packs, adopted });
 	} catch (e) {
 		if (e instanceof Response) return e;

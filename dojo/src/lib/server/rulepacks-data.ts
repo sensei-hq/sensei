@@ -58,14 +58,12 @@ export async function listLibraryPacks(db: DojoClient): Promise<LibraryPackWire[
  * namespace (scope_key 'user', slug = user id). Honest-empty `[]` on none; a read
  * error throws (the route maps it to 500).
  */
-export async function listAdoptedPackSlugs(db: DojoClient, userId: string): Promise<string[]> {
-	const { data, error } = await db
-		.from('pack_adoption')
-		.select('pack_slug')
-		.eq('scope_key', 'user')
-		.eq('namespace_slug', userId);
+export async function listAdoptedPackSlugs(db: DojoClient): Promise<string[]> {
+	// The caller's own user namespace, pinned in the database (#236): the
+	// cross-namespace dojo.pack_adoption view stays the service role's.
+	const { data, error } = await db.rpc('my_adopted_pack_slugs');
 	if (error) throw new RulePacksError(500, error.message);
-	return ((data ?? []) as { pack_slug: string }[]).map((r) => r.pack_slug);
+	return (data ?? []) as string[];
 }
 
 /**
@@ -77,13 +75,12 @@ export async function listAdoptedPackSlugs(db: DojoClient, userId: string): Prom
 export async function setPackAdoption(
 	db: DojoClient,
 	slug: string,
-	userId: string,
 	userName: string | null,
 	adopt: boolean
 ): Promise<boolean> {
+	// No user id: the function adopts into the SESSION's own namespace (#236).
 	const { data, error } = await db.rpc('set_pack_adoption', {
 		p_pack_slug: slug,
-		p_user_id: userId,
 		p_user_name: userName ?? '',
 		p_adopt: adopt
 	});
