@@ -19,6 +19,7 @@ mod learn_playbooks;
 pub(crate) mod libraries;
 pub(crate) mod metrics;
 mod model_insight;
+mod orm_schema;
 mod process;
 mod prompt_classify;
 mod publish_run;
@@ -42,6 +43,7 @@ pub use dbd_schema::import_dbd_schema;
 pub use doc_drift::scan_doc_drift;
 pub use embed::embed_nodes;
 pub use libraries::{extract_deps, import_lib, index_library, index_library_page, resolve_libs};
+pub use orm_schema::derive_orm_schema;
 pub use process::{
     delete_file, delete_folder, process_file, process_folder, reconcile_repo_metadata,
 };

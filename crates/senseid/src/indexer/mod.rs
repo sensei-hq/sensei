@@ -21,6 +21,7 @@ pub mod placement;
 // owns any given language, and flipping one is a single commit with deleting
 // `languages/<that language>.rs`.
 pub mod dbd_import;
+pub mod ef_core;
 pub mod facts;
 pub mod fqn;
 pub mod git_history;

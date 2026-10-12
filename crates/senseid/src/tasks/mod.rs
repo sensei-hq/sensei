@@ -92,6 +92,9 @@ pub enum TaskKind {
     /// One dbd design's structure into the schema store (#251), behind the
     /// repo's file tasks so the detail lands on the walked nodes.
     ImportDbdSchema,
+    /// An ORM's mapped database, derived from the walks into the schema store
+    /// (#251 §7c) — behind the file tasks, like the dbd import.
+    DeriveOrmSchema,
     ExtractDeps,
     MeasureVerdicts,
     /// Re-reconcile a project root's identity from its README frontmatter
@@ -301,6 +304,7 @@ impl TaskKind {
         Self::EmbedNodes,
         Self::DetectCommunities,
         Self::ImportDbdSchema,
+        Self::DeriveOrmSchema,
         Self::ResolveLibs,
         Self::ImportLib,
         Self::IndexLibrary,
@@ -439,6 +443,14 @@ impl TaskKind {
                 budget_secs: 300,
                 high_priority: false,
                 // A design that does not parse stays broken until it is edited.
+                retryable: false,
+            },
+            Self::DeriveOrmSchema => KindInfo {
+                name: "derive_orm_schema",
+                pipeline: Pipeline::Index,
+                stage: Stage::Derive,
+                budget_secs: 300,
+                high_priority: false,
                 retryable: false,
             },
             Self::DetectCommunities => KindInfo {
@@ -1080,7 +1092,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), total, "a kind appears twice in ALL");
-        assert_eq!(total, 38, "ALL is missing a kind — add it beside its info() arm");
+        assert_eq!(total, 39, "ALL is missing a kind — add it beside its info() arm");
     }
 
     #[test]
