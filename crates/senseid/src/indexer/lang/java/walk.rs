@@ -95,6 +95,8 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
         references: walk.references,
         relations: walk.relations,
         imports: walk.imports,
+        schema: Vec::new(),
+        calls: Vec::new(),
     })
 }
 
@@ -273,6 +275,7 @@ impl<'a> Walk<'a> {
                 }
             };
             self.imports.push(Import {
+                target: Import::unplaced(path),
                 path: path.to_string(),
                 binds,
                 origin: ImportOrigin::External { package },

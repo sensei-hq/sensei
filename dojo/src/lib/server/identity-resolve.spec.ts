@@ -101,3 +101,53 @@ describe('resolveDisplayNames', () => {
 		await expect(resolveDisplayNames(db, 't1', ['u1'])).rejects.toBeInstanceOf(AdminError);
 	});
 });
+
+// A stub that answers per TABLE, recording every filter it was given — so a
+// test can ask whether the identity read was narrowed to the tenant's members.
+function makeTableDb(tables: Record<string, Array<Record<string, unknown>>>) {
+	const calls: Array<{ table: string; op: string; args: unknown[] }> = [];
+	const from = (table: string) => {
+		const filters: Array<[string, string, unknown]> = [];
+		const q: Record<string, unknown> = {};
+		const rec = (op: string) => (...args: unknown[]) => {
+			calls.push({ table, op, args });
+			if (op === 'eq') filters.push(['eq', args[0] as string, args[1]]);
+			if (op === 'in') filters.push(['in', args[0] as string, args[1]]);
+			return q;
+		};
+		for (const op of ['select', 'eq', 'in', 'is']) q[op] = rec(op);
+		q.then = (ok: (v: unknown) => unknown) => {
+			const rows = (tables[table] ?? []).filter((r) =>
+				filters.every(([kind, col, v]) =>
+					kind === 'eq' ? r[col] === v : (v as unknown[]).includes(r[col])
+				)
+			);
+			return Promise.resolve({ data: rows, error: null }).then(ok);
+		};
+		return q;
+	};
+	return { db: { from } as unknown as DojoClient, calls };
+}
+
+describe('resolveDisplayNames is scoped to the tenant', () => {
+	// An incident's `owner_id` comes from the request body. Resolving it against
+	// the GLOBAL identities table handed a lead of tenant A the name and email of
+	// anyone on the platform. A principal who is not a member of the tenant
+	// resolves to nothing — exactly as an unknown id does.
+	it('never resolves a principal who is not a member of the tenant', async () => {
+		const { db, calls } = makeTableDb({
+			memberships: [
+				{ tenant_id: 't1', user_id: 'member' },
+				{ tenant_id: 't2', user_id: 'outsider' }
+			],
+			identities: [
+				{ principal_id: 'member', display_name: 'Ada', email: 'ada@x.co', last_login_at: null },
+				{ principal_id: 'outsider', display_name: 'Eve', email: 'eve@y.co', last_login_at: null }
+			]
+		});
+		const names = await resolveDisplayNames(db, 't1', ['member', 'outsider']);
+		expect([...names.keys()]).toEqual(['member']);
+		const identityRead = calls.find((c) => c.table === 'identities' && c.op === 'in');
+		expect(identityRead?.args[1], 'only members are looked up').toEqual(['member']);
+	});
+});

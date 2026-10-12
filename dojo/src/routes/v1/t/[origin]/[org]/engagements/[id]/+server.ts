@@ -8,6 +8,7 @@
 // (GET/POST list+create are inline in the parent `engagements/+server.ts`.)
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { updateEngagement, deleteEngagement, parsePatchEngagement, EngagementsError } from '$lib/server/engagements-data';
 import { recordAudit } from '$lib/server/audit';
@@ -23,9 +24,8 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 		);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const input = parsePatchEngagement(body);
-		const db = dojoDb();
-		const result = await updateEngagement(db, caller.tenantId, params.id, input);
-		await recordAudit(db, caller.tenantId, caller.userId, {
+		const result = await updateEngagement(callerDb(caller), caller.tenantId, params.id, input);
+		await recordAudit(dojoDb(), caller.tenantId, caller.userId, {
 			action: input.status === 'ended' ? 'engagement_closed' : 'engagement_updated',
 			target: result.id,
 			engagementId: result.id
@@ -47,10 +47,9 @@ export const DELETE: RequestHandler = async ({ params, request, locals }) => {
 			locals,
 			ACCESS.lead
 		);
-		const db = dojoDb();
-		const deleted = await deleteEngagement(db, caller.tenantId, params.id);
+		const deleted = await deleteEngagement(callerDb(caller), caller.tenantId, params.id);
 		if (!deleted) return apiError(404, 'no such engagement');
-		await recordAudit(db, caller.tenantId, caller.userId, {
+		await recordAudit(dojoDb(), caller.tenantId, caller.userId, {
 			action: 'engagement_deleted',
 			target: params.id
 		});

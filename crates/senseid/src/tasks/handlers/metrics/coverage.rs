@@ -46,6 +46,7 @@ use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;
+use crate::db::pg_store::MetricRow;
 
 /// `sensei.metric_grain` text value (coverage writes a daily snapshot row only).
 const GRAIN_DAILY: &str = "daily";
@@ -204,18 +205,18 @@ pub(super) async fn compute(
         // nothing is covered), never suppressed.
         let value = hit as f64 / found as f64;
         let props = serde_json::json!({ "numerator": hit, "denominator": found });
-        pg.upsert_project_metric_repo(
-            &mid,
-            &repository_id,
-            SCOPE_USER,
-            None,
-            None,
-            day,
-            GRAIN_DAILY,
+        pg.upsert_project_metric_repo(&MetricRow {
+            metric_id: &mid,
+            repository_id: &repository_id,
+            scope: SCOPE_USER,
+            identity: None,
+            commit_sha: None,
+            computed_on: day,
+            grain: GRAIN_DAILY,
             value,
-            &props,
-            SOURCE_MEASURED,
-        )
+            props: &props,
+            source: SOURCE_MEASURED,
+        })
         .await?;
         written += 1;
     }
@@ -325,18 +326,19 @@ pub(crate) async fn backfill(
             }
             let value = hit as f64 / found as f64;
             let props = serde_json::json!({ "numerator": hit, "denominator": found });
-            pg.upsert_project_metric_repo(
-                &mid,
-                &repository_id,
-                SCOPE_USER,
-                None,
-                Some(&sha), // commit_sha set → a historical, commit-cadence coverage point
-                day,
-                GRAIN_DAILY,
+            pg.upsert_project_metric_repo(&MetricRow {
+                metric_id: &mid,
+                repository_id: &repository_id,
+                scope: SCOPE_USER,
+                identity: None,
+                // Set → a historical, commit-cadence coverage point.
+                commit_sha: Some(&sha),
+                computed_on: day,
+                grain: GRAIN_DAILY,
                 value,
-                &props,
-                SOURCE_MEASURED,
-            )
+                props: &props,
+                source: SOURCE_MEASURED,
+            })
             .await?;
             written += 1;
         }

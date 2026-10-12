@@ -8,7 +8,6 @@
     "prose": "docs/spec/indexer/17-vocabulary.md (shared vocabulary), docs/spec/indexer/20-schema-entities.md (database entities, draft)",
     "liveCounts": "Measured against the running local database on 2026-09-28, in a single repeatable-read snapshot so every figure below reconciles against every other. The database is live and indexing, so a later reading will differ slightly."
   },
-
   "scale": {
     "nodes": 1182525,
     "edges": 4077549,
@@ -23,7 +22,6 @@
       "19.5% of nodes are test nodes. They swamp production structure when mixed in, so the test filter is a primary control, not a preference."
     ]
   },
-
   "hierarchy": {
     "description": "Containment runs through five levels. The first four are ownership and filesystem; the fifth nests inside itself.",
     "levels": [
@@ -32,21 +30,42 @@
         "name": "project",
         "table": "sensei.projects",
         "meaning": "A product. Owns one or more repositories.",
-        "keyFields": ["name", "description", "maturity", "root_abs_path", "stack"]
+        "keyFields": [
+          "name",
+          "description",
+          "maturity",
+          "root_abs_path",
+          "stack"
+        ]
       },
       {
         "level": 2,
         "name": "repository",
         "table": "sensei.repositories",
         "meaning": "A git remote, identified by repo_key.",
-        "keyFields": ["repo_key", "remote_url", "name", "visibility"]
+        "keyFields": [
+          "repo_key",
+          "remote_url",
+          "name",
+          "visibility"
+        ]
       },
       {
         "level": 3,
         "name": "folder",
         "table": "sensei.folders",
         "meaning": "THE INDEXING UNIT and the natural scope boundary. Self-nesting via folders.parent_id. Every node and every edge carries folder_id.",
-        "keyFields": ["kind", "role", "status", "name", "path", "abs_path", "stack", "parent_id", "repository_id"],
+        "keyFields": [
+          "kind",
+          "role",
+          "status",
+          "name",
+          "path",
+          "abs_path",
+          "stack",
+          "parent_id",
+          "repository_id"
+        ],
         "note": "This is the level that carries the code/docs/infra classification, via folder_role."
       },
       {
@@ -54,7 +73,12 @@
         "name": "file",
         "table": "sensei.files",
         "meaning": "One row per tracked source file. A file is NOT a node — nodes reference it through nodes.file_id.",
-        "keyFields": ["file_path", "content_hash", "skip_reason", "indexed_at"]
+        "keyFields": [
+          "file_path",
+          "content_hash",
+          "skip_reason",
+          "indexed_at"
+        ]
       },
       {
         "level": 5,
@@ -76,308 +100,1021 @@
       "note": "There are two distinct external representations and they answer different questions. referenced_libraries answers 'what does this repo depend on' (1,904 libraries). Nodes named with a 'lib·' prefix answer 'which external symbol does this call reach'. A dependency panel wants the first; an edge target wants the second."
     }
   },
-
   "classificationAxes": {
     "description": "Five independent ways to slice the graph. They are INDEPENDENT — a node can be test AND documentation AND external — so they are filters that compose, not one taxonomy.",
-
     "byPurpose": {
       "axis": "folder.role",
       "column": "sensei.folders.role (enum folder_role)",
-      "values": ["backend", "frontend", "library", "tool", "docs", "infra", "website", "desktop", "mobile", "config", "packaging"],
+      "values": [
+        "backend",
+        "frontend",
+        "library",
+        "tool",
+        "docs",
+        "infra",
+        "website",
+        "desktop",
+        "mobile",
+        "config",
+        "packaging"
+      ],
       "warning": "SPARSELY POPULATED. In the live database the overwhelming majority of folders have role NULL (12,874 of ~13,000 folder-kind rows). Design an explicit 'unclassified' state; do not assume every folder has a role.",
       "liveSample": [
-        { "kind": "folder", "role": null, "count": 12874 },
-        { "kind": "module", "role": null, "count": 357 },
-        { "kind": "git", "role": null, "count": 146 },
-        { "kind": "module", "role": "library", "count": 94 },
-        { "kind": "standalone", "role": null, "count": 84 },
-        { "kind": "git", "role": "library", "count": 33 },
-        { "kind": "module", "role": "website", "count": 32 }
+        {
+          "kind": "folder",
+          "role": null,
+          "count": 12874
+        },
+        {
+          "kind": "module",
+          "role": null,
+          "count": 357
+        },
+        {
+          "kind": "git",
+          "role": null,
+          "count": 146
+        },
+        {
+          "kind": "module",
+          "role": "library",
+          "count": 94
+        },
+        {
+          "kind": "standalone",
+          "role": null,
+          "count": 84
+        },
+        {
+          "kind": "git",
+          "role": "library",
+          "count": 33
+        },
+        {
+          "kind": "module",
+          "role": "website",
+          "count": 32
+        }
       ]
     },
-
     "byFolderKind": {
       "axis": "folder.kind",
       "column": "sensei.folders.kind (enum folder_kind)",
       "values": [
-        { "value": "git",        "meaning": "A git repository root." },
-        { "value": "module",     "meaning": "A workspace member / sub-package inside a repo." },
-        { "value": "subtree",    "meaning": "Vendored content from another repository." },
-        { "value": "standalone", "meaning": "Tracked but not part of a repo." },
-        { "value": "folder",     "meaning": "An ordinary directory. The overwhelming majority." }
+        {
+          "value": "git",
+          "meaning": "A git repository root."
+        },
+        {
+          "value": "module",
+          "meaning": "A workspace member / sub-package inside a repo."
+        },
+        {
+          "value": "subtree",
+          "meaning": "Vendored content from another repository."
+        },
+        {
+          "value": "standalone",
+          "meaning": "Tracked but not part of a repo."
+        },
+        {
+          "value": "folder",
+          "meaning": "An ordinary directory. The overwhelming majority."
+        }
       ]
     },
-
     "byIndexingStatus": {
       "axis": "folder.status",
       "column": "sensei.folders.status (enum folder_status)",
-      "values": ["discovered", "queued", "indexing", "indexed", "failed", "archived"],
+      "values": [
+        "discovered",
+        "queued",
+        "indexing",
+        "indexed",
+        "failed",
+        "archived"
+      ],
       "designImplication": "A view must render a folder that is queued, indexing or failed — not just indexed ones. 'failed' and 'archived' need distinct treatments from 'not yet done'."
     },
-
     "byContentClass": {
       "axis": "derived from node.kind",
       "derived": true,
       "note": "NOT a database column. This grouping is for presentation; the stored value is node_kind.",
       "groups": {
-        "structure":     { "kinds": ["file", "module", "package"], "liveCount": 148260 },
-        "code":          { "kinds": ["method", "field", "function", "const", "property", "class", "interface", "enum_variant", "type", "struct", "enum", "extension", "component", "macro", "hook", "trait", "static", "parameter"], "liveCount": 826092 },
-        "documentation": { "kinds": ["section", "doc", "rationale"], "liveCount": 119483 },
-        "unclassified":  { "kinds": ["unknown"], "liveCount": 88690, "warning": "7.5% of all nodes are 'unknown'. This is a large, visible population and needs a deliberate treatment rather than being filtered away silently." }
+        "structure": {
+          "kinds": [
+            "file",
+            "module",
+            "package"
+          ],
+          "liveCount": 148260
+        },
+        "code": {
+          "kinds": [
+            "method",
+            "field",
+            "function",
+            "const",
+            "property",
+            "class",
+            "interface",
+            "enum_variant",
+            "type",
+            "struct",
+            "enum",
+            "extension",
+            "component",
+            "macro",
+            "hook",
+            "trait",
+            "static",
+            "parameter"
+          ],
+          "liveCount": 826092
+        },
+        "documentation": {
+          "kinds": [
+            "section",
+            "doc",
+            "rationale"
+          ],
+          "liveCount": 119483
+        },
+        "unclassified": {
+          "kinds": [
+            "unknown"
+          ],
+          "liveCount": 88690,
+          "warning": "7.5% of all nodes are 'unknown'. This is a large, visible population and needs a deliberate treatment rather than being filtered away silently."
+        }
       }
     },
-
     "byTestVsProduction": {
       "axis": "node.is_test",
       "column": "sensei.nodes.is_test (boolean, NOT NULL)",
       "meaning": "True when the node belongs to a test file, decided by path convention (tests/ dirs, *.test.*, *.spec.*, *_test.*, test_*.py, *Test.java).",
-      "live": { "production": 952284, "test": 230241, "testShare": 0.195 },
+      "live": {
+        "production": 952284,
+        "test": 230241,
+        "testShare": 0.195
+      },
       "designImplication": "A primary, always-visible toggle. External 'lib·' nodes are never test; reference stubs inherit the flag from their definition."
     },
-
     "byProvenance": {
       "axis": "derived from node.file_id, node.resolved and the name prefix",
       "derived": true,
       "meaning": "Three populations share the nodes table and a `name` column cannot tell them apart. They mean very different things about how much the graph KNOWS, and conflating them is the most common way a code-graph view misleads.",
       "populations": [
-        { "name": "declaration",   "predicate": "file_id IS NOT NULL",                  "meaning": "Real code that was read. Has a file and a line span." },
-        { "name": "referenceStub", "predicate": "file_id IS NULL AND resolved = false", "meaning": "Referenced but never found. A known gap — show it dimmed, never drop it." },
-        { "name": "external",      "predicate": "name LIKE 'lib·%'",                    "meaning": "A third-party symbol. resolved = true, because the external symbol IS the definition. Belongs visually outside the repo boundary." }
+        {
+          "name": "declaration",
+          "predicate": "file_id IS NOT NULL",
+          "meaning": "Real code that was read. Has a file and a line span."
+        },
+        {
+          "name": "referenceStub",
+          "predicate": "file_id IS NULL AND resolved = false",
+          "meaning": "Referenced but never found. A known gap — show it dimmed, never drop it."
+        },
+        {
+          "name": "external",
+          "predicate": "name LIKE 'lib·%'",
+          "meaning": "A third-party symbol. resolved = true, because the external symbol IS the definition. Belongs visually outside the repo boundary."
+        }
       ]
     }
   },
-
   "enums": {
     "node_kind": {
       "where": "STORED. sensei.nodes.kind — this is what a renderer actually reads.",
       "count": 25,
       "values": [
-        { "value": "method",       "live": 262331 },
-        { "value": "field",        "live": 192852 },
-        { "value": "function",     "live": 155347 },
-        { "value": "section",      "live": 111970, "meaning": "A documentation heading. Level in props.level." },
-        { "value": "unknown",      "live": 88690,  "meaning": "Fallback when no rule matched." },
-        { "value": "module",       "live": 71074 },
-        { "value": "const",        "live": 69527 },
-        { "value": "file",         "live": 66534 },
-        { "value": "property",     "live": 43880,  "meaning": "Reached like a field but backed by an accessor. Also the kind a schema INDEX will use." },
-        { "value": "class",        "live": 43139 },
-        { "value": "interface",    "live": 27201 },
-        { "value": "enum_variant", "live": 12464 },
-        { "value": "package",      "live": 10652 },
-        { "value": "type",         "live": 10298 },
-        { "value": "doc",          "live": 6324 },
-        { "value": "struct",       "live": 5600,   "meaning": "Also the kind a schema TABLE / VIEW will use." },
-        { "value": "enum",         "live": 3378 },
-        { "value": "rationale",    "live": 1189,   "meaning": "Extracted from NOTE/WHY/HACK/TODO/IMPORTANT comments. props.tag holds which." },
-        { "value": "extension",    "live": 70 },
-        { "value": "component",    "live": 2 },
-        { "value": "macro",        "live": 2 },
-        { "value": "hook",         "live": 1 },
-        { "value": "trait",        "live": 0,      "meaning": "Defined in the enum, no rows yet." },
-        { "value": "static",       "live": 0,      "meaning": "Defined in the enum, no rows yet." },
-        { "value": "parameter",    "live": 0,      "meaning": "Defined in the enum but parameters are carried as a typed prop on their function rather than as nodes, so this stays empty by design." }
+        {
+          "value": "method",
+          "live": 262331
+        },
+        {
+          "value": "field",
+          "live": 192852
+        },
+        {
+          "value": "function",
+          "live": 155347
+        },
+        {
+          "value": "section",
+          "live": 111970,
+          "meaning": "A documentation heading. Level in props.level."
+        },
+        {
+          "value": "unknown",
+          "live": 88690,
+          "meaning": "Fallback when no rule matched."
+        },
+        {
+          "value": "module",
+          "live": 71074
+        },
+        {
+          "value": "const",
+          "live": 69527
+        },
+        {
+          "value": "file",
+          "live": 66534
+        },
+        {
+          "value": "property",
+          "live": 43880,
+          "meaning": "Reached like a field but backed by an accessor. Also the kind a schema INDEX will use."
+        },
+        {
+          "value": "class",
+          "live": 43139
+        },
+        {
+          "value": "interface",
+          "live": 27201
+        },
+        {
+          "value": "enum_variant",
+          "live": 12464
+        },
+        {
+          "value": "package",
+          "live": 10652
+        },
+        {
+          "value": "type",
+          "live": 10298
+        },
+        {
+          "value": "doc",
+          "live": 6324
+        },
+        {
+          "value": "struct",
+          "live": 5600,
+          "meaning": "Also the kind a schema TABLE / VIEW will use."
+        },
+        {
+          "value": "enum",
+          "live": 3378
+        },
+        {
+          "value": "rationale",
+          "live": 1189,
+          "meaning": "Extracted from NOTE/WHY/HACK/TODO/IMPORTANT comments. props.tag holds which."
+        },
+        {
+          "value": "extension",
+          "live": 70
+        },
+        {
+          "value": "component",
+          "live": 2
+        },
+        {
+          "value": "macro",
+          "live": 2
+        },
+        {
+          "value": "hook",
+          "live": 1
+        },
+        {
+          "value": "trait",
+          "live": 0,
+          "meaning": "Defined in the enum, no rows yet."
+        },
+        {
+          "value": "static",
+          "live": 0,
+          "meaning": "Defined in the enum, no rows yet."
+        },
+        {
+          "value": "parameter",
+          "live": 0,
+          "meaning": "Defined in the enum but parameters are carried as a typed prop on their function rather than as nodes, so this stays empty by design."
+        }
       ],
       "note": "22 of 25 values have rows. The long tail (component 2, macro 2, hook 1) is real but tiny — do not design a legend that gives them equal weight to `method` at 262,331."
     },
-
     "SymbolKind": {
       "where": "PRODUCER. crates/senseid/src/indexer/facts.rs — what the Rust walk emits for a code declaration, before it is stored as a node_kind. Documented in 17-vocabulary.md §2.",
       "count": 17,
       "relationshipToNodeKind": "SymbolKind covers only CODE declarations and maps onto the code subset of node_kind. The remaining node_kind values (file, package, section, rationale, doc, component, hook, extension, unknown) come from other producers — the file pass, the folder pass and the documentation indexer — not from this enum.",
       "values": [
-        { "value": "Function",    "meaning": "A free function." },
-        { "value": "Method",      "meaning": "A function owned by a type." },
-        { "value": "Class",       "meaning": "A type declaration." },
-        { "value": "Struct",      "meaning": "A type declaration." },
-        { "value": "Enum",        "meaning": "A type declaration." },
-        { "value": "Interface",   "meaning": "A type declaration." },
-        { "value": "Trait",       "meaning": "A type declaration." },
-        { "value": "EnumVariant", "meaning": "One arm of an enum." },
-        { "value": "TypeAlias",   "meaning": "A name for another type. Stored as node_kind `type`." },
-        { "value": "Const",       "meaning": "A named value." },
-        { "value": "Static",      "meaning": "A named value." },
-        { "value": "Module",      "meaning": "A namespace, including the file's own." },
-        { "value": "Macro",       "meaning": "A macro definition." },
-        { "value": "Field",       "meaning": "A member of a struct or class." },
-        { "value": "Property",    "meaning": "A member reached like a field but backed by an accessor." },
-        { "value": "Call",        "meaning": "Carried for reference stubs rather than declarations." },
-        { "value": "Import",      "meaning": "Carried for reference stubs rather than declarations." }
+        {
+          "value": "Function",
+          "meaning": "A free function."
+        },
+        {
+          "value": "Method",
+          "meaning": "A function owned by a type."
+        },
+        {
+          "value": "Class",
+          "meaning": "A type declaration."
+        },
+        {
+          "value": "Struct",
+          "meaning": "A type declaration."
+        },
+        {
+          "value": "Enum",
+          "meaning": "A type declaration."
+        },
+        {
+          "value": "Interface",
+          "meaning": "A type declaration."
+        },
+        {
+          "value": "Trait",
+          "meaning": "A type declaration."
+        },
+        {
+          "value": "EnumVariant",
+          "meaning": "One arm of an enum."
+        },
+        {
+          "value": "TypeAlias",
+          "meaning": "A name for another type. Stored as node_kind `type`."
+        },
+        {
+          "value": "Const",
+          "meaning": "A named value."
+        },
+        {
+          "value": "Static",
+          "meaning": "A named value."
+        },
+        {
+          "value": "Module",
+          "meaning": "A namespace, including the file's own."
+        },
+        {
+          "value": "Macro",
+          "meaning": "A macro definition."
+        },
+        {
+          "value": "Field",
+          "meaning": "A member of a struct or class."
+        },
+        {
+          "value": "Property",
+          "meaning": "A member reached like a field but backed by an accessor."
+        },
+        {
+          "value": "Call",
+          "meaning": "Carried for reference stubs rather than declarations."
+        },
+        {
+          "value": "Import",
+          "meaning": "Carried for reference stubs rather than declarations."
+        }
       ],
       "reachedBy": "Each kind also declares how it is REACHED — ReachedBy::Call or ReachedBy::Import — which is what lets coverage reports ask 'is this symbol reached at all?' without knowing the language."
     },
-
     "edge_kind": {
       "where": "STORED. sensei.edges.kind.",
       "count": 11,
       "values": [
-        { "value": "calls",         "live": 1844012, "meaning": "A callable invokes another callable." },
-        { "value": "references",    "live": 1786275, "meaning": "A use that is not a call — a type mention, a name read. Also the kind a schema FOREIGN KEY will use." },
-        { "value": "imports",       "live": 424884,  "meaning": "A file imports from a file or module. props.names lists the bindings." },
-        { "value": "implements",    "live": 17171,   "meaning": "A type provides an interface. props.relation separates a Rust trait impl from Java-style implementation." },
-        { "value": "extends",       "live": 5207,    "meaning": "A type extends another." },
-        { "value": "depends_on",    "live": 0,       "meaning": "Module-level dependency." },
-        { "value": "traces_to",     "live": 0,       "meaning": "Documentation traces to a code symbol." },
-        { "value": "covers",        "live": 0,       "meaning": "A doc file covers a source file." },
-        { "value": "rationale_for", "live": 0,       "meaning": "A comment explains a symbol." },
-        { "value": "duplicates",    "live": 0,       "meaning": "Structurally identical code. confidence_score = similarity." },
-        { "value": "similar_to",    "live": 0,       "meaning": "Semantically similar, inferred from embeddings." }
+        {
+          "value": "calls",
+          "live": 1844012,
+          "meaning": "A callable invokes another callable."
+        },
+        {
+          "value": "references",
+          "live": 1786275,
+          "meaning": "A use that is not a call — a type mention, a name read. Also the kind a schema FOREIGN KEY will use."
+        },
+        {
+          "value": "imports",
+          "live": 424884,
+          "meaning": "A file imports from a file or module. props.names lists the bindings."
+        },
+        {
+          "value": "implements",
+          "live": 17171,
+          "meaning": "A type provides an interface. props.relation separates a Rust trait impl from Java-style implementation."
+        },
+        {
+          "value": "extends",
+          "live": 5207,
+          "meaning": "A type extends another."
+        },
+        {
+          "value": "depends_on",
+          "live": 0,
+          "meaning": "Module-level dependency."
+        },
+        {
+          "value": "traces_to",
+          "live": 0,
+          "meaning": "Documentation traces to a code symbol."
+        },
+        {
+          "value": "covers",
+          "live": 0,
+          "meaning": "A doc file covers a source file."
+        },
+        {
+          "value": "rationale_for",
+          "live": 0,
+          "meaning": "A comment explains a symbol."
+        },
+        {
+          "value": "duplicates",
+          "live": 0,
+          "meaning": "Structurally identical code. confidence_score = similarity."
+        },
+        {
+          "value": "similar_to",
+          "live": 0,
+          "meaning": "Semantically similar, inferred from embeddings."
+        }
       ],
       "warning": "ONLY 5 OF 11 KINDS HAVE ANY ROWS. The doc-to-code kinds (traces_to, covers, rationale_for) and the similarity kinds (duplicates, similar_to) are defined but unwritten. A design that features them prominently is designing for data that does not exist yet."
     },
-
     "RelationKind": {
       "where": "PRODUCER. Structural relations from the walk, documented in 17-vocabulary.md §3. These feed containment and the structural edge kinds rather than being stored verbatim.",
       "count": 8,
       "values": [
-        { "value": "Owns",       "meaning": "This type owns this member. Feeds nodes.parent_id." },
-        { "value": "Contains",   "meaning": "This module holds this declaration directly. Feeds nodes.parent_id." },
-        { "value": "Extends",    "meaning": "Every child IS a parent (trait Sub: Super, class A extends B)." },
-        { "value": "Implements", "meaning": "This type provides this interface." },
-        { "value": "TraitImpl",  "meaning": "Rust's `impl Trait for Type`, kept apart from Implements." },
-        { "value": "Mixin",      "meaning": "Included rather than inherited." },
-        { "value": "Decorates",  "meaning": "A decorator applied to a declaration." },
-        { "value": "Variant",    "meaning": "This enum arm belongs to this enum." }
+        {
+          "value": "Owns",
+          "meaning": "This type owns this member. Feeds nodes.parent_id."
+        },
+        {
+          "value": "Contains",
+          "meaning": "This module holds this declaration directly. Feeds nodes.parent_id."
+        },
+        {
+          "value": "Extends",
+          "meaning": "Every child IS a parent (trait Sub: Super, class A extends B)."
+        },
+        {
+          "value": "Implements",
+          "meaning": "This type provides this interface."
+        },
+        {
+          "value": "TraitImpl",
+          "meaning": "Rust's `impl Trait for Type`, kept apart from Implements."
+        },
+        {
+          "value": "Mixin",
+          "meaning": "Included rather than inherited."
+        },
+        {
+          "value": "Decorates",
+          "meaning": "A decorator applied to a declaration."
+        },
+        {
+          "value": "Variant",
+          "meaning": "This enum arm belongs to this enum."
+        }
       ],
       "invariant": "A declaration takes EXACTLY ONE of Owns or Contains, never both: both feed nodes.parent_id, and a child with two parents has none."
     },
-
     "RefKind": {
       "where": "PRODUCER. Behavioural references from the walk.",
       "count": 7,
       "values": [
-        { "value": "Calls",        "meaning": "Invokes the target." },
-        { "value": "Reads",        "meaning": "Reads the target's value." },
-        { "value": "Writes",       "meaning": "Writes the target's value." },
-        { "value": "Constructs",   "meaning": "Builds a value of the target type. Separated from Calls because factory detection needs it." },
-        { "value": "TypeUse",      "meaning": "Names the target as a type — in a signature, a field, a bound. This is what makes field and parameter types edges rather than loose strings." },
-        { "value": "MacroInvokes", "meaning": "Invokes a macro. Distinct because what a macro expands to is not parsed, so a call inside the expansion is not a fact the walk has." },
-        { "value": "Imports",      "meaning": "ENTERS a module. The only kind whose target is a Module." }
+        {
+          "value": "Calls",
+          "meaning": "Invokes the target."
+        },
+        {
+          "value": "Reads",
+          "meaning": "Reads the target's value."
+        },
+        {
+          "value": "Writes",
+          "meaning": "Writes the target's value."
+        },
+        {
+          "value": "Constructs",
+          "meaning": "Builds a value of the target type. Separated from Calls because factory detection needs it."
+        },
+        {
+          "value": "TypeUse",
+          "meaning": "Names the target as a type — in a signature, a field, a bound. This is what makes field and parameter types edges rather than loose strings."
+        },
+        {
+          "value": "MacroInvokes",
+          "meaning": "Invokes a macro. Distinct because what a macro expands to is not parsed, so a call inside the expansion is not a fact the walk has."
+        },
+        {
+          "value": "Imports",
+          "meaning": "ENTERS a module. The only kind whose target is a Module."
+        }
       ]
     },
-
     "edge_confidence": {
       "where": "STORED. sensei.edges.confidence.",
       "count": 3,
       "values": [
-        { "value": "extracted", "live": 4077549, "meaning": "Read from the syntax tree. Certain.", "designHint": "solid line" },
-        { "value": "inferred",  "live": 0,       "meaning": "Derived from embeddings or BM25. Probable.", "designHint": "dashed line" },
-        { "value": "ambiguous", "live": 0,       "meaning": "Drift or a gap. Uncertain.", "designHint": "dotted / muted" }
+        {
+          "value": "extracted",
+          "live": 4077549,
+          "meaning": "Read from the syntax tree. Certain.",
+          "designHint": "solid line"
+        },
+        {
+          "value": "inferred",
+          "live": 0,
+          "meaning": "Derived from embeddings or BM25. Probable.",
+          "designHint": "dashed line"
+        },
+        {
+          "value": "ambiguous",
+          "live": 0,
+          "meaning": "Drift or a gap. Uncertain.",
+          "designHint": "dotted / muted"
+        }
       ],
       "warning": "EVERY edge in the live database is 'extracted'. Confidence is currently a constant, so it cannot carry visual weight today. Use resolved_via for the trust signal instead — that one actually varies."
     },
-
     "resolved_via": {
       "where": "STORED. sensei.edges.resolved_via (text). Produced from `Rung` in facts.rs; documented in 17-vocabulary.md §4.",
       "deploymentStatus": "NOT YET IN THE LIVE DATABASE. sensei.edges currently has 11 columns and this is not one of them. Any mock using this field is design-ahead, not live-backed.",
       "description": "WHY a placed edge was placed. The resolver is a LADDER: rungs are tried strongest-evidence-first and the FIRST that answers wins. The ORDER IS THE POINT — it says how far to trust this particular edge.",
       "ordered": true,
       "values": [
-        { "rank": 0, "value": "stated_by_schema",          "meaning": "The schema itself states the relationship — a dbd SchemaModel ref. No source file was read.", "status": "PROPOSED in 20-schema-entities.md, not yet implemented. Ranked above everything because the database's own name is the identity and every other producer defers to it." },
-        { "rank": 1, "value": "declared_here",             "meaning": "This file declares the target itself. Nothing is inferred." },
-        { "rank": 2, "value": "through_an_import",         "meaning": "An import in scope binds the head of the path." },
-        { "rank": 3, "value": "named_by_this_file",        "meaning": "This file's own text names the target — it declares the type or imports it by a package-rooted path, so it has STATED where the type lives." },
-        { "rank": 4, "value": "declared_by_its_type",      "meaning": "A type in this scan declares the target as its member, in ANOTHER file. Rust puts an impl anywhere, so a method and its type are often apart." },
-        { "rank": 5, "value": "through_a_glob",            "meaning": "A glob in scope covers the module the target sits in. The name was never written down — the weakest first-party rung." },
-        { "rank": 6, "value": "rooted_in_this_package",    "meaning": "A path rooted at this package, needing no import." },
-        { "rank": 7, "value": "fully_qualified_external",  "meaning": "A fully spelled path outside this scan." },
-        { "rank": 8, "value": "in_the_prelude",            "meaning": "The language puts it in scope everywhere." }
+        {
+          "rank": 0,
+          "value": "stated_by_schema",
+          "meaning": "The schema itself states the relationship — a dbd SchemaModel ref. No source file was read.",
+          "status": "PROPOSED in 20-schema-entities.md, not yet implemented. Ranked above everything because the database's own name is the identity and every other producer defers to it."
+        },
+        {
+          "rank": 1,
+          "value": "declared_here",
+          "meaning": "This file declares the target itself. Nothing is inferred."
+        },
+        {
+          "rank": 2,
+          "value": "through_an_import",
+          "meaning": "An import in scope binds the head of the path."
+        },
+        {
+          "rank": 3,
+          "value": "named_by_this_file",
+          "meaning": "This file's own text names the target — it declares the type or imports it by a package-rooted path, so it has STATED where the type lives."
+        },
+        {
+          "rank": 4,
+          "value": "declared_by_its_type",
+          "meaning": "A type in this scan declares the target as its member, in ANOTHER file. Rust puts an impl anywhere, so a method and its type are often apart."
+        },
+        {
+          "rank": 5,
+          "value": "through_a_glob",
+          "meaning": "A glob in scope covers the module the target sits in. The name was never written down — the weakest first-party rung."
+        },
+        {
+          "rank": 6,
+          "value": "rooted_in_this_package",
+          "meaning": "A path rooted at this package, needing no import."
+        },
+        {
+          "rank": 7,
+          "value": "fully_qualified_external",
+          "meaning": "A fully spelled path outside this scan."
+        },
+        {
+          "rank": 8,
+          "value": "in_the_prelude",
+          "meaning": "The language puts it in scope everywhere."
+        }
       ]
     },
-
     "unresolved_reason": {
       "where": "STORED. sensei.edges.unresolved_reason (text). Produced from `Reason` in facts.rs.",
       "deploymentStatus": "NOT YET IN THE LIVE DATABASE — same as resolved_via.",
       "description": "WHY an edge could not be placed. THIS IS NOT AN ERROR LIST. Several of these are correct, permanent outcomes and rendering them as failures teaches the reader something false. `isGap` separates the two.",
       "values": [
-        { "value": "unhandled_form",        "isGap": true,  "meaning": "The walk has no rule for this node kind yet. The fallback arm, so a form nobody thought about is named in the histogram instead of silently yielding nothing." },
-        { "value": "no_declared_type",      "isGap": true,  "meaning": "The language states no type where resolution needed one — an unannotated binding, a closure parameter. Inferring it is a non-goal." },
-        { "value": "receiver_type_unknown", "isGap": true,  "meaning": "A member access whose receiver type this file cannot determine, most often a chain deeper than the walk follows." },
-        { "value": "no_import_in_scope",    "isGap": true,  "meaning": "A bare name with no local declaration and no import binding it. NOT the same as external." },
-        { "value": "unplaced",              "isGap": true,  "meaning": "The walk minted the candidate but the shared resolution ladder has not run. The one bucket that must be EMPTY once resolution is in place — which makes it a thing a histogram can check." },
-        { "value": "ambiguous_candidates",  "isGap": false, "meaning": "More than one candidate matched and nothing distinguishes them. Picking one would be a WRONG edge, which is worse than a missing one." },
-        { "value": "dynamic_dispatch",      "isGap": false, "meaning": "The target is chosen at run time — a trait object, a function pointer. No static answer exists: a permanent miss, not a gap." },
-        { "value": "macro_expansion",       "isGap": false, "meaning": "The target would only exist after macro expansion, and expansions are not parsed." },
-        { "value": "plumbing",              "isGap": false, "meaning": "Grammar-filtered noise — clone, unwrap, toString. Filtering, not failure; its own reason so a reader can exclude it without also excluding genuine misses." },
-        { "value": "external_boundary",     "isGap": false, "meaning": "The target names a member NO first-party type declares — a method on a library type (.trim(), .collect(), .toBe()). This is where our world ends, not something we dropped. 23,739 of 53,224 receivers previously miscounted as receiver_type_unknown were actually this." }
+        {
+          "value": "unhandled_form",
+          "isGap": true,
+          "meaning": "The walk has no rule for this node kind yet. The fallback arm, so a form nobody thought about is named in the histogram instead of silently yielding nothing."
+        },
+        {
+          "value": "no_declared_type",
+          "isGap": true,
+          "meaning": "The language states no type where resolution needed one — an unannotated binding, a closure parameter. Inferring it is a non-goal."
+        },
+        {
+          "value": "receiver_type_unknown",
+          "isGap": true,
+          "meaning": "A member access whose receiver type this file cannot determine, most often a chain deeper than the walk follows."
+        },
+        {
+          "value": "no_import_in_scope",
+          "isGap": true,
+          "meaning": "A bare name with no local declaration and no import binding it. NOT the same as external."
+        },
+        {
+          "value": "unplaced",
+          "isGap": true,
+          "meaning": "The walk minted the candidate but the shared resolution ladder has not run. The one bucket that must be EMPTY once resolution is in place — which makes it a thing a histogram can check."
+        },
+        {
+          "value": "ambiguous_candidates",
+          "isGap": false,
+          "meaning": "More than one candidate matched and nothing distinguishes them. Picking one would be a WRONG edge, which is worse than a missing one."
+        },
+        {
+          "value": "dynamic_dispatch",
+          "isGap": false,
+          "meaning": "The target is chosen at run time — a trait object, a function pointer. No static answer exists: a permanent miss, not a gap."
+        },
+        {
+          "value": "macro_expansion",
+          "isGap": false,
+          "meaning": "The target would only exist after macro expansion, and expansions are not parsed."
+        },
+        {
+          "value": "plumbing",
+          "isGap": false,
+          "meaning": "Grammar-filtered noise — clone, unwrap, toString. Filtering, not failure; its own reason so a reader can exclude it without also excluding genuine misses."
+        },
+        {
+          "value": "external_boundary",
+          "isGap": false,
+          "meaning": "The target names a member NO first-party type declares — a method on a library type (.trim(), .collect(), .toBe()). This is where our world ends, not something we dropped. 23,739 of 53,224 receivers previously miscounted as receiver_type_unknown were actually this."
+        }
       ]
     },
-
-    "folder_kind":         { "where": "STORED. sensei.folders.kind.",   "values": ["git", "module", "subtree", "standalone", "folder"] },
-    "folder_role":         { "where": "STORED. sensei.folders.role.",   "values": ["backend", "frontend", "library", "tool", "docs", "infra", "website", "desktop", "mobile", "config", "packaging"], "warning": "Mostly NULL in practice." },
-    "folder_status":       { "where": "STORED. sensei.folders.status.", "values": ["discovered", "queued", "indexing", "indexed", "failed", "archived"] },
-    "library_kind":        { "where": "STORED. sensei.libraries.kind.", "values": [ { "value": "detected", "meaning": "Found in a manifest." }, { "value": "imported", "meaning": "Added deliberately for its documentation." } ] },
-    "library_ecosystem":   { "where": "STORED. sensei.libraries.ecosystem.", "values": ["npm", "pypi", "cargo", "go", "maven", "nuget", "rubygems", "composer", "swiftpm", "docs"] },
-    "library_source_type": { "where": "STORED. sensei.library_versions.source_type.", "values": ["http", "local"] },
-    "library_content_kind":{ "where": "STORED. sensei.library_content.kind.", "values": ["skill", "agent", "page"] },
-    "scan_skip_reason":    { "where": "STORED. sensei.files.skip_reason — why a file was not indexed.", "values": ["unsupported_format", "binary_content", "invalid_utf8", "parse_error", "excluded_by_config"] },
-
+    "folder_kind": {
+      "where": "STORED. sensei.folders.kind.",
+      "values": [
+        "git",
+        "module",
+        "subtree",
+        "standalone",
+        "folder"
+      ]
+    },
+    "folder_role": {
+      "where": "STORED. sensei.folders.role.",
+      "values": [
+        "backend",
+        "frontend",
+        "library",
+        "tool",
+        "docs",
+        "infra",
+        "website",
+        "desktop",
+        "mobile",
+        "config",
+        "packaging"
+      ],
+      "warning": "Mostly NULL in practice."
+    },
+    "folder_status": {
+      "where": "STORED. sensei.folders.status.",
+      "values": [
+        "discovered",
+        "queued",
+        "indexing",
+        "indexed",
+        "failed",
+        "archived"
+      ]
+    },
+    "library_kind": {
+      "where": "STORED. sensei.libraries.kind.",
+      "values": [
+        {
+          "value": "detected",
+          "meaning": "Found in a manifest."
+        },
+        {
+          "value": "imported",
+          "meaning": "Added deliberately for its documentation."
+        }
+      ]
+    },
+    "library_ecosystem": {
+      "where": "STORED. sensei.libraries.ecosystem.",
+      "values": [
+        "npm",
+        "pypi",
+        "cargo",
+        "go",
+        "maven",
+        "nuget",
+        "rubygems",
+        "composer",
+        "swiftpm",
+        "docs"
+      ]
+    },
+    "library_source_type": {
+      "where": "STORED. sensei.library_versions.source_type.",
+      "values": [
+        "http",
+        "local"
+      ]
+    },
+    "library_content_kind": {
+      "where": "STORED. sensei.library_content.kind.",
+      "values": [
+        "skill",
+        "agent",
+        "page"
+      ]
+    },
+    "scan_skip_reason": {
+      "where": "STORED. sensei.files.skip_reason — why a file was not indexed.",
+      "values": [
+        "unsupported_format",
+        "binary_content",
+        "invalid_utf8",
+        "parse_error",
+        "excluded_by_config"
+      ]
+    },
     "declared_type_schemaObjects": {
       "where": "STORED as free text in nodes.props/declared_type, but treated as a CLOSED set by convention.",
       "status": "PROPOSED in 20-schema-entities.md, not yet implemented.",
       "description": "The second level of the two-level vocabulary: the generic kind goes in node_kind so cross-language queries work, the specific word goes here.",
-      "values": ["table", "view", "materialized_view", "function", "procedure", "column", "index"]
+      "values": [
+        "table",
+        "view",
+        "materialized_view",
+        "function",
+        "procedure",
+        "column",
+        "index"
+      ]
     },
     "SchemaSource": {
       "status": "PROPOSED, not yet implemented.",
       "description": "WHO said so. A consumer must be able to tell the schema's own word from an ORM's reading of it, because they disagree and the schema wins.",
-      "values": [ { "value": "Dbd", "meaning": "dbd's SchemaModel — the schema describing itself." }, { "value": "Orm(OrmKind)", "meaning": "An ORM or data-access layer, named." } ]
+      "values": [
+        {
+          "value": "Dbd",
+          "meaning": "dbd's SchemaModel — the schema describing itself."
+        },
+        {
+          "value": "Orm(OrmKind)",
+          "meaning": "An ORM or data-access layer, named."
+        }
+      ]
     },
     "Naming": {
       "status": "PROPOSED, not yet implemented.",
       "description": "Whether the NAME was what the source wrote, or what a convention supplied. Load-bearing: a consumer that cannot tell them apart cannot report a mapping as verified.",
-      "values": [ { "value": "Stated", "meaning": "The source wrote it — `create table sensei.orders`, an explicit `.ToTable(\"orders\")`." }, { "value": "Convention", "meaning": "A convention supplied it — a `DbSet<Order> Orders` property, an ActiveRecord class name." } ]
+      "values": [
+        {
+          "value": "Stated",
+          "meaning": "The source wrote it — `create table sensei.orders`, an explicit `.ToTable(\"orders\")`."
+        },
+        {
+          "value": "Convention",
+          "meaning": "A convention supplied it — a `DbSet<Order> Orders` property, an ActiveRecord class name."
+        }
+      ]
     },
     "OrmKind": {
       "status": "PROPOSED, not yet implemented.",
-      "values": ["EfCore", "Dapper", "SqlAlchemy", "DjangoOrm", "Jpa", "Prisma", "Drizzle", "TypeOrm", "ActiveRecord", "Gorm", "Other(String)"]
+      "values": [
+        "EfCore",
+        "Dapper",
+        "SqlAlchemy",
+        "DjangoOrm",
+        "Jpa",
+        "Prisma",
+        "Drizzle",
+        "TypeOrm",
+        "ActiveRecord",
+        "Gorm",
+        "Other(String)"
+      ]
     }
   },
-
   "entities": {
     "node": {
       "table": "sensei.nodes",
       "fields": [
-        { "name": "id",           "type": "uuid",        "nullable": false, "meaning": "Primary key." },
-        { "name": "folder_id",    "type": "uuid",        "nullable": false, "meaning": "Scoping key. Every view filters on this." },
-        { "name": "parent_id",    "type": "uuid",        "nullable": true,  "meaning": "Containment parent. NULL = top-level in its file." },
-        { "name": "kind",         "type": "node_kind",   "nullable": false, "meaning": "See enums.node_kind." },
-        { "name": "name",         "type": "text",        "nullable": false, "meaning": "Identifier or heading text. The label to render." },
-        { "name": "file_id",      "type": "uuid",        "nullable": true,  "meaning": "The file this node is DECLARED in. NULL for reference stubs and external symbols." },
-        { "name": "fqn",          "type": "text",        "nullable": true,  "meaning": "Fully-qualified name — the join key for the whole graph. Shape: language·package·module·name·reach." },
-        { "name": "resolved",     "type": "boolean",     "nullable": false, "meaning": "True once a declaration has been seen. False = a reference-first stub." },
-        { "name": "language",     "type": "text",        "nullable": true,  "meaning": "Language slug from the file extension." },
-        { "name": "signature",    "type": "text",        "nullable": true,  "meaning": "Abbreviated type signature. Good tooltip content." },
-        { "name": "description",  "type": "text",        "nullable": true,  "meaning": "Human-readable summary." },
-        { "name": "content",      "type": "text",        "nullable": true,  "meaning": "Full body — markdown for doc sections, comment text for rationale." },
-        { "name": "docstring",    "type": "text",        "nullable": true,  "meaning": "Extracted JSDoc/TSDoc/rustdoc." },
-        { "name": "line_start",   "type": "integer",     "nullable": true,  "meaning": "One-based start line. Enables jump-to-source." },
-        { "name": "line_end",     "type": "integer",     "nullable": true,  "meaning": "One-based end line. The span is a usable size signal." },
-        { "name": "is_exported",  "type": "boolean",     "nullable": false, "meaning": "Part of the file's public surface. A candidate for emphasis." },
-        { "name": "is_test",      "type": "boolean",     "nullable": false, "meaning": "Belongs to a test file. 19.5% of nodes." },
-        { "name": "community_id", "type": "integer",     "nullable": true,  "meaning": "Leiden cluster id, batch-computed. POPULATED: 1,182,656 of 1,182,676 nodes carry one, across 37,700 distinct communities (measured 2026-09-28). Only 20 are NULL. This is the richest grouping key available and it is live today — the DDL comment saying 'Null until computed' describes a state the database left long ago." },
-        { "name": "embedding",    "type": "vector(384)", "nullable": true,  "meaning": "Semantic embedding, HNSW-indexed. Powers 'find similar', not layout." },
-        { "name": "tags",         "type": "text[]",      "nullable": false, "meaning": "Free filtering tags." },
-        { "name": "props",        "type": "jsonb",       "nullable": false, "meaning": "Per-kind extras. section: {level:2}. rationale: {tag:'WHY'}. directory module: {dir:'...'}." },
-        { "name": "modified_at",  "type": "timestamptz", "nullable": false, "meaning": "Last write." }
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": false,
+          "meaning": "Primary key."
+        },
+        {
+          "name": "folder_id",
+          "type": "uuid",
+          "nullable": false,
+          "meaning": "Scoping key. Every view filters on this."
+        },
+        {
+          "name": "parent_id",
+          "type": "uuid",
+          "nullable": true,
+          "meaning": "Containment parent. NULL = top-level in its file."
+        },
+        {
+          "name": "kind",
+          "type": "node_kind",
+          "nullable": false,
+          "meaning": "See enums.node_kind."
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "nullable": false,
+          "meaning": "Identifier or heading text. The label to render."
+        },
+        {
+          "name": "file_id",
+          "type": "uuid",
+          "nullable": true,
+          "meaning": "The file this node is DECLARED in. NULL for reference stubs and external symbols."
+        },
+        {
+          "name": "fqn",
+          "type": "text",
+          "nullable": true,
+          "meaning": "Fully-qualified name — the join key for the whole graph. Shape: language·package·module·name·reach."
+        },
+        {
+          "name": "resolved",
+          "type": "boolean",
+          "nullable": false,
+          "meaning": "True once a declaration has been seen. False = a reference-first stub."
+        },
+        {
+          "name": "language",
+          "type": "text",
+          "nullable": true,
+          "meaning": "Language slug from the file extension."
+        },
+        {
+          "name": "signature",
+          "type": "text",
+          "nullable": true,
+          "meaning": "Abbreviated type signature. Good tooltip content."
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "nullable": true,
+          "meaning": "Human-readable summary."
+        },
+        {
+          "name": "content",
+          "type": "text",
+          "nullable": true,
+          "meaning": "Full body — markdown for doc sections, comment text for rationale."
+        },
+        {
+          "name": "docstring",
+          "type": "text",
+          "nullable": true,
+          "meaning": "Extracted JSDoc/TSDoc/rustdoc."
+        },
+        {
+          "name": "line_start",
+          "type": "integer",
+          "nullable": true,
+          "meaning": "One-based start line. Enables jump-to-source."
+        },
+        {
+          "name": "line_end",
+          "type": "integer",
+          "nullable": true,
+          "meaning": "One-based end line. The span is a usable size signal."
+        },
+        {
+          "name": "is_exported",
+          "type": "boolean",
+          "nullable": false,
+          "meaning": "Part of the file's public surface. A candidate for emphasis."
+        },
+        {
+          "name": "is_test",
+          "type": "boolean",
+          "nullable": false,
+          "meaning": "Belongs to a test file. 19.5% of nodes."
+        },
+        {
+          "name": "community_id",
+          "type": "integer",
+          "nullable": true,
+          "meaning": "Leiden cluster id, batch-computed. POPULATED: 1,182,656 of 1,182,676 nodes carry one, across 37,700 distinct communities (measured 2026-09-28). Only 20 are NULL. This is the richest grouping key available and it is live today — the DDL comment saying 'Null until computed' describes a state the database left long ago."
+        },
+        {
+          "name": "embedding",
+          "type": "vector(384)",
+          "nullable": true,
+          "meaning": "Semantic embedding, HNSW-indexed. Powers 'find similar', not layout."
+        },
+        {
+          "name": "tags",
+          "type": "text[]",
+          "nullable": false,
+          "meaning": "Free filtering tags."
+        },
+        {
+          "name": "props",
+          "type": "jsonb",
+          "nullable": false,
+          "meaning": "Per-kind extras. section: {level:2}. rationale: {tag:'WHY'}. directory module: {dir:'...'}."
+        },
+        {
+          "name": "modified_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "meaning": "Last write."
+        }
       ]
     },
     "edge": {
       "table": "sensei.edges",
       "fields": [
-        { "name": "id",               "type": "uuid",            "nullable": false, "meaning": "Primary key." },
-        { "name": "folder_id",        "type": "uuid",            "nullable": false, "meaning": "Scoping key." },
-        { "name": "source_id",        "type": "uuid",            "nullable": false, "meaning": "Where the relationship starts. Always a real node." },
-        { "name": "target_id",        "type": "uuid",            "nullable": true,  "meaning": "Where it points. NULL when the target could not be placed — 59.6% of edges." },
-        { "name": "target_name",      "type": "text",            "nullable": true,  "meaning": "The name written at the use site. Carries an unplaced edge's meaning." },
-        { "name": "target_file",      "type": "text",            "nullable": true,  "meaning": "Best-known file for an unplaced target." },
-        { "name": "kind",             "type": "edge_kind",       "nullable": false, "meaning": "See enums.edge_kind." },
-        { "name": "confidence",       "type": "edge_confidence", "nullable": false, "meaning": "Currently constant — every row is 'extracted'." },
-        { "name": "confidence_score", "type": "numeric(3,2)",    "nullable": true,  "meaning": "0.00-1.00, for similarity and duplicate edges only." },
-        { "name": "props",            "type": "jsonb",           "nullable": false, "meaning": "MERGED on re-insert so a later writer cannot erase an earlier one. Holds props.occurrences." },
-        { "name": "resolved_via",     "type": "text",            "nullable": true,  "meaning": "See enums.resolved_via. NOT YET DEPLOYED." },
-        { "name": "unresolved_reason","type": "text",            "nullable": true,  "meaning": "See enums.unresolved_reason. NOT YET DEPLOYED." },
-        { "name": "modified_at",      "type": "timestamptz",     "nullable": false, "meaning": "Last write." }
+        {
+          "name": "id",
+          "type": "uuid",
+          "nullable": false,
+          "meaning": "Primary key."
+        },
+        {
+          "name": "folder_id",
+          "type": "uuid",
+          "nullable": false,
+          "meaning": "Scoping key."
+        },
+        {
+          "name": "source_id",
+          "type": "uuid",
+          "nullable": false,
+          "meaning": "Where the relationship starts. Always a real node."
+        },
+        {
+          "name": "target_id",
+          "type": "uuid",
+          "nullable": true,
+          "meaning": "Where it points. NULL when the target could not be placed — 59.6% of edges."
+        },
+        {
+          "name": "target_name",
+          "type": "text",
+          "nullable": true,
+          "meaning": "The name written at the use site. Carries an unplaced edge's meaning."
+        },
+        {
+          "name": "target_file",
+          "type": "text",
+          "nullable": true,
+          "meaning": "Best-known file for an unplaced target."
+        },
+        {
+          "name": "kind",
+          "type": "edge_kind",
+          "nullable": false,
+          "meaning": "See enums.edge_kind."
+        },
+        {
+          "name": "confidence",
+          "type": "edge_confidence",
+          "nullable": false,
+          "meaning": "Currently constant — every row is 'extracted'."
+        },
+        {
+          "name": "confidence_score",
+          "type": "numeric(3,2)",
+          "nullable": true,
+          "meaning": "0.00-1.00, for similarity and duplicate edges only."
+        },
+        {
+          "name": "props",
+          "type": "jsonb",
+          "nullable": false,
+          "meaning": "MERGED on re-insert so a later writer cannot erase an earlier one. Holds props.occurrences."
+        },
+        {
+          "name": "resolved_via",
+          "type": "text",
+          "nullable": true,
+          "meaning": "See enums.resolved_via. NOT YET DEPLOYED."
+        },
+        {
+          "name": "unresolved_reason",
+          "type": "text",
+          "nullable": true,
+          "meaning": "See enums.unresolved_reason. NOT YET DEPLOYED."
+        },
+        {
+          "name": "modified_at",
+          "type": "timestamptz",
+          "nullable": false,
+          "meaning": "Last write."
+        }
       ],
       "verdictInvariant": "Exactly one of resolved_via / unresolved_reason is set. BOTH NULL means the writer recorded no verdict — the pre-v2 shape — and is itself a category worth showing rather than hiding.",
       "occurrences": {
@@ -387,155 +1124,253 @@
       }
     }
   },
-
   "examples": {
     "note": "Illustrative instances in the real shapes, one per population a view must handle. UUIDs are fabricated for readability; every field name and enum value is real.",
-
     "folder_repoRoot": {
       "id": "f0000000-0000-4000-8000-000000000001",
-      "kind": "git", "role": "backend", "status": "indexed",
-      "name": "senseid", "path": "crates/senseid", "abs_path": "/Users/dev/Developer/sensei-hq/sensei/crates/senseid",
-      "parent_id": null, "repository_id": "r0000000-0000-4000-8000-000000000001",
-      "stack": { "languages": ["rust"] }
+      "kind": "git",
+      "role": "backend",
+      "status": "indexed",
+      "name": "senseid",
+      "path": "crates/senseid",
+      "abs_path": "/Users/dev/Developer/sensei-hq/sensei/crates/senseid",
+      "parent_id": null,
+      "repository_id": "r0000000-0000-4000-8000-000000000001",
+      "stack": {
+        "languages": [
+          "rust"
+        ]
+      }
     },
-
     "node_codeDeclaration": {
       "_population": "declaration — normal first-party code",
       "id": "a0000000-0000-4000-8000-000000000001",
       "folder_id": "f0000000-0000-4000-8000-000000000001",
       "parent_id": "a0000000-0000-4000-8000-000000000000",
-      "kind": "method", "name": "resolve_edges",
+      "kind": "method",
+      "name": "resolve_edges",
       "file_id": "c0000000-0000-4000-8000-000000000001",
       "fqn": "rust·senseid·indexer::resolve·resolve_edges·fn",
-      "resolved": true, "language": "rust",
+      "resolved": true,
+      "language": "rust",
       "signature": "fn resolve_edges(&self, facts: &Facts) -> Result<Vec<Edge>>",
-      "line_start": 412, "line_end": 487,
-      "is_exported": true, "is_test": false,
-      "community_id": 17, "tags": [], "props": {}
+      "line_start": 412,
+      "line_end": 487,
+      "is_exported": true,
+      "is_test": false,
+      "community_id": 17,
+      "tags": [],
+      "props": {}
     },
-
     "node_referenceStub": {
       "_population": "referenceStub — referenced but never found. RENDER DIMMED, NEVER DROP.",
       "id": "a0000000-0000-4000-8000-000000000002",
       "folder_id": "f0000000-0000-4000-8000-000000000001",
       "parent_id": null,
-      "kind": "function", "name": "compute_drift",
+      "kind": "function",
+      "name": "compute_drift",
       "file_id": null,
       "fqn": "rust·senseid·metrics::drift·compute_drift·fn",
-      "resolved": false, "language": "rust",
-      "signature": null, "line_start": null, "line_end": null,
-      "is_exported": false, "is_test": false, "props": {}
+      "resolved": false,
+      "language": "rust",
+      "signature": null,
+      "line_start": null,
+      "line_end": null,
+      "is_exported": false,
+      "is_test": false,
+      "props": {}
     },
-
     "node_external": {
       "_population": "external — a third-party symbol. Belongs outside the repo boundary.",
       "id": "a0000000-0000-4000-8000-000000000003",
       "folder_id": "f0000000-0000-4000-8000-000000000001",
       "parent_id": null,
-      "kind": "method", "name": "lib·serde_json·to_string",
+      "kind": "method",
+      "name": "lib·serde_json·to_string",
       "file_id": null,
       "fqn": "rust·serde_json··to_string·fn",
       "resolved": true,
-      "is_exported": false, "is_test": false, "props": {}
+      "is_exported": false,
+      "is_test": false,
+      "props": {}
     },
-
     "node_testDeclaration": {
       "_population": "declaration, is_test = true — 19.5% of all nodes",
       "id": "a0000000-0000-4000-8000-000000000004",
       "folder_id": "f0000000-0000-4000-8000-000000000001",
-      "kind": "function", "name": "resolves_a_bare_name_to_nothing",
+      "kind": "function",
+      "name": "resolves_a_bare_name_to_nothing",
       "file_id": "c0000000-0000-4000-8000-000000000009",
       "fqn": "rust·senseid·indexer::resolve::tests·resolves_a_bare_name_to_nothing·fn",
-      "resolved": true, "is_exported": false, "is_test": true,
-      "line_start": 901, "line_end": 914, "props": {}
+      "resolved": true,
+      "is_exported": false,
+      "is_test": true,
+      "line_start": 901,
+      "line_end": 914,
+      "props": {}
     },
-
     "node_docSection": {
       "_population": "documentation — a markdown heading. Nests by heading level.",
       "id": "a0000000-0000-4000-8000-000000000005",
       "folder_id": "f0000000-0000-4000-8000-000000000001",
       "parent_id": "a0000000-0000-4000-8000-000000000050",
-      "kind": "section", "name": "The one rule this rests on",
+      "kind": "section",
+      "name": "The one rule this rests on",
       "file_id": "c0000000-0000-4000-8000-000000000020",
-      "fqn": null, "resolved": true, "language": "markdown",
+      "fqn": null,
+      "resolved": true,
+      "language": "markdown",
       "content": "**The database's own name is the identity; every other producer defers to it.**",
-      "line_start": 18, "line_end": 36,
-      "is_exported": false, "is_test": false,
-      "props": { "level": 2 }
+      "line_start": 18,
+      "line_end": 36,
+      "is_exported": false,
+      "is_test": false,
+      "props": {
+        "level": 2
+      }
     },
-
     "node_rationale": {
       "_population": "documentation — extracted from a WHY/NOTE/HACK/TODO comment",
       "id": "a0000000-0000-4000-8000-000000000006",
       "folder_id": "f0000000-0000-4000-8000-000000000001",
       "parent_id": "a0000000-0000-4000-8000-000000000001",
-      "kind": "rationale", "name": "WHY: the ladder stops at the first answer",
+      "kind": "rationale",
+      "name": "WHY: the ladder stops at the first answer",
       "file_id": "c0000000-0000-4000-8000-000000000001",
       "content": "Rungs are tried strongest-first and the FIRST that answers wins, so a weaker rung can never override a stronger one.",
-      "line_start": 405, "line_end": 408,
-      "is_test": false, "props": { "tag": "WHY" }
+      "line_start": 405,
+      "line_end": 408,
+      "is_test": false,
+      "props": {
+        "tag": "WHY"
+      }
     },
-
     "node_schemaTable": {
       "_population": "schema entity — PROPOSED in 20-schema-entities.md, not yet built",
       "id": "a0000000-0000-4000-8000-000000000007",
       "folder_id": "f0000000-0000-4000-8000-000000000001",
       "parent_id": null,
-      "kind": "struct", "name": "orders",
+      "kind": "struct",
+      "name": "orders",
       "fqn": "sql·sensei·sensei·orders·table",
-      "resolved": true, "language": "sql",
+      "resolved": true,
+      "language": "sql",
       "docstring": "Customer orders, one row per placed order.",
       "is_test": false,
-      "props": { "declared_type": "table", "schema": { "source": "Dbd", "naming": "Stated", "detail": { "Table": {} } } }
+      "props": {
+        "declared_type": "table",
+        "schema": {
+          "source": "Dbd",
+          "naming": "Stated",
+          "detail": {
+            "Table": {}
+          }
+        }
+      }
     },
-
     "node_schemaColumn": {
       "_population": "schema entity — a column, parented to its table",
       "id": "a0000000-0000-4000-8000-000000000008",
       "folder_id": "f0000000-0000-4000-8000-000000000001",
       "parent_id": "a0000000-0000-4000-8000-000000000007",
-      "kind": "field", "name": "customer_id",
+      "kind": "field",
+      "name": "customer_id",
       "fqn": "sql·sensei·sensei·orders::customer_id·column",
-      "resolved": true, "language": "sql", "is_test": false,
-      "props": { "declared_type": "column", "schema": { "source": "Dbd", "naming": "Stated", "detail": { "Column": { "sql_type": "uuid", "primary_key": false, "not_null": true, "unique": false, "foreign_key": true, "default": null } } } }
+      "resolved": true,
+      "language": "sql",
+      "is_test": false,
+      "props": {
+        "declared_type": "column",
+        "schema": {
+          "source": "Dbd",
+          "naming": "Stated",
+          "detail": {
+            "Column": {
+              "sql_type": "uuid",
+              "primary_key": false,
+              "not_null": true,
+              "unique": false,
+              "foreign_key": true,
+              "default": null
+            }
+          }
+        }
+      }
     },
-
     "edge_placed": {
       "_population": "40.4% of edges — target_id set, resolved_via stamped",
       "id": "e0000000-0000-4000-8000-000000000001",
       "folder_id": "f0000000-0000-4000-8000-000000000001",
       "source_id": "a0000000-0000-4000-8000-000000000001",
       "target_id": "a0000000-0000-4000-8000-000000000010",
-      "target_name": "mint_fqn", "target_file": "crates/senseid/src/indexer/fqn.rs",
-      "kind": "calls", "confidence": "extracted", "confidence_score": null,
-      "resolved_via": "through_an_import", "unresolved_reason": null,
-      "props": { "occurrences": { "crates/senseid/src/indexer/resolve.rs": [ { "line": 431, "rung": "through_an_import" }, { "line": 455, "rung": "through_an_import" } ] } }
+      "target_name": "mint_fqn",
+      "target_file": "crates/senseid/src/indexer/fqn.rs",
+      "kind": "calls",
+      "confidence": "extracted",
+      "confidence_score": null,
+      "resolved_via": "through_an_import",
+      "unresolved_reason": null,
+      "props": {
+        "occurrences": {
+          "crates/senseid/src/indexer/resolve.rs": [
+            {
+              "line": 431,
+              "rung": "through_an_import"
+            },
+            {
+              "line": 455,
+              "rung": "through_an_import"
+            }
+          ]
+        }
+      }
     },
-
     "edge_unplaced_gap": {
       "_population": "59.6% of edges. isGap = true — a real hole worth closing.",
       "id": "e0000000-0000-4000-8000-000000000002",
       "folder_id": "f0000000-0000-4000-8000-000000000001",
       "source_id": "a0000000-0000-4000-8000-000000000001",
       "target_id": null,
-      "target_name": "compute_drift", "target_file": null,
-      "kind": "calls", "confidence": "extracted",
-      "resolved_via": null, "unresolved_reason": "receiver_type_unknown",
-      "props": { "occurrences": { "crates/senseid/src/indexer/resolve.rs": [ { "line": 470, "reason": "receiver_type_unknown" } ] } }
+      "target_name": "compute_drift",
+      "target_file": null,
+      "kind": "calls",
+      "confidence": "extracted",
+      "resolved_via": null,
+      "unresolved_reason": "receiver_type_unknown",
+      "props": {
+        "occurrences": {
+          "crates/senseid/src/indexer/resolve.rs": [
+            {
+              "line": 470,
+              "reason": "receiver_type_unknown"
+            }
+          ]
+        }
+      }
     },
-
     "edge_unplaced_correct": {
       "_population": "isGap = false — the graph being RIGHT about a limit. Must not read as an error.",
       "id": "e0000000-0000-4000-8000-000000000003",
       "folder_id": "f0000000-0000-4000-8000-000000000001",
       "source_id": "a0000000-0000-4000-8000-000000000001",
       "target_id": null,
-      "target_name": "collect", "target_file": null,
-      "kind": "calls", "confidence": "extracted",
-      "resolved_via": null, "unresolved_reason": "external_boundary",
-      "props": { "occurrences": { "crates/senseid/src/indexer/resolve.rs": [ { "line": 480, "reason": "external_boundary" } ] } }
+      "target_name": "collect",
+      "target_file": null,
+      "kind": "calls",
+      "confidence": "extracted",
+      "resolved_via": null,
+      "unresolved_reason": "external_boundary",
+      "props": {
+        "occurrences": {
+          "crates/senseid/src/indexer/resolve.rs": [
+            {
+              "line": 480,
+              "reason": "external_boundary"
+            }
+          ]
+        }
+      }
     },
-
     "edge_schemaForeignKey": {
       "_population": "schema entity — PROPOSED. A foreign key is a `references` edge.",
       "id": "e0000000-0000-4000-8000-000000000004",
@@ -543,30 +1378,75 @@
       "source_id": "a0000000-0000-4000-8000-000000000008",
       "target_id": "a0000000-0000-4000-8000-000000000011",
       "target_name": "customers.id",
-      "kind": "references", "confidence": "extracted",
-      "resolved_via": "stated_by_schema", "unresolved_reason": null,
-      "props": { "action": "cascade" }
+      "kind": "references",
+      "confidence": "extracted",
+      "resolved_via": "stated_by_schema",
+      "unresolved_reason": null,
+      "props": {
+        "action": "cascade"
+      }
     },
-
     "library_referenced": {
       "_population": "the dependency axis — reached from a folder, not from the node tree",
-      "library": { "id": "b0000000-0000-4000-8000-000000000001", "kind": "detected", "name": "serde_json", "ecosystem": "cargo", "description": "JSON serialisation for Rust.", "homepage_url": "https://serde.rs" },
-      "version": { "version": "1.0", "resolved_version": "1.0.133", "source_type": "http", "is_latest": true },
-      "link": { "folder_id": "f0000000-0000-4000-8000-000000000001", "library_id": "b0000000-0000-4000-8000-000000000001", "version_used": "1.0.133" }
+      "library": {
+        "id": "b0000000-0000-4000-8000-000000000001",
+        "kind": "detected",
+        "name": "serde_json",
+        "ecosystem": "cargo",
+        "description": "JSON serialisation for Rust.",
+        "homepage_url": "https://serde.rs"
+      },
+      "version": {
+        "version": "1.0",
+        "resolved_version": "1.0.133",
+        "source_type": "http",
+        "is_latest": true
+      },
+      "link": {
+        "folder_id": "f0000000-0000-4000-8000-000000000001",
+        "library_id": "b0000000-0000-4000-8000-000000000001",
+        "version_used": "1.0.133"
+      }
     }
   },
-
   "renderingRules": [
-    { "rule": "An unplaced edge is dimmed, never dropped.", "why": "The edge is real; only its endpoint is unplaceable. Dropping it makes the graph look more complete than it is — the single most misleading thing this view can do. At 59.6% unplaced, dropping them would hide most of the data." },
-    { "rule": "Split unplaced edges by isGap before styling them.", "why": "external_boundary, dynamic_dispatch, macro_expansion, plumbing and ambiguous_candidates are CORRECT outcomes. Rendering them the same as receiver_type_unknown tells the reader there is work to do where there is none." },
-    { "rule": "Scope every view; never attempt a global layout.", "why": "4,077,549 edges. Root every view at a folder, a file or a symbol with a depth limit." },
-    { "rule": "Make the test filter a primary control.", "why": "230,241 of 1,182,526 nodes are tests. Mixed in, they swamp production structure." },
-    { "rule": "Separate the three node populations visually.", "why": "A declaration, a reference stub and an external lib· symbol look identical if you only read `name`, but they say very different things about how much the graph knows." },
-    { "rule": "Use resolved_via rank as the trust signal, not confidence.", "why": "confidence is a constant today — every edge is 'extracted'. resolved_via is the field that actually varies, and its ladder is ordered: declared_here is a fact, through_a_glob is the weakest first-party inference." },
-    { "rule": "Design empty and unclassified states deliberately.", "why": "folder.role is NULL for most folders and 88,690 nodes are kind 'unknown'. Both are common, not edge cases. NOTE: community_id is NOT one of these — it is populated on all but 20 nodes." },
-    { "rule": "Treat an edge as a bundle of occurrences.", "why": "props.occurrences is keyed by file and each use site carries its own span and outcome, so a detail view can show where a relationship actually happens." }
+    {
+      "rule": "An unplaced edge is dimmed, never dropped.",
+      "why": "The edge is real; only its endpoint is unplaceable. Dropping it makes the graph look more complete than it is — the single most misleading thing this view can do. At 59.6% unplaced, dropping them would hide most of the data."
+    },
+    {
+      "rule": "Split unplaced edges by isGap before styling them.",
+      "why": "external_boundary, dynamic_dispatch, macro_expansion, plumbing and ambiguous_candidates are CORRECT outcomes. Rendering them the same as receiver_type_unknown tells the reader there is work to do where there is none."
+    },
+    {
+      "rule": "Scope every view; never attempt a global layout.",
+      "why": "4,077,549 edges. Root every view at a folder, a file or a symbol with a depth limit."
+    },
+    {
+      "rule": "Make the test filter a primary control.",
+      "why": "230,241 of 1,182,526 nodes are tests. Mixed in, they swamp production structure."
+    },
+    {
+      "rule": "Separate the three node populations visually.",
+      "why": "A declaration, a reference stub and an external lib· symbol look identical if you only read `name`, but they say very different things about how much the graph knows."
+    },
+    {
+      "rule": "Use resolved_via rank as the trust signal, not confidence.",
+      "why": "confidence is a constant today — every edge is 'extracted'. resolved_via is the field that actually varies, and its ladder is ordered: declared_here is a fact, through_a_glob is the weakest first-party inference."
+    },
+    {
+      "rule": "Design empty and unclassified states deliberately.",
+      "why": "folder.role is NULL for most folders and 88,690 nodes are kind 'unknown'. Both are common, not edge cases. NOTE: community_id is NOT one of these — it is populated on all but 20 nodes."
+    },
+    {
+      "rule": "Treat an edge as a bundle of occurrences.",
+      "why": "props.occurrences is keyed by file and each use site carries its own span and outcome, so a detail view can show where a relationship actually happens."
+    },
+    {
+      "rule": "A node does not have to be a circle. Nested rounded rectangles are welcome — the bar is tidy, readable, navigable.",
+      "why": "The graph is CONTAINMENT-shaped before it is network-shaped: a file holds classes, a class holds methods, a table holds columns, and nodes.parent_id makes that nesting explicit. A circle has no natural way to show something inside it, so a force-directed ball of circles throws away the one structure the data most reliably has. A rectangle can hold its children; a label fits in it; and a nested box reads as ownership without needing an edge drawn for it. Reserve circles for the cases where nesting genuinely does not apply — an external `lib·` symbol, or a reference stub with no parent."
+    }
   ],
-
   "notYetBuilt": [
     "resolved_via and unresolved_reason are defined in the DDL but absent from the live sensei.edges table.",
     "Schema entities (tables, columns, indexes, foreign keys as graph nodes) are specified in docs/spec/indexer/20-schema-entities.md but not implemented. All examples marked PROPOSED.",

@@ -38,12 +38,8 @@ comment on column dojo.invites.expires_at
 comment on column dojo.invites.accepted_at
      is 'Set once on accept → single-use; a second accept is rejected.';
 
--- Locked down: only the service_role (the /v1 routes) touches invites. RLS on with an
--- explicit deny-all-to-clients policy (no `authenticated`/`anon` read or write) → the token
--- is never exposed to a browser query, only redeemed through the accept route. service_role
--- bypasses RLS. The explicit policy also clears the rls_enabled_no_policy advisor.
+-- RLS: a tenant admin issues and reads the tenant's invites. The token is never
+-- exposed to a session — the read grant leaves the column out — and is redeemed only
+-- through the accept route (service_role). The policies call the access predicates
+-- and so live in policies/dojo/invites.sql (see policies/README.md).
 alter table dojo.invites enable row level security;
-drop policy if exists invites_service_only on dojo.invites;
-create policy invites_service_only on dojo.invites
-    for all to authenticated, anon
-    using (false) with check (false);

@@ -638,7 +638,7 @@ impl Evidence {
     ///
     /// One reader for both grades, because "which identity did the use site
     /// mint" is a different question from "may it become an edge". Every
-    /// MEASUREMENT asks the first: the lost-edge decomposition in `barrier.rs`
+    /// MEASUREMENT asks the first: the lost-edge decomposition in `quality/reachability.rs`
     /// needs to know a use site named a node whatever the ladder then did about
     /// it, and a harness comparing the two sides of the merge contract is
     /// comparing strings.
@@ -723,6 +723,35 @@ pub enum Rung {
     ThroughAGlob,
     /// A path rooted at this package, needing no import.
     RootedInThisPackage,
+    /// The head of the path names a SIBLING package this scan owns the source of.
+    ///
+    /// A dependency puts a sibling crate's root in scope without anything being
+    /// written down, so [`Rung::ThroughAnImport`] has nothing to read and
+    /// `rooted_in_this_package` rejects the head — it accepts only the root
+    /// TOKENS. The external rung then correctly declines, because the package is
+    /// ours. Before this rung existed there was nowhere left to go and the
+    /// reference fell to `NoImportInScope`: measured on sensei 2026-09-30, 11
+    /// occurrences of `sensei_bootstrap::SenseiConfig::from_env` alone.
+    ///
+    /// BELOW [`Rung::RootedInThisPackage`] because the file's own package is the
+    /// narrower, more certain scope. ABOVE `FullyQualifiedExternal` because the
+    /// target being OURS is the stronger claim about where it lives.
+    RootedInAScannedPackage,
+    /// The WHOLE SCOPE settled it, after every file was read.
+    ///
+    /// A path the importing file wrote, whose reading only the complete set of
+    /// declarations can fix: rust's `use a::b::C` is a module `a::b::C` or an
+    /// item `C` in `a::b`, and the file states neither. Exactly one of the two
+    /// identities turns out to have a declaration behind it.
+    ///
+    /// BELOW [`Rung::RootedInThisPackage`] because the file alone does not
+    /// settle it — a second fact, from elsewhere in the scan, had to agree.
+    /// ABOVE [`Rung::FullyQualifiedExternal`] because it lands on a declaration
+    /// this scan actually holds, which a path leaving the source never does.
+    ///
+    /// It can only ever confirm ONE reading. Both resolving is
+    /// [`Reason::AmbiguousCandidates`], not a coin toss (R4).
+    SettledByScope,
     /// A fully-qualified path that leaves the scanned source (R5). Named, never
     /// opened.
     FullyQualifiedExternal,
@@ -742,6 +771,8 @@ impl Rung {
             Self::DeclaredByItsType => "declared_by_its_type",
             Self::ThroughAGlob => "through_a_glob",
             Self::RootedInThisPackage => "rooted_in_this_package",
+            Self::RootedInAScannedPackage => "rooted_in_a_scanned_package",
+            Self::SettledByScope => "settled_by_scope",
             Self::FullyQualifiedExternal => "fully_qualified_external",
             Self::InThePrelude => "in_the_prelude",
         }
@@ -756,6 +787,8 @@ impl Rung {
             "declared_by_its_type" => Self::DeclaredByItsType,
             "through_a_glob" => Self::ThroughAGlob,
             "rooted_in_this_package" => Self::RootedInThisPackage,
+            "rooted_in_a_scanned_package" => Self::RootedInAScannedPackage,
+            "settled_by_scope" => Self::SettledByScope,
             "fully_qualified_external" => Self::FullyQualifiedExternal,
             "in_the_prelude" => Self::InThePrelude,
             _ => return None,
@@ -770,6 +803,8 @@ impl Rung {
         Rung::DeclaredByItsType,
         Rung::ThroughAGlob,
         Rung::RootedInThisPackage,
+        Rung::RootedInAScannedPackage,
+        Rung::SettledByScope,
         Rung::FullyQualifiedExternal,
         Rung::InThePrelude,
     ];
@@ -932,6 +967,234 @@ pub struct Import {
     pub binds: Binding,
     pub origin: ImportOrigin,
     pub at: Span,
+    /// What the specifier names, once the ladder has read it.
+    ///
+    /// An import carries a target for the same reason a [`Reference`] does, and
+    /// it was the one fact shape that did not. Measured 2026-10-06: of 258,623
+    /// `imports` edges, 251,270 — 97.2% — carried NEITHER `resolved_via` nor
+    /// `unresolved_reason`, where `references` had 2 such rows out of 1.69M and
+    /// `calls` 4,421 out of 1.35M. An import was the only fact this indexer
+    /// wrote without ever saying how it turned out (#242).
+    ///
+    /// Not an `Option`: a specifier the ladder could not read is a
+    /// [`Resolution::Unresolved`] carrying the reason, never an absence (R2).
+    pub target: Resolution,
+}
+
+impl Import {
+    /// The target of an import the walk has only STATED, not placed.
+    ///
+    /// Every walk emits this and no walk emits anything else, because a walk
+    /// never reaches outside the file it is reading (R1) and reducing a
+    /// specifier to an identity needs the roots, the package boundary and the
+    /// relative rule — which live in the resolution ladder (R7). `resolve` is
+    /// the one place that turns it into an answer, exactly as it is for a
+    /// callee.
+    ///
+    /// [`Reach::Item`] because an import binds an ITEM: the identity it has to
+    /// MEET is the one a declaration minted, and a declaration of a function, a
+    /// type or a const is an item. A specifier naming a MODULE is placed by
+    /// `entered_module`, which mints [`Reach::Mod`] itself — so the reach stated
+    /// here is the one for the case that has no other owner.
+    pub fn unplaced(path: &str) -> Resolution {
+        Resolution::Unresolved {
+            reason: Reason::Unplaced,
+            evidence: Evidence {
+                name: path.to_string(),
+                // The same `node_kind` `common::import_references` states, so a
+                // histogram of unhandled forms counts imports once rather than
+                // under two spellings.
+                node_kind: "import".to_string(),
+                reach: Reach::Item,
+                saw: Vec::new(),
+            },
+        }
+    }
+}
+
+// ── call sites (spec 20 §7b, #251) ────────────────────────────────────────────
+
+/// What one call site was handed, beyond the callee: string literals, lambdas,
+/// type arguments and the receiver it hangs off.
+///
+/// A FACT ABOUT THE SOURCE, not about any library. The walk records the shape;
+/// what a `.ToTable("orders")` MEANS is the EF Core derivation's business (spec
+/// 20 §7c), and a walk that knew EF would be a walk that knew one ORM.
+///
+/// Recorded only when it carries something a derivation can read — a `Str` or
+/// `Lambda` argument, or a type argument. A bare `Foo(x)` is a `Calls`
+/// reference and nothing more.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CallSite {
+    /// The declaration the call sits in.
+    pub from: Fqn,
+    /// The invocation, spanned as its `Calls` reference is.
+    pub at: Span,
+    /// The method name as written, without type arguments.
+    pub callee: String,
+    /// `Entity<Order>()` → `["Order"]`, verbatim.
+    pub type_args: Vec<String>,
+    pub receiver: Receiver,
+    /// Positional; `Other` keeps the positions honest.
+    pub args: Vec<CallArg>,
+}
+
+/// What a call was made ON.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Receiver {
+    /// A free call: `Foo()`.
+    None,
+    /// Another call — `a.Entity<T>().ToTable(…)` hangs `ToTable` off the
+    /// `Entity<T>()` invocation at this span.
+    Call(Span),
+    /// A plain name: `builder.ToTable(…)`.
+    Name(String),
+    /// Anything else — a member chain, an indexer, `this`.
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CallArg {
+    /// A string literal, unescaped.
+    Str(String),
+    /// `x => x.Name` → params `["x"]`, member `Some("Name")`. `member` is the
+    /// accessed member only when the body is exactly `param.Member`.
+    Lambda {
+        params: Vec<String>,
+        member: Option<String>,
+        at: Span,
+    },
+    Other,
+}
+
+// ── schema detail (spec 20, #251) ────────────────────────────────────────────
+
+/// Schema detail for one database object a producer declares as a node — a
+/// table, view, materialized view, function or procedure. Keyed by the node's
+/// fqn, so the writer resolves it to the node in the same transaction that
+/// wrote the node. Columns, indexes and foreign keys are NOT nodes; they land in
+/// the `schema_*` tables keyed by this object's node (spec 20, "The schema
+/// store").
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SchemaFact {
+    pub fqn: Fqn,
+    pub kind: SchemaKind,
+    /// The database schema the object lives in (`app`, `sensei`, `dbo`).
+    pub db_schema: String,
+    pub source: SchemaSource,
+    pub naming: Naming,
+    pub note: Option<String>,
+    pub note_md: Option<String>,
+    /// In declaration order.
+    pub columns: Vec<SchemaColumn>,
+    pub indexes: Vec<SchemaIndex>,
+    /// This object's OUTGOING foreign keys, one per column pair.
+    pub refs: Vec<SchemaRef>,
+}
+
+/// dbd SchemaModel v2's `Column`, renamed only where a SQL keyword collides.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SchemaColumn {
+    pub name: String,
+    /// The declared type, verbatim.
+    pub sql_type: String,
+    pub primary_key: bool,
+    pub not_null: bool,
+    pub unique_key: bool,
+    pub foreign_key: bool,
+    pub enum_typed: bool,
+    pub default_expr: Option<String>,
+    pub note: Option<String>,
+}
+
+/// dbd SchemaModel v2's `Index`. `definition` is the column spec as written —
+/// an expression, so text.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SchemaIndex {
+    pub name: Option<String>,
+    pub definition: String,
+    pub unique: bool,
+}
+
+/// One column pair of a foreign key from the owning object.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SchemaRef {
+    pub from_column: String,
+    /// The referenced object's node identity.
+    pub to: Fqn,
+    pub to_column: String,
+    pub on_delete: Option<FkAction>,
+}
+
+/// Generates a closed vocabulary that spells itself one way, in both
+/// directions, matching its Postgres enum exactly — so the writer and the
+/// reader cannot disagree on a label.
+macro_rules! schema_vocabulary {
+    ($(#[$m:meta])* $name:ident { $($variant:ident => $label:literal),+ $(,)? }) => {
+        $(#[$m])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum $name { $($variant),+ }
+
+        impl $name {
+            pub const ALL: &'static [$name] = &[$($name::$variant),+];
+            pub fn as_label(self) -> &'static str {
+                match self { $($name::$variant => $label),+ }
+            }
+            pub fn from_label(label: &str) -> Option<Self> {
+                match label { $($label => Some($name::$variant),)+ _ => None }
+            }
+        }
+    };
+}
+
+schema_vocabulary! {
+    /// `sensei.schema_object_kind` — the five `declared_type` words.
+    SchemaKind {
+        Table => "table",
+        View => "view",
+        MaterializedView => "materialized_view",
+        Function => "function",
+        Procedure => "procedure",
+    }
+}
+
+schema_vocabulary! {
+    /// `sensei.schema_source` — who described the object. The schema
+    /// describing itself (dbd) wins over any ORM's reading of it.
+    SchemaSource {
+        Dbd => "dbd",
+        EfCore => "ef_core",
+        Dapper => "dapper",
+        SqlAlchemy => "sqlalchemy",
+        DjangoOrm => "django_orm",
+        Jpa => "jpa",
+        Prisma => "prisma",
+        Drizzle => "drizzle",
+        TypeOrm => "typeorm",
+        ActiveRecord => "active_record",
+        Gorm => "gorm",
+        Other => "other",
+    }
+}
+
+schema_vocabulary! {
+    /// `sensei.schema_naming` — whether the object's NAME was written by its
+    /// source or supplied by a convention. Never promoted by agreement.
+    Naming {
+        Stated => "stated",
+        Convention => "convention",
+    }
+}
+
+schema_vocabulary! {
+    /// `sensei.fk_action` — a foreign key's ON DELETE action, in v2's words.
+    FkAction {
+        Cascade => "cascade",
+        Restrict => "restrict",
+        SetNull => "set_null",
+        SetDefault => "set_default",
+        NoAction => "no_action",
+    }
 }
 
 // ── the product of one walk (spec §3) ────────────────────────────────────────
@@ -957,6 +1220,12 @@ pub struct FileFacts {
     pub references: Vec<Reference>,
     pub relations: Vec<Relation>,
     pub imports: Vec<Import>,
+    /// Schema detail for objects this file declares (spec 20). Empty for every
+    /// file that describes no database object — the overwhelming majority.
+    /// Routed by `persist::write` to the `schema_*` tables, never to `nodes`.
+    pub schema: Vec<SchemaFact>,
+    /// Call sites with readable arguments (spec 20 §7b).
+    pub calls: Vec<CallSite>,
 }
 
 #[cfg(test)]
@@ -1380,6 +1649,7 @@ mod tests {
             at: a_span(),
         };
         let import = Import {
+            target: Import::unplaced("crate::db::PgStore"),
             path: "crate::db::PgStore".to_string(),
             binds: Binding::Name("PgStore".to_string()),
             origin: ImportOrigin::Local,
@@ -1395,6 +1665,8 @@ mod tests {
             references: vec![reference],
             relations: vec![relation],
             imports: vec![import],
+            schema: Vec::new(),
+            calls: Vec::new(),
         };
 
         assert_eq!(facts.symbols.len(), 1);

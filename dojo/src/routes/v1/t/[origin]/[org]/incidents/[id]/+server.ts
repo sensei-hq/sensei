@@ -8,6 +8,7 @@
 // `dojo.audit_events`. The store logic lives in `$lib/server/incidents-data`.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import {
 	getIncidentDetail,
@@ -21,14 +22,14 @@ import { recordAudit } from '$lib/server/audit';
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { tenantId } = await resolveTenantAccess(
+		const caller = await resolveTenantAccess(
 			params.origin,
 			params.org,
 			request,
 			locals,
 			ACCESS.lead
 		);
-		const detail = await getIncidentDetail(dojoDb(), tenantId, params.id);
+		const detail = await getIncidentDetail(callerDb(caller), caller.tenantId, params.id, dojoDb());
 		return Response.json(detail);
 	} catch (e) {
 		if (e instanceof Response) return e;
@@ -49,9 +50,8 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 		);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const input = parsePatchIncident(body);
-		const db = dojoDb();
-		const result = await updateIncident(db, caller.tenantId, params.id, input);
-		await recordAudit(db, caller.tenantId, caller.userId, {
+		const result = await updateIncident(callerDb(caller), caller.tenantId, params.id, input);
+		await recordAudit(dojoDb(), caller.tenantId, caller.userId, {
 			action: input.resolve ? 'incident_resolved' : 'incident_updated',
 			target: result.id,
 			detail: { status: input.status ?? null }
@@ -73,10 +73,9 @@ export const DELETE: RequestHandler = async ({ params, request, locals }) => {
 			locals,
 			ACCESS.lead
 		);
-		const db = dojoDb();
-		const deleted = await deleteIncident(db, caller.tenantId, params.id);
+		const deleted = await deleteIncident(callerDb(caller), caller.tenantId, params.id);
 		if (!deleted) return apiError(404, 'no such incident');
-		await recordAudit(db, caller.tenantId, caller.userId, {
+		await recordAudit(dojoDb(), caller.tenantId, caller.userId, {
 			action: 'incident_deleted',
 			target: params.id
 		});

@@ -18,7 +18,11 @@ const mocks = vi.hoisted(() => ({
 	ingestMetrics: vi.fn()
 }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}) }));
+// The service role vs the caller's own JWT — which client the store got.
+vi.mock('$lib/server/dojo-supabase', () => ({
+	dojoDb: () => ({ client: 'service' }),
+	userDb: (token: string) => ({ client: 'user', token })
+}));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveCaller: mocks.resolveCaller,
 	apiError: (status: number, message: string) =>
@@ -59,21 +63,21 @@ function row(over: Record<string, unknown> = {}) {
 beforeEach(() => {
 	mocks.resolveCaller
 		.mockClear()
-		.mockResolvedValue({ userId: 'p1', authUserId: 'u1', email: null, db: {} });
+		.mockResolvedValue({ userId: 'p1', authUserId: 'u1', email: null, db: { client: 'service' }, accessToken: 'jwt-A' });
 	mocks.ingestMetrics.mockClear().mockResolvedValue({ accepted: 0, rejected: [] });
 });
 
 describe('POST /v1/you/metrics', () => {
-	it('stores the batch and passes the caller PRINCIPAL id, not the auth user id', async () => {
-		// `dojo.repository_metrics` is written against principals; passing the
-		// Supabase login id would attribute rows to an identity that does not own
-		// them, and `resolveCaller` returns both so the mistake is one letter away.
+	it('stores the batch as the signed-in person', async () => {
+		// The caller's JWT carries who they are, and the database resolves their
+		// principal from it — no id to pass, and none to get wrong (#236).
 		mocks.ingestMetrics.mockResolvedValue({ accepted: 1, rejected: [] });
 		const res = await route.POST(post({ metrics: [row()] }));
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ accepted: 1, rejected: [] });
 		expect(mocks.ingestMetrics).toHaveBeenCalledOnce();
-		expect(mocks.ingestMetrics.mock.calls[0][1]).toBe('p1');
+		expect(mocks.ingestMetrics.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+		expect(mocks.ingestMetrics.mock.calls[0]).toHaveLength(2);
 	});
 
 	it('400s when `metrics` is not an array, without attempting the write', async () => {
@@ -115,5 +119,13 @@ describe('POST /v1/you/metrics', () => {
 		mocks.ingestMetrics.mockRejectedValue(new AdminError(500, 'db exploded'));
 		const res = await route.POST(post({ metrics: [row()] }));
 		expect(res.status).toBe(500);
+	});
+});
+
+describe('POST /v1/you/metrics without a session', () => {
+	it('refuses rather than storing as the service role', async () => {
+		mocks.resolveCaller.mockResolvedValueOnce({ userId: 'p1', db: { client: 'service' } });
+		expect((await route.POST(post({ metrics: [row()] }))).status).toBe(401);
+		expect(mocks.ingestMetrics).not.toHaveBeenCalled();
 	});
 });

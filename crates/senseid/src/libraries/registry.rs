@@ -33,6 +33,12 @@ impl LatestInfo {
 
 /// Resolves the latest published version of a library. A trait so the scheduler can
 /// be driven by a stub in tests. `None` = couldn't determine (→ no notice).
+// `async_trait` desugars each method to a `Pin<Box<dyn Future>>` and stamps
+// `#[must_use]` on it; clippy 1.99 added `double_must_use`, which then fires on
+// a return type that is already must-use. The attribute is the macro's, not
+// ours, and clippy's external-macro suppression does not reach proc-macro output
+// that keeps call-site spans.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait VersionSource: Send + Sync {
     async fn latest(

@@ -3,9 +3,10 @@
 // dojo.notification_prefs row (user_id is the PK) — merging the posted `events`
 // onto whatever is already stored so enabling "stalls" doesn't wipe an existing
 // "approvals" opt-in. quiet_hours / muted_tenants are left untouched here (a
-// later screen owns those). Service-role client; the send that reads these is P4.4.
+// later screen owns those). Written as the signed-in person: RLS keeps the row
+// their own (#236). The send that reads these runs as the system (P4.4).
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
+import { asOwner } from '$lib/server/relay-owner';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 /** The push event opt-in keys this route accepts (mirrors notification_prefs.events). */
@@ -13,7 +14,9 @@ const EVENT_KEYS = ['approvals', 'decisions', 'stalls', 'crashed'] as const;
 
 export const POST: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { userId } = await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member);
+		const caller = await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member);
+		const { db } = asOwner(caller);
+		const { userId } = caller;
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const incoming = (body.events ?? {}) as Record<string, unknown>;
 
@@ -24,7 +27,6 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		}
 		if (Object.keys(events).length === 0) return apiError(400, 'events is required');
 
-		const db = dojoDb();
 		const nowIso = new Date().toISOString();
 
 		// Merge onto the existing prefs (PK = user_id) so we don't clobber other opt-ins.

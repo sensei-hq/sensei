@@ -85,7 +85,7 @@ interface TriageQueueRow {
 /** The `select` list for the triage read — queue columns + the embedded artifact
  *  (kind + title). */
 export const TRIAGE_SELECT =
-	'signature, artifact_id, owner_scope, confidence, contributor_count, similarity, nearest_artifact_id, state, created_at, artifacts(kind, title)';
+	'signature, artifact_id, owner_scope, confidence, contributor_count, similarity, nearest_artifact_id, state, created_at, artifacts!triage_queue_artifact_id_fkey(kind, title)';
 
 /** Normalize PostgREST's embed (object or one-element array) to the single row. */
 function embeddedArtifact(

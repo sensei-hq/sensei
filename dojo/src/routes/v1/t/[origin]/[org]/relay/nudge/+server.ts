@@ -5,25 +5,25 @@
 // held/live run through the hook control channel (see relay-engine §5 "control
 // channel" + §6 "nudge — two modes").
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
+import { asOwner } from '$lib/server/relay-owner';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 export const POST: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const caller = await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member);
-		if (!caller.membershipId) return apiError(403, 'membership required');
+		const { membershipId, db } = asOwner(
+			await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member)
+		);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const runId = typeof body.run_id === 'string' ? body.run_id : '';
 		const text = typeof body.text === 'string' ? body.text.trim() : '';
 		// Only chat/nudge are human-initiated (relay_inbox_kind); default to nudge.
 		const kind = body.kind === 'chat' ? 'chat' : 'nudge';
 		if (!runId || !text) return apiError(400, 'run_id and text are required');
-		const db = dojoDb();
 		// The nudge is keyed by run_id; map it to the cloud session row (tenant-scoped).
 		const { data: sess, error: sErr } = await db
 			.from('relay_sessions')
 			.select('id')
-			.eq('membership_id', caller.membershipId)
+			.eq('membership_id', membershipId)
 			.eq('run_id', runId)
 			.maybeSingle();
 		if (sErr) return apiError(500, sErr.message);
@@ -32,7 +32,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 			.from('relay_inbox')
 			.insert({
 				session_id: sess.id,
-				membership_id: caller.membershipId,
+				membership_id: membershipId,
 				kind,
 				direction: 'human_to_agent',
 				payload: { text }

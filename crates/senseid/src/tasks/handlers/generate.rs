@@ -14,6 +14,7 @@
 //! `based_on.patterns` and a memory via `source_id` — and the generator skips a
 //! pattern that already produced one.
 
+use crate::db::pg_store::RecommendationRow;
 use crate::tasks::executor::TaskContext;
 
 /// Memory-title cap (chars) for a principle distilled into a learned rule.
@@ -255,17 +256,19 @@ pub async fn generate_for_project(
                 let based_on = serde_json::json!({ "patterns": [pattern_id] });
                 match ctx
                     .pg()
-                    .create_recommendation_full(
+                    .create_recommendation_full(&RecommendationRow {
                         project_id,
-                        &title,
-                        &why,
-                        impact.as_deref(),
-                        &action_type,
-                        &urgency,
-                        &based_on,
-                        None, // heuristic tier — no reasoning trace
-                        None, // no ready-to-send prompt
-                    )
+                        title: &title,
+                        why: &why,
+                        impact: impact.as_deref(),
+                        action_type: &action_type,
+                        urgency: &urgency,
+                        based_on: &based_on,
+                        // Heuristic tier — no reasoning trace.
+                        reasoning_trace_id: None,
+                        // No ready-to-send prompt.
+                        prompt: None,
+                    })
                     .await
                 {
                     Ok(_) => written += 1,
@@ -472,10 +475,14 @@ mod tests {
             )
             .await
             .unwrap();
-        let fid = pg
-            .upsert_repo(&root, "gen-repo", &format!("/_test/gen-{}", uuid::Uuid::new_v4()))
-            .await
-            .unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            pg,
+            &root,
+            "gen-repo",
+            &format!("/_test/gen-{}", uuid::Uuid::new_v4()),
+        )
+        .await
+        .unwrap();
         // A session attributes this folder to the project (L1's attribution path).
         let csid = format!("_test-gen-sid-{}", uuid::Uuid::new_v4());
         pg.record_session_event(&csid, &fid, Some(&pid), "claude", true).await.unwrap();

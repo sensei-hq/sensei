@@ -79,10 +79,25 @@ pub fn owning_manifest(file: &Path, repo_root: &Path, manifests: &[PathBuf]) -> 
 /// spells (R4) — so the caller climbs to the next manifest rather than guessing.
 pub fn package_named_by(manifest: &Path, text: &str) -> Option<String> {
     let filename = manifest.file_name()?.to_str()?;
-    let named = manifest_adapter_for_filename(filename)?.parse_manifest(text).name?;
+    let adapter = manifest_adapter_for_filename(filename)?;
+    let named =
+        adapter.parse_manifest(text).name.or_else(|| adapter.name_by_tool_default(filename))?;
     match named.trim().is_empty() {
         true => None,
         false => Some(named),
+    }
+}
+
+/// Whether a manifest of `ecosystem` can own a file of `language`.
+///
+/// A .NET project owns .NET source only: an ASP.NET folder routinely holds a
+/// `package.json` beside its `.csproj`, and its JavaScript is npm's. Every
+/// other manifest serves every language, exactly as the climb always treated
+/// them — so admitting `.csproj` changed no placement but C#'s.
+pub fn serves(ecosystem: &str, language: Language) -> bool {
+    match ecosystem {
+        "nuget" => language == Language::CSharp,
+        _ => true,
     }
 }
 
@@ -109,6 +124,34 @@ mod tests {
 
     fn p(s: &str) -> PathBuf {
         PathBuf::from(s)
+    }
+
+    /// **A `.csproj` THAT STATES NO NAME IS NAMED BY ITS FILE**, because that
+    /// is MSBuild's own rule: `$(AssemblyName)` defaults to
+    /// `$(MSBuildProjectName)`, the project file's name. Measured over the C#
+    /// corpus: 83 of 150 `.csproj` state neither `<AssemblyName>` nor
+    /// `<RootNamespace>` (29 of the 35 on EF Core), and every C# file under
+    /// one went unindexed — "no manifest names a package".
+    ///
+    /// The rule is the TOOL's, not a guess, which is the line R4 draws: a
+    /// `package.json` with no name still names nothing.
+    ///
+    /// MUTATION: drop the fallback — the unnamed project names nothing again.
+    #[test]
+    fn a_csproj_with_no_stated_name_is_named_by_its_file() {
+        let sdk = "<Project Sdk=\"Microsoft.NET.Sdk\">\n</Project>\n";
+        assert_eq!(
+            package_named_by(&p("/r/src/Store.Api.csproj"), sdk).as_deref(),
+            Some("Store.Api")
+        );
+        let stated =
+            "<Project><PropertyGroup><AssemblyName>Shop</AssemblyName></PropertyGroup></Project>";
+        assert_eq!(
+            package_named_by(&p("/r/src/Store.Api.csproj"), stated).as_deref(),
+            Some("Shop")
+        );
+        assert_eq!(package_named_by(&p("/r/Store.sln"), ""), None, "a solution is not a package");
+        assert_eq!(package_named_by(&p("/r/package.json"), "{\"private\":true}"), None);
     }
 
     /// **A dbd SCHEMA IS A PACKAGE, AND `design.yaml` IS WHAT NAMES IT.**

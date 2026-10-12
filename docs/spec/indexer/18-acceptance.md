@@ -91,7 +91,7 @@ two declarations that only a block-level segment could tell apart — and such a
 segment rewrites identities whenever a line moves inside a body.
 
 The answer was to stop declaring them. **A local value is not a node**: the graph
-answers "what does this function call", and `barrier.rs::a_node` — "something a
+answers "what does this function call", and `quality/reachability.rs::a_node` — "something a
 reader navigates to" — already excluded its kind from every coverage measurement.
 It was a row nothing read. A local FUNCTION keeps its node (a call needs a target),
 and a module-level `const` keeps its node (it is importable). The TYPE BINDING is
@@ -214,7 +214,8 @@ a normal `cargo test` does not pay for a full-corpus walk:
 cargo test -p senseid --bin senseid indexer::acceptance -- --ignored --nocapture
 ```
 
-`indexer/barrier.rs` holds the two coverage barriers over any corpus, and
+`indexer/quality/reachability.rs` holds the two coverage barriers over any
+corpus, and
 `SENSEI_CORPUS` points the web reader at a codebase nobody here wrote — our own
 front ends were written alongside this indexer, so agreement with them is
 weaker evidence than it looks.

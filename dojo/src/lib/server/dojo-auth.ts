@@ -27,6 +27,10 @@ export type Caller = {
 	access: AccessLevel;
 	/** Present on the API-key (device-token) plane — the caller's membership row. */
 	membershipId?: string;
+	/** The verified Supabase JWT, on the user (JWT) plane only — what `userDb`
+	 *  reads with, so RLS rather than route code limits the rows (#236 step 3).
+	 *  The device plane has none until it exchanges its token for one. */
+	accessToken?: string;
 };
 
 /** Lowercase hex sha256 (Web Crypto — available in the Worker runtime and Node). */
@@ -51,21 +55,6 @@ async function resolveTenantId(
 	if (error) throw apiError(500, 'tenant lookup failed');
 	if (!tenant) throw apiError(404, 'no such tenant');
 	return tenant.id as string;
-}
-
-/** All membership ids for a tenant — the membership-scoped replacement for the
- *  dropped relay_* `tenant_id` filter (WS-0 Rule A slice 2). The relay tables key
- *  on `membership_id` only, so a tenant-wide relay read filters
- *  `membership_id IN (this tenant's memberships)`. Returns [] for an unknown or
- *  member-less tenant (a subsequent `.in('membership_id', [])` matches nothing —
- *  the correct empty result, never a leak). */
-export async function membershipIdsForTenant(
-	db: ReturnType<typeof dojoDb>,
-	tenantId: string
-): Promise<string[]> {
-	const { data, error } = await db.from('memberships').select('id').eq('tenant_id', tenantId);
-	if (error) throw apiError(500, 'membership scope lookup failed');
-	return (data ?? []).map((m) => m.id as string);
 }
 
 /** Extract the Supabase access token: `Authorization: Bearer <jwt>` (API/desktop
@@ -108,7 +97,7 @@ export async function resolveCaller(
 	userId: string;
 	authUserId: string;
 	email: string | null;
-	db: ReturnType<typeof dojoDb>;
+	accessToken: string;
 }> {
 	const token = tokenFrom(request, locals);
 	if (!token) throw apiError(401, 'unauthenticated');
@@ -131,7 +120,9 @@ export async function resolveCaller(
 		throw e;
 	}
 
-	return { userId, authUserId, email: userData.user.email ?? null, db };
+	// No database client: a caller is an identity. A session reads as itself
+	// through callerDb; system work names dojoDb() (#236).
+	return { userId, authUserId, email: userData.user.email ?? null, accessToken: token };
 }
 
 /** A best-effort human name off the Supabase user, for a principal created on
@@ -159,7 +150,9 @@ export async function resolveTenantAccess(
 	floor: AccessLevel
 ): Promise<Caller> {
 	// Same JWT-plane identity step as a user-wide caller, then tenant + role.
-	const { userId, db } = await resolveCaller(request, locals);
+	const { userId, accessToken } = await resolveCaller(request, locals);
+	// Resolving the caller's tenant and role is auth itself — system work.
+	const db = dojoDb();
 
 	// Resolve the tenant by its `{origin}/{org}` key.
 	const tenantId = await resolveTenantId(db, origin, org);
@@ -174,16 +167,21 @@ export async function resolveTenantAccess(
 		.eq('tenant_id', tenantId).eq('user_id', userId).is('disabled_at', null)
 		.maybeSingle();
 	if (error) throw apiError(500, 'membership lookup failed');
+	// No ACTIVE membership is no access at any floor — never "level 0". A
+	// signed-in person who is not a member of this tenant reaches nothing of
+	// it (#236, docs/spec/dojo/access-matrix.md "Who").
+	if (!mem) throw apiError(403, 'not a member of this dōjō');
 
-	const access = roleToAccess(mem?.role);
+	const access = roleToAccess(mem.role);
 	if (access < floor) throw apiError(403, `${accessLabel(floor)} role required`);
 
 	return {
 		tenantId,
 		userId,
-		role: mem?.role ?? 'member',
+		role: mem.role,
 		access,
-		membershipId: mem?.id as string | undefined
+		membershipId: mem.id as string,
+		accessToken
 	};
 }
 

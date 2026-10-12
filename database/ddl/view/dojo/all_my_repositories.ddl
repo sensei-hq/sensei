@@ -42,25 +42,26 @@ set search_path to dojo, extensions;
 -- remove the repository from a sync-decision view.
 --
 -- SECURITY: `security_invoker = on` — runs as the calling role, not the owner
--- (Supabase lint security_definer_view). Read server-side as service_role; the
--- caller supplies the principal filter. Not granted to any client role, so a
--- user's repository list is never exposed via PostgREST.
+-- (Supabase lint security_definer_view). A session reads it ONLY through
+-- dojo.my_repositories(), which pins the principal to the caller; the view is
+-- granted to service_role alone.
 --
--- KNOWN RISK, stated rather than discovered: service_role BYPASSES RLS whatever
--- `security_invoker` says, so for the Worker the entire boundary is the app's
--- `.eq('principal_id', …)`. One consumer forgetting it exposes every tenant's
--- members, elections and billing state at once. The structural fix — wrapping
--- this in a SECURITY DEFINER function taking the principal as a REQUIRED
--- argument — is the next slice, not review discipline.
+-- service_role BYPASSES RLS whatever `security_invoker` says, so a service-role
+-- reader's whole boundary is its own `.eq('principal_id', …)`. Sessions do not
+-- carry that risk: dojo.my_repositories() pins the principal to the caller.
 --
 -- See docs/spec/dojo/daemon-sync.md §8a/§8b/§8c and
 -- docs/requirements/repository-sharing.md.
 --
--- Recreated rather than replaced: `create or replace view` cannot rename
--- `visibility` → `forge_visibility` nor insert columns before `sync_enabled`.
-drop view if exists dojo.all_my_repositories;
-
-create view dojo.all_my_repositories
+-- REPLACED, not dropped. This file once dropped and recreated the view, because
+-- `create or replace view` cannot rename `visibility` → `forge_visibility` nor
+-- insert columns before `sync_enabled`; that reshape has shipped. A drop now
+-- fails the deploy outright — dojo.my_repositories() returns this view's row
+-- type, and Postgres will not drop a view something depends on (#236; it failed
+-- the first redeploy). A future change that renames or reorders columns needs a
+-- one-off migration that drops and recreates the dependents with it; appending a
+-- column at the END does not.
+create or replace view dojo.all_my_repositories
 with (security_invoker = on)
 as
 with member_repo as (
@@ -441,14 +442,12 @@ comment on column dojo.all_my_repositories.last_synced_at
 comment on column dojo.all_my_repositories.denied_reason
      is 'DEPRECATED alias of reason_code, kept until GET /v1/you/sync/plan reads reason_code directly.';
 
--- ACLs DO NOT SURVIVE `drop view`. This file drops and recreates (see the note
--- above on renaming columns), so every deploy discards whatever grants the view
--- had and re-creates it owned by the deploying role. Without this line the live
--- ACL was `postgres` + `service_role` and nothing else — verified, not assumed.
+-- The grants are stated here rather than assumed to survive: a drop-and-recreate
+-- (above) discards them, and that is how the live ACL was once found to be
+-- `postgres` + `service_role` and nothing else.
 --
--- It worked anyway only because every current reader is the Worker holding a
--- service_role key. `security_invoker = on` means the moment anything queries
--- this as `authenticated` — a browser-side read, a Realtime subscription, an RLS
--- test — it gets "permission denied" for a view whose own predicates would have
--- allowed it. `dojo.metric_catalogue` shipped that exact failure once.
-grant select on dojo.all_my_repositories to authenticated, service_role;
+-- service_role only. A SESSION reads this through dojo.my_repositories(), never
+-- directly: as the invoker it would see fewer facts than a verdict needs (a
+-- member cannot read the tenant's billing account) and answer wrong (#236).
+grant select on dojo.all_my_repositories to service_role;
+revoke select on dojo.all_my_repositories from authenticated;

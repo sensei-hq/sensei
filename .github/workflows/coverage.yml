@@ -91,9 +91,21 @@ jobs:
       # `skip-missing-files` lets the upload no-op if no lcov was produced. App
       # coverage uploads when the run succeeds. FOLLOW-UP: align app to dojo's
       # stable vitest ^3.2.4, or debug the rolldown crash.
+      # Deliberately NOT continue-on-error, unlike the coverage step below: this
+      # is the app's only CI gate on types. `make app-check` existed and was
+      # wired into nothing, which is how the rokkit 1.6 upgrade shipped a Toggle
+      # that had silently lost its accessible name — unit tests and the
+      # production build both pass it, because neither reads types.
+      #
+      # It lives in this workflow because this is where the app's CI already
+      # installs its dependencies, not because it has anything to do with
+      # coverage.
+      - name: app typecheck
+        run: cd app && bun install --frozen-lockfile && bun run check
+
       - name: app coverage
         continue-on-error: true
-        run: cd app && bun install --frozen-lockfile && bun run test:unit --coverage
+        run: cd app && bun run test:unit --coverage
       - name: Upload app coverage
         uses: qltysh/qlty-action/coverage@08a0a862c159eae9b9003081da6663d96efef637 # v2
         with:

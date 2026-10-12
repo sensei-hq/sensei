@@ -4,7 +4,14 @@
 // getKnowledgeLibrary store is mocked (its own logic is in knowledge-data.spec).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const caller = { tenantId: 't1', userId: 'maint-uuid', role: 'maintainer', access: 3, membershipId: 'm1' };
+const caller: Record<string, unknown> = {
+	tenantId: 't1',
+	userId: 'maint-uuid',
+	role: 'maintainer',
+	access: 2,
+	membershipId: 'm1',
+	accessToken: 'jwt-A'
+};
 
 class KnowledgeError extends Error {
 	constructor(
@@ -20,12 +27,16 @@ const mocks = vi.hoisted(() => ({
 	getKnowledgeLibrary: vi.fn()
 }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}), ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 } }));
+// The service role vs the caller's own JWT — which client each store call got.
+vi.mock('$lib/server/dojo-supabase', () => ({
+	dojoDb: () => ({ client: 'service' }),
+	userDb: (token: string) => ({ client: 'user', token })
+}));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
 	apiError: (status: number, message: string) =>
 		new Response(JSON.stringify({ error: message }), { status, headers: { 'content-type': 'application/json' } }),
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/knowledge-data', () => ({
 	getKnowledgeLibrary: mocks.getKnowledgeLibrary,
@@ -46,6 +57,19 @@ function ev() {
 beforeEach(() => {
 	mocks.resolveTenantAccess.mockClear().mockResolvedValue(caller);
 	mocks.getKnowledgeLibrary.mockClear().mockResolvedValue({ retention_days: 90, active: [], pending: [], catalog: [] });
+	caller.accessToken = 'jwt-A';
+});
+
+describe('GET /knowledge runs as the signed-in person (#236)', () => {
+	it('reads with the caller\'s JWT, so the artifacts and policies policies decide the rows', async () => {
+		await route.GET(ev());
+		expect(mocks.getKnowledgeLibrary.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+	});
+	it('refuses a caller with no session rather than reading as the service role', async () => {
+		caller.accessToken = undefined;
+		expect((await route.GET(ev())).status).toBe(401);
+		expect(mocks.getKnowledgeLibrary).not.toHaveBeenCalled();
+	});
 });
 
 describe('GET /knowledge', () => {
@@ -54,7 +78,7 @@ describe('GET /knowledge', () => {
 		mocks.getKnowledgeLibrary.mockResolvedValueOnce(lib);
 		const res = await route.GET(ev());
 		expect(await res.json()).toEqual(lib);
-		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(3); // ACCESS.maintainer
+		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(2); // ACCESS.maintainer
 	});
 	it('maps a KnowledgeError(500) to 500 (fail-closed, never a fixture)', async () => {
 		mocks.getKnowledgeLibrary.mockRejectedValueOnce(new KnowledgeError(500, 'boom'));

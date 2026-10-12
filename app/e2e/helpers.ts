@@ -261,3 +261,31 @@ export async function waitForDom(
 ): Promise<void> {
   await waitFor(async () => (await tauriPage.evaluate(expr)) === true, timeoutMs);
 }
+
+/**
+ * Mark setup complete — in the daemon's config AND in the page's cached state.
+ *
+ * `hooks.ts` reroutes every page to `/setup/welcome` until setup is complete,
+ * and `make reset-e2e-db` drops the row that says it is. A spec that skips this
+ * passes only when an earlier run happened to leave `setup_complete` behind:
+ * the whole Settings rail failed on a reset DB for exactly that reason.
+ *
+ * Was copied verbatim into eight specs; this is the one copy.
+ */
+export async function seedSetupComplete(tauriPage: any): Promise<void> {
+  await fetch(`${DAEMON_URL}/api/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ setup_complete: '1' }),
+  });
+  await tauriPage.evaluate(`
+    (function() {
+      try { localStorage.setItem('sensei:setup-complete', '1'); } catch (e) { /* shim */ }
+      var s = window.__sensei_state__;
+      if (s && s.appState) {
+        s.appState.config = Object.assign({}, s.appState.config, { setup_complete: '1' });
+        s.appState.loaded = true;
+      }
+    })()
+  `);
+}

@@ -1,7 +1,10 @@
 // The lead Client-audit CONFIDENTIALITY/CONTAINMENT ledger (`GET …/audit/ledger`)
-// — `dojo.audit_events` filtered to the confidentiality events (NOT the general
-// admin action-audit the screen was wrongly bound to), each enriched with the
-// engagement's client name (Rule C). Semantics (client-audit.md resolved design):
+// — the `dojo.confidentiality_ledger` view: `dojo.audit_events` filtered to the
+// confidentiality events (NOT the general admin action-audit the screen was
+// wrongly bound to), each enriched with the engagement's client name (Rule C).
+// The actions are named once, by `dojo.is_confidentiality_action`, which the
+// lead's read policy on audit_events also uses (#236). Semantics (client-audit.md
+// resolved design):
 //   • publish            → a lesson crossed the boundary (source-stripped by
 //                          construction — the always-on invariant)
 //   • contained / held   → the guard blocked a would-be leak (the guard WORKING,
@@ -13,10 +16,6 @@ import { resolveEngagementClientNames } from './engagement-client-names';
 
 export type { DojoClient };
 export { AdminError };
-
-/** The audit actions that make up the confidentiality ledger. `contained`/`held`
- *  are emitted by the containment seam (health screen); forward-compatible. */
-export const CONFIDENTIALITY_ACTIONS = ['publish', 'contained', 'held'];
 
 /** One confidentiality-ledger row (an audit event + resolved client name). */
 export interface ClientAuditEntry {
@@ -44,10 +43,9 @@ export async function getClientAuditLedger(
 ): Promise<ClientAuditEntry[]> {
 	const capped = Math.max(1, Math.min(500, Number.isFinite(limit) ? limit : 200));
 	const { data, error } = await db
-		.from('audit_events')
+		.from('confidentiality_ledger')
 		.select(LEDGER_COLS)
 		.eq('tenant_id', tenantId)
-		.in('action', CONFIDENTIALITY_ACTIONS)
 		.order('ts', { ascending: false })
 		.limit(capped);
 	if (error) throw new AdminError(500, error.message);

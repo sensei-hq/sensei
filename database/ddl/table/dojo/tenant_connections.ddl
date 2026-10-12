@@ -61,3 +61,7 @@ comment on column dojo.tenant_connections.verified_at is
 connection exists but grants nothing. Re-proved on each provisioning pass, and
 only a pass that positively read the forge may clear it — an API outage must
 never be read as "the org is gone".';
+
+-- RLS on, and no session grant: read only by provisioning (the system) and
+-- dojo.register_repository, which returns a reason, never another tenant's id (#236).
+alter table dojo.tenant_connections enable row level security;

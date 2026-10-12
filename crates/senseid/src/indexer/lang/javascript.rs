@@ -308,6 +308,8 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
         references: found.references,
         relations: found.relations,
         imports: found.imports,
+        schema: Vec::new(),
+        calls: Vec::new(),
     })
 }
 
@@ -1443,7 +1445,7 @@ impl Walk<'_> {
         // file does not mention at all — an imported factory's RETURN type,
         // which is cross-file knowledge by construction. Recorded in
         // `docs/backlog.md`; deleting it here would drop TypeScript's resolved
-        // share below the floor `acceptance::report` ratchets.
+        // share below the floor `quality::acceptance::report` ratchets.
         self.types.lookup(self.package, ty)
     }
 
@@ -2351,7 +2353,7 @@ impl Walk<'_> {
             // A local VALUE is not a node. The graph answers "what does this
             // function call", and a `const` in a body is neither something a
             // reader navigates to nor something a call can target —
-            // `barrier.rs::a_node` already excludes its kind from every coverage
+            // `quality/reachability.rs::a_node` already excludes its kind from every coverage
             // measurement, so it was a row nothing read.
             //
             // It was not free. JavaScript lets sibling BLOCKS redeclare a name,
@@ -3055,7 +3057,13 @@ impl Walk<'_> {
         let Some(specifiers) = &i.specifiers else {
             // `import './side-effect.js'` binds no name and is still an import:
             // it states a dependency, which is what the module graph is.
-            self.found.imports.push(Import { path, binds: Binding::Glob, origin, at });
+            self.found.imports.push(Import {
+                target: Import::unplaced(&path),
+                path,
+                binds: Binding::Glob,
+                origin,
+                at,
+            });
             return;
         };
         for specifier in specifiers {
@@ -3087,6 +3095,7 @@ impl Walk<'_> {
                 }
             };
             self.found.imports.push(Import {
+                target: Import::unplaced(&path),
                 path: path.clone(),
                 binds,
                 origin: origin.clone(),
@@ -3117,6 +3126,7 @@ impl Walk<'_> {
             BindingPattern::BindingIdentifier(local) => {
                 self.namespaces.insert(local.name.to_string());
                 self.found.imports.push(Import {
+                    target: Import::unplaced(path),
                     path: path.to_string(),
                     binds: Binding::Name(local.name.to_string()),
                     origin,
@@ -3133,6 +3143,7 @@ impl Walk<'_> {
                         continue;
                     };
                     self.found.imports.push(Import {
+                        target: Import::unplaced(path),
                         path: path.to_string(),
                         binds: Binding::MemberOf {
                             local: local.name.to_string(),
@@ -3170,6 +3181,7 @@ impl Walk<'_> {
                 // calls it and `exported` is what this one passes on, which is
                 // the same two questions an alias asks.
                 self.found.imports.push(Import {
+                    target: Import::unplaced(&path),
                     path: path.clone(),
                     binds: Binding::MemberOf {
                         local: specifier.exported.name().to_string(),
@@ -3207,6 +3219,7 @@ impl Walk<'_> {
         let path = e.source.value.to_string();
         let origin = import_origin(&path);
         self.found.imports.push(Import {
+            target: Import::unplaced(&path),
             path,
             binds: Binding::Glob,
             origin,
@@ -3910,7 +3923,7 @@ mod tests {
     ///
     /// The graph answers "what does this function call". A `const card =
     /// page.locator(…)` inside a body is not something a reader navigates to and
-    /// not something a call can target — `barrier.rs::a_node` already excludes
+    /// not something a call can target — `quality/reachability.rs::a_node` already excludes
     /// its kind from every coverage measurement, so it was a row nothing read.
     ///
     /// It was not free. Locals were the ENTIRE A7 residue: 9 of the last 10
@@ -5156,7 +5169,7 @@ mod tests {
         );
         assert_eq!(
             file_fqn("pkg", "index", "src/index.ts").map(|f| f.to_string()).as_deref(),
-            Ok("typescript·pkg·index·mod")
+            Ok("typescript·pkg··index·mod")
         );
         assert!(
             file_fqn("pkg", "", "src/index.ts").is_err(),

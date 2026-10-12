@@ -9,6 +9,7 @@
 // daemon's alone and is never mirrored here. The dōjō never learns about a repo
 // the user did not choose to share.
 import type { RequestHandler } from './$types';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { AdminError } from '$lib/server/admin-data';
 import {
@@ -41,9 +42,9 @@ function parseRepos(body: Record<string, unknown>): RepoInput[] {
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, db } = await resolveCaller(request, locals);
+		const caller = await resolveCaller(request, locals);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-		const result = await registerRepositories(db, userId, parseRepos(body));
+		const result = await registerRepositories(callerDb(caller), parseRepos(body));
 		return Response.json(result);
 	} catch (e) {
 		if (e instanceof Response) return e;
@@ -58,13 +59,15 @@ export const POST: RequestHandler = async ({ request, locals }) => {
  *  The READ half. `POST` registers what the daemon found; this is what a human
  *  is shown, from the SAME view (`dojo.all_my_repositories`) the daemon reads
  *  through `/v1/you/sync/plan` — so the screen and the daemon cannot disagree.
+ *  Read as the caller, through dojo.my_repositories(), which pins their
+ *  principal in the database (#236).
  *
  *  User-scoped, like the POST: which tenant a repository belongs to is derived,
  *  never supplied. */
 export const GET: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, db } = await resolveCaller(request, locals);
-		return Response.json({ repositories: await listMyRepositories(db, userId) });
+		const caller = await resolveCaller(request, locals);
+		return Response.json({ repositories: await listMyRepositories(callerDb(caller)) });
 	} catch (e) {
 		if (e instanceof Response) return e;
 		if (e instanceof AdminError) return apiError(e.status, e.message);

@@ -20,7 +20,11 @@ const mocks = vi.hoisted(() => ({
 	setMetricActivation: vi.fn()
 }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}) }));
+// The service role vs the caller's own JWT — which client the store got.
+vi.mock('$lib/server/dojo-supabase', () => ({
+	dojoDb: () => ({ client: 'service' }),
+	userDb: (token: string) => ({ client: 'user', token })
+}));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveCaller: mocks.resolveCaller,
 	apiError: (status: number, message: string) =>
@@ -36,7 +40,7 @@ vi.mock('$lib/server/metric-activation', () => ({
 
 const route = await import('./+server');
 
-const DB = { marker: 'db' };
+const USER = { client: 'user', token: 'jwt-A' };
 const OUT = {
 	repo_key: 'github.com/acme/api',
 	metric: 'ftr',
@@ -57,12 +61,12 @@ function patch(body: unknown) {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	mocks.resolveCaller.mockResolvedValue({ userId: 'p-alice', db: DB });
+	mocks.resolveCaller.mockResolvedValue({ userId: 'p-alice', db: { client: 'service' }, accessToken: 'jwt-A' });
 	mocks.setMetricActivation.mockResolvedValue(OUT);
 });
 
 describe('PATCH /v1/you/metrics/activation', () => {
-	it('rules on behalf of the resolved PRINCIPAL, not anything in the body', async () => {
+	it('rules as the signed-in person, not anything in the body', async () => {
 		// The body cannot name the principal or the tenant. If it could, a member
 		// of one dōjō could switch off a metric another dōjō is paying for.
 		const res = await patch({
@@ -73,13 +77,8 @@ describe('PATCH /v1/you/metrics/activation', () => {
 			tenant_id: 't-other'
 		});
 		expect(res.status).toBe(200);
-		expect(mocks.setMetricActivation).toHaveBeenCalledWith(
-			DB,
-			'p-alice',
-			'github.com/acme/api',
-			'ftr',
-			false
-		);
+		// The caller's JWT carries who they are; the database reads it (#236).
+		expect(mocks.setMetricActivation).toHaveBeenCalledWith(USER, 'github.com/acme/api', 'ftr', false);
 		expect(await res.json()).toEqual(OUT);
 	});
 
@@ -88,13 +87,7 @@ describe('PATCH /v1/you/metrics/activation', () => {
 		// indistinguishable from omitting the field — a 400 on the one operation a
 		// user most needs to work after switching something off by mistake.
 		await patch({ repo_key: 'github.com/acme/api', metric: 'ftr', enabled: true });
-		expect(mocks.setMetricActivation).toHaveBeenCalledWith(
-			DB,
-			'p-alice',
-			'github.com/acme/api',
-			'ftr',
-			true
-		);
+		expect(mocks.setMetricActivation).toHaveBeenCalledWith(USER, 'github.com/acme/api', 'ftr', true);
 	});
 
 	it('refuses a non-boolean `enabled` instead of coercing it', async () => {
@@ -132,5 +125,14 @@ describe('PATCH /v1/you/metrics/activation', () => {
 		const res = await patch({ repo_key: 'github.com/acme/api', metric: 'ftr', enabled: false });
 		expect(res.status).toBe(status);
 		expect((await res.json()).error).toBe(message);
+	});
+});
+
+describe('PATCH /v1/you/metrics/activation without a session', () => {
+	it('refuses rather than ruling as the service role', async () => {
+		mocks.resolveCaller.mockResolvedValueOnce({ userId: 'p-alice', db: { client: 'service' } });
+		const res = await patch({ repo_key: 'github.com/acme/api', metric: 'ftr', enabled: false });
+		expect(res.status).toBe(401);
+		expect(mocks.setMetricActivation).not.toHaveBeenCalled();
 	});
 });

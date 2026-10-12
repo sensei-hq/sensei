@@ -6,6 +6,7 @@
 // `dojo.audit_events`. The store logic lives in `$lib/server/admin-data`.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { patchPolicy, deletePolicy, parsePatchPolicy, AdminError } from '$lib/server/admin-data';
 import { recordAudit } from '$lib/server/audit';
@@ -21,9 +22,8 @@ export const PATCH: RequestHandler = async ({ params, request, locals }) => {
 		);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const input = parsePatchPolicy(body);
-		const db = dojoDb();
-		const result = await patchPolicy(db, caller.tenantId, params.id, input);
-		await recordAudit(db, caller.tenantId, caller.userId, {
+		const result = await patchPolicy(callerDb(caller), caller.tenantId, params.id, input);
+		await recordAudit(dojoDb(), caller.tenantId, caller.userId, {
 			action: 'policy_edited',
 			target: result.id
 		});
@@ -44,10 +44,9 @@ export const DELETE: RequestHandler = async ({ params, request, locals }) => {
 			locals,
 			ACCESS.admin
 		);
-		const db = dojoDb();
-		const deleted = await deletePolicy(db, caller.tenantId, params.id);
+		const deleted = await deletePolicy(callerDb(caller), caller.tenantId, params.id);
 		if (!deleted) return apiError(404, 'no such policy');
-		await recordAudit(db, caller.tenantId, caller.userId, {
+		await recordAudit(dojoDb(), caller.tenantId, caller.userId, {
 			action: 'policy_deleted',
 			target: params.id
 		});

@@ -393,6 +393,32 @@ pub trait LanguageAdapter: Send + Sync {
     /// Declaring it makes the relationship queryable, and explains why a
     /// `.svelte` file's symbols are filed under the TypeScript language rather
     /// than a Svelte one.
+    /// **THE SCOPE PASS.** Place the imports the per-file ladder refused,
+    /// now that every declaration in the scope is known.
+    ///
+    /// Called once per file AFTER the whole repository is read, with `declared`
+    /// holding every identity this scan minted. That completeness is what makes
+    /// it sound where a rung is not: `World::scanned` is deliberately never
+    /// read because it GROWS as the pass runs and a rung consulting it would
+    /// answer differently depending on file order (R6). This set does not grow
+    /// — it is the finished product of the pass before.
+    ///
+    /// Default: none. A language whose specifiers are unambiguous has nothing to
+    /// settle, and saying so by not overriding is better than an empty override
+    /// in every adapter. Rust overrides it because `use a::b::C` is genuinely
+    /// two readings and only the scope can say which.
+    ///
+    /// It may only PLACE what the walk already saw. Minting a use site here
+    /// would make this a second producer, which is the thing the tree spent
+    /// 8,411 lines removing.
+    fn settle_imports(
+        &self,
+        _facts: &FileFacts,
+        _declared: &std::collections::BTreeSet<Fqn>,
+    ) -> Vec<crate::indexer::facts::Reference> {
+        Vec::new()
+    }
+
     fn host(&self) -> Option<&'static str> {
         None
     }
@@ -461,7 +487,80 @@ pub const PRODUCTION_LANGUAGES: &[Language] = &[
     // set NARROWED: v1 claimed `.cpp`, `.hpp` and `.cc`, which are C++ and
     // which nothing here parses. See `no_adapter_claims_a_cpp_extension`.
     Language::C,
+    // SQL is a CUTOVER and it meets the identity bar outright: its ratchet is
+    // `colliding.is_empty()`, not a budget. The legacy reader was regex- and
+    // line-based, so this is a rewrite; the dialect is established before
+    // anything is read, which is why SQL is the one language whose adapter
+    // needs a manifest label before a file makes sense.
+    Language::Sql,
+    // KOTLIN ENTERS WITH A KNOWN, MEASURED RESIDUE: 39 colliding identities of
+    // 3,038 declarations over a 245-file corpus (1.3%), held by the ratchet in
+    // `kotlin::tests`. It is the only entry here that did not reach zero first,
+    // and the reason it enters anyway is that the alternative is worse, not
+    // that the residue is acceptable:
+    //
+    //   * the legacy reader it replaces mints identities with the FOUR-segment
+    //     encoder, which no lookup in this build can match — a defect that
+    //     applies to every Kotlin symbol, not 1.3% of them;
+    //   * neither colliding shape is a walk defect that this entry makes worse.
+    //     Android product flavours (`app/src/<flavour>/Color.kt`, one compiled
+    //     per build) are a PLACEMENT question — a Gradle source set is a fact
+    //     about the build, and the walk is handed one file. The anonymous
+    //     object expression (`val M = object : Migration(5, 6) { … }`) wants
+    //     naming by the property it is assigned to, the shape TypeScript
+    //     already has.
+    //
+    // Both are tracked, and the ratchet fails on a rise outside them.
+    Language::Kotlin,
 ];
+
+/// What one language can do here — a pure projection of the registry.
+///
+/// Moved from the retired registry, which by the end reported `parses: false`
+/// for every language it listed: it had become a name-and-extension table for
+/// parsers that had already left. Sourced from the adapters that actually read
+/// files, so it cannot describe a producer that does not exist.
+///
+/// The JSON keys are unchanged because this is served over MCP and a renamed
+/// field is a broken client.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CapabilityReport {
+    pub language: String,
+    /// Always true now. Kept so a client that branches on it keeps working, and
+    /// because "this language has a parser" stops being a question worth asking
+    /// only while exactly one producer exists.
+    pub parses: bool,
+    pub extensions: Vec<String>,
+    /// The language this one delegates to (`svelte` -> `typescript`).
+    pub host: Option<String>,
+    pub fqn: bool,
+    pub scope: bool,
+    pub inheritance: bool,
+}
+
+/// The capability matrix for every registered language.
+pub fn capability_matrix() -> Vec<CapabilityReport> {
+    let mut seen: Vec<CapabilityReport> = Vec::new();
+    for adapter in all_adapters() {
+        let language = adapter.language().as_str().to_string();
+        if seen.iter().any(|r| r.language == language) {
+            continue;
+        }
+        seen.push(CapabilityReport {
+            language,
+            // Every adapter here reads files, mints fqns, resolves in scope and
+            // emits inheritance — that is what being in this registry means.
+            // Reporting them per-adapter would be four fields restating one.
+            parses: true,
+            extensions: adapter.extensions().iter().map(|e| (*e).to_string()).collect(),
+            host: adapter.host().map(str::to_string),
+            fqn: true,
+            scope: true,
+            inheritance: true,
+        });
+    }
+    seen
+}
 
 /// Whether this indexer is the production producer for `language`.
 pub fn indexes_in_production(language: Language) -> bool {
@@ -512,7 +611,7 @@ mod tests {
     /// [`LanguageAdapter::read`] still TAKES the table and the other four
     /// adapters still read theirs — TypeScript has no other source for a type's
     /// home, and taking it away now would drop its share below the floor
-    /// `acceptance::report` records. Rust is the first adapter through (§11), so
+    /// `quality::acceptance::report` records. Rust is the first adapter through (§11), so
     /// its walk is the first file this may be asserted of. Widen the path as
     /// each next adapter lands; the trait parameter goes when the LAST one does.
     ///
@@ -553,6 +652,31 @@ mod tests {
              comes from THIS FILE — its declarations, then its imports — and a walk that can \
              be handed one is a walk the barrier grows back through:\n  {}",
             found.join("\n  ")
+        );
+    }
+
+    /// **This indexer is the producer for every language the build reads.**
+    ///
+    /// The frontier was a subset while languages were being cut over one at a
+    /// time, and each entry earned its place by a corpus measurement. With
+    /// Kotlin and SQL in, the subset is the whole set — which is what makes the
+    /// legacy producer deletable, and what makes `production_adapter_for_ext`
+    /// and `adapter_for_ext` answer identically.
+    ///
+    /// Asserted against `Language::all()` rather than a count, so a NEW language
+    /// variant fails here the moment it is added rather than quietly falling
+    /// through to a producer that no longer exists.
+    ///
+    /// Breaking mutation: remove any entry from `PRODUCTION_LANGUAGES`.
+    #[test]
+    fn this_indexer_produces_every_language_the_build_reads() {
+        let missing: Vec<_> =
+            Language::all().iter().filter(|l| !indexes_in_production(**l)).collect();
+
+        assert!(
+            missing.is_empty(),
+            "these languages have an adapter but no production entry, so their files \
+             route to a producer that is on its way out: {missing:?}"
         );
     }
 

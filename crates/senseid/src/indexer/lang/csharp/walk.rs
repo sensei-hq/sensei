@@ -40,9 +40,9 @@ use tree_sitter::Node;
 
 use super::super::{Home, ReadError, Source, TypeHomes};
 use crate::indexer::facts::{
-    Binding, DeclaredType, Evidence, FileFacts, Fqn, Import, ImportOrigin, Language, Param, Reason,
-    RefKind, Reference, Relation, RelationKind, Resolution, Rung, Span, Symbol, SymbolKind,
-    Visibility,
+    Binding, CallArg, CallSite, DeclaredType, Evidence, FileFacts, Fqn, Import, ImportOrigin,
+    Language, Param, Reason, Receiver, RefKind, Reference, Relation, RelationKind, Resolution,
+    Rung, Span, Symbol, SymbolKind, Visibility,
 };
 use crate::indexer::fqn::{self, Form, FqnError, Reach};
 
@@ -76,6 +76,7 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
         references: Vec::new(),
         relations: Vec::new(),
         imports: Vec::new(),
+        calls: Vec::new(),
     };
     walk.usings_of(root);
     let its_own = file.clone();
@@ -109,6 +110,8 @@ pub fn read(source: &Source<'_>, types: &TypeHomes) -> Result<FileFacts, ReadErr
         references: walk.references,
         relations: walk.relations,
         imports: walk.imports,
+        schema: Vec::new(),
+        calls: walk.calls,
     })
 }
 
@@ -131,6 +134,21 @@ fn declared_namespace(src: &str, root: Node<'_>) -> Option<String> {
         None
     }
     find(src, root)
+}
+
+/// A C# escape sequence as the character it stands for; an unknown one stays
+/// as written rather than becoming a guess.
+fn unescape(seq: &str) -> String {
+    match seq {
+        "\\\"" => "\"".into(),
+        "\\'" => "'".into(),
+        "\\\\" => "\\".into(),
+        "\\0" => "\0".into(),
+        "\\n" => "\n".into(),
+        "\\r" => "\r".into(),
+        "\\t" => "\t".into(),
+        other => other.to_string(),
+    }
 }
 
 fn span(node: Node<'_>) -> Span {
@@ -214,6 +232,7 @@ struct Walk<'a> {
     references: Vec<Reference>,
     relations: Vec<Relation>,
     imports: Vec<Import>,
+    calls: Vec<CallSite>,
 }
 
 impl<'a> Walk<'a> {
@@ -334,6 +353,7 @@ impl<'a> Walk<'a> {
                 (target.to_string(), Binding::Glob)
             };
             self.imports.push(Import {
+                target: Import::unplaced(target),
                 path: target.to_string(),
                 binds,
                 origin: ImportOrigin::External { package },
@@ -966,9 +986,133 @@ impl<'a> Walk<'a> {
         out
     }
 
+    /// Record what a call site was handed (spec 20 §7b), when it carries
+    /// anything a derivation can read. Runs for EVERY invocation shape —
+    /// including a bare generic call, which places no reference.
+    fn record_call(&mut self, scope: &Scope, node: Node<'_>) {
+        let Some(function) = node.child_by_field_name("function") else { return };
+        let (name, receiver) = match function.kind() {
+            "identifier" | "generic_name" => (function, Receiver::None),
+            "member_access_expression" => {
+                let Some(name) = function.child_by_field_name("name") else { return };
+                let receiver = match function.child_by_field_name("expression") {
+                    Some(e) if e.kind() == "invocation_expression" => Receiver::Call(span(e)),
+                    Some(e) if e.kind() == "identifier" => Receiver::Name(self.text(e).to_string()),
+                    Some(_) => Receiver::Other,
+                    None => Receiver::None,
+                };
+                (name, receiver)
+            }
+            _ => return,
+        };
+        let (callee, type_args) = match name.kind() {
+            "generic_name" => {
+                let mut cursor = name.walk();
+                let children: Vec<Node<'_>> = name.named_children(&mut cursor).collect();
+                let Some(ident) = children.iter().find(|c| c.kind() == "identifier") else {
+                    return;
+                };
+                let type_args = children
+                    .iter()
+                    .filter(|c| c.kind() == "type_argument_list")
+                    .flat_map(|list| {
+                        let mut cursor = list.walk();
+                        list.named_children(&mut cursor)
+                            .map(|t| self.text(t).to_string())
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                (self.text(*ident).to_string(), type_args)
+            }
+            _ => (self.text(name).to_string(), Vec::new()),
+        };
+        // No argument list is a call with no arguments, which is what the
+        // source says — not a failed read.
+        let args: Vec<CallArg> = match node.child_by_field_name("arguments") {
+            Some(list) => {
+                let mut cursor = list.walk();
+                list.named_children(&mut cursor)
+                    .filter(|a| a.kind() == "argument")
+                    .map(|a| {
+                        let mut cursor = a.walk();
+                        // A named argument `name: value` puts the label first;
+                        // the value is the last named child either way.
+                        match a.named_children(&mut cursor).last() {
+                            Some(value) => self.call_arg(value),
+                            None => CallArg::Other,
+                        }
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        };
+        let readable = !type_args.is_empty() || args.iter().any(|a| !matches!(a, CallArg::Other));
+        if !readable {
+            return;
+        }
+        self.calls.push(CallSite {
+            from: scope.from.clone(),
+            at: span(node),
+            callee,
+            type_args,
+            receiver,
+            args,
+        });
+    }
+
+    fn call_arg(&self, value: Node<'_>) -> CallArg {
+        match value.kind() {
+            "string_literal" => {
+                let mut out = String::new();
+                let mut cursor = value.walk();
+                for part in value.named_children(&mut cursor) {
+                    match part.kind() {
+                        "string_literal_content" => out.push_str(self.text(part)),
+                        "escape_sequence" => out.push_str(&unescape(self.text(part))),
+                        _ => {}
+                    }
+                }
+                CallArg::Str(out)
+            }
+            "verbatim_string_literal" => {
+                let raw = self.text(value);
+                match raw.strip_prefix("@\"").and_then(|r| r.strip_suffix('"')) {
+                    Some(inner) => CallArg::Str(inner.replace("\"\"", "\"")),
+                    None => CallArg::Other,
+                }
+            }
+            "lambda_expression" => {
+                let params: Vec<String> = match value.child_by_field_name("parameters") {
+                    Some(p) if p.kind() == "implicit_parameter" || p.kind() == "identifier" => {
+                        vec![self.text(p).to_string()]
+                    }
+                    Some(list) => {
+                        let mut cursor = list.walk();
+                        list.named_children(&mut cursor)
+                            .filter_map(|p| self.field_text(p, "name").map(str::to_string))
+                            .collect()
+                    }
+                    None => Vec::new(),
+                };
+                let member = value.child_by_field_name("body").and_then(|body| {
+                    if body.kind() != "member_access_expression" {
+                        return None;
+                    }
+                    let on = body.child_by_field_name("expression")?;
+                    let on_param =
+                        on.kind() == "identifier" && params.iter().any(|p| p == self.text(on));
+                    on_param.then(|| self.field_text(body, "name").map(str::to_string)).flatten()
+                });
+                CallArg::Lambda { params, member, at: span(value) }
+            }
+            _ => CallArg::Other,
+        }
+    }
+
     fn expression(&mut self, scope: &Scope, node: Node<'_>) {
         match node.kind() {
             "invocation_expression" => {
+                self.record_call(scope, node);
                 let Some(function) = node.child_by_field_name("function") else { return };
                 let target = match function.kind() {
                     // `Foo()` — a call on `this` or a static using.
@@ -1142,6 +1286,91 @@ mod tests {
 
     fn named(facts: &FileFacts, name: &str) -> Vec<String> {
         facts.symbols.iter().filter(|s| s.name == name).map(|s| s.fqn.to_string()).collect()
+    }
+
+    fn calls_named<'f>(facts: &'f FileFacts, callee: &str) -> Vec<&'f CallSite> {
+        facts.calls.iter().filter(|c| c.callee == callee).collect()
+    }
+
+    /// **A CALL SITE KEEPS ITS LITERALS, TYPE ARGUMENTS, LAMBDAS AND RECEIVER**
+    /// (spec 20 §7b) — the three shapes EF Core configures a table in, none of
+    /// which this walk knows to be EF's.
+    ///
+    /// Mutations that must break this: drop type arguments from `Entity<Order>`;
+    /// record a chained receiver as `Other`; lose a lambda's member; record a
+    /// call with nothing readable.
+    #[test]
+    fn a_call_site_keeps_what_a_derivation_can_read() {
+        let facts = twice(
+            r#"namespace Shop;
+public class ShopContext : DbContext {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+        modelBuilder.HasDefaultSchema("sales");
+        modelBuilder.Entity<Order>().ToTable("orders", "sales");
+        modelBuilder.Entity<Customer>(b => { b.ToTable("customers"); b.HasKey(c => c.Code); });
+        Log(modelBuilder);
+    }
+}
+public class LineConfig : IEntityTypeConfiguration<Line> {
+    public void Configure(EntityTypeBuilder<Line> builder) {
+        builder.Property(l => l.Qty).HasColumnName("quantity");
+    }
+}
+"#,
+        );
+
+        let entity = calls_named(&facts, "Entity");
+        assert_eq!(entity.len(), 2, "{:#?}", facts.calls);
+        assert_eq!(entity[0].type_args, ["Order"]);
+        assert_eq!(entity[0].receiver, Receiver::Name("modelBuilder".into()));
+
+        let to_table = calls_named(&facts, "ToTable");
+        assert_eq!(to_table.len(), 2);
+        assert_eq!(to_table[0].args, [CallArg::Str("orders".into()), CallArg::Str("sales".into())]);
+        assert_eq!(
+            to_table[0].receiver,
+            Receiver::Call(entity[0].at),
+            "a chained call hangs off the call before it"
+        );
+        assert_eq!(to_table[1].receiver, Receiver::Name("b".into()));
+
+        let CallArg::Lambda { params, member, at } = &entity[1].args[0] else {
+            panic!("Entity<Customer>(b => …) carries a lambda: {:?}", entity[1].args)
+        };
+        assert_eq!((params.as_slice(), member), (&["b".to_string()][..], &None));
+        assert!(
+            at.start_line <= to_table[1].at.start_line && to_table[1].at.end_line <= at.end_line,
+            "the lambda's span contains the calls written inside it"
+        );
+        let has_key = calls_named(&facts, "HasKey");
+        assert_eq!(
+            has_key[0].args,
+            [CallArg::Lambda {
+                params: vec!["c".into()],
+                member: Some("Code".into()),
+                at: match &has_key[0].args[0] {
+                    CallArg::Lambda { at, .. } => *at,
+                    _ => unreachable!(),
+                }
+            }]
+        );
+
+        let renamed = calls_named(&facts, "HasColumnName");
+        assert_eq!(renamed[0].args, [CallArg::Str("quantity".into())]);
+        let property = calls_named(&facts, "Property");
+        assert_eq!(renamed[0].receiver, Receiver::Call(property[0].at));
+        assert!(property[0].from.as_str().contains("Configure"), "{}", property[0].from);
+
+        assert_eq!(calls_named(&facts, "HasDefaultSchema")[0].args, [CallArg::Str("sales".into())]);
+        assert!(calls_named(&facts, "Log").is_empty(), "a bare call carries nothing to read");
+
+        // A literal is its VALUE: escapes resolved, a verbatim string's doubled
+        // quote halved.
+        let quoted =
+            twice(r#"class C { void M() { b.ToTable("a\"b\tc"); b.ToTable(@"x""y\z"); } }"#);
+        let tables = calls_named(&quoted, "ToTable");
+        assert_eq!(tables[0].args, [CallArg::Str("a\"b\tc".into())]);
+        assert_eq!(tables[1].args, [CallArg::Str("x\"y\\z".into())]);
     }
 
     /// A FILE-SCOPED namespace is the file's namespace, exactly as the block

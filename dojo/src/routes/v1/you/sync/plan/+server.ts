@@ -20,14 +20,15 @@
 // shipping data that would be refused, and the dōjō re-decides on every write,
 // so ignoring the plan gains a daemon nothing.
 import type { RequestHandler } from './$types';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveCaller, apiError } from '$lib/server/dojo-auth';
 import { AdminError } from '$lib/server/admin-data';
 import { syncPlan } from '$lib/server/repositories';
 
 export const GET: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, db } = await resolveCaller(request, locals);
-		return Response.json(await syncPlan(db, userId));
+		const caller = await resolveCaller(request, locals);
+		return Response.json(await syncPlan(callerDb(caller)));
 	} catch (e) {
 		if (e instanceof Response) return e;
 		if (e instanceof AdminError) return apiError(e.status, e.message);

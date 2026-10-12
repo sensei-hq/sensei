@@ -535,7 +535,7 @@ impl FileClassifier for DefaultClassifier {
             return true;
         }
         // Delegate to LanguageAdapter for anything the parser understands.
-        if crate::languages::adapter_for_ext(&format!(".{e}")).is_some() {
+        if crate::indexer::lang::adapter_for_ext(&format!(".{e}")).is_some() {
             return true;
         }
         // Common source languages we recognise without a parser adapter.

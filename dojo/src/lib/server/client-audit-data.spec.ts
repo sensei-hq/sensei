@@ -1,14 +1,16 @@
-// Unit tests for the confidentiality-ledger read (`client-audit-data.ts`): the
-// action filter, client-name enrichment, limit clamp, and fail-closed behaviour.
+// Unit tests for the confidentiality-ledger read (`client-audit-data.ts`): it
+// reads the dojo.confidentiality_ledger view (the database names the actions,
+// once), enriches the client name, clamps the limit, and fails closed.
 import { describe, it, expect } from 'vitest';
-import { getClientAuditLedger, CONFIDENTIALITY_ACTIONS, AdminError, type DojoClient } from './client-audit-data';
+import { getClientAuditLedger, AdminError, type DojoClient } from './client-audit-data';
 
-// A table-aware stub: audit_events ends on `.limit()` (capturing the filters),
-// engagements (the client-name resolver) ends on `.in()`.
+// A table-aware stub: the ledger read ends on `.limit()` (capturing the source
+// and any action filter), engagements (the client-name resolver) ends on `.in()`.
 function makeDb(audit: { data: unknown; error: unknown }, engagements: { data: unknown; error: unknown }) {
-	const captured: { actionIn?: unknown; limit?: number } = {};
+	const captured: { actionIn?: unknown; limit?: number; source?: string } = {};
 	return {
 		from(table: string) {
+			if (table !== 'engagements') captured.source = table;
 			const b: Record<string, unknown> = {};
 			b.select = () => b;
 			b.eq = () => b;
@@ -18,7 +20,7 @@ function makeDb(audit: { data: unknown; error: unknown }, engagements: { data: u
 				return Promise.resolve(audit);
 			};
 			b.in = (col: string, vals: unknown) => {
-				if (table === 'audit_events' && col === 'action') captured.actionIn = vals;
+				if (table !== 'engagements' && col === 'action') captured.actionIn = vals;
 				return table === 'engagements' ? Promise.resolve(engagements) : b;
 			};
 			return b;
@@ -28,13 +30,14 @@ function makeDb(audit: { data: unknown; error: unknown }, engagements: { data: u
 }
 
 describe('getClientAuditLedger', () => {
-	it('filters to the confidentiality actions and enriches the client name', async () => {
+	it('reads the ledger view, with no action list of its own, and enriches the client name', async () => {
 		const db = makeDb(
 			{ data: [{ id: 1, ts: 't', action: 'publish', target: 'x', detail: null, engagement_id: 'e1' }], error: null },
 			{ data: [{ id: 'e1', client_name: 'Globex' }], error: null }
-		) as DojoClient & { captured: { actionIn?: unknown; limit?: number } };
+		) as DojoClient & { captured: { actionIn?: unknown; limit?: number; source?: string } };
 		const rows = await getClientAuditLedger(db, 't1');
-		expect(db.captured.actionIn).toEqual(CONFIDENTIALITY_ACTIONS);
+		expect(db.captured.source).toBe('confidentiality_ledger');
+		expect(db.captured.actionIn).toBeUndefined();
 		expect(rows[0]).toMatchObject({ action: 'publish', client_name: 'Globex' });
 	});
 	it('leaves client_name null for an unbound entry', async () => {

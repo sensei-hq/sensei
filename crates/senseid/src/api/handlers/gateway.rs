@@ -115,6 +115,7 @@ pub(crate) async fn infer(
         consensus: None,
         allow_fallback: true,
         credentials: std::collections::HashMap::new(),
+        routing: None,
     };
 
     match state.gateway.execute(&request).await {
@@ -152,6 +153,7 @@ pub(crate) async fn embed(
         consensus: None,
         allow_fallback: true,
         credentials: std::collections::HashMap::new(),
+        routing: None,
     };
 
     match state.gateway.execute(&request).await {

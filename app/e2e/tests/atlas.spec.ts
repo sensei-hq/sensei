@@ -16,7 +16,7 @@
 import { test, expect } from '../fixtures';
 import {
   navigateTo, navigateToScreen, waitForDom, daemonGet, DAEMON_URL,
-  installErrorTrap, readErrors, type ErrBuf,
+  installErrorTrap, readErrors, type ErrBuf, seedSetupComplete,
 } from '../helpers';
 
 /** A project + the repo name its atlas scopes to (the project's primary git root,
@@ -32,23 +32,6 @@ async function projectScope(): Promise<{ id: string; repo: string }> {
 }
 
 /** Mark setup complete so the app shell is reachable. */
-async function seedSetupComplete(tauriPage: any): Promise<void> {
-  await fetch(`${DAEMON_URL}/api/config`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ setup_complete: '1' }),
-  });
-  await tauriPage.evaluate(`
-    (function() {
-      try { localStorage.setItem('sensei:setup-complete', '1'); } catch (e) { /* shim */ }
-      var s = window.__sensei_state__;
-      if (s && s.appState) {
-        s.appState.config = Object.assign({}, s.appState.config, { setup_complete: '1' });
-        s.appState.loaded = true;
-      }
-    })()
-  `);
-}
 
 function expectNoRuntimeErrors(errs: ErrBuf, where: string): void {
   expect(errs.error, `${where}: uncaught errors`).toEqual([]);

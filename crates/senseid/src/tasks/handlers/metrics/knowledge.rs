@@ -40,24 +40,18 @@
 //! that a value cannot be attributed to any repository.)
 //!
 //! ## Numerator is windowed; denominator is a snapshot
-//! The numerator counts memories CREATED in the last [`window_days`] (default 14),
-//! bucketed on `sensei.memories.created_at` — the stable "learned" timestamp, NOT
-//! `modified_at` (which is bumped on every reinforcement and so cannot date a
-//! creation). The denominator is the CURRENT count of eligible items (a snapshot of
-//! "how much is waiting to be distilled" right now), so the ratio reads as "of the
-//! backlog that should be distilled, how much did we distill lately". The whole row
-//! is therefore a point-in-time snapshot stored on [`super::today`].
+//! The numerator counts memories CREATED in the last [`window_days`] (default 14)
+//! — [`PgStore::knowledge_memories_created`]. The denominator is the CURRENT count
+//! of eligible items (a snapshot of "how much is waiting to be distilled" right
+//! now) — [`PgStore::knowledge_eligible_counts`]. So the ratio reads as "of the
+//! backlog that should be distilled, how much did we distill lately", and the whole
+//! row is a point-in-time snapshot stored on [`super::today`].
 //!
 //! ## Eligibility spans BOTH patterns and corrections (summed)
 //! The catalog formula is `count(memories created) / count(eligible
-//! patterns+corrections)`, so the denominator sums two sources:
-//! - `inference.detected_patterns` — column `instance_count`; project-scoped by the
-//!   NOT-NULL `project_id` FK. Eligible = `instance_count >= 3`.
-//! - `inference.corrections` — the recurrence tally column is `count` (there is no
-//!   `instance_count` here); a correction is a GLOBAL cluster attributed to
-//!   projects through its `project_ids` UUID ARRAY (it can span several). Eligible
-//!   for THIS project = `count >= 3` AND `project_id = ANY(project_ids)`.
-//!
+//! patterns+corrections)`, so the denominator SUMS two sources: eligible
+//! `inference.detected_patterns` plus eligible `inference.corrections`, where
+//! eligible means "has recurred at least [`ELIGIBILITY_MIN_INSTANCES`] times".
 //! Both are cleanly project-attributable, so both are counted (the display props
 //! carry the split for transparency).
 //!
@@ -66,11 +60,17 @@
 //! 0 memories writes a real `0.0`. Strict project scoping (patterns via `project_id`,
 //! corrections via `project_ids` membership, memories via `project_id`) — another
 //! project's items never leak in.
+//!
+//! [`PgStore::upsert_project_metric_repo`]: crate::db::pg_store::PgStore::upsert_project_metric_repo
+//! [`PgStore::primary_repository_for_project`]: crate::db::pg_store::PgStore::primary_repository_for_project
+//! [`PgStore::knowledge_memories_created`]: crate::db::pg_store::PgStore::knowledge_memories_created
+//! [`PgStore::knowledge_eligible_counts`]: crate::db::pg_store::PgStore::knowledge_eligible_counts
+//! [`window_days`]: crate::tasks::metrics_scheduler::window_days
 
-use crate::db::pg_store::PgStore;
 use crate::tasks::executor::TaskContext;
 
 use super::MetricGroup;
+use crate::db::pg_store::MetricRow;
 
 /// `sensei.metric_grain` text value (knowledge writes a daily snapshot row only).
 const GRAIN_DAILY: &str = "daily";
@@ -87,56 +87,6 @@ const KEY_MEMORY_PROMOTION: &str = "memory_promotion";
 /// recurred at least this many times is a distillation candidate. Applies to
 /// `detected_patterns.instance_count` AND `corrections.count`.
 const ELIGIBILITY_MIN_INSTANCES: i32 = 3;
-
-/// # memories created for this project within the rolling window (the numerator).
-/// Bucketed on `created_at` (the stable creation timestamp), project-scoped by the
-/// `project_id` FK. A memory later archived still counts — it WAS distilled.
-async fn memories_created(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    window_days: u32,
-) -> Result<i64, String> {
-    let (n,): (i64,) = sqlx_core::query_as::query_as(
-        "SELECT count(*)::int8
-           FROM sensei.memories
-          WHERE project_id  = $1
-            AND created_at >= now() - make_interval(days => $2::int)",
-    )
-    .bind(project_id)
-    .bind(window_days as i32)
-    .fetch_one(pg.pool())
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok(n)
-}
-
-/// `(eligible_patterns, eligible_corrections)` — the two halves of the denominator,
-/// each a current snapshot of items that have recurred `>= min_instances` times.
-/// Patterns are project-scoped by `project_id`; corrections by membership in the
-/// `project_ids` array (`$1 = ANY(project_ids)`). Returned split so the caller can
-/// sum them AND expose the breakdown in the row's display props.
-async fn eligible_counts(
-    pg: &PgStore,
-    project_id: &uuid::Uuid,
-    min_instances: i32,
-) -> Result<(i64, i64), String> {
-    let (patterns, corrections): (i64, i64) = sqlx_core::query_as::query_as(
-        "SELECT (SELECT count(*)::int8
-                   FROM inference.detected_patterns
-                  WHERE project_id     = $1
-                    AND instance_count >= $2)                       AS eligible_patterns
-              , (SELECT count(*)::int8
-                   FROM inference.corrections
-                  WHERE $1 = ANY(project_ids)
-                    AND count >= $2)                                AS eligible_corrections",
-    )
-    .bind(project_id)
-    .bind(min_instances)
-    .fetch_one(pg.pool())
-    .await
-    .map_err(|e| e.to_string())?;
-    Ok((patterns, corrections))
-}
 
 /// Compute the `knowledge` group for one project as a snapshot as of today.
 /// `project_raw` is the project uuid carried in `task.folder_path`. Returns the
@@ -173,9 +123,9 @@ pub(super) async fn compute(
         return Ok(0);
     };
 
-    let numerator = memories_created(pg, &project_id, window_days).await?;
+    let numerator = pg.knowledge_memories_created(&project_id, window_days).await?;
     let (eligible_patterns, eligible_corrections) =
-        eligible_counts(pg, &project_id, ELIGIBILITY_MIN_INSTANCES).await?;
+        pg.knowledge_eligible_counts(&project_id, ELIGIBILITY_MIN_INSTANCES).await?;
     let denominator = eligible_patterns + eligible_corrections;
 
     if denominator == 0 {
@@ -205,18 +155,18 @@ pub(super) async fn compute(
     let day = super::today(pg).await?;
     // scope=user, identity=NULL (single local user), commit_sha=NULL (day-bucketed
     // snapshot, not commit cadence), folder_id/session_id=NULL (not in the identity).
-    pg.upsert_project_metric_repo(
-        &mid,
-        &repository_id,
-        SCOPE_USER,
-        None,
-        None,
-        day,
-        GRAIN_DAILY,
+    pg.upsert_project_metric_repo(&MetricRow {
+        metric_id: &mid,
+        repository_id: &repository_id,
+        scope: SCOPE_USER,
+        identity: None,
+        commit_sha: None,
+        computed_on: day,
+        grain: GRAIN_DAILY,
         value,
-        &props,
-        SOURCE_MEASURED,
-    )
+        props: &props,
+        source: SOURCE_MEASURED,
+    })
     .await?;
 
     Ok(1)

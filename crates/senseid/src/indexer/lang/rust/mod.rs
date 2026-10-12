@@ -21,6 +21,7 @@
 // This module has no caller on purpose — see the note in `indexer/mod.rs`.
 #![allow(dead_code)]
 
+pub mod receiver;
 mod types;
 mod walk;
 
@@ -38,6 +39,105 @@ use crate::indexer::resolve::{Grammar, Root};
 pub struct RustAdapter;
 
 impl LanguageAdapter for RustAdapter {
+    /// `use a::b::C` is two readings and the importing file states neither: the
+    /// last segment may be a MODULE or an ITEM inside the one before it.
+    /// `specifier_names_a_module` refuses to guess, so the walk emits no
+    /// reference at all — correct per file, and the reason 9,025 import edges
+    /// in the live graph carry no verdict.
+    ///
+    /// Here the whole scope is known, so the question is decidable: build both
+    /// identities and ask which one this scan actually declared.
+    ///
+    /// EXACTLY ONE, or nothing. If both readings resolve, the path is genuinely
+    /// ambiguous — a module and an item of the same name — and placing either
+    /// would be right half the time, which is the guess R4 ranks below a miss.
+    /// If neither resolves the target is outside this scan, which is a boundary
+    /// and not a fault.
+    fn settle_imports(
+        &self,
+        facts: &crate::indexer::facts::FileFacts,
+        declared: &std::collections::BTreeSet<Fqn>,
+    ) -> Vec<crate::indexer::facts::Reference> {
+        use crate::indexer::facts::{
+            Binding, Evidence, Reason, RefKind, Reference, Resolution, Rung,
+        };
+        use crate::indexer::fqn::{Form, Reach, refer};
+        use crate::indexer::lang::common::specifier_names_a_module;
+
+        let Ok(from) = self.file_fqn(&facts.package, &facts.module, &facts.path) else {
+            return Vec::new();
+        };
+
+        facts
+            .imports
+            .iter()
+            // Only the ones the walk refused. An import that already produced a
+            // reference has been through the ladder and is not this pass's to
+            // re-answer — two producers for one use site is how they disagree.
+            .filter(|i| !specifier_names_a_module(Language::Rust, &i.binds))
+            .filter(|i| matches!(i.binds, Binding::Name(_)))
+            .filter_map(|import| {
+                let segs: Vec<&str> =
+                    import.path.trim().split("::").filter(|s| !s.is_empty()).collect();
+                let (module, leaf) = receiver::internal_use_module(&facts.module, &segs)?;
+                if leaf.is_empty() {
+                    return None;
+                }
+                // THE TWO READINGS DIFFER ONLY IN THE REACH SEGMENT. A file at
+                // module path `b::Thing` mints an identity whose MODULE segment
+                // is the parent (`b`) and whose NAME is the leaf (`Thing`) —
+                // exactly the shape an item takes, with `mod` as the reach
+                // instead of `item`. So `use crate::b::Thing` asks which of the
+                // two reaches this scan actually holds, and `internal_use_module`
+                // has already split the path the way both forms need.
+                //
+                // (Spelled in words rather than as literal identities: this file
+                // is under the guard that forbids building an fqn by formatting,
+                // and that guard reads source text.)
+                let one = |reach| {
+                    refer(&Form::Item {
+                        lang: Language::Rust,
+                        package: &facts.package,
+                        module: &module,
+                        name: &leaf,
+                        reach,
+                    })
+                    .ok()
+                    .filter(|f| declared.contains(f))
+                };
+                let as_module = one(Reach::Mod);
+                let as_item = one(Reach::Item);
+
+                let target = match (as_module, as_item) {
+                    (Some(fqn), None) | (None, Some(fqn)) => {
+                        Resolution::Resolved { fqn, via: Rung::SettledByScope }
+                    }
+                    // Both, or neither. Named rather than dropped, so the edge
+                    // carries a verdict either way.
+                    (both, _) => Resolution::Unresolved {
+                        reason: if both.is_some() {
+                            Reason::AmbiguousCandidates
+                        } else {
+                            Reason::ExternalBoundary
+                        },
+                        evidence: Evidence {
+                            name: import.path.clone(),
+                            node_kind: "import".to_string(),
+                            reach: Reach::Item,
+                            saw: Vec::new(),
+                        },
+                    },
+                };
+                Some(Reference {
+                    from: from.clone(),
+                    kind: RefKind::Imports,
+                    at: import.at,
+                    target,
+                })
+            })
+            .collect()
+    }
+
     fn language(&self) -> Language {
         Language::Rust
     }
@@ -286,6 +386,8 @@ pub fn read(source: &Source<'_>) -> Result<FileFacts, ReadError> {
         references: found.references,
         relations: found.relations,
         imports: found.imports,
+        schema: Vec::new(),
+        calls: Vec::new(),
     })
 }
 
@@ -1257,7 +1359,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
         // generate trait impls, not associated functions a path call can name.
         assert_eq!(
             got,
-            vec!["rust·p·m·mod", "rust·p·m·T·item", "rust·p·m·T·a·field"],
+            vec!["rust·p··m·mod", "rust·p·m·T·item", "rust·p·m·T·a·field"],
             "an unrecognised derive must not invent members"
         );
     }
@@ -1320,7 +1422,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
             // The FILE's own module. `pub mod inner;` no longer declares
             // `inner` — that module's body is another file, and that file
             // declares it. What this file declares of its own is itself.
-            "rust·p·m·mod",
+            "rust·p··m·mod",
         ];
         expected.sort_unstable();
 
@@ -1629,7 +1731,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
                 "rust·p·a·b·mod",
                 // The file itself, module `a`. The inline `mod b { }` still
                 // declares `b`, because b's body IS here.
-                "rust·p·a·mod",
+                "rust·p··a·mod",
             ]
         );
     }
@@ -1645,7 +1747,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
         let facts = facts("", "pub fn main() {}");
         let mut got = fqns(&facts);
         got.sort_unstable();
-        assert_eq!(got, vec!["rust·p·crate·fixture·mod", "rust·p·main·item"]);
+        assert_eq!(got, vec!["rust·p·crate·fixture·mod", "rust·p··main·item"]);
     }
 
     /// `impl Trait for (A, B)` names no type, so its members have no identity in
@@ -2790,7 +2892,7 @@ pub fn free(w: &Widget) -> u32 { w.width }
         let from_the_file: Vec<&str> = facts
             .references
             .iter()
-            .filter(|r| r.from.as_str() == "rust·p·m·mod")
+            .filter(|r| r.from.as_str() == "rust·p··m·mod")
             .map(|r| r.from.as_str())
             .collect();
         assert_eq!(
@@ -3274,9 +3376,9 @@ fn helper() -> u32 { 0 }
             contains,
             vec![
                 "Contains rust·p·m::inner·deep·item -> rust·p·m·inner·mod".to_string(),
-                "Contains rust·p·m·Widget·item -> rust·p·m·mod".to_string(),
-                "Contains rust·p·m·free·item -> rust·p·m·mod".to_string(),
-                "Contains rust·p·m·inner·mod -> rust·p·m·mod".to_string(),
+                "Contains rust·p·m·Widget·item -> rust·p··m·mod".to_string(),
+                "Contains rust·p·m·free·item -> rust·p··m·mod".to_string(),
+                "Contains rust·p·m·inner·mod -> rust·p··m·mod".to_string(),
             ],
             "the file holds what is written at file scope, the inline `mod` holds its own, \
              and `Widget::new` is owned by `Widget` rather than contained by either"
@@ -3442,7 +3544,7 @@ fn helper() -> u32 { 0 }
             relations(&facts),
             vec![
                 // The trait is written at file scope, so the file holds it.
-                "Contains rust·p·m·Sub·item -> rust·p·m·mod",
+                "Contains rust·p·m·Sub·item -> rust·p··m·mod",
                 "Extends rust·p·m·Sub·item -> Unplaced(Super)",
                 "Extends rust·p·m·Sub·item -> Unplaced(Send)",
             ],
@@ -3496,7 +3598,7 @@ fn helper() -> u32 { 0 }
         assert_eq!(
             relations(&facts),
             vec![
-                "Contains rust·p·m·Draw·item -> rust·p·m·mod",
+                "Contains rust·p·m·Draw·item -> rust·p··m·mod",
                 "Owns rust·p·m·Draw·draw·item -> rust·p·m·Draw·item",
             ],
             "the tuple impl names no type, so it hangs no relation; the trait's own \

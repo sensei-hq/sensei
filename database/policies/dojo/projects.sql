@@ -12,10 +12,8 @@
 -- console kept working while the client-direct path was blind. Covered by
 -- database/tests/dojo/rls_principal_grain.sql.
 --
--- The client-direct read path connects as `authenticated`; RLS narrows to the
--- user's own projects. SELECT only — the daemon upserts via the service_role
--- path. Own-rows model, like relay_sessions, but keyed on the owner column
--- directly (projects have no membership indirection).
+-- The read path connects as `authenticated`. SELECT only — the daemon upserts
+-- via the service_role path.
 --
 -- Idempotent: the pre-release deploy re-applies every DDL file declaratively on
 -- each deploy, and `create policy` is not idempotent — so drop-if-exists first.
@@ -30,9 +28,19 @@ alter table dojo.projects enable row level security;
 -- all. A loud failure, never a silent leak.
 grant select on dojo.projects to authenticated;
 
+-- Who reads a project (access matrix "Projects and repositories", #236): its
+-- owner wherever it is homed; a member of a team that owns it while it is homed
+-- in the team's tenant (dojo.on_team_of); an admin of the tenant it is homed in.
+-- A personal project (tenant_id null) is its owner's alone.
+-- Covered by database/tests/dojo/projects_read.sql.
 drop policy if exists projects_select_own on dojo.projects;
-create policy projects_select_own
+drop policy if exists projects_select on dojo.projects;
+create policy projects_select
     on dojo.projects
     for select
     to authenticated
-    using (user_id = dojo.current_principal_id());
+    using (
+        user_id = dojo.current_principal_id()
+        or dojo.on_team_of(id)
+        or (tenant_id is not null and dojo.tenant_role_at_least(tenant_id, 'admin'))
+    );

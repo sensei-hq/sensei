@@ -119,7 +119,14 @@ mod tests {
         let folder_path = format!("/tmp/detect_terminal_{}", uuid::Uuid::new_v4());
         let root_id =
             ctx.pg().add_watch_root(&folder_path, "dt", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "dt-repo", &folder_path).await.unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            ctx.pg(),
+            &root_id,
+            "dt-repo",
+            &folder_path,
+        )
+        .await
+        .unwrap();
         ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
 
         let task = Task::new(TaskKind::DetectCommunities, &folder_path, "");
@@ -142,7 +149,14 @@ mod tests {
         let folder_path = format!("/tmp/detect_failclosed_{}", uuid::Uuid::new_v4());
         let root_id =
             ctx.pg().add_watch_root(&folder_path, "df", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "df-repo", &folder_path).await.unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            ctx.pg(),
+            &root_id,
+            "df-repo",
+            &folder_path,
+        )
+        .await
+        .unwrap();
         ctx.pg().update_folder_status(&fid, "failed").await.unwrap();
 
         let task = Task::new(TaskKind::DetectCommunities, &folder_path, "");
@@ -166,7 +180,14 @@ mod tests {
         let folder_path = format!("/tmp/detect_norestamp_{}", uuid::Uuid::new_v4());
         let root_id =
             ctx.pg().add_watch_root(&folder_path, "dn", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "dn-repo", &folder_path).await.unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            ctx.pg(),
+            &root_id,
+            "dn-repo",
+            &folder_path,
+        )
+        .await
+        .unwrap();
         ctx.pg()
             .set_folder_props(&fid, &serde_json::json!({"indexed_at": "2020-01-01T00:00:00+00:00"}))
             .await
@@ -206,7 +227,14 @@ mod tests {
         let folder_path = format!("/tmp/detect_err_{}", uuid::Uuid::new_v4());
         let root_id =
             ctx.pg().add_watch_root(&folder_path, "der", &serde_json::json!([])).await.unwrap();
-        let fid = ctx.pg().upsert_repo(&root_id, "der-repo", &folder_path).await.unwrap();
+        let fid = crate::tasks::test_support::seed_repo_folder(
+            ctx.pg(),
+            &root_id,
+            "der-repo",
+            &folder_path,
+        )
+        .await
+        .unwrap();
         ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
 
         fault::fail_for(&folder_path);

@@ -8,6 +8,7 @@
 // `$lib/server/engagements-data`.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { bindEngagementProject, parseBindProject, EngagementsError } from '$lib/server/engagements-data';
 import { recordAudit } from '$lib/server/audit';
@@ -23,9 +24,8 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const input = parseBindProject(body);
-		const db = dojoDb();
-		const result = await bindEngagementProject(db, caller.tenantId, params.id, input);
-		await recordAudit(db, caller.tenantId, caller.userId, {
+		const result = await bindEngagementProject(callerDb(caller), caller.tenantId, params.id, input);
+		await recordAudit(dojoDb(), caller.tenantId, caller.userId, {
 			action: 'project_bound',
 			target: input.project_id,
 			detail: { name: input.name ?? null },

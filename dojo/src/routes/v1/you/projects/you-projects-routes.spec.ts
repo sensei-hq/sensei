@@ -17,7 +17,11 @@ class AdminError extends Error {
 
 const mocks = vi.hoisted(() => ({ resolveCaller: vi.fn(), listUserProjects: vi.fn() }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}) }));
+// The service role vs the caller's own JWT — which client the store got.
+vi.mock('$lib/server/dojo-supabase', () => ({
+	dojoDb: () => ({ client: 'service' }),
+	userDb: (token: string) => ({ client: 'user', token })
+}));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveCaller: mocks.resolveCaller,
 	apiError: (status: number, message: string) =>
@@ -39,7 +43,7 @@ function ev() {
 }
 
 beforeEach(() => {
-	mocks.resolveCaller.mockClear().mockResolvedValue({ userId: 'u1', db: {} });
+	mocks.resolveCaller.mockClear().mockResolvedValue({ userId: 'u1', db: { client: 'service' }, accessToken: 'jwt-A' });
 	mocks.listUserProjects.mockClear().mockResolvedValue([]);
 });
 
@@ -59,6 +63,20 @@ describe('GET /v1/you/projects', () => {
 
 	it('propagates a 401 without reading', async () => {
 		mocks.resolveCaller.mockRejectedValueOnce(new Response('{}', { status: 401 }));
+		expect((await route.GET(ev())).status).toBe(401);
+		expect(mocks.listUserProjects).not.toHaveBeenCalled();
+	});
+});
+
+// The caller's own projects, read with THEIR JWT: the projects policy decides the
+// rows, not only the route's user filter (#236).
+describe('runs as the signed-in person (#236)', () => {
+	it('reads with the caller\'s JWT, never the service role', async () => {
+		await route.GET(ev());
+		expect(mocks.listUserProjects.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+	});
+	it('refuses a caller with no session rather than reading as the service role', async () => {
+		mocks.resolveCaller.mockResolvedValueOnce({ userId: 'u1', db: { client: 'service' } });
 		expect((await route.GET(ev())).status).toBe(401);
 		expect(mocks.listUserProjects).not.toHaveBeenCalled();
 	});

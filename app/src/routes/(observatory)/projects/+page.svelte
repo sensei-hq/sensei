@@ -78,7 +78,7 @@
       options={filterOptions}
       value={projectsView.filter}
       onchange={(v: unknown) => projectsView.setFilter(v as ProjectFilter)}
-      aria-label="filter projects by status"
+      label="filter projects by status"
     >
       {#snippet itemContent(proxy: ProxyItem)}
         <span class="kanji text-xs">{proxy.get('kanji')}</span>
@@ -96,7 +96,7 @@
       options={viewOptions}
       value={projectsView.view}
       onchange={(v: unknown) => projectsView.setView(v as ProjectView)}
-      aria-label="view"
+      label="switch between grid and list"
     >
       {#snippet itemContent(proxy: ProxyItem)}
         <span class="{proxy.get('icon')} text-base" aria-hidden="true"></span>

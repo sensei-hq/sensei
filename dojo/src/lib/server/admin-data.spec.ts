@@ -2,7 +2,7 @@
 //   • listMembers / listIdentities / listPolicies / listAudit — the tenant
 //     filter + envelope rows + error → AdminError(500), and the audit limit
 //     clamp.
-//   • getHealth — the four isolated count queries composed into the rollup, and
+//   • getHealth — the counts (three queries + the live-session count) composed into the rollup, and
 //     a count-query error surfacing (never a silent 0).
 import { describe, it, expect } from 'vitest';
 import {
@@ -13,17 +13,11 @@ import {
 	getHealth,
 	setMemberRole,
 	addMember,
-	parseNewMember,
 	upsertPolicy,
 	parseUpsertPolicy,
 	patchPolicy,
 	parsePatchPolicy,
 	deletePolicy,
-	createIdentity,
-	parseNewIdentity,
-	updateIdentity,
-	parsePatchIdentity,
-	deleteIdentity,
 	slugify,
 	parseNewDojo,
 	createDojo,
@@ -114,37 +108,52 @@ describe('listAudit', () => {
 	});
 });
 
-// ── getHealth: four sequential count queries ─────────────────────────────────
+// ── getHealth: three count queries + the live-session count ──────────────────
 // Each `.from(...).select(..,{head}).eq(...).gte()/.in()/.eq()` chain resolves
-// (awaited) to the next `{ count, error }` in order.
-function makeCountDb(results: Terminal[]) {
+// (awaited) to the next `{ count, error }` in order. Connections come from
+// dojo.tenant_live_session_count — relay sessions are their owner's, so an admin
+// gets a count, never the rows (#236).
+function makeCountDb(results: Terminal[], rpcResult: { data: unknown; error: unknown } = { data: 3, error: null }) {
 	let i = 0;
 	const next = (): Terminal => results[i++] ?? { count: 0, error: null };
+	const tables: string[] = [];
+	const rpcs: { fn: string; args: Record<string, unknown> }[] = [];
 	const b: Record<string, unknown> = {};
-	b.from = () => b;
+	b.from = (t: string) => (tables.push(t), b);
+	b.rpc = (fn: string, args: Record<string, unknown>) => (rpcs.push({ fn, args }), Promise.resolve(rpcResult));
 	b.select = () => b;
 	b.eq = () => b;
 	b.in = () => b;
 	b.gte = () => Promise.resolve(next());
-	// The error_rate query ends on `.eq()` (no gte/in) — resolve on await.
+	// The queue and error_rate queries end on `.eq()` (no gte) — resolve on await.
 	b.then = (resolve: (v: Terminal) => unknown) => resolve(next());
-	return b as unknown as DojoClient;
+	return { db: b as unknown as DojoClient, tables, rpcs };
 }
 
 describe('getHealth', () => {
-	it('composes the four counts into the rollup', async () => {
-		const db = makeCountDb([
-			{ count: 0, error: null }, // memberships scope fetch (.eq → .then; data unused, ids => [])
-			{ count: 3, error: null }, // connections (.gte heartbeat)
-			{ count: 12, error: null }, // queue_depth (.eq state) — resolves via .then
+	it('composes the counts into the rollup, connections from the live-session count', async () => {
+		const { db, tables, rpcs } = makeCountDb([
+			{ count: 12, error: null }, // queue_depth (.eq state) — via .then
 			{ count: 5, error: null }, // publish_rate (.gte ts)
 			{ count: 1, error: null } // error_rate (.eq sync_status) — via .then
 		]);
+		const before = Date.now();
 		const h = await getHealth(db, 't1');
 		expect(h).toEqual({ connections: 3, queue_depth: 12, publish_rate_1h: 5, error_rate_1h: 1 });
+		expect(rpcs).toHaveLength(1);
+		expect(rpcs[0].fn).toBe('tenant_live_session_count');
+		expect(rpcs[0].args.p_tenant).toBe('t1');
+		const since = Date.parse(rpcs[0].args.p_since as string);
+		expect(before - since).toBeGreaterThanOrEqual(5 * 60_000 - 1000);
+		expect(before - since).toBeLessThanOrEqual(5 * 60_000 + 1000);
+		expect(tables).not.toContain('relay_sessions');
 	});
 	it('surfaces a count-query error rather than blanking the strip', async () => {
-		const db = makeCountDb([{ count: null, error: { message: 'count boom' } }]);
+		const { db } = makeCountDb([{ count: null, error: { message: 'count boom' } }]);
+		await expect(getHealth(db, 't1')).rejects.toThrow(AdminError);
+	});
+	it('surfaces a refused session count rather than reporting 0 connections', async () => {
+		const { db } = makeCountDb([], { data: null, error: { message: 'only an admin of the tenant counts its sessions' } });
 		await expect(getHealth(db, 't1')).rejects.toThrow(AdminError);
 	});
 });
@@ -207,27 +216,10 @@ describe('setMemberRole', () => {
 	});
 });
 
-describe('parseNewMember', () => {
-	it('requires user_id, a known kind, and a known auth method', () => {
-		expect(() => parseNewMember({})).toThrow(AdminError);
-		expect(() => parseNewMember({ user_id: 'u1', kind: 'nope', authenticated_via: 'sso' })).toThrow();
-		expect(() => parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'x' })).toThrow();
-	});
-	it('defaults role to contributor and prefers an explicit role', () => {
-		expect(parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso' }).role).toBe('contributor');
-		expect(
-			parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso', role: 'lead' }).role
-		).toBe('lead');
-		expect(
-			parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso', git_provider_role: 'maintainer' }).role
-		).toBe('maintainer');
-	});
-});
-
 describe('addMember', () => {
 	it('inserts the membership with the tenant and returns { id, role } (no dojo_url — derived from the tenant)', async () => {
 		const { db, captured } = makeMutDb({ data: { id: 'm1', role: 'contributor' }, error: null });
-		const input = parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso' });
+		const input = { user_id: 'u1', kind: 'client', authenticated_via: 'sso', role: 'contributor' as const };
 		expect(await addMember(db, 't1', input)).toEqual({ id: 'm1', role: 'contributor' });
 		const payload = captured.payload as Record<string, unknown>;
 		expect(payload.tenant_id).toBe('t1');
@@ -236,7 +228,7 @@ describe('addMember', () => {
 	});
 	it('maps a unique-violation (23505) to 409', async () => {
 		const { db } = makeMutDb({ data: null, error: { code: '23505', message: 'dup' } });
-		const input = parseNewMember({ user_id: 'u1', kind: 'client', authenticated_via: 'sso' });
+		const input = { user_id: 'u1', kind: 'client', authenticated_via: 'sso', role: 'contributor' as const };
 		await expect(addMember(db, 't1', input)).rejects.toMatchObject({ status: 409 });
 	});
 });
@@ -340,135 +332,16 @@ describe('listIdentities (global rows, scoped by membership)', () => {
 	});
 });
 
-describe('identities write', () => {
-	it('parseNewIdentity requires principal_id + a known provider + subject', () => {
-		expect(() => parseNewIdentity({})).toThrow(AdminError);
-		expect(() => parseNewIdentity({ principal_id: 'p1', provider: 'x', subject: 's' })).toThrow();
-		expect(() => parseNewIdentity({ principal_id: 'p1', provider: 'sso', subject: '' })).toThrow();
-		// user_id is the OLD field name and must not be silently accepted — doing
-		// so would write a null principal_id and violate the NOT NULL at runtime.
-		expect(() => parseNewIdentity({ user_id: 'p1', provider: 'sso', subject: 'sub' })).toThrow();
-		expect(parseNewIdentity({ principal_id: 'p1', provider: 'sso', subject: 'sub' })).toMatchObject({
-			principal_id: 'p1',
-			provider: 'sso',
-			subject: 'sub'
-		});
-	});
-
-	it('createIdentity refuses a principal who is not a member of the tenant', async () => {
-		// The replacement for the dropped tenant_id filter. Without it an admin
-		// could attach an identity to anyone in any tenant.
-		const { db, captured } = makeIdentityDb({ data: null, error: null }); // membership miss
-		await expect(
-			createIdentity(db, 't1', parseNewIdentity({ principal_id: 'outsider', provider: 'sso', subject: 's' }))
-		).rejects.toMatchObject({ status: 404 });
-		expect(captured.payload).toBeUndefined();
-	});
-
-	it('createIdentity inserts principal_id and no tenant_id for a real member', async () => {
-		const { db, captured } = makeIdentityDb(
-			{ data: { id: 'm1' }, error: null }, // membership hit
-			{ data: { id: 'i1' }, error: null }
-		);
-		const out = await createIdentity(
-			db,
-			't1',
-			parseNewIdentity({ principal_id: 'p1', provider: 'sso', subject: 's' })
-		);
-		expect(out).toEqual({ id: 'i1' });
-		const payload = captured.payload as Record<string, unknown>;
-		expect(payload.principal_id).toBe('p1');
-		expect(payload).not.toHaveProperty('tenant_id'); // the column does not exist
-		expect(payload).not.toHaveProperty('user_id');
-	});
-
-	it('createIdentity maps a unique-violation to 409', async () => {
-		const { db } = makeIdentityDb(
-			{ data: { id: 'm1' }, error: null },
-			{ data: null, error: { code: '23505', message: 'dup' } }
-		);
-		await expect(
-			createIdentity(db, 't1', parseNewIdentity({ principal_id: 'p1', provider: 'sso', subject: 's' }))
-		).rejects.toMatchObject({ status: 409 });
-	});
-
-	it('updateIdentity 404s for an identity belonging to another tenant', async () => {
-		// Reads the identity's principal, then checks membership. Both misses
-		// answer 404 "no such identity" — an admin of tenant A must not learn
-		// that the id exists in tenant B.
-		const { db, captured } = makeIdentityDb(
-			{ data: { principal_id: 'outsider' }, error: null }, // identity exists…
-			{ data: null, error: null } // …but not in this tenant
-		);
-		const err = await updateIdentity(db, 't1', 'i9', parsePatchIdentity({ email: 'a@b.co' })).catch(
-			(e) => e
-		);
-		expect(err.status).toBe(404);
-		expect(err.message).toBe('no such identity');
-		expect(captured.payload).toBeUndefined();
-	});
-
-	it('updateIdentity 404s when the identity does not exist', async () => {
-		const { db } = makeIdentityDb({ data: null, error: null });
-		await expect(
-			updateIdentity(db, 't1', 'i9', parsePatchIdentity({ email: 'a@b.co' }))
-		).rejects.toMatchObject({ status: 404 });
-	});
-
-	it('updateIdentity patches a member identity; parsePatchIdentity rejects non-strings', async () => {
-		expect(() => parsePatchIdentity({ email: 123 as unknown as string })).toThrow(AdminError);
-		const { db } = makeIdentityDb(
-			{ data: { principal_id: 'p1' }, error: null },
-			{ data: { id: 'm1' }, error: null },
-			{ data: { id: 'i1' }, error: null }
-		);
-		expect(await updateIdentity(db, 't1', 'i1', parsePatchIdentity({ email: 'a@b.co' }))).toEqual({
-			id: 'i1'
-		});
-	});
-
-	it('deleteIdentity refuses an identity outside the tenant, and reports rows removed', async () => {
-		const outside = makeIdentityDb(
-			{ data: { principal_id: 'outsider' }, error: null },
-			{ data: null, error: null }
-		);
-		await expect(deleteIdentity(outside.db, 't1', 'i9')).rejects.toMatchObject({ status: 404 });
-
-		const removed = makeIdentityDb(
-			{ data: { principal_id: 'p1' }, error: null },
-			{ data: { id: 'm1' }, error: null },
-			{ data: [{ id: 'i1' }], error: null }
-		);
-		expect(await deleteIdentity(removed.db, 't1', 'i1')).toBe(true);
-
-		const none = makeIdentityDb(
-			{ data: { principal_id: 'p1' }, error: null },
-			{ data: { id: 'm1' }, error: null },
-			{ data: [], error: null }
-		);
-		expect(await deleteIdentity(none.db, 't1', 'i2')).toBe(false);
-	});
-});
-
-// A two-insert stub for createDojo: `.single()` shifts the next queued result
-// (tenant insert, then the addMember membership insert). Captures each insert's
-// table + payload so the tenant shape + creator admin membership can be asserted.
-function makeCreateDb(...results: { data?: unknown; error: unknown }[]) {
-	const queue = [...results];
-	const inserts: { table?: string; payload?: Record<string, unknown> }[] = [];
-	let table: string | undefined;
-	const b: Record<string, unknown> = {};
-	b.from = (t: string) => {
-		table = t;
-		return b;
+// createDojo calls dojo.create_dojo; this stub records the rpc and answers it.
+function makeCreateDb(result: { data?: unknown; error: unknown }) {
+	const calls: { fn: string; args: Record<string, unknown> }[] = [];
+	const db = {
+		rpc: (fn: string, args: Record<string, unknown>) => {
+			calls.push({ fn, args });
+			return { single: async () => result };
+		}
 	};
-	b.insert = (payload: Record<string, unknown>) => {
-		inserts.push({ table, payload });
-		return b;
-	};
-	b.select = () => b;
-	b.single = () => Promise.resolve(queue.shift() ?? { data: null, error: null });
-	return { db: b as unknown as DojoClient, inserts };
+	return { db: db as unknown as DojoClient, calls };
 }
 
 describe('slugify', () => {
@@ -491,44 +364,27 @@ describe('parseNewDojo', () => {
 	});
 });
 
+// The tenant, its key and url, and the creator's admin membership are the
+// database's, in one transaction, for the SESSION's principal — proved against a
+// real Postgres in database/tests/dojo/create_dojo_insert.sql (#236). This side
+// slugs the name and keeps the collision a 409.
 describe('createDojo', () => {
-	it('inserts an organization tenant (key organization/{slug}) and makes the creator admin', async () => {
-		// Every field here is one the database rejects if it is wrong, and the
-		// old values were all three wrong at once: origin 'org' is not a
-		// tenant_origin label any more (personal | organization), the column is
-		// `slug` not `org`, and the key prefix is the ORIGIN — which is what
-		// `dojo-auth.ts` joins back together to resolve /t/{origin}/{slug}.
-		const { db, inserts } = makeCreateDb(
-			{ data: { id: 't-new', key: 'organization/acme', name: 'Acme' }, error: null },
-			{ data: { id: 'm-new', role: 'admin' }, error: null } // addMember insert
-		);
-		const out = await createDojo(db, 'p1', { name: 'Acme', kind: 'employer' });
-		expect(out).toEqual({ id: 't-new', key: 'organization/acme', name: 'Acme' });
-		// tenant shape
-		expect(inserts[0]).toMatchObject({
-			table: 'tenants',
-			payload: {
-				key: 'organization/acme',
-				origin: 'organization',
-				slug: 'acme',
-				name: 'Acme',
-				scope: 'private'
-			}
-		});
-		// The retired column must not be sent — it would fail the insert outright.
-		expect(inserts[0].payload).not.toHaveProperty('org');
-		// The dōjō url carries the same key, so it moves with the prefix.
-		expect((inserts[0].payload as Record<string, string>).dojo_url).toContain(
-			'organization/acme'
-		);
-		// creator admin membership — user_id is the caller's PRINCIPAL id (§VIII.2)
-		expect(inserts[1]).toMatchObject({
-			table: 'memberships',
-			payload: { tenant_id: 't-new', user_id: 'p1', role: 'admin', kind: 'employer' }
-		});
+	it('asks the database for the dōjō by name, slug and kind — and names no user', async () => {
+		const { db, calls } = makeCreateDb({ data: { id: 't-new', key: 'organization/acme-labs', name: 'Acme Labs' }, error: null });
+		const out = await createDojo(db, { name: 'Acme Labs', kind: 'employer' });
+		expect(out).toEqual({ id: 't-new', key: 'organization/acme-labs', name: 'Acme Labs' });
+		expect(calls).toEqual([
+			{ fn: 'create_dojo', args: { p_name: 'Acme Labs', p_slug: 'acme-labs', p_kind: 'employer' } }
+		]);
 	});
 	it('maps a key collision (23505) to 409', async () => {
 		const { db } = makeCreateDb({ data: null, error: { code: '23505', message: 'dup key' } });
-		await expect(createDojo(db, 'u1', { name: 'Acme', kind: 'client' })).rejects.toMatchObject({ status: 409 });
+		await expect(createDojo(db, { name: 'Acme', kind: 'client' })).rejects.toMatchObject({ status: 409 });
+	});
+	it('keeps a refusal as its status, and anything else a 500', async () => {
+		const refused = makeCreateDb({ data: null, error: { code: '42501', message: 'a signed-in session is required' } });
+		await expect(createDojo(refused.db, { name: 'Acme', kind: 'client' })).rejects.toMatchObject({ status: 403 });
+		const broken = makeCreateDb({ data: null, error: { code: '08006', message: 'connection reset' } });
+		await expect(createDojo(broken.db, { name: 'Acme', kind: 'client' })).rejects.toMatchObject({ status: 500 });
 	});
 });

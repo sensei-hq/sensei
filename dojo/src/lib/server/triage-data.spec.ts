@@ -18,6 +18,7 @@ import {
 	listTriage,
 	decideTriage,
 	TriageError,
+	TRIAGE_SELECT,
 	type TriageRow,
 	type DojoClient
 } from './triage-data';
@@ -152,6 +153,13 @@ function makeDb(results: Terminal[]) {
 }
 
 describe('listTriage', () => {
+	// triage_queue has TWO foreign keys to artifacts (artifact_id and
+	// nearest_artifact_id); an unnamed embed is ambiguous and PostgREST refuses
+	// the whole read (PGRST201). The row's own artifact is the artifact_id one.
+	it('embeds the queued artifact by its foreign key, not ambiguously', () => {
+		expect(TRIAGE_SELECT).toContain('artifacts!triage_queue_artifact_id_fkey(kind, title)');
+		expect(TRIAGE_SELECT).not.toMatch(/(^|[ ,])artifacts\(/);
+	});
 	it('joins the artifact and returns ranked rows', async () => {
 		const { db } = makeDb([
 			{

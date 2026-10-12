@@ -92,20 +92,17 @@ pub async fn push_promoted(pg: &PgStore, memory_id: uuid::Uuid) {
 }
 
 async fn resolve_memory_namespace_id(pg: &PgStore, memory_id: &uuid::Uuid) -> Option<uuid::Uuid> {
-    let row: Option<(Option<uuid::Uuid>,)> = match sqlx_core::query_as::query_as(
-        "SELECT namespace_id FROM sensei.memories WHERE id = $1",
-    )
-    .bind(memory_id)
-    .fetch_optional(pg.pool())
-    .await
-    {
-        Ok(r) => r,
+    // The swallow stays HERE rather than in the layer: federation declines to
+    // share when it cannot establish a namespace, and that is a decision about
+    // sharing, not about data access. `PgStore::memory_namespace_id` returns an
+    // `Err` for a failed lookup so a different caller could treat it differently.
+    match pg.memory_namespace_id(memory_id).await {
+        Ok(n) => n,
         Err(e) => {
             tracing::warn!(error = %e, "federation: resolve namespace query failed");
-            return None;
+            None
         }
-    };
-    row.and_then(|(n,)| n)
+    }
 }
 
 /// The rules endpoint for a source: `{url}/rules`, where `url` is the tenant base

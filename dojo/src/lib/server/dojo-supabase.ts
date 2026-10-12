@@ -44,8 +44,12 @@ export function dojoDb(): ReturnType<typeof buildClient> {
 	return client;
 }
 
-// Access ladder — mirrors dojo-mind `DojoAccess` (auth.rs). Higher = more.
-export const ACCESS = { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 } as const;
+// Access ladder. Higher = more. The ORDER is `dojo.member_role`'s declared order
+// and the canonical entity & access model's: contributor < maintainer < lead <
+// admin. (It was ported with lead BELOW maintainer, from an older service; see
+// dojo-access-ladder.spec.ts.) `member` (0) is no membership at all — no role
+// maps to it.
+export const ACCESS = { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 } as const;
 export type AccessLevel = (typeof ACCESS)[keyof typeof ACCESS];
 
 /** Map a `dojo.memberships.role` string to an access level (mirrors
@@ -62,4 +66,27 @@ export function roleToAccess(role: string | null | undefined): AccessLevel {
 
 export function accessLabel(level: AccessLevel): string {
 	return (Object.keys(ACCESS) as (keyof typeof ACCESS)[]).find((k) => ACCESS[k] === level) ?? 'member';
+}
+
+/**
+ * The USER-SESSION client (#236 step 3): the public anon key plus the caller's
+ * own JWT, scoped to the `dojo` schema. Row-level security decides what it
+ * reads — the access matrix's policies, not route code (docs/spec/dojo/
+ * access-matrix.md). Built per request: the token is the caller's.
+ *
+ * A missing token THROWS. Falling back to `dojoDb()` would bypass every policy
+ * in silence, which is the one thing this client exists to stop.
+ */
+export function userDb(accessToken: string) {
+	if (!accessToken) throw new Error('userDb: no access token — refusing to read without the caller');
+	const url = pub.PUBLIC_SUPABASE_URL;
+	const anonKey = pub.PUBLIC_SUPABASE_ANON_KEY;
+	if (!url || !anonKey) {
+		throw new Error('dojo API: PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY must be set');
+	}
+	return createClient(url, anonKey, {
+		auth: { persistSession: false, autoRefreshToken: false },
+		db: { schema: 'dojo' },
+		accessToken: async () => accessToken
+	});
 }

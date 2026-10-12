@@ -27,6 +27,7 @@ pub mod contribute_scheduler;
 pub mod dojo_sync;
 pub mod executor;
 pub mod forge_token_check;
+pub mod git_history_pruner;
 pub mod handlers;
 pub mod index_audit;
 pub mod library_update_scheduler;
@@ -59,6 +60,8 @@ use std::time::Instant;
 #[serde(rename_all = "snake_case")]
 pub enum TaskKind {
     ScanRoot,
+    /// Walk one checkout's git history into repository facts (#224).
+    ScanGitHistory,
     ProcessGitFolder,
     ProcessFolder,
     ProcessFile,
@@ -86,6 +89,12 @@ pub enum TaskKind {
     IndexLibrary,
     IndexLibraryPage,
     DetectCommunities,
+    /// One dbd design's structure into the schema store (#251), behind the
+    /// repo's file tasks so the detail lands on the walked nodes.
+    ImportDbdSchema,
+    /// An ORM's mapped database, derived from the walks into the schema store
+    /// (#251 §7c) — behind the file tasks, like the dbd import.
+    DeriveOrmSchema,
     ExtractDeps,
     MeasureVerdicts,
     /// Re-reconcile a project root's identity from its README frontmatter
@@ -282,6 +291,7 @@ impl TaskKind {
     /// so a kind cannot be half-added.
     pub const ALL: &'static [TaskKind] = &[
         Self::ScanRoot,
+        Self::ScanGitHistory,
         Self::ProcessGitFolder,
         Self::ProcessFolder,
         Self::ProcessFile,
@@ -293,6 +303,8 @@ impl TaskKind {
         Self::ExtractDeps,
         Self::EmbedNodes,
         Self::DetectCommunities,
+        Self::ImportDbdSchema,
+        Self::DeriveOrmSchema,
         Self::ResolveLibs,
         Self::ImportLib,
         Self::IndexLibrary,
@@ -329,6 +341,18 @@ impl TaskKind {
                 budget_secs: 600,
                 high_priority: false,
                 retryable: false,
+            },
+            Self::ScanGitHistory => KindInfo {
+                name: "scan_git_history",
+                pipeline: Pipeline::Index,
+                stage: Stage::Discover,
+                // A first walk reads the whole log — 4,000 commits and 24,500
+                // touches for sensei. Retryable: every failure here is
+                // transient and the walk is idempotent, so a repeat inserts
+                // nothing rather than duplicating.
+                budget_secs: 900,
+                high_priority: false,
+                retryable: true,
             },
             Self::ProcessGitFolder => KindInfo {
                 name: "process_git_folder",
@@ -409,6 +433,23 @@ impl TaskKind {
                 pipeline: Pipeline::Index,
                 stage: Stage::Derive,
                 budget_secs: 600,
+                high_priority: false,
+                retryable: false,
+            },
+            Self::ImportDbdSchema => KindInfo {
+                name: "import_dbd_schema",
+                pipeline: Pipeline::Index,
+                stage: Stage::Ingest,
+                budget_secs: 300,
+                high_priority: false,
+                // A design that does not parse stays broken until it is edited.
+                retryable: false,
+            },
+            Self::DeriveOrmSchema => KindInfo {
+                name: "derive_orm_schema",
+                pipeline: Pipeline::Index,
+                stage: Stage::Derive,
+                budget_secs: 300,
                 high_priority: false,
                 retryable: false,
             },
@@ -721,6 +762,11 @@ pub struct Task {
     /// path) — see `handlers::metrics`. Carried through `retry()` so an interrupted
     /// backfill resumes on the same day.
     pub as_of: Option<chrono::NaiveDate>,
+    /// Re-index everything under this task's path, ignoring the mtime/hash
+    /// gate. The override for "the graph is wrong and I want it rebuilt" — see
+    /// `indexer::structure::scan_baseline`. Deleting `files` rows by hand was
+    /// the only way before, and that takes the nodes and edges with it.
+    pub force: bool,
     pub status: TaskStatus,
     pub depends_on: Vec<u64>, // won't run until these complete
     /// What this scan may look at, and whether that set is exhaustive.
@@ -746,6 +792,7 @@ impl Task {
             branch: None,
             url: None,
             as_of: None,
+            force: false,
             status: TaskStatus::Pending,
             depends_on: Vec::new(),
             scope: Scope::default(),
@@ -878,6 +925,7 @@ impl Task {
             branch: self.branch.clone(),
             url: self.url.clone(),
             as_of: self.as_of,
+            force: false,
             status: TaskStatus::Pending,
             depends_on: Vec::new(),
             scope: Scope::default(),
@@ -926,6 +974,13 @@ impl Task {
     /// Narrow (or widen) what this task may examine.
     pub fn with_scope(mut self, scope: Scope) -> Self {
         self.scope = scope;
+        self
+    }
+
+    /// Carry a forced rescan down the chain. A no-op when false, so a caller
+    /// that does not care writes nothing.
+    pub fn forced(mut self, force: bool) -> Self {
+        self.force = force;
         self
     }
 
@@ -1037,7 +1092,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), total, "a kind appears twice in ALL");
-        assert_eq!(total, 36, "ALL is missing a kind — add it beside its info() arm");
+        assert_eq!(total, 39, "ALL is missing a kind — add it beside its info() arm");
     }
 
     #[test]

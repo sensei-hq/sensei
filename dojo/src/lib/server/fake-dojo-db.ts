@@ -97,6 +97,7 @@ function sameKey(a: FakeRow, b: FakeRow, u: FakeUnique): boolean {
  */
 export function fakeDojoDb(tables: Record<string, FakeTable>) {
 	const state: Record<string, FakeTable> = {};
+	const rpcCalls: { fn: string; args: Record<string, unknown> }[] = [];
 	for (const [name, t] of Object.entries(tables)) {
 		state[name] = { rows: t.rows.map((r) => ({ ...r })), uniques: t.uniques, reads: 0, error: t.error };
 	}
@@ -215,6 +216,16 @@ export function fakeDojoDb(tables: Record<string, FakeTable>) {
 
 	return {
 		from: (table: string) => builder(table),
+		/** A set-returning function, read like a table: `rpc('my_repositories')`
+		 *  addresses the fixture table `'rpc:my_repositories'`. What the function
+		 *  itself returns (e.g. that it pins the caller's principal) is the
+		 *  database's to prove, in database/tests; here the fixture IS its result. */
+		rpc: (fn: string, args?: Record<string, unknown>) => {
+			rpcCalls.push({ fn, args: args ?? {} });
+			return builder(`rpc:${fn}`);
+		},
+		/** Every rpc made, with its arguments, for assertions on what was asked. */
+		rpcCalls,
 		/** Re-scope the next `.from()` to another Postgres schema, as supabase-js
 		 *  does. Modelled because NOT modelling it hid a real defect: the metric
 		 *  catalogue lives in `sensei.metrics`, a bare `.from('metrics')` resolves

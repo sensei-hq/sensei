@@ -6,6 +6,7 @@
 //! before ranking. Idempotent: skips if a pending rec already proposes that model.
 
 use super::super::executor::TaskContext;
+use crate::db::pg_store::RecommendationRow;
 use crate::model_insight;
 
 /// Generate the per-project "prefer model X" recommendation if the data warrants
@@ -52,17 +53,17 @@ pub async fn model_insight_for_project(
 
     match ctx
         .pg()
-        .create_recommendation_full(
+        .create_recommendation_full(&RecommendationRow {
             project_id,
-            &title,
-            &why,
-            Some(&impact),
-            "revise_rule",
+            title: &title,
+            why: &why,
+            impact: Some(&impact),
+            action_type: "revise_rule",
             urgency,
-            &based_on,
-            None,
-            None,
-        )
+            based_on: &based_on,
+            reasoning_trace_id: None,
+            prompt: None,
+        })
         .await
     {
         Ok(_) => {

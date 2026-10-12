@@ -39,3 +39,30 @@ create policy relay_segments_select_own
               and dojo.owns_membership(s.membership_id)
         )
     );
+
+-- ── review as the person (#236 step 3b; access matrix "Relay") ──────────────
+-- Only the owner of the run records verdicts on its segments, and only the
+-- verdict columns: the outline itself is the agent's.
+grant update (response_verdict, response_note, submitted_at, updated_at) on dojo.relay_segments to authenticated;
+
+drop policy if exists relay_segments_review_own on dojo.relay_segments;
+create policy relay_segments_review_own
+    on dojo.relay_segments
+    for update
+    to authenticated
+    using (
+        exists (
+            select 1
+              from dojo.relay_sessions s
+             where s.id = relay_segments.session_id
+               and dojo.owns_membership(s.membership_id)
+        )
+    )
+    with check (
+        exists (
+            select 1
+              from dojo.relay_sessions s
+             where s.id = relay_segments.session_id
+               and dojo.owns_membership(s.membership_id)
+        )
+    );

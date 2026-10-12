@@ -2,7 +2,8 @@
 //   • summarizeSeatUsage — the pure per-seat count: PRIVATE-only, deduped per
 //     user across projects, public-only users excluded, breakdown sorted.
 //   • loadActiveSeatRows — active-seat query (eq tenant, is ended_at null) then
-//     the cross-schema (sensei) namespace join, orphan-seat drop, empty short-cut.
+//     the cross-schema (sensei) namespace join on the system client, orphan-seat
+//     drop, empty short-cut.
 //   • getBillingAccount — the maybeSingle fetch (row or null).
 //   • refreshSeatsUsed — the billing_accounts upsert shape + onConflict.
 //   • errors surface as BillingError(500).
@@ -154,7 +155,7 @@ describe('loadActiveSeatRows', () => {
 				error: null
 			}
 		);
-		const rows = await loadActiveSeatRows(db.client, 'tenant-1');
+		const rows = await loadActiveSeatRows(db.client, 'tenant-1', db.client);
 
 		// seats query: dojo schema, filtered by tenant + active
 		expect(db.calls[0]).toMatchObject({ schema: undefined, table: 'seats' });
@@ -172,10 +173,25 @@ describe('loadActiveSeatRows', () => {
 		]);
 	});
 
+	// Seats are read as the signed-in admin; the project names for them are a
+	// system lookup (no session reads sensei.namespaces — names can be clients'),
+	// for the ids on the seats the admin's read returned (#236).
+	it('reads seats with the caller\'s client and project names with the system\'s', async () => {
+		const asCaller = makeDb();
+		asCaller.queue({ data: [{ user_id: 'u1', role: 'contributor', namespace_id: 'n1' }], error: null });
+		const system = makeDb();
+		system.queue({ data: [{ id: 'n1', name: 'Alpha', slug: 'alpha', visibility: 'private' }], error: null });
+		const rows = await loadActiveSeatRows(asCaller.client, 'tenant-1', system.client);
+		expect(asCaller.calls.map((c) => c.table)).toEqual(['seats']);
+		expect(system.calls.map((c) => c.table)).toEqual(['namespaces']);
+		expect(system.calls[0].filters).toEqual([['in', 'id', ['n1']]]);
+		expect(rows[0]).toMatchObject({ project_name: 'Alpha' });
+	});
+
 	it('short-circuits with no namespace query when there are no seats', async () => {
 		const db = makeDb();
 		db.queue({ data: [], error: null });
-		const rows = await loadActiveSeatRows(db.client, 'tenant-1');
+		const rows = await loadActiveSeatRows(db.client, 'tenant-1', db.client);
 		expect(rows).toEqual([]);
 		expect(db.calls).toHaveLength(1); // only the seats query ran
 	});
@@ -183,7 +199,7 @@ describe('loadActiveSeatRows', () => {
 	it('throws BillingError(500) when the seats query errors', async () => {
 		const db = makeDb();
 		db.queue({ data: null, error: { message: 'boom' } });
-		await expect(loadActiveSeatRows(db.client, 'tenant-1')).rejects.toBeInstanceOf(BillingError);
+		await expect(loadActiveSeatRows(db.client, 'tenant-1', db.client)).rejects.toBeInstanceOf(BillingError);
 	});
 });
 

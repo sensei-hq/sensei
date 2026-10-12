@@ -89,6 +89,27 @@ describe('resolveTenantAccess — fail closed on the membership lookup', () => {
 		expect((err as Response).status).toBe(403);
 	});
 
+	// A missing (or disabled) membership is NO access — never "level 0". The
+	// member floor admitted any signed-in person to any tenant's member-floor
+	// routes; the routes that mattered each patched it locally. One rule here
+	// instead of one per route (#236, access matrix "Who").
+	it('403 for a signed-in non-member even at the MEMBER floor', async () => {
+		stub = makeDb(AUTH_OK, PRINCIPAL_OK, TENANT_OK, { data: null, error: null });
+		const err = await resolveTenantAccess('gh', 'acme', bearerReq(), locals, ACCESS.member).catch(
+			(e) => e
+		);
+		expect(err).toBeInstanceOf(Response);
+		expect((err as Response).status).toBe(403);
+	});
+
+	// The caller carries the JWT it was authenticated with, so a route can read
+	// AS the person through `userDb` — RLS deciding, not route code (#236 step 3).
+	it('carries the verified access token for user-session reads', async () => {
+		stub = makeDb(AUTH_OK, PRINCIPAL_OK, TENANT_OK, { data: { id: 'm1', role: 'contributor' }, error: null });
+		const caller = await resolveTenantAccess('gh', 'acme', bearerReq(), locals, ACCESS.member);
+		expect(caller.accessToken).toBe('tok');
+	});
+
 	it('401 when the JWT is invalid (no user)', async () => {
 		stub = makeDb({ data: { user: null }, error: { message: 'bad jwt' } });
 		const err = await resolveTenantAccess('gh', 'acme', bearerReq(), locals, ACCESS.member).catch(
@@ -109,6 +130,16 @@ describe('resolveCaller — user-wide JWT identity (no tenant, no role floor)', 
 		expect(userId).toBe('p1');
 		expect(userId).not.toBe('u1');
 		expect(authUserId).toBe('u1');
+	});
+
+	// A caller is an identity, not a client. Handing out the service role here
+	// is how a route reads as the system by destructuring one more field; system
+	// work names dojoDb() instead, and a session reads through callerDb (#236).
+	it('hands out no database client — only who the caller is and their JWT', async () => {
+		stub = makeDb(AUTH_OK, PRINCIPAL_OK);
+		const caller = await resolveCaller(bearerReq(), locals);
+		expect(caller).not.toHaveProperty('db');
+		expect(Object.keys(caller).sort()).toEqual(['accessToken', 'authUserId', 'email', 'userId']);
 	});
 
 	it('throws 500 rather than falling back to the login id when the principal lookup fails', async () => {

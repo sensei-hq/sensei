@@ -127,6 +127,8 @@ pub fn read(source: &Source<'_>, _types: &TypeHomes) -> Result<FileFacts, ReadEr
         references: walk.references,
         relations: walk.relations,
         imports: walk.imports,
+        schema: Vec::new(),
+        calls: Vec::new(),
     })
 }
 
@@ -258,7 +260,7 @@ struct Scope {
     /// Whether this scope is inside a function BODY.
     ///
     /// A declaration in a body is a LOCAL, and a local is not a node — the rule
-    /// every adapter here has needed. `barrier::a_node` already excludes its
+    /// every adapter here has needed. `quality::reachability::a_node` already excludes its
     /// kind from every coverage measurement, so the row was one nothing read.
     /// It is still recorded in `locals`, because that is what types the
     /// receiver of `p.x`.
@@ -487,6 +489,7 @@ impl<'a> Walk<'a> {
         let system = path.kind() == "system_lib_string";
         let spelled = raw.trim_matches(['"', '<', '>'].as_ref()).to_string();
         self.imports.push(Import {
+            target: Import::unplaced(&spelled),
             path: spelled,
             binds: Binding::Glob,
             origin: if system {
