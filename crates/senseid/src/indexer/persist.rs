@@ -1661,12 +1661,7 @@ fn target_ref_of(target: &TargetKey) -> Result<TargetRef, String> {
 /// filled in a blank would make the round-trip test pass on data the database
 /// does not hold, which is the one thing it exists to catch (R4).
 pub async fn read_back(store: &PgStore, folder_id: &uuid::Uuid) -> Result<Stored, String> {
-    let symbols = store
-        .definition_nodes(folder_id)
-        .await?
-        .iter()
-        .map(symbol_row_from_columns)
-        .collect::<Result<Vec<_>, String>>()?;
+    let symbols = symbols_of(store, folder_id).await?;
     let schema = store
         .schema_detail(folder_id)
         .await?
@@ -1679,17 +1674,36 @@ pub async fn read_back(store: &PgStore, folder_id: &uuid::Uuid) -> Result<Stored
         relations: Vec::new(),
         imports: Vec::new(),
         schema,
-        calls: store
-            .call_sites_of(folder_id)
-            .await?
-            .into_iter()
-            .map(CallSiteRow::from_stored)
-            .collect::<Result<Vec<_>, String>>()?,
+        calls: call_sites_of(store, folder_id).await?,
     };
     for edge in store.occurrence_edges(folder_id).await? {
         read_edge_into(&edge, &mut stored)?;
     }
     Ok(stored)
+}
+
+/// One folder's declarations, decoded — the read `read_back` and the ORM
+/// derivation share, so there is one decoder.
+pub async fn symbols_of(store: &PgStore, folder_id: &uuid::Uuid) -> Result<Vec<SymbolRow>, String> {
+    store
+        .definition_nodes(folder_id)
+        .await?
+        .iter()
+        .map(symbol_row_from_columns)
+        .collect::<Result<Vec<_>, String>>()
+}
+
+/// One folder's call sites, decoded (spec 20 §7b).
+pub async fn call_sites_of(
+    store: &PgStore,
+    folder_id: &uuid::Uuid,
+) -> Result<Vec<CallSiteRow>, String> {
+    store
+        .call_sites_of(folder_id)
+        .await?
+        .into_iter()
+        .map(CallSiteRow::from_stored)
+        .collect::<Result<Vec<_>, String>>()
 }
 
 /// Every fact one edge row records.

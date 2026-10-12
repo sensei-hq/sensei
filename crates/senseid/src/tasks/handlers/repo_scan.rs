@@ -259,6 +259,17 @@ pub async fn process_repo_files(ctx: &TaskContext, task: &Task) -> Result<u32, S
     barrier_deps.push(embed);
     // A dbd design's detail goes onto the nodes its DDL files produce, so each
     // import waits on the file tasks — and the barrier waits on the imports.
+    // An ORM's mapping is read off the walks too, so it waits on them the same way.
+    if super::orm_schema::has_dotnet_project(Path::new(&task.folder_path))? {
+        barrier_deps.push(
+            ctx.queue
+                .enqueue(
+                    Task::new(TaskKind::DeriveOrmSchema, &task.folder_path, "")
+                        .blocked_by(file_ids.clone()),
+                )
+                .await,
+        );
+    }
     for design in super::dbd_schema::designs_under(Path::new(&task.folder_path))? {
         barrier_deps.push(
             ctx.queue
@@ -1452,6 +1463,135 @@ mod scan_tests {
             ]),
             "the view's read and the key's table edge placed; the built-in dimmed"
         );
+    }
+
+    /// **AN EF CORE MAPPING LANDS IN THE SCHEMA STORE (#251 §7c).** A .NET
+    /// repository gets a `DeriveOrmSchema` behind its file tasks; run, it fills
+    /// the store with the tables the `DbContext` maps — names stated by
+    /// `ToTable`, the provider's default schema where nothing states one, and the
+    /// keys between them.
+    ///
+    /// Mutations that must break this: drop the enqueue; skip the provider read
+    /// (the convention tables are then skipped, not filed under `dbo`).
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
+    async fn an_ef_core_mapping_lands_in_the_schema_store() {
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let name = format!("store-{}", uuid::Uuid::new_v4().simple());
+        let repo = t.path().join(&name);
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(
+            repo.join("src/Store.csproj"),
+            r#"<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="8.0.0" />
+  </ItemGroup>
+</Project>
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("src/StoreContext.cs"),
+            r#"namespace Store;
+public class StoreContext : DbContext {
+    public DbSet<Order> Orders { get; set; }
+    public DbSet<Customer> Customers { get; set; }
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+        modelBuilder.Entity<Order>().ToTable("orders", "ops");
+    }
+}
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("src/Entities.cs"),
+            r#"namespace Store;
+public class Order { public int Id { get; set; } public Customer Customer { get; set; } public int CustomerId { get; set; } }
+public class Customer { public int Id { get; set; } public string Name { get; set; } }
+"#,
+        )
+        .unwrap();
+
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", &name, &repo.to_string_lossy())
+            .await
+            .unwrap();
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, &name).await.unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
+            .await
+            .unwrap();
+        // The manifests first, as the gate orders them: the provider comes from
+        // the .csproj's package references.
+        for (_, folder_path, path) in ctx
+            .queue
+            .snapshot()
+            .await
+            .into_iter()
+            .filter(|(k, _, _)| *k == TaskKind::ProcessManifest)
+        {
+            super::process_manifest(
+                &ctx,
+                &Task::new(TaskKind::ProcessManifest, &folder_path, &path),
+            )
+            .await
+            .unwrap();
+        }
+        super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
+            .await
+            .unwrap();
+        let tasks = ctx.queue.snapshot_tasks().await;
+        for file in tasks.iter().filter(|t| t.kind == TaskKind::ProcessFile) {
+            super::super::process_file(
+                &ctx,
+                &Task::new(TaskKind::ProcessFile, &file.folder_path, &file.path),
+            )
+            .await
+            .unwrap();
+        }
+        let derive = tasks.iter().find(|t| t.kind == TaskKind::DeriveOrmSchema).expect("enqueued");
+        let files: Vec<u64> =
+            tasks.iter().filter(|t| t.kind == TaskKind::ProcessFile).map(|t| t.id).collect();
+        assert!(!files.is_empty() && files.iter().all(|f| derive.depends_on.contains(f)));
+        assert!(
+            tasks.iter().any(|t| t.kind == TaskKind::DetectCommunities && t.depends_on.contains(&derive.id)),
+            "the barrier waits on the derivation"
+        );
+
+        super::super::derive_orm_schema(
+            &ctx,
+            &Task::new(TaskKind::DeriveOrmSchema, &repo_path, ""),
+        )
+        .await
+        .unwrap();
+        let detail = ctx.pg().schema_detail(&fid).await.unwrap();
+        let shape: Vec<(String, String, String)> =
+            detail.iter().map(|e| (e.fqn.clone(), e.db_schema.clone(), e.naming.clone())).collect();
+        assert_eq!(
+            shape,
+            [
+                ("sql·Store·dbo·Customers·item".into(), "dbo".into(), "convention".into()),
+                ("sql·Store·ops·orders·item".into(), "ops".into(), "stated".into()),
+            ],
+            "ToTable names orders; Customers is the DbSet's name under SQL Server's dbo"
+        );
+        let orders = &detail[1];
+        assert_eq!(orders.source, "ef_core");
+        assert_eq!(
+            orders.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+            ["Id", "CustomerId"]
+        );
+        assert_eq!(orders.refs.len(), 1, "the key to Customers is placed: {:?}", orders.refs);
+        assert_eq!(orders.refs[0].to, "sql·Store·dbo·Customers·item");
     }
 
     /// A SECOND scan of an unchanged repository must leave the parse state alone.
