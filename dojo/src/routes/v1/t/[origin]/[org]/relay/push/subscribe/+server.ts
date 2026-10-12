@@ -3,21 +3,17 @@
 // (resolveTenantAccess), like the other relay routes. Upserts a
 // dojo.push_subscriptions row keyed by (user_id, web_push.endpoint) so a device
 // re-subscribing (permission re-grant, key rotation) refreshes in place rather
-// than piling up rows. Service-role client (dojoDb) — bypasses RLS; the route
-// enforces auth. The actual send-on-gate is P4.4.
+// than piling up rows. Written as the signed-in person: RLS keeps the row theirs
+// and under one of their own memberships (#236). The send-on-gate is P4.4.
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
+import { asOwner } from '$lib/server/relay-owner';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 export const POST: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { userId, membershipId } = await resolveTenantAccess(
-			params.origin,
-			params.org,
-			request,
-			locals,
-			ACCESS.member
-		);
+		const caller = await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.member);
+		const { membershipId, db } = asOwner(caller);
+		const { userId } = caller;
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 
 		// Defensive input validation — a subscription without an endpoint or the
@@ -44,7 +40,6 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		// Only web is handled here; native tokens use a separate registration path (P5+).
 		const platform = body.platform === 'web' ? 'web' : 'web';
 
-		const db = dojoDb();
 		const nowIso = new Date().toISOString();
 		const webPush = { endpoint, p256dh, auth };
 
@@ -64,7 +59,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 				.update({
 					web_push: webPush,
 					platform,
-					membership_id: membershipId ?? null,
+					membership_id: membershipId,
 					enabled: true,
 					last_seen: nowIso,
 					updated_at: nowIso
@@ -80,7 +75,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 			.from('push_subscriptions')
 			.insert({
 				user_id: userId,
-				membership_id: membershipId ?? null,
+				membership_id: membershipId,
 				platform,
 				web_push: webPush,
 				enabled: true,

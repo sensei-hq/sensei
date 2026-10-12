@@ -147,6 +147,20 @@ PN=$(req GET "$WORKER/v1/t/personal/dev/relay/inbox?since=$CURSOR" "$AUTH_DEV")
 echo "$PN" | jq -e '.items[] | select(.id=="'"$NUDGE_ID"'" and .direction=="human_to_agent" and .kind=="nudge" and .payload.text=="focus on the API first")' >/dev/null \
   || fail "nudge not visible to the daemon poll / not trimmed ($PN)"
 
+echo "== 3d. phone POST relay/push/subscribe twice (JWT — registers once, refreshes in place) =="
+EP="https://push.example/roundtrip-$RUN"
+SUB='{"endpoint":"'"$EP"'","keys":{"p256dh":"PK","auth":"AK"},"platform":"web"}'
+S1=$(req POST "$WORKER/v1/t/personal/dev/relay/push/subscribe" "$AUTH_JWT" "$SUB")
+S2=$(req POST "$WORKER/v1/t/personal/dev/relay/push/subscribe" "$AUTH_JWT" "$SUB")
+echo "   $S1 $S2"; SUB_ID=$(echo "$S1" | jq -r '.id // empty')
+[ -n "$SUB_ID" ] && [ "$(echo "$S2" | jq -r '.id // empty')" = "$SUB_ID" ] || fail "push subscribe ($S1 / $S2)"
+
+echo "== 3e. phone POST relay/push/prefs twice (JWT — merged opt-ins) =="
+req POST "$WORKER/v1/t/personal/dev/relay/push/prefs" "$AUTH_JWT" '{"events":{"approvals":true}}' >/dev/null
+PR=$(req POST "$WORKER/v1/t/personal/dev/relay/push/prefs" "$AUTH_JWT" '{"events":{"stalls":true}}')
+echo "   $PR"
+echo "$PR" | jq -e '.events.approvals == true and .events.stalls == true' >/dev/null || fail "push prefs ($PR)"
+
 echo "== 4. phone POST reply (JWT) =="
 R=$(req POST "$WORKER/v1/t/personal/dev/relay/reply" "$AUTH_JWT" \
   "{\"inbox_id\":\"$INBOX_ID\",\"reply\":{\"verdict\":\"approve\"}}")

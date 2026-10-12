@@ -56,10 +56,27 @@ function makeDb() {
 }
 
 const db = makeDb();
-const access = { userId: 'user-1', membershipId: 'mem-1', tenantId: 't1', role: 'member', access: 0 };
+const access: Record<string, unknown> = {
+	userId: 'user-1',
+	membershipId: 'mem-1',
+	tenantId: 't1',
+	role: 'member',
+	access: 0,
+	accessToken: 'jwt-A'
+};
 
+// Which client each write ran on: the person's own JWT (RLS applies) or the
+// service role (it would not).
+const clients = { service: 0, userTokens: [] as string[] };
 vi.mock('$lib/server/dojo-supabase', () => ({
-	dojoDb: () => db.builder,
+	dojoDb: () => {
+		clients.service += 1;
+		return db.builder;
+	},
+	userDb: (token: string) => {
+		clients.userTokens.push(token);
+		return db.builder;
+	},
 	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/dojo-auth', () => ({
@@ -86,6 +103,34 @@ beforeEach(() => {
 	db.captured.op = undefined;
 	db.captured.payload = undefined;
 	db.captured.filters = [];
+	clients.service = 0;
+	clients.userTokens.length = 0;
+	access.accessToken = 'jwt-A';
+});
+
+describe('relay/push runs as the signed-in person (#236 step 3b)', () => {
+	const sub = { endpoint: 'https://push.example/abc', keys: { p256dh: 'PK', auth: 'AK' } };
+	const routes = [
+		['subscribe', () => subscribePOST(ev(sub))],
+		['prefs', () => prefsPOST(ev({ events: { stalls: true } }))]
+	] as const;
+
+	for (const [name, call] of routes) {
+		it(`${name} writes with the caller's JWT, never the service role`, async () => {
+			db.queue({ data: null, error: null }, { data: { id: 'x', user_id: 'user-1' }, error: null });
+			const res = await call();
+			expect(res.status).toBe(200);
+			expect(clients.userTokens).toEqual(['jwt-A']);
+			expect(clients.service).toBe(0);
+		});
+
+		it(`${name} refuses a caller with no session rather than falling back to the service role`, async () => {
+			access.accessToken = undefined;
+			const res = await call();
+			expect(res.status).toBe(401);
+			expect(clients.service).toBe(0);
+		});
+	}
 });
 
 describe('relay/push/subscribe', () => {
