@@ -11,19 +11,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AdminError } from '$lib/server/admin-data';
 
-const caller = { tenantId: 't1', userId: 'lead-uuid', role: 'lead', access: 2, membershipId: 'm1' };
+const caller: Record<string, unknown> = {
+	tenantId: 't1',
+	userId: 'lead-uuid',
+	role: 'lead',
+	access: 3,
+	membershipId: 'm1',
+	accessToken: 'jwt-A'
+};
 
 const mocks = vi.hoisted(() => ({
 	resolveTenantAccess: vi.fn(),
 	countEngagementArtifacts: vi.fn(),
 	// terminals the chainable stub resolves to (GET ends on `.order()`, POST on `.single()`)
 	db: { order: { data: [] as unknown, error: null as unknown }, single: { data: { id: 'e9' } as unknown, error: null as unknown } },
-	captured: { insert: undefined as unknown, tenantEq: undefined as unknown }
+	captured: { insert: undefined as unknown, tenantEq: undefined as unknown },
+	// Which client each read/write ran on: 'service', or 'user:<token>'.
+	clients: [] as string[]
 }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({
-	dojoDb: () => {
-		const b: Record<string, unknown> = {};
+vi.mock('$lib/server/dojo-supabase', () => {
+	const chain = () => {
+		const b: Record<string, unknown> = { kind: 'chain' };
 		b.from = () => b;
 		b.select = () => b;
 		b.eq = (_col: string, val: unknown) => {
@@ -37,8 +46,18 @@ vi.mock('$lib/server/dojo-supabase', () => ({
 		};
 		b.single = () => Promise.resolve(mocks.db.single);
 		return b;
-	}
-}));
+	};
+	return {
+		dojoDb: () => {
+			mocks.clients.push('service');
+			return chain();
+		},
+		userDb: (token: string) => {
+			mocks.clients.push(`user:${token}`);
+			return chain();
+		}
+	};
+});
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
 	apiError: (status: number, message: string) =>
@@ -73,6 +92,23 @@ beforeEach(() => {
 	mocks.db.single = { data: { id: 'e9' }, error: null };
 	mocks.captured.insert = undefined;
 	mocks.captured.tenantEq = undefined;
+	mocks.clients.length = 0;
+	caller.accessToken = 'jwt-A';
+});
+
+describe('engagements list and open run as the signed-in person (#236)', () => {
+	it('GET and POST use the caller\'s JWT, never the service role', async () => {
+		await route.GET(ev('GET'));
+		await route.POST(ev('POST', { client_name: 'Globex' }));
+		expect(mocks.clients).toEqual(['user:jwt-A', 'user:jwt-A']);
+		expect(mocks.countEngagementArtifacts.mock.calls[0][0]).toMatchObject({ kind: 'chain' });
+	});
+	it('refuses a caller with no session rather than acting as the service role', async () => {
+		caller.accessToken = undefined;
+		expect((await route.GET(ev('GET'))).status).toBe(401);
+		expect((await route.POST(ev('POST', { client_name: 'Globex' }))).status).toBe(401);
+		expect(mocks.clients).toEqual([]);
+	});
 });
 
 describe('GET /engagements', () => {

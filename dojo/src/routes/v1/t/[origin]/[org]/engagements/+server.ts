@@ -1,9 +1,10 @@
 // GET/POST /v1/t/{origin}/{org}/engagements — the tenant's client engagements.
 // The in-Worker port of dojo-mind's `list_engagements` / `create_engagement`
-// (api.rs), lead+ gated. This is the reference pattern for the other console
+// (api.rs), lead+ gated, read and written as the caller (the engagements policy
+// decides, #236). This is the reference pattern for the other console
 // resources (incidents, members, identities, policies, triage).
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { countEngagementArtifacts } from '$lib/server/engagement-artifact-counts';
 import { AdminError } from '$lib/server/admin-data';
@@ -13,8 +14,9 @@ const COLS =
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { tenantId } = await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.lead);
-		const db = dojoDb();
+		const caller = await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.lead);
+		const { tenantId } = caller;
+		const db = callerDb(caller);
 		const { data, error } = await db
 			.from('engagements')
 			.select(COLS)
@@ -43,14 +45,15 @@ export const GET: RequestHandler = async ({ params, request, locals }) => {
 
 export const POST: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { tenantId } = await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.lead);
+		const caller = await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.lead);
+		const { tenantId } = caller;
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		// Rule C: `client` split into `client_name` (required display name) +
 		// `client_tenant_id` (optional FK to the client's own dojo.tenants row).
 		const clientName = typeof body.client_name === 'string' ? body.client_name.trim() : '';
 		if (!clientName) return apiError(400, 'client_name is required');
 		const clientTenantId = typeof body.client_tenant_id === 'string' ? body.client_tenant_id : null;
-		const { data, error } = await dojoDb()
+		const { data, error } = await callerDb(caller)
 			.from('engagements')
 			.insert({
 				tenant_id: tenantId,
