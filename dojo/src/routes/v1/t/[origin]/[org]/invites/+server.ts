@@ -4,7 +4,7 @@
 // admin shares as an accept link. Delivery (email) is a follow-on; the token is
 // the mechanism. Fails closed; never a fabricated invite.
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { createInvite, parseNewInvite, AdminError } from '$lib/server/invites-data';
 
@@ -19,7 +19,7 @@ export const POST: RequestHandler = async ({ params, request, locals }) => {
 		);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const input = parseNewInvite(body);
-		const invite = await createInvite(dojoDb(), caller.tenantId, caller.userId, input, Date.now());
+		const invite = await createInvite(callerDb(caller), caller.tenantId, caller.userId, input, Date.now());
 		return Response.json(invite, { status: 201 });
 	} catch (e) {
 		if (e instanceof Response) return e;
