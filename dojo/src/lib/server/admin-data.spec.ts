@@ -19,11 +19,6 @@ import {
 	patchPolicy,
 	parsePatchPolicy,
 	deletePolicy,
-	createIdentity,
-	parseNewIdentity,
-	updateIdentity,
-	parsePatchIdentity,
-	deleteIdentity,
 	slugify,
 	parseNewDojo,
 	createDojo,
@@ -337,116 +332,6 @@ describe('listIdentities (global rows, scoped by membership)', () => {
 	it('throws AdminError(500) when the identities query errors', async () => {
 		const { db } = makeIdentityDb(MEMBERS_OF_T1, { data: null, error: { message: 'boom' } });
 		await expect(listIdentities(db, 't1')).rejects.toMatchObject({ status: 500 });
-	});
-});
-
-describe('identities write', () => {
-	it('parseNewIdentity requires principal_id + a known provider + subject', () => {
-		expect(() => parseNewIdentity({})).toThrow(AdminError);
-		expect(() => parseNewIdentity({ principal_id: 'p1', provider: 'x', subject: 's' })).toThrow();
-		expect(() => parseNewIdentity({ principal_id: 'p1', provider: 'sso', subject: '' })).toThrow();
-		// user_id is the OLD field name and must not be silently accepted — doing
-		// so would write a null principal_id and violate the NOT NULL at runtime.
-		expect(() => parseNewIdentity({ user_id: 'p1', provider: 'sso', subject: 'sub' })).toThrow();
-		expect(parseNewIdentity({ principal_id: 'p1', provider: 'sso', subject: 'sub' })).toMatchObject({
-			principal_id: 'p1',
-			provider: 'sso',
-			subject: 'sub'
-		});
-	});
-
-	it('createIdentity refuses a principal who is not a member of the tenant', async () => {
-		// The replacement for the dropped tenant_id filter. Without it an admin
-		// could attach an identity to anyone in any tenant.
-		const { db, captured } = makeIdentityDb({ data: null, error: null }); // membership miss
-		await expect(
-			createIdentity(db, 't1', parseNewIdentity({ principal_id: 'outsider', provider: 'sso', subject: 's' }))
-		).rejects.toMatchObject({ status: 404 });
-		expect(captured.payload).toBeUndefined();
-	});
-
-	it('createIdentity inserts principal_id and no tenant_id for a real member', async () => {
-		const { db, captured } = makeIdentityDb(
-			{ data: { id: 'm1' }, error: null }, // membership hit
-			{ data: { id: 'i1' }, error: null }
-		);
-		const out = await createIdentity(
-			db,
-			't1',
-			parseNewIdentity({ principal_id: 'p1', provider: 'sso', subject: 's' })
-		);
-		expect(out).toEqual({ id: 'i1' });
-		const payload = captured.payload as Record<string, unknown>;
-		expect(payload.principal_id).toBe('p1');
-		expect(payload).not.toHaveProperty('tenant_id'); // the column does not exist
-		expect(payload).not.toHaveProperty('user_id');
-	});
-
-	it('createIdentity maps a unique-violation to 409', async () => {
-		const { db } = makeIdentityDb(
-			{ data: { id: 'm1' }, error: null },
-			{ data: null, error: { code: '23505', message: 'dup' } }
-		);
-		await expect(
-			createIdentity(db, 't1', parseNewIdentity({ principal_id: 'p1', provider: 'sso', subject: 's' }))
-		).rejects.toMatchObject({ status: 409 });
-	});
-
-	it('updateIdentity 404s for an identity belonging to another tenant', async () => {
-		// Reads the identity's principal, then checks membership. Both misses
-		// answer 404 "no such identity" — an admin of tenant A must not learn
-		// that the id exists in tenant B.
-		const { db, captured } = makeIdentityDb(
-			{ data: { principal_id: 'outsider' }, error: null }, // identity exists…
-			{ data: null, error: null } // …but not in this tenant
-		);
-		const err = await updateIdentity(db, 't1', 'i9', parsePatchIdentity({ email: 'a@b.co' })).catch(
-			(e) => e
-		);
-		expect(err.status).toBe(404);
-		expect(err.message).toBe('no such identity');
-		expect(captured.payload).toBeUndefined();
-	});
-
-	it('updateIdentity 404s when the identity does not exist', async () => {
-		const { db } = makeIdentityDb({ data: null, error: null });
-		await expect(
-			updateIdentity(db, 't1', 'i9', parsePatchIdentity({ email: 'a@b.co' }))
-		).rejects.toMatchObject({ status: 404 });
-	});
-
-	it('updateIdentity patches a member identity; parsePatchIdentity rejects non-strings', async () => {
-		expect(() => parsePatchIdentity({ email: 123 as unknown as string })).toThrow(AdminError);
-		const { db } = makeIdentityDb(
-			{ data: { principal_id: 'p1' }, error: null },
-			{ data: { id: 'm1' }, error: null },
-			{ data: { id: 'i1' }, error: null }
-		);
-		expect(await updateIdentity(db, 't1', 'i1', parsePatchIdentity({ email: 'a@b.co' }))).toEqual({
-			id: 'i1'
-		});
-	});
-
-	it('deleteIdentity refuses an identity outside the tenant, and reports rows removed', async () => {
-		const outside = makeIdentityDb(
-			{ data: { principal_id: 'outsider' }, error: null },
-			{ data: null, error: null }
-		);
-		await expect(deleteIdentity(outside.db, 't1', 'i9')).rejects.toMatchObject({ status: 404 });
-
-		const removed = makeIdentityDb(
-			{ data: { principal_id: 'p1' }, error: null },
-			{ data: { id: 'm1' }, error: null },
-			{ data: [{ id: 'i1' }], error: null }
-		);
-		expect(await deleteIdentity(removed.db, 't1', 'i1')).toBe(true);
-
-		const none = makeIdentityDb(
-			{ data: { principal_id: 'p1' }, error: null },
-			{ data: { id: 'm1' }, error: null },
-			{ data: [], error: null }
-		);
-		expect(await deleteIdentity(none.db, 't1', 'i2')).toBe(false);
 	});
 });
 

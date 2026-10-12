@@ -149,9 +149,13 @@ export async function listMembers(db: DojoClient, tenantId: string): Promise<Mem
 // row per tenant (see the table's DDL).
 //
 // But the routes are still tenant-addressed. So the isolation the tenant_id
-// filter used to provide incidentally is now an EXPLICIT membership check.
-// Without it, an admin of one tenant could read, rewrite or delete the
-// identities of people in another.
+// filter used to provide incidentally is now an EXPLICIT membership check:
+// an admin of one tenant reads only their members' identities.
+//
+// And nothing here WRITES an identity. Global means an edit by tenant A's
+// admin would change the row tenant B relies on, so identities are created by
+// provisioning with the forge's proof, never through a tenant's console (#236,
+// access matrix "Tenancy, identity, billing").
 
 /** The principal ids of a tenant's members — what scopes a tenant-addressed
  *  identity read. `memberships.user_id` holds a principal id (§VIII.2). */
@@ -159,48 +163,6 @@ async function tenantPrincipalIds(db: DojoClient, tenantId: string): Promise<str
 	const { data, error } = await db.from('memberships').select('user_id').eq('tenant_id', tenantId);
 	if (error) throw new AdminError(500, error.message);
 	return (data ?? []).map((m) => (m as { user_id: string }).user_id);
-}
-
-/** Throw 404 unless `principalId` is a member of `tenantId`. */
-async function assertTenantMember(
-	db: DojoClient,
-	tenantId: string,
-	principalId: string
-): Promise<void> {
-	const { data, error } = await db
-		.from('memberships')
-		.select('id')
-		.eq('tenant_id', tenantId)
-		.eq('user_id', principalId)
-		.maybeSingle();
-	if (error) throw new AdminError(500, error.message);
-	if (!data) throw new AdminError(404, 'no such member in this tenant');
-}
-
-/** Throw 404 unless identity `id` belongs to a member of `tenantId`. Both the
- *  missing and the wrong-tenant case answer identically — an admin of tenant A
- *  must not be able to probe which identity ids exist in tenant B. */
-async function assertIdentityInTenant(
-	db: DojoClient,
-	tenantId: string,
-	id: string
-): Promise<void> {
-	const { data, error } = await db
-		.from('identities')
-		.select('principal_id')
-		.eq('id', id)
-		.maybeSingle();
-	if (error) throw new AdminError(500, error.message);
-	if (!data) throw new AdminError(404, 'no such identity');
-	const principalId = (data as { principal_id: string }).principal_id;
-	const member = await db
-		.from('memberships')
-		.select('id')
-		.eq('tenant_id', tenantId)
-		.eq('user_id', principalId)
-		.maybeSingle();
-	if (member.error) throw new AdminError(500, member.error.message);
-	if (!member.data) throw new AdminError(404, 'no such identity');
 }
 
 /** The identity mappings of this tenant's members, most recent first. Returns []
@@ -640,130 +602,6 @@ export async function deletePolicy(db: DojoClient, tenantId: string, id: string)
 		.eq('tenant_id', tenantId)
 		.eq('id', id)
 		.select('id');
-	if (error) throw new AdminError(500, error.message);
-	return (data?.length ?? 0) > 0;
-}
-
-// ── identities: create / patch / delete ──────────────────────────────────────
-
-/** A validated `POST …/identities` body — the port of dojo-mind's `NewIdentity`. */
-export interface NewIdentityInput {
-	principal_id: string;
-	provider: string;
-	subject: string;
-	email?: string;
-	display_name?: string;
-}
-
-/** Validate a `POST …/identities` body into a {@link NewIdentityInput}, or throw
- *  AdminError(400). `principal_id`, `provider` (an auth method), `subject`
- *  required. A body still sending the old `user_id` is REJECTED rather than
- *  coerced — accepting it would write a null principal_id and hit the NOT NULL
- *  at runtime, which is a 500 for what is really a stale caller. */
-export function parseNewIdentity(body: Record<string, unknown>): NewIdentityInput {
-	const principalId = typeof body.principal_id === 'string' ? body.principal_id.trim() : '';
-	if (!principalId) throw new AdminError(400, 'principal_id is required');
-	if (!isAuthMethod(body.provider)) {
-		throw new AdminError(400, 'provider must be sso, github_oauth, or device_code');
-	}
-	const subject = typeof body.subject === 'string' ? body.subject.trim() : '';
-	if (!subject) throw new AdminError(400, 'subject is required');
-	const out: NewIdentityInput = {
-		principal_id: principalId,
-		provider: body.provider as string,
-		subject
-	};
-	if (typeof body.email === 'string') out.email = body.email;
-	if (typeof body.display_name === 'string') out.display_name = body.display_name;
-	return out;
-}
-
-/**
- * Wire an identity provider (`POST …/identities`) — the port of dojo-mind's
- * `add_identity`. Returns `{ id }`; a duplicate `(provider, subject)` is a 409.
- *
- * The principal must be a member of the addressed tenant. `dojo.identities` has
- * no tenant_id to constrain the write, so this check is the only thing stopping
- * a tenant admin attaching an identity to someone outside their tenant.
- */
-export async function createIdentity(
-	db: DojoClient,
-	tenantId: string,
-	input: NewIdentityInput
-): Promise<{ id: string }> {
-	await assertTenantMember(db, tenantId, input.principal_id);
-	const { data, error } = await db
-		.from('identities')
-		.insert({
-			principal_id: input.principal_id,
-			provider: input.provider,
-			subject: input.subject,
-			email: input.email ?? null,
-			display_name: input.display_name ?? null
-		})
-		.select('id')
-		.single();
-	if (error) {
-		if (error.code === '23505') throw new AdminError(409, 'that identity is already mapped');
-		throw new AdminError(500, error.message);
-	}
-	return data as { id: string };
-}
-
-/** A validated `PATCH …/identities/{id}` body — email + display_name only. */
-export interface PatchIdentityInput {
-	email?: string;
-	display_name?: string;
-}
-
-/** Validate a `PATCH …/identities/{id}` body into a {@link PatchIdentityInput}. */
-export function parsePatchIdentity(body: Record<string, unknown>): PatchIdentityInput {
-	const out: PatchIdentityInput = {};
-	if (body.email !== undefined) {
-		if (typeof body.email !== 'string') throw new AdminError(400, 'email must be a string');
-		out.email = body.email;
-	}
-	if (body.display_name !== undefined) {
-		if (typeof body.display_name !== 'string') {
-			throw new AdminError(400, 'display_name must be a string');
-		}
-		out.display_name = body.display_name;
-	}
-	return out;
-}
-
-/**
- * Update an identity's email / display name (`PATCH …/identities/{id}`) — the
- * port of dojo-mind's `update_identity`. Returns `{ id }`; a 404 when none matches.
- */
-export async function updateIdentity(
-	db: DojoClient,
-	tenantId: string,
-	id: string,
-	input: PatchIdentityInput
-): Promise<{ id: string }> {
-	await assertIdentityInTenant(db, tenantId, id);
-	const row: Record<string, unknown> = {};
-	if (input.email !== undefined) row.email = input.email;
-	if (input.display_name !== undefined) row.display_name = input.display_name;
-	const { data, error } = await db
-		.from('identities')
-		.update(row)
-		.eq('id', id)
-		.select('id')
-		.maybeSingle();
-	if (error) throw new AdminError(500, error.message);
-	if (!data) throw new AdminError(404, 'no such identity');
-	return data as { id: string };
-}
-
-/**
- * Delete an identity by id (`DELETE …/identities/{id}`) — returns `true` when a
- * row was removed, `false` when none matched (the handler maps false → 404).
- */
-export async function deleteIdentity(db: DojoClient, tenantId: string, id: string): Promise<boolean> {
-	await assertIdentityInTenant(db, tenantId, id);
-	const { data, error } = await db.from('identities').delete().eq('id', id).select('id');
 	if (error) throw new AdminError(500, error.message);
 	return (data?.length ?? 0) > 0;
 }

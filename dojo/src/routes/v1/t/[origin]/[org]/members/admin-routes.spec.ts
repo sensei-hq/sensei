@@ -10,6 +10,8 @@
 // mapping, and auth-Response propagation. The `admin-data` store is mocked (its
 // own logic is in `admin-data.spec.ts`). No live Worker/DB.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const caller = { tenantId: 't1', userId: 'admin-uuid', role: 'admin', access: 4, membershipId: 'm1' };
 
@@ -38,11 +40,6 @@ const mocks = vi.hoisted(() => ({
 	patchPolicy: vi.fn(),
 	parsePatchPolicy: vi.fn(),
 	deletePolicy: vi.fn(),
-	createIdentity: vi.fn(),
-	parseNewIdentity: vi.fn(),
-	updateIdentity: vi.fn(),
-	parsePatchIdentity: vi.fn(),
-	deleteIdentity: vi.fn(),
 	recordAudit: vi.fn()
 }));
 
@@ -70,11 +67,6 @@ vi.mock('$lib/server/admin-data', () => ({
 	patchPolicy: mocks.patchPolicy,
 	parsePatchPolicy: mocks.parsePatchPolicy,
 	deletePolicy: mocks.deletePolicy,
-	createIdentity: mocks.createIdentity,
-	parseNewIdentity: mocks.parseNewIdentity,
-	updateIdentity: mocks.updateIdentity,
-	parsePatchIdentity: mocks.parsePatchIdentity,
-	deleteIdentity: mocks.deleteIdentity,
 	AdminError
 }));
 vi.mock('$lib/server/health-series', () => ({ getContribVsApprove: mocks.getContribVsApprove }));
@@ -85,7 +77,6 @@ const memberRole = await import('./[userId]/role/+server');
 const policies = await import('../policies/+server');
 const policyId = await import('../policies/[id]/+server');
 const identities = await import('../identities/+server');
-const identityId = await import('../identities/[id]/+server');
 const audit = await import('../audit/+server');
 const health = await import('../health/+server');
 
@@ -118,11 +109,6 @@ beforeEach(() => {
 	mocks.patchPolicy.mockClear().mockResolvedValue({ id: 'p1' });
 	mocks.parsePatchPolicy.mockClear().mockReturnValue({ retention_days: 90 });
 	mocks.deletePolicy.mockClear().mockResolvedValue(true);
-	mocks.createIdentity.mockClear().mockResolvedValue({ id: 'id1' });
-	mocks.parseNewIdentity.mockClear().mockReturnValue({ user_id: 'u1', provider: 'sso', subject: 's' });
-	mocks.updateIdentity.mockClear().mockResolvedValue({ id: 'id1' });
-	mocks.parsePatchIdentity.mockClear().mockReturnValue({ email: 'a@b.co' });
-	mocks.deleteIdentity.mockClear().mockResolvedValue(true);
 	mocks.recordAudit.mockClear().mockResolvedValue(undefined);
 });
 
@@ -256,24 +242,22 @@ describe('POST/PATCH/DELETE /policies', () => {
 	});
 });
 
-describe('POST/PATCH/DELETE /identities', () => {
-	it('POST creates, audits, returns { id }', async () => {
-		const res = await identities.POST(ev('http://x/', { user_id: 'u1', provider: 'sso', subject: 's' }));
-		expect(await res.json()).toEqual({ id: 'id1' });
-		expect(mocks.recordAudit.mock.calls[0][3]).toMatchObject({ action: 'identity_added' });
+// An identity is the PERSON's proof (provider, subject) and spans every tenant
+// they belong to (`dojo.identities` has no tenant). A tenant admin therefore
+// READS their members' identities and never writes them: an edit by tenant A's
+// admin would change the row tenant B relies on, and binding a forge account to
+// a principal needs that forge's proof — provisioning's job, not an admin form
+// (#236, docs/spec/dojo/access-matrix.md "Tenancy, identity, billing"). The
+// console never called these writes.
+describe('identities are read, never written, by a tenant admin', () => {
+	it('the identities route answers GET and nothing else', () => {
+		expect(identities.GET).toBeDefined();
+		expect((identities as Record<string, unknown>).POST).toBeUndefined();
+		expect((identities as Record<string, unknown>).PATCH).toBeUndefined();
+		expect((identities as Record<string, unknown>).DELETE).toBeUndefined();
 	});
-	it('PATCH updates by id, returns { id }', async () => {
-		const res = await identityId.PATCH(ev('http://x/', { email: 'a@b.co' }, { id: 'id1' }));
-		expect(await res.json()).toEqual({ id: 'id1' });
-	});
-	it('DELETE removes, returns { deleted: true }; 404 when none', async () => {
-		expect(await (await identityId.DELETE(ev('http://x/', {}, { id: 'id1' }))).json()).toEqual({ deleted: true });
-		mocks.deleteIdentity.mockResolvedValueOnce(false);
-		expect((await identityId.DELETE(ev('http://x/', {}, { id: 'id9' }))).status).toBe(404);
-	});
-	it('propagates a 403 without writing', async () => {
-		mocks.resolveTenantAccess.mockRejectedValueOnce(new Response('{}', { status: 403 }));
-		expect((await identities.POST(ev('http://x/', {}))).status).toBe(403);
-		expect(mocks.createIdentity).not.toHaveBeenCalled();
+	it('there is no per-identity write route', () => {
+		const route = resolve(__dirname, '../identities/[id]/+server.ts');
+		expect(existsSync(route), route).toBe(false);
 	});
 });

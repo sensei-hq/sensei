@@ -6,9 +6,6 @@
 //   POST   …/members                       → { id, role }
 //   PATCH  …/members/{user_id}/role        → { user_id, role }
 //   GET    …/identities                    → { identities: Identity[] }
-//   POST   …/identities                    → { id }
-//   PATCH  …/identities/{id}               → { id }
-//   DELETE …/identities/{id}               → { deleted: true }
 //   GET    …/policies                      → { policies: Policy[] }
 //   POST   …/policies                      → { id, scope_key }
 //   PATCH  …/policies/{id}                 → { id }
@@ -142,23 +139,6 @@ export interface NewMembershipBody {
 	role?: string;
 }
 
-/** `POST …/identities` body — `NewIdentity` (api.rs:630). The server's
- *  `parseNewIdentity` requires `principal_id` and REJECTS the old `user_id`
- *  outright, so this name is the wire contract, not a preference. */
-export interface NewIdentityBody {
-	principal_id: string;
-	provider: string;
-	subject: string;
-	email?: string;
-	display_name?: string;
-}
-
-/** `PATCH …/identities/{id}` body — `UpdateIdentity` (api.rs:688). */
-export interface UpdateIdentityBody {
-	email?: string;
-	display_name?: string;
-}
-
 /** `POST …/policies` body — `UpsertPolicy` (api.rs:774). Upserts on `scope_key`. */
 export interface UpsertPolicyBody {
 	scope_key: string;
@@ -251,44 +231,6 @@ export async function listIdentities(
 		opts
 	);
 	return data.identities ?? [];
-}
-
-/** `POST …/identities` — wire an identity provider (admin). */
-export async function createIdentity(
-	tenantKey: string,
-	body: NewIdentityBody,
-	opts: DojoCallOpts = {}
-): Promise<{ id: string }> {
-	return sendJson(adminUrl(tenantKey, '/identities'), 'POST', body, opts);
-}
-
-/** `PATCH …/identities/{id}` — update an identity's email / display name (admin). */
-export async function updateIdentity(
-	tenantKey: string,
-	id: string,
-	body: UpdateIdentityBody,
-	opts: DojoCallOpts = {}
-): Promise<{ id: string }> {
-	return sendJson(
-		adminUrl(tenantKey, `/identities/${encodeURIComponent(id)}`),
-		'PATCH',
-		body,
-		opts
-	);
-}
-
-/** `DELETE …/identities/{id}` — remove an identity (admin). */
-export async function deleteIdentity(
-	tenantKey: string,
-	id: string,
-	opts: DojoCallOpts = {}
-): Promise<{ deleted: boolean }> {
-	return sendJson(
-		adminUrl(tenantKey, `/identities/${encodeURIComponent(id)}`),
-		'DELETE',
-		undefined,
-		opts
-	);
 }
 
 // policies ──────────────────────────────────────────────────────────────────────
