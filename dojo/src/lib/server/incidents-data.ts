@@ -214,6 +214,33 @@ export function parseNewIncident(body: Record<string, unknown>): NewIncidentInpu
 }
 
 /**
+ * Refuse a reference that does not name THIS tenant's object (#236). An
+ * incident's owner, engagement and artifact arrive in the request body; an owner
+ * outside the tenant was a read of their name and email through a side door, and
+ * an engagement or artifact of another tenant a cross-tenant link. A 400, before
+ * anything is written.
+ */
+async function assertReferencesInTenant(
+	db: DojoClient,
+	tenantId: string,
+	refs: { owner_id?: string; engagement_id?: string; artifact_id?: string }
+): Promise<void> {
+	const check = async (table: string, cond: Record<string, unknown>, what: string) => {
+		let q = db.from(table).select('tenant_id');
+		for (const [c, v] of Object.entries(cond)) q = v === null ? q.is(c, null) : q.eq(c, v);
+		const { data, error } = await q.maybeSingle();
+		if (error) throw new IncidentsError(500, error.message);
+		if (!data) throw new IncidentsError(400, `${what} is not part of this dōjō`);
+	};
+	if (refs.owner_id)
+		await check('memberships', { tenant_id: tenantId, user_id: refs.owner_id, disabled_at: null }, 'owner');
+	if (refs.engagement_id)
+		await check('engagements', { tenant_id: tenantId, id: refs.engagement_id }, 'engagement');
+	if (refs.artifact_id)
+		await check('artifacts', { tenant_id: tenantId, id: refs.artifact_id }, 'artifact');
+}
+
+/**
  * Open a confidentiality incident (`POST …/incidents`) — the port of dojo-mind's
  * `open_incident`. Returns `{ id, severity }` (the shape `client-data.ts
  * createIncident()` unwraps).
@@ -223,6 +250,7 @@ export async function createIncident(
 	tenantId: string,
 	input: NewIncidentInput
 ): Promise<{ id: string; severity: string }> {
+	await assertReferencesInTenant(db, tenantId, input);
 	const { data, error } = await db
 		.from('incidents')
 		.insert({
@@ -310,6 +338,7 @@ export async function updateIncident(
 	id: string,
 	input: PatchIncidentInput
 ): Promise<{ id: string }> {
+	await assertReferencesInTenant(db, tenantId, { owner_id: input.owner_id });
 	const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
 	if (input.severity !== undefined) row.severity = input.severity;
 	if (input.status !== undefined) row.status = input.status;
