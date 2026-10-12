@@ -100,6 +100,7 @@ export interface KindTone {
 /** Dōjō kind — employer · client · community · personal. */
 export const K2_KIND: Record<string, KindTone> = {
 	employer: { kanji: '社', text: 'text-ink-soft' },
+	team: { kanji: '組', text: 'text-ink-soft' },
 	client: { kanji: '客', text: 'text-accent' },
 	community: { kanji: '群', text: 'text-success' },
 	personal: { kanji: '己', text: 'text-ink-mute' }

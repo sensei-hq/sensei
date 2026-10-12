@@ -370,9 +370,9 @@ describe('parseNewDojo', () => {
 // slugs the name and keeps the collision a 409.
 describe('createDojo', () => {
 	it('asks the database for the dōjō by name, slug and kind — and names no user', async () => {
-		const { db, calls } = makeCreateDb({ data: { id: 't-new', key: 'organization/acme-labs', name: 'Acme Labs' }, error: null });
+		const { db, calls } = makeCreateDb({ data: { id: 't-new', key: 'team/acme-labs', name: 'Acme Labs' }, error: null });
 		const out = await createDojo(db, { name: 'Acme Labs', kind: 'employer' });
-		expect(out).toEqual({ id: 't-new', key: 'organization/acme-labs', name: 'Acme Labs' });
+		expect(out).toEqual({ id: 't-new', key: 'team/acme-labs', name: 'Acme Labs' });
 		expect(calls).toEqual([
 			{ fn: 'create_dojo', args: { p_name: 'Acme Labs', p_slug: 'acme-labs', p_kind: 'employer' } }
 		]);

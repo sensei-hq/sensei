@@ -47,14 +47,14 @@ function ev(body: unknown) {
 beforeEach(() => {
 	mocks.resolveCaller.mockClear().mockResolvedValue({ userId: 'u1', db: { client: 'service' }, accessToken: 'jwt-A' });
 	mocks.parseNewDojo.mockClear().mockImplementation((b) => ({ name: b.name, kind: b.kind }));
-	mocks.createDojo.mockClear().mockResolvedValue({ id: 't-new', key: 'org/acme', name: 'Acme' });
+	mocks.createDojo.mockClear().mockResolvedValue({ id: 't-new', key: 'team/acme', name: 'Acme' });
 });
 
 describe('POST /v1/you/dojos', () => {
 	it('creates the dōjō for the caller and returns 201 + the row', async () => {
 		const res = await route.POST(ev({ name: 'Acme', kind: 'employer' }));
 		expect(res.status).toBe(201);
-		expect(await res.json()).toEqual({ id: 't-new', key: 'org/acme', name: 'Acme' });
+		expect(await res.json()).toEqual({ id: 't-new', key: 'team/acme', name: 'Acme' });
 		// As the caller: the database makes the SESSION's principal admin (#236).
 		expect(mocks.createDojo.mock.calls[0]).toEqual([{ client: 'user', token: 'jwt-A' }, { name: 'Acme', kind: 'employer' }]);
 	});

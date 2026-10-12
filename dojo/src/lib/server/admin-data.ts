@@ -384,17 +384,17 @@ export function parseNewDojo(body: Record<string, unknown>): NewDojoInput {
 }
 
 /**
- * Create a dōjō the caller owns (F3a, issue #117). The tenant is an
- * `organization` with key `organization/{slug}`; the creator becomes its
- * `admin`. A key collision (someone already registered that name) is a 409.
+ * Create a dōjō the caller owns (F3a, issue #117). The tenant is a `team` with
+ * key `team/{slug}` — `organization/` is the forge-proven organisation's alone
+ * (decision 2026-10-12) — and the creator becomes its `admin`. A key collision (someone already registered that name) is a 409.
  * dojo.create_dojo does both in one transaction, for the SESSION's principal,
  * and builds the key and url itself (#236). Fails closed.
  *
  * The key's first segment is the ORIGIN, not a forge — `dojo-auth.ts` resolves a
  * tenant by joining the two URL segments back into `{origin}/{slug}`, so the
  * prefix and `origin` must agree or the tenant is unreachable at its own URL.
- * That is also what keeps `personal/acme` and `organization/acme` apart under
- * the single unique on `key` (spec §IV.7).
+ * That is also what keeps `personal/acme`, `organization/acme` and `team/acme`
+ * apart under the single unique on `key` (spec §IV.7).
  *
  * This wrote `origin: 'org'`, `org: slug` and `key: org/{slug}` until 5cbe4d4d's
  * sibling commit: all three were retired by the phase-1 schema change, and the

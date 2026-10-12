@@ -43,6 +43,7 @@ export function splitPacks(packs: KitRulePack[]): {
  *  renders an empty section (mockup `ScrMyDojos` `groups.map`+`if`). */
 export const DOJO_GROUPS: readonly { kind: string; label: string; icon: string }[] = [
 	{ kind: 'organization', label: 'Organizations', icon: 'buildings-2' },
+	{ kind: 'team', label: 'Teams', icon: 'users-group-rounded' },
 	{ kind: 'personal', label: 'Personal', icon: 'user' }
 ];
 
