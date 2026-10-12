@@ -75,22 +75,22 @@ function ev(opts: { body?: unknown; query?: string; platform?: unknown } = {}) {
 const routes: Array<{ name: string; run: () => Promise<Response>; queue: Terminal[] }> = [
 	{
 		name: 'session POST',
-		run: () => sessionPOST(ev({ body: { run_id: 'run-1', status: 'running' } })),
+		run: async () => sessionPOST(ev({ body: { run_id: 'run-1', status: 'running' } })),
 		queue: [{ data: null, error: null }, { data: { id: 's1' }, error: null }]
 	},
 	{
 		name: 'segments POST',
-		run: () => segmentsPOST(ev({ body: { run_id: 'run-1', segments: [{ seq: 0, title: 'P1' }] } })),
+		run: async () => segmentsPOST(ev({ body: { run_id: 'run-1', segments: [{ seq: 0, title: 'P1' }] } })),
 		queue: [{ data: { id: 's1' }, error: null }, { data: null, error: null }]
 	},
 	{
 		name: 'inbox POST',
-		run: () => inboxPOST(ev({ body: { run_id: 'run-1', kind: 'chat', payload: {} } })),
+		run: async () => inboxPOST(ev({ body: { run_id: 'run-1', kind: 'chat', payload: {} } })),
 		queue: [{ data: { id: 's1', title: 'Run' }, error: null }, { data: { id: 'i1', seq: 1 }, error: null }]
 	},
 	{
 		name: 'inbox GET',
-		run: () => inboxGET(ev({ query: 'since=0' })),
+		run: async () => inboxGET(ev({ query: 'since=0' })),
 		queue: [{ data: [], error: null }]
 	}
 ];
