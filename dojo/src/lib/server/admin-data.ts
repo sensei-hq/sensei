@@ -228,18 +228,10 @@ export async function getHealth(db: DojoClient, tenantId: string): Promise<Healt
 	const fiveMinAgo = new Date(now - 5 * 60_000).toISOString();
 	const oneHourAgo = new Date(now - 60 * 60_000).toISOString();
 
-	// relay_* tables key on membership_id (WS-0 Rule A) — scope the tenant's live
-	// sessions via its memberships, not a dropped tenant_id column.
-	const mem = await db.from('memberships').select('id').eq('tenant_id', tenantId);
-	if (mem.error) throw new AdminError(500, mem.error.message);
-	const membershipIds = (mem.data ?? []).map((m) => m.id as string);
-
-	// connections — live relay sessions (heartbeat within 5 min).
-	const conn = await db
-		.from('relay_sessions')
-		.select('id', { count: 'exact', head: true })
-		.in('membership_id', membershipIds)
-		.gte('heartbeat_at', fiveMinAgo);
+	// connections — the tenant's live relay sessions (heartbeat within 5 min). A
+	// session is its owner's content, so the admin gets a COUNT from the database,
+	// never the rows (access matrix "Relay", #236); anyone else is refused, loudly.
+	const conn = await db.rpc('tenant_live_session_count', { p_tenant: tenantId, p_since: fiveMinAgo });
 	if (conn.error) throw new AdminError(500, conn.error.message);
 
 	// queue_depth — open triage rows.
@@ -268,7 +260,7 @@ export async function getHealth(db: DojoClient, tenantId: string): Promise<Healt
 	if (errors.error) throw new AdminError(500, errors.error.message);
 
 	return {
-		connections: conn.count ?? 0,
+		connections: conn.data as number,
 		queue_depth: queue.count ?? 0,
 		publish_rate_1h: publish.count ?? 0,
 		error_rate_1h: errors.count ?? 0
