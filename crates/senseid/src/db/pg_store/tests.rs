@@ -16982,3 +16982,35 @@ async fn a_membership_records_its_persona() {
         .await
         .unwrap();
 }
+
+// #236 step 4d: the membership row carries its persona, so every DojoClient
+// built from it presents the right credential without a second lookup.
+#[tokio::test]
+async fn a_loaded_membership_carries_its_persona() {
+    let s = pg_store().await;
+    let mid = persona_test_membership(&s).await;
+    assert_eq!(s.get_dojo_membership(&mid).await.unwrap().unwrap().persona, None);
+
+    let pid =
+        s.upsert_persona(&format!("persona-row-{}", uuid::Uuid::new_v4()), true).await.unwrap();
+    let slot = format!("slot-{}", uuid::Uuid::new_v4());
+    sqlx_core::query::query("UPDATE sensei.personas SET session_slot = $2 WHERE id = $1")
+        .bind(pid)
+        .bind(&slot)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    s.set_membership_persona(&mid, &pid).await.unwrap();
+
+    let want = Some(MembershipPersona { persona_id: pid, session_slot: Some(slot) });
+    assert_eq!(s.get_dojo_membership(&mid).await.unwrap().unwrap().persona, want);
+    let listed = s.list_dojo_memberships().await.unwrap();
+    assert_eq!(listed.iter().find(|m| m.id == mid).map(|m| m.persona.clone()), Some(want));
+
+    s.delete_dojo_membership(&mid).await.unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}

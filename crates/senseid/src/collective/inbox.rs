@@ -508,6 +508,7 @@ mod tests {
             last_seq: 0,
             last_heartbeat_at: None,
             enabled: true,
+            persona: None,
         }
     }
 

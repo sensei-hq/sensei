@@ -679,25 +679,11 @@ impl PgStore {
     }
 
     pub async fn list_dojo_memberships(&self) -> Result<Vec<DojoMembership>, String> {
-        let rows: Vec<(
-            uuid::Uuid,
-            String,
-            String,
-            String,
-            String,
-            Vec<String>,
-            String,
-            String,
-            String,
-            String,
-            String,
-            i64,
-            Option<String>,
-            bool,
-        )> = sqlx_core::query_as::query_as(&format!("{} ORDER BY created_at", Self::DOJO_SELECT))
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        let rows: Vec<DojoMembershipRow> =
+            sqlx_core::query_as::query_as(&format!("{} ORDER BY m.created_at", Self::DOJO_SELECT))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(Self::map_dojo_row).collect())
     }
 
@@ -705,26 +691,12 @@ impl PgStore {
         &self,
         id: &uuid::Uuid,
     ) -> Result<Option<DojoMembership>, String> {
-        let row: Option<(
-            uuid::Uuid,
-            String,
-            String,
-            String,
-            String,
-            Vec<String>,
-            String,
-            String,
-            String,
-            String,
-            String,
-            i64,
-            Option<String>,
-            bool,
-        )> = sqlx_core::query_as::query_as(&format!("{} WHERE id = $1", Self::DOJO_SELECT))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        let row: Option<DojoMembershipRow> =
+            sqlx_core::query_as::query_as(&format!("{} WHERE m.id = $1", Self::DOJO_SELECT))
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         Ok(row.map(Self::map_dojo_row))
     }
 
