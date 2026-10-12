@@ -38,13 +38,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('$lib/server/dojo-supabase', () => ({
 	dojoDb: () => ({}),
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
 	apiError: (status: number, message: string) =>
 		new Response(JSON.stringify({ error: message }), { status, headers: { 'content-type': 'application/json' } }),
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/incidents-data', () => ({
 	listIncidents: mocks.listIncidents,
@@ -97,7 +97,7 @@ describe('GET /incidents', () => {
 		mocks.listIncidents.mockResolvedValueOnce({ incidents: [{ id: 'i1' }], open_count: 1 });
 		const res = await list.GET(ev());
 		expect(await res.json()).toEqual({ incidents: [{ id: 'i1', client_name: null }], open_count: 1 });
-		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(2);
+		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(3); // ACCESS.lead
 	});
 	it('maps IncidentsError(500) to 500', async () => {
 		mocks.listIncidents.mockRejectedValueOnce(new IncidentsError(500, 'boom'));
@@ -133,7 +133,7 @@ describe('GET /incidents/{id} (detail)', () => {
 		mocks.getIncidentDetail.mockResolvedValueOnce({ id: 'i1', client_name: 'Globex', owner_name: 'Ada', artifact: null });
 		const res = await detail.GET(ev(undefined, { id: 'i1' }));
 		expect(await res.json()).toMatchObject({ id: 'i1', client_name: 'Globex', owner_name: 'Ada' });
-		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(2); // ACCESS.lead
+		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(3); // ACCESS.lead
 	});
 	it('maps a 404 from the store', async () => {
 		mocks.getIncidentDetail.mockRejectedValueOnce(new IncidentsError(404, 'no such incident'));
@@ -153,7 +153,7 @@ describe('POST /incidents', () => {
 	it('opens, audits, returns { id, severity } at the lead floor', async () => {
 		const res = await list.POST(ev({ title: 'leak', severity: 'high' }));
 		expect(await res.json()).toEqual({ id: 'i1', severity: 'high' });
-		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(2);
+		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(3); // ACCESS.lead
 		expect(mocks.recordAudit.mock.calls[0][3]).toMatchObject({ action: 'incident_opened', target: 'i1' });
 	});
 	it('maps a 400 from a bad body (no title) without auditing', async () => {

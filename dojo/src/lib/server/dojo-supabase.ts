@@ -44,8 +44,12 @@ export function dojoDb(): ReturnType<typeof buildClient> {
 	return client;
 }
 
-// Access ladder — mirrors dojo-mind `DojoAccess` (auth.rs). Higher = more.
-export const ACCESS = { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 } as const;
+// Access ladder. Higher = more. The ORDER is `dojo.member_role`'s declared order
+// and the canonical entity & access model's: contributor < maintainer < lead <
+// admin. (It was ported with lead BELOW maintainer, from an older service; see
+// dojo-access-ladder.spec.ts.) `member` (0) is no membership at all — no role
+// maps to it.
+export const ACCESS = { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 } as const;
 export type AccessLevel = (typeof ACCESS)[keyof typeof ACCESS];
 
 /** Map a `dojo.memberships.role` string to an access level (mirrors

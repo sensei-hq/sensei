@@ -35,13 +35,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('$lib/server/dojo-supabase', () => ({
 	dojoDb: () => ({}),
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
 	apiError: (status: number, message: string) =>
 		new Response(JSON.stringify({ error: message }), { status, headers: { 'content-type': 'application/json' } }),
-	ACCESS: { member: 0, contributor: 1, lead: 2, maintainer: 3, admin: 4 }
+	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/triage-data', () => ({
 	listTriage: mocks.listTriage,
@@ -88,7 +88,7 @@ describe('GET /triage', () => {
 		const args = mocks.resolveTenantAccess.mock.calls[0];
 		expect(args[0]).toBe('github');
 		expect(args[1]).toBe('acme');
-		expect(args[4]).toBe(3); // ACCESS.maintainer
+		expect(args[4]).toBe(2); // ACCESS.maintainer
 	});
 	it('maps a store TriageError(500) to 500', async () => {
 		mocks.listTriage.mockRejectedValueOnce(new TriageError(500, 'boom'));
@@ -116,7 +116,7 @@ describe('POST /triage/{signature}/decide', () => {
 	});
 	it('auths at the maintainer floor', async () => {
 		await POST(ev('POST', { status: 'revise' }));
-		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(3);
+		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(2); // ACCESS.maintainer
 	});
 	it('400s when parseDecideBody rejects the body (never decides)', async () => {
 		mocks.parseDecideBody.mockImplementationOnce(() => {
