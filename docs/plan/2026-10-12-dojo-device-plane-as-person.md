@@ -45,7 +45,12 @@ can never quietly stand in for the other.
 | `GET artifacts` | existing read policy (published · own · maintainer) | — |
 | `POST rules` / `DELETE rules/{id}` | `shared_rules` — existing maintainer write policies | the namespace the rule files under (`sensei.namespaces` upsert); the audit row |
 | `GET rules` | existing member read | — |
-| `GET rules/resolved` | — | resolved pack rules for the caller's namespaces (cross-namespace `sensei.*` read, like `my_adopted_pack_slugs`) — a pinned definer function |
+| `GET rules/resolved` | `dojo.tenant_pack_rules(tenant, ns)` — a pinned definer function: members only, the packs adopted at the namespace the tenant's key names, among the folder's pairs (decision 2026-10-12) | — |
+
+Found in 4a: `rules/resolved` has returned `{rules: []}` since `rule_packs.source`
+became `attribution` (2026-08-25) — its `.select('id, area, source')` fails and
+every error path logs and returns `[]`. 4b replaces the reads with the function
+and turns those fallbacks into 500s.
 
 ## Slices (each red-first, mutation-probed, deployed twice locally)
 
