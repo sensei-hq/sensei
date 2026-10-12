@@ -12,7 +12,7 @@
 // — but "probably identical across every install" is not an identity, and a
 // mismatch would attach real numbers to the wrong metric silently. The key is
 // the stable identity; an unresolvable one is rejected, never defaulted.
-import { refusal } from './db-refusal';
+import { refusalStatus } from './db-refusal';
 import { AdminError, type DojoClient } from './admin-data';
 
 /** One metric row the daemon is offering. */
@@ -165,7 +165,7 @@ export async function ingestMetrics(db: DojoClient, rows: MetricInput[]): Promis
 
 	if (toWrite.length > 0) {
 		const { error } = await db.rpc('upsert_repository_metrics', { p_rows: toWrite });
-		if (error) throw refusal(error);
+		if (error) throw new AdminError(refusalStatus(error), error.message);
 	}
 	return { accepted: toWrite.length, rejected };
 }
