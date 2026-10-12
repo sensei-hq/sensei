@@ -44,13 +44,17 @@ can never quietly stand in for the other.
 | `POST artifacts` | `artifacts` insert: own submission (`contributed_by` = caller, `submitted`, member) | clustering after a publish (`promoteCluster`) |
 | `GET artifacts` | existing read policy (published · own · maintainer) | — |
 | `POST rules` / `DELETE rules/{id}` | `shared_rules` — existing maintainer write policies | the namespace the rule files under (`sensei.namespaces` upsert); the audit row |
-| `GET rules` | existing member read | — |
+| `GET rules` | `dojo.tenant_shared_rules(tenant, since)` — a pinned definer function: a session cannot read `sensei.namespaces` to embed each rule's namespace (42501 on the local stack) | — |
 | `GET rules/resolved` | `dojo.tenant_pack_rules(tenant, ns)` — a pinned definer function: members only, the packs adopted at the namespace the tenant's key names, among the folder's pairs (decision 2026-10-12) | — |
 
 Found in 4a: `rules/resolved` has returned `{rules: []}` since `rule_packs.source`
 became `attribution` (2026-08-25) — its `.select('id, area, source')` fails and
-every error path logs and returns `[]`. 4b replaces the reads with the function
-and turns those fallbacks into 500s.
+every error path logs and returns `[]`. 4b replaced the reads with the function
+and made those fallbacks 500s (`5f715460`).
+
+During the window a legacy device token keeps the service role on every route
+except `rules/resolved`, which is a 401 for it: that leg never returned data to
+a device token, so the window keeps nothing it had.
 
 ## Slices (each red-first, mutation-probed, deployed twice locally)
 
