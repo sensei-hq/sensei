@@ -23,8 +23,8 @@
 // cost decision that is the organisation's policy. So on an organisation
 // repository it also takes an admin; in a personal dōjō the tenant is the person
 // (docs/spec/dojo/access-matrix.md "Metrics"). The function holds both.
-import { type DojoClient } from './admin-data';
-import { refusal } from './db-refusal';
+import { AdminError, type DojoClient } from './admin-data';
+import { refusalStatus } from './db-refusal';
 
 /** What the tenant's ruling now is, re-read rather than echoed from the input. */
 export interface ActivationOutcome {
@@ -48,6 +48,6 @@ export async function setMetricActivation(
 	const { data, error } = await db
 		.rpc('set_metric_activation', { p_repo_key: repoKey, p_metric_key: metricKey, p_enabled: enabled })
 		.single();
-	if (error) throw refusal(error);
+	if (error) throw new AdminError(refusalStatus(error), error.message);
 	return data as ActivationOutcome;
 }

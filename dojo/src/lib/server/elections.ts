@@ -17,8 +17,8 @@
 // The consequence worth stating: **an election cannot be made for a repository
 // the caller cannot see**, because the function reads only the caller's rows.
 // Scoping is the authorization; there is no second membership check to forget.
-import { type DojoClient } from './admin-data';
-import { refusal } from './db-refusal';
+import { AdminError, type DojoClient } from './admin-data';
+import { refusalStatus } from './db-refusal';
 
 /** What the view says after the write — the verdict, not an echo of the input. */
 export interface ElectionOutcome {
@@ -54,6 +54,6 @@ export async function setElection(
 	const { data, error } = await db
 		.rpc('set_repository_election', { p_repo_key: repoKey, p_elected: elected })
 		.single();
-	if (error) throw refusal(error);
+	if (error) throw new AdminError(refusalStatus(error), error.message);
 	return data as ElectionOutcome;
 }
