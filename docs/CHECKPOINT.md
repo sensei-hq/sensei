@@ -1,31 +1,35 @@
 # Checkpoint
 
-**State 2026-10-12.** #221 CLOSED (`89272517`, Schema screen, verified on live data; visual mockup check pending — no on-screen window for screenshots). #251 steps 1–5 landed and verified LIVE (`a12f2710` spec, `12d9d3bc` DDL, `d231b5dc` routing, `60549739` importer + `c15a3645` DDL fix, `91a4350e` endpoint): 169 tables/184 refs/784 deps, deps identical to dbd's own. Earlier, 2026-10-08: History rewritten to Jerry Thomas (all refs force-pushed,
-`main` protection restored). Open PRs: none. Branches: main + develop only (WIP diffs in ~/sensei-history-backup/wip-patches-20261008). 108 → 101 open issues this run.
+**State 2026-10-12.** #251 (schema store + dbd import + EF Core derivation) and
+#221 (Schema screen) CLOSED with live evidence; #253 (stale git tips after the
+history rewrite) CLOSED live. Scan roots: `~/Developer/sensei-hq/sensei` plus ONE
+private C# repo under `~/Work` (added for #251 7d — client names stay out of
+commits/issues/docs). Open PRs: none. Branches: main + develop.
 
 | # | item | status | to close |
 |---|---|---|---|
-| 220 219 231 233 218 248 202 203 205 232 | done | CLOSED | — |
-| — | CodeQL for Rust | MERGED #250 | baseline at next main merge |
-| 247 | pruner + root removal | CLOSED — orphan cleanup dropped; data recreated after the fixes | — |
+| 251 | schema store, dbd import, EF Core | CLOSED — 9/9 EF tables, 2/2 keys live | follow-ons #254 |
+| 221 | Schema / ER screen | CLOSED `89272517` | visual check vs mockup pending (no on-screen window for screenshots) |
+| 253 | scan_git_history poison pill | CLOSED `801104c1` | — |
+| 238 | Claude Code capture | missing PostToolUseFailure now WARNS (`6e0df121`); Critical loop stopped live | publish plugin (`make bump`); mods Steps 2–5 need the mods `.d.ts` |
 
-**Queue, in order** (re-sequenced 2026-10-08 after the #221/#236/#249 decisions):
+**Queue, in order:**
 
-| # | item | why here | first step |
-|---|---|---|---|
-| ~~249~~ | relay owner-only | CLOSED `ada807a2`; peer status view → #252 | — |
-| 238 | Claude Code mods | 4 of 4 live defects FIXED (`c40cb02b`); Steps 2–5 need the mods API | settle mods `.d.ts`, then usage-at-source |
-| 1. 251 | schema store + indexer routing | #221 prerequisite | 1–5 DONE + live; 7a spec `597ba875`, 7b `62c60ef2`, sweep fix `3bf9bc97`, C#-placement fix `4cbaae81`, 7c DeriveOrmSchema `dae7c66d`; 7d live remains |
-| ~~221~~ | Schema / ER screen | CLOSED `89272517` | — |
-| 3. 236 | dōjō access: views + RLS, user session | large; kavach#51 upstream | access-matrix doc |
-| 4. 225 · 239–241 · 245 · 252 | team view · productionise · e2e red gate | — | — |
+| # | item | first step |
+|---|---|---|
+| 1. 236 | dōjō access: views + RLS, user session (kavach#51 upstream) | access-matrix doc |
+| 2. 225 · 239–241 · 245 · 252 | team view · productionise · e2e red gate | — |
+| 3. 254 | next ORM, call_sites volume | measure |
 
-**Next command:** #251 7d — apply `call_sites` DDL + `derive_orm_schema` enum value to live by hand, `make install-debug`, add ONE C# EF repo under ~/Work as a scan root (client names stay out of commits/issues), scan, compare derived tables to an rg count of its DbSet/ToTable.
+**Next command:** #236 — write the access-matrix doc (who sees which dōjō data:
+own / project lead / management), then views + RLS per row.
 
-**Note:** `install-service` deploys the RELEASED DDL; a view/table change reaches the live DB only via a release or by hand (`psql -f`), as done for `session_tool_calls`. Untracked files from another session in the tree (`src/`, `docs/components/`, `docs/rune-usage.md`, `svelte5-runes-*.md`) — not touched.
+**Hand-applied to live DB** (installs need a release): `schema_*` tables + enums,
+`call_sites`, task kinds `import_dbd_schema` / `derive_orm_schema`. The daemon
+is the DEBUG build (`make install-debug`, which ends in `cargo clean`).
+Untracked files from another session (`src/`, `docs/components/`,
+`docs/rune-usage.md`, `svelte5-runes-*.md`) — not touched.
 
-**Data:** the leftover orphan rows stay until the full re-index after the
-indexing fixes land (owner decision 2026-10-08).
-
-**Known broken:** e2e #245. `schema_*` tables + `import_dbd_schema` applied to live and sensei_test BY HAND; installs need a release. SQL reader ignores design.yaml's stated dialect (noted on #251). Marketplace hook fixes unpublished until `make
-bump`. Old hashes in docs/*.md (22 refs, 10 files) predate the rewrite.
+**Known broken:** e2e #245. Plugin with PostToolUseFailure unpublished until
+`make bump`. `commit_scans.tips` stores duplicates (noted on #253). SQL reader
+ignores design.yaml's stated dialect. Old hashes in docs/*.md predate the rewrite.
