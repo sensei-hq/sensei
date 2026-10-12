@@ -248,6 +248,18 @@ describe('GET /health', () => {
 		await health.GET(ev());
 		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(4);
 	});
+	// Read as the signed-in admin; the session count is asked of the database,
+	// which answers an admin with a number (#236).
+	it('reads with the caller\'s JWT, never the service role', async () => {
+		await health.GET(ev());
+		expect(mocks.getHealth.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+		expect(mocks.getContribVsApprove.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+	});
+	it('refuses a caller with no session rather than reading as the service role', async () => {
+		caller.accessToken = undefined;
+		expect((await health.GET(ev())).status).toBe(401);
+		expect(mocks.getHealth).not.toHaveBeenCalled();
+	});
 });
 
 // ── mutation routes (admin floor · audited) ──────────────────────────────────

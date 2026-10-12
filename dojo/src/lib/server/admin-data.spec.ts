@@ -2,7 +2,7 @@
 //   • listMembers / listIdentities / listPolicies / listAudit — the tenant
 //     filter + envelope rows + error → AdminError(500), and the audit limit
 //     clamp.
-//   • getHealth — the four isolated count queries composed into the rollup, and
+//   • getHealth — the counts (three queries + the live-session count) composed into the rollup, and
 //     a count-query error surfacing (never a silent 0).
 import { describe, it, expect } from 'vitest';
 import {
@@ -108,37 +108,52 @@ describe('listAudit', () => {
 	});
 });
 
-// ── getHealth: four sequential count queries ─────────────────────────────────
+// ── getHealth: three count queries + the live-session count ──────────────────
 // Each `.from(...).select(..,{head}).eq(...).gte()/.in()/.eq()` chain resolves
-// (awaited) to the next `{ count, error }` in order.
-function makeCountDb(results: Terminal[]) {
+// (awaited) to the next `{ count, error }` in order. Connections come from
+// dojo.tenant_live_session_count — relay sessions are their owner's, so an admin
+// gets a count, never the rows (#236).
+function makeCountDb(results: Terminal[], rpcResult: { data: unknown; error: unknown } = { data: 3, error: null }) {
 	let i = 0;
 	const next = (): Terminal => results[i++] ?? { count: 0, error: null };
+	const tables: string[] = [];
+	const rpcs: { fn: string; args: Record<string, unknown> }[] = [];
 	const b: Record<string, unknown> = {};
-	b.from = () => b;
+	b.from = (t: string) => (tables.push(t), b);
+	b.rpc = (fn: string, args: Record<string, unknown>) => (rpcs.push({ fn, args }), Promise.resolve(rpcResult));
 	b.select = () => b;
 	b.eq = () => b;
 	b.in = () => b;
 	b.gte = () => Promise.resolve(next());
-	// The error_rate query ends on `.eq()` (no gte/in) — resolve on await.
+	// The queue and error_rate queries end on `.eq()` (no gte) — resolve on await.
 	b.then = (resolve: (v: Terminal) => unknown) => resolve(next());
-	return b as unknown as DojoClient;
+	return { db: b as unknown as DojoClient, tables, rpcs };
 }
 
 describe('getHealth', () => {
-	it('composes the four counts into the rollup', async () => {
-		const db = makeCountDb([
-			{ count: 0, error: null }, // memberships scope fetch (.eq → .then; data unused, ids => [])
-			{ count: 3, error: null }, // connections (.gte heartbeat)
-			{ count: 12, error: null }, // queue_depth (.eq state) — resolves via .then
+	it('composes the counts into the rollup, connections from the live-session count', async () => {
+		const { db, tables, rpcs } = makeCountDb([
+			{ count: 12, error: null }, // queue_depth (.eq state) — via .then
 			{ count: 5, error: null }, // publish_rate (.gte ts)
 			{ count: 1, error: null } // error_rate (.eq sync_status) — via .then
 		]);
+		const before = Date.now();
 		const h = await getHealth(db, 't1');
 		expect(h).toEqual({ connections: 3, queue_depth: 12, publish_rate_1h: 5, error_rate_1h: 1 });
+		expect(rpcs).toHaveLength(1);
+		expect(rpcs[0].fn).toBe('tenant_live_session_count');
+		expect(rpcs[0].args.p_tenant).toBe('t1');
+		const since = Date.parse(rpcs[0].args.p_since as string);
+		expect(before - since).toBeGreaterThanOrEqual(5 * 60_000 - 1000);
+		expect(before - since).toBeLessThanOrEqual(5 * 60_000 + 1000);
+		expect(tables).not.toContain('relay_sessions');
 	});
 	it('surfaces a count-query error rather than blanking the strip', async () => {
-		const db = makeCountDb([{ count: null, error: { message: 'count boom' } }]);
+		const { db } = makeCountDb([{ count: null, error: { message: 'count boom' } }]);
+		await expect(getHealth(db, 't1')).rejects.toThrow(AdminError);
+	});
+	it('surfaces a refused session count rather than reporting 0 connections', async () => {
+		const { db } = makeCountDb([], { data: null, error: { message: 'only an admin of the tenant counts its sessions' } });
 		await expect(getHealth(db, 't1')).rejects.toThrow(AdminError);
 	});
 });
