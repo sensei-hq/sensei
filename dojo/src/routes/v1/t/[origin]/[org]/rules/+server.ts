@@ -21,7 +21,7 @@ import {
 // dojo-mind's `Role::Publisher` floor). Attribution is server-controlled.
 export const POST: RequestHandler = async ({ params, request }) => {
 	try {
-		const caller = await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.contributor);
+		const caller = await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.maintainer);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
 		const rule = parsePublishedRule(body);
 		if (!rule) return apiError(400, 'a required rule field is missing');

@@ -111,13 +111,13 @@ describe('POST /v1/t/{origin}/{org}/rules — publish', () => {
 		expect(await res.json()).toEqual({ id: 'rule-1', version: 1, seq: 7 });
 	});
 
-	it('auths on the device-token plane at the contributor floor', async () => {
+	it('auths on the device-token plane at the maintainer floor (access matrix: rules W = maintainer)', async () => {
 		await POST(ev('POST', RULE));
 		expect(resolveApiKeyAccess).toHaveBeenCalledTimes(1);
 		const args = resolveApiKeyAccess.mock.calls[0];
 		expect(args[0]).toBe('github'); // origin
 		expect(args[1]).toBe('sensei-hq'); // org
-		expect(args[3]).toBe(1); // ACCESS.contributor
+		expect(args[3]).toBe(2); // ACCESS.maintainer
 	});
 
 	it('server-controls attribution: publishRule is called with the caller, not the body', async () => {
@@ -231,9 +231,9 @@ describe('DELETE /v1/t/{origin}/{org}/rules/{id} — retract', () => {
 		expect(recordRulesAudit).not.toHaveBeenCalled();
 	});
 
-	it('requires the contributor floor', async () => {
+	it('requires the maintainer floor (access matrix: rules W = maintainer)', async () => {
 		await DELETE(ev('DELETE', undefined, { id: 'r' }));
-		expect(resolveApiKeyAccess.mock.calls[0][3]).toBe(1); // ACCESS.contributor
+		expect(resolveApiKeyAccess.mock.calls[0][3]).toBe(2); // ACCESS.maintainer
 	});
 
 	it('maps a store RulesError(500) to 500', async () => {
