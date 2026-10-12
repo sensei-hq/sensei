@@ -1284,7 +1284,10 @@ mod scan_tests {
         let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let t = tempfile::tempdir().unwrap();
-        let repo = t.path().join("shop");
+        // A name of its own: the scan resolves the PROJECT by the repo's name, and
+        // a fixed name would share one project with every earlier run's folders.
+        let shop = format!("shop-{}", uuid::Uuid::new_v4().simple());
+        let repo = t.path().join(&shop);
         let ddl = repo.join("database/ddl/table/app");
         std::fs::create_dir_all(&ddl).unwrap();
         std::fs::create_dir_all(repo.join(".git")).unwrap();
@@ -1305,6 +1308,12 @@ mod scan_tests {
         )
         .unwrap();
 
+        std::fs::create_dir_all(repo.join("database/ddl/view/app")).unwrap();
+        std::fs::write(
+            repo.join("database/ddl/view/app/order_count.ddl"),
+            "set search_path to app;\n\ncreate or replace view app.order_count as\nselect count(*) as n from app.orders;\n",
+        )
+        .unwrap();
         let root_id = ctx
             .pg()
             .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
@@ -1312,10 +1321,10 @@ mod scan_tests {
             .unwrap();
         let fid = ctx
             .pg()
-            .upsert_repo_kind(&root_id, "git", "shop", &repo.to_string_lossy())
+            .upsert_repo_kind(&root_id, "git", &shop, &repo.to_string_lossy())
             .await
             .unwrap();
-        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "shop").await.unwrap();
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, &shop).await.unwrap();
         let repo_path = repo.to_string_lossy().to_string();
         super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
             .await
@@ -1377,8 +1386,15 @@ mod scan_tests {
 
         let detail = ctx.pg().schema_detail(&fid).await.unwrap();
         let names: Vec<&str> = detail.iter().map(|e| e.fqn.as_str()).collect();
-        assert_eq!(names, ["sql·shopdb·app·customers·item", "sql·shopdb·app·orders·item"]);
-        let orders = &detail[1];
+        assert_eq!(
+            names,
+            [
+                "sql·shopdb·app·customers·item",
+                "sql·shopdb·app·order_count·item",
+                "sql·shopdb·app·orders·item"
+            ]
+        );
+        let orders = &detail[2];
         assert_eq!(orders.columns.len(), 2);
         assert_eq!(orders.refs.len(), 1, "the key is placed: {:?}", orders.refs);
         assert_eq!(orders.refs[0].to, "sql·shopdb·app·customers·item");
@@ -1390,7 +1406,52 @@ mod scan_tests {
         .fetch_one(ctx.pg().pool())
         .await
         .unwrap();
-        assert_eq!(spanned, 2, "the detail hangs off the walked nodes, spans and all");
+        assert_eq!(spanned, 3, "the detail hangs off the walked nodes, spans and all");
+
+        // THE READ SIDE (step 5): the project's payload, as the Schema diagram
+        // gets it — the view's read of `orders` comes from the GRAPH's edge.
+        let (project,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "SELECT project_id FROM sensei.folder_projects WHERE folder_id = $1",
+        )
+        .bind(fid)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        let folders = ctx.pg().schema_folders_of_project(&project).await.unwrap();
+        // The repo's directory folders are placed in the project too; the nodes
+        // hang off the REPO folder, which must be among them.
+        assert!(folders.contains(&fid), "{folders:?} misses the repo folder {fid}");
+        let (entities, deps) = tokio::try_join!(
+            ctx.pg().schema_detail_in(&folders),
+            ctx.pg().schema_deps_in(&folders)
+        )
+        .unwrap();
+        let payload = crate::analysis::schema_model::assemble(&entities, &deps).unwrap();
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["tables"].as_array().unwrap().len(), 2, "{json}");
+        assert_eq!(json["entities"][0]["name"], "order_count");
+        assert_eq!(json["entities"][0]["kind"], "view");
+        assert_eq!(
+            json["refs"][0],
+            serde_json::json!({ "from": { "s": "app", "t": "orders", "c": "customer_id" },
+                                "to": { "s": "app", "t": "customers", "c": "id" },
+                                "action": "cascade" })
+        );
+        // dbd's own `deps` carry a TABLE's references too (437 of this repo's
+        // 793), so the key's table-level edge belongs here; and a call to a
+        // built-in is an endpoint no node stands for — dimmed, never dropped.
+        assert_eq!(
+            json["deps"],
+            serde_json::json!([
+                { "from": { "s": "app", "n": "order_count" }, "to": { "s": "app", "n": "orders" },
+                  "kind": "reads" },
+                { "from": { "s": "app", "n": "order_count" }, "to": { "s": "app", "n": "count" },
+                  "kind": "calls", "unresolved": true },
+                { "from": { "s": "app", "n": "orders" }, "to": { "s": "app", "n": "customers" },
+                  "kind": "reads" }
+            ]),
+            "the view's read and the key's table edge placed; the built-in dimmed"
+        );
     }
 
     /// A SECOND scan of an unchanged repository must leave the parse state alone.

@@ -25,6 +25,8 @@ pub struct UnplacedRef {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredSchemaEntity {
     pub fqn: String,
+    /// The node's name — the object's own, unqualified.
+    pub name: String,
     pub kind: String,
     pub db_schema: String,
     pub source: String,
@@ -42,6 +44,20 @@ pub struct StoredSchemaRef {
     pub to: String,
     pub to_column: String,
     pub on_delete: Option<String>,
+}
+
+/// One dependency the graph holds from a described object: a view reading a
+/// table, a routine calling a routine. `to` is the target's fqn when the target
+/// is an object the store describes; otherwise `None`, with the name it is known
+/// by in `target_name` — a renderer dims it rather than drops it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredDep {
+    pub from: String,
+    pub to: Option<String>,
+    pub target_name: Option<String>,
+    /// The occurrence kind as the indexer spells it (`reads`, `writes`,
+    /// `calls`, `type_use`).
+    pub kind: String,
 }
 
 type ColumnTuple =
@@ -174,23 +190,119 @@ impl PgStore {
         Ok(unplaced)
     }
 
-    /// Every object the store describes in `folder_id`, with its columns in
-    /// declaration order and its indexes and refs in write order.
+    /// Every object the store describes in `folder_id`. See [`Self::schema_detail_in`].
     pub async fn schema_detail(
         &self,
         folder_id: &uuid::Uuid,
     ) -> Result<Vec<StoredSchemaEntity>, String> {
-        type EntityTuple =
-            (uuid::Uuid, String, String, String, String, String, Option<String>, Option<String>);
+        self.schema_detail_in(std::slice::from_ref(folder_id)).await
+    }
+
+    /// The folders whose schema a project's diagram shows: the ones placed in
+    /// it (`sensei.folder_projects`), in a stable order.
+    pub async fn schema_folders_of_project(
+        &self,
+        project_id: &uuid::Uuid,
+    ) -> Result<Vec<uuid::Uuid>, String> {
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT DISTINCT folder_id FROM sensei.folder_projects
+              WHERE project_id = $1 ORDER BY folder_id",
+        )
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("schema store: folders of project {project_id}: {e}"))?;
+        Ok(rows.into_iter().map(|(f,)| f).collect())
+    }
+
+    /// When the detail of `folders` was last written — `None` when nothing in
+    /// them is described.
+    ///
+    /// The diagram cache needs it beside the graph's version: the import writes
+    /// AFTER the file tasks and touches no `files` row, so a payload cached
+    /// between the two would otherwise outlive the import.
+    pub async fn schema_version_of(
+        &self,
+        folders: &[uuid::Uuid],
+    ) -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
+        let (v,): (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
+            "SELECT max(se.modified_at)
+               FROM sensei.schema_entities se
+               JOIN sensei.nodes n ON n.id = se.node_id
+              WHERE n.folder_id = ANY($1)",
+        )
+        .bind(folders)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("schema store: version: {e}"))?;
+        Ok(v)
+    }
+
+    /// The dependencies the GRAPH holds from objects the store describes in
+    /// `folders` — one per (from, to, kind), whatever number of sites.
+    ///
+    /// A target the store does not describe — a sequence, a type, an object in
+    /// an unscanned schema — cannot be drawn as a node, so it comes back with
+    /// `to: None` and the name it is known by: schema-qualified when the graph
+    /// placed it on a SQL node, the written name when it placed nothing.
+    pub async fn schema_deps_in(&self, folders: &[uuid::Uuid]) -> Result<Vec<StoredDep>, String> {
+        let rows: Vec<(String, Option<String>, Option<String>, String)> =
+            sqlx_core::query_as::query_as(
+                "SELECT DISTINCT src.fqn
+                      , CASE WHEN ts.node_id IS NOT NULL THEN tn.fqn END
+                      , CASE WHEN ts.node_id IS NOT NULL THEN NULL
+                             WHEN tn.id IS NULL THEN e.target_name
+                             WHEN tn.language = 'sql'
+                               THEN split_part(tn.fqn, '·', 3) || '.' || tn.name
+                             ELSE tn.name END
+                      , o->>'kind'
+                   FROM sensei.edges e
+                   JOIN sensei.schema_entities fs ON fs.node_id = e.source_id
+                   JOIN sensei.nodes src ON src.id = e.source_id
+                   LEFT JOIN sensei.nodes tn ON tn.id = e.target_id
+                   LEFT JOIN sensei.schema_entities ts ON ts.node_id = e.target_id
+                  CROSS JOIN LATERAL jsonb_each(e.props->'occurrences') f(file, sites)
+                  CROSS JOIN LATERAL jsonb_array_elements(f.sites) o
+                  WHERE src.folder_id = ANY($1)
+                    AND o->>'kind' IN ('reads', 'writes', 'calls', 'type_use')
+                  ORDER BY 1, 2, 3, 4",
+            )
+            .bind(folders)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| format!("schema store: read deps: {e}"))?;
+        Ok(rows
+            .into_iter()
+            .map(|(from, to, target_name, kind)| StoredDep { from, to, target_name, kind })
+            .collect())
+    }
+
+    /// Every object the store describes in `folders`, with its columns in
+    /// declaration order and its indexes and refs in write order.
+    pub async fn schema_detail_in(
+        &self,
+        folders: &[uuid::Uuid],
+    ) -> Result<Vec<StoredSchemaEntity>, String> {
+        type EntityTuple = (
+            uuid::Uuid,
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+        );
         let entities: Vec<EntityTuple> = sqlx_core::query_as::query_as(
-            "SELECT se.node_id, n.fqn, se.kind::text, se.db_schema, se.source::text,
+            "SELECT se.node_id, n.fqn, n.name, se.kind::text, se.db_schema, se.source::text,
                     se.naming::text, se.note, se.note_md
                FROM sensei.schema_entities se
                JOIN sensei.nodes n ON n.id = se.node_id
-              WHERE n.folder_id = $1
+              WHERE n.folder_id = ANY($1)
               ORDER BY n.fqn",
         )
-        .bind(folder_id)
+        .bind(folders)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| format!("schema store: read entities: {e}"))?;
@@ -200,10 +312,10 @@ impl PgStore {
                     c.foreign_key, c.enum_typed, c.default_expr, c.note
                FROM sensei.schema_columns c
                JOIN sensei.nodes n ON n.id = c.node_id
-              WHERE n.folder_id = $1
+              WHERE n.folder_id = ANY($1)
               ORDER BY c.node_id, c.ordinal",
         )
-        .bind(folder_id)
+        .bind(folders)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| format!("schema store: read columns: {e}"))?;
@@ -213,10 +325,10 @@ impl PgStore {
                 "SELECT i.node_id, i.name, i.definition, i.unique_index
                    FROM sensei.schema_indexes i
                    JOIN sensei.nodes n ON n.id = i.node_id
-                  WHERE n.folder_id = $1
+                  WHERE n.folder_id = ANY($1)
                   ORDER BY i.id",
             )
-            .bind(folder_id)
+            .bind(folders)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| format!("schema store: read indexes: {e}"))?;
@@ -227,58 +339,61 @@ impl PgStore {
                    FROM sensei.schema_refs r
                    JOIN sensei.nodes n ON n.id = r.from_node_id
                    JOIN sensei.nodes t ON t.id = r.to_node_id
-                  WHERE n.folder_id = $1
+                  WHERE n.folder_id = ANY($1)
                   ORDER BY r.id",
             )
-            .bind(folder_id)
+            .bind(folders)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| format!("schema store: read refs: {e}"))?;
 
         Ok(entities
             .into_iter()
-            .map(|(node, fqn, kind, db_schema, source, naming, note, note_md)| StoredSchemaEntity {
-                fqn,
-                kind,
-                db_schema,
-                source,
-                naming,
-                note,
-                note_md,
-                columns: columns
-                    .iter()
-                    .filter(|c| c.0 == node)
-                    .map(|c| SchemaColumn {
-                        name: c.1.clone(),
-                        sql_type: c.2.clone(),
-                        primary_key: c.3,
-                        not_null: c.4,
-                        unique_key: c.5,
-                        foreign_key: c.6,
-                        enum_typed: c.7,
-                        default_expr: c.8.clone(),
-                        note: c.9.clone(),
-                    })
-                    .collect(),
-                indexes: indexes
-                    .iter()
-                    .filter(|i| i.0 == node)
-                    .map(|i| SchemaIndex {
-                        name: i.1.clone(),
-                        definition: i.2.clone(),
-                        unique: i.3,
-                    })
-                    .collect(),
-                refs: refs
-                    .iter()
-                    .filter(|r| r.0 == node)
-                    .map(|r| StoredSchemaRef {
-                        from_column: r.1.clone(),
-                        to: r.2.clone(),
-                        to_column: r.3.clone(),
-                        on_delete: r.4.clone(),
-                    })
-                    .collect(),
+            .map(|(node, fqn, name, kind, db_schema, source, naming, note, note_md)| {
+                StoredSchemaEntity {
+                    fqn,
+                    name,
+                    kind,
+                    db_schema,
+                    source,
+                    naming,
+                    note,
+                    note_md,
+                    columns: columns
+                        .iter()
+                        .filter(|c| c.0 == node)
+                        .map(|c| SchemaColumn {
+                            name: c.1.clone(),
+                            sql_type: c.2.clone(),
+                            primary_key: c.3,
+                            not_null: c.4,
+                            unique_key: c.5,
+                            foreign_key: c.6,
+                            enum_typed: c.7,
+                            default_expr: c.8.clone(),
+                            note: c.9.clone(),
+                        })
+                        .collect(),
+                    indexes: indexes
+                        .iter()
+                        .filter(|i| i.0 == node)
+                        .map(|i| SchemaIndex {
+                            name: i.1.clone(),
+                            definition: i.2.clone(),
+                            unique: i.3,
+                        })
+                        .collect(),
+                    refs: refs
+                        .iter()
+                        .filter(|r| r.0 == node)
+                        .map(|r| StoredSchemaRef {
+                            from_column: r.1.clone(),
+                            to: r.2.clone(),
+                            to_column: r.3.clone(),
+                            on_delete: r.4.clone(),
+                        })
+                        .collect(),
+                }
             })
             .collect())
     }
