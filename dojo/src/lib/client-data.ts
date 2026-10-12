@@ -526,8 +526,8 @@ export async function setPackAdoption(
 	await sendJson(youUrl(`/rule-packs/${encodeTenant(slug)}/adopt`), 'POST', { adopt }, opts);
 }
 
-/** `POST /v1/you/dojos` — self-serve create a dōjō (F3a); the caller becomes its
- *  admin. Returns the new `{ id, key, name }`. Throws `ClientApiError` on a
+/** `POST /v1/you/dojos` — self-serve create a dōjō (F3a): a TEAM
+ *  (`team/<slug>`) with the caller as its admin. Returns the new `{ id, key, name }`. Throws `ClientApiError` on a
  *  non-2xx (e.g. 409 name collision, 400 invalid). */
 export async function createDojo(
 	name: string,
