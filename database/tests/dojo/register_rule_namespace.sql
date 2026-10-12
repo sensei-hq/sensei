@@ -12,25 +12,15 @@
 
 begin;
 
+-- Only the calls run as the service role: a deploy-built database grants it no
+-- reach into `sensei`, so the function is its only way in. The checks below read
+-- back as the owner.
 set local role service_role;
 
 do $$
-declare
-    first  uuid;
-    again  uuid;
-    n      int;
 begin
-    first := dojo.register_rule_namespace('organization', 'ztest-rrn', 'Ztest');
-    again := dojo.register_rule_namespace('organization', 'ztest-rrn', 'Ztest renamed');
-    if first is null or again is distinct from first then
-        raise exception 'register_rule_namespace: re-registering returned % then % — expected one id', first, again;
-    end if;
-    select count(*) into n from sensei.namespaces where scope_key = 'organization' and slug = 'ztest-rrn';
-    if n <> 1 then raise exception 'register_rule_namespace: % rows for one namespace', n; end if;
-    if (select name from sensei.namespaces where id = first) <> 'Ztest renamed' then
-        raise exception 'register_rule_namespace: the name was not refreshed';
-    end if;
-
+    perform set_config('ztest.first', dojo.register_rule_namespace('organization', 'ztest-rrn', 'Ztest')::text, true);
+    perform set_config('ztest.again', dojo.register_rule_namespace('organization', 'ztest-rrn', 'Ztest renamed')::text, true);
     begin
         perform dojo.register_rule_namespace('no-such-scope', 'ztest-rrn', 'x');
         raise exception 'register_rule_namespace: accepted an unknown scope';
@@ -39,6 +29,23 @@ begin
 end $$;
 
 reset role;
+
+do $$
+declare
+    first uuid := nullif(current_setting('ztest.first', true), '')::uuid;
+    again uuid := nullif(current_setting('ztest.again', true), '')::uuid;
+    n     int;
+begin
+    if first is null or again is distinct from first then
+        raise exception 'register_rule_namespace: re-registering returned % then % — expected one id', first, again;
+    end if;
+    select count(*) into n from sensei.namespaces where scope_key = 'organization' and slug = 'ztest-rrn';
+    if n <> 1 then raise exception 'register_rule_namespace: % rows for one namespace', n; end if;
+    if (select name from sensei.namespaces where id = first) <> 'Ztest renamed' then
+        raise exception 'register_rule_namespace: the name was not refreshed';
+    end if;
+end $$;
+
 set local role authenticated;
 
 do $$
