@@ -224,18 +224,21 @@ describe('shapePullResponse (PullResponse wire shape + cursor)', () => {
 });
 
 describe('upsertRuleNamespace', () => {
-	it('upserts the namespace in the sensei schema on (scope_key, slug), returning its id', async () => {
+	// `sensei` is not exposed through PostgREST, so the registry is reached through
+	// dojo.register_rule_namespace — a `.schema('sensei')` call is "Invalid schema".
+	it('registers the namespace through dojo.register_rule_namespace, returning its id', async () => {
 		const db = makeDb();
-		db.queue({ data: { id: 'ns-1' }, error: null });
+		db.queue({ data: 'ns-1', error: null });
 		expect(await upsertRuleNamespace(db.client, RULE)).toBe('ns-1');
-		const ns = db.calls.find((c) => c.table === 'namespaces')!;
-		expect(ns.schema).toBe('sensei');
-		expect(ns.op).toBe('upsert');
-		expect(ns.onConflict).toBe('scope_key,slug');
-		expect(ns.payload).toMatchObject({ scope_key: 'organization', slug: 'sensei-hq', name: 'Sensei HQ' });
+		expect(db.calls).toEqual([
+			expect.objectContaining({
+				rpc: 'register_rule_namespace',
+				args: { p_scope_key: 'organization', p_slug: 'sensei-hq', p_name: 'Sensei HQ' }
+			})
+		]);
 	});
 
-	it('throws RulesError(500) when the upsert errors (never silent)', async () => {
+	it('throws RulesError(500) when the registration errors (never silent)', async () => {
 		const db = makeDb();
 		db.queue({ data: null, error: { message: 'ns boom' } });
 		await expect(upsertRuleNamespace(db.client, RULE)).rejects.toMatchObject({

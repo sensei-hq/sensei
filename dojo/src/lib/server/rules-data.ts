@@ -113,22 +113,19 @@ export class RulesError extends Error {
 
 /**
  * Register a rule's namespace (`sensei.namespaces` on `(scope_key, slug)`) and
- * return its id. The namespace registry is shared across tenants and no session
- * writes it, so this is the system's (#236 step 4) — `publishRule` then files the
- * rule under the id as the person.
+ * return its id, through `dojo.register_rule_namespace` — `sensei` is not exposed
+ * through PostgREST, so a `.schema('sensei')` call is refused outright. The
+ * namespace registry is shared across tenants and is the system's (#236 step 4);
+ * `publishRule` then files the rule under the id as the person.
  */
 export async function upsertRuleNamespace(db: DojoClient, rule: PublishedRule): Promise<string> {
-	const nsRes = await db
-		.schema('sensei')
-		.from('namespaces')
-		.upsert(
-			{ scope_key: rule.scope_key, slug: rule.namespace_slug, name: rule.namespace_name },
-			{ onConflict: 'scope_key,slug' }
-		)
-		.select('id')
-		.single();
-	if (nsRes.error) throw new RulesError(500, nsRes.error.message);
-	return (nsRes.data as { id: string }).id;
+	const { data, error } = await db.rpc('register_rule_namespace', {
+		p_scope_key: rule.scope_key,
+		p_slug: rule.namespace_slug,
+		p_name: rule.namespace_name
+	});
+	if (error) throw new RulesError(500, error.message);
+	return data as string;
 }
 
 /**
