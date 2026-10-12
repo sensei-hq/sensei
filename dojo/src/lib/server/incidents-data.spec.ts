@@ -111,7 +111,7 @@ describe('getIncidentDetail', () => {
 	});
 	it('404s when no tenant incident matches', async () => {
 		const db = makeDetailDb({ incidents: { data: null, error: null } });
-		await expect(getIncidentDetail(db, 't1', 'ghost')).rejects.toMatchObject({ status: 404 });
+		await expect(getIncidentDetail(db, 't1', 'ghost', db)).rejects.toMatchObject({ status: 404 });
 	});
 	it('fails closed (500) on the incident query error', async () => {
 		const db = makeDetailDb({ incidents: { data: null, error: { message: 'boom' } } });
