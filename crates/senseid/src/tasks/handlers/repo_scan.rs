@@ -1573,6 +1573,15 @@ public class Customer { public int Id { get; set; } public string Name { get; se
         )
         .await
         .unwrap();
+        // THE BARRIER RUNS AFTER IT, as in production, and its GC collects
+        // orphan stubs — which an ORM's file-less table nodes look like. Seen
+        // live: 9 EF tables written, then deleted by this step (#251 7d).
+        super::super::detect_communities(
+            &ctx,
+            &Task::new(TaskKind::DetectCommunities, &repo_path, ""),
+        )
+        .await
+        .unwrap();
         let detail = ctx.pg().schema_detail(&fid).await.unwrap();
         let shape: Vec<(String, String, String)> =
             detail.iter().map(|e| (e.fqn.clone(), e.db_schema.clone(), e.naming.clone())).collect();

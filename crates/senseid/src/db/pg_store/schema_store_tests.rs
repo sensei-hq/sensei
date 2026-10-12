@@ -316,3 +316,68 @@ async fn a_project_reads_only_its_own_schema() {
             .ok();
     }
 }
+
+/// **A NODE THE SCHEMA STORE DESCRIBES IS NOT AN ORPHAN.** An ORM's table has
+/// no file of its own — no walk declares it — and often no edge yet, which is
+/// exactly what `prune_orphan_stubs_scoped` collects. Seen live (#251 step 7d):
+/// the EF Core derivation wrote 9 tables and the next barrier's GC deleted all
+/// 9, their detail with them by cascade. The store describing a node is a
+/// reference to it; a stub the store no longer describes is still collected.
+///
+/// Mutation that must break this: drop the schema_entities clause from the GC.
+#[tokio::test]
+async fn a_described_stub_survives_the_orphan_gc() {
+    let Ok(pg) = PgStore::connect_test().await else {
+        return;
+    };
+    let tag = uuid::Uuid::new_v4();
+    let root = format!("/_test/schema-gc/{tag}");
+    let root_id = pg.add_watch_root(&root, "schema-gc", &serde_json::json!([])).await.unwrap();
+    let folder = pg.upsert_repo(&root_id, &format!("gc-{tag}"), &root).await.unwrap();
+    let stub = |name: &'static str| {
+        let pg = pg.clone();
+        async move {
+            pg.upsert_node_by_fqn(
+                &folder,
+                &format!("sql·Gc{tag}·dbo·{name}·item"),
+                "unknown",
+                name,
+                Some("sql"),
+                None,
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let (described, bare) = (stub("Orders").await, stub("Gone").await);
+    sqlx_core::query::query(
+        "INSERT INTO sensei.schema_entities (node_id, kind, db_schema, source, naming)
+         VALUES ($1, 'table', 'dbo', 'ef_core', 'convention')",
+    )
+    .bind(described)
+    .execute(pg.pool())
+    .await
+    .unwrap();
+
+    pg.prune_orphan_stubs_scoped(&[folder]).await.unwrap();
+
+    let alive = |id: uuid::Uuid| {
+        let pg = pg.clone();
+        async move {
+            let (n,): (i64,) =
+                sqlx_core::query_as::query_as("SELECT count(*) FROM sensei.nodes WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(pg.pool())
+                    .await
+                    .unwrap();
+            n == 1
+        }
+    };
+    assert!(alive(described).await, "the store describes it, so it is referenced");
+    assert!(!alive(bare).await, "an undescribed stub is still an orphan");
+    sqlx_core::query::query("DELETE FROM sensei.folders_to_watch WHERE id = $1")
+        .bind(root_id)
+        .execute(pg.pool())
+        .await
+        .ok();
+}
