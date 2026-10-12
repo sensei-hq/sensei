@@ -29,7 +29,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
 		const db = dojoDb();
 		// Attribution comes from the authenticated caller, not the body — a
 		// publisher can't spoof who published a rule.
-		const resp = await publishRule(db, rule, caller.userId);
+		const resp = await publishRule(db, caller.tenantId, rule, caller.userId);
 		// Audit-write failures don't fail the (already committed) publish — but
 		// they are logged, never silently dropped (mirrors dojo-mind).
 		await recordRulesAudit(db, caller.tenantId, 'publish', resp.id, caller.userId, {
@@ -48,11 +48,11 @@ export const POST: RequestHandler = async ({ params, request }) => {
 // token for this tenant may pull, mirroring dojo-mind's `pull_rules`).
 export const GET: RequestHandler = async ({ params, request, url }) => {
 	try {
-		await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.member);
+		const caller = await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.member);
 		const sinceRaw = url.searchParams.get('since');
 		const parsed = sinceRaw == null ? 0 : Number.parseInt(sinceRaw, 10);
 		const since = Number.isFinite(parsed) ? parsed : 0;
-		const page = await pullRules(dojoDb(), since);
+		const page = await pullRules(dojoDb(), caller.tenantId, since);
 		return Response.json(page);
 	} catch (e) {
 		if (e instanceof Response) return e;

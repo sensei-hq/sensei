@@ -15,7 +15,7 @@ export const DELETE: RequestHandler = async ({ params, request }) => {
 		if (!id) return apiError(400, 'rule id is required');
 
 		const db = dojoDb();
-		const tombstoned = await retractRule(db, id);
+		const tombstoned = await retractRule(db, caller.tenantId, id);
 		if (!tombstoned) return apiError(404, 'no such rule');
 		// Audit is fire-and-forget (mirrors dojo-mind) but logged on failure.
 		await recordRulesAudit(db, caller.tenantId, 'retract', id, caller.userId);
