@@ -121,6 +121,18 @@ beforeEach(() => {
 	caller.accessToken = 'jwt-A';
 });
 
+describe('GET /audit runs as the signed-in admin (#236)', () => {
+	it('reads with the caller\'s JWT, so the audit_events policy decides the rows', async () => {
+		await audit.GET(ev());
+		expect(mocks.listAudit.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+	});
+	it('refuses a caller with no session rather than reading as the service role', async () => {
+		caller.accessToken = undefined;
+		expect((await audit.GET(ev())).status).toBe(401);
+		expect(mocks.listAudit).not.toHaveBeenCalled();
+	});
+});
+
 // Policies are read and written as the signed-in admin, so the policies table's
 // policy decides (#236). The audit row is the system's record of the action:
 // written by the server from the resolved caller, never by the person's session.

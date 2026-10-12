@@ -4,13 +4,13 @@
 // shape the shipped `(console)` client `admin-data.ts listAudit()` unwraps. The
 // query + limit clamp live in `$lib/server/admin-data`.
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { listAudit, AdminError } from '$lib/server/admin-data';
 
 export const GET: RequestHandler = async ({ params, request, locals, url }) => {
 	try {
-		const { tenantId } = await resolveTenantAccess(
+		const caller = await resolveTenantAccess(
 			params.origin,
 			params.org,
 			request,
@@ -19,7 +19,7 @@ export const GET: RequestHandler = async ({ params, request, locals, url }) => {
 		);
 		const limitRaw = url.searchParams.get('limit');
 		const parsed = limitRaw == null ? NaN : Number.parseInt(limitRaw, 10);
-		const events = await listAudit(dojoDb(), tenantId, Number.isFinite(parsed) ? parsed : undefined);
+		const events = await listAudit(callerDb(caller), caller.tenantId, Number.isFinite(parsed) ? parsed : undefined);
 		return Response.json({ events });
 	} catch (e) {
 		if (e instanceof Response) return e;

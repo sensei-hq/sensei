@@ -3,7 +3,14 @@
 // AdminError → status, and auth-Response propagation. The store is mocked.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const caller = { tenantId: 't1', userId: 'lead-uuid', role: 'lead', access: 2, membershipId: 'm1' };
+const caller: Record<string, unknown> = {
+	tenantId: 't1',
+	userId: 'lead-uuid',
+	role: 'lead',
+	access: 3,
+	membershipId: 'm1',
+	accessToken: 'jwt-A'
+};
 
 class AdminError extends Error {
 	constructor(
@@ -16,7 +23,11 @@ class AdminError extends Error {
 
 const mocks = vi.hoisted(() => ({ resolveTenantAccess: vi.fn(), getClientAuditLedger: vi.fn() }));
 
-vi.mock('$lib/server/dojo-supabase', () => ({ dojoDb: () => ({}), ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 } }));
+// The service role vs the caller's own JWT — which client each store call got.
+vi.mock('$lib/server/dojo-supabase', () => ({
+	dojoDb: () => ({ client: 'service' }),
+	userDb: (token: string) => ({ client: 'user', token })
+}));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
 	apiError: (status: number, message: string) =>
@@ -39,6 +50,19 @@ function ev() {
 beforeEach(() => {
 	mocks.resolveTenantAccess.mockClear().mockResolvedValue(caller);
 	mocks.getClientAuditLedger.mockClear().mockResolvedValue([]);
+	caller.accessToken = 'jwt-A';
+});
+
+describe('GET /audit/ledger runs as the signed-in person (#236)', () => {
+	it('reads with the caller\'s JWT, so the audit_events policy decides the rows', async () => {
+		await route.GET(ev());
+		expect(mocks.getClientAuditLedger.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+	});
+	it('refuses a caller with no session rather than reading as the service role', async () => {
+		caller.accessToken = undefined;
+		expect((await route.GET(ev())).status).toBe(401);
+		expect(mocks.getClientAuditLedger).not.toHaveBeenCalled();
+	});
 });
 
 describe('GET /audit/ledger', () => {

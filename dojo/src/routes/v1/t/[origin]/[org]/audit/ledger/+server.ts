@@ -4,14 +4,14 @@
 // source for the client-audit screen — NOT the general admin action-audit
 // (`…/audit`, ADMIN) the screen was previously bound to.
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { getClientAuditLedger, AdminError } from '$lib/server/client-audit-data';
 
 export const GET: RequestHandler = async ({ params, request, locals }) => {
 	try {
-		const { tenantId } = await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.lead);
-		const entries = await getClientAuditLedger(dojoDb(), tenantId);
+		const caller = await resolveTenantAccess(params.origin, params.org, request, locals, ACCESS.lead);
+		const entries = await getClientAuditLedger(callerDb(caller), caller.tenantId);
 		return Response.json({ entries });
 	} catch (e) {
 		if (e instanceof Response) return e;
