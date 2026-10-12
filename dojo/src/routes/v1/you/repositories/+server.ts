@@ -42,9 +42,9 @@ function parseRepos(body: Record<string, unknown>): RepoInput[] {
 
 export const POST: RequestHandler = async ({ request, locals }) => {
 	try {
-		const { userId, db } = await resolveCaller(request, locals);
+		const caller = await resolveCaller(request, locals);
 		const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-		const result = await registerRepositories(db, userId, parseRepos(body));
+		const result = await registerRepositories(callerDb(caller), parseRepos(body));
 		return Response.json(result);
 	} catch (e) {
 		if (e instanceof Response) return e;
