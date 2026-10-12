@@ -44,7 +44,7 @@ interface Call {
 	op?: string;
 	payload?: unknown;
 	select?: string;
-	filters: [string, string, unknown][];
+	filters: ([string, string, unknown] | [string, string])[];
 	order?: [string, unknown];
 	limit?: number;
 }
