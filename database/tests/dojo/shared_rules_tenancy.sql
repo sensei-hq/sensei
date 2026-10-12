@@ -37,6 +37,12 @@ insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via)
 insert into sensei.namespaces (id, scope_key, name, slug) values
   ('e0000000-0000-4000-8000-0000000000a1', 'organization', 'ztest rules ns', 'ztest-rules-ns');
 
+-- The backfill reports totals over the whole table (what a deploy wants), so
+-- measure against what is already there — a database with other rules in it
+-- (the relay round trip publishes some) must not fail this.
+create temp table backfill_baseline on commit drop as
+    select b.owned, b.unprovable from dojo.backfill_shared_rules_tenant() b;
+
 -- Three rules as they stand BEFORE the backfill: no tenant yet.
 insert into dojo.shared_rules (id, namespace_id, content_hash, rule_type, title, content,
                                enforcement, published_by, published_at) values
@@ -60,9 +66,10 @@ declare
     owned int;
     unprovable int;
 begin
-    select b.owned, b.unprovable into owned, unprovable from dojo.backfill_shared_rules_tenant() b;
+    select b.owned - base.owned, b.unprovable - base.unprovable into owned, unprovable
+      from dojo.backfill_shared_rules_tenant() b, backfill_baseline base;
     if (owned, unprovable) is distinct from (2, 1) then
-        raise exception 'backfill: expected 2 owned / 1 unprovable, got % / %', owned, unprovable;
+        raise exception 'backfill: expected 2 more owned / 1 more unprovable, got % / %', owned, unprovable;
     end if;
     if (select tenant_id from dojo.shared_rules where id = 'f0000000-0000-4000-8000-0000000000a1')
        is distinct from 'b0000000-0000-4000-8000-00000000001a' then
