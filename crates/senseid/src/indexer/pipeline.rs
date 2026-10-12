@@ -1057,14 +1057,32 @@ pub fn placement_on_disk(
     repo_root: &std::path::Path,
     language: crate::indexer::facts::Language,
 ) -> Option<crate::indexer::placement::Placement> {
-    let names = crate::adapters::manifest::all_manifest_filenames();
     let mut dir = file.parent()?;
     loop {
+        // EVERY manifest an adapter claims, by name OR by extension. Probing the
+        // fixed names alone never opened a `.csproj`, so a C# file whose only
+        // manifest was its project went unplaced — see
+        // `a_cs_file_is_placed_by_its_csproj`.
+        //
         // Deterministic: the pure `owning_manifest` breaks a several-manifests
         // -in-one-directory tie by NAME rather than by walk order (R6), so the
         // candidates for this directory are sorted the same way before asking.
-        let mut here: Vec<std::path::PathBuf> =
-            names.iter().map(|n| dir.join(n)).filter(|p| p.is_file()).collect();
+        let mut here: Vec<std::path::PathBuf> = match std::fs::read_dir(dir) {
+            Ok(entries) => entries
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| p.is_file())
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .and_then(crate::adapters::manifest::manifest_adapter_for_filename)
+                        .is_some_and(|a| crate::indexer::placement::serves(a.ecosystem(), language))
+                })
+                .collect(),
+            // An unreadable directory holds no manifest this walk can read; the
+            // climb continues, exactly as a missing fixed name did.
+            Err(_) => Vec::new(),
+        };
         here.sort();
         for manifest in &here {
             let Ok(text) = std::fs::read_to_string(manifest) else { continue };
@@ -1078,6 +1096,53 @@ pub fn placement_on_disk(
             return None;
         }
         dir = dir.parent()?;
+    }
+}
+
+#[cfg(test)]
+mod placement_on_disk_tests {
+    use super::placement_on_disk;
+    use crate::indexer::facts::Language;
+
+    /// **A C# FILE IS PLACED BY ITS `.csproj`.** The walk up used to try only
+    /// the FIXED manifest filenames, so an extension-named manifest was never
+    /// opened: every C# file whose only manifest was a `.csproj` read "no
+    /// manifest names a package — not indexed", named project or not.
+    ///
+    /// Mutations that must break this: consider fixed names only; drop the
+    /// MSBuild default name.
+    #[test]
+    fn a_cs_file_is_placed_by_its_csproj() {
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path();
+        std::fs::create_dir_all(repo.join("src/Store")).unwrap();
+        std::fs::write(repo.join("Store.sln"), "").unwrap();
+        std::fs::write(
+            repo.join("src/Store/Store.Api.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>",
+        )
+        .unwrap();
+        let file = repo.join("src/Store/Orders.cs");
+        std::fs::write(&file, "namespace Store;").unwrap();
+
+        let placed =
+            placement_on_disk(&file, repo, Language::CSharp).expect("the csproj places it");
+        assert_eq!(placed.package, "Store.Api");
+
+        // A .NET project places .NET files ONLY. An ASP.NET folder holding a
+        // `package.json` beside its `.csproj` keeps its JavaScript under npm —
+        // the name sort would otherwise hand it to `Store.Api.csproj`.
+        std::fs::write(repo.join("src/Store/package.json"), "{\"name\":\"store-web\"}").unwrap();
+        let script = repo.join("src/Store/app.js");
+        std::fs::write(&script, "export const a = 1;").unwrap();
+        let js = placement_on_disk(&script, repo, Language::TypeScript).expect("npm places it");
+        assert_eq!(js.package, "store-web");
+        assert_eq!(placement_on_disk(&file, repo, Language::CSharp).unwrap().package, "Store.Api");
+
+        // A solution names no package, so a file beside only a `.sln` is not placed.
+        let loose = repo.join("Loose.cs");
+        std::fs::write(&loose, "class C {}").unwrap();
+        assert_eq!(placement_on_disk(&loose, repo, Language::CSharp), None);
     }
 }
 

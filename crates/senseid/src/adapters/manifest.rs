@@ -71,6 +71,16 @@ pub trait ManifestAdapter: Send + Sync {
         self.manifest_extensions().iter().any(|e| e.eq_ignore_ascii_case(ext))
     }
 
+    /// The name the ecosystem's TOOL gives a manifest that states none — for
+    /// MSBuild, `$(AssemblyName)` defaults to the project file's name.
+    ///
+    /// Default: none. Most ecosystems have no such rule, and naming a package
+    /// after anything the tool would not is an identity no dependency edge
+    /// spells (R4) — a `package.json` with no `name` still names nothing.
+    fn name_by_tool_default(&self, _filename: &str) -> Option<String> {
+        None
+    }
+
     /// Lockfile names this adapter can read (02 S6b). Default: none, so no
     /// existing adapter breaks by not implementing it.
     ///
