@@ -332,25 +332,16 @@ describe('listIdentities (global rows, scoped by membership)', () => {
 	});
 });
 
-// A two-insert stub for createDojo: `.single()` shifts the next queued result
-// (tenant insert, then the addMember membership insert). Captures each insert's
-// table + payload so the tenant shape + creator admin membership can be asserted.
-function makeCreateDb(...results: { data?: unknown; error: unknown }[]) {
-	const queue = [...results];
-	const inserts: { table?: string; payload?: Record<string, unknown> }[] = [];
-	let table: string | undefined;
-	const b: Record<string, unknown> = {};
-	b.from = (t: string) => {
-		table = t;
-		return b;
+// createDojo calls dojo.create_dojo; this stub records the rpc and answers it.
+function makeCreateDb(result: { data?: unknown; error: unknown }) {
+	const calls: { fn: string; args: Record<string, unknown> }[] = [];
+	const db = {
+		rpc: (fn: string, args: Record<string, unknown>) => {
+			calls.push({ fn, args });
+			return { single: async () => result };
+		}
 	};
-	b.insert = (payload: Record<string, unknown>) => {
-		inserts.push({ table, payload });
-		return b;
-	};
-	b.select = () => b;
-	b.single = () => Promise.resolve(queue.shift() ?? { data: null, error: null });
-	return { db: b as unknown as DojoClient, inserts };
+	return { db: db as unknown as DojoClient, calls };
 }
 
 describe('slugify', () => {
@@ -373,44 +364,27 @@ describe('parseNewDojo', () => {
 	});
 });
 
+// The tenant, its key and url, and the creator's admin membership are the
+// database's, in one transaction, for the SESSION's principal — proved against a
+// real Postgres in database/tests/dojo/create_dojo_insert.sql (#236). This side
+// slugs the name and keeps the collision a 409.
 describe('createDojo', () => {
-	it('inserts an organization tenant (key organization/{slug}) and makes the creator admin', async () => {
-		// Every field here is one the database rejects if it is wrong, and the
-		// old values were all three wrong at once: origin 'org' is not a
-		// tenant_origin label any more (personal | organization), the column is
-		// `slug` not `org`, and the key prefix is the ORIGIN — which is what
-		// `dojo-auth.ts` joins back together to resolve /t/{origin}/{slug}.
-		const { db, inserts } = makeCreateDb(
-			{ data: { id: 't-new', key: 'organization/acme', name: 'Acme' }, error: null },
-			{ data: { id: 'm-new', role: 'admin' }, error: null } // addMember insert
-		);
-		const out = await createDojo(db, 'p1', { name: 'Acme', kind: 'employer' });
-		expect(out).toEqual({ id: 't-new', key: 'organization/acme', name: 'Acme' });
-		// tenant shape
-		expect(inserts[0]).toMatchObject({
-			table: 'tenants',
-			payload: {
-				key: 'organization/acme',
-				origin: 'organization',
-				slug: 'acme',
-				name: 'Acme',
-				scope: 'private'
-			}
-		});
-		// The retired column must not be sent — it would fail the insert outright.
-		expect(inserts[0].payload).not.toHaveProperty('org');
-		// The dōjō url carries the same key, so it moves with the prefix.
-		expect((inserts[0].payload as Record<string, string>).dojo_url).toContain(
-			'organization/acme'
-		);
-		// creator admin membership — user_id is the caller's PRINCIPAL id (§VIII.2)
-		expect(inserts[1]).toMatchObject({
-			table: 'memberships',
-			payload: { tenant_id: 't-new', user_id: 'p1', role: 'admin', kind: 'employer' }
-		});
+	it('asks the database for the dōjō by name, slug and kind — and names no user', async () => {
+		const { db, calls } = makeCreateDb({ data: { id: 't-new', key: 'organization/acme-labs', name: 'Acme Labs' }, error: null });
+		const out = await createDojo(db, { name: 'Acme Labs', kind: 'employer' });
+		expect(out).toEqual({ id: 't-new', key: 'organization/acme-labs', name: 'Acme Labs' });
+		expect(calls).toEqual([
+			{ fn: 'create_dojo', args: { p_name: 'Acme Labs', p_slug: 'acme-labs', p_kind: 'employer' } }
+		]);
 	});
 	it('maps a key collision (23505) to 409', async () => {
 		const { db } = makeCreateDb({ data: null, error: { code: '23505', message: 'dup key' } });
-		await expect(createDojo(db, 'u1', { name: 'Acme', kind: 'client' })).rejects.toMatchObject({ status: 409 });
+		await expect(createDojo(db, { name: 'Acme', kind: 'client' })).rejects.toMatchObject({ status: 409 });
+	});
+	it('keeps a refusal as its status, and anything else a 500', async () => {
+		const refused = makeCreateDb({ data: null, error: { code: '42501', message: 'a signed-in session is required' } });
+		await expect(createDojo(refused.db, { name: 'Acme', kind: 'client' })).rejects.toMatchObject({ status: 403 });
+		const broken = makeCreateDb({ data: null, error: { code: '08006', message: 'connection reset' } });
+		await expect(createDojo(broken.db, { name: 'Acme', kind: 'client' })).rejects.toMatchObject({ status: 500 });
 	});
 });

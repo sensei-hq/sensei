@@ -14,6 +14,7 @@
 
 import type { dojoDb } from './dojo-supabase';
 import { resolveDisplayNames } from './identity-resolve';
+import { refusalStatus } from './db-refusal';
 
 /** The supabase-js client returned by `dojoDb()` (scoped to the `dojo` schema). */
 export type DojoClient = ReturnType<typeof dojoDb>;
@@ -385,9 +386,9 @@ export function parseNewDojo(body: Record<string, unknown>): NewDojoInput {
 /**
  * Create a dōjō the caller owns (F3a, issue #117). The tenant is an
  * `organization` with key `organization/{slug}`; the creator becomes its
- * `admin`. A key collision (someone already registered that name) is a 409. The
- * creator's admin membership reuses {@link addMember} (its own duplicate guard).
- * Fails closed.
+ * `admin`. A key collision (someone already registered that name) is a 409.
+ * dojo.create_dojo does both in one transaction, for the SESSION's principal,
+ * and builds the key and url itself (#236). Fails closed.
  *
  * The key's first segment is the ORIGIN, not a forge — `dojo-auth.ts` resolves a
  * tenant by joining the two URL segments back into `{origin}/{slug}`, so the
@@ -403,38 +404,16 @@ export function parseNewDojo(body: Record<string, unknown>): NewDojoInput {
  */
 export async function createDojo(
 	db: DojoClient,
-	userId: string,
 	input: NewDojoInput
 ): Promise<{ id: string; key: string; name: string }> {
-	const slug = slugify(input.name);
-	const key = `organization/${slug}`;
 	const { data, error } = await db
-		.from('tenants')
-		.insert({
-			key,
-			origin: 'organization',
-			slug,
-			name: input.name,
-			dojo_url: `dojo.sensei-hq.org/${key}`,
-			scope: 'private'
-		})
-		.select('id, key, name')
+		.rpc('create_dojo', { p_name: input.name, p_slug: slugify(input.name), p_kind: input.kind })
 		.single();
 	if (error) {
 		if (error.code === '23505') throw new AdminError(409, 'a dōjō with that name already exists');
-		throw new AdminError(500, error.message);
+		throw new AdminError(refusalStatus(error), error.message);
 	}
-	const tenant = data as { id: string; key: string; name: string };
-	// The creator becomes admin — reuse addMember (shares the membership insert +
-	// its own duplicate guard). authenticated_via = `sso` (the web/JWT console
-	// auth plane; `dojo.auth_method` is sso | github_oauth | device_code).
-	await addMember(db, tenant.id, {
-		user_id: userId,
-		kind: input.kind,
-		authenticated_via: 'sso',
-		role: 'admin'
-	});
-	return tenant;
+	return data as { id: string; key: string; name: string };
 }
 
 // ── policies: upsert / patch / delete ────────────────────────────────────────
