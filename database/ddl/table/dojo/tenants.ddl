@@ -47,18 +47,9 @@ comment on column dojo.tenants.self_hosted
 comment on column dojo.tenants.settings
      is 'Free-form tenant configuration (heartbeat window, triage thresholds, etc.).';
 
--- RLS deny-by-default: server-only table (the dōjō Worker uses service_role, which
--- bypasses RLS; no client authenticated/anon grant). Locks out any direct PostgREST
--- access while service_role keeps full access; clears the Supabase rls_disabled advisor.
+-- RLS: the access matrix's cells for this table. The policies call the access
+-- predicates and so live in policies/dojo/tenants.sql (see policies/README.md).
 alter table dojo.tenants enable row level security;
-
--- No client access: authenticated/anon are denied all rows + writes; the dōjō Worker
--- reads/writes as service_role, which bypasses RLS. Explicit deny-all so RLS has a
--- policy (clears the rls_enabled_no_policy advisor). Idempotent.
-drop policy if exists tenants_service_only on dojo.tenants;
-create policy tenants_service_only on dojo.tenants
-    for all to authenticated, anon
-    using (false) with check (false);
 comment on column tenants.claimed_at
      is 'CLAIM (§II.4). An org tenant is created by whoever signs in first, who may be a plain member — so existence proves nothing about ownership. `claimed_at` is set only once someone whose FORGE role is owner/admin has signed in, and an unclaimed tenant may not hold a subscription and therefore can never sync private data.
 
