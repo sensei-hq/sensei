@@ -70,6 +70,10 @@ function makeDb() {
 		cur.filters.push(['neq', c, v]);
 		return b;
 	};
+	b.or = (expr: string) => {
+		cur.filters.push(['or', expr]);
+		return b;
+	};
 	b.gt = (c: string, v: unknown) => {
 		cur.filters.push(['gt', c, v]);
 		return b;
@@ -395,7 +399,29 @@ describe('publishArtifact', () => {
 
 // ── pullArtifactsSince ───────────────────────────────────────────────────────
 
+const MAINTAINER = { principalId: 'p-maint', seesSubmissions: true } as const;
+const CONTRIBUTOR = { principalId: 'p-alice', seesSubmissions: false } as const;
+
 describe('pullArtifactsSince', () => {
+	// Before triage a submission is its contributor's and the maintainers' — not
+	// every member's (#236 matrix, "Knowledge"). A contributor's pull carries
+	// every published or archived artifact, and their OWN submissions only.
+	it('a contributor pulls published work and their own submissions, not others\' submissions', async () => {
+		const db = makeDb();
+		db.queue({ data: [], error: null });
+		await pullArtifactsSince(db.client, 't1', 0, CONTRIBUTOR);
+		const call = db.calls.find((c) => c.table === 'artifacts')!;
+		expect(call.filters).toContainEqual(['or', 'status.neq.submitted,contributed_by.eq.p-alice']);
+	});
+
+	it('a maintainer pulls every status — triage needs the submissions', async () => {
+		const db = makeDb();
+		db.queue({ data: [], error: null });
+		await pullArtifactsSince(db.client, 't1', 0, MAINTAINER);
+		const call = db.calls.find((c) => c.table === 'artifacts')!;
+		expect(call.filters.some((f) => f[0] === 'or')).toBe(false);
+	});
+
 	it('scopes to the tenant, filters seq>since, orders asc, selects the join, shapes the response', async () => {
 		const db = makeDb();
 		db.queue({
@@ -419,7 +445,7 @@ describe('pullArtifactsSince', () => {
 			],
 			error: null
 		});
-		const out = await pullArtifactsSince(db.client, 't1', 3);
+		const out = await pullArtifactsSince(db.client, 't1', 3, MAINTAINER);
 		expect(out.cursor).toBe(5);
 		expect(out.artifacts[0].tenant_key).toBe('github/sensei-hq');
 		expect(out.artifacts[0].kind).toBe('guard');
@@ -434,13 +460,13 @@ describe('pullArtifactsSince', () => {
 	it('empty result → { artifacts: [], cursor: since }', async () => {
 		const db = makeDb();
 		db.queue({ data: [], error: null });
-		expect(await pullArtifactsSince(db.client, 't1', 42)).toEqual({ artifacts: [], cursor: 42 });
+		expect(await pullArtifactsSince(db.client, 't1', 42, MAINTAINER)).toEqual({ artifacts: [], cursor: 42 });
 	});
 
 	it('throws ArtifactError(500) on a select error', async () => {
 		const db = makeDb();
 		db.queue({ data: null, error: { message: 'pull boom' } });
-		await expect(pullArtifactsSince(db.client, 't1', 0)).rejects.toMatchObject({
+		await expect(pullArtifactsSince(db.client, 't1', 0, MAINTAINER)).rejects.toMatchObject({
 			status: 500,
 			message: 'pull boom'
 		});

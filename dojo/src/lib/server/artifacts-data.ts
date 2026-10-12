@@ -390,17 +390,32 @@ export function shapeArtifactPullResponse(rows: ArtifactRow[], since: number): A
  * one tenant never sees another's artifacts. Delegates shaping to
  * `shapeArtifactPullResponse`.
  */
+/** Who is pulling: their principal, and whether they see OTHER members'
+ *  pre-triage submissions (maintainer and above — triage is their work). */
+export interface ArtifactViewer {
+	principalId: string;
+	seesSubmissions: boolean;
+}
+
 export async function pullArtifactsSince(
 	db: DojoClient,
 	tenantId: string,
-	since: number
+	since: number,
+	viewer: ArtifactViewer
 ): Promise<ArtifactPullResponse> {
-	const { data, error } = await db
+	let query = db
 		.from('artifacts')
 		.select(ARTIFACT_PULL_SELECT)
-		.eq('tenant_id', tenantId)
-		.gt('seq', since)
-		.order('seq', { ascending: true });
+		.eq('tenant_id', tenantId);
+	// Before triage a submission is its contributor's and the maintainers' —
+	// not every member's (#236, access matrix "Knowledge"). Safe for the cursor:
+	// `dojo.artifacts_seq_bump` re-stamps seq on publish, so a submission this
+	// puller skipped arrives once it is published. `principalId` is the
+	// authenticated principal from the membership lookup, never request input.
+	if (!viewer.seesSubmissions) {
+		query = query.or(`status.neq.submitted,contributed_by.eq.${viewer.principalId}`);
+	}
+	const { data, error } = await query.gt('seq', since).order('seq', { ascending: true });
 	if (error) throw new ArtifactError(500, error.message);
 	return shapeArtifactPullResponse((data ?? []) as unknown as ArtifactRow[], since);
 }

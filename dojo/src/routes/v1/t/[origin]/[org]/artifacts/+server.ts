@@ -63,7 +63,10 @@ export const GET: RequestHandler = async ({ params, request, url }) => {
 		const sinceRaw = url.searchParams.get('since');
 		const parsed = sinceRaw == null ? 0 : Number.parseInt(sinceRaw, 10);
 		const since = Number.isFinite(parsed) ? parsed : 0;
-		const page = await pullArtifactsSince(dojoDb(), caller.tenantId, since);
+		const page = await pullArtifactsSince(dojoDb(), caller.tenantId, since, {
+			principalId: caller.userId,
+			seesSubmissions: caller.access >= ACCESS.maintainer
+		});
 		return Response.json(page);
 	} catch (e) {
 		if (e instanceof Response) return e;
