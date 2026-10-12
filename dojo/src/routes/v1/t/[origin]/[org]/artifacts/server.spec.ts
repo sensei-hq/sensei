@@ -139,19 +139,36 @@ describe('GET /artifacts (pull)', () => {
 			cursor: 9
 		});
 		const res = await GET(evt(req(), '5'));
-		expect(spies.pullArtifactsSince).toHaveBeenCalledWith(expect.anything(), 't1', 5);
+		expect(spies.pullArtifactsSince).toHaveBeenCalledWith(expect.anything(), 't1', 5, expect.anything());
 		expect(await res.json()).toEqual({
 			artifacts: [{ id: 'art-9', seq: 9, status: 'published' }],
 			cursor: 9
 		});
 	});
 
+	// The viewer is the CALLER: their principal, and whether their role reaches
+	// triage. A contributor's device sees others' submissions only once published.
+	it('pulls as the caller — a contributor does not see others\' submissions, a maintainer does', async () => {
+		await GET(evt(req(), '0'));
+		expect(spies.pullArtifactsSince.mock.calls[0][3]).toEqual({
+			principalId: 'user-uuid',
+			seesSubmissions: false
+		});
+		spies.pullArtifactsSince.mockClear();
+		spies.resolveApiKeyAccess.mockResolvedValue({ ...CALLER, role: 'maintainer', access: 2 });
+		await GET(evt(req(), '0'));
+		expect(spies.pullArtifactsSince.mock.calls[0][3]).toEqual({
+			principalId: 'user-uuid',
+			seesSubmissions: true
+		});
+	});
+
 	it('defaults since to 0 when absent or non-numeric', async () => {
 		await GET(evt(req()));
-		expect(spies.pullArtifactsSince).toHaveBeenCalledWith(expect.anything(), 't1', 0);
+		expect(spies.pullArtifactsSince).toHaveBeenCalledWith(expect.anything(), 't1', 0, expect.anything());
 		spies.pullArtifactsSince.mockClear();
 		await GET(evt(req(), 'notanumber'));
-		expect(spies.pullArtifactsSince).toHaveBeenCalledWith(expect.anything(), 't1', 0);
+		expect(spies.pullArtifactsSince).toHaveBeenCalledWith(expect.anything(), 't1', 0, expect.anything());
 	});
 
 	it('propagates the auth Response (e.g. 401) without pulling', async () => {
