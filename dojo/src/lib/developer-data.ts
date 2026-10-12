@@ -29,6 +29,7 @@ import type { OrgKind } from './dojo-data';
 // anonymised, so singling one membership out implied the others were not.
 export const DEV_ROLE_BY_KIND: Record<OrgKind, string> = {
 	Organization: 'Contributor',
+	Team: 'Member',
 	Personal: 'Owner'
 };
 

@@ -59,8 +59,9 @@ describe('roleKey — label → lowercase role rank key', () => {
 });
 
 describe('kindKey — capitalized kind → lowercase kit kind', () => {
-	it('maps to the two buckets that exist', () => {
+	it('maps to the three buckets that exist', () => {
 		expect(kindKey('Organization')).toBe('organization');
+		expect(kindKey('Team')).toBe('team');
 		expect(kindKey('Personal')).toBe('personal');
 	});
 

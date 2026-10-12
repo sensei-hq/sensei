@@ -88,11 +88,20 @@ describe('groupDojos — membership groups', () => {
 		expect(groupDojos([])).toEqual([]);
 	});
 
-	it('exposes exactly the two groups the forge can tell apart', () => {
+	it('groups a team dōjō under Teams, apart from organisations', () => {
+		const team: KitDojo = { ...dojos[0], slug: 'guild', kind: 'team' };
+		const groups = groupDojos([...dojos, team]);
+		expect(groups.map((g) => g.kind)).toEqual(['organization', 'team']);
+		expect(groups.find((g) => g.kind === 'team')?.items.map((d) => d.slug)).toEqual(['guild']);
+	});
+
+	it('exposes the groups the dōjō can tell apart', () => {
 		// Employer / Clients / Communities are gone: nothing could derive them, and
 		// the one behaviour attached to Client (anonymised sends) described a
 		// difference that does not exist — every insight is anonymised.
-		expect(DOJO_GROUPS.map((g) => g.kind)).toEqual(['organization', 'personal']);
+		// A Team is a hand-made dōjō — told apart from a forge-proven Organization
+		// (decision 2026-10-12).
+		expect(DOJO_GROUPS.map((g) => g.kind)).toEqual(['organization', 'team', 'personal']);
 	});
 
 	it('puts a personal-kind dōjō in its own Personal group (my-dojos resolved design Q5)', () => {

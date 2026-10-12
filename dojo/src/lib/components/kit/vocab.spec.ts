@@ -25,6 +25,7 @@ describe('kit vocab lookups', () => {
 	});
 
 	it('kindTone resolves org kinds and defaults to employer', () => {
+		expect(kindTone('team').kanji).toBe('組');
 		expect(kindTone('client').text).toBe('text-accent');
 		expect(kindTone('community').text).toBe('text-success');
 		expect(kindTone(undefined).kanji).toBe('社');

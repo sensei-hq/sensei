@@ -1,5 +1,9 @@
 -- Creating a dōjō (POST /v1/you/dojos, issue #117), run against a real database.
 --
+-- A hand-made dōjō is a TEAM: `team/<slug>`. `organization/<login>` belongs to
+-- the forge-proven organisation alone (provisioning), so nobody can hold an
+-- organisation's natural name ahead of it (decision 2026-10-12, GHSA-hqv4).
+--
 -- createDojo used to issue two inserts as the service role — the tenant, then
 -- the creator's admin membership — and once sent retired columns (`origin:
 -- 'org'`, `org: slug`, `key: 'org/{slug}'`) that a mocked test asserted and
@@ -7,7 +11,8 @@
 -- (#236): one transaction, the key and url built in the database, the admin
 -- membership the SESSION's own principal — never a user the caller names.
 --
--- WHAT BREAKS THIS TEST: a key whose prefix is not the origin, or a url that
+-- WHAT BREAKS THIS TEST: create_dojo making anything but a `team` tenant; a key
+-- whose prefix is not the origin, or a url that
 -- does not end in the key; a membership on anyone but the session's principal,
 -- or on its login id; a tenant left behind when the membership fails; a slug
 -- that is not a slug; creating with no session; reverting the enum or the
@@ -36,7 +41,7 @@ begin
 
     perform set_config('request.jwt.claims', '{"sub":"11111111-1111-1111-1111-111111111111"}', true);
     select * into r from dojo.create_dojo('Acme', 'ztest-acme', 'employer');
-    if r.key <> 'organization/ztest-acme' or r.name <> 'Acme' or r.id is null then
+    if r.key <> 'team/ztest-acme' or r.name <> 'Acme' or r.id is null then
         raise exception 'create_dojo returned %', r;
     end if;
 
@@ -64,8 +69,11 @@ begin
     select t.key, t.origin::text as origin, t.slug, t.dojo_url, m.role::text as role, m.user_id
       into got
       from dojo.tenants t join dojo.memberships m on m.tenant_id = t.id
-     where t.key = 'organization/ztest-acme';
-    if got is null then raise exception 'create_dojo produced no tenant with a membership.'; end if;
+     where t.key = 'team/ztest-acme';
+    if got is null then raise exception 'create_dojo produced no team tenant with a membership.'; end if;
+    if got.origin <> 'team' then
+        raise exception 'create_dojo made a % tenant — a hand-made dōjō is a team.', got.origin;
+    end if;
 
     -- The key's first segment IS the origin. dojo-auth.ts resolves a tenant by
     -- joining the two URL segments, so a key whose prefix disagrees with `origin`
@@ -87,8 +95,10 @@ begin
         raise exception 'membership.user_id is % — expected the creator''s principal id.', got.user_id;
     end if;
 
-    select count(*) into n from dojo.tenants where slug like 'ztest-%' and key like 'organization/%';
-    if n <> 1 then raise exception 'a failed create_dojo left a tenant behind (% organization tenants).', n; end if;
+    select count(*) into n from dojo.tenants where slug like 'ztest-%' and origin = 'team';
+    if n <> 1 then raise exception 'a failed create_dojo left a tenant behind (% team tenants).', n; end if;
+    select count(*) into n from dojo.tenants where slug like 'ztest-%' and origin = 'organization';
+    if n <> 0 then raise exception 'create_dojo produced % organization tenant(s).', n; end if;
 end $$;
 
 -- ── the retired spellings must stay rejected ────────────────────────────────
@@ -110,17 +120,19 @@ begin
     end;
 end $$;
 
--- ── personal and organization namespaces stay apart (§IV.7 / F1) ────────────
-insert into dojo.tenants (key, origin, slug, name, dojo_url)
-values ('personal/ztest-acme', 'personal', 'ztest-acme', 'Acme''s Dōjō',
-        'dojo.sensei-hq.org/personal/ztest-acme');
+-- ── personal, organization and team namespaces stay apart (§IV.7 / F1) ──────
+-- One slug, three owners: the person `acme`, the GitHub org `acme`, and a team
+-- someone named Acme. The origin prefix is what keeps them from colliding.
+insert into dojo.tenants (key, origin, slug, name, dojo_url) values
+  ('personal/ztest-acme', 'personal', 'ztest-acme', 'Acme''s Dōjō', 'dojo.sensei-hq.org/personal/ztest-acme'),
+  ('organization/ztest-acme', 'organization', 'ztest-acme', 'Acme (GitHub)', 'dojo.sensei-hq.org/organization/ztest-acme');
 
 do $$
 declare n int;
 begin
     select count(*) into n from dojo.tenants where slug = 'ztest-acme';
-    if n <> 2 then
-        raise exception 'personal/ztest-acme and organization/ztest-acme should coexist as 2 rows, found %.', n;
+    if n <> 3 then
+        raise exception 'personal/, organization/ and team/ztest-acme should coexist as 3 rows, found %.', n;
     end if;
 end $$;
 

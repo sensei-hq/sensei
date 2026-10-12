@@ -1043,6 +1043,7 @@ prefix means, not to delete it:
 |---|---|---|---|
 | personal | `personal/devuser` | `/t/personal/devuser` | `personal` |
 | organization | `organization/sensei-hq` | `/t/organization/sensei-hq` | `organization` |
+| team | `team/platform-guild` | `/t/team/platform-guild` | `team` |
 
 This satisfies every constraint at once:
 
@@ -1056,6 +1057,16 @@ This satisfies every constraint at once:
   and gets linkified as a mention by some clients — avoidable weirdness for no
   gain.)
 - **All 33 routes keep their shape.** Only the values `origin` takes change.
+
+**`organization` is the forge-proven organisation's alone** (decision
+2026-10-12). A dōjō someone creates by hand (`POST /v1/you/dojos`) is a `team`:
+it is not a forge organisation, and filing it under `organization/` let anyone
+hold a real organisation's natural name before that organisation signed in —
+provisioning then fell back to `organization/acme-2` and the look-alike kept the
+URL. `dojo.create_dojo` writes `team/<slug>`; only provisioning writes
+`organization/<login>`. A team has no forge connection and so no repositories.
+The UI shows the difference (`Team`, 組) rather than calling every non-personal
+tenant an organisation.
 
 **Migration cost, stated plainly.** Existing keys `github/{org}` must be
 rewritten to `organization/{org}`, because resolution joins the segments and
