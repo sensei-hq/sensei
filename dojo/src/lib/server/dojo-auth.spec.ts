@@ -102,6 +102,14 @@ describe('resolveTenantAccess — fail closed on the membership lookup', () => {
 		expect((err as Response).status).toBe(403);
 	});
 
+	// The caller carries the JWT it was authenticated with, so a route can read
+	// AS the person through `userDb` — RLS deciding, not route code (#236 step 3).
+	it('carries the verified access token for user-session reads', async () => {
+		stub = makeDb(AUTH_OK, PRINCIPAL_OK, TENANT_OK, { data: { id: 'm1', role: 'contributor' }, error: null });
+		const caller = await resolveTenantAccess('gh', 'acme', bearerReq(), locals, ACCESS.member);
+		expect(caller.accessToken).toBe('tok');
+	});
+
 	it('401 when the JWT is invalid (no user)', async () => {
 		stub = makeDb({ data: { user: null }, error: { message: 'bad jwt' } });
 		const err = await resolveTenantAccess('gh', 'acme', bearerReq(), locals, ACCESS.member).catch(
