@@ -41,7 +41,7 @@ create policy relay_inbox_select_own
 -- update, so the role needs usage on it.
 grant usage on sequence dojo.relay_inbox_seq to authenticated;
 grant update (reply, status, answered_at) on dojo.relay_inbox to authenticated;
-grant insert (session_id, membership_id, kind, direction, payload) on dojo.relay_inbox to authenticated;
+grant insert (session_id, segment_id, membership_id, kind, direction, payload) on dojo.relay_inbox to authenticated;
 
 -- Reply: the owner's PENDING gate, raised by the agent (agent → human).
 drop policy if exists relay_inbox_reply_own on dojo.relay_inbox;
@@ -69,4 +69,23 @@ create policy relay_inbox_nudge_own
              where s.id = relay_inbox.session_id
                and s.membership_id = relay_inbox.membership_id
         )
+    );
+
+-- The daemon raises its agent's gate, as the signed-in person (#236 step 4): an
+-- agent → human row on a session of THEIR membership, naming (if anything) a
+-- segment of that same session. The phone and the daemon are the same person on
+-- the same session, so raising a gate on your own run is your agent's to do;
+-- what no one may do is raise one on another person's run.
+-- Covered by database/tests/dojo/relay_daemon_writes.sql.
+drop policy if exists relay_inbox_raise_own on dojo.relay_inbox;
+create policy relay_inbox_raise_own on dojo.relay_inbox
+    for insert to authenticated
+    with check (
+        dojo.owns_membership(membership_id)
+        and direction = 'agent_to_human'
+        and exists (select 1 from dojo.relay_sessions s
+                     where s.id = relay_inbox.session_id and s.membership_id = relay_inbox.membership_id)
+        and (segment_id is null
+             or exists (select 1 from dojo.relay_segments g
+                         where g.id = relay_inbox.segment_id and g.session_id = relay_inbox.session_id))
     );

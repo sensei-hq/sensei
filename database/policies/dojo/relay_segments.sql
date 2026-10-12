@@ -66,3 +66,23 @@ create policy relay_segments_review_own
                and dojo.owns_membership(s.membership_id)
         )
     );
+
+-- The daemon's writes, as the signed-in person (#236 step 4): a person's daemon
+-- publishes their run's outline — on a session of a membership they own. The
+-- route upserts on (session_id, seq) and then links parents, so those columns
+-- are in the UPDATE grant; the review policy above already limits an update to
+-- the caller's own sessions, so only the grant is new for updates.
+-- Covered by database/tests/dojo/relay_daemon_writes.sql.
+grant insert (session_id, seq, title, summary, detail, agent, model, spec_ref, state, is_gate,
+              gate_severity, updated_at, parent_id)
+    on dojo.relay_segments to authenticated;
+grant update (session_id, seq, title, summary, detail, agent, model, spec_ref, state, is_gate,
+              gate_severity, parent_id)
+    on dojo.relay_segments to authenticated;
+
+drop policy if exists relay_segments_publish_own on dojo.relay_segments;
+create policy relay_segments_publish_own on dojo.relay_segments
+    for insert to authenticated
+    with check (exists (select 1 from dojo.relay_sessions s
+                         where s.id = relay_segments.session_id
+                           and dojo.owns_membership(s.membership_id)));
