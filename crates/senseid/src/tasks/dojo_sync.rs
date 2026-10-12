@@ -59,7 +59,7 @@ use crate::db::pg_store::PgStore;
 use crate::db::pg_store::sync::SyncMark;
 use crate::dojo_client::dojo_auth;
 use crate::dojo_client::settings::dojo_url;
-use crate::dojo_client::user_plane::{self, HttpUserPlane, RepoInput, UserPlane};
+use crate::dojo_client::user_plane::{self, HttpUserPlane, MyMembership, RepoInput, UserPlane};
 
 /// How many repositories one pass will offer for registration at a time.
 ///
@@ -158,6 +158,68 @@ async fn sync_one(pg: &PgStore, persona: &str, plane: &dyn UserPlane) -> Result<
     sync_persona(pg, persona, &token, plane).await
 }
 
+/// The unbound local memberships a persona claims: those the dōjō lists under
+/// it. Never one it does not list, never one that is not on this machine. Pure.
+fn claims(unbound: &[uuid::Uuid], listed: &[MyMembership]) -> Vec<uuid::Uuid> {
+    unbound.iter().copied().filter(|id| listed.iter().any(|m| m.id == *id)).collect()
+}
+
+/// Record the persona of every unbound local membership the dōjō lists under
+/// the persona holding `slot` (#236 step 4c) — at join, and for memberships
+/// made before the binding existed. Asks nothing when nothing is unbound.
+/// Returns how many it bound; a list it could not read is an `Err`, never "none
+/// of yours".
+pub(crate) async fn bind_memberships(
+    pg: &PgStore,
+    slot: &str,
+    token: &str,
+    plane: &dyn UserPlane,
+) -> Result<usize, String> {
+    let unbound = pg.unbound_dojo_memberships().await?;
+    if unbound.is_empty() {
+        return Ok(0);
+    }
+    let persona = pg
+        .persona_id_for_slot(slot)
+        .await?
+        .ok_or_else(|| format!("no persona holds session slot {slot}"))?;
+    let mine = claims(&unbound, &plane.my_memberships(token).await?);
+    for m in &mine {
+        pg.set_membership_persona(m, &persona).await?;
+    }
+    if !mine.is_empty() {
+        tracing::info!(
+            persona = slot,
+            bound = mine.len(),
+            "dojo_sync: memberships bound to persona"
+        );
+    }
+    Ok(mine.len())
+}
+
+/// Bind unbound memberships for every signed-in persona now — the join's half of
+/// [`bind_memberships`], so a new membership does not wait for the next cycle.
+/// Returns each persona's failure for the caller to report; an empty result is
+/// "nothing failed", not "something bound".
+pub(crate) async fn bind_all_memberships(pg: &PgStore) -> Vec<String> {
+    let personas = match pg.signed_in_personas().await {
+        Ok(p) => p,
+        Err(e) => return vec![format!("signed-in personas unreadable: {e}")],
+    };
+    let plane = HttpUserPlane { dojo_url: dojo_url() };
+    let mut failures = vec![];
+    for persona in personas {
+        let outcome = match live_access_token(&persona).await {
+            Ok(token) => bind_memberships(pg, &persona, &token, &plane).await.map(|_| ()),
+            Err(e) => Err(format!("no live session: {e:?}")),
+        };
+        if let Err(e) = outcome {
+            failures.push(format!("{persona}: {e}"));
+        }
+    }
+    failures
+}
+
 /// Whether a user-plane failure is the dōjō refusing the CREDENTIAL itself.
 ///
 /// Reuses `dojo_auth`'s classifier rather than matching on message text here.
@@ -223,6 +285,14 @@ async fn sync_persona(
     token: &str,
     plane: &dyn UserPlane,
 ) -> Result<(), String> {
+    // #236 step 4c: record which persona each unbound local membership belongs
+    // to, so its tenant calls can present this session. A failure here leaves
+    // the memberships unbound for the next pass and does not stop the cycle —
+    // but it is said, never swallowed.
+    if let Err(e) = bind_memberships(pg, persona, token, plane).await {
+        tracing::warn!(persona, error = %e, "dojo_sync: membership binding skipped");
+    }
+
     // THE OFFER SET (§8a, finding B1): every locally-scanned repository with a
     // `repo_key` — what the user CLONED — and NOT gate 1's subset.
     //
@@ -749,8 +819,8 @@ mod tests {
     }
 
     use crate::dojo_client::user_plane::{
-        ActivationOutcome, DeniedRepo, IngestResult, MappedRepo, MetricPush, ProvisionOutcome,
-        RegisterResult, RejectedMetric, SyncPlan, UnmappedRepo, VisibilityCounts,
+        ActivationOutcome, DeniedRepo, IngestResult, MappedRepo, MetricPush, MyMembership,
+        ProvisionOutcome, RegisterResult, RejectedMetric, SyncPlan, UnmappedRepo, VisibilityCounts,
     };
     use std::sync::Mutex;
 
@@ -785,6 +855,9 @@ mod tests {
         /// Set to make the PLAN read fail, so the classification of a refusal
         /// (401/403) against a fault (5xx) is exercised on the real path.
         plan_err: Option<String>,
+        /// What `GET /v1/you/memberships` answers — `None` is an empty list.
+        memberships: Option<Result<Vec<MyMembership>, String>>,
+        membership_calls: Mutex<usize>,
     }
 
     #[async_trait::async_trait]
@@ -812,6 +885,10 @@ mod tests {
             _enabled: bool,
         ) -> Result<ActivationOutcome, String> {
             unreachable!("dojo_sync does not write metric activation")
+        }
+        async fn my_memberships(&self, _t: &str) -> Result<Vec<MyMembership>, String> {
+            *self.membership_calls.lock().unwrap() += 1;
+            self.memberships.clone().unwrap_or(Ok(vec![]))
         }
         async fn sync_plan(&self, _t: &str) -> Result<SyncPlan, String> {
             *self.plan_calls.lock().unwrap() += 1;
@@ -1609,5 +1686,143 @@ mod tests {
             labels.iter().any(|l| l == PLAN_ENTITY),
             "{PLAN_ENTITY} is not a sensei.sync_entity value; the enum holds {labels:?}"
         );
+    }
+
+    /// A signed-in persona and two local memberships for the binding tests.
+    /// `sensei_test` is shared, so every row is unique to this call.
+    async fn binding_fixture(pg: &PgStore) -> (String, uuid::Uuid, uuid::Uuid, uuid::Uuid) {
+        let tag = uuid::Uuid::new_v4();
+        let slot = format!("bind-slot-{tag}");
+        let persona = pg.upsert_persona(&format!("bind-{tag}"), true).await.unwrap();
+        sqlx_core::query::query(
+            "UPDATE sensei.personas SET session_slot = $2, verified_at = now() WHERE id = $1",
+        )
+        .bind(persona)
+        .bind(&slot)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        let mut ids = vec![];
+        for n in 0..2 {
+            let id = uuid::Uuid::new_v4();
+            pg.create_dojo_membership(&crate::db::pg_store::NewDojoMembership {
+                id,
+                registry_url: "http://localhost:7755".into(),
+                tenant_key: format!("organization/bind-{tag}-{n}"),
+                dojo_url: format!("http://localhost:7755/organization/bind-{tag}-{n}"),
+                kind: "employer".into(),
+                org_slugs: vec![],
+                role: "contributor".into(),
+                authenticated_via: "github_oauth".into(),
+                attribution_default: "named".into(),
+                credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()),
+                sync_status: "healthy".into(),
+            })
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+        (slot, persona, ids[0], ids[1])
+    }
+
+    async fn drop_binding_fixture(pg: &PgStore, persona: uuid::Uuid, ms: &[uuid::Uuid]) {
+        for m in ms {
+            pg.delete_dojo_membership(m).await.unwrap();
+        }
+        sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+            .bind(persona)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+    }
+
+    fn listed(id: uuid::Uuid) -> MyMembership {
+        MyMembership { id, tenant_key: "organization/acme".into() }
+    }
+
+    // #236 step 4c: a persona claims exactly the unbound LOCAL memberships the
+    // dōjō lists under it — never one it does not list, never one that is not here.
+    #[test]
+    fn a_persona_claims_only_the_unbound_memberships_listed_under_it() {
+        let (a, b, c) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        assert_eq!(claims(&[a, b], &[listed(a), listed(c)]), vec![a]);
+        assert!(claims(&[], &[listed(a)]).is_empty());
+        assert!(claims(&[a], &[]).is_empty());
+    }
+
+    #[tokio::test]
+    async fn binding_records_the_persona_of_each_listed_membership() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (slot, persona, mine, not_listed) = binding_fixture(&pg).await;
+        let plane = StubPlane { memberships: Some(Ok(vec![listed(mine)])), ..Default::default() };
+
+        let bound = bind_memberships(&pg, &slot, "jwt", &plane).await.expect("binding runs");
+
+        assert_eq!(bound, 1);
+        assert_eq!(
+            pg.membership_persona(&mine).await.unwrap().map(|p| p.persona_id),
+            Some(persona)
+        );
+        assert_eq!(pg.membership_persona(&not_listed).await.unwrap(), None);
+        drop_binding_fixture(&pg, persona, &[mine, not_listed]).await;
+    }
+
+    #[tokio::test]
+    async fn a_failed_list_binds_nothing_and_says_so() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (slot, persona, m1, m2) = binding_fixture(&pg).await;
+        let plane = StubPlane {
+            memberships: Some(Err("dōjō returned 503 for the memberships: down".into())),
+            ..Default::default()
+        };
+
+        let out = bind_memberships(&pg, &slot, "jwt", &plane).await;
+
+        assert!(out.as_ref().is_err_and(|e| e.contains("503")), "got {out:?}");
+        assert_eq!(pg.membership_persona(&m1).await.unwrap(), None);
+        drop_binding_fixture(&pg, persona, &[m1, m2]).await;
+    }
+
+    #[tokio::test]
+    async fn a_slot_with_no_persona_is_an_error_not_a_guess() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (_slot, persona, m1, m2) = binding_fixture(&pg).await;
+        let plane = StubPlane { memberships: Some(Ok(vec![listed(m1)])), ..Default::default() };
+
+        let out = bind_memberships(&pg, "no-such-slot", "jwt", &plane).await;
+
+        assert!(out.is_err(), "got {out:?}");
+        assert_eq!(pg.membership_persona(&m1).await.unwrap(), None);
+        drop_binding_fixture(&pg, persona, &[m1, m2]).await;
+    }
+
+    // The cycle itself binds: a persona's pass records its memberships before it
+    // syncs anything, and a binding failure does not stop the sync.
+    #[tokio::test]
+    async fn the_sync_cycle_binds_the_personas_memberships() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (slot, persona, mine, other) = binding_fixture(&pg).await;
+        let plane = StubPlane { memberships: Some(Ok(vec![listed(mine)])), ..Default::default() };
+
+        let _ = sync_persona(&pg, &slot, "tok", &plane).await;
+
+        assert_eq!(*plane.membership_calls.lock().unwrap(), 1);
+        assert_eq!(
+            pg.membership_persona(&mine).await.unwrap().map(|p| p.persona_id),
+            Some(persona)
+        );
+        drop_binding_fixture(&pg, persona, &[mine, other]).await;
+    }
+
+    #[tokio::test]
+    async fn a_binding_failure_does_not_stop_the_sync() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (slot, persona, m1, m2) = binding_fixture(&pg).await;
+        let plane = StubPlane { memberships: Some(Err("down".into())), ..Default::default() };
+
+        let _ = sync_persona(&pg, &slot, "tok", &plane).await;
+
+        assert_eq!(*plane.plan_calls.lock().unwrap(), 1, "the plan is still read");
+        drop_binding_fixture(&pg, persona, &[m1, m2]).await;
     }
 }
