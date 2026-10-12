@@ -13,7 +13,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const caller = { tenantId: 't1', userId: 'admin-uuid', role: 'admin', access: 4, membershipId: 'm1' };
+const caller: Record<string, unknown> = {
+	tenantId: 't1',
+	userId: 'admin-uuid',
+	role: 'admin',
+	access: 4,
+	membershipId: 'm1',
+	accessToken: 'jwt-A'
+};
 
 class AdminError extends Error {
 	constructor(
@@ -43,9 +50,10 @@ const mocks = vi.hoisted(() => ({
 	recordAudit: vi.fn()
 }));
 
+// The service role vs the caller's own JWT — which client each store call got.
 vi.mock('$lib/server/dojo-supabase', () => ({
-	dojoDb: () => ({}),
-	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
+	dojoDb: () => ({ client: 'service' }),
+	userDb: (token: string) => ({ client: 'user', token })
 }));
 vi.mock('$lib/server/dojo-auth', () => ({
 	resolveTenantAccess: mocks.resolveTenantAccess,
@@ -110,6 +118,32 @@ beforeEach(() => {
 	mocks.parsePatchPolicy.mockClear().mockReturnValue({ retention_days: 90 });
 	mocks.deletePolicy.mockClear().mockResolvedValue(true);
 	mocks.recordAudit.mockClear().mockResolvedValue(undefined);
+	caller.accessToken = 'jwt-A';
+});
+
+// Policies are read and written as the signed-in admin, so the policies table's
+// policy decides (#236). The audit row is the system's record of the action:
+// written by the server from the resolved caller, never by the person's session.
+describe('policies run as the signed-in person (#236)', () => {
+	it('GET, POST, PATCH and DELETE use the caller\'s JWT; the audit row is the system\'s', async () => {
+		await policies.GET(ev());
+		await policies.POST(ev('http://x/', { scope_key: 'all-org' }));
+		await policyId.PATCH(ev('http://x/', { retention_days: 90 }, { id: 'p1' }));
+		await policyId.DELETE(ev('http://x/', {}, { id: 'p1' }));
+		for (const m of [mocks.listPolicies, mocks.upsertPolicy, mocks.patchPolicy, mocks.deletePolicy]) {
+			expect(m.mock.calls[0][0]).toEqual({ client: 'user', token: 'jwt-A' });
+		}
+		for (const call of mocks.recordAudit.mock.calls) expect(call[0]).toEqual({ client: 'service' });
+		expect(mocks.recordAudit).toHaveBeenCalledTimes(3);
+	});
+	it('refuses a caller with no session rather than acting as the service role', async () => {
+		caller.accessToken = undefined;
+		expect((await policies.GET(ev())).status).toBe(401);
+		expect((await policies.POST(ev('http://x/', { scope_key: 'all-org' }))).status).toBe(401);
+		expect((await policyId.PATCH(ev('http://x/', { retention_days: 90 }, { id: 'p1' }))).status).toBe(401);
+		expect((await policyId.DELETE(ev('http://x/', {}, { id: 'p1' }))).status).toBe(401);
+		expect(mocks.recordAudit).not.toHaveBeenCalled();
+	});
 });
 
 describe('GET /members', () => {
@@ -186,7 +220,7 @@ describe('PATCH /members/{userId}/role', () => {
 	it('sets the role, audits, and returns { user_id, role } at the admin floor', async () => {
 		const res = await memberRole.PATCH(ev('http://x/', { role: 'lead' }, { userId: 'u1' }));
 		expect(await res.json()).toEqual({ user_id: 'u1', role: 'lead' });
-		expect(mocks.setMemberRole.mock.calls[0]).toEqual([{}, 't1', 'u1', 'lead']);
+		expect(mocks.setMemberRole.mock.calls[0]).toEqual([{ client: 'service' }, 't1', 'u1', 'lead']);
 		expect(mocks.resolveTenantAccess.mock.calls[0][4]).toBe(4);
 		expect(mocks.recordAudit).toHaveBeenCalledOnce();
 		expect(mocks.recordAudit.mock.calls[0][3]).toMatchObject({ action: 'role_changed', target: 'u1' });

@@ -151,6 +151,7 @@ writes an audit row where it changes tenant state.
 | billing webhooks, seat opening from relay activity | external caller / system bookkeeping |
 | invite acceptance | the joining principal has no membership yet; the invite token is the authority |
 | clustering after a publish (`promoteCluster`) | derived maintenance over many members' rows |
+| the audit row for a person's action (`recordAudit`) | the system's record of what the person did, written from the resolved caller; a member never authors ledger rows |
 
 Everything not in this table moves to the user session.
 
