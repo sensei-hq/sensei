@@ -143,10 +143,8 @@ impl std::fmt::Display for DojoClientError {
 impl std::error::Error for DojoClientError {}
 
 /// Percent-encode one URL path segment (unreserved chars pass through, everything
-/// else — notably `/` → `%2F` — is encoded), so the multi-segment tenant key
-/// (`github/acme`) rides as a SINGLE path segment the service decodes back. The
-/// service mounts `/v1/t/{tenant_key}/artifacts` where `{tenant_key}` is one
-/// segment, so the `/`s inside the discovery path must be encoded.
+/// else — `/` included — is encoded). [`encode_tenant_path`] applies it to each
+/// segment of a tenant key.
 fn encode_path_segment(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -164,8 +162,6 @@ fn encode_path_segment(s: &str) -> String {
 /// `/`-separated segment is percent-encoded individually, then rejoined with `/`.
 /// The Worker's relay routes are `/v1/t/[origin]/[org]/relay/…` — TWO path segments —
 /// so the `/` in the discovery path is a real separator here, NOT an encoded byte.
-/// (Contrast [`encode_path_segment`] / [`DojoClient::artifacts_url`], which target the
-/// dojo-mind artifacts mount that takes the whole tenant_key as ONE encoded segment.)
 fn encode_tenant_path(tenant_key: &str) -> String {
     tenant_key.split('/').map(encode_path_segment).collect::<Vec<_>>().join("/")
 }
@@ -201,9 +197,9 @@ impl DojoClient {
     }
 
     /// The artifact publish/pull endpoint for this membership's tenant:
-    /// `{registry_url}/v1/t/{url-encoded tenant_key}/artifacts`.
+    /// `{registry_url}/v1/t/{origin}/{org}/artifacts` — the Worker's tenant route.
     fn artifacts_url(&self) -> String {
-        format!("{}/v1/t/{}/artifacts", self.registry_url, encode_path_segment(&self.tenant_key))
+        format!("{}/artifacts", tenant_base_url(&self.registry_url, &self.tenant_key))
     }
 
     /// The Bearer for one call — see [`TenantCredential::bearer`].
@@ -287,7 +283,7 @@ impl DojoClient {
     // or diffs — the caller supplies already-filtered logical status (D10).
 
     /// The relay endpoint for this membership's tenant:
-    /// `{registry_url}/v1/t/{url-encoded tenant_key}/relay/{suffix}` — the same
+    /// `{registry_url}/v1/t/{origin}/{org}/relay/{suffix}` — the same
     /// mount shape as [`Self::artifacts_url`].
     fn relay_url(&self, suffix: &str) -> String {
         format!("{}/relay/{suffix}", tenant_base_url(&self.registry_url, &self.tenant_key))
@@ -691,12 +687,13 @@ mod tests {
     }
 
     #[test]
-    fn artifacts_url_encodes_tenant_as_single_segment() {
-        // tenant_key "github/acme" must ride as ONE segment (`github%2Facme`)
-        // under the registry root — NOT under the dojo_url tenant path.
+    fn artifacts_url_is_the_workers_two_segment_tenant_route() {
+        // The Worker mounts /v1/t/[origin]/[org]/artifacts. The single encoded
+        // segment (`github%2Facme`) was dojo-mind's mount and 404s on the Worker
+        // (checked live 2026-10-12: 404 encoded, 401 two-segment).
         let c =
             DojoClient::for_membership(&membership("http://localhost:7755/github/acme", "dojo-x"));
-        assert_eq!(c.artifacts_url(), "http://localhost:7755/v1/t/github%2Facme/artifacts");
+        assert_eq!(c.artifacts_url(), "http://localhost:7755/v1/t/github/acme/artifacts");
     }
 
     #[test]
@@ -771,7 +768,7 @@ mod tests {
             })
         }
 
-        let app = Router::new().route("/v1/t/{tenant}/artifacts", get(artifacts));
+        let app = Router::new().route("/v1/t/{origin}/{org}/artifacts", get(artifacts));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
