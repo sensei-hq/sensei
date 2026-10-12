@@ -99,7 +99,7 @@ sleep 0.6
 
 echo "== 1. daemon POST session =="
 S=$(req POST "$WORKER/v1/t/personal/dev/relay/session" "$AUTH_DEV" \
-  "{\"run_id\":\"$RUN\",\"title\":\"Round-trip\",\"status\":\"running\",\"progress_done\":0,\"progress_total\":1,\"current_phase\":\"P1\"}")
+  "{\"run_id\":\"$RUN\",\"title\":\"Round-trip\",\"status\":\"running\",\"progress_done\":0,\"progress_total\":1,\"current_phase\":\"P1\",\"project\":{\"slug\":\"roundtrip-$RUN\",\"name\":\"Round-trip\",\"classification\":\"company\"}}")
 echo "   $S"; echo "$S" | jq -e '.id' >/dev/null || fail "session ($S)"
 
 echo "== 1b. daemon POST segments (outline) =="
@@ -160,6 +160,16 @@ req POST "$WORKER/v1/t/personal/dev/relay/push/prefs" "$AUTH_JWT" '{"events":{"a
 PR=$(req POST "$WORKER/v1/t/personal/dev/relay/push/prefs" "$AUTH_JWT" '{"events":{"stalls":true}}')
 echo "   $PR"
 echo "$PR" | jq -e '.events.approvals == true and .events.stalls == true' >/dev/null || fail "push prefs ($PR)"
+
+echo "== 3f. phone GET projects (JWT — the run's project, read under the projects policy) =="
+# The session POST files the run's project in the background; give it a moment.
+for _ in 1 2 3 4 5; do
+  PJ=$(req GET "$WORKER/v1/t/personal/dev/projects" "$AUTH_JWT")
+  echo "$PJ" | jq -e '.projects[] | select(.slug=="roundtrip-'"$RUN"'")' >/dev/null && break
+  sleep 1
+done
+echo "   $(echo "$PJ" | jq -c '[.projects[] | select(.slug=="roundtrip-'"$RUN"'")]')"
+echo "$PJ" | jq -e '.projects[] | select(.slug=="roundtrip-'"$RUN"'")' >/dev/null || fail "projects ($PJ)"
 
 echo "== 4. phone POST reply (JWT) =="
 R=$(req POST "$WORKER/v1/t/personal/dev/relay/reply" "$AUTH_JWT" \
