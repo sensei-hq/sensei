@@ -69,7 +69,18 @@ pub async fn scan_git_history(ctx: &TaskContext, task: &Task) -> Result<u32, Str
     }
 
     // Where the last walk of THIS checkout stopped. Absent = walk everything.
-    let stop_at = ctx.pg().get_commit_scan_tips(&folder_id).await?.unwrap_or_default();
+    let stored = ctx.pg().get_commit_scan_tips(&folder_id).await?.unwrap_or_default();
+    // A tip the repository no longer has (a rewrite, a force-push then gc) is
+    // dropped rather than handed to `git log`, which would refuse it on every
+    // pass (#253).
+    let (stop_at, dropped) = crate::indexer::git_history::existing_tips(repo_path, &stored)
+        .map_err(|e| format!("scan_git_history: checking tips in {}: {e}", task.folder_path))?;
+    if !dropped.is_empty() {
+        tracing::warn!(
+            path = %task.folder_path, dropped = dropped.len(),
+            "scan_git_history: stored tips no longer exist (history rewritten?) — walking past them"
+        );
+    }
     let args = crate::indexer::git_history::log_args(&stop_at)
         .map_err(|e| format!("scan_git_history: {e}"))?;
     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
