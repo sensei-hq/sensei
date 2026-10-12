@@ -10,6 +10,8 @@ as $$
     select exists (
         select 1
           from dojo.team_projects tp
+          join dojo.teams t         on t.id = tp.team_id
+          join dojo.projects p      on p.id = tp.project_id and p.tenant_id = t.tenant_id
           join dojo.team_members tm on tm.team_id = tp.team_id
          where tp.project_id = p_project
            and tm.principal_id = dojo.current_principal_id()
@@ -24,4 +26,5 @@ comment on function dojo.leads_team_of(uuid) is
 'Whether the signed-in principal LEADS a team that owns the project — the
 "team-lead" scope that unlocks cross-user project data (decision 2026-10-12,
 docs/spec/dojo/access-matrix.md). The TEAM role decides it, not the tenant role:
-a tenant lead on no team is not a team lead.';
+a tenant lead on no team is not a team lead. Like on_team_of, only while the
+project is homed in the team''s tenant.';
