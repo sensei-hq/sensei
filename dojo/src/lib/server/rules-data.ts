@@ -12,11 +12,11 @@
 //     `PulledRule` is `{ id, seq, status, version, ...PublishedRule }`
 //     (`#[serde(flatten)]` — the rule fields sit at the top level).
 //
-// dojo.shared_rules is NOT tenant-scoped (no tenant_id column — see the table's
-// DDL comment and `seed_default_governance`): the registry is keyed on
-// (namespace_id, content_hash). Tenant scoping is the AUTH boundary — the device
-// token must resolve to a membership in the path tenant (`resolveApiKeyAccess`);
-// the tenant is recorded on the `dojo.audit_events` row.
+// A shared rule belongs to one tenant (#236): unique on (tenant_id,
+// namespace_id, content_hash), read by its members and written by its
+// maintainers under the policies in database/policies/dojo/shared_rules.sql.
+// The caller is resolved by `resolveTenantCaller`; the tenant is also recorded
+// on the `dojo.audit_events` row.
 
 import type { dojoDb } from './dojo-supabase';
 
