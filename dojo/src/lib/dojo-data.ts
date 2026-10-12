@@ -38,8 +38,10 @@ export const metrics: DojoMetrics = {
  *  ALL insights are anonymised, so there was never anything client-specific to
  *  protect; the function had no callers and the distinction was decorative.
  *
- *  What remains is what the forge actually states: organisation, or person. */
-export type OrgKind = 'Organization' | 'Personal';
+ *  What remains is what the forge actually states — organisation, or person —
+ *  plus the TEAM: a dōjō someone made by hand, which the forge proves nothing
+ *  about (decision 2026-10-12, GHSA-hqv4). */
+export type OrgKind = 'Organization' | 'Team' | 'Personal';
 export type OrgHost = 'self' | 'saas';
 
 export interface DojoOrg {
@@ -65,18 +67,22 @@ export interface DojoOrg {
  *  tag. Origin is knowable — the forge states whether an account is an
  *  organisation or a person — so this cannot be wrong the way the tag was.
  *
- *  Anything that is not explicitly `personal` is an Organization. There is no
- *  third bucket to fall into and therefore no "safe generic" default that could
- *  quietly absorb a bad value. */
+ *  Only an exact `organization` is an Organization — the PROVEN kind. Anything
+ *  else that is not `personal` is a Team: an unrecognised value must never be
+ *  promoted to the kind that says "this is the real organisation", which is
+ *  the impersonation the team namespace exists to prevent. */
 export function originToOrgKind(origin: string | null | undefined): OrgKind {
-	return (origin ?? '').toLowerCase() === 'personal' ? 'Personal' : 'Organization';
+	const o = (origin ?? '').toLowerCase();
+	if (o === 'personal') return 'Personal';
+	return origin === 'organization' ? 'Organization' : 'Team';
 }
 
-/** The identity glyph per kind (社 organisation · 己 personal), matching the
- *  ladder kanji in `constitution-map`. 客 (client) and 群 (community) went with
- *  the taxonomy that produced them. */
+/** The identity glyph per kind (社 organisation · 組 team · 己 personal),
+ *  matching the ladder kanji in `constitution-map`. 客 (client) and 群
+ *  (community) went with the taxonomy that produced them. */
 export function orgKindKanji(kind: OrgKind): string {
-	return kind === 'Personal' ? '己' : '社';
+	if (kind === 'Personal') return '己';
+	return kind === 'Team' ? '組' : '社';
 }
 
 export const orgs: DojoOrg[] = [
@@ -147,5 +153,6 @@ export const orgs: DojoOrg[] = [
 // /--success/--ink-3; map onto named tokens).
 export const kindToneClass: Record<OrgKind, string> = {
 	Organization: 'text-ink-soft',
+	Team: 'text-ink-soft',
 	Personal: 'text-ink-mute'
 };

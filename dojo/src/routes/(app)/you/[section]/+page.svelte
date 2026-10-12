@@ -220,12 +220,15 @@
 				class="bg-paper border-paper-edge relative flex w-full max-w-md flex-col gap-4 rounded-2xl border p-6"
 				onsubmit={submitCreate}
 			>
-				<div class="display text-lg">Create a dōjō</div>
+				<div class="display text-lg">Create a team dōjō</div>
+				<p class="text-ink-soft text-xs">
+					A team you name yourself. A GitHub organisation's dōjō is made when one of its admins signs in.
+				</p>
 				<label class="flex flex-col gap-1">
 					<span class="text-ink-soft text-xs">Name</span>
 					<input
 						bind:value={cName}
-						placeholder="Acme Corp"
+						placeholder="Platform guild"
 						class="bg-paper border-paper-edge text-ink box-border w-full rounded-lg border px-3 py-2 text-sm"
 					/>
 				</label>
