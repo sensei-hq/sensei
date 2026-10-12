@@ -5,7 +5,7 @@
 // two surfaces can never drift. Never import from client code — uses the
 // service-role client (dojo-supabase.ts).
 import { error } from '@sveltejs/kit';
-import { dojoDb } from './dojo-supabase';
+import { dojoDb, userDb } from './dojo-supabase';
 import { lookupPrincipalId } from './principal-resolve';
 import { originToOrgKind, orgKindKanji, type DojoOrg } from '$lib/dojo-data';
 
@@ -71,6 +71,18 @@ export async function principalIdForSession(locals: unknown): Promise<string | n
 	return lookupPrincipalId(dojoDb(), su.id);
 }
 
+/**
+ * A client on the page session's own JWT, so the memberships and tenants policies
+ * decide what the console chrome and the org picker see (#236). A session with no
+ * access token cannot read as the person and is refused (401) — never handed the
+ * service role.
+ */
+export function sessionDb(locals: unknown): ReturnType<typeof userDb> {
+	const token = (locals as { session?: { access_token?: string } })?.session?.access_token;
+	if (!token) throw error(401, 'a signed-in session is required');
+	return userDb(token);
+}
+
 /** First+last initial of a display name. For an email, derive from the local
  *  part (before @) so `dev.user@…` → "DU", not "DC" (dev…com). */
 function initials(nameOrEmail: string): string {
@@ -118,9 +130,10 @@ function firstTenant(row: unknown): TenantRow | null {
 	return Array.isArray(t) ? (t[0] ?? null) : (t ?? null);
 }
 
-/** The Dōjōs a user belongs to (active memberships), as DojoOrg records. */
-export async function listUserOrgs(userId: string): Promise<DojoOrg[]> {
-	const { data, error: qErr } = await dojoDb()
+/** The Dōjōs a user belongs to (active memberships), as DojoOrg records. `db`
+ *  reads as the person (`sessionDb`). */
+export async function listUserOrgs(db: ReturnType<typeof userDb>, userId: string): Promise<DojoOrg[]> {
+	const { data, error: qErr } = await db
 		.from('memberships')
 		.select(`role, kind, tenant:tenants(${TENANT_COLS})`)
 		.eq('user_id', userId)
@@ -139,8 +152,11 @@ export async function listUserOrgs(userId: string): Promise<DojoOrg[]> {
 /** The single Dōjō a user is entering (by tenant key), or undefined if they have
  *  no active membership in it. Backs the console chrome. Two queries (tenant by
  *  key, then membership) to avoid embedded-filter quirks. */
-export async function getUserOrg(userId: string, tenantKey: string): Promise<DojoOrg | undefined> {
-	const db = dojoDb();
+export async function getUserOrg(
+	db: ReturnType<typeof userDb>,
+	userId: string,
+	tenantKey: string
+): Promise<DojoOrg | undefined> {
 	const { data: tenant, error: te } = await db
 		.from('tenants')
 		.select(TENANT_COLS)
