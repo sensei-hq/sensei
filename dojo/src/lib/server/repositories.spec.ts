@@ -212,13 +212,14 @@ describe('registerRepositories', () => {
 });
 
 describe('syncPlan', () => {
-	// syncPlan reads `dojo.all_my_repositories`, which already joins repository →
+	// syncPlan reads `dojo.all_my_repositories` through dojo.my_repositories(),
+	// which pins the caller; the view already joins repository →
 	// tenant → membership and carries the owning tenant on each row. The view's
 	// own semantics (membership scoping, disabled memberships) are covered by
 	// database/tests/dojo/all_my_repositories.sql, against a real Postgres —
 	// a fake cannot evaluate a view. What is under test here is the split.
 	function withView(rows: Record<string, unknown>[]): Record<string, FakeTable> {
-		return { ...tables(), all_my_repositories: { rows } };
+		return { ...tables(), 'rpc:my_repositories': { rows } };
 	}
 
 	const MINE = [
@@ -244,7 +245,7 @@ describe('syncPlan', () => {
 		// `denied: []` rather than absent, so the daemon's handling of it is
 		// exercised from day one and phase 2 changes no shape (§V.5).
 		const db = fakeDojoDb(withView(MINE));
-		const plan = await syncPlan(db as never, ALICE);
+		const plan = await syncPlan(db as never);
 		expect(plan.allowed.map((a) => a.repo_key).sort()).toEqual([
 			'github.com/acme/api',
 			'github.com/acme/web'
@@ -259,7 +260,7 @@ describe('syncPlan', () => {
 		// rename changes — and would have to either store the wrong thing or
 		// re-resolve the tenant on every cycle.
 		const db = fakeDojoDb(withView(MINE));
-		const plan = await syncPlan(db as never, ALICE);
+		const plan = await syncPlan(db as never);
 		expect(plan.allowed[0].tenant_id).toBe('t-acme');
 	});
 
@@ -278,7 +279,7 @@ describe('syncPlan', () => {
 			},
 			metric_catalogue: { rows: [{ id: 'm-ftr', key: 'ftr' }, { id: 'm-churn', key: 'churn_rate' }] }
 		});
-		const plan = await syncPlan(db as never, ALICE);
+		const plan = await syncPlan(db as never);
 		const api = plan.allowed.find((a) => a.repo_key === 'github.com/acme/api');
 		const web = plan.allowed.find((a) => a.repo_key === 'github.com/acme/web');
 		expect(api?.disabled_metrics).toEqual(['ftr']);
@@ -297,7 +298,7 @@ describe('syncPlan', () => {
 			},
 			metric_catalogue: { rows: [{ id: 'm-ftr', key: 'ftr' }] }
 		});
-		const plan = await syncPlan(db as never, ALICE);
+		const plan = await syncPlan(db as never);
 		const api = plan.allowed.find((a) => a.repo_key === 'github.com/acme/api');
 		expect(api?.disabled_metrics).toEqual(['ftr']);
 	});
@@ -311,35 +312,26 @@ describe('syncPlan', () => {
 			...withView(MINE),
 			metric_activations: { rows: [], error: { message: 'connection reset' } }
 		});
-		await expect(syncPlan(db as never, ALICE)).rejects.toThrow(/connection reset/);
+		await expect(syncPlan(db as never)).rejects.toThrow(/connection reset/);
 	});
 
 	it('leaves disabled_metrics empty when nothing was ever switched off', async () => {
 		// The overwhelmingly common case, and the one a new dōjō is in: no rows,
 		// whole catalogue on.
 		const db = fakeDojoDb(withView(MINE));
-		const plan = await syncPlan(db as never, ALICE);
+		const plan = await syncPlan(db as never);
 		expect(plan.allowed.every((a) => a.disabled_metrics.length === 0)).toBe(true);
 	});
 
-	it('scopes to the caller, so one user never sees another user rows', async () => {
-		// The plan is an ALLOW-LIST the daemon acts on directly, so a leak here is
-		// not a display bug — it is the daemon syncing someone else code.
-		const db = fakeDojoDb(
-			withView([
-				...MINE,
-				{
-					repository_id: 'r-other',
-					repo_key: 'github.com/secret-org/private-api',
-					tenant: 'organization/other',
-					tenant_id: 't-other',
-					principal_id: 'p-bob',
-					sync_enabled: true
-				}
-			])
-		);
-		const plan = await syncPlan(db as never, ALICE);
-		expect(plan.allowed.map((a) => a.repo_key)).not.toContain('github.com/secret-org/private-api');
+	// The plan is an ALLOW-LIST the daemon acts on directly, so a leak here is not
+	// a display bug — it is the daemon syncing someone else's code. The scoping is
+	// the DATABASE's: dojo.my_repositories() pins the caller's principal (proved in
+	// database/tests/dojo/my_repositories_access.sql). What this side must not do
+	// is read the view directly, where the boundary is a filter one caller forgets.
+	it('reads through dojo.my_repositories(), never the view', async () => {
+		const db = fakeDojoDb(withView(MINE)); // no `all_my_repositories` table: a direct read throws
+		const plan = await syncPlan(db as never);
+		expect(plan.allowed.map((a) => a.repo_key).sort()).toEqual(['github.com/acme/api', 'github.com/acme/web']);
 	});
 
 	it('splits on sync_enabled, so the phase-2 gate needs no code change here', async () => {
@@ -352,7 +344,7 @@ describe('syncPlan', () => {
 				{ ...MINE[1], sync_enabled: false, denied_reason: 'no_seat' }
 			])
 		);
-		const plan = await syncPlan(db as never, ALICE);
+		const plan = await syncPlan(db as never);
 		expect(plan.allowed.map((a) => a.repo_key)).toEqual(['github.com/acme/api']);
 		expect(plan.denied).toEqual([
 			{ repo_key: 'github.com/acme/web', tenant: 'organization/acme', reason: 'no_seat' }
@@ -363,7 +355,7 @@ describe('syncPlan', () => {
 		// Genuinely empty: nothing of theirs to sync. Offline degrades the same way
 		// by construction — no plan, no sync.
 		const db = fakeDojoDb(withView([]));
-		expect(await syncPlan(db as never, 'p-nobody')).toEqual({ allowed: [], denied: [] });
+		expect(await syncPlan(db as never)).toEqual({ allowed: [], denied: [] });
 	});
 });
 
@@ -380,7 +372,7 @@ import { listMyRepositories } from './repositories';
 
 describe('listMyRepositories — what a human is shown', () => {
 	function view(rows: Record<string, unknown>[]): Record<string, FakeTable> {
-		return { all_my_repositories: { rows } };
+		return { 'rpc:my_repositories': { rows } };
 	}
 	const ROW = {
 		repository_id: 'r1',
@@ -403,9 +395,11 @@ describe('listMyRepositories — what a human is shown', () => {
 		metric_rows: 0
 	};
 
-	it('returns only the caller rows — the view is per-principal', async () => {
-		const db = fakeDojoDb(view([ROW, { ...ROW, repo_key: 'github.com/acme/other', principal_id: 'p-bob' }]));
-		const out = await listMyRepositories(db as never, ALICE);
+	// Scoping to the caller is dojo.my_repositories()'s (proved in
+	// database/tests/dojo/my_repositories_access.sql); this side reads through it.
+	it('reads through dojo.my_repositories(), never the view', async () => {
+		const db = fakeDojoDb(view([ROW])); // no `all_my_repositories` table: a direct read throws
+		const out = await listMyRepositories(db as never);
 		expect(out.map((r) => r.repo_key)).toEqual(['github.com/acme/api']);
 	});
 
@@ -414,7 +408,7 @@ describe('listMyRepositories — what a human is shown', () => {
 		// `sync_enabled: false` reproduces the "nothing to sync" ambiguity the
 		// two-axis model exists to remove.
 		const db = fakeDojoDb(view([ROW]));
-		const [r] = await listMyRepositories(db as never, ALICE);
+		const [r] = await listMyRepositories(db as never);
 		expect(r).toMatchObject({
 			sync_enabled: false,
 			reason_code: 'not_elected_user',
@@ -434,9 +428,9 @@ describe('listMyRepositories — what a human is shown', () => {
 		// anything the real chain grew.
 		const db = fakeDojoDb({
 			...tables(),
-			all_my_repositories: { rows: [], error: { message: 'boom' } }
+			'rpc:my_repositories': { rows: [], error: { message: 'boom' } }
 		});
-		await expect(listMyRepositories(db as never, ALICE)).rejects.toThrow(/boom/);
+		await expect(listMyRepositories(db as never)).rejects.toThrow(/boom/);
 	});
 });
 
@@ -480,8 +474,8 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 	}
 
 	it('returns EVERY repository past the first page, not the first 1000', async () => {
-		const db = fakeDojoDb({ all_my_repositories: { rows: manyRows(2350) } });
-		const out = await listMyRepositories(db as never, ALICE);
+		const db = fakeDojoDb({ 'rpc:my_repositories': { rows: manyRows(2350) } });
+		const out = await listMyRepositories(db as never);
 		expect(out).toHaveLength(2350);
 		// The last row is the one a single unpaged read loses.
 		expect(out.at(-1)?.repo_key).toBe('github.com/acme/repo-2349');
@@ -490,8 +484,8 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 	it('stops at exactly one page when the total IS the page size', async () => {
 		// The off-by-one that turns a page loop into an infinite one: a full final
 		// page looks identical to "there is more".
-		const db = fakeDojoDb({ all_my_repositories: { rows: manyRows(1000) } });
-		const out = await listMyRepositories(db as never, ALICE);
+		const db = fakeDojoDb({ 'rpc:my_repositories': { rows: manyRows(1000) } });
+		const out = await listMyRepositories(db as never);
 		expect(out).toHaveLength(1000);
 	});
 
@@ -499,8 +493,8 @@ describe('paged reads — the 1000-row cap must not truncate silently', () => {
 		// `tables()` supplies the empty metric_activations/metrics the plan reads.
 		// Without them the fake refuses the read and this fails for a reason that
 		// has nothing to do with paging.
-		const db = fakeDojoDb({ ...tables(), all_my_repositories: { rows: manyRows(1200) } });
-		const plan = await syncPlan(db as never, ALICE);
+		const db = fakeDojoDb({ ...tables(), 'rpc:my_repositories': { rows: manyRows(1200) } });
+		const plan = await syncPlan(db as never);
 		expect(plan.allowed).toHaveLength(1200);
 	});
 });
