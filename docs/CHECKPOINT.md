@@ -17,11 +17,11 @@ commits/issues/docs). Open PRs: none. Branches: main + develop.
 
 | # | item | first step |
 |---|---|---|
-| 1. 236 | dōjō access: views + RLS, user session (kavach#51 upstream) | steps 1–2 DONE (matrix, predicates, rules tenancy, 2c fixes); next step 3 route moves; DEPLOY owed |
+| 1. 236 | dōjō access: views + RLS, user session (kavach#51 upstream) | steps 1–2 DONE; prod `dbd deploy --scope dojo` DONE by owner; 3a relay reads under RLS `5147005d`; next 3b relay writes |
 | 2. 225 · 239–241 · 245 · 252 | team view · productionise · e2e red gate | — |
 | 3. 254 | next ORM, call_sites volume | measure |
 
-**Next command:** #236 step 3 — move routes to the user-session client area by area (start with relay: RLS own-rows already exists), incl. projects (tenant from the project↔membership binding, advisory item 5). **A dōjō DEPLOY is owed** for every #236 commit since `6dfb1ef0`: reconcile `dojo.shared_rules` → functions (incl. `artifacts_bump_seq`, `shared_rules_bump_seq`) → `dbd policies` → `select * from dojo.backfill_shared_rules_tenant()` (report `unprovable`) → Worker. Access findings live in PRIVATE draft advisories (Security tab) — never describe them publicly until fixed + deployed.
+**Next command:** #236 step 3b — relay WRITES (reply → relay_inbox update, review → relay_segments update, nudge → relay_inbox insert) and push prefs/subscribe: policies + column grants, DB tests, then routes via `ownReads`/userDb; verify with `scripts/relay-roundtrip.sh` (needs `bun run dev` with PUBLIC_SUPABASE_ANON_KEY). **Prod still owed:** `select * from dojo.backfill_shared_rules_tenant()` (report `unprovable`) → Worker deploy. Access findings live in PRIVATE draft advisories — never describe them publicly until fixed + deployed.
 
 **Hand-applied to live DB** (installs need a release): `schema_*` tables + enums,
 `call_sites`, task kinds `import_dbd_schema` / `derive_orm_schema`. The daemon
