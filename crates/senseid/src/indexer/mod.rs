@@ -20,6 +20,7 @@ pub mod placement;
 // fqns (`languages/fqn.rs` against `indexer/fqn.rs`), so exactly one of them
 // owns any given language, and flipping one is a single commit with deleting
 // `languages/<that language>.rs`.
+pub mod dbd_import;
 pub mod facts;
 pub mod fqn;
 pub mod git_history;

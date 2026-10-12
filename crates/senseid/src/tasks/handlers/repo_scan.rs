@@ -255,8 +255,20 @@ pub async fn process_repo_files(ctx: &TaskContext, task: &Task) -> Result<u32, S
             Task::new(TaskKind::EmbedNodes, &task.folder_path, "").blocked_by(file_ids.clone()),
         )
         .await;
-    let mut barrier_deps = file_ids;
+    let mut barrier_deps = file_ids.clone();
     barrier_deps.push(embed);
+    // A dbd design's detail goes onto the nodes its DDL files produce, so each
+    // import waits on the file tasks — and the barrier waits on the imports.
+    for design in super::dbd_schema::designs_under(Path::new(&task.folder_path))? {
+        barrier_deps.push(
+            ctx.queue
+                .enqueue(
+                    Task::new(TaskKind::ImportDbdSchema, &task.folder_path, &design)
+                        .blocked_by(file_ids.clone()),
+                )
+                .await,
+        );
+    }
     ctx.queue
         .enqueue(
             Task::new(TaskKind::DetectCommunities, &task.folder_path, "").blocked_by(barrier_deps),
@@ -1257,6 +1269,128 @@ mod scan_tests {
             still_unparsed.is_empty(),
             "an indexed file is still listed unparsed, so it is re-enqueued for ever: {still_unparsed:?}"
         );
+    }
+
+    /// **A DBD DESIGN'S DETAIL LANDS ON THE NODES THE WALK WROTE (#251).** The
+    /// scan fans out an `ImportDbdSchema` per `design.yaml`; run after the file
+    /// tasks, it fills the schema store for the tables the SQL walk declared —
+    /// on those nodes, with their spans, and without minting any of its own.
+    ///
+    /// Mutations that must break this: drop the enqueue; take the package from
+    /// anything but the manifest (the fqns stop meeting, the import mints stubs).
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
+    async fn a_dbd_design_lands_its_detail_on_the_walked_nodes() {
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let repo = t.path().join("shop");
+        let ddl = repo.join("database/ddl/table/app");
+        std::fs::create_dir_all(&ddl).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(
+            repo.join("database/design.yaml"),
+            "project:\n  name: shopdb\nsource:\n  dialect: postgresql\nschemas:\n  - app\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ddl.join("customers.ddl"),
+            "set search_path to app;\n\ncreate table if not exists app.customers (\n  id uuid primary key\n);\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ddl.join("orders.ddl"),
+            "set search_path to app;\n\ncreate table if not exists app.orders (\n  id uuid primary key\n, customer_id uuid not null \
+             references app.customers(id) on delete cascade\n);\n",
+        )
+        .unwrap();
+
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", "shop", &repo.to_string_lossy())
+            .await
+            .unwrap();
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, "shop").await.unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
+            .await
+            .unwrap();
+        super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
+            .await
+            .unwrap();
+
+        let tasks = ctx.queue.snapshot().await;
+        for (_, folder_path, path) in tasks.iter().filter(|(k, _, _)| *k == TaskKind::ProcessFile) {
+            super::super::process_file(&ctx, &Task::new(TaskKind::ProcessFile, folder_path, path))
+                .await
+                .unwrap();
+        }
+        let imports: Vec<_> =
+            tasks.iter().filter(|(k, _, _)| *k == TaskKind::ImportDbdSchema).collect();
+        assert_eq!(imports.len(), 1, "one import per design.yaml: {tasks:?}");
+        assert_eq!(imports[0].2, "database/design.yaml");
+        // ORDER: the import waits on every file task, and the terminal barrier
+        // waits on the import — before the walk it would describe stubs, and a
+        // folder must not read `indexed` while its schema is still pending.
+        let full = ctx.queue.snapshot_tasks().await;
+        let files: Vec<u64> =
+            full.iter().filter(|t| t.kind == TaskKind::ProcessFile).map(|t| t.id).collect();
+        let import = full.iter().find(|t| t.kind == TaskKind::ImportDbdSchema).unwrap();
+        assert!(
+            !files.is_empty() && files.iter().all(|f| import.depends_on.contains(f)),
+            "the import must wait on every file task: {:?} vs {files:?}",
+            import.depends_on
+        );
+        assert!(
+            full.iter()
+                .any(|t| t.kind == TaskKind::DetectCommunities && t.depends_on.contains(&import.id)),
+            "the terminal barrier must wait on the import"
+        );
+
+        let nodes = |pg: &crate::db::pg_store::PgStore| {
+            let pg = pg.clone();
+            async move {
+                let (n,): (i64,) = sqlx_core::query_as::query_as(
+                    "SELECT count(*) FROM sensei.nodes WHERE folder_id = $1",
+                )
+                .bind(fid)
+                .fetch_one(pg.pool())
+                .await
+                .unwrap();
+                n
+            }
+        };
+        let walked = nodes(ctx.pg()).await;
+        let (_, folder_path, path) = imports[0];
+        super::super::import_dbd_schema(
+            &ctx,
+            &Task::new(TaskKind::ImportDbdSchema, folder_path, path),
+        )
+        .await
+        .unwrap();
+        assert_eq!(nodes(ctx.pg()).await, walked, "the import minted no node of its own");
+
+        let detail = ctx.pg().schema_detail(&fid).await.unwrap();
+        let names: Vec<&str> = detail.iter().map(|e| e.fqn.as_str()).collect();
+        assert_eq!(names, ["sql·shopdb·app·customers·item", "sql·shopdb·app·orders·item"]);
+        let orders = &detail[1];
+        assert_eq!(orders.columns.len(), 2);
+        assert_eq!(orders.refs.len(), 1, "the key is placed: {:?}", orders.refs);
+        assert_eq!(orders.refs[0].to, "sql·shopdb·app·customers·item");
+        let (spanned,): (i64,) = sqlx_core::query_as::query_as(
+            "SELECT count(*) FROM sensei.schema_entities se JOIN sensei.nodes n ON n.id = se.node_id
+              WHERE n.folder_id = $1 AND n.line_start IS NOT NULL",
+        )
+        .bind(fid)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert_eq!(spanned, 2, "the detail hangs off the walked nodes, spans and all");
     }
 
     /// A SECOND scan of an unchanged repository must leave the parse state alone.

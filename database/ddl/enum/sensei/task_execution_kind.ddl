@@ -94,4 +94,5 @@ create type task_execution_kind as enum (
 , 'reconcile_identity'
 , 'backfill_transcripts'
 , 'backfill_transcript_file'
+, 'import_dbd_schema'
 );
