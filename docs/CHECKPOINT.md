@@ -15,7 +15,7 @@
 |---|---|---|---|
 | ~~249~~ | relay owner-only | CLOSED `ada807a2`; peer status view → #252 | — |
 | 238 | Claude Code mods | 4 of 4 live defects FIXED (`c40cb02b`); Steps 2–5 need the mods API | settle mods `.d.ts`, then usage-at-source |
-| 1. 251 | schema store + indexer routing | #221 prerequisite | 1–5 DONE + live; 7a spec `597ba875`, 7b call-site fact `62c60ef2`; 7c DeriveOrmSchema → 7d live remain |
+| 1. 251 | schema store + indexer routing | #221 prerequisite | 1–5 DONE + live; 7a spec `597ba875`, 7b call-site fact `62c60ef2`, batch-sweep fix `3bf9bc97`; 7c DeriveOrmSchema → 7d live remain |
 | ~~221~~ | Schema / ER screen | CLOSED `89272517` | — |
 | 3. 236 | dōjō access: views + RLS, user session | large; kavach#51 upstream | access-matrix doc |
 | 4. 225 · 239–241 · 245 · 252 | team view · productionise · e2e red gate | — | — |
