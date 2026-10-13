@@ -354,7 +354,10 @@ for (const sf of program.getSourceFiles()) {
 function record(sf, id, found) {
   const sym = resolved(found);
   const decl = sym && (sym.valueDeclaration ?? sym.declarations?.[0]);
-  const symbol = decl ? symbolFor(sym, decl, sf) : undeclared(id);
+  // A name imported from a module the checker cannot find stands for nothing
+  // it can type — the receiver-less form of `untyped`.
+  const unresolvedImport = !decl && !!found && (found.flags & ts.SymbolFlags.Alias) !== 0;
+  const symbol = decl ? symbolFor(sym, decl, sf) : unresolvedImport ? 'untyped' : undeclared(id);
   if (!symbol) return;
   const at = originalPosition(sf, id);
   if (!at) return;

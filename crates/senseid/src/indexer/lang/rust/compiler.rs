@@ -108,6 +108,11 @@ impl CompilerEngine for RustEngine {
         matches!(node_kind, "closure_expression" | "call_expression")
     }
 
+    /// `handlers[i]()` — a function chosen by an index.
+    fn dynamic_callee(&self, node_kind: &str) -> bool {
+        node_kind == "index_expression"
+    }
+
     /// A symbol the project DEFINES is the declaration the walk mints at that
     /// place; anything else is a library, named and never opened.
     fn target(
@@ -314,6 +319,12 @@ mod engine_tests {
         for os in ["linux", "windows", "apple-darwin"] {
             assert!(targets.iter().any(|t| t.contains(os)), "no compile for {os}: {targets:?}");
         }
+    }
+
+    #[test]
+    fn a_function_chosen_by_an_index_is_dynamic() {
+        assert!(RUST_ENGINE.dynamic_callee("index_expression"));
+        assert!(!RUST_ENGINE.dynamic_callee("field_expression"));
     }
 
     #[test]
