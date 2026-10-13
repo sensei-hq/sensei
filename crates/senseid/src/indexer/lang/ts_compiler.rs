@@ -91,9 +91,10 @@ impl CompilerEngine for TsEngine {
         node_kind == "ComputedMemberExpression"
     }
 
-    /// A type annotation the walk records whole (`Opts[]`, `A | B`).
-    fn type_expression(&self, node_kind: &str) -> bool {
-        node_kind == "TSType"
+    /// What the walk records whole: a type annotation (`Opts[]`, `A | B`), a
+    /// Svelte template tag it does not take apart.
+    fn expression(&self, node_kind: &str) -> bool {
+        matches!(node_kind, "TSType" | "SvelteTag")
     }
 
     fn target(

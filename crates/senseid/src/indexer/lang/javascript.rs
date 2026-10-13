@@ -1612,6 +1612,7 @@ impl Walk<'_> {
             Statement::TSTypeAliasDeclaration(a) => self.type_alias(a, scope),
             Statement::TSEnumDeclaration(e) => self.enumeration(e, scope),
             Statement::TSModuleDeclaration(m) => self.namespace(m, scope, flow),
+            Statement::TSGlobalDeclaration(g) => self.global(g, scope, flow),
             Statement::ImportDeclaration(i) => self.import(i),
             Statement::ExportNamedDeclaration(e) => self.export_named(e, scope, flow),
             Statement::ExportDefaultDeclaration(e) => self.export_default(e, scope, flow),
@@ -2403,6 +2404,15 @@ impl Walk<'_> {
         };
         for statement in &block.body {
             self.statement(statement, &inner, flow);
+        }
+    }
+
+    /// `declare global { … }` — declarations into the global scope (SvelteKit's
+    /// `App.Platform`), which the checker places uses on. Their home in the
+    /// graph is the file that states them.
+    fn global(&mut self, g: &TSGlobalDeclaration<'_>, scope: &Scope, flow: &mut Flow) {
+        for statement in &g.body.body {
+            self.statement(statement, scope, flow);
         }
     }
 
@@ -3343,7 +3353,8 @@ impl Walk<'_> {
             Declaration::TSInterfaceDeclaration(i) => self.interface(i, scope, flow),
             Declaration::TSEnumDeclaration(e) => self.enumeration(e, scope),
             Declaration::TSModuleDeclaration(m) => self.namespace(m, scope, flow),
-            Declaration::TSImportEqualsDeclaration(_) | Declaration::TSGlobalDeclaration(_) => {}
+            Declaration::TSGlobalDeclaration(g) => self.global(g, scope, flow),
+            Declaration::TSImportEqualsDeclaration(_) => {}
         }
     }
 }

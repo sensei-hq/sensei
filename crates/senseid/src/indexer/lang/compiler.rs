@@ -248,10 +248,10 @@ pub trait CompilerEngine: Sync {
     fn dynamic_callee(&self, _node_kind: &str) -> bool {
         false
     }
-    /// Whether a type use of this node kind is a whole type EXPRESSION
-    /// (`Map<A, B>`, `A | B`) rather than one name: it then names every type
-    /// the compiler resolves in it, one reference each.
-    fn type_expression(&self, _node_kind: &str) -> bool {
+    /// Whether a use of this node kind is a whole EXPRESSION the walk recorded
+    /// as one (`Map<A, B>`, `A | B`, a template tag) rather than one name: it
+    /// then names every symbol the compiler resolves in it, one reference each.
+    fn expression(&self, _node_kind: &str) -> bool {
         false
     }
     /// The identity a resolved symbol names.
@@ -296,8 +296,8 @@ impl Targets for EngineTargets<'_> {
     fn dynamic_callee(&self, node_kind: &str) -> bool {
         self.engine.dynamic_callee(node_kind)
     }
-    fn type_expression(&self, node_kind: &str) -> bool {
-        self.engine.type_expression(node_kind)
+    fn expression(&self, node_kind: &str) -> bool {
+        self.engine.expression(node_kind)
     }
 }
 
@@ -341,8 +341,8 @@ pub trait Targets {
     fn dynamic_callee(&self, _node_kind: &str) -> bool {
         false
     }
-    /// See [`CompilerEngine::type_expression`].
-    fn type_expression(&self, _node_kind: &str) -> bool {
+    /// See [`CompilerEngine::expression`].
+    fn expression(&self, _node_kind: &str) -> bool {
         false
     }
 }
@@ -423,8 +423,8 @@ pub fn place_references(
                 .filter(|c| **c != reference.at && encloses(&reference.at, c))
                 .copied()
                 .collect();
-            // A type expression names every type in it: one reference each.
-            if targets.type_expression(&evidence.node_kind)
+            // A whole expression names every symbol in it: one reference each.
+            if targets.expression(&evidence.node_kind)
                 && let Some(symbols) =
                     answers.and_then(|a| a.symbols_within(&reference.at, &nested))
             {
@@ -1136,7 +1136,7 @@ mod placement_tests {
             fn target(&self, symbol: &str) -> Result<Fqn, Reason> {
                 Engine.target(symbol)
             }
-            fn type_expression(&self, node_kind: &str) -> bool {
+            fn expression(&self, node_kind: &str) -> bool {
                 node_kind == "type_expr"
             }
         }
