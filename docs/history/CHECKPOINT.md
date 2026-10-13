@@ -1,36 +1,32 @@
 # Checkpoint
 
-**State 2026-10-13.** Slice **every call edge placed — compiler engine per
-language** (`docs/plan/2026-10-13-indexer-full-call-placement.md`): DONE for
-calls and references on the sensei repo. Report:
-`docs/reports/2026-10-13-placement.md`.
+**State 2026-10-13.** Slice **#236 step 4e — the daemon acts as the person,
+signing in is joining** (`docs/history/plan/2026-10-12-dojo-device-plane-as-person.md`):
+DONE on `develop` (`9cae35fd`), ships as **0.13.0** with its dōjō side.
 
 | increment | status |
 |---|---|
-| Rust (rust-analyzer) + TS/JS/Svelte (project's checker, svelte2tsx, `svelte-kit sync`) engines | DONE |
-| Compile scheduling (once per source state, one in flight, turns, stale → re-queue) | DONE |
-| Calls: callee selection, wrapped/qualified/anonymous/dynamic callees, every TS shape | DONE — Rust 100%, TS 99.96%, Svelte 99.94% (live) |
-| References through the compiler (`0586141d` …`8902e3db`) | DONE — Rust 99.92%, TS 99.33%, Svelte 99.55% (live) |
-| Owned code only (linguist marks, `@generated`; worktrees in dot-dirs) | DONE |
-| Bootstrap installs/checks engines; doctor; daemon boot | DONE |
-| TS driver a typed package (`29df86e0`), type-checked in CI | DONE |
-| Placement floor ≥90% per language/package/kind, nightly (`e4ec0267`) | DONE — passes |
-| SQL/ER: SQL calls/refs 100%; schema store ⊇ every pg FK | DONE (verified) |
-| `resolution_quality` package axis (`571d8850`) | DONE |
-| Docs: R5, §5, `08-resolve.md`, report | DONE (this commit) |
+| v0.12.0 released + merged (#257), dōjō live at `5ecceca` | DONE |
+| v0.12.1 hotfix: install schema converges with reconcile (enum values on upgrade), dbd 0.26 pinned everywhere (#259 → main `cc322f8e`) | DONE — CI green, dōjō `/version` 0.12.1 |
+| dōjō: tenant calls session-only, `device_token_hash` dropped, round trip live (401/403) | DONE `21647161` |
+| dōjō: `/v1/you/memberships` carries routing fields | DONE `9dc4bd83` |
+| daemon: unbound → SignedOut, `await_reply` stops on SignedOut | DONE `33f08a6c` |
+| app: connections screen → sign-in, load error ≠ empty | DONE `52893422` |
+| daemon: sync joins memberships, POST 405, `credential_ref` dropped | DONE `d54ffed0` |
+| knowledge sources hold no key | DONE `cdf2910c` |
+| docs/spec | DONE `9cae35fd` |
 
-**Residue, each named:** `untyped_receiver` where the source says `any`
-(~90 occurrences); `macro_expansion` 25; `dynamic_dispatch` 1; Rust
-`compiler_no_symbol` 9 (let annotations in `#[tokio::test]` bodies, fn-local
-types); 3 stale C edges from file-less stubs (backlog entry).
+**Next command:** `make bump v=minor` from develop once the user approves 0.13.0
+(merges develop → main → dōjō deploys 4e at once).
 
-**Next command:** resume the queue — release N (CHANGELOG `[Unreleased]` +
-docs/skills/site sync, then `make bump`), #236 4e, then #225, #239–241, #245,
-#252, #254, #238, #221 visual check.
+**Open questions (user's):**
+- A CLI-only `brew upgrade` never deploys the schema (only first install and the
+  app's upgrade flow do) — recommend a boot-time deploy on version change.
+- `deploy-dojo` jobs for v0.12.0 / v0.12.1 await environment approval.
+- Cloudflare Workers Builds (branch) is bound to a wrongly named Worker.
 
-**Open questions:** none.
-
-**Known broken:** none in the schema — the live DB was reconciled to the DDL
-tree with `dbd reconcile` and the import files loaded with `dbd import` (the
-project is pre-release, so reconcile is the path; earlier hand-applied DDL and
-reason rows are all in `database/`). 
+**Known-broken / not run:**
+- App e2e (`app/e2e/tests/dojo-binding.spec.ts`) updated but not executed.
+- Live join not exercised end-to-end (needs dōjō ≥ `9dc4bd83`); unit + stub tests only.
+- This machine's `personal/jerry` membership is unbound and its persona signed
+  out: after 0.13.0 it needs a sign-in.
