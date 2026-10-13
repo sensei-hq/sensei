@@ -85,11 +85,50 @@ impl CompilerSessions {
     /// The compiled project the package at `package_dir` belongs to. An `Err`
     /// carries why — the build tool or the compiler failed, or is missing — and
     /// the caller's calls then say `engine_not_run`.
+    #[cfg(test)]
     pub async fn project_for(
         &self,
         engine: &'static dyn CompilerEngine,
         package_dir: &Path,
     ) -> Result<Arc<Project>, String> {
+        let root = self.locate_root(engine, package_dir).await?;
+        self.compile_root(engine, &root).await
+    }
+
+    /// Compile the projects `packages` belong to: every package located first,
+    /// then each project they name compiled ONCE — however many of its
+    /// packages ask, and whatever changes on disk between them. One answer per
+    /// project (by root), or per package that could not be located (by its
+    /// directory).
+    pub async fn compile_packages(
+        &self,
+        packages: Vec<(&'static dyn CompilerEngine, PathBuf)>,
+    ) -> Vec<(PathBuf, Result<Arc<Project>, String>)> {
+        let mut out = Vec::new();
+        let mut projects: std::collections::BTreeMap<Key, &'static dyn CompilerEngine> =
+            std::collections::BTreeMap::new();
+        for (engine, dir) in packages {
+            match self.locate_root(engine, &dir).await {
+                Ok(root) => {
+                    projects.entry((engine.manifest(), (*root).clone())).or_insert(engine);
+                }
+                Err(e) => out.push((dir, Err(e))),
+            }
+        }
+        for ((_, root), engine) in projects {
+            let compiled = self.compile_root(engine, &root).await;
+            out.push((root, compiled));
+        }
+        out
+    }
+
+    /// The project root the package at `package_dir` belongs to, as its build
+    /// tool names it — and remembered for the package's file tasks.
+    async fn locate_root(
+        &self,
+        engine: &'static dyn CompilerEngine,
+        package_dir: &Path,
+    ) -> Result<Arc<PathBuf>, String> {
         // Asked afresh each time: a package can move into another workspace.
         let located = async {
             let out = run(&engine.locate(&package_dir.to_string_lossy()), LOCATE_TIMEOUT).await?;
@@ -103,15 +142,22 @@ impl CompilerSessions {
             .lock()
             .map_err(|_| "compiler session cache poisoned".to_string())?
             .insert((engine.manifest(), package_dir.to_path_buf()), located.clone());
-        let root = located?;
+        located
+    }
 
-        let fingerprint = fingerprint(&root).await?;
-        let key = (engine.manifest(), (*root).clone());
+    /// The compile of the project at `root` as its sources are now.
+    async fn compile_root(
+        &self,
+        engine: &'static dyn CompilerEngine,
+        root: &Path,
+    ) -> Result<Arc<Project>, String> {
+        let fingerprint = fingerprint(root).await?;
+        let key = (engine.manifest(), root.to_path_buf());
         let (cell, turn) = self.compile_cell(key.clone(), &fingerprint)?;
         let project = cell
             .get_or_init(|| async {
                 let _turn = turn.lock().await;
-                compile(engine, &root, &fingerprint).await.map(Arc::new)
+                compile(engine, root, &fingerprint).await.map(Arc::new)
             })
             .await
             .clone()?;
@@ -547,6 +593,87 @@ mod tests {
         let log = std::fs::read_to_string(&counter).unwrap();
         let log: Vec<&str> = log.lines().collect();
         assert_eq!(log, ["start", "end", "start", "end", "start", "end"], "one at a time");
+    }
+
+    /// An engine whose packages all belong to the project at `root`, and whose
+    /// compile touches that project — the way a developer's editor does while
+    /// a scan runs.
+    struct OneProject {
+        root: std::path::PathBuf,
+        counter: std::path::PathBuf,
+    }
+    impl CompilerEngine for OneProject {
+        fn manifest(&self) -> &'static str {
+            "Cargo.toml"
+        }
+        fn locate(&self, package_dir: &str) -> Invocation {
+            Invocation {
+                program: "sh".into(),
+                args: vec!["-c".into(), format!("echo {}/Cargo.toml", self.root.display())],
+                cwd: package_dir.into(),
+            }
+        }
+        fn project_root(&self, located: &str) -> Option<String> {
+            located.trim().strip_suffix("/Cargo.toml").map(String::from)
+        }
+        fn locate_compiler(&self, root: &str) -> Invocation {
+            Invocation {
+                program: "sh".into(),
+                args: vec!["-c".into(), "echo sh".into()],
+                cwd: root.into(),
+            }
+        }
+        fn configs(&self) -> &'static [&'static str] {
+            &["{}"]
+        }
+        fn compile(&self, _compiler: &str, root: &str, output: &str, _config: &str) -> Invocation {
+            Invocation {
+                program: "sh".into(),
+                args: vec![
+                    "-c".into(),
+                    format!(
+                        ": > '{output}'; echo run >> '{}'; date +%N >> '{root}/edited.rs'",
+                        self.counter.display()
+                    ),
+                ],
+                cwd: root.into(),
+            }
+        }
+        fn target(&self, _: &str, _: &CompilerIndex, _: &dyn Declarations) -> Result<Fqn, Reason> {
+            Err(Reason::SymbolUnnamed)
+        }
+    }
+
+    /// **ONE COMPILE OF A PROJECT PER TASK, HOWEVER MANY OF ITS PACKAGES ASK.**
+    /// A workspace of nine crates was compiled up to nine times by one task:
+    /// each package re-read the sources, and an edit between two of them made
+    /// a "new" project. The task's packages are located first and each project
+    /// they name is compiled once — that compile is the task's snapshot.
+    #[tokio::test]
+    async fn the_packages_of_one_project_share_one_compile() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        std::fs::create_dir_all(root.join("a")).unwrap();
+        std::fs::create_dir_all(root.join("b")).unwrap();
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let counter = elsewhere.path().join("compiles.txt");
+        let engine: &'static OneProject =
+            Box::leak(Box::new(OneProject { root: root.clone(), counter: counter.clone() }));
+        let sessions = CompilerSessions::new(&root);
+
+        let compiled = sessions
+            .compile_packages(vec![
+                (engine as &dyn CompilerEngine, root.join("a")),
+                (engine, root.join("b")),
+            ])
+            .await;
+        let roots: Vec<_> = compiled.iter().map(|(root, r)| (root, r.as_ref().err())).collect();
+        assert_eq!(roots, [(&root, None)], "one project, compiled");
+        let runs = std::fs::read_to_string(&counter).unwrap().lines().count();
+        assert_eq!(runs, 1, "the project is compiled once for both of its packages");
+        assert!(sessions.compiled_for(engine, &root.join("a")).await.is_ok());
+        assert!(sessions.compiled_for(engine, &root.join("b")).await.is_ok());
     }
 
     /// A command that is not installed is an `Err` that says so, not a hang

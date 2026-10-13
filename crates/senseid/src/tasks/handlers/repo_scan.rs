@@ -218,10 +218,11 @@ pub async fn compile_projects(ctx: &TaskContext, task: &Task) -> Result<u32, Str
         }
     }
     let mut compiled = 0u32;
-    for ((_, dir), engine) in packages {
-        match sessions.project_for(engine, &dir).await {
+    let packages: Vec<_> = packages.into_iter().map(|((_, dir), engine)| (engine, dir)).collect();
+    for (project, answer) in sessions.compile_packages(packages).await {
+        match answer {
             Ok(_) => compiled += 1,
-            Err(e) => tracing::warn!(package = %dir.display(), error = %e,
+            Err(e) => tracing::warn!(project = %project.display(), error = %e,
                 "compile_projects: not compiled — its files' calls will be engine_not_run"),
         }
     }
