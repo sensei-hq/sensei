@@ -480,7 +480,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 match crate::indexer::pipeline::owning_manifest_on_disk(fpath, repo_root, language)
                 {
                     Some((package_dir, _)) => {
-                        match sessions.project_for(engine, &package_dir).await {
+                        match sessions.compiled_for(engine, &package_dir).await {
                             Ok(project) => Some(project),
                             Err(e) => {
                                 tracing::warn!(file = %rel, error = %e,
@@ -1469,6 +1469,9 @@ mod tests {
             .ok_or_else(|| format!("processed: the folder at {repo_path} carries no id"))?;
         let rel = abs.strip_prefix(repo_path).map(|r| r.trim_start_matches('/')).unwrap_or(abs);
         ctx.pg().seed_only_file(&folder_id, rel).await?;
+        // As the gate orders it: the repository's compile, then the file.
+        super::super::compile_projects(ctx, &Task::new(TaskKind::CompileProjects, repo_path, ""))
+            .await?;
         process_file(ctx, &Task::for_file(TaskKind::ProcessFile, repo_path, abs)).await
     }
 

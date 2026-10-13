@@ -88,6 +88,26 @@ impl CompilerSessions {
         cell.get_or_init(|| async { compile(engine, &root).await.map(Arc::new) }).await.clone()
     }
 
+    /// The project `package_dir` belongs to, IF this scan's compile produced
+    /// it. Never compiles: that is `CompileProjects`' job, ahead of the files,
+    /// so a file task never waits on — or, when abandoned, cancels — a compile.
+    pub async fn compiled_for(
+        &self,
+        engine: &'static dyn CompilerEngine,
+        package_dir: &Path,
+    ) -> Result<Arc<Project>, String> {
+        let located = Self::cell(&self.located, (engine.manifest(), package_dir.to_path_buf()))?;
+        let root = match located.get() {
+            Some(found) => found.clone()?,
+            None => return Err("this package's project was not compiled by this scan".to_string()),
+        };
+        let compiled = Self::cell(&self.compiled, (engine.manifest(), (*root).clone()))?;
+        match compiled.get() {
+            Some(found) => found.clone(),
+            None => Err("this package's project was not compiled by this scan".to_string()),
+        }
+    }
+
     fn cell<T>(
         map: &Mutex<HashMap<(&'static str, PathBuf), Shared<T>>>,
         key: (&'static str, PathBuf),
