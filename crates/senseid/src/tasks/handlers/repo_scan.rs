@@ -243,9 +243,9 @@ pub async fn process_repo_files(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // second invalidation site would let it change mid-scan and reintroduce the
     // order dependence R6 forbids.
     crate::indexer::pipeline::TellFile::forget(&folder_id);
-    // The compiler's answers are a barrier artifact of the same kind: compiled
-    // for THIS scan's tree, cleared at the same single point.
-    crate::indexer::compiler_session::CompilerSessions::forget(&folder_id);
+    // The compiler's answers are NOT cleared here: they are keyed by the state
+    // of the sources they were compiled from (`CompilerSessions::project_for`),
+    // so a gate that fires twice in one scan shares one compile.
 
     // A FORCED scan clears `parsed_at` first, so every file falls back into the
     // unparsed set below. Nothing is deleted — the writer upserts by path, so a

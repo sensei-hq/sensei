@@ -32,16 +32,24 @@ pub struct Project {
 
 type Shared<T> = Arc<tokio::sync::OnceCell<Result<Arc<T>, String>>>;
 
-/// The compiler answers of ONE scan of one repository. Built lazily — a project
-/// is compiled the first time one of its files asks — and shared by every file
-/// task of the scan, so each project is compiled once however many files it has.
+/// What a project's sources were when it was compiled: every file the
+/// repository does not ignore, by path, length and modification time.
+type Fingerprint = String;
+
+/// An engine's manifest and a directory: what a lookup is keyed by.
+type Key = (&'static str, PathBuf);
+
+/// The compiler answers of one repository, kept across its scans. A project is
+/// compiled once per state of its sources: asking again while nothing changed
+/// shares the compile (however many gates of however many scans ask), and a
+/// change compiles it afresh.
 pub struct CompilerSessions {
     repo_root: PathBuf,
     /// package directory → the project root its build tool names.
-    located: Mutex<HashMap<(&'static str, PathBuf), Shared<PathBuf>>>,
-    /// project root → the compiled project.
-    compiled: Mutex<HashMap<(&'static str, PathBuf), Shared<Project>>>,
-    /// Definition files read back through their adapters, for this scan.
+    located: Mutex<HashMap<Key, Result<Arc<PathBuf>, String>>>,
+    /// project root → the latest compile, and the sources it was compiled from.
+    compiled: Mutex<HashMap<Key, (Fingerprint, Shared<Project>)>>,
+    /// Definition files read back through their adapters, since the last compile.
     declared: Mutex<HashMap<PathBuf, Result<Arc<FileFacts>, Reason>>>,
 }
 
@@ -70,22 +78,43 @@ impl CompilerSessions {
         engine: &'static dyn CompilerEngine,
         package_dir: &Path,
     ) -> Result<Arc<Project>, String> {
-        let key = (engine.manifest(), package_dir.to_path_buf());
-        let cell = Self::cell(&self.located, key)?;
-        let root = cell
-            .get_or_init(|| async {
-                let out =
-                    run(&engine.locate(&package_dir.to_string_lossy()), LOCATE_TIMEOUT).await?;
-                engine
-                    .project_root(&out)
-                    .map(|r| Arc::new(canonical(Path::new(&r))))
-                    .ok_or_else(|| format!("no project root in {out:?}"))
-            })
-            .await
-            .clone()?;
+        // Asked afresh each time: a package can move into another workspace.
+        let located = async {
+            let out = run(&engine.locate(&package_dir.to_string_lossy()), LOCATE_TIMEOUT).await?;
+            engine
+                .project_root(&out)
+                .map(|r| Arc::new(canonical(Path::new(&r))))
+                .ok_or_else(|| format!("no project root in {out:?}"))
+        }
+        .await;
+        self.located
+            .lock()
+            .map_err(|_| "compiler session cache poisoned".to_string())?
+            .insert((engine.manifest(), package_dir.to_path_buf()), located.clone());
+        let root = located?;
 
-        let cell = Self::cell(&self.compiled, (engine.manifest(), (*root).clone()))?;
-        cell.get_or_init(|| async { compile(engine, &root).await.map(Arc::new) }).await.clone()
+        let fingerprint = fingerprint(&root).await?;
+        let cell = self.compile_cell((engine.manifest(), (*root).clone()), &fingerprint)?;
+        cell.get_or_init(|| async { compile(engine, &root, &fingerprint).await.map(Arc::new) })
+            .await
+            .clone()
+    }
+
+    /// The compile of this state of the project's sources: the one already
+    /// made or under way when nothing changed, a fresh one when something did.
+    fn compile_cell(&self, key: Key, fingerprint: &str) -> Result<Shared<Project>, String> {
+        let poisoned = || "compiler session cache poisoned".to_string();
+        let mut compiled = self.compiled.lock().map_err(|_| poisoned())?;
+        if let Some((was, cell)) = compiled.get(&key)
+            && was == fingerprint
+        {
+            return Ok(cell.clone());
+        }
+        let cell = Shared::default();
+        compiled.insert(key, (fingerprint.to_string(), cell.clone()));
+        // A definition file read before the change may have changed with it.
+        self.declared.lock().map_err(|_| poisoned())?.clear();
+        Ok(cell)
     }
 
     /// The project `package_dir` belongs to, IF this scan's compile produced
@@ -96,24 +125,26 @@ impl CompilerSessions {
         engine: &'static dyn CompilerEngine,
         package_dir: &Path,
     ) -> Result<Arc<Project>, String> {
-        let located = Self::cell(&self.located, (engine.manifest(), package_dir.to_path_buf()))?;
-        let root = match located.get() {
-            Some(found) => found.clone()?,
+        let located = self
+            .located
+            .lock()
+            .map_err(|_| "compiler session cache poisoned".to_string())?
+            .get(&(engine.manifest(), package_dir.to_path_buf()))
+            .cloned();
+        let root = match located {
+            Some(found) => found?,
             None => return Err("this package's project was not compiled by this scan".to_string()),
         };
-        let compiled = Self::cell(&self.compiled, (engine.manifest(), (*root).clone()))?;
-        match compiled.get() {
+        let compiled = self
+            .compiled
+            .lock()
+            .map_err(|_| "compiler session cache poisoned".to_string())?
+            .get(&(engine.manifest(), (*root).clone()))
+            .map(|(_, cell)| cell.clone());
+        match compiled.as_ref().and_then(|cell| cell.get()) {
             Some(found) => found.clone(),
             None => Err("this package's project was not compiled by this scan".to_string()),
         }
-    }
-
-    fn cell<T>(
-        map: &Mutex<HashMap<(&'static str, PathBuf), Shared<T>>>,
-        key: (&'static str, PathBuf),
-    ) -> Result<Shared<T>, String> {
-        let mut map = map.lock().map_err(|_| "compiler session cache poisoned".to_string())?;
-        Ok(map.entry(key).or_default().clone())
     }
 
     /// The declaration lookup for files of `project`.
@@ -130,22 +161,44 @@ fn scans() -> &'static Mutex<HashMap<uuid::Uuid, Arc<CompilerSessions>>> {
 }
 
 impl CompilerSessions {
-    /// The sessions of this repository's current scan, shared by all its file
-    /// tasks. Lives and dies with the scan exactly as `TellFile::shared` does.
+    /// The sessions of this repository, shared by all its file tasks and kept
+    /// across its scans: a gate that fires again finds the compile it started.
     pub fn shared(folder_id: &uuid::Uuid, repo_root: &Path) -> Result<Arc<Self>, String> {
         let mut scans =
             scans().lock().map_err(|_| "compiler session cache poisoned".to_string())?;
         Ok(scans.entry(*folder_id).or_insert_with(|| Arc::new(Self::new(repo_root))).clone())
     }
+}
 
-    /// Drop a repository's sessions. ONE WRITER, the same as `TellFile::forget`:
-    /// the gate that runs once per repo before the file fan-out, so a scan never
-    /// sees answers compiled for the tree before it.
-    pub fn forget(folder_id: &uuid::Uuid) {
-        if let Ok(mut scans) = scans().lock() {
-            scans.remove(folder_id);
+/// The state of the sources under `root`: every file the repository does not
+/// ignore, by path, length and modification time.
+async fn fingerprint(root: &Path) -> Result<Fingerprint, String> {
+    let root = root.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        use sha2::Digest;
+        let mut files = Vec::new();
+        for entry in ignore::WalkBuilder::new(&root).build() {
+            let entry = entry.map_err(|e| format!("cannot walk {root:?}: {e}"))?;
+            if !entry.file_type().is_some_and(|t| t.is_file()) {
+                continue;
+            }
+            let meta = entry.metadata().map_err(|e| format!("cannot read {entry:?}: {e}"))?;
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
+            files.push(format!("{}\0{}\0{modified}\n", entry.path().display(), meta.len()));
         }
-    }
+        files.sort();
+        let mut hash = sha2::Sha256::new();
+        for file in files {
+            hash.update(file.as_bytes());
+        }
+        Ok(format!("{:x}", hash.finalize()))
+    })
+    .await
+    .map_err(|e| format!("the fingerprint of the sources failed: {e}"))?
 }
 
 /// A path with its symlinks resolved, or as given when it cannot be (a path
@@ -155,7 +208,11 @@ pub fn canonical(path: &Path) -> PathBuf {
 }
 
 /// Compile `root` into a SCIP index and read it.
-async fn compile(engine: &'static dyn CompilerEngine, root: &Path) -> Result<Project, String> {
+async fn compile(
+    engine: &'static dyn CompilerEngine,
+    root: &Path,
+    fingerprint: &str,
+) -> Result<Project, String> {
     let out_dir = std::env::temp_dir().join("sensei-compiler");
     tokio::fs::create_dir_all(&out_dir)
         .await
@@ -164,6 +221,8 @@ async fn compile(engine: &'static dyn CompilerEngine, root: &Path) -> Result<Pro
         .to_string_lossy()
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .chain(".".chars())
+        .chain(fingerprint.chars().take(16))
         .collect();
     let root_str = root.to_string_lossy();
     let compiler = run(&engine.locate_compiler(&root_str), LOCATE_TIMEOUT).await?;
@@ -338,6 +397,78 @@ mod tests {
         };
         let got = sessions.declarations(&project).declared_at("src/lib.rs", 2, "listener").unwrap();
         assert!(got.as_str().ends_with("listener·listener·item"), "got {got:?}");
+    }
+
+    /// An engine that counts its compiles: `sh` writes an empty index and
+    /// appends a line to a counter file.
+    struct Counting {
+        counter: std::path::PathBuf,
+    }
+    impl CompilerEngine for Counting {
+        fn manifest(&self) -> &'static str {
+            "Cargo.toml"
+        }
+        fn locate(&self, package_dir: &str) -> Invocation {
+            Invocation {
+                program: "sh".into(),
+                args: vec!["-c".into(), format!("echo {package_dir}/Cargo.toml")],
+                cwd: package_dir.into(),
+            }
+        }
+        fn project_root(&self, located: &str) -> Option<String> {
+            located.trim().strip_suffix("/Cargo.toml").map(String::from)
+        }
+        fn locate_compiler(&self, root: &str) -> Invocation {
+            Invocation {
+                program: "sh".into(),
+                args: vec!["-c".into(), "echo sh".into()],
+                cwd: root.into(),
+            }
+        }
+        fn configs(&self) -> &'static [&'static str] {
+            &["{}"]
+        }
+        fn compile(&self, _compiler: &str, root: &str, output: &str, _config: &str) -> Invocation {
+            Invocation {
+                program: "sh".into(),
+                args: vec![
+                    "-c".into(),
+                    format!(": > '{output}'; echo run >> '{}'", self.counter.display()),
+                ],
+                cwd: root.into(),
+            }
+        }
+        fn target(&self, _: &str, _: &CompilerIndex, _: &dyn Declarations) -> Result<Fqn, Reason> {
+            Err(Reason::SymbolUnnamed)
+        }
+    }
+
+    /// **A COMPILE IS KEYED BY WHAT IT COMPILES, NOT BY WHO ASKS.** Gates fire
+    /// several times a scan; each used to wipe the sessions and compile again,
+    /// concurrently. An unchanged project now reuses its compile; a changed one
+    /// compiles again; and a file task reads the latest.
+    #[tokio::test]
+    async fn an_unchanged_project_is_compiled_once_and_a_changed_one_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        std::fs::write(root.join("lib.rs"), "pub fn a() {}\n").unwrap();
+        // Outside the project: a write inside it is a change to its sources.
+        let elsewhere = tempfile::tempdir().unwrap();
+        let counter = elsewhere.path().join("compiles.txt");
+        let engine: &'static Counting = Box::leak(Box::new(Counting { counter: counter.clone() }));
+        let sessions = CompilerSessions::new(&root);
+        let runs = || std::fs::read_to_string(&counter).map(|t| t.lines().count()).unwrap_or(0);
+
+        sessions.project_for(engine, &root).await.expect("compiles");
+        sessions.project_for(engine, &root).await.expect("reuses");
+        assert_eq!(runs(), 1, "an unchanged project is compiled once");
+        assert!(sessions.compiled_for(engine, &root).await.is_ok(), "a file task reads it");
+
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write(root.join("lib.rs"), "pub fn a() {}\npub fn b() {}\n").unwrap();
+        sessions.project_for(engine, &root).await.expect("recompiles");
+        assert_eq!(runs(), 2, "a changed project is compiled again");
     }
 
     /// A command that is not installed is an `Err` that says so, not a hang
