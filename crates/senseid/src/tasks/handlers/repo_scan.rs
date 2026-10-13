@@ -263,8 +263,19 @@ pub async fn process_repo_files(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // the repository's projects ONCE, in a task of its own, and the files read
     // its answers. See `TaskKind::CompileProjects` for why it is not done by the
     // first file to ask.
-    let compile =
-        ctx.queue.enqueue(Task::new(TaskKind::CompileProjects, &task.folder_path, "")).await;
+    //
+    // ONE compile in flight per repository: a gate that fires again while one
+    // is queued or running hangs its files on that one. Nothing to parse,
+    // nothing to compile.
+    let compile = if files.is_empty() {
+        None
+    } else {
+        Some(
+            ctx.queue
+                .enqueue_covered(Task::new(TaskKind::CompileProjects, &task.folder_path, ""))
+                .await,
+        )
+    };
     for rel in &files {
         // ABSOLUTE. `files.file_path` is repo-RELATIVE, and `process_file`
         // reads `task.path` as an absolute path (`process.rs`: `let abs_path =
@@ -284,7 +295,7 @@ pub async fn process_repo_files(ctx: &TaskContext, task: &Task) -> Result<u32, S
             .queue
             .enqueue_unique(
                 Task::for_file(TaskKind::ProcessFile, &task.folder_path, &abs.to_string_lossy())
-                    .blocked_by(vec![compile]),
+                    .blocked_by(compile.into_iter().collect()),
             )
             .await
         {
@@ -1387,6 +1398,54 @@ mod scan_tests {
             files.iter().all(|f| f.depends_on.contains(&compiles[0].id)),
             "every file task must wait on the compile"
         );
+
+        // The gate fires again while that compile is still waiting (a forced
+        // rescan reopens files mid-scan): the compile that covers the files
+        // is the one in flight, not a second compile of the same tree.
+        super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
+            .await
+            .unwrap();
+        let again = ctx.queue.snapshot_tasks().await;
+        let compiles_again: Vec<_> =
+            again.iter().filter(|t| t.kind == TaskKind::CompileProjects).collect();
+        assert_eq!(compiles_again.len(), 1, "a gate firing again shares the compile in flight");
+    }
+
+    /// A gate with nothing unparsed compiles nothing: a compile exists for the
+    /// files that wait on it.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
+    async fn a_gate_with_no_files_to_parse_compiles_nothing() {
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let name = format!("parsed-{}", uuid::Uuid::new_v4().simple());
+        let repo = t.path().join(&name);
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("README.txt"), "no source here\n").unwrap();
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", &name, &repo.to_string_lossy())
+            .await
+            .unwrap();
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, &name).await.unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
+            .await
+            .unwrap();
+        let compiles = ctx
+            .queue
+            .snapshot_tasks()
+            .await
+            .into_iter()
+            .filter(|t| t.kind == TaskKind::CompileProjects && t.folder_path == repo_path)
+            .count();
+        assert_eq!(compiles, 0);
     }
 
     /// **A DBD DESIGN'S DETAIL LANDS ON THE NODES THE WALK WROTE (#251).** The
