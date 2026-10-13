@@ -5,7 +5,7 @@ kind: functional
 ---
 
 > **SUPERSEDED 2026-10-13 — folded into the M15 module spec.**
-> Canonical spec: [`prd/modules/delivery/observatory/README.md`](../prd/modules/delivery/observatory/README.md).
+> Canonical spec: [`prd/modules/03-delivery/15-observatory/README.md`](../prd/modules/03-delivery/15-observatory/README.md).
 > Kept for history and cross-links.
 
 # Observatory

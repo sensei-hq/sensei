@@ -8,7 +8,7 @@ kind: functional
 
 > **SUPERSEDED 2026-10-13 — folded into the M2 module spec** (the Inference pane
 > config routes with M5's gateway).
-> The canonical spec is [`prd/modules/foundation/setup-preferences/`](../prd/modules/foundation/setup-preferences/README.md);
+> The canonical spec is [`prd/modules/01-foundation/02-setup-preferences/`](../prd/modules/01-foundation/02-setup-preferences/README.md);
 > this dossier is kept for history and cross-links.
 
 Configuration is everything sensei can be told, reachable anytime after [Setup](01-setup.md) — it is not part of the entry gate. These a free-navigation Settings surface: search or browse, change what you want, and it applies live.

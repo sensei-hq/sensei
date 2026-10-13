@@ -5,7 +5,7 @@ kind: functional
 ---
 
 > **SUPERSEDED 2026-10-13 — folded into the M21 module spec.**
-> Canonical spec: [`prd/modules/delivery/relay/README.md`](../prd/modules/delivery/relay/README.md).
+> Canonical spec: [`prd/modules/03-delivery/21-relay/README.md`](../prd/modules/03-delivery/21-relay/README.md).
 > Kept for history and cross-links.
 
 # Relay

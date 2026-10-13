@@ -13,7 +13,7 @@ tags: [metrics, catalog, calculation, source, representation]
 # Metrics catalog — per-metric detail
 
 > **SUPERSEDED 2026-10-13 — folded into the M8 module spec.**
-> The canonical spec is [`prd/modules/insight/metrics-and-health/`](../../prd/modules/insight/metrics-and-health/README.md);
+> The canonical spec is [`prd/modules/02-insight/08-metrics-and-health/`](../../prd/modules/02-insight/08-metrics-and-health/README.md);
 > this dossier is kept for history and cross-links. The live registry (`sensei.metrics`)
 > and the chart brief (`design/metrics-chart-brief/registry.json`) are authoritative
 > where this prose has drifted.
