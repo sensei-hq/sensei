@@ -6,8 +6,8 @@
 ## Purpose
 
 Everything sensei can be told — and nothing more than first-run needs — lives in a
-free-navigation Preferences surface, reachable at any time, never gated. The old
-nine-stage setup wizard is gone: folders, projects, assistants, libraries, instruments,
+free-navigation Preferences surface, reachable at any time, never gated. Getting
+started stays minimal: folders, projects, assistants, libraries, instruments,
 inference, assignments, profile are panes, not steps. The user searches or browses,
 edits, and the change applies live — no Save/Cancel dance, no restart. The one-and-only
 first-run gate is *point sensei at your work*: add a scan root and press Begin, watching
@@ -21,7 +21,7 @@ projects appear live.
   restore-default on overridden values; the first-run scan screen (single gate: add root + Begin);
   the kanji ⇄ solar icon-style preference and the wider personal-preference surface
   (decision 10, `prd/03-personas.md` §Preference surface).
-- Out: the setup *wizard* as a mandatory flow (removed; the same panes are free navigation);
+- Out: a mandatory setup flow (the panes are free navigation, reachable at any time);
   dojo pairing/auth (T1 — the Connection sub-section wires to it, architecture here);
   capture, scanning, and watcher implementation (M3) — Folders pane *configures* roots.
 
@@ -44,8 +44,7 @@ projects appear live.
   can be kept; `sensei.scan_roots` persists each root and scanning starts immediately, not at
   "Begin".
 - Begin is disabled until at least one root is `scanning`/`watching`.
-- Every old wizard setting is reachable from at least one pane (anti-regression: no hidden
-  settings).
+- Every configurable setting is reachable from at least one pane (no hidden settings).
 - Restore-default resets an overridden value to its shipped default — and only that value.
 - Review cues deep-link to the specific row they're about, not just the pane.
 - Profile user name auto-derives from the home folder on first boot, fills only a blank field,
@@ -66,8 +65,8 @@ projects appear live.
 
 - A first-run user adds a root and reaches "Begin" in one action; projects appear live as the
   scan discovers them.
-- Every configurable value is reachable by search from `/preferences` — nothing the wizard
-  covered is stranded.
+- Every configurable value is reachable by search from `/preferences` — nothing is
+  stranded.
 - Editing any value applies live and survives restart; an override shows a one-click
   restore-default.
 - The silhouette toggle (kanji ⇄ solar) and the personal-preference surface from decision 10
@@ -81,13 +80,13 @@ curl -s http://localhost:7744/api/preferences/cues | jq 'length' # non-negative;
 
 ## Wrong gate
 
-- **A setting from the old wizard isn't reachable from any pane** — wizard rehab incomplete.
+- **A configurable setting isn't reachable from any pane** — the pane coverage is incomplete.
 - **Search misses a value that clearly matches** — hay-stack must index value *and* label *and* description.
 - **Editing requires a Save/Cancel modal** — direct manipulation regressed.
 - **Review cue links to the pane but not the specific row** — must scroll + highlight inside the pane.
 - **Restore-default doesn't reset, or resets the wrong default.**
 - **Profile user name blank after an upgrade** despite auto-derivation or a prior user-set value.
-- **First-run forces the full wizard** — the only forward gate is "point sensei at your work".
+- **First-run forces a full setup flow** — the only forward gate is "point sensei at your work".
 
 ## Scenarios
 
@@ -104,8 +103,8 @@ curl -s http://localhost:7744/api/preferences/cues | jq 'length' # non-negative;
 
 ## Related
 
-- [spec/screen/preferences](../../../../spec/screen/preferences.md) — 8 panes, cues, wizard
-  rehab (legacy depth, folds here).
+- [spec/screen/preferences](../../../../spec/screen/preferences.md) — 8 panes, cues,
+  pane coverage (legacy depth, folds here).
 - [spec/screen/first-run-scan](../../../../spec/screen/first-run-scan.md) ·
   [spec/screen/settings-inference](../../../../spec/screen/settings-inference.md) — the gate + Inference pane.
 - [features/02-config.md](../../../../features/02-config.md) — the Configuration story

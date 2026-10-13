@@ -1,6 +1,6 @@
 ---
 name: Decisions log — sensei
-updated: 2026-07-20
+updated: 2026-10-13
 ---
 
 # Decisions
@@ -9,6 +9,20 @@ updated: 2026-07-20
 > The anti-rework memory — never re-derive a settled choice.
 > The **design journey** (approaches tried, what worked, what didn't) lives in
 > [`history/analysis/2026-07-24-design-journey.md`](history/analysis/2026-07-24-design-journey.md).
+
+---
+
+## 2026-10-13 — Entry point, role vocabulary, and personas
+
+Taken during the docs reorg (full text: [`reorg.md`](reorg.md) §16, decision 10).
+Recorded here because they change the product surface, not just the docs —
+the PRD states only the current result; the reasoning lives here.
+
+| Decision | Locked answer | Why |
+|---|---|---|
+| **Entry point is minimal by design** | Getting started is one gate — *point sensei at your work* (add a scan root, press Begin). The full configuration surface (Preferences) is free-navigation, reachable at any time, never blocking, and covers folders, projects, assistants, libraries, instruments, inference, assignments and profile. No mandatory setup flow. | A lighter entry makes the first run simple; everything configurable stays reachable later to adjust how sensei behaves and which features and support are enabled. |
+| **Dōjō role vocabulary** | Four roles: **developer · maintainer · org admin · lead**. **Lead** is the client/engagement confidentiality role — the lesson travels, the source never does. | Short, one-word role names; the engagement concept is unchanged. |
+| **Personas** | Solo developer · team developer · maintainer · org admin · lead, plus **manager / delivery lead** (*the roll-up*) and **client / project stakeholder** (*the narrow lens*) — the multi-user, multi-team viewpoints. Authored in [`prd/03-personas.md`](prd/03-personas.md). | The multi-user, multi-team case needs the management and client/project viewpoints. Roles that are not yet built are covered by the roadmap/gap register, not by prose in the PRD. |
 
 ---
 

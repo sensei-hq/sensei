@@ -89,8 +89,10 @@ flowchart TD
 ```
 
 **Value before setup** is literal: the first thing the user does is see *their
-own projects*, not a wizard. The old nine-stage wizard is gone — tuning lives in
-Preferences, reachable but never blocking.
+own projects*. The entry point stays deliberately minimal so getting started is
+simple; the full configuration surface (Preferences) is reachable at any time to
+adjust how sensei behaves and which features and support are enabled — tuning
+never blocks the first run.
 
 ### The loops inside the daily app
 

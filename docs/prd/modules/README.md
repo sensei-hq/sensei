@@ -39,7 +39,7 @@ and `spec/` tree. Until a module spec exists, its status lives in
 ## The module-spec template
 
 Every module spec (`modules/<plane>/<module>/README.md`) answers the five
-questions that made the old `spec/` tree usable, then the gaps and the
+questions that make a module spec usable, then the gaps and the
 scenarios:
 
 ```
