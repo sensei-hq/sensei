@@ -106,15 +106,17 @@ rootNames = [...new Set([...rootNames, ...scripts])];
 // Svelte components, as TypeScript, with a map back to the component.
 /** @type {typeof import('svelte2tsx') | null} */
 const s2t = load('svelte2tsx');
+/** @type {typeof import('svelte/compiler') | null} */
+const svelteCompiler = load('svelte/compiler');
 /** @type {typeof import('@jridgewell/trace-mapping') | null} */
 const traceMapping = load('@jridgewell/trace-mapping');
 /** @type {Map<string, { code: string, trace: import('@jridgewell/trace-mapping').TraceMap, original: string, lines: string[], scripts: number[][] }>} */
 const virtual = new Map(); // `<file>.svelte.ts` -> { code, trace, original, lines }
 const componentFiles = sources.filter((f) => f.endsWith('.svelte'));
-if (componentFiles.length && (!s2t || !traceMapping)) {
-  console.error('svelte2tsx / @jridgewell/trace-mapping not installed — .svelte files are not compiled');
+if (componentFiles.length && (!s2t || !traceMapping || !svelteCompiler)) {
+  console.error('svelte, svelte2tsx or @jridgewell/trace-mapping not installed — .svelte files are not compiled');
 }
-if (s2t && traceMapping) {
+if (s2t && traceMapping && svelteCompiler) {
   for (const file of componentFiles) {
     const text = fs.readFileSync(file, 'utf8');
     try {
@@ -191,15 +193,14 @@ function isLibraryFile(sf) {
   return program.isSourceFileDefaultLibrary(sf) || sf.fileName.includes('/node_modules/');
 }
 
-/** The 0-based line ranges of a component's `<script>` blocks. */
-/** @param {string} text */
+/** The 0-based line ranges of a component's `<script>` blocks, as Svelte's
+ *  own parser finds them (a pattern misreads `</script >`, or a tag inside a
+ *  comment or a string).
+ *  @param {string} text */
 function scriptLines(text) {
-  const ranges = [];
-  for (const m of text.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) {
-    const first = text.slice(0, m.index).split('\n').length - 1;
-    ranges.push([first, first + m[0].split('\n').length - 1]);
-  }
-  return ranges;
+  const ast = svelteCompiler.parse(text, { modern: true });
+  const lineOf = (/** @type {number} */ offset) => text.slice(0, offset).split('\n').length - 1;
+  return [ast.instance, ast.module].filter(Boolean).map((script) => [lineOf(script.start), lineOf(script.end)]);
 }
 
 /** Declared in a component's MARKUP — a snippet, an `{#each}` item, an
