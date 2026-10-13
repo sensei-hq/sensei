@@ -1609,18 +1609,7 @@ impl Walk<'_> {
             Statement::ClassDeclaration(c) => self.class(c, scope, flow),
             Statement::VariableDeclaration(v) => self.variables(v, scope, flow),
             Statement::TSInterfaceDeclaration(i) => self.interface(i, scope, flow),
-            Statement::TSTypeAliasDeclaration(a) => {
-                let symbol = self.symbol(
-                    a.span,
-                    scope,
-                    &a.id.name,
-                    SymbolKind::TypeAlias,
-                    Reach::Item,
-                    DeclaredType::Stated(self.text_of(a.type_annotation.span()).to_string()),
-                );
-                let inner = self.push(symbol, scope);
-                self.type_use(a.type_annotation.span(), &inner);
-            }
+            Statement::TSTypeAliasDeclaration(a) => self.type_alias(a, scope),
             Statement::TSEnumDeclaration(e) => self.enumeration(e, scope),
             Statement::TSModuleDeclaration(m) => self.namespace(m, scope, flow),
             Statement::ImportDeclaration(i) => self.import(i),
@@ -2301,7 +2290,40 @@ impl Walk<'_> {
                 name: i.id.name.to_string(),
             },
         };
-        for member in &i.body.body {
+        self.type_members(&i.body.body, &inner);
+    }
+
+    /// `type T = …`. A type alias of an OBJECT type is a named type with
+    /// members, exactly as an interface is.
+    fn type_alias(&mut self, a: &TSTypeAliasDeclaration<'_>, scope: &Scope) {
+        let symbol = self.symbol(
+            a.span,
+            scope,
+            &a.id.name,
+            SymbolKind::TypeAlias,
+            Reach::Item,
+            DeclaredType::Stated(self.text_of(a.type_annotation.span()).to_string()),
+        );
+        let outer = self.push(symbol, scope);
+        self.type_use(a.type_annotation.span(), &outer);
+        if let TSType::TSTypeLiteral(literal) = &a.type_annotation {
+            let inner = Scope {
+                from: outer.from.clone(),
+                container_at: outer.fn_scope.len(),
+                fn_scope: outer.fn_scope.clone(),
+                container: Container::Type {
+                    module: self.module_of(scope),
+                    name: a.id.name.to_string(),
+                },
+            };
+            self.type_members(&literal.members, &inner);
+        }
+    }
+
+    /// The members a named object type declares: a property signature is a
+    /// field, a method signature a method.
+    fn type_members(&mut self, members: &[TSSignature<'_>], inner: &Scope) {
+        for member in members {
             let (span, key, kind, reach) = match member {
                 TSSignature::TSPropertySignature(p) => {
                     (p.span, property_name(&p.key), SymbolKind::Field, Reach::Field)
@@ -2312,8 +2334,8 @@ impl Walk<'_> {
                 _ => continue,
             };
             let Some(key) = key else { continue };
-            let symbol = self.symbol(span, &inner, &key, kind, reach, DeclaredType::Unstated);
-            self.push(symbol, &inner);
+            let symbol = self.symbol(span, inner, &key, kind, reach, DeclaredType::Unstated);
+            self.push(symbol, inner);
         }
     }
 
@@ -3317,17 +3339,7 @@ impl Walk<'_> {
             Declaration::VariableDeclaration(v) => self.variables(v, scope, flow),
             Declaration::FunctionDeclaration(f) => self.function(f, scope, flow),
             Declaration::ClassDeclaration(c) => self.class(c, scope, flow),
-            Declaration::TSTypeAliasDeclaration(a) => {
-                let symbol = self.symbol(
-                    a.span,
-                    scope,
-                    &a.id.name,
-                    SymbolKind::TypeAlias,
-                    Reach::Item,
-                    DeclaredType::Stated(self.text_of(a.type_annotation.span()).to_string()),
-                );
-                self.push(symbol, scope);
-            }
+            Declaration::TSTypeAliasDeclaration(a) => self.type_alias(a, scope),
             Declaration::TSInterfaceDeclaration(i) => self.interface(i, scope, flow),
             Declaration::TSEnumDeclaration(e) => self.enumeration(e, scope),
             Declaration::TSModuleDeclaration(m) => self.namespace(m, scope, flow),
@@ -3750,6 +3762,32 @@ mod tests {
     /// `name -> candidate identity or reason`.
     fn member_targets(facts: &FileFacts) -> Vec<(String, String)> {
         targets(facts)
+    }
+
+    /// **A TYPE ALIAS OF AN OBJECT TYPE HAS MEMBERS, AS AN INTERFACE DOES.**
+    /// `type PushDbQuery = { select(…): …; eq: … }` is how a structural client
+    /// surface is written, and the checker places `db.select()` on its member
+    /// — which had no node, so the call was `declaration_not_found`.
+    #[test]
+    fn the_members_of_a_type_alias_of_an_object_type_are_its_members() {
+        let facts = facts(
+            "export type Query = {\n  select(cols: string): Query;\n  eq: (c: string) => Query;\n};\ntype Local = { run(): void };\n",
+        );
+        let member = |ty: &str, name: &str, reach: Reach| {
+            fqn::define(&Form::Member {
+                lang: Language::TypeScript,
+                package: "pkg",
+                module: "lib/fixture",
+                ty,
+                member: name,
+                reach,
+            })
+            .unwrap()
+        };
+        let kind_of = |fqn: &Fqn| facts.symbols.iter().find(|s| &s.fqn == fqn).map(|s| s.kind);
+        assert_eq!(kind_of(&member("Query", "select", Reach::Item)), Some(SymbolKind::Method));
+        assert_eq!(kind_of(&member("Query", "eq", Reach::Field)), Some(SymbolKind::Field));
+        assert_eq!(kind_of(&member("Local", "run", Reach::Item)), Some(SymbolKind::Method));
     }
 
     /// **A MODULE-LEVEL OBJECT OF FUNCTIONS IS ITS FUNCTIONS' CONTAINER.**
