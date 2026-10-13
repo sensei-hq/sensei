@@ -19,7 +19,7 @@ set search_path to sensei, extensions;
 -- sensei.projects.dojo_id (which points here; no cross-DB FK — Fork 1).
 create table if not exists dojo_memberships (
   id                   uuid        primary key   -- = dojo.memberships.id (service-assigned)
-, registry_url         text        not null      -- Dōjō registry base URL (SENSEI_DOJO_URL), e.g. http://localhost:7755
+, registry_url         text        not null      -- the dōjō that issued the persona's session (dojo_client::settings::dojo_url)
 , tenant_key           text        not null      -- <origin>/<org>[/<dojo>] discovery path of the tenant Dōjō
 , dojo_url             text        not null      -- full membership URL (registry_url + tenant path)
 , kind                 text        not null      -- employer | client | community | personal (drives routing precedence)

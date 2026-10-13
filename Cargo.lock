@@ -4762,14 +4762,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sensei-config"
-version = "0.12.1"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "sensei-gateway"
 version = "0.7.0"
 source = "git+https://github.com/sensei-hq/gateway.git?tag=v0.7.0#b444b6b6454246f239ef03ad10903d38b69cdebe"
@@ -4910,7 +4902,6 @@ dependencies = [
  "scip",
  "semver",
  "sensei-bootstrap",
- "sensei-config",
  "sensei-gateway",
  "sensei-local-engine",
  "sensei-local-providers",
