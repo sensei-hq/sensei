@@ -39,6 +39,18 @@ type Fingerprint = String;
 /// An engine's manifest and a directory: what a lookup is keyed by.
 type Key = (&'static str, PathBuf);
 
+/// One project's compiles: the one for the latest state of its sources, the
+/// last one that finished, and the turn every compile of it takes.
+#[derive(Default)]
+struct Compiles {
+    fingerprint: Fingerprint,
+    latest: Shared<Project>,
+    finished: Option<Arc<Project>>,
+    /// Held while a compile of this project runs: a compile is a whole
+    /// compiler's memory, and two of one project never run together.
+    turn: Arc<tokio::sync::Mutex<()>>,
+}
+
 /// The compiler answers of one repository, kept across its scans. A project is
 /// compiled once per state of its sources: asking again while nothing changed
 /// shares the compile (however many gates of however many scans ask), and a
@@ -47,8 +59,8 @@ pub struct CompilerSessions {
     repo_root: PathBuf,
     /// package directory → the project root its build tool names.
     located: Mutex<HashMap<Key, Result<Arc<PathBuf>, String>>>,
-    /// project root → the latest compile, and the sources it was compiled from.
-    compiled: Mutex<HashMap<Key, (Fingerprint, Shared<Project>)>>,
+    /// project root → its compiles.
+    compiled: Mutex<HashMap<Key, Compiles>>,
     /// Definition files read back through their adapters, since the last compile.
     declared: Mutex<HashMap<PathBuf, Result<Arc<FileFacts>, Reason>>>,
 }
@@ -94,32 +106,44 @@ impl CompilerSessions {
         let root = located?;
 
         let fingerprint = fingerprint(&root).await?;
-        let cell = self.compile_cell((engine.manifest(), (*root).clone()), &fingerprint)?;
-        cell.get_or_init(|| async { compile(engine, &root, &fingerprint).await.map(Arc::new) })
+        let key = (engine.manifest(), (*root).clone());
+        let (cell, turn) = self.compile_cell(key.clone(), &fingerprint)?;
+        let project = cell
+            .get_or_init(|| async {
+                let _turn = turn.lock().await;
+                compile(engine, &root, &fingerprint).await.map(Arc::new)
+            })
             .await
-            .clone()
-    }
-
-    /// The compile of this state of the project's sources: the one already
-    /// made or under way when nothing changed, a fresh one when something did.
-    fn compile_cell(&self, key: Key, fingerprint: &str) -> Result<Shared<Project>, String> {
-        let poisoned = || "compiler session cache poisoned".to_string();
-        let mut compiled = self.compiled.lock().map_err(|_| poisoned())?;
-        if let Some((was, cell)) = compiled.get(&key)
-            && was == fingerprint
-        {
-            return Ok(cell.clone());
+            .clone()?;
+        if let Some(compiles) = self.compiled.lock().map_err(|_| poisoned())?.get_mut(&key) {
+            compiles.finished = Some(project.clone());
         }
-        let cell = Shared::default();
-        compiled.insert(key, (fingerprint.to_string(), cell.clone()));
-        // A definition file read before the change may have changed with it.
-        self.declared.lock().map_err(|_| poisoned())?.clear();
-        Ok(cell)
+        Ok(project)
     }
 
-    /// The project `package_dir` belongs to, IF this scan's compile produced
-    /// it. Never compiles: that is `CompileProjects`' job, ahead of the files,
-    /// so a file task never waits on — or, when abandoned, cancels — a compile.
+    /// The compile of this state of the project's sources — the one already
+    /// made or under way when nothing changed, a fresh one when something did —
+    /// and the project's turn to compile.
+    fn compile_cell(
+        &self,
+        key: Key,
+        fingerprint: &str,
+    ) -> Result<(Shared<Project>, Arc<tokio::sync::Mutex<()>>), String> {
+        let mut compiled = self.compiled.lock().map_err(|_| poisoned())?;
+        let compiles = compiled.entry(key).or_default();
+        if compiles.fingerprint != fingerprint {
+            compiles.fingerprint = fingerprint.to_string();
+            compiles.latest = Shared::default();
+            // A definition file read before the change may have changed with it.
+            self.declared.lock().map_err(|_| poisoned())?.clear();
+        }
+        Ok((compiles.latest.clone(), compiles.turn.clone()))
+    }
+
+    /// The project `package_dir` belongs to, as its latest finished compile
+    /// left it. Never compiles: that is `CompileProjects`' job, ahead of the
+    /// files, so a file task never waits on — or, when abandoned, cancels — a
+    /// compile.
     pub async fn compiled_for(
         &self,
         engine: &'static dyn CompilerEngine,
@@ -135,15 +159,14 @@ impl CompilerSessions {
             Some(found) => found?,
             None => return Err("this package's project was not compiled by this scan".to_string()),
         };
-        let compiled = self
-            .compiled
-            .lock()
-            .map_err(|_| "compiler session cache poisoned".to_string())?
-            .get(&(engine.manifest(), (*root).clone()))
-            .map(|(_, cell)| cell.clone());
-        match compiled.as_ref().and_then(|cell| cell.get()) {
-            Some(found) => found.clone(),
-            None => Err("this package's project was not compiled by this scan".to_string()),
+        let compiled = self.compiled.lock().map_err(|_| poisoned())?;
+        let compiles = compiled.get(&(engine.manifest(), (*root).clone()));
+        // The latest state's compile once it is done; while it runs, the last
+        // one that finished.
+        match compiles.map(|c| (c.latest.get(), &c.finished)) {
+            Some((Some(latest), _)) => latest.clone(),
+            Some((None, Some(finished))) => Ok(finished.clone()),
+            _ => Err("this package's project was not compiled by this scan".to_string()),
         }
     }
 
@@ -199,6 +222,10 @@ async fn fingerprint(root: &Path) -> Result<Fingerprint, String> {
     })
     .await
     .map_err(|e| format!("the fingerprint of the sources failed: {e}"))?
+}
+
+fn poisoned() -> String {
+    "compiler session cache poisoned".to_string()
 }
 
 /// A path with its symlinks resolved, or as given when it cannot be (a path
@@ -401,8 +428,10 @@ mod tests {
 
     /// An engine that counts its compiles: `sh` writes an empty index and
     /// appends a line to a counter file.
+    /// Logs `start` and `end` of each compile to `counter`, `pause` seconds apart.
     struct Counting {
         counter: std::path::PathBuf,
+        pause: &'static str,
     }
     impl CompilerEngine for Counting {
         fn manifest(&self) -> &'static str {
@@ -433,7 +462,11 @@ mod tests {
                 program: "sh".into(),
                 args: vec![
                     "-c".into(),
-                    format!(": > '{output}'; echo run >> '{}'", self.counter.display()),
+                    format!(
+                        "echo start >> '{c}'; sleep {p}; : > '{output}'; echo end >> '{c}'",
+                        c = self.counter.display(),
+                        p = self.pause,
+                    ),
                 ],
                 cwd: root.into(),
             }
@@ -456,9 +489,14 @@ mod tests {
         // Outside the project: a write inside it is a change to its sources.
         let elsewhere = tempfile::tempdir().unwrap();
         let counter = elsewhere.path().join("compiles.txt");
-        let engine: &'static Counting = Box::leak(Box::new(Counting { counter: counter.clone() }));
+        let engine: &'static Counting =
+            Box::leak(Box::new(Counting { counter: counter.clone(), pause: "0" }));
         let sessions = CompilerSessions::new(&root);
-        let runs = || std::fs::read_to_string(&counter).map(|t| t.lines().count()).unwrap_or(0);
+        let runs = || {
+            std::fs::read_to_string(&counter)
+                .map(|t| t.lines().filter(|l| *l == "end").count())
+                .unwrap_or(0)
+        };
 
         sessions.project_for(engine, &root).await.expect("compiles");
         sessions.project_for(engine, &root).await.expect("reuses");
@@ -469,6 +507,46 @@ mod tests {
         std::fs::write(root.join("lib.rs"), "pub fn a() {}\npub fn b() {}\n").unwrap();
         sessions.project_for(engine, &root).await.expect("recompiles");
         assert_eq!(runs(), 2, "a changed project is compiled again");
+    }
+
+    /// **A NEWER COMPILE NEVER BLANKS AN OLDER ONE, NOR RUNS BESIDE IT.** While
+    /// a changed project compiles again, a file task reads the compile that
+    /// finished last — not "not compiled"; and two compiles of one project run
+    /// one after the other, never together (each is a whole compiler's memory).
+    #[tokio::test]
+    async fn a_recompile_waits_its_turn_and_files_read_the_last_one_finished() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        std::fs::write(root.join("lib.rs"), "pub fn a() {}\n").unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let counter = elsewhere.path().join("compiles.txt");
+        let engine: &'static Counting =
+            Box::leak(Box::new(Counting { counter: counter.clone(), pause: "0.6" }));
+        let sessions = Arc::new(CompilerSessions::new(&root));
+        sessions.project_for(engine, &root).await.expect("first compile");
+
+        let change = |text: &str| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            std::fs::write(root.join("lib.rs"), text).unwrap();
+        };
+        change("pub fn a() {}\npub fn b() {}\n");
+        let (s, r) = (sessions.clone(), root.clone());
+        let second = tokio::spawn(async move { s.project_for(engine, &r).await.map(|_| ()) });
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(
+            sessions.compiled_for(engine, &root).await.is_ok(),
+            "a file task reads the compile that finished while the next one runs"
+        );
+        change("pub fn a() {}\npub fn b() {}\npub fn c() {}\n");
+        let (s, r) = (sessions.clone(), root.clone());
+        let third = tokio::spawn(async move { s.project_for(engine, &r).await.map(|_| ()) });
+        second.await.unwrap().expect("second compile");
+        third.await.unwrap().expect("third compile");
+
+        let log = std::fs::read_to_string(&counter).unwrap();
+        let log: Vec<&str> = log.lines().collect();
+        assert_eq!(log, ["start", "end", "start", "end", "start", "end"], "one at a time");
     }
 
     /// A command that is not installed is an `Err` that says so, not a hang
