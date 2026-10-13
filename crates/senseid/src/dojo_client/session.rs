@@ -3,10 +3,9 @@
 //!
 //! ## Where the token lives
 //!
-//! The Keychain, never Postgres. A refresh token IS the user in dōjō — longer
-//! lived and broader than the device tokens it replaces — so it gets the same
-//! treatment `dojo_memberships.credential_ref` already establishes: the secret
-//! sits in the OS keychain and the database holds only a handle.
+//! The Keychain, never Postgres. A refresh token IS the user in dōjō — long
+//! lived and broad — so the secret sits in the OS keychain and the database
+//! holds only a handle (`personas.session_slot`).
 //!
 //! Access tokens are deliberately NOT persisted. They expire in an hour, and a
 //! stored one is a credential at rest with no upside — it is cheaper to refresh

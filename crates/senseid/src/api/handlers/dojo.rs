@@ -1,13 +1,10 @@
 //! `/api/dojo/*` — the daemon's Dōjō connections (memberships) surface.
 //!
-//! Mirrors the federation `/api/knowledge/sources` handlers: register a
-//! connection (URL + tenant_key + service membership id + device token →
-//! Keychain, optional project binding) and list connections + bindings +
-//! sync-status for the observatory Dōjō-connections pane.
-//!
-//! Live artifact publish/pull is out of scope here (C6/C7). The daemon
-//! authenticates to the Dōjō service with a Keychain-backed Bearer token — never
-//! Supabase (dual-plane auth: humans use Supabase in the web console only).
+//! Lists the daemon's memberships with their bindings and sync status for the
+//! observatory Dōjō-connections pane, and edits a membership's org tagging.
+//! There is no POST: signing in is joining (#236 step 4e) — the sync creates
+//! each membership from the signed-in persona's list, and its tenant calls
+//! present that persona's session.
 
 use axum::{
     extract::{Path, State},
@@ -18,7 +15,7 @@ use serde::Deserialize;
 
 use crate::api::handlers::err;
 use crate::api::state::AppState;
-use crate::dojo::memberships::{self, NewConnection};
+use crate::dojo::memberships;
 
 /// `GET /api/dojo/sync-state` — when each entity last agreed with the dōjō, and
 /// what went wrong where it has not.
@@ -61,115 +58,6 @@ pub(crate) async fn list_memberships(
         .await
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     Ok(Json(serde_json::to_value(views).unwrap_or(serde_json::Value::Array(vec![]))))
-}
-
-/// Body for POST /api/dojo/memberships. `membership_id` is the service-assigned
-/// `dojo.memberships.id` (from the console); `credential` is the per-membership
-/// device token pasted into the app (stored in the Keychain, never in PG).
-#[derive(Deserialize)]
-pub(crate) struct NewMembershipBody {
-    /// Service membership id (`dojo.memberships.id`) — becomes the local PK.
-    pub membership_id: String,
-    /// Registry base URL. Defaults to `sensei_config::dojo_registry_url()`
-    /// (`SENSEI_DOJO_URL`, default `http://localhost:7755`) when omitted.
-    pub registry_url: Option<String>,
-    /// `<origin>/<org>[/<dojo>]` discovery path of the tenant Dōjō.
-    pub tenant_key: String,
-    /// employer | client | community | personal.
-    pub kind: String,
-    /// Git-remote owner slugs this membership covers (e.g. `["sensei-hq"]`) —
-    /// the org-tagging that drives infer-at-detect auto-bind. Normalised
-    /// (lowercased/deduped) server-side. Optional; defaults to none.
-    pub org_slugs: Option<Vec<String>>,
-    /// contributor | maintainer | lead | admin (default contributor).
-    pub role: Option<String>,
-    /// sso | github_oauth | device_code (default device_code).
-    pub authenticated_via: Option<String>,
-    /// named | anonymous | dereferenced (default named).
-    pub attribution_default: Option<String>,
-    /// The device token (Bearer). Stored in the OS Keychain.
-    pub credential: String,
-    /// Optional project to bind to this membership (`projects.dojo_id`).
-    pub project_id: Option<String>,
-}
-
-/// POST /api/dojo/memberships — register a Dōjō connection.
-pub(crate) async fn create_membership(
-    State(state): State<AppState>,
-    Json(b): Json<NewMembershipBody>,
-) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let membership_id = uuid::Uuid::parse_str(b.membership_id.trim()).map_err(|_| {
-        err(StatusCode::BAD_REQUEST, "bad membership_id (expected the service membership uuid)")
-    })?;
-
-    let registry_url = b
-        .registry_url
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(sensei_config::dojo_registry_url);
-    // Never send the device token to a non-loopback cleartext endpoint.
-    crate::api::util::require_secure_url(&registry_url, "registry url")
-        .map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
-
-    let tenant_key = b.tenant_key.trim().to_string();
-    let dojo_url = memberships::derive_dojo_url(&registry_url, &tenant_key);
-
-    let project_id = match b.project_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(s) => Some(
-            uuid::Uuid::parse_str(s).map_err(|_| err(StatusCode::BAD_REQUEST, "bad project_id"))?,
-        ),
-        None => None,
-    };
-
-    let conn = NewConnection::validated(
-        membership_id,
-        registry_url,
-        tenant_key,
-        dojo_url,
-        &b.kind,
-        b.org_slugs.as_deref().unwrap_or(&[]),
-        b.role.as_deref().unwrap_or("contributor"),
-        b.authenticated_via.as_deref().unwrap_or("device_code"),
-        // Fail closed on privacy: an omitted attribution defaults to the safest
-        // conservative mode (source-dereferenced), NOT the least-private `named`.
-        // Shared source of truth with collective preferences.
-        b.attribution_default
-            .as_deref()
-            .unwrap_or(crate::collective::preferences::DEFAULT_ATTRIBUTION),
-        // A fresh pairing is mid-authentication. This used to say "until the
-        // first heartbeat"; there is no heartbeat. Nothing in this repository
-        // writes `dojo_memberships.last_heartbeat_at`, and the only setter for
-        // `sync_status` — `dojo::memberships::set_sync_status` — is
-        // `#[allow(dead_code)]` with zero callers. So this literal is the FINAL
-        // value of the column, not its initial one, and every row on both sides
-        // of the fork still reads `authenticating` (the daemon's oldest since
-        // 2026-07-16, with `updated_at` still equal to `created_at`).
-        "authenticating",
-    )
-    .map_err(|e| err(StatusCode::BAD_REQUEST, &e))?;
-
-    let id = memberships::register(&state.pg, conn, &b.credential)
-        .await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-
-    // #236 step 4c: record whose membership this is now, not at the next sync
-    // cycle — that cycle retries whatever this could not reach.
-    for failure in crate::tasks::dojo_sync::bind_all_memberships(&state.pg).await {
-        tracing::warn!(error = %failure, "dojo: membership persona binding deferred to the next sync");
-    }
-
-    if let Some(pid) = project_id
-        && !memberships::bind_project(&state.pg, &pid, &id)
-            .await
-            .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
-    {
-        return Err(err(
-            StatusCode::NOT_FOUND,
-            "membership registered but project_id not found to bind",
-        ));
-    }
-
-    Ok(Json(serde_json::json!({ "id": id.to_string() })))
 }
 
 /// Body for PUT /api/dojo/memberships/{id}/orgs — the org-tagging edit.

@@ -5,9 +5,8 @@
  * exhaustively by unit tests (routing.rs::infer_binding, about-binding-state
  * specs) and svelte-check. This spec covers what they can't, against the real
  * e2e daemon:
- *   1. org_slugs round-trips end-to-end — POST /api/dojo/memberships with
- *      org_slugs, GET returns them normalized (proves the org_slugs DDL column
- *      + handler work on a live daemon, not just sensei_test).
+ *   1. Memberships are joined by signing in, not posted (405), and the
+ *      org-tagging edit normalizes a joined membership's slugs.
  *   2. The Dōjō connections screen mounts and sends you to sign in — there
  *      is no pairing form (#236 step 4e).
  *   3. The project About "Bindings" section mounts without a runtime throw and
@@ -54,43 +53,34 @@ test.describe('R3 · Dōjō auto-bind', () => {
     await installErrorTrap(tauriPage);
   });
 
-  test('org_slugs round-trips through the daemon (POST → GET normalized)', async () => {
-    // A membership id the daemon will accept as the PK. org_slugs given with
-    // mixed case + a dupe; the daemon normalizes to lowercased + deduped.
-    const membershipId = crypto.randomUUID();
-    const body = {
-      membership_id: membershipId,
-      tenant_key: 'github/acme-e2e',
-      kind: 'employer',
-      org_slugs: ['Acme-E2E', 'acme-e2e', 'acme-labs'],
-      credential: 'e2e-device-token',
-    };
+  test('a membership cannot be posted — it joins by signing in (#236 step 4e)', async () => {
     const post = await fetch(`${DAEMON_URL}/api/dojo/memberships`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ membership_id: crypto.randomUUID(), tenant_key: 'github/acme-e2e', kind: 'employer' }),
     });
-    expect(post.ok, 'POST /api/dojo/memberships should succeed').toBe(true);
+    expect(post.status, 'POST /api/dojo/memberships is gone').toBe(405);
+  });
 
+  test('org tagging replaces a joined membership\'s org slugs', async () => {
+    // Memberships arrive with a signed-in persona's sync; the throwaway e2e DB
+    // has none unless one was joined, so the edit is exercised only then.
     const memberships = await safeJson<Array<{ id: string; org_slugs: string[] }>>(
       `${DAEMON_URL}/api/dojo/memberships`, [],
     );
-    const created = memberships.find((m) => m.id === membershipId);
-    expect(created, 'created membership is listed').toBeTruthy();
-    // Normalized: lowercased, deduped, first-seen order preserved.
-    expect(created!.org_slugs).toEqual(['acme-e2e', 'acme-labs']);
-
-    // The org-tagging edit endpoint replaces the set.
-    const put = await fetch(`${DAEMON_URL}/api/dojo/memberships/${membershipId}/orgs`, {
+    if (memberships.length === 0) { test.skip(true, 'no joined membership in the e2e DB'); return; }
+    const { id } = memberships[0];
+    const put = await fetch(`${DAEMON_URL}/api/dojo/memberships/${id}/orgs`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ org_slugs: ['acme-e2e', 'globex'] }),
+      body: JSON.stringify({ org_slugs: ['Acme-E2E', 'acme-e2e', 'globex'] }),
     });
     expect(put.ok, 'PUT …/orgs should succeed').toBe(true);
     const after = await safeJson<Array<{ id: string; org_slugs: string[] }>>(
       `${DAEMON_URL}/api/dojo/memberships`, [],
     );
-    expect(after.find((m) => m.id === membershipId)!.org_slugs).toEqual(['acme-e2e', 'globex']);
+    // Normalized: lowercased, deduped, first-seen order preserved.
+    expect(after.find((m) => m.id === id)!.org_slugs).toEqual(['acme-e2e', 'globex']);
   });
 
   test('connections screen sends you to sign in, with no pairing form', async ({ tauriPage }) => {

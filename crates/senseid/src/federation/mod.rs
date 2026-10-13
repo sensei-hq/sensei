@@ -396,7 +396,6 @@ mod tests {
             role: "contributor".into(),
             authenticated_via: "github_oauth".into(),
             attribution_default: "named".into(),
-            credential_ref: "membership-device".into(),
             sync_status: "healthy".into(),
             last_seq: 0,
             last_heartbeat_at: None,
@@ -581,7 +580,6 @@ mod tests {
             role: "contributor".into(),
             authenticated_via: "github_oauth".into(),
             attribution_default: "named".into(),
-            credential_ref: "unused".into(),
             sync_status: "healthy".into(),
         })
         .await

@@ -1040,7 +1040,6 @@ mod tests {
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
             attribution_default: "named".into(),
-            credential_ref: "cref".into(),
             sync_status: "healthy".into(),
             last_seq: 0,
             last_heartbeat_at: None,
@@ -1830,7 +1829,6 @@ mod nothing_generalised_is_nothing_shareable {
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
             attribution_default: "named".into(),
-            credential_ref: format!("dojo-{}", Uuid::new_v4()),
             sync_status: "healthy".into(),
         })
         .await

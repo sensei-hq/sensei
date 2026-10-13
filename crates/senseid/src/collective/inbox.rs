@@ -503,7 +503,6 @@ mod tests {
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
             attribution_default: "anonymous".into(),
-            credential_ref: "cref".into(),
             sync_status: "healthy".into(),
             last_seq: 0,
             last_heartbeat_at: None,

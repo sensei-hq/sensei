@@ -477,7 +477,7 @@ pub fn create_router(state: AppState) -> Router {
             get(preferences::get_collective).put(preferences::put_collective),
         )
         // Dōjō connections (memberships)
-        .route("/api/dojo/memberships", get(dojo::list_memberships).post(dojo::create_membership))
+        .route("/api/dojo/memberships", get(dojo::list_memberships))
         .route("/api/dojo/memberships/{id}/orgs", put(dojo::set_membership_orgs))
         .route("/api/dojo/metric-activation", patch(dojo::set_metric_activation))
         // When each entity last AGREED with the dōjō, and what went wrong where it
@@ -2286,6 +2286,25 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
+    }
+
+    // #236 step 4e: signing in is joining — there is no pairing to post, so a
+    // device token has nowhere to go.
+    #[tokio::test]
+    async fn a_membership_cannot_be_posted_only_joined_by_signing_in() {
+        let (app, _) = test_app().await;
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/dojo/memberships")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"membership_id":"x","tenant_key":"a/b","kind":"employer","credential":"t"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]

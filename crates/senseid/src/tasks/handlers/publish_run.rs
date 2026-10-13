@@ -471,7 +471,6 @@ mod tests {
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
             attribution_default: "anonymous".into(),
-            credential_ref: "unused".into(),
             sync_status: "authenticating".into(),
         })
         .await
@@ -589,7 +588,6 @@ mod tests {
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
             attribution_default: "anonymous".into(),
-            credential_ref: "unused".into(),
             sync_status: "authenticating".into(),
         })
         .await

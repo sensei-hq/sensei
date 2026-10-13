@@ -789,7 +789,6 @@ async fn suggest_binding_infers_from_git_owner_then_stops_once_bound() {
         role: "contributor".into(),
         authenticated_via: "device_code".into(),
         attribution_default: "anonymous".into(),
-        credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()),
         sync_status: "healthy".into(),
     })
     .await
@@ -9391,7 +9390,6 @@ async fn dojo_membership_crud_and_project_binding_roundtrip() {
         role: "contributor".into(),
         authenticated_via: "device_code".into(),
         attribution_default: "anonymous".into(),
-        credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()),
         sync_status: "authenticating".into(),
     })
     .await
@@ -9674,7 +9672,6 @@ async fn dojo_outbox_and_batch_items_roundtrip() {
         role: "contributor".into(),
         authenticated_via: "device_code".into(),
         attribution_default: "anonymous".into(),
-        credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()),
         sync_status: "healthy".into(),
     })
     .await
@@ -9785,7 +9782,6 @@ async fn dojo_inbox_upsert_apply_and_state_roundtrip() {
         role: "contributor".into(),
         authenticated_via: "device_code".into(),
         attribution_default: "anonymous".into(),
-        credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()),
         sync_status: "healthy".into(),
     })
     .await
@@ -16910,7 +16906,6 @@ async fn persona_test_membership(s: &PgStore) -> uuid::Uuid {
         role: "contributor".into(),
         authenticated_via: "github_oauth".into(),
         attribution_default: "named".into(),
-        credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()),
         sync_status: "healthy".into(),
     })
     .await

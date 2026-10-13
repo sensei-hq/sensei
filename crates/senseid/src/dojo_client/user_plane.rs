@@ -1,8 +1,8 @@
 //! The USER-plane dōjō client — "what may I sync, as me?"
 //!
-//! Distinct from `dojo/client.rs`, which is the TENANT plane: that one carries a
-//! per-membership device token and addresses artifacts that genuinely belong to a
-//! tenant. This one carries the persona's own Supabase access token and asks two
+//! Distinct from `dojo/client.rs`, which is the TENANT plane: that one addresses
+//! artifacts, rules and relay rows that genuinely belong to a tenant, as the
+//! persona a membership is bound to. This one carries the persona's own Supabase access token and asks two
 //! questions that are only answerable for a USER:
 //!
 //!   POST /v1/you/repositories   IDENTITY.    Which tenant does each repo belong to?
@@ -121,13 +121,19 @@ pub struct SyncPlan {
 }
 
 /// One of the signed-in person's memberships, as `GET /v1/you/memberships`
-/// lists it — what the daemon matches its local memberships against to record
-/// which persona each belongs to (#236 step 4c). `role`/`kind` are on the wire
-/// too; the match needs only the id.
+/// lists it. Signing in is joining (#236 step 4e): the daemon creates its local
+/// membership from this and binds it to the persona.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct MyMembership {
     pub id: uuid::Uuid,
     pub tenant_key: String,
+    pub role: String,
+    /// employer | client | community | personal — drives client precedence.
+    pub kind: String,
+    /// The git-remote owners the membership covers.
+    pub org_slugs: Vec<String>,
+    pub authenticated_via: String,
+    pub attribution_default: String,
 }
 
 /// The `GET /v1/you/memberships` envelope.
@@ -554,7 +560,10 @@ mod tests {
                 "id": "1f0c0e3a-0000-4000-8000-000000000001",
                 "tenant_key": "organization/acme",
                 "role": "contributor",
-                "kind": "employer"
+                "kind": "employer",
+                "org_slugs": ["acme"],
+                "authenticated_via": "github_oauth",
+                "attribution_default": "named"
             }]
         });
         let got: MyMemberships = serde_json::from_value(body).expect("the list decodes");
@@ -563,6 +572,11 @@ mod tests {
             vec![MyMembership {
                 id: uuid::Uuid::parse_str("1f0c0e3a-0000-4000-8000-000000000001").unwrap(),
                 tenant_key: "organization/acme".into(),
+                role: "contributor".into(),
+                kind: "employer".into(),
+                org_slugs: vec!["acme".into()],
+                authenticated_via: "github_oauth".into(),
+                attribution_default: "named".into(),
             }]
         );
         assert_eq!(
