@@ -595,6 +595,60 @@ mod tests {
         assert_eq!(log, ["start", "end", "start", "end", "start", "end"], "one at a time");
     }
 
+    /// **A SVELTEKIT PROJECT IS COMPILED AS ITS OWN TOOLING SEES IT.** Its
+    /// tsconfig extends what `svelte-kit sync` generates (`$lib`, `$app`,
+    /// `./$types`); a clean checkout, or a `make clean`, has none of it, and
+    /// every name imported through `$lib` vanished. The driver runs the
+    /// project's own `svelte-kit sync` first. Here the kit is a stand-in whose
+    /// sync writes only the `$lib` path.
+    #[tokio::test]
+    async fn a_sveltekit_project_is_synced_before_it_is_compiled() {
+        use crate::indexer::facts::{RefKind, Resolution, Rung};
+        use crate::indexer::lang::compiler::{Compiled, place_with};
+        use crate::indexer::lang::ts_compiler::TS_ENGINE;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        let write = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("package.json", r#"{"name": "kitapp", "type": "module"}"#);
+        write("svelte.config.js", "export default {};\n");
+        write("tsconfig.json", r#"{"extends": "./.svelte-kit/tsconfig.json"}"#);
+        write(
+            "node_modules/@sveltejs/kit/package.json",
+            r#"{"name": "@sveltejs/kit", "version": "0.0.0"}"#,
+        );
+        write(
+            "node_modules/@sveltejs/kit/svelte-kit.js",
+            "import fs from 'node:fs';\nif (process.argv[2] !== 'sync') process.exit(9);\nfs.mkdirSync('.svelte-kit', { recursive: true });\nfs.writeFileSync('.svelte-kit/tsconfig.json', JSON.stringify({ compilerOptions: { strict: true, module: 'esnext', moduleResolution: 'bundler', target: 'es2022', paths: { '$lib': ['../src/lib'], '$lib/*': ['../src/lib/*'] } }, include: ['../src/**/*.ts'] }));\n",
+        );
+        write("src/lib/net.ts", "export function bind(port: number) {\n  return port;\n}\n");
+        write(
+            "src/main.ts",
+            "import { bind } from '$lib/net';\n\nexport function start() {\n  return bind(80);\n}\n",
+        );
+
+        let sessions = CompilerSessions::new(&root);
+        let project = sessions.project_for(&TS_ENGINE, &root).await.expect("the driver compiles");
+        let declarations = sessions.declarations(&project);
+        let bind = declarations.declared_at("src/lib/net.ts", 1, "bind").expect("bind is declared");
+        let facts = read_declarations(&root, &root.join("src/main.ts")).expect("main reads");
+        let text = std::fs::read_to_string(root.join("src/main.ts")).unwrap();
+        let compiled =
+            Compiled { index: &project.index, path: "src/main.ts", declarations: &declarations };
+        let calls: Vec<_> =
+            facts.references.iter().filter(|r| r.kind == RefKind::Calls).cloned().collect();
+        let placed = place_with(&TS_ENGINE, Some(&compiled), calls, &text);
+        assert_eq!(
+            placed.iter().map(|r| r.target.clone()).collect::<Vec<_>>(),
+            vec![Resolution::Resolved { fqn: bind, via: Rung::ResolvedByCompiler }],
+            "a call through `$lib` is placed once the project is synced"
+        );
+    }
+
     /// An engine whose packages all belong to the project at `root`, and whose
     /// compile touches that project — the way a developer's editor does while
     /// a scan runs.
