@@ -86,6 +86,11 @@ impl CompilerEngine for TsEngine {
         matches!(node_kind, "ArrowFunctionExpression" | "FunctionExpression" | "CallExpression")
     }
 
+    /// `this[event.action](…)` — a member chosen by an expression.
+    fn dynamic_callee(&self, node_kind: &str) -> bool {
+        node_kind == "ComputedMemberExpression"
+    }
+
     fn target(
         &self,
         symbol: &str,
@@ -187,6 +192,16 @@ mod tests {
         }
         for kind in ["Identifier", "StaticMemberExpression", "Super", "ComputedMemberExpression"] {
             assert!(!TS_ENGINE.anonymous_callee(kind), "{kind}");
+        }
+    }
+
+    /// A member chosen by an expression, `this[event.action](…)`, is chosen at
+    /// run time: no declaration answers, and that is the reason.
+    #[test]
+    fn a_member_chosen_by_an_expression_is_dynamic_dispatch() {
+        assert!(TS_ENGINE.dynamic_callee("ComputedMemberExpression"));
+        for kind in ["Identifier", "StaticMemberExpression", "Super"] {
+            assert!(!TS_ENGINE.dynamic_callee(kind), "{kind}");
         }
     }
 

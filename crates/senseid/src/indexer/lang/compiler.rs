@@ -227,6 +227,12 @@ pub trait CompilerEngine: Sync {
     fn anonymous_callee(&self, _node_kind: &str) -> bool {
         false
     }
+    /// Whether a callee of this node kind is a member chosen by an expression
+    /// at run time (`handlers[i]()`) — `dynamic_dispatch`, a refusal no
+    /// declaration can answer.
+    fn dynamic_callee(&self, _node_kind: &str) -> bool {
+        false
+    }
     /// The identity a resolved symbol names.
     fn target(
         &self,
@@ -266,6 +272,9 @@ impl Targets for EngineTargets<'_> {
     fn anonymous_callee(&self, node_kind: &str) -> bool {
         self.engine.anonymous_callee(node_kind)
     }
+    fn dynamic_callee(&self, node_kind: &str) -> bool {
+        self.engine.dynamic_callee(node_kind)
+    }
 }
 
 /// The compiler step for one file of a language that HAS an engine: every call
@@ -302,6 +311,10 @@ pub trait Targets {
     /// Whether a callee the walk named by this node kind is an anonymous
     /// function — see [`CompilerEngine::anonymous_callee`].
     fn anonymous_callee(&self, _node_kind: &str) -> bool {
+        false
+    }
+    /// See [`CompilerEngine::dynamic_callee`].
+    fn dynamic_callee(&self, _node_kind: &str) -> bool {
         false
     }
 }
@@ -346,6 +359,11 @@ pub fn place_calls(
             // A call of an anonymous function reaches no declaration.
             if targets.anonymous_callee(&evidence.node_kind) {
                 return None;
+            }
+            // A member chosen at run time: no declaration answers.
+            if targets.dynamic_callee(&evidence.node_kind) {
+                let target = Resolution::Unresolved { reason: Reason::DynamicDispatch, evidence };
+                return Some(Reference { target, ..reference });
             }
             let nested: Vec<Span> = calls
                 .iter()
@@ -944,6 +962,35 @@ mod placement_tests {
         // A Rust qualified path is a path, not a cast.
         assert_eq!(spelled("<Cli as clap::CommandFactory>::command"), "command");
         assert_eq!(spelled("<Vec<u8> as Default>::default"), "default");
+    }
+
+    /// A member chosen by an expression at run time is `dynamic_dispatch`, said
+    /// rather than looked up — no occurrence would answer it.
+    #[test]
+    fn a_member_chosen_at_run_time_is_dynamic_dispatch() {
+        struct Chosen;
+        impl Targets for Chosen {
+            fn target(&self, _: &str) -> Result<Fqn, Reason> {
+                Err(Reason::SymbolUnnamed)
+            }
+            fn dynamic_callee(&self, node_kind: &str) -> bool {
+                node_kind == "index_expression"
+            }
+        }
+        let ix = compiled();
+        let answers = FileAnswers::new(&ix, "src/main.rs", TEXT);
+        let mut chosen = call(span(2, 4, 20), unplaced("handlers[i]"));
+        if let Resolution::Unresolved { evidence, .. } = &mut chosen.target {
+            evidence.node_kind = "index_expression".into();
+        }
+        let placed = place_calls(vec![chosen], Some(&answers), &Chosen);
+        assert!(
+            matches!(
+                placed[0].target,
+                Resolution::Unresolved { reason: Reason::DynamicDispatch, .. }
+            ),
+            "{placed:?}"
+        );
     }
 
     /// A call of an anonymous function — an immediately invoked closure, or the

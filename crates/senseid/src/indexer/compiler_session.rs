@@ -809,13 +809,18 @@ mod tests {
             "<script lang=\"ts\">\n  let n = 1;\n</script>\n\n{#snippet stat(x: number)}\n  <b>{x}</b>\n{/snippet}\n\n{@render stat(n)}\n",
         );
         write("src/raw.js", "export function go(x) {\n  return x.whatever();\n}\n");
+        write(
+            "src/missing.ts",
+            "import { make } from 'not-installed';\n\nexport function go() {\n  return make();\n}\n",
+        );
 
         let sessions = CompilerSessions::new(&root);
         let project = sessions.project_for(&TS_ENGINE, &root).await.expect("the driver compiles");
         let declarations = sessions.declarations(&project);
         let mut seen = Vec::new();
         let mut placed = Vec::new();
-        for rel in ["src/fire.ts", "src/use.ts", "src/Card.svelte", "src/raw.js"] {
+        for rel in ["src/fire.ts", "src/use.ts", "src/Card.svelte", "src/raw.js", "src/missing.ts"]
+        {
             let facts = read_declarations(&root, &root.join(rel)).expect(rel);
             let text = std::fs::read_to_string(root.join(rel)).unwrap();
             let compiled =
@@ -855,6 +860,14 @@ mod tests {
             ),
             "{:?}",
             to("src/raw.js", 2)
+        );
+        assert!(
+            matches!(
+                to("src/missing.ts", 4).as_slice(),
+                [Resolution::Unresolved { reason: Reason::UntypedReceiver, .. }]
+            ),
+            "a name imported from a module the checker cannot find is untyped: {:?}",
+            to("src/missing.ts", 4)
         );
     }
 
