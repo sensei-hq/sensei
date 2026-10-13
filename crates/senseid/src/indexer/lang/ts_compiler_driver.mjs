@@ -21,6 +21,7 @@
 //   npm <package> <path>         a library: node_modules, Svelte's runes, and
 //                                the language's own declarations as package
 //                                `ecmascript` (the walk's name for them)
+import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -57,6 +58,32 @@ function walk(dir, out = []) {
     else out.push(full);
   }
   return out;
+}
+
+// ── a SvelteKit project, as its own tooling sees it ──────────────────────────
+// Its tsconfig extends what `svelte-kit sync` generates — `$lib`, `$app/*`,
+// `./$types` — which a clean checkout does not have. Run the project's own
+// sync first (it writes only `.svelte-kit/`, the kit's own output); a sync that
+// fails is the compile failing, not a project compiled without its paths.
+const kitDir = (() => {
+  try {
+    return path.dirname(createRequire(path.join(root, 'package.json')).resolve('@sveltejs/kit/package.json'));
+  } catch {
+    return null;
+  }
+})();
+const kitConfig = ['svelte.config.js', 'svelte.config.mjs', 'svelte.config.ts'].some((f) =>
+  fs.existsSync(path.join(root, f))
+);
+if (kitDir && kitConfig) {
+  const sync = spawnSync(process.execPath, [path.join(kitDir, 'svelte-kit.js'), 'sync'], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  if (sync.status !== 0) {
+    console.error(`svelte-kit sync failed in ${root}: ${(sync.stderr || sync.error?.message || '').trim()}`);
+    process.exit(4);
+  }
 }
 
 // ── the program ───────────────────────────────────────────────────────────────
