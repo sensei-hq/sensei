@@ -102,6 +102,10 @@ impl CompilerEngine for TsEngine {
             let line = line.parse().map_err(|_| Reason::SymbolUnnamed)?;
             return declarations.declared_at(path, line, name);
         }
+        // The driver's mark for a call on a receiver typed `any`.
+        if symbol == "untyped" {
+            return Err(Reason::UntypedReceiver);
+        }
         if let Some(library) = symbol.strip_prefix("npm ") {
             let (package, member) = library.split_once(' ').ok_or(Reason::SymbolUnnamed)?;
             return fqn::refer(&Form::Lib { package, member }).map_err(|_| Reason::SymbolUnnamed);
@@ -154,6 +158,14 @@ mod tests {
         let (got, asked) = target("ts src/lib/a b.ts:12:load");
         assert_eq!(got, Ok(lib("asked", "load")));
         assert_eq!(asked, vec![("src/lib/a b.ts".to_string(), 12, "load".to_string())]);
+    }
+
+    /// A call on a receiver the checker typed `any` (an import it could not
+    /// resolve, untyped JavaScript) has no static callee: the driver marks it,
+    /// and that is its root cause.
+    #[test]
+    fn a_call_on_an_untyped_receiver_says_so() {
+        assert_eq!(target("untyped").0, Err(Reason::UntypedReceiver));
     }
 
     /// A symbol this cannot read is a named root cause, never a silent miss.

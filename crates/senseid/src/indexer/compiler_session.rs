@@ -763,6 +763,101 @@ mod tests {
         assert_eq!(to("src/Button.svelte", 4), vec![], "a prop is a parameter: no edge");
     }
 
+    /// **WHAT THE CHECKER KNOWS WITHOUT A DECLARATION IS STILL AN ANSWER.**
+    /// A member of a mapped type (`fireEvent.click`) has no declaration of its
+    /// own — it is named by its type. A shorthand property (`{ loadCatalog }`)
+    /// is the function it names. A Svelte snippet is declared in the markup, a
+    /// template's local: no edge. And a receiver typed `any` names nothing —
+    /// which is said, as `untyped_receiver`.
+    #[tokio::test]
+    async fn the_checker_names_members_shorthands_snippets_and_untyped_receivers() {
+        use crate::indexer::facts::{RefKind, Resolution, Rung};
+        use crate::indexer::lang::compiler::{Compiled, place_with};
+        use crate::indexer::lang::ts_compiler::TS_ENGINE;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        let write = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("package.json", r#"{"name": "web", "type": "module"}"#);
+        write(
+            "tsconfig.json",
+            r#"{"compilerOptions": {"strict": true, "module": "esnext", "moduleResolution": "bundler", "target": "es2022", "allowJs": true}}"#,
+        );
+        write("node_modules/firelib/package.json", r#"{"name": "firelib", "types": "index.d.ts"}"#);
+        write(
+            "node_modules/firelib/index.d.ts",
+            "export type FireObject = { [K in 'click' | 'input']: (el: number) => Promise<boolean> };\nexport declare const fireEvent: FireObject;\n",
+        );
+        write(
+            "src/fire.ts",
+            "import { fireEvent } from 'firelib';\n\nexport async function press() {\n  await fireEvent.click(1);\n}\n",
+        );
+        write(
+            "src/store.ts",
+            "function loadCatalog() {\n  return 1;\n}\n\nexport const mcp = { loadCatalog };\n",
+        );
+        write(
+            "src/use.ts",
+            "import { mcp } from './store';\n\nexport function go() {\n  return mcp.loadCatalog();\n}\n",
+        );
+        write(
+            "src/Card.svelte",
+            "<script lang=\"ts\">\n  let n = 1;\n</script>\n\n{#snippet stat(x: number)}\n  <b>{x}</b>\n{/snippet}\n\n{@render stat(n)}\n",
+        );
+        write("src/raw.js", "export function go(x) {\n  return x.whatever();\n}\n");
+
+        let sessions = CompilerSessions::new(&root);
+        let project = sessions.project_for(&TS_ENGINE, &root).await.expect("the driver compiles");
+        let declarations = sessions.declarations(&project);
+        let mut seen = Vec::new();
+        let mut placed = Vec::new();
+        for rel in ["src/fire.ts", "src/use.ts", "src/Card.svelte", "src/raw.js"] {
+            let facts = read_declarations(&root, &root.join(rel)).expect(rel);
+            let text = std::fs::read_to_string(root.join(rel)).unwrap();
+            let compiled =
+                Compiled { index: &project.index, path: rel, declarations: &declarations };
+            let calls: Vec<_> =
+                facts.references.iter().filter(|r| r.kind == RefKind::Calls).cloned().collect();
+            seen.extend(calls.iter().map(|c| (rel, c.at.start_line)));
+            for call in place_with(&TS_ENGINE, Some(&compiled), calls, &text) {
+                placed.push((rel, call.at.start_line, call.target));
+            }
+        }
+        let to = |rel: &str, line: u32| {
+            placed
+                .iter()
+                .filter(|(r, l, _)| *r == rel && *l == line)
+                .map(|(_, _, t)| t.clone())
+                .collect::<Vec<_>>()
+        };
+        let resolved = |fqn: Fqn| vec![Resolution::Resolved { fqn, via: Rung::ResolvedByCompiler }];
+        let click = crate::indexer::fqn::refer(&crate::indexer::fqn::Form::Lib {
+            package: "firelib",
+            member: "FireObject.click",
+        })
+        .unwrap();
+        let load = declarations.declared_at("src/store.ts", 1, "loadCatalog").expect("declared");
+        assert_eq!(to("src/fire.ts", 4), resolved(click), "a mapped member is named by its type");
+        assert_eq!(to("src/use.ts", 4), resolved(load), "a shorthand is the function it names");
+        assert!(
+            seen.contains(&("src/Card.svelte", 9)),
+            "the walk saw the snippet's call: {seen:?}"
+        );
+        assert_eq!(to("src/Card.svelte", 9), vec![], "a snippet is a template's local");
+        assert!(
+            matches!(
+                to("src/raw.js", 2).as_slice(),
+                [Resolution::Unresolved { reason: Reason::UntypedReceiver, .. }]
+            ),
+            "{:?}",
+            to("src/raw.js", 2)
+        );
+    }
+
     /// **A SVELTEKIT PROJECT IS COMPILED AS ITS OWN TOOLING SEES IT.** Its
     /// tsconfig extends what `svelte-kit sync` generates (`$lib`, `$app`,
     /// `./$types`); a clean checkout, or a `make clean`, has none of it, and

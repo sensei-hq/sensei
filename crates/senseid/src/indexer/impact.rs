@@ -549,7 +549,7 @@ pub fn both() { leaf(); mid(); }
                 "{reason:?} does not survive its own label"
             );
         }
-        assert_eq!(Reason::ALL.len(), 14, "a new variant needs a label and a place in ALL");
+        assert_eq!(Reason::ALL.len(), 15, "a new variant needs a label and a place in ALL");
         assert_eq!(Reason::from_label("not_a_reason"), None);
     }
 

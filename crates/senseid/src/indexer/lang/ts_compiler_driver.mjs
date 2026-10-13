@@ -118,6 +118,7 @@ if (s2t && traceMapping) {
         trace: new traceMapping.TraceMap(out.map),
         original: file,
         lines: text.split('\n'),
+        scripts: scriptLines(text),
       });
     } catch (e) {
       console.error(`svelte2tsx could not read ${file}: ${e.message}`);
@@ -180,10 +181,31 @@ function isLibraryFile(sf) {
   return program.isSourceFileDefaultLibrary(sf) || sf.fileName.includes('/node_modules/');
 }
 
+/** The 0-based line ranges of a component's `<script>` blocks. */
+function scriptLines(text) {
+  const ranges = [];
+  for (const m of text.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) {
+    const first = text.slice(0, m.index).split('\n').length - 1;
+    ranges.push([first, first + m[0].split('\n').length - 1]);
+  }
+  return ranges;
+}
+
+/** Declared in a component's MARKUP — a snippet, an `{#each}` item, an
+ *  `{@const}`: the template's own local. */
+function isMarkupBinding(decl) {
+  const declSf = decl.getSourceFile();
+  const v = virtual.get(declSf.fileName);
+  if (!v) return false;
+  const at = originalPosition(declSf, decl.name ?? decl);
+  return !!at && !v.scripts.some(([a, b]) => a <= at.line && at.line <= b);
+}
+
 /** Inside a function body — a binding no other file can name. */
 function isLocal(decl) {
   if (ts.isParameter(decl) || ts.isTypeParameterDeclaration(decl)) return true;
   if (isPropsBinding(decl)) return true;
+  if (isMarkupBinding(decl)) return true;
   for (let p = decl.parent; p; p = p.parent) {
     if (ts.isSourceFile(p) || ts.isModuleBlock(p)) return false;
     if (ts.isClassLike(p) || ts.isInterfaceDeclaration(p)) return false;
@@ -216,6 +238,16 @@ function destructured(decl) {
   return checker.getPropertyOfType(checker.getAwaitedType(type) ?? type, key.text);
 }
 
+/** What an object property that only NAMES a value stands for:
+ *  `{ loadCatalog }` and `{ load: loadCatalog }` are `loadCatalog`. */
+function named(decl) {
+  if (ts.isShorthandPropertyAssignment(decl)) return checker.getShorthandAssignmentValueSymbol(decl);
+  if (ts.isPropertyAssignment(decl) && ts.isIdentifier(decl.initializer)) {
+    return checker.getSymbolAtLocation(decl.initializer);
+  }
+  return undefined;
+}
+
 /** A symbol followed to what it stands for: through imports and re-exports,
  *  and through destructuring. */
 function resolved(sym) {
@@ -229,7 +261,7 @@ function resolved(sym) {
       }
     }
     const decl = sym.valueDeclaration ?? sym.declarations?.[0];
-    const property = decl && !isPropsBinding(decl) ? destructured(decl) : undefined;
+    const property = decl && !isPropsBinding(decl) ? destructured(decl) ?? named(decl) : undefined;
     if (!property || property === sym) return sym;
     sym = property;
   }
@@ -314,17 +346,34 @@ for (const sf of program.getSourceFiles()) {
 
 function record(sf, id, found) {
   const sym = resolved(found);
-  if (!sym) return;
-  const decl = sym.valueDeclaration ?? sym.declarations?.[0];
-  if (!decl) return;
+  const decl = sym && (sym.valueDeclaration ?? sym.declarations?.[0]);
+  const symbol = decl ? symbolFor(sym, decl, sf) : undeclared(id);
+  if (!symbol) return;
   const at = originalPosition(sf, id);
   if (!at) return;
-  const symbol = symbolFor(sym, decl, sf);
-  if (!symbol) return;
-  const declaresIt = decl.name === id;
+  const declaresIt = !!decl && decl.name === id;
   const rel = path.relative(root, at.file);
   if (!documents.has(rel)) documents.set(rel, []);
   documents.get(rel).push({ range: [at.line, at.start, at.end], symbol, roles: declaresIt ? 1 : 0 });
+}
+
+/** A member the checker knows without a declaration of its own: one of a
+ *  mapped type (`fireEvent.click`) is named by the type; one of a receiver
+ *  typed `any` is marked `untyped` — nothing static names it. */
+function undeclared(id) {
+  const access = id.parent;
+  if (!access || !ts.isPropertyAccessExpression(access) || access.name !== id) return null;
+  const type = checker.getTypeAtLocation(access.expression);
+  if (type.flags & ts.TypeFlags.Any) return 'untyped';
+  const owner = type.aliasSymbol ?? type.symbol;
+  const ownerDecl = owner?.declarations?.[0];
+  if (!ownerDecl) return null;
+  const file = ownerDecl.getSourceFile();
+  if (isLibraryFile(file)) {
+    const pkg = program.isSourceFileDefaultLibrary(file) ? 'ecmascript' : packageOf(file.fileName);
+    return `npm ${pkg} ${checker.getFullyQualifiedName(owner).replace(/^".*?"\./, '')}.${id.text}`;
+  }
+  return symbolFor(owner, ownerDecl);
 }
 
 // ── SCIP, by hand: Index.documents = 2; Document.relative_path = 1,
