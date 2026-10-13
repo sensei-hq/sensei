@@ -403,9 +403,8 @@ mod tests {
     // membership pointing at the stub, create a run with phase events, run the
     // handler, and assert it publishes the status + plan segments, polls the inbox
     // for nudges, and persists the cloud session id. Mirrors the client.rs relay
-    // stub tests. DB + macOS-keychain guarded.
+    // stub tests. Needs the test database.
     #[tokio::test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn full_bridge_publishes_status_segments_and_persists_session_id() {
         let _serialised = MEMBERSHIP_COUNT_LOCK.enter();
         use crate::db::pg_store::NewDojoMembership;
@@ -459,10 +458,9 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        // Seed a membership pointing at the stub, with a keychain token.
+        // Seed a membership pointing at the stub, with a test bearer.
         let mid = uuid::Uuid::new_v4();
-        let cref = format!("dojo-bridge-{}", uuid::Uuid::new_v4());
-        crate::gateway_keys::set_key(&cref, "device-token-bridge").unwrap();
+        crate::dojo::client::test_bearers::set(mid, "device-token-bridge");
         pg.create_dojo_membership(&NewDojoMembership {
             id: mid,
             registry_url: format!("http://{addr}"),
@@ -473,7 +471,7 @@ mod tests {
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
             attribution_default: "anonymous".into(),
-            credential_ref: cref.clone(),
+            credential_ref: "unused".into(),
             sync_status: "authenticating".into(),
         })
         .await
@@ -526,7 +524,6 @@ mod tests {
             .execute(pg.pool())
             .await
             .unwrap();
-        crate::gateway_keys::delete_key(&cref).unwrap();
     }
 
     // A run seeded WITH an authored plan graph federates the AUTHORED outline (the
@@ -535,7 +532,6 @@ mod tests {
     // Captures the published segments and asserts them in the test thread (robust —
     // an assert inside the stub handler would be swallowed by axum's panic catch).
     #[tokio::test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn full_bridge_authors_plan_graph_segments() {
         let _serialised = MEMBERSHIP_COUNT_LOCK.enter();
         use crate::db::pg_store::NewDojoMembership;
@@ -582,8 +578,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let mid = uuid::Uuid::new_v4();
-        let cref = format!("dojo-authored-{}", uuid::Uuid::new_v4());
-        crate::gateway_keys::set_key(&cref, "device-token-authored").unwrap();
+        crate::dojo::client::test_bearers::set(mid, "device-token-authored");
         pg.create_dojo_membership(&NewDojoMembership {
             id: mid,
             registry_url: format!("http://{addr}"),
@@ -594,7 +589,7 @@ mod tests {
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
             attribution_default: "anonymous".into(),
-            credential_ref: cref.clone(),
+            credential_ref: "unused".into(),
             sync_status: "authenticating".into(),
         })
         .await
@@ -630,6 +625,5 @@ mod tests {
             .execute(pg.pool())
             .await
             .unwrap();
-        crate::gateway_keys::delete_key(&cref).unwrap();
     }
 }
