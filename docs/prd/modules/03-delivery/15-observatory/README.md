@@ -40,8 +40,10 @@ with its receipt* — not a dashboard to maintain.
 - Out: **Consolidation** (`/consolidation`) and **Insights Reasoning**
   (`/insights/{id}/reasoning`) — routes are not in `routes.rs`; roadmap/mockup only
   (see gaps). Any knowledge-base browsing UX — Insights is action-first, not a KB.
-  The deep project window (M16), Atlas (M17), Instruments (M18) and Impact (M19) are
-  peer surfaces with their own specs.
+  The **Diagrams sub-tree** (`structure`, `layers`, `cycles`, `neighbourhood`, `schema`,
+  `world`) is **part of Atlas (M17)**, not Observatory — they share the same core graph
+  API and data invariants. The deep project window (M16), Atlas (M17), Instruments (M18)
+  and Impact (M19) are peer surfaces with their own specs.
 
 ## Surfaces
 

@@ -4,30 +4,30 @@
 **Serves:** team developer ([persona 2](../../../03-personas.md#2--team-developer--the-inheritor)),
 manager / delivery lead ([persona 6](../../../03-personas.md#6--manager--delivery-lead--the-roll-up))
 
-## Purpose
+## Purpose — Atlas + Diagrams = The Graph UI Surface
 
-Atlas is the spatial view of the code graph: move between granularities
-(repo → package → module → symbol) and see how the pieces relate, with a docs /
-drift overlay. Its job is **legibility at every scale** — a birds-eye that a manager
-can read without opening a file, and a detail view a developer can click through to
-the code. The user feels this as *I can see the shape of this codebase at a glance —
-and then zoom into the piece I care about.*
+Atlas and the Diagrams sub-tree are **the spatial UI surface** over the **core code graph**
+built by **M4 (Code Graph & Indexing)**. The indexer (M4) builds the convergent graph
+(`sensei.nodes` / `sensei.edges` + `inference.communities`); Atlas + Diagrams
+**render** that graph at different granularities and answer different questions.
+
+> **Unified architecture:** M4 (Indexer) → Core Graph (`nodes`/`edges`/`communities`) →
+> M17 (Atlas + Diagrams) → UI Surfaces.
+> The Diagrams sub-tree (`structure`, `layers`, `cycles`, `neighbourhood`, `schema`,
+> `world`) is **part of Atlas**, not a separate module — they share the same API layer,
+> data invariants, and cache.
 
 > **Status honesty.** Atlas ships today as a **two-level** canvas (Communities →
-> Symbols) plus a full Diagrams sub-tree (structure · layers · cycles · neighbourhood
-> · schema · world) — all built and tested. The **three readable levels L0/L1/L2**
-> the reorg §9.7 deliverable asks for are **not built**: this is gap
-> [G-1](../../../../roadmap/06-gaps.md). The screen spec
-> (`spec/screen/project-atlas.md`) calls the project Atlas "greenfield", which is
-> stale — the app ships `(project)/project/[id]/atlas/` with canvas, inspector,
-> legend and unit specs. The old G5a bug (`get_communities` resolving a single folder)
-> is **fixed** — `mcp.rs::get_communities` now uses `resolve_scope_ids` +
-> `list_communities_scoped`.
+> Symbols) plus the full Diagrams sub-tree — all built and tested. The **three readable
+> levels L0/L1/L2** the reorg §9.7 deliverable asks for are **not built**: this is gap
+> [G-1](../../../../roadmap/06-gaps.md). The old G5a bug (`get_communities` resolving
+> a single folder) is **fixed** — `mcp.rs::get_communities` now uses
+> `resolve_scope_ids` + `list_communities_scoped`.
 
 ## In scope / out of scope
 
 - In: the Atlas canvas at `/project/{id}/atlas`; communities (per-folder aggregation);
-  the Diagrams sub-tree (`structure`, `layers`, `cycles`, `neighbourhood`, `schema`,
+  the **Diagrams sub-tree** (`structure`, `layers`, `cycles`, `neighbourhood`, `schema`,
   `world`); graph reads (`nodes`, `communities`, `communities/info`, `callers`,
   `callees`, `call-flow`, `{repoId}/tree`); the docs/drift overlay; and the **three
   levels of detail L0/L1/L2** (the §9.7 deliverable, gap G-1).
@@ -51,10 +51,10 @@ and then zoom into the piece I care about.*
   `buildSymbolGraph`, `initialLevel`, `SYMBOL_CAP=200`, `COLLAPSE_THRESHOLD=500`),
   `atlas-view.svelte.ts`, `AtlasCanvas` / `AtlasInspector` / `AtlasLegend`; diagram
   states under `(project)/project/[id]/diagrams/`.
-- **Data** — `sensei.nodes` / `sensei.edges`, `sensei.graph_nodes` (view),
-  `inference.communities` (one row per `(folder_id, community_id)`),
-  `sensei.structure_graph` + `structure_edges` (views), `sensei.module_edges`,
-  `sensei.graph_placement`, `sensei.schema_entities/_columns/_indexes/_refs`.
+- **Data (Core Graph → UI)** — `sensei.nodes` / `sensei.edges` →
+  `sensei.graph_nodes` (view) → `inference.communities` →
+  `sensei.structure_graph` + `structure_edges` (views) → `sensei.module_edges` →
+  `sensei.graph_placement` → `sensei.schema_entities/_columns/_indexes/_refs`.
 
 ## Data invariants
 
