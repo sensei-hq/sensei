@@ -421,13 +421,26 @@ pub struct DiskDeclarations<'a> {
 impl Declarations for DiskDeclarations<'_> {
     fn declared_at(&self, path: &str, line: u32, name: &str) -> Result<Fqn, Reason> {
         let facts = self.facts_of(&self.project_root.join(path))?;
-        facts
+        let holds =
+            |span: &crate::indexer::facts::Span| span.start_line <= line && line <= span.end_line;
+        let declared = facts
             .symbols
             .iter()
-            .filter(|s| s.name == name && s.span.start_line <= line && line <= s.span.end_line)
+            .filter(|s| s.name == name && holds(&s.span))
             .max_by_key(|s| s.span.start_line)
-            .map(|s| s.fqn.clone())
-            .ok_or(Reason::DeclarationNotFound)
+            .map(|s| s.fqn.clone());
+        match declared {
+            Some(fqn) => Ok(fqn),
+            // Defined inside a macro invocation: a declaration the macro
+            // generates, which the walk reads as text and never expands.
+            None if facts.references.iter().any(|r| {
+                r.kind == crate::indexer::facts::RefKind::MacroInvokes && holds(&r.at)
+            }) =>
+            {
+                Err(Reason::MacroExpansion)
+            }
+            None => Err(Reason::DeclarationNotFound),
+        }
     }
 }
 
@@ -505,6 +518,36 @@ mod tests {
         );
         assert_eq!(decl.declared_at("src/net.rs", 4, "nothing"), Err(Reason::DeclarationNotFound));
         assert_eq!(decl.declared_at("src/gone.rs", 1, "x"), Err(Reason::DeclarationNotFound));
+    }
+
+    /// A declaration a MACRO generates (`schema_vocabulary! { Kind { … } }`)
+    /// is defined, the compiler says, inside the invocation — which the walk
+    /// reads as text and does not expand. That is `macro_expansion`, the
+    /// cause, not a declaration the walk failed to find.
+    #[test]
+    fn a_declaration_a_macro_generates_is_macro_expansion() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "macro_rules! make {\n    ($n:ident) => {\n        pub struct $n;\n    };\n}\n\nmake! {\n    Thing\n}\n",
+        )
+        .unwrap();
+        let sessions = CompilerSessions::new(root);
+        let project = Project {
+            root: root.to_path_buf(),
+            index: CompilerIndex::from_index(&scip::types::Index::new()),
+            fingerprint: String::new(),
+        };
+        let decl = sessions.declarations(&project);
+        assert_eq!(decl.declared_at("src/lib.rs", 8, "Thing"), Err(Reason::MacroExpansion));
+        assert_eq!(decl.declared_at("src/lib.rs", 1, "Gone"), Err(Reason::DeclarationNotFound));
     }
 
     /// Two declarations of one name, one inside the other: the compiler's line
@@ -1051,6 +1094,111 @@ mod tests {
         assert!(
             !targets.iter().any(|t| t.ends_with("·T·item") || t.contains("·T·")),
             "a generic parameter is no edge: {targets:?}"
+        );
+    }
+
+    /// **WHAT A REFERENCE READS THROUGH DECIDES WHETHER IT IS AN EDGE.** An
+    /// index signature's entry is a value, not a declaration: no edge. A
+    /// member declared in `declare global` (SvelteKit's `App.Platform`) is a
+    /// declaration of this project. A template tag the walk records whole
+    /// names every symbol in it.
+    #[tokio::test]
+    async fn references_through_index_signatures_globals_and_template_tags() {
+        use crate::indexer::facts::{RefKind, Resolution, Rung};
+        use crate::indexer::lang::compiler::{Compiled, place_with};
+        use crate::indexer::lang::ts_compiler::TS_ENGINE;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        let write = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("package.json", r#"{"name": "web", "type": "module"}"#);
+        write(
+            "tsconfig.json",
+            r#"{"compilerOptions": {"strict": true, "module": "esnext", "moduleResolution": "bundler", "target": "es2022"}}"#,
+        );
+        write(
+            "src/db.ts",
+            "export interface Row {\n  [column: string]: unknown;\n}\n\nexport function first(r: Row) {\n  return r.claimed_at;\n}\n",
+        );
+        write(
+            "src/app.d.ts",
+            "declare global {\n  namespace App {\n    interface Platform {\n      context?: { waitUntil(p: Promise<unknown>): void };\n    }\n  }\n}\n\nexport {};\n",
+        );
+        write(
+            "src/use-platform.ts",
+            "export function wait(p: App.Platform) {\n  return p.context;\n}\n",
+        );
+        write(
+            "src/Trend.svelte",
+            "<script lang=\"ts\">\n  import Chart from './Chart.svelte';\n  const TREND_WINDOW = 7;\n</script>\n\n<Chart options={{ type: 'ma', window: TREND_WINDOW }} />\n",
+        );
+        write(
+            "src/Chart.svelte",
+            "<script lang=\"ts\">\n  let { options }: { options: { type: string; window: number } } = $props();\n</script>\n\n<p>{options.type}</p>\n",
+        );
+
+        let sessions = CompilerSessions::new(&root);
+        let project = sessions.project_for(&TS_ENGINE, &root).await.expect("the driver compiles");
+        let declarations = sessions.declarations(&project);
+        let mut placed = Vec::new();
+        for rel in ["src/db.ts", "src/use-platform.ts", "src/Trend.svelte"] {
+            let facts = read_declarations(&root, &root.join(rel)).expect(rel);
+            let text = std::fs::read_to_string(root.join(rel)).unwrap();
+            let compiled =
+                Compiled { index: &project.index, path: rel, declarations: &declarations };
+            let references: Vec<_> = facts
+                .references
+                .iter()
+                .filter(|r| {
+                    matches!(
+                        r.kind,
+                        RefKind::Reads | RefKind::Writes | RefKind::TypeUse | RefKind::Constructs
+                    )
+                })
+                .cloned()
+                .collect();
+            for r in place_with(&TS_ENGINE, Some(&compiled), references, &text) {
+                placed.push((rel, r.at.start_line, r.target));
+            }
+        }
+        let unplaced: Vec<_> =
+            placed.iter().filter(|(_, _, t)| matches!(t, Resolution::Unresolved { .. })).collect();
+        assert!(unplaced.is_empty(), "every reference placed or no edge: {unplaced:#?}");
+        let at = |rel: &str, line: u32| {
+            placed
+                .iter()
+                .filter(|(r, l, _)| *r == rel && *l == line)
+                .filter_map(|(_, _, t)| match t {
+                    Resolution::Resolved { fqn, via: Rung::ResolvedByCompiler } => {
+                        Some(fqn.as_str().to_string())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            at("src/db.ts", 6),
+            Vec::<String>::new(),
+            "an index signature's entry is no edge"
+        );
+        let context = declarations
+            .declared_at("src/app.d.ts", 4, "context")
+            .expect("a global's member is a node");
+        assert!(
+            at("src/use-platform.ts", 2).contains(&context.as_str().to_string()),
+            "{:?}",
+            at("src/use-platform.ts", 2)
+        );
+        let window =
+            declarations.declared_at("src/Trend.svelte", 3, "TREND_WINDOW").expect("declared");
+        assert!(
+            at("src/Trend.svelte", 6).contains(&window.as_str().to_string()),
+            "{:?}",
+            at("src/Trend.svelte", 6)
         );
     }
 

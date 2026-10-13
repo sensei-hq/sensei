@@ -204,6 +204,8 @@ function isMarkupBinding(decl) {
 /** Inside a function body — a binding no other file can name. */
 function isLocal(decl) {
   if (ts.isParameter(decl) || ts.isTypeParameterDeclaration(decl)) return true;
+  // An index signature's entry is a value's, not a declaration.
+  if (ts.isIndexSignatureDeclaration(decl)) return true;
   if (isPropsBinding(decl)) return true;
   if (isMarkupBinding(decl)) return true;
   for (let p = decl.parent; p; p = p.parent) {
