@@ -12,12 +12,14 @@
 //!     (or `=debug`/`=trace`) to surface the underlying probes, brew
 //!     shell-outs, and per-stage cascade decisions.
 //!
-//! Exit code: 0 if the terminal payload is Ok, 1 otherwise.
+//! Exit code: 0 if the terminal payload is Ok, every assistant's capture is
+//! healthy and every indexing engine is ready; 1 otherwise.
 
 use owo_colors::{OwoColorize, Stream};
 use sensei_bootstrap::{
     self as bootstrap, Component, ComponentStatus, HealthEvent, HealthPayload, HealthStatus,
     SenseiConfig,
+    engines::{self, EngineStatus},
 };
 
 const CARGO_PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -74,7 +76,12 @@ pub fn run(fix: bool) -> i32 {
     print_terminal(&terminal);
 
     let capture_pressure = print_capture_section(fix);
-    if terminal.status == HealthStatus::Ok && capture_pressure == 0 { 0 } else { 1 }
+    let engines_pressure = print_engines_section(fix);
+    if terminal.status == HealthStatus::Ok && capture_pressure == 0 && engines_pressure == 0 {
+        0
+    } else {
+        1
+    }
 }
 
 // ── Event printer ───────────────────────────────────────────────────────────
@@ -256,6 +263,52 @@ fn print_capture_section(fix: bool) -> i32 {
     worst_fail
 }
 
+// ── Indexing engines section ────────────────────────────────────────────────
+
+/// Render the Indexing engines section — the compilers the indexer places call
+/// edges with. With `fix`, the engines that are not ready are installed first.
+/// Returns extra exit-code pressure: 1 if any engine is still not ready.
+fn print_engines_section(fix: bool) -> i32 {
+    println!();
+    println!("{}", bold("Indexing engines"));
+
+    let statuses = if fix {
+        let ensured = engines::ensure();
+        for engine in &ensured.installed {
+            println!("  {} installing {}…", yellow("…"), engine.label());
+        }
+        for failure in &ensured.failures {
+            println!("    {} {}", red("✗"), dim(&failure.to_string()));
+        }
+        ensured.after
+    } else {
+        engines::check()
+    };
+
+    for status in &statuses {
+        if status.is_ready() {
+            println!("  {} {:<10} {}", green("✓"), status.engine.label(), green("ready"));
+            continue;
+        }
+        println!("  {} {:<10} {}", red("✗"), status.engine.label(), red("missing"));
+        for cause in &status.missing {
+            println!("      {}", dim(&cause.to_string()));
+        }
+    }
+
+    let pressure = engines_pressure(&statuses);
+    if pressure != 0 && !fix {
+        println!();
+        println!("{}", dim("Run `sensei doctor --fix` to install them."));
+    }
+    pressure
+}
+
+/// Exit-code pressure from the engines: 1 if any is not ready, else 0.
+fn engines_pressure(statuses: &[EngineStatus]) -> i32 {
+    i32::from(statuses.iter().any(|s| !s.is_ready()))
+}
+
 /// Map a status string to a coloured glyph.
 fn status_glyph(s: &str) -> (String, &'static str) {
     match s {
@@ -315,5 +368,33 @@ fn print_terminal(t: &HealthPayload) {
     } else if t.status == HealthStatus::Ok {
         println!();
         println!("{}", dim("Nothing else to do."));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sensei_bootstrap::engines::{Cause, Engine, EngineStatus};
+
+    fn status(engine: Engine, missing: Vec<Cause>) -> EngineStatus {
+        EngineStatus { engine, missing }
+    }
+
+    #[test]
+    fn every_engine_ready_adds_no_exit_pressure() {
+        let ready = [status(Engine::Rust, vec![]), status(Engine::TypeScript, vec![])];
+        assert_eq!(engines_pressure(&ready), 0);
+    }
+
+    #[test]
+    fn one_engine_missing_fails_the_doctor() {
+        let one_missing =
+            [status(Engine::Rust, vec![]), status(Engine::TypeScript, vec![Cause::NodeMissing])];
+        assert_eq!(engines_pressure(&one_missing), 1);
+        let all_missing = [
+            status(Engine::Rust, vec![Cause::RustupMissing]),
+            status(Engine::TypeScript, vec![Cause::NodeMissing]),
+        ];
+        assert_eq!(engines_pressure(&all_missing), 1);
     }
 }
