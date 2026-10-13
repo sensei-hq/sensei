@@ -18,7 +18,7 @@
  * is, an empty canvas with no words is the worst of the three.
  */
 
-import { test, expect } from '../fixtures';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import {
   navigateTo, navigateToScreen, daemonGet, daemonPost, DAEMON_URL,
   installErrorTrap, readErrors, type ErrBuf, seedSetupComplete,
@@ -46,7 +46,7 @@ function expectNoRuntimeErrors(errs: ErrBuf, where: string): void {
   expect(errs.console, `${where}: console.error output`).toEqual([]);
 }
 
-async function settle(tauriPage: any): Promise<void> {
+async function settle(tauriPage: TauriPageLike): Promise<void> {
   await tauriPage.waitForSelector(
     '[data-testid="world-diagram"], [data-testid="world-empty"], [data-testid="world-error"]',
     120_000,
