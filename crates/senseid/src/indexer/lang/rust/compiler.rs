@@ -97,6 +97,12 @@ impl CompilerEngine for RustEngine {
         }
     }
 
+    /// A closure invoked where it is written, or the function a call returned
+    /// (tree-sitter's node kinds, as the walk records them).
+    fn anonymous_callee(&self, node_kind: &str) -> bool {
+        matches!(node_kind, "closure_expression" | "call_expression")
+    }
+
     /// A symbol the project DEFINES is the declaration the walk mints at that
     /// place; anything else is a library, named and never opened.
     fn target(
@@ -302,6 +308,18 @@ mod engine_tests {
         // repository's own source targets is compiled and the answers merged.
         for os in ["linux", "windows", "apple-darwin"] {
             assert!(targets.iter().any(|t| t.contains(os)), "no compile for {os}: {targets:?}");
+        }
+    }
+
+    #[test]
+    fn an_anonymous_callee_is_a_closure_or_a_returned_function() {
+        for kind in ["closure_expression", "call_expression"] {
+            assert!(RUST_ENGINE.anonymous_callee(kind), "{kind}");
+        }
+        for kind in
+            ["identifier", "field_expression", "scoped_identifier", "parenthesized_expression"]
+        {
+            assert!(!RUST_ENGINE.anonymous_callee(kind), "{kind}");
         }
     }
 
