@@ -6,12 +6,12 @@
 
 | ID | Module | One-line "done" | Spec |
 |---|---|---|---|
-| M1 | Bootstrap & Provisioning | Fresh install reaches all-green with no manual toolchain work | ✅ [`bootstrap-provisioning/`](bootstrap-provisioning/README.md) · 2026-10-13 |
-| M2 | Setup & Preferences | Every default is adjustable in a searchable surface — incl. the icon-style (kanji ⇄ solar) preference | ✅ [`setup-preferences/`](setup-preferences/README.md) · 2026-10-13 |
-| M3 | Capture & Sessions | Every assistant session is captured with turns, tools and outcome — Claude, OpenCode first, others behind a shared adapter seam | ✅ [`capture-sessions/`](capture-sessions/README.md) · 2026-10-13 |
-| M4 | Code Graph & Indexing | A repo scans to a resolved, queryable graph, incrementally | ✅ [`code-graph/`](code-graph/README.md) · 2026-10-13 |
-| M5 | Inference Gateway | Every LLM step routes to a local or paid model under a policy | ✅ [`inference-gateway/`](inference-gateway/README.md) · 2026-10-13 |
-| M6 | Storage & Data Model | The schema is the single source of truth and drifts clean | ✅ [`storage-data-model/`](storage-data-model/README.md) · 2026-10-13 |
+| M1 | Bootstrap & Provisioning | Fresh install reaches all-green with no manual toolchain work | ✅ [`01-bootstrap-provisioning/`](01-bootstrap-provisioning/README.md) · 2026-10-13 |
+| M2 | Setup & Preferences | Every default is adjustable in a searchable surface — incl. the icon-style (kanji ⇄ solar) preference | ✅ [`02-setup-preferences/`](02-setup-preferences/README.md) · 2026-10-13 |
+| M3 | Capture & Sessions | Every assistant session is captured with turns, tools and outcome — Claude, OpenCode first, others behind a shared adapter seam | ✅ [`03-capture-sessions/`](03-capture-sessions/README.md) · 2026-10-13 |
+| M4 | Code Graph & Indexing | A repo scans to a resolved, queryable graph, incrementally | ✅ [`04-code-graph/`](04-code-graph/README.md) · 2026-10-13 |
+| M5 | Inference Gateway | Every LLM step routes to a local or paid model under a policy | ✅ [`05-inference-gateway/`](05-inference-gateway/README.md) · 2026-10-13 |
+| M6 | Storage & Data Model | The schema is the single source of truth and drifts clean | ✅ [`06-storage-data-model/`](06-storage-data-model/README.md) · 2026-10-13 |
 
 ## What this plane owns
 

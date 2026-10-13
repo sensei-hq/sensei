@@ -32,11 +32,11 @@ one is the bug.
 
 | Plane | Modules | PRD | Roadmap |
 |---|---|---|---|
-| Foundation | M1–M6 | [`prd/modules/foundation`](prd/modules/foundation/README.md) | [`roadmap/01-foundation.md`](roadmap/01-foundation.md) |
-| Insight | M7–M13 | [`prd/modules/insight`](prd/modules/insight/README.md) | [`roadmap/02-insight.md`](roadmap/02-insight.md) |
-| Delivery | M14–M22 | [`prd/modules/delivery`](prd/modules/delivery/README.md) | [`roadmap/03-delivery.md`](roadmap/03-delivery.md) |
-| Team | T1–T4 | [`prd/modules/team`](prd/modules/team/README.md) | [`roadmap/04-team.md`](roadmap/04-team.md) |
-| Platform | P1–P3 | [`prd/modules/platform`](prd/modules/platform/README.md) | [`roadmap/05-platform.md`](roadmap/05-platform.md) |
+| Foundation | M1–M6 | [`prd/modules/01-foundation`](prd/modules/01-foundation/README.md) | [`roadmap/01-foundation.md`](roadmap/01-foundation.md) |
+| Insight | M7–M13 | [`prd/modules/02-insight`](prd/modules/02-insight/README.md) | [`roadmap/02-insight.md`](roadmap/02-insight.md) |
+| Delivery | M14–M22 | [`prd/modules/03-delivery`](prd/modules/03-delivery/README.md) | [`roadmap/03-delivery.md`](roadmap/03-delivery.md) |
+| Team | T1–T4 | [`prd/modules/04-team`](prd/modules/04-team/README.md) | [`roadmap/04-team.md`](roadmap/04-team.md) |
+| Platform | P1–P3 | [`prd/modules/05-platform`](prd/modules/05-platform/README.md) | [`roadmap/05-platform.md`](roadmap/05-platform.md) |
 
 ## Monorepo structure
 
