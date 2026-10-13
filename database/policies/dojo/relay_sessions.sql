@@ -47,3 +47,28 @@ create policy relay_sessions_select_own
     for select
     to authenticated
     using (dojo.owns_membership(membership_id));
+
+-- The daemon's writes, as the signed-in person (#236 step 4,
+-- docs/plan/2026-10-12-dojo-device-plane-as-person.md): a person's daemon
+-- publishes their run on a membership they own. The route upserts on
+-- (membership_id, run_id), and PostgREST's upsert sets every posted column on
+-- conflict — so both keys are in the UPDATE grant, and the with-check keeps the
+-- row on a membership the caller owns. Covered by
+-- database/tests/dojo/relay_daemon_writes.sql.
+grant insert (membership_id, run_id, title, goal, status, progress_done, progress_total, current_phase,
+              current_feature, last_event_at, paused_until, pause_reason, heartbeat_at, updated_at)
+    on dojo.relay_sessions to authenticated;
+grant update (membership_id, run_id, title, goal, status, progress_done, progress_total, current_phase,
+              current_feature, last_event_at, paused_until, pause_reason, heartbeat_at, updated_at)
+    on dojo.relay_sessions to authenticated;
+
+drop policy if exists relay_sessions_publish_own on dojo.relay_sessions;
+create policy relay_sessions_publish_own on dojo.relay_sessions
+    for insert to authenticated
+    with check (dojo.owns_membership(membership_id));
+
+drop policy if exists relay_sessions_update_own on dojo.relay_sessions;
+create policy relay_sessions_update_own on dojo.relay_sessions
+    for update to authenticated
+    using (dojo.owns_membership(membership_id))
+    with check (dojo.owns_membership(membership_id));

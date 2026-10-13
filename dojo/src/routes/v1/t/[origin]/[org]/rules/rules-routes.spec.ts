@@ -4,21 +4,25 @@
 //   DELETE /v1/t/{origin}/{org}/rules/{id}   → tombstone/retract
 //
 // The in-Worker port of dojo-mind's `publish_rule` / `pull_rules` /
-// `retract_rule` (api.rs). Auth is the DEVICE-TOKEN plane (`resolveApiKeyAccess`).
+// `retract_rule` (api.rs). Auth is `resolveTenantCaller`: the person's session,
+// or the legacy device token for one release (#236 step 4).
 // This spec covers the HANDLER wiring (auth floor, body validation, error
 // mapping, audit call, status codes) with the `rules-data` store fully mocked;
 // the store's own SQL-shape logic is covered by `rules-data.spec.ts`. No live
 // Worker/DB (mirrors `relay/push/push-routes.spec.ts`).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// A contributor+ device-token caller (dojo-mind's `Role::Publisher` floor).
+// A member presenting their session (the default), and the same member on the
+// legacy device token (no session).
 const caller = {
 	userId: '11111111-1111-1111-1111-111111111111',
 	membershipId: 'mem-1',
 	tenantId: 't1',
 	role: 'contributor',
-	access: 1
+	access: 1,
+	accessToken: 'jwt'
 };
+const { accessToken: _session, ...deviceCaller } = caller;
 // `class RulesError` is hoisted so the mock factory (also hoisted) can reference
 // it; the `vi.fn` mocks live in a `vi.hoisted` block for the same reason.
 class RulesError extends Error {
@@ -31,29 +35,46 @@ class RulesError extends Error {
 }
 
 const mocks = vi.hoisted(() => ({
-	resolveApiKeyAccess: vi.fn(),
+	resolveTenantCaller: vi.fn(),
+	upsertRuleNamespace: vi.fn(),
 	publishRule: vi.fn(),
 	pullRules: vi.fn(),
+	pullRulesAsSystem: vi.fn(),
 	retractRule: vi.fn(),
 	recordRulesAudit: vi.fn(),
 	parsePublishedRule: vi.fn()
 }));
-const { resolveApiKeyAccess, publishRule, pullRules, retractRule, recordRulesAudit, parsePublishedRule } = mocks;
+const {
+	resolveTenantCaller,
+	upsertRuleNamespace,
+	publishRule,
+	pullRules,
+	pullRulesAsSystem,
+	retractRule,
+	recordRulesAudit,
+	parsePublishedRule
+} = mocks;
 
+// Which client each store call got. The store is mocked, so they are markers.
+const SESSION = vi.hoisted(() => ({ as: 'session' }));
+const SYSTEM = vi.hoisted(() => ({ as: 'system' }));
 vi.mock('$lib/server/dojo-supabase', () => ({
-	dojoDb: () => ({}),
+	dojoDb: () => SYSTEM,
+	userDb: () => SESSION,
 	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/dojo-auth', () => ({
-	resolveApiKeyAccess: mocks.resolveApiKeyAccess,
+	resolveTenantCaller: mocks.resolveTenantCaller,
 	apiError: (status: number, message: string) =>
 		new Response(JSON.stringify({ error: message }), { status, headers: { 'content-type': 'application/json' } }),
 	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/rules-data', () => ({
 	parsePublishedRule: mocks.parsePublishedRule,
+	upsertRuleNamespace: mocks.upsertRuleNamespace,
 	publishRule: mocks.publishRule,
 	pullRules: mocks.pullRules,
+	pullRulesAsSystem: mocks.pullRulesAsSystem,
 	retractRule: mocks.retractRule,
 	recordRulesAudit: mocks.recordRulesAudit,
 	RulesError
@@ -94,9 +115,11 @@ const RULE = {
 };
 
 beforeEach(() => {
-	resolveApiKeyAccess.mockClear().mockResolvedValue(caller);
+	resolveTenantCaller.mockClear().mockResolvedValue(caller);
+	upsertRuleNamespace.mockClear().mockResolvedValue('ns-1');
 	publishRule.mockClear().mockResolvedValue({ id: 'rule-1', version: 1, seq: 7 });
 	pullRules.mockClear().mockResolvedValue({ rules: [], cursor: 0 });
+	pullRulesAsSystem.mockClear().mockResolvedValue({ rules: [], cursor: 0 });
 	retractRule.mockClear().mockResolvedValue(true);
 	recordRulesAudit.mockClear();
 	parsePublishedRule.mockClear().mockImplementation((body) =>
@@ -111,10 +134,10 @@ describe('POST /v1/t/{origin}/{org}/rules — publish', () => {
 		expect(await res.json()).toEqual({ id: 'rule-1', version: 1, seq: 7 });
 	});
 
-	it('auths on the device-token plane at the maintainer floor (access matrix: rules W = maintainer)', async () => {
+	it('auths at the maintainer floor (access matrix: rules W = maintainer)', async () => {
 		await POST(ev('POST', RULE));
-		expect(resolveApiKeyAccess).toHaveBeenCalledTimes(1);
-		const args = resolveApiKeyAccess.mock.calls[0];
+		expect(resolveTenantCaller).toHaveBeenCalledTimes(1);
+		const args = resolveTenantCaller.mock.calls[0];
 		expect(args[0]).toBe('github'); // origin
 		expect(args[1]).toBe('sensei-hq'); // org
 		expect(args[3]).toBe(2); // ACCESS.maintainer
@@ -122,7 +145,7 @@ describe('POST /v1/t/{origin}/{org}/rules — publish', () => {
 
 	it('server-controls attribution: publishRule is called with the caller, not the body', async () => {
 		await POST(ev('POST', { ...RULE, published_by: 'attacker' }));
-		// publishRule(db, rule, publishedBy) — the 3rd arg is the authenticated caller.
+		// publishRule(db, tenantId, rule, publishedBy, namespaceId).
 		expect(publishRule.mock.calls[0][1]).toBe(caller.tenantId); // the caller's tenant owns it (#236)
 		expect(publishRule.mock.calls[0][3]).toBe(caller.userId);
 	});
@@ -135,6 +158,22 @@ describe('POST /v1/t/{origin}/{org}/rules — publish', () => {
 		expect(a[2]).toBe('publish'); // action
 		expect(a[3]).toBe('rule-1'); // target (the returned id)
 		expect(a[4]).toBe(caller.userId); // actor
+	});
+
+	// #236 step 4: the rule is the person's (shared_rules_write_maintainer); the
+	// namespace registry and the audit trail are the system's.
+	it('with the person\'s session, files the rule as them under the namespace the system registered', async () => {
+		await POST(ev('POST', RULE));
+		expect(upsertRuleNamespace.mock.calls[0][0]).toBe(SYSTEM);
+		expect(publishRule.mock.calls[0][0]).toBe(SESSION);
+		expect(publishRule.mock.calls[0][4]).toBe('ns-1');
+		expect(recordRulesAudit.mock.calls[0][0]).toBe(SYSTEM);
+	});
+
+	it('with a legacy device token, files the rule on the service role (the window)', async () => {
+		resolveTenantCaller.mockResolvedValueOnce(deviceCaller);
+		await POST(ev('POST', RULE));
+		expect(publishRule.mock.calls[0][0]).toBe(SYSTEM);
 	});
 
 	it('400s a body missing required fields (parser returns null)', async () => {
@@ -150,14 +189,14 @@ describe('POST /v1/t/{origin}/{org}/rules — publish', () => {
 		expect((await res.json()).error).toMatch(/ns boom/);
 	});
 
-	it('propagates a 401 Response thrown by resolveApiKeyAccess', async () => {
-		resolveApiKeyAccess.mockRejectedValueOnce(new Response('{}', { status: 401 }));
+	it('propagates a 401 Response thrown by resolveTenantCaller', async () => {
+		resolveTenantCaller.mockRejectedValueOnce(new Response('{}', { status: 401 }));
 		const res = await POST(ev('POST', RULE));
 		expect(res.status).toBe(401);
 	});
 
 	it('propagates a 403 Response (insufficient device-token role)', async () => {
-		resolveApiKeyAccess.mockRejectedValueOnce(new Response('{}', { status: 403 }));
+		resolveTenantCaller.mockRejectedValueOnce(new Response('{}', { status: 403 }));
 		const res = await POST(ev('POST', RULE));
 		expect(res.status).toBe(403);
 	});
@@ -192,7 +231,20 @@ describe('GET /v1/t/{origin}/{org}/rules?since= — pull', () => {
 
 	it('pull requires only the member floor', async () => {
 		await GET(ev('GET', undefined, { url: 'http://x/' }));
-		expect(resolveApiKeyAccess.mock.calls[0][3]).toBe(0); // ACCESS.member
+		expect(resolveTenantCaller.mock.calls[0][3]).toBe(0); // ACCESS.member
+	});
+
+	it('with the person\'s session, pulls through dojo.tenant_shared_rules as them', async () => {
+		await GET(ev('GET', undefined, { url: 'http://x/' }));
+		expect(pullRules.mock.calls[0][0]).toBe(SESSION);
+		expect(pullRulesAsSystem).not.toHaveBeenCalled();
+	});
+
+	it('with a legacy device token, pulls on the service role (the window)', async () => {
+		resolveTenantCaller.mockResolvedValueOnce(deviceCaller);
+		await GET(ev('GET', undefined, { url: 'http://x/?since=4' }));
+		expect(pullRulesAsSystem).toHaveBeenCalledWith(SYSTEM, caller.tenantId, 4);
+		expect(pullRules).not.toHaveBeenCalled();
 	});
 
 	it('maps a store RulesError(500) to 500', async () => {
@@ -202,7 +254,7 @@ describe('GET /v1/t/{origin}/{org}/rules?since= — pull', () => {
 	});
 
 	it('propagates a 401 from auth', async () => {
-		resolveApiKeyAccess.mockRejectedValueOnce(new Response('{}', { status: 401 }));
+		resolveTenantCaller.mockRejectedValueOnce(new Response('{}', { status: 401 }));
 		const res = await GET(ev('GET', undefined, { url: 'http://x/' }));
 		expect(res.status).toBe(401);
 	});
@@ -224,6 +276,12 @@ describe('DELETE /v1/t/{origin}/{org}/rules/{id} — retract', () => {
 		expect(a[3]).toBe('rule-1');
 	});
 
+	it('with the person\'s session, retracts as them and audits as the system', async () => {
+		await DELETE(ev('DELETE', undefined, { id: 'rule-1' }));
+		expect(retractRule.mock.calls[0][0]).toBe(SESSION);
+		expect(recordRulesAudit.mock.calls[0][0]).toBe(SYSTEM);
+	});
+
 	it('404s when no active row matched (store returns false)', async () => {
 		retractRule.mockResolvedValueOnce(false);
 		const res = await DELETE(ev('DELETE', undefined, { id: 'rule-x' }));
@@ -233,7 +291,7 @@ describe('DELETE /v1/t/{origin}/{org}/rules/{id} — retract', () => {
 
 	it('requires the maintainer floor (access matrix: rules W = maintainer)', async () => {
 		await DELETE(ev('DELETE', undefined, { id: 'r' }));
-		expect(resolveApiKeyAccess.mock.calls[0][3]).toBe(2); // ACCESS.maintainer
+		expect(resolveTenantCaller.mock.calls[0][3]).toBe(2); // ACCESS.maintainer
 	});
 
 	it('maps a store RulesError(500) to 500', async () => {
@@ -243,7 +301,7 @@ describe('DELETE /v1/t/{origin}/{org}/rules/{id} — retract', () => {
 	});
 
 	it('propagates a 403 from auth', async () => {
-		resolveApiKeyAccess.mockRejectedValueOnce(new Response('{}', { status: 403 }));
+		resolveTenantCaller.mockRejectedValueOnce(new Response('{}', { status: 403 }));
 		const res = await DELETE(ev('DELETE', undefined, { id: 'rule-1' }));
 		expect(res.status).toBe(403);
 	});

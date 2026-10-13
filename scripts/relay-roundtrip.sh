@@ -8,6 +8,10 @@
 #   → phone POST reply (JWT) → daemon GET inbox?since=<cursor> re-surfaces the
 #   answered row (proving the relay_inbox seq trigger + cursor).
 #
+# DAEMON_AUTH=session runs the daemon's calls with the person's JWT instead of
+# the device token (#236 step 4) — the policies decide — and adds the other half
+# of the done gate: a signed-in NON-member is refused (403) on the daemon routes.
+#
 # Run from the repo (sensei/). Requires: supabase running, dojo Worker running
 # (cd dojo && PUBLIC_SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… bun run dev), jq.
 set -uo pipefail
@@ -15,6 +19,7 @@ cd "$(dirname "$0")/.." || exit
 
 WORKER=${WORKER:-http://localhost:5173}
 TESTTOKEN=${TESTTOKEN:-relay-dev-device-token}
+DAEMON_AUTH=${DAEMON_AUTH:-device}   # device | session
 EMAIL=${EMAIL:-relay-dev@local.test}
 PASS=${PASS:-relaytest123}
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -62,6 +67,12 @@ echo "   jwt len=${#JWT}"
 RUN="$(uuidgen | tr '[:upper:]' '[:lower:]')"   # relay_sessions.run_id is a uuid (the daemon's activity.runs.id)
 AUTH_DEV="Authorization: Bearer $TESTTOKEN"
 AUTH_JWT="Authorization: Bearer $JWT"
+case "$DAEMON_AUTH" in
+  device) AUTH_DAEMON="$AUTH_DEV" ;;
+  session) AUTH_DAEMON="$AUTH_JWT" ;;
+  *) fail "DAEMON_AUTH must be device or session" ;;
+esac
+echo "   daemon presents: $DAEMON_AUTH"
 CT='content-type: application/json'
 
 # The vite DEV server compiles a route on first hit and can drop the body on that
@@ -81,10 +92,10 @@ req() { # METHOD URL AUTH [BODY]
 # request's body). Results discarded — this just compiles the handlers.
 echo "== warm dev routes =="
 Z="00000000-0000-0000-0000-000000000000"
-curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/dev/relay/session" -H "$AUTH_DEV" -H "$CT" -d "{\"run_id\":\"$Z\"}" || true
-curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/dev/relay/inbox" -H "$AUTH_DEV" -H "$CT" -d "{\"run_id\":\"$Z\",\"kind\":\"approval\"}" || true
-curl -s -o /dev/null "$WORKER/v1/t/personal/dev/relay/inbox?since=999999999" -H "$AUTH_DEV" || true
-curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/dev/relay/segments" -H "$AUTH_DEV" -H "$CT" -d "{\"run_id\":\"$Z\",\"segments\":[]}" || true
+curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/dev/relay/session" -H "$AUTH_DAEMON" -H "$CT" -d "{\"run_id\":\"$Z\"}" || true
+curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/dev/relay/inbox" -H "$AUTH_DAEMON" -H "$CT" -d "{\"run_id\":\"$Z\",\"kind\":\"approval\"}" || true
+curl -s -o /dev/null "$WORKER/v1/t/personal/dev/relay/inbox?since=999999999" -H "$AUTH_DAEMON" || true
+curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/dev/relay/segments" -H "$AUTH_DAEMON" -H "$CT" -d "{\"run_id\":\"$Z\",\"segments\":[]}" || true
 curl -s -o /dev/null "$WORKER/v1/t/personal/dev/relay/segments?run_id=$Z" -H "$AUTH_JWT" || true
 curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/dev/relay/review" -H "$AUTH_JWT" -H "$CT" -d "{\"run_id\":\"$Z\",\"reviews\":[]}" || true
 curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/dev/relay/reply" -H "$AUTH_JWT" -H "$CT" -d "{\"inbox_id\":\"$Z\",\"reply\":{}}" || true
@@ -93,12 +104,12 @@ curl -s -o /dev/null -X POST "$WORKER/v1/t/personal/dev/relay/nudge" -H "$AUTH_J
 sleep 0.6
 
 echo "== 1. daemon POST session =="
-S=$(req POST "$WORKER/v1/t/personal/dev/relay/session" "$AUTH_DEV" \
+S=$(req POST "$WORKER/v1/t/personal/dev/relay/session" "$AUTH_DAEMON" \
   "{\"run_id\":\"$RUN\",\"title\":\"Round-trip\",\"status\":\"running\",\"progress_done\":0,\"progress_total\":1,\"current_phase\":\"P1\",\"project\":{\"slug\":\"roundtrip-$RUN\",\"name\":\"Round-trip\",\"classification\":\"company\"}}")
 echo "   $S"; echo "$S" | jq -e '.id' >/dev/null || fail "session ($S)"
 
 echo "== 1b. daemon POST segments (outline) =="
-SEG=$(req POST "$WORKER/v1/t/personal/dev/relay/segments" "$AUTH_DEV" \
+SEG=$(req POST "$WORKER/v1/t/personal/dev/relay/segments" "$AUTH_DAEMON" \
   "{\"run_id\":\"$RUN\",\"segments\":[{\"seq\":0,\"title\":\"Phase 1\",\"summary\":\"vertical slice\",\"state\":\"active\",\"is_gate\":false},{\"seq\":1,\"title\":\"Gate\",\"state\":\"blocked\",\"is_gate\":true,\"gate_severity\":\"blocking\"}]}")
 echo "   $SEG"; echo "$SEG" | jq -e '.upserted==2' >/dev/null || fail "segments publish ($SEG)"
 
@@ -117,12 +128,12 @@ GS2=$(req GET "$WORKER/v1/t/personal/dev/relay/segments?run_id=$RUN" "$AUTH_JWT"
 echo "$GS2" | jq -e '.segments[] | select(.seq==0 and .response_verdict=="approve" and .submitted_at!=null)' >/dev/null || fail "verdict not applied ($GS2)"
 
 echo "== 2. daemon POST inbox (raise gate) =="
-I=$(req POST "$WORKER/v1/t/personal/dev/relay/inbox" "$AUTH_DEV" \
+I=$(req POST "$WORKER/v1/t/personal/dev/relay/inbox" "$AUTH_DAEMON" \
   "{\"run_id\":\"$RUN\",\"kind\":\"approval\",\"direction\":\"agent_to_human\",\"payload\":{\"prompt\":\"run cargo test?\"}}")
 echo "   $I"; INBOX_ID=$(echo "$I" | jq -r '.id // empty'); [ -n "$INBOX_ID" ] || fail "inbox ($I)"
 
 echo "== 3. daemon GET inbox?since=0 (expect pending) =="
-P1=$(req GET "$WORKER/v1/t/personal/dev/relay/inbox?since=0" "$AUTH_DEV")
+P1=$(req GET "$WORKER/v1/t/personal/dev/relay/inbox?since=0" "$AUTH_DAEMON")
 echo "   $P1"
 echo "$P1" | jq -e '.items[] | select(.id=="'"$INBOX_ID"'" and .status=="pending")' >/dev/null || fail "gate not pending ($P1)"
 CURSOR=$(echo "$P1" | jq -r '.cursor')
@@ -138,7 +149,7 @@ N=$(req POST "$WORKER/v1/t/personal/dev/relay/nudge" "$AUTH_JWT" \
   "{\"run_id\":\"$RUN\",\"text\":\"  focus on the API first  \"}")
 echo "   $N"; NUDGE_ID=$(echo "$N" | jq -r '.id // empty'); [ -n "$NUDGE_ID" ] || fail "nudge ($N)"
 # The daemon poll (device plane) must see the human_to_agent nudge with trimmed text.
-PN=$(req GET "$WORKER/v1/t/personal/dev/relay/inbox?since=$CURSOR" "$AUTH_DEV")
+PN=$(req GET "$WORKER/v1/t/personal/dev/relay/inbox?since=$CURSOR" "$AUTH_DAEMON")
 echo "$PN" | jq -e '.items[] | select(.id=="'"$NUDGE_ID"'" and .direction=="human_to_agent" and .kind=="nudge" and .payload.text=="focus on the API first")' >/dev/null \
   || fail "nudge not visible to the daemon poll / not trimmed ($PN)"
 
@@ -172,9 +183,46 @@ R=$(req POST "$WORKER/v1/t/personal/dev/relay/reply" "$AUTH_JWT" \
 echo "   $R"; echo "$R" | jq -e '.id' >/dev/null || fail "reply ($R)"
 
 echo "== 5. daemon GET inbox?since=$CURSOR (expect answer re-surfaced) =="
-P2=$(req GET "$WORKER/v1/t/personal/dev/relay/inbox?since=$CURSOR" "$AUTH_DEV")
+P2=$(req GET "$WORKER/v1/t/personal/dev/relay/inbox?since=$CURSOR" "$AUTH_DAEMON")
 echo "   $P2"
 echo "$P2" | jq -e '.items[] | select(.id=="'"$INBOX_ID"'" and .status=="answered" and .reply.verdict=="approve" and .run_id=="'"$RUN"'")' >/dev/null \
   || fail "answer NOT re-surfaced past cursor $CURSOR, or run_id missing ($P2)"
+
+if [ "$DAEMON_AUTH" = session ]; then
+  echo "== 6. a signed-in NON-member is refused on the daemon routes (403) =="
+  OUT_EMAIL="relay-outsider@sensei.test"
+  curl -s -o /dev/null -X POST "$API/auth/v1/admin/users" \
+    -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "$CT" \
+    -d "{\"email\":\"$OUT_EMAIL\",\"password\":\"$PASS\",\"email_confirm\":true}"
+  OUT_JWT=$(curl -s -X POST "$API/auth/v1/token?grant_type=password" -H "apikey: $ANON_KEY" -H "$CT" \
+    -d "{\"email\":\"$OUT_EMAIL\",\"password\":\"$PASS\"}" | jq -r '.access_token // empty')
+  [ -n "$OUT_JWT" ] || fail "no outsider JWT"
+  for route in "POST relay/session {\"run_id\":\"$RUN\"}" "POST relay/inbox {\"run_id\":\"$RUN\",\"kind\":\"chat\"}" \
+               "GET relay/inbox?since=0" "POST artifacts {}" "GET artifacts" "GET rules" "GET rules/resolved?ns=personal:dev"; do
+    set -- $route; M=$1; R=$2; B=${3:-}
+    if [ -n "$B" ]; then CODE=$(curl -s -o /dev/null -w '%{http_code}' -X "$M" "$WORKER/v1/t/personal/dev/$R" -H "Authorization: Bearer $OUT_JWT" -H "$CT" -d "$B")
+    else CODE=$(curl -s -o /dev/null -w '%{http_code}' -X "$M" "$WORKER/v1/t/personal/dev/$R" -H "Authorization: Bearer $OUT_JWT"); fi
+    echo "   $M $R → $CODE"; [ "$CODE" = 403 ] || fail "non-member got $CODE on $M $R"
+  done
+
+  echo "== 7. the member's daemon publishes and pulls artifacts and rules as them =="
+  SIG=$(printf '%s' "roundtrip-$RUN" | shasum -a 256 | cut -d' ' -f1)
+  A=$(req POST "$WORKER/v1/t/personal/dev/artifacts" "$AUTH_DAEMON" \
+    "{\"signature\":\"$SIG\",\"tenant_key\":\"personal/dev\",\"kind\":\"principle\",\"title\":\"Round-trip\",\"body\":\"b\",\"payload\":{\"kind\":\"principle\"},\"scope\":{},\"attribution\":{\"mode\":\"anonymous\"}}")
+  echo "   artifact: $A"; ART_ID=$(echo "$A" | jq -r '.id // empty'); [ -n "$ART_ID" ] || fail "artifact publish ($A)"
+  AP=$(req GET "$WORKER/v1/t/personal/dev/artifacts?since=0" "$AUTH_DAEMON")
+  echo "$AP" | jq -e '.artifacts[] | select(.id=="'"$ART_ID"'")' >/dev/null || fail "own artifact not pulled ($AP)"
+  RH=$(printf '%s' "rule-$RUN" | shasum -a 256 | cut -d' ' -f1)
+  RP=$(req POST "$WORKER/v1/t/personal/dev/rules" "$AUTH_DAEMON" \
+    "{\"content_hash\":\"$RH\",\"scope_key\":\"user\",\"namespace_slug\":\"roundtrip-$RUN\",\"namespace_name\":\"Round-trip\",\"rule_type\":\"convention\",\"title\":\"Round-trip rule\",\"content\":\"c\",\"enforcement\":\"recommended\"}")
+  echo "   rule: $RP"; RULE_ID=$(echo "$RP" | jq -r '.id // empty'); [ -n "$RULE_ID" ] || fail "rule publish ($RP)"
+  RL=$(req GET "$WORKER/v1/t/personal/dev/rules?since=0" "$AUTH_DAEMON")
+  echo "$RL" | jq -e '.rules[] | select(.id=="'"$RULE_ID"'" and .namespace_slug=="roundtrip-'"$RUN"'" and .scope_key=="user")' >/dev/null \
+    || fail "own rule not pulled with its namespace ($RL)"
+  DC=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$WORKER/v1/t/personal/dev/rules/$RULE_ID" -H "$AUTH_DAEMON")
+  echo "   retract → $DC"; [ "$DC" = 204 ] || fail "rule retract ($DC)"
+  RR=$(req GET "$WORKER/v1/t/personal/dev/rules/resolved?ns=user:x" "$AUTH_DAEMON")
+  echo "   resolved: $RR"; echo "$RR" | jq -e '.rules | type=="array"' >/dev/null || fail "rules/resolved ($RR)"
+fi
 
 echo "ROUND-TRIP OK ✓ — gate raised, answered from the phone plane, re-surfaced to the daemon poll via the seq trigger."

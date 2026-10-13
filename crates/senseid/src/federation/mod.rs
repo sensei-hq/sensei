@@ -4,13 +4,17 @@
 //!
 //! Wire target (D1): rules ride the Worker's **tenant path**
 //! `{KnowledgeSource.url}/rules` — where `url` is the tenant base
-//! `{registry}/v1/t/{origin}/{org}` — authenticated with the per-membership
-//! **device token** (Keychain, via `credential_ref`), the SAME plane the
-//! artifacts client uses (`dojo/client.rs`). The `dojo_protocol` request/response
+//! `{registry}/v1/t/{origin}/{org}` — authenticated like every tenant call
+//! (`dojo/client.rs` [`TenantCredential`]): the session of the persona whose
+//! membership that tenant base belongs to (#236 step 4), or the source's own
+//! legacy device token when no bound membership matches. The `dojo_protocol` request/response
 //! shapes are unchanged; only the URL + credential kind moved off the retired
 //! dojo-mind's global `/v1/rules` + API-key plane.
 
-use crate::db::pg_store::{InsertMemory, KnowledgeSource, MemoryPushPayload, PgStore};
+use crate::db::pg_store::{
+    DojoMembership, InsertMemory, KnowledgeSource, MemoryPushPayload, PgStore,
+};
+use crate::dojo::client::{TenantCredential, tenant_base_url};
 use dojo_protocol::{PublishedRule, PullResponse, content_hash};
 
 /// HTTP client for all federation calls. Bounded connect + total timeouts so a
@@ -115,6 +119,29 @@ fn rules_url(base: &str) -> String {
     format!("{}/rules", base.trim_end_matches('/'))
 }
 
+/// The credential a rules source presents: the persona's, when the source's
+/// tenant base is a membership bound to one; otherwise the source's own device
+/// token (the window). Matched on the exact tenant base, never a prefix. Pure.
+fn credential_for_source(
+    memberships: &[DojoMembership],
+    src: &KnowledgeSource,
+) -> TenantCredential {
+    let base = src.url.trim_end_matches('/');
+    memberships
+        .iter()
+        .find(|m| m.persona.is_some() && tenant_base_url(&m.registry_url, &m.tenant_key) == base)
+        .map(TenantCredential::of)
+        .unwrap_or_else(|| TenantCredential::DeviceToken {
+            credential_ref: src.credential_ref.clone(),
+        })
+}
+
+/// [`credential_for_source`] against the stored memberships, as a Bearer.
+async fn source_bearer(pg: &PgStore, src: &KnowledgeSource) -> Result<String, String> {
+    let memberships = pg.list_dojo_memberships().await?;
+    credential_for_source(&memberships, src).bearer().await.map_err(|e| e.to_string())
+}
+
 async fn push_one(
     pg: &PgStore,
     client: &reqwest::Client,
@@ -122,9 +149,7 @@ async fn push_one(
     pr: &PublishedRule,
     memory_id: uuid::Uuid,
 ) -> Result<(), String> {
-    // The Keychain credential is the per-membership device token (D1), attached as
-    // the Bearer exactly as before — only the credential kind + URL plane changed.
-    let key = crate::gateway_keys::get_key(&src.credential_ref).map_err(|e| e.to_string())?;
+    let key = source_bearer(pg, src).await?;
     let resp = client
         .post(rules_url(&src.url))
         .bearer_auth(key)
@@ -164,7 +189,7 @@ pub async fn pull_source(
     client: &reqwest::Client,
     src: &KnowledgeSource,
 ) -> Result<PullStats, String> {
-    let key = crate::gateway_keys::get_key(&src.credential_ref).map_err(|e| e.to_string())?;
+    let key = source_bearer(pg, src).await?;
     let resp = client
         .get(rules_url(&src.url))
         .query(&[("since", src.last_seq.to_string())])
@@ -346,6 +371,87 @@ pub fn run_pull_loop(pg: PgStore, interval_secs: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn src(url: &str) -> KnowledgeSource {
+        KnowledgeSource {
+            id: uuid::Uuid::new_v4(),
+            kind: "hive_mind".into(),
+            name: "acme".into(),
+            url: url.into(),
+            namespace_id: None,
+            credential_ref: "source-device".into(),
+            direction: "both".into(),
+            last_seq: 0,
+            enabled: true,
+        }
+    }
+
+    fn membership(tenant_key: &str, slot: Option<Option<&str>>) -> DojoMembership {
+        DojoMembership {
+            id: uuid::Uuid::new_v4(),
+            registry_url: "http://localhost:7755".into(),
+            tenant_key: tenant_key.into(),
+            dojo_url: format!("http://localhost:7755/{tenant_key}"),
+            kind: "employer".into(),
+            org_slugs: vec![],
+            role: "contributor".into(),
+            authenticated_via: "github_oauth".into(),
+            attribution_default: "named".into(),
+            credential_ref: "membership-device".into(),
+            sync_status: "healthy".into(),
+            last_seq: 0,
+            last_heartbeat_at: None,
+            enabled: true,
+            persona: slot.map(|s| crate::db::pg_store::MembershipPersona {
+                persona_id: uuid::Uuid::new_v4(),
+                session_slot: s.map(str::to_string),
+            }),
+        }
+    }
+
+    // #236 step 4d: a rules source presents the session of the persona whose
+    // membership owns its tenant base — matched exactly, not by prefix.
+    #[test]
+    fn a_source_on_a_bound_tenant_presents_the_persona_session() {
+        let ms = [membership("organization/acme", Some(Some("acme-slot")))];
+        assert_eq!(
+            credential_for_source(&ms, &src("http://localhost:7755/v1/t/organization/acme/")),
+            TenantCredential::Session { slot: "acme-slot".into() }
+        );
+    }
+
+    #[test]
+    fn a_source_on_a_signed_out_tenant_presents_nothing() {
+        let ms = [membership("organization/acme", Some(None))];
+        assert!(matches!(
+            credential_for_source(&ms, &src("http://localhost:7755/v1/t/organization/acme")),
+            TenantCredential::SignedOut { .. }
+        ));
+    }
+
+    #[test]
+    fn a_source_with_no_bound_membership_keeps_its_own_device_token() {
+        let device = TenantCredential::DeviceToken { credential_ref: "source-device".into() };
+        // No membership for that tenant, an unbound one, and a prefix that is not the tenant.
+        assert_eq!(
+            credential_for_source(&[], &src("http://localhost:7755/v1/t/organization/acme")),
+            device
+        );
+        let unbound = [membership("organization/acme", None)];
+        assert_eq!(
+            credential_for_source(&unbound, &src("http://localhost:7755/v1/t/organization/acme")),
+            device
+        );
+        let other = [membership("organization/acme", Some(Some("acme-slot")))];
+        assert_eq!(
+            credential_for_source(
+                &other,
+                &src("http://localhost:7755/v1/t/organization/acme-labs")
+            ),
+            device
+        );
+    }
+
     use crate::db::pg_store::MemoryPushPayload;
 
     #[test]

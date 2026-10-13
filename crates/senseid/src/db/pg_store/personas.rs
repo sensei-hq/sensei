@@ -118,6 +118,17 @@ impl PgStore {
         Ok(res.rows_affected() > 0)
     }
 
+    /// The persona holding a Keychain session slot, if any.
+    pub async fn persona_id_for_slot(&self, slot: &str) -> Result<Option<uuid::Uuid>, String> {
+        let row: Option<(uuid::Uuid,)> =
+            sqlx_core::query_as::query_as("SELECT id FROM sensei.personas WHERE session_slot = $1")
+                .bind(slot)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| format!("persona_id_for_slot: {e}"))?;
+        Ok(row.map(|r| r.0))
+    }
+
     /// Create a persona, or return the existing one with that label.
     ///
     /// Idempotent on `lower(label)` so a re-run of a seed/backfill converges

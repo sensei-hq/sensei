@@ -234,4 +234,33 @@ export async function resolveApiKeyAccess(
 	};
 }
 
+/** A JWT is three non-empty base64url segments. A device token is opaque and
+ *  never has that shape, so the shape alone tells the two credentials apart. */
+export function isJwtShaped(token: string): boolean {
+	return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token);
+}
+
+/**
+ * The daemon's tenant calls (relay, artifacts, rules) during the one-release
+ * window of #236 step 4 (docs/plan/2026-10-12-dojo-device-plane-as-person.md).
+ * The bearer's SHAPE picks the path: a JWT is the person's session
+ * (`resolveTenantAccess`, then `callerDb`); anything else is the legacy device
+ * token (`resolveApiKeyAccess`, the service role). A JWT that fails verification
+ * is a 401 and is never retried as a device token, so one credential cannot
+ * stand in for the other. Only the Authorization header counts here — a browser
+ * cookie session does not reach the daemon's routes.
+ */
+export async function resolveTenantCaller(
+	origin: string,
+	org: string,
+	request: Request,
+	floor: AccessLevel
+): Promise<Caller> {
+	const auth = request.headers.get('authorization') ?? '';
+	const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
+	if (!token) throw apiError(401, 'unauthenticated');
+	if (isJwtShaped(token)) return resolveTenantAccess(origin, org, request, {} as App.Locals, floor);
+	return resolveApiKeyAccess(origin, org, request, floor);
+}
+
 export { ACCESS };

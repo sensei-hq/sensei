@@ -12,11 +12,11 @@
 //     `PulledRule` is `{ id, seq, status, version, ...PublishedRule }`
 //     (`#[serde(flatten)]` — the rule fields sit at the top level).
 //
-// dojo.shared_rules is NOT tenant-scoped (no tenant_id column — see the table's
-// DDL comment and `seed_default_governance`): the registry is keyed on
-// (namespace_id, content_hash). Tenant scoping is the AUTH boundary — the device
-// token must resolve to a membership in the path tenant (`resolveApiKeyAccess`);
-// the tenant is recorded on the `dojo.audit_events` row.
+// A shared rule belongs to one tenant (#236): unique on (tenant_id,
+// namespace_id, content_hash), read by its members and written by its
+// maintainers under the policies in database/policies/dojo/shared_rules.sql.
+// The caller is resolved by `resolveTenantCaller`; the tenant is also recorded
+// on the `dojo.audit_events` row.
 
 import type { dojoDb } from './dojo-supabase';
 
@@ -112,9 +112,26 @@ export class RulesError extends Error {
 }
 
 /**
- * Publish a rule: upsert its namespace (`sensei.namespaces` on `(scope_key,
- * slug)`), then upsert the shared rule (`dojo.shared_rules` on `(namespace_id,
- * content_hash)`). Mirrors `DojoStore::publish`:
+ * Register a rule's namespace (`sensei.namespaces` on `(scope_key, slug)`) and
+ * return its id, through `dojo.register_rule_namespace` — `sensei` is not exposed
+ * through PostgREST, so a `.schema('sensei')` call is refused outright. The
+ * namespace registry is shared across tenants and is the system's (#236 step 4);
+ * `publishRule` then files the rule under the id as the person.
+ */
+export async function upsertRuleNamespace(db: DojoClient, rule: PublishedRule): Promise<string> {
+	const { data, error } = await db.rpc('register_rule_namespace', {
+		p_scope_key: rule.scope_key,
+		p_slug: rule.namespace_slug,
+		p_name: rule.namespace_name
+	});
+	if (error) throw new RulesError(500, error.message);
+	return data as string;
+}
+
+/**
+ * Publish a rule: upsert the shared rule (`dojo.shared_rules` on `(tenant_id,
+ * namespace_id, content_hash)`) under the namespace `upsertRuleNamespace`
+ * registered. Mirrors `DojoStore::publish`:
  *   • first publish → version 1 (the column default);
  *   • republish of the same (namespace, content_hash) bumps version + refreshes
  *     status/attribution/timestamp.
@@ -132,23 +149,10 @@ export async function publishRule(
 	db: DojoClient,
 	tenantId: string,
 	rule: PublishedRule,
-	publishedBy: string
+	publishedBy: string,
+	namespaceId: string
 ): Promise<PublishResponse> {
-	// 1. Upsert the namespace in the `sensei` schema (shared_rules.namespace_id
-	//    FKs sensei.namespaces, not a dojo table).
-	const nsRes = await db
-		.schema('sensei')
-		.from('namespaces')
-		.upsert(
-			{ scope_key: rule.scope_key, slug: rule.namespace_slug, name: rule.namespace_name },
-			{ onConflict: 'scope_key,slug' }
-		)
-		.select('id')
-		.single();
-	if (nsRes.error) throw new RulesError(500, nsRes.error.message);
-	const namespaceId = (nsRes.data as { id: string }).id;
-
-	// 2. Upsert the rule. On first insert the DB defaults version=1 and seq via
+	// On first insert the DB defaults version=1 and seq via
 	//    the sequence; on conflict we bump the version and refresh the snapshot
 	//    (attribution + timestamp server-controlled).
 	const publishedAt = new Date().toISOString();
@@ -181,7 +185,7 @@ export async function publishRule(
 	return { id: row.id, version: row.version, seq: row.seq };
 }
 
-/** One `dojo.shared_rules ⋈ sensei.namespaces` row as returned by the pull select. */
+/** One row of `dojo.tenant_shared_rules` — a shared rule with its namespace. */
 interface RuleRow {
 	id: string;
 	seq: number;
@@ -196,18 +200,23 @@ interface RuleRow {
 	origin_repo: string | null;
 	published_by: string;
 	published_at: string;
-	// The embedded namespace (PostgREST FK-embed). shared_rules → namespaces is a
-	// to-one relationship, so supabase-js returns an object (or, defensively for
-	// PostgREST's array-embed shape, a one-element array).
-	namespaces: { scope_key: string; slug: string; name: string } | { scope_key: string; slug: string; name: string }[] | null;
+	scope_key: string;
+	namespace_slug: string;
+	namespace_name: string;
 }
 
-/** The `select` list for the pull join (shared_rules columns + embedded namespace). */
+/** The legacy select's row: the rule with its namespace EMBEDDED (PostgREST
+ *  FK-embed — an object, or defensively a one-element array). */
+type EmbeddedRuleRow = Omit<RuleRow, 'scope_key' | 'namespace_slug' | 'namespace_name'> & {
+	namespaces: { scope_key: string; slug: string; name: string } | { scope_key: string; slug: string; name: string }[] | null;
+};
+
+/** The `select` list for the legacy pull join (shared_rules columns + embedded namespace). */
 export const PULL_SELECT =
 	'id, seq, status, version, content_hash, rule_type, title, content, impact, enforcement, origin_repo, published_by, published_at, namespaces(scope_key, slug, name)';
 
 /** Normalize PostgREST's embed (object or one-element array) to the single row. */
-function embeddedNamespace(ns: RuleRow['namespaces']): { scope_key: string; slug: string; name: string } | null {
+function embeddedNamespace(ns: EmbeddedRuleRow['namespaces']): { scope_key: string; slug: string; name: string } | null {
 	if (!ns) return null;
 	return Array.isArray(ns) ? (ns[0] ?? null) : ns;
 }
@@ -222,16 +231,15 @@ export function shapePullResponse(rows: RuleRow[], since: number): PullResponse 
 	let cursor = since;
 	const rules: PulledRule[] = rows.map((r) => {
 		if (r.seq > cursor) cursor = r.seq;
-		const ns = embeddedNamespace(r.namespaces);
 		return {
 			id: r.id,
 			seq: r.seq,
 			status: r.status,
 			version: r.version,
 			content_hash: r.content_hash,
-			scope_key: ns?.scope_key ?? '',
-			namespace_slug: ns?.slug ?? '',
-			namespace_name: ns?.name ?? '',
+			scope_key: r.scope_key,
+			namespace_slug: r.namespace_slug,
+			namespace_name: r.namespace_name,
 			rule_type: r.rule_type,
 			title: r.title,
 			content: r.content,
@@ -246,10 +254,28 @@ export function shapePullResponse(rows: RuleRow[], since: number): PullResponse 
 }
 
 /**
- * Pull all rule deltas with `seq > since`, ordered by `seq` — the query half of
- * `DojoStore::pull_since`. Delegates shaping to `shapePullResponse`.
+ * Pull all rule deltas with `seq > since`, in `seq` order, AS THE PERSON —
+ * `dojo.tenant_shared_rules`, which carries each rule's namespace (a session
+ * cannot read `sensei.namespaces` to embed it). The query half of
+ * `DojoStore::pull_since`; shaping is `shapePullResponse`. A refusal (a
+ * non-member, 42501) or any error is a RulesError(500), never an empty page.
  */
 export async function pullRules(
+	db: DojoClient,
+	tenantId: string,
+	since: number
+): Promise<PullResponse> {
+	const { data, error } = await db.rpc('tenant_shared_rules', { p_tenant: tenantId, p_since: since });
+	if (error) throw new RulesError(500, error.message);
+	return shapePullResponse((data ?? []) as RuleRow[], since);
+}
+
+/**
+ * The same pull for the legacy device token (the service role), during the one
+ * release window of #236 step 4 — removed with the device token in 4e. The
+ * route's membership check already scoped the caller to `tenantId`.
+ */
+export async function pullRulesAsSystem(
 	db: DojoClient,
 	tenantId: string,
 	since: number
@@ -261,7 +287,11 @@ export async function pullRules(
 		.gt('seq', since)
 		.order('seq', { ascending: true });
 	if (error) throw new RulesError(500, error.message);
-	return shapePullResponse((data ?? []) as unknown as RuleRow[], since);
+	const rows = ((data ?? []) as unknown as EmbeddedRuleRow[]).map(({ namespaces, ...r }) => {
+		const ns = embeddedNamespace(namespaces);
+		return { ...r, scope_key: ns?.scope_key ?? '', namespace_slug: ns?.slug ?? '', namespace_name: ns?.name ?? '' };
+	});
+	return shapePullResponse(rows, since);
 }
 
 /**
@@ -319,32 +349,12 @@ export async function recordRulesAudit(
 }
 
 // ── Rule-pack resolution (adopt → govern) ────────────────────────────────────
-// A namespace that ADOPTS a rule pack inherits the pack's rules. Resolution
-// unions, for a set of namespaces, every adopted pack's rules — applying the
-// adoption's optional tier override. This is the payoff for the rule_packs DDL:
-// an org adopting "Auth boundary guards" makes those rules resolve for its repos
-// (and, via the daemon's `/v1/.../rules` federation pull → local memories →
-// resolve_rules_raw, flow through the SessionStart/PreCompact push).
-
-/** Enforcement tiers weakest→strongest — mirrors `sensei.enforcement`. */
-export const ENFORCEMENT_ORDER = ['advisory', 'recommended', 'required', 'mandatory'] as const;
-
-/** The stronger of two tiers. Unknown tiers rank lowest. Pure. */
-export function maxTier(a: string, b: string): string {
-	const ia = ENFORCEMENT_ORDER.indexOf(a as (typeof ENFORCEMENT_ORDER)[number]);
-	const ib = ENFORCEMENT_ORDER.indexOf(b as (typeof ENFORCEMENT_ORDER)[number]);
-	return ib > ia ? b : a;
-}
-
-/**
- * The effective tier of a pack rule under an adoption: the rule's own tier,
- * RAISED (never lowered) by the adoption's optional override — so an org can
- * adopt an advisory pack as `required`, but can never weaken a rule below its
- * intrinsic tier (mandatory stays mandatory). Pure.
- */
-export function effectivePackRuleTier(ruleTier: string, adoptionOverride: string | null): string {
-	return adoptionOverride ? maxTier(ruleTier, adoptionOverride) : ruleTier;
-}
+// A namespace that ADOPTS a rule pack inherits the pack's rules. The daemon asks,
+// for its folder's namespaces, for the rules of every pack adopted there — and a
+// member gets those adopted at the namespace their TENANT owns
+// (`dojo.tenant_pack_rules`, decision 2026-10-12), each at the adoption's scope
+// with its never-weaken tier override. They flow through the SessionStart /
+// PreCompact push.
 
 /** Parse the `?ns=organization:acme,stack:react` query into (scope_key, slug)
  *  pairs — how the daemon names its repo's namespaces cross-DB (the stable key,
@@ -363,32 +373,6 @@ export function parseNamespacePairs(raw: string | null): Array<{ scope_key: stri
 		.filter((p) => p.scope_key && p.slug);
 }
 
-/** Resolve (scope_key, slug) namespace pairs to their `sensei.namespaces` id +
- *  scope_key — the stable identity across the daemon/dojo DB split. The scope_key
- *  is carried so an adopted pack's rules federate at the GOVERNANCE scope the
- *  pack was adopted at (not the pack's own area). Unknown pairs are dropped; a
- *  query error logs and yields `[]` (never silent). */
-export async function resolveNamespaces(
-	db: DojoClient,
-	pairs: Array<{ scope_key: string; slug: string }>
-): Promise<Array<{ id: string; scope_key: string }>> {
-	if (pairs.length === 0) return [];
-	const slugs = [...new Set(pairs.map((p) => p.slug))];
-	const { data, error } = await db
-		.schema('sensei')
-		.from('namespaces')
-		.select('id, scope_key, slug')
-		.in('slug', slugs);
-	if (error) {
-		console.error(`namespace resolve failed: ${error.message}`);
-		return [];
-	}
-	const want = new Set(pairs.map((p) => `${p.scope_key} ${p.slug}`));
-	return ((data ?? []) as Array<{ id: string; scope_key: string; slug: string }>)
-		.filter((n) => want.has(`${n.scope_key} ${n.slug}`))
-		.map((n) => ({ id: n.id, scope_key: n.scope_key }));
-}
-
 /** A pack rule resolved for a namespace — the rule's full shape + its pack's
  *  provenance, with the effective (override-applied) enforcement tier. */
 export interface ResolvedPackRule {
@@ -404,7 +388,7 @@ export interface ResolvedPackRule {
 	remediation: string | null;
 	skill_ref: string | null;
 	applies_to: unknown;
-	source: string; // from the pack
+	source: string; // the pack's attribution
 	area: string; // from the pack (the category — provenance only)
 	/** The GOVERNANCE scope the pack was ADOPTED at (the adopting namespace's
 	 *  scope_key: general/organization/project/…). This — not `area` — is the
@@ -413,125 +397,26 @@ export interface ResolvedPackRule {
 	scope_key: string;
 }
 
-/** A `rule_pack_rules` row as fetched from the Worker DB — the raw pack rule
- *  before the adoption scope + override are applied. */
-export interface PackRuleInput {
-	id: string;
-	pack_id: string;
-	ordinal: number;
-	statement: string;
-	body: string;
-	rationale: string | null;
-	enforcement: string;
-	verification: string;
-	checker_ref: string | null;
-	remediation: string | null;
-	skill_ref: string | null;
-	applies_to: unknown;
-}
+/** One row of `dojo.tenant_pack_rules`. */
+type TenantPackRuleRow = Omit<ResolvedPackRule, 'source'> & { attribution: string };
 
 /**
- * Compose the resolved pack rules for a set of adoptions — the PURE core of
- * `resolveAdoptedPackRules`. For EACH adoption (namespace, pack), emit that
- * pack's rules carrying the adoption namespace's `scope_key` (the governance
- * scope the pack governs at — NOT the pack's own area/category) and the
- * adoption's never-weaken enforcement override. A pack adopted at several
- * namespaces yields its rules once per scope; the daemon dedups downstream
- * (`structure_ruleset`), exactly as the LOCAL resolver's per-adoption emit does.
- * An adoption whose namespace isn't in `namespaces` is skipped. Pure.
+ * The rules of the packs adopted at the namespace the caller's tenant owns,
+ * among the folder's `pairs` — `dojo.tenant_pack_rules`, as the person (members
+ * only; the tier override, the adoption scope and the ownership are the
+ * function's). No pairs asks nothing and is no rules. Any error — a refusal
+ * included — is a RulesError(500): never an empty list that reads as "no packs".
  */
-export function composeAdoptedPackRules(
-	adoptions: Array<{ pack_id: string; namespace_id: string; enforcement: string | null }>,
-	namespaces: Array<{ id: string; scope_key: string }>,
-	packs: Array<{ id: string; area: string; source: string }>,
-	rules: PackRuleInput[]
-): ResolvedPackRule[] {
-	const scopeByNs = new Map(namespaces.map((n) => [n.id, n.scope_key]));
-	const packMeta = new Map(packs.map((p) => [p.id, p]));
-	const rulesByPack = new Map<string, PackRuleInput[]>();
-	for (const r of rules) {
-		const g = rulesByPack.get(r.pack_id);
-		if (g) g.push(r);
-		else rulesByPack.set(r.pack_id, [r]);
-	}
-
-	const out: ResolvedPackRule[] = [];
-	for (const a of adoptions) {
-		const scope_key = scopeByNs.get(a.namespace_id);
-		if (!scope_key) continue; // namespace not in the resolved set — skip
-		const m = packMeta.get(a.pack_id);
-		for (const r of rulesByPack.get(a.pack_id) ?? []) {
-			out.push({
-				pack_id: r.pack_id,
-				rule_id: r.id,
-				ordinal: r.ordinal,
-				statement: r.statement,
-				body: r.body,
-				rationale: r.rationale ?? null,
-				enforcement: effectivePackRuleTier(r.enforcement, a.enforcement),
-				verification: r.verification,
-				checker_ref: r.checker_ref ?? null,
-				remediation: r.remediation ?? null,
-				skill_ref: r.skill_ref ?? null,
-				applies_to: r.applies_to,
-				source: m?.source ?? '',
-				area: m?.area ?? '',
-				scope_key
-			});
-		}
-	}
-	return out;
-}
-
-/**
- * Resolve the rules of every pack ADOPTED at any of `namespaces`, each rule
- * carrying its adoption scope (`namespaces[].scope_key`) and the adoption's
- * never-weaken tier override. Delegates the mapping to the pure
- * `composeAdoptedPackRules`. A pack-resolution error is logged and yields `[]`
- * (packs are additive — a hiccup must not break the base rules pull), never silent.
- */
-export async function resolveAdoptedPackRules(
+export async function resolveTenantPackRules(
 	db: DojoClient,
-	namespaces: Array<{ id: string; scope_key: string }>
+	tenantId: string,
+	pairs: Array<{ scope_key: string; slug: string }>
 ): Promise<ResolvedPackRule[]> {
-	if (namespaces.length === 0) return [];
-
-	const { data: adoptions, error: aErr } = await db
-		.schema('sensei')
-		.from('rule_pack_adoptions')
-		.select('pack_id, namespace_id, enforcement')
-		.in(
-			'namespace_id',
-			namespaces.map((n) => n.id)
-		);
-	if (aErr) {
-		console.error(`rule-pack adoption resolve failed: ${aErr.message}`);
-		return [];
-	}
-	if (!adoptions || adoptions.length === 0) return [];
-
-	const packIds = [...new Set((adoptions as Array<{ pack_id: string }>).map((a) => a.pack_id))];
-
-	const [{ data: packs, error: pErr }, { data: rules, error: rErr }] = await Promise.all([
-		db.schema('sensei').from('rule_packs').select('id, area, source').in('id', packIds),
-		db
-			.schema('sensei')
-			.from('rule_pack_rules')
-			.select(
-				'id, pack_id, ordinal, statement, body, rationale, enforcement, verification, checker_ref, remediation, skill_ref, applies_to'
-			)
-			.in('pack_id', packIds)
-			.order('ordinal', { ascending: true })
-	]);
-	if (pErr || rErr) {
-		console.error(`rule-pack rule resolve failed: ${(pErr ?? rErr)?.message}`);
-		return [];
-	}
-
-	return composeAdoptedPackRules(
-		adoptions as Array<{ pack_id: string; namespace_id: string; enforcement: string | null }>,
-		namespaces,
-		(packs ?? []) as Array<{ id: string; area: string; source: string }>,
-		(rules ?? []) as PackRuleInput[]
-	);
+	if (pairs.length === 0) return [];
+	const { data, error } = await db.rpc('tenant_pack_rules', {
+		p_tenant: tenantId,
+		p_namespaces: pairs.map((p) => `${p.scope_key}:${p.slug}`)
+	});
+	if (error) throw new RulesError(500, error.message);
+	return ((data ?? []) as TenantPackRuleRow[]).map(({ attribution, ...r }) => ({ ...r, source: attribution }));
 }
