@@ -1287,6 +1287,21 @@ mod parse_task {
         let told = TellFile::about("p");
         let world = told.world();
 
+        // The file on disk, in a crate its compiler can read: Rust's references
+        // are placed by rust-analyzer, as in production (`process_file`).
+        let text = "pub struct Widget;\npub fn make() -> Widget { Widget }\n";
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"p\"\n[workspace]\n").unwrap();
+        std::fs::write(root.join("src/lib.rs"), text).unwrap();
+        let engine = &crate::indexer::lang::rust::compiler::RUST_ENGINE;
+        let sessions = crate::indexer::compiler_session::CompilerSessions::new(root);
+        let project = sessions.project_for(engine, root).await.expect("rust-analyzer compiles");
+        let declarations = sessions.declarations(&project);
+        let compiled = crate::indexer::lang::compiler::Compiled {
+            index: &project.index,
+            path: "src/lib.rs",
+            declarations: &declarations,
+        };
+
         let written = index_and_persist(
             &pg,
             &folder_id,
@@ -1296,9 +1311,9 @@ mod parse_task {
                 mode: crate::indexer::index::Mode::New,
                 package: "p",
                 module: "lib",
-                text: "pub struct Widget;\npub fn make() -> Widget { Widget }\n",
+                text,
                 world: &world,
-                compiled: None,
+                compiled: Some(&compiled),
             },
         )
         .await

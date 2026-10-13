@@ -233,6 +233,12 @@ pub trait CompilerEngine: Sync {
     fn dynamic_callee(&self, _node_kind: &str) -> bool {
         false
     }
+    /// Whether a type use of this node kind is a whole type EXPRESSION
+    /// (`Map<A, B>`, `A | B`) rather than one name: it then names every type
+    /// the compiler resolves in it, one reference each.
+    fn type_expression(&self, _node_kind: &str) -> bool {
+        false
+    }
     /// The identity a resolved symbol names.
     fn target(
         &self,
@@ -275,6 +281,9 @@ impl Targets for EngineTargets<'_> {
     fn dynamic_callee(&self, node_kind: &str) -> bool {
         self.engine.dynamic_callee(node_kind)
     }
+    fn type_expression(&self, node_kind: &str) -> bool {
+        self.engine.type_expression(node_kind)
+    }
 }
 
 /// The compiler step for one file of a language that HAS an engine: every call
@@ -290,7 +299,7 @@ pub fn place_with(
         Some(c) => {
             let answers = FileAnswers::new(c.index, c.path, text);
             let targets = EngineTargets { engine, index: c.index, declarations: c.declarations };
-            place_calls(references, Some(&answers), &targets)
+            place_references(references, Some(&answers), &targets)
         }
         None => {
             struct NotRun;
@@ -299,7 +308,7 @@ pub fn place_with(
                     Err(Reason::EngineNotRun)
                 }
             }
-            place_calls(references, None, &NotRun)
+            place_references(references, None, &NotRun)
         }
     }
 }
@@ -317,6 +326,10 @@ pub trait Targets {
     fn dynamic_callee(&self, _node_kind: &str) -> bool {
         false
     }
+    /// See [`CompilerEngine::type_expression`].
+    fn type_expression(&self, _node_kind: &str) -> bool {
+        false
+    }
 }
 
 /// The compiler's answers for ONE file: the project's index, the file's path as
@@ -332,53 +345,86 @@ impl<'a> FileAnswers<'a> {
     pub fn new(index: &'a CompilerIndex, path: &'a str, text: &'a str) -> Self {
         Self { index, path, lines: text.split('\n').collect() }
     }
+
+    /// Every symbol the compiler resolved within `span`, in order, outside the
+    /// `nested` references' spans — locals excluded, as they name no node.
+    /// `None` when the compiler did not read this file at all.
+    fn symbols_within(&self, span: &Span, nested: &[Span]) -> Option<Vec<&'a str>> {
+        self.index.by_file.get(self.path).map(|occurrences| {
+            occurrences
+                .iter()
+                .filter(|o| within(o, span) && !nested.iter().any(|inner| within(o, inner)))
+                .map(|o| o.symbol.as_str())
+                .collect()
+        })
+    }
 }
 
-/// Place every CALL in a file through its language's compiler.
+/// Place every reference in a file a compiler can answer — a call, a read, a
+/// write, a construction, a type use — through its language's compiler.
 ///
-/// Where the compiler covers the file it is the ONE answer for every call — the
+/// Where the compiler covers the file it is the ONE answer for each — the
 /// walk's own placement is not kept beside it, so a library symbol is never
-/// spelled two ways. Where it does not, every call says so
+/// spelled two ways. Where it does not, each says so
 /// ([`Reason::EngineNotRun`]): a visible root cause, never a fallback to the
-/// walk. Other reference kinds are untouched.
-pub fn place_calls(
+/// walk. An import enters a module, which is the ladder's to place.
+pub fn place_references(
     references: Vec<Reference>,
     answers: Option<&FileAnswers<'_>>,
     targets: &dyn Targets,
 ) -> Vec<Reference> {
-    let calls: Vec<Span> = references.iter().filter(|r| is_call(r)).map(|r| r.at).collect();
+    let spans: Vec<Span> =
+        references.iter().filter(|r| placed_by_the_compiler(r)).map(|r| r.at).collect();
     references
         .into_iter()
-        .filter_map(|reference| {
-            // What persistence writes as a `calls` edge: a call and a macro
-            // invocation. The other kinds are `references` and `imports`.
-            if !is_call(&reference) {
-                return Some(reference);
+        .flat_map(|reference| {
+            if !placed_by_the_compiler(&reference) {
+                return vec![reference];
             }
             let evidence = evidence_of(&reference);
             // A call of an anonymous function reaches no declaration.
             if targets.anonymous_callee(&evidence.node_kind) {
-                return None;
+                return vec![];
             }
             // A member chosen at run time: no declaration answers.
             if targets.dynamic_callee(&evidence.node_kind) {
                 let target = Resolution::Unresolved { reason: Reason::DynamicDispatch, evidence };
-                return Some(Reference { target, ..reference });
+                return vec![Reference { target, ..reference }];
             }
-            let nested: Vec<Span> = calls
+            // The references written inside this one own their occurrences: a
+            // call in an argument, an index, a type argument.
+            let nested: Vec<Span> = spans
                 .iter()
                 .filter(|c| **c != reference.at && encloses(&reference.at, c))
                 .copied()
                 .collect();
+            // A type expression names every type in it: one reference each.
+            if targets.type_expression(&evidence.node_kind)
+                && let Some(symbols) =
+                    answers.and_then(|a| a.symbols_within(&reference.at, &nested))
+            {
+                return symbols
+                    .into_iter()
+                    .map(|symbol| {
+                        let target = match targets.target(symbol) {
+                            Ok(fqn) => Resolution::Resolved { fqn, via: Rung::ResolvedByCompiler },
+                            Err(reason) => {
+                                Resolution::Unresolved { reason, evidence: evidence.clone() }
+                            }
+                        };
+                        Reference { target, ..reference.clone() }
+                    })
+                    .collect();
+            }
             let target = match place_one(&reference.at, &nested, &evidence.name, answers, targets) {
                 Placement::Target(fqn) => {
                     Resolution::Resolved { fqn, via: Rung::ResolvedByCompiler }
                 }
-                // A call to a local is no edge: locals get no nodes.
-                Placement::Local => return None,
+                // A use of a local is no edge: locals get no nodes.
+                Placement::Local => return vec![],
                 Placement::Miss(reason) => Resolution::Unresolved { reason, evidence },
             };
-            Some(Reference { target, ..reference })
+            vec![Reference { target, ..reference }]
         })
         .collect()
 }
@@ -422,9 +468,18 @@ fn last_segment(name: &str) -> &str {
     last.trim_end_matches('!')
 }
 
-/// What persistence writes as a `calls` edge: a call and a macro invocation.
-fn is_call(reference: &Reference) -> bool {
-    matches!(reference.kind, RefKind::Calls | RefKind::MacroInvokes)
+/// What the compiler places: every use of a declaration. An import enters a
+/// module, which is the ladder's.
+fn placed_by_the_compiler(reference: &Reference) -> bool {
+    match reference.kind {
+        RefKind::Calls
+        | RefKind::MacroInvokes
+        | RefKind::Reads
+        | RefKind::Writes
+        | RefKind::Constructs
+        | RefKind::TypeUse => true,
+        RefKind::Imports => false,
+    }
 }
 
 /// Whether `inner` lies within `outer`.
@@ -720,7 +775,7 @@ mod placement_tests {
                 Resolution::Resolved { fqn: item("bind"), via: Rung::DeclaredHere },
             ),
         ];
-        let placed = place_calls(refs, Some(&answers), &Engine);
+        let placed = place_references(refs, Some(&answers), &Engine);
         assert_eq!(
             placed[0].target,
             Resolution::Resolved {
@@ -741,7 +796,7 @@ mod placement_tests {
             span(3, 4, 10),
             Resolution::Resolved { fqn: item("bind"), via: Rung::DeclaredHere },
         )];
-        let placed = place_calls(refs, None, &Engine);
+        let placed = place_references(refs, None, &Engine);
         assert!(
             matches!(&placed[0].target, Resolution::Unresolved { reason: Reason::EngineNotRun, evidence } if evidence.name == "bind"),
             "got {:?}",
@@ -756,7 +811,7 @@ mod placement_tests {
         let ix = compiled();
         let answers = FileAnswers::new(&ix, "src/elsewhere.rs", TEXT);
         let placed =
-            place_calls(vec![call(span(3, 4, 10), unplaced("bind"))], Some(&answers), &Engine);
+            place_references(vec![call(span(3, 4, 10), unplaced("bind"))], Some(&answers), &Engine);
         assert!(matches!(
             placed[0].target,
             Resolution::Unresolved { reason: Reason::EngineNotRun, .. }
@@ -768,7 +823,7 @@ mod placement_tests {
         let ix = compiled();
         let answers = FileAnswers::new(&ix, "src/main.rs", TEXT);
         let refs = vec![call(span(2, 12, 27), unplaced("expect"))];
-        let placed = place_calls(refs, Some(&answers), &Engine);
+        let placed = place_references(refs, Some(&answers), &Engine);
         assert!(matches!(
             placed[0].target,
             Resolution::Unresolved { reason: Reason::CompilerNoSymbol, .. }
@@ -781,7 +836,7 @@ mod placement_tests {
             }
         }
         let refs = vec![call(span(3, 4, 10), unplaced("bind"))];
-        let placed = place_calls(refs, Some(&answers), &Nothing);
+        let placed = place_references(refs, Some(&answers), &Nothing);
         assert!(matches!(
             placed[0].target,
             Resolution::Unresolved { reason: Reason::DeclarationNotFound, .. }
@@ -796,7 +851,7 @@ mod placement_tests {
         let answers = FileAnswers::new(&ix, "src/main.rs", TEXT);
         let mut invoke = call(span(3, 4, 10), unplaced("bind"));
         invoke.kind = RefKind::MacroInvokes;
-        let placed = place_calls(vec![invoke], Some(&answers), &Engine);
+        let placed = place_references(vec![invoke], Some(&answers), &Engine);
         assert_eq!(
             placed[0].target,
             Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }
@@ -809,8 +864,11 @@ mod placement_tests {
     fn a_path_call_is_matched_on_its_last_segment() {
         let ix = compiled();
         let answers = FileAnswers::new(&ix, "src/main.rs", TEXT);
-        let placed =
-            place_calls(vec![call(span(3, 4, 10), unplaced("net::bind"))], Some(&answers), &Engine);
+        let placed = place_references(
+            vec![call(span(3, 4, 10), unplaced("net::bind"))],
+            Some(&answers),
+            &Engine,
+        );
         assert_eq!(
             placed[0].target,
             Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }
@@ -838,7 +896,7 @@ mod placement_tests {
         let ix = CompilerIndex::from_index(&index);
         let answers = FileAnswers::new(&ix, "src/main.rs", text);
         let placed =
-            place_calls(vec![call(span(3, 4, 11), unplaced("edit"))], Some(&answers), &Engine);
+            place_references(vec![call(span(3, 4, 11), unplaced("edit"))], Some(&answers), &Engine);
         assert!(placed.is_empty(), "a call to a local leaves no edge, got {placed:?}");
     }
 
@@ -872,7 +930,7 @@ mod placement_tests {
         let ix = index_of(&[(1, 8, 12, "local 1"), (2, 8, 12, BIND), (2, 13, 17, "local 1")]);
         let answers = FileAnswers::new(&ix, "src/main.rs", text);
         let placed =
-            place_calls(vec![call(span(3, 4, 18), unplaced("bind"))], Some(&answers), &Engine);
+            place_references(vec![call(span(3, 4, 18), unplaced("bind"))], Some(&answers), &Engine);
         assert_eq!(
             placed.iter().map(|r| r.target.clone()).collect::<Vec<_>>(),
             vec![Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }],
@@ -888,7 +946,7 @@ mod placement_tests {
         ]);
         let answers = FileAnswers::new(&ix, "src/main.rs", text);
         let placed =
-            place_calls(vec![call(span(2, 4, 18), unplaced("bind"))], Some(&answers), &Engine);
+            place_references(vec![call(span(2, 4, 18), unplaced("bind"))], Some(&answers), &Engine);
         assert_eq!(
             placed[0].target,
             Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler },
@@ -902,7 +960,7 @@ mod placement_tests {
         let answers = FileAnswers::new(&ix, "src/main.rs", text);
         let inner = call(span(2, 9, 18), unplaced("unwrap"));
         let outer = call(span(2, 4, 19), unplaced("bind"));
-        let placed = place_calls(vec![outer, inner], Some(&answers), &Engine);
+        let placed = place_references(vec![outer, inner], Some(&answers), &Engine);
         assert_eq!(
             placed[0].target,
             Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }
@@ -914,7 +972,7 @@ mod placement_tests {
         let answers = FileAnswers::new(&ix, "src/main.rs", text);
         let inner = call(span(2, 9, 16), unplaced("bind"));
         let outer = call(span(2, 4, 17), unplaced("bind"));
-        let placed = place_calls(vec![outer, inner], Some(&answers), &Engine);
+        let placed = place_references(vec![outer, inner], Some(&answers), &Engine);
         assert_eq!(
             placed[0].target,
             Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler },
@@ -937,7 +995,7 @@ mod placement_tests {
         let answers = FileAnswers::new(&ix, "src/main.rs", text);
         let inner = call(span(2, 4, 13), unplaced("bind"));
         let outer = call(span(2, 4, 21), unplaced("bind"));
-        let placed = place_calls(vec![outer, inner], Some(&answers), &Engine);
+        let placed = place_references(vec![outer, inner], Some(&answers), &Engine);
         assert_eq!(
             placed[0].target,
             Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler },
@@ -983,7 +1041,7 @@ mod placement_tests {
         if let Resolution::Unresolved { evidence, .. } = &mut chosen.target {
             evidence.node_kind = "index_expression".into();
         }
-        let placed = place_calls(vec![chosen], Some(&answers), &Chosen);
+        let placed = place_references(vec![chosen], Some(&answers), &Chosen);
         assert!(
             matches!(
                 placed[0].target,
@@ -1013,17 +1071,110 @@ mod placement_tests {
         if let Resolution::Unresolved { evidence, .. } = &mut iife.target {
             evidence.node_kind = "closure_expression".into();
         }
-        let placed = place_calls(vec![iife], Some(&answers), &Anonymous);
+        let placed = place_references(vec![iife], Some(&answers), &Anonymous);
         assert!(placed.is_empty(), "{placed:?}");
     }
 
+    /// **EVERY REFERENCE A COMPILER CAN ANSWER, IT ANSWERS** — a read, a write,
+    /// a construction and a type use, as a call. An import enters a module,
+    /// which is the ladder's to place.
     #[test]
-    fn only_calls_are_touched() {
+    fn reads_writes_constructions_and_type_uses_are_placed_like_calls() {
         let ix = compiled();
         let answers = FileAnswers::new(&ix, "src/main.rs", TEXT);
-        let mut read = call(span(3, 4, 10), unplaced("bind"));
+        for kind in [RefKind::Reads, RefKind::Writes, RefKind::Constructs, RefKind::TypeUse] {
+            let mut r = call(span(3, 4, 10), unplaced("bind"));
+            r.kind = kind;
+            let placed = place_references(vec![r], Some(&answers), &Engine);
+            assert_eq!(
+                placed[0].target,
+                Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler },
+                "{kind:?}"
+            );
+        }
+        let mut import = call(span(3, 4, 10), unplaced("bind"));
+        import.kind = RefKind::Imports;
+        let placed = place_references(vec![import.clone()], Some(&answers), &Engine);
+        assert_eq!(placed[0], import, "an import is the ladder's");
+    }
+
+    /// **A TYPE EXPRESSION NAMES EVERY TYPE IN IT.** `Map<A, B>` or `A | B`
+    /// reaches the step as one use over the whole expression; it becomes one
+    /// reference per named type the compiler resolves in it. A keyword or a
+    /// literal type names no declaration: no edge.
+    #[test]
+    fn a_type_expression_names_every_type_in_it() {
+        struct Expanding;
+        impl Targets for Expanding {
+            fn target(&self, symbol: &str) -> Result<Fqn, Reason> {
+                Engine.target(symbol)
+            }
+            fn type_expression(&self, node_kind: &str) -> bool {
+                node_kind == "type_expr"
+            }
+        }
+        let text = "fn main() {\n    let x: Pair<bind, unwrap, u8>;\n}";
+        let ix = index_of(&[(1, 16, 20, BIND), (1, 22, 28, UNWRAP), (1, 30, 32, "local 1")]);
+        let answers = FileAnswers::new(&ix, "src/main.rs", text);
+        let mut use_ = call(span(2, 11, 33), unplaced("Pair<bind, unwrap, u8>"));
+        use_.kind = RefKind::TypeUse;
+        if let Resolution::Unresolved { evidence, .. } = &mut use_.target {
+            evidence.node_kind = "type_expr".into();
+        }
+        let placed = place_references(vec![use_.clone()], Some(&answers), &Expanding);
+        assert_eq!(
+            placed.iter().map(|r| (r.kind, r.target.clone())).collect::<Vec<_>>(),
+            vec![
+                (
+                    RefKind::TypeUse,
+                    Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }
+                ),
+                (
+                    RefKind::TypeUse,
+                    Resolution::Resolved {
+                        fqn: fqn::refer(&Form::Lib {
+                            package: "core",
+                            member: "result::Result::unwrap"
+                        })
+                        .unwrap(),
+                        via: Rung::ResolvedByCompiler
+                    }
+                ),
+            ]
+        );
+        // Nothing named in it: no edge.
+        let mut literal = use_;
+        literal.at = span(2, 31, 33);
+        assert!(place_references(vec![literal], Some(&answers), &Expanding).is_empty());
+    }
+
+    /// A read of a local is no edge, as a call to one is not.
+    #[test]
+    fn a_read_of_a_local_is_no_edge() {
+        let text = "fn main() {\n    let n = 1;\n    take(n);\n}";
+        let ix = index_of(&[(1, 8, 9, "local 1"), (2, 9, 10, "local 1")]);
+        let answers = FileAnswers::new(&ix, "src/main.rs", text);
+        let mut read = call(span(3, 9, 10), unplaced("n"));
         read.kind = RefKind::Reads;
-        let placed = place_calls(vec![read.clone()], Some(&answers), &Engine);
-        assert_eq!(placed[0], read);
+        assert!(place_references(vec![read], Some(&answers), &Engine).is_empty());
+    }
+
+    /// A reference nested in another owns its occurrences: in `a[bind].bind`
+    /// the index `bind` is its own read, and the outer read is the member.
+    #[test]
+    fn a_nested_reference_owns_its_occurrences() {
+        let text = "fn main() {\n    a[bind].bind;\n}";
+        let ix = index_of(&[(1, 6, 10, "local 1"), (1, 12, 16, BIND)]);
+        let answers = FileAnswers::new(&ix, "src/main.rs", text);
+        let mut outer = call(span(2, 4, 16), unplaced("a.bind"));
+        outer.kind = RefKind::Reads;
+        let mut index = call(span(2, 6, 10), unplaced("bind"));
+        index.kind = RefKind::Reads;
+        let placed = place_references(vec![outer, index], Some(&answers), &Engine);
+        assert_eq!(
+            placed.iter().map(|r| r.target.clone()).collect::<Vec<_>>(),
+            vec![Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }],
+            "the member is placed, the local index is no edge"
+        );
     }
 }
