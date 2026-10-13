@@ -122,6 +122,74 @@ async fn an_edge_nobody_asked_about_is_not_reported_as_a_miss() {
     cleanup(&pg, &project_id, &folder_id).await;
 }
 
+/// **THE PACKAGE AXIS — the crate or the app an edge was written in.** A
+/// language-wide number cannot say which crate or app holds the misses, and
+/// the placement report is by language, crate, package and app. The package
+/// is the source node's fqn segment 2, the decomposition `structure_graph`
+/// uses, so the report and the diagrams agree by construction.
+///
+/// Mutation that must break this test: drop `package` from the GROUP BY (the
+/// two packages merge into one row).
+#[tokio::test]
+async fn placement_is_decomposed_by_the_package_the_edge_was_written_in() {
+    let Ok(pg) = PgStore::connect_test().await else {
+        return;
+    };
+    let tag = uuid::Uuid::new_v4();
+    let (project_id, folder_id) = fixture(&pg, &tag).await;
+    let def = |p: &'static str| FqnDef {
+        file_path: p,
+        signature: None,
+        line_start: Some(1),
+        line_end: Some(2),
+        is_exported: true,
+        parent_id: None,
+    };
+    let mut nodes = Vec::new();
+    for fqn in ["rust·alpha·m·a", "rust·alpha·m·b", "rust·beta·m·c"] {
+        let name = fqn.rsplit('·').next().unwrap();
+        nodes.push(
+            pg.upsert_node_by_fqn(
+                &folder_id,
+                fqn,
+                "function",
+                name,
+                Some("rust"),
+                Some(def("a.rs")),
+            )
+            .await
+            .unwrap(),
+        );
+    }
+    let (a, b, c) = (nodes[0], nodes[1], nodes[2]);
+    let placed_a = pg.insert_edge(&folder_id, &a, Some(&b), None, None, "calls").await.unwrap();
+    let missed_a = pg.insert_edge(&folder_id, &a, None, Some("x"), None, "calls").await.unwrap();
+    let placed_c = pg.insert_edge(&folder_id, &c, Some(&a), None, None, "calls").await.unwrap();
+    set_verdict(&pg, &placed_a, Some("resolved_by_compiler"), None).await;
+    set_verdict(&pg, &missed_a, None, Some("compiler_no_symbol")).await;
+    set_verdict(&pg, &placed_c, Some("resolved_by_compiler"), None).await;
+
+    let rows: Vec<(String, String, i64, f64)> = sqlx_core::query_as::query_as(
+        "SELECT package, outcome, edges, pct_of_package_kind::float8 FROM sensei.resolution_quality($1)
+          WHERE edge_kind = 'calls' ORDER BY package, outcome",
+    )
+    .bind(project_id)
+    .fetch_all(pg.pool())
+    .await
+    .unwrap();
+    let got: Vec<(String, String, i64, String)> =
+        rows.into_iter().map(|(p, o, n, pct)| (p, o, n, format!("{pct:.0}"))).collect();
+    assert_eq!(
+        got,
+        vec![
+            ("alpha".to_string(), "missed".to_string(), 1, "50".to_string()),
+            ("alpha".to_string(), "placed".to_string(), 1, "50".to_string()),
+            ("beta".to_string(), "placed".to_string(), 1, "100".to_string()),
+        ]
+    );
+    cleanup(&pg, &project_id, &folder_id).await;
+}
+
 /// Language is the SOURCE node's, and an edge with no language is reported
 /// rather than dropped.
 ///
