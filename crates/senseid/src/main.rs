@@ -13,6 +13,7 @@ pub mod cost;
 mod db;
 mod dojo;
 mod dojo_client;
+mod engine_boot;
 mod federation;
 pub mod gateway_keys;
 pub mod gateway_routers;
@@ -269,6 +270,8 @@ async fn run_foreground(port: u16) {
     }
 
     println!("[senseid] Listening on :{}", port);
+
+    engine_boot::spawn();
 
     if let Err(e) = api::start_server(port).await {
         eprintln!("[senseid] Server error: {}", e);
