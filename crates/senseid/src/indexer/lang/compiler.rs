@@ -36,7 +36,7 @@ pub struct Definition {
 }
 
 /// A compiler's answers for one project, by file.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct CompilerIndex {
     by_file: HashMap<String, Vec<Occurrence>>,
     definitions: HashMap<String, Definition>,
@@ -55,7 +55,7 @@ impl CompilerIndex {
     }
 
     pub fn from_index(index: &scip::types::Index) -> Self {
-        let mut out = Self::default();
+        let mut out = Self { by_file: HashMap::new(), definitions: HashMap::new() };
         for doc in &index.documents {
             let mut occurrences = Vec::with_capacity(doc.occurrences.len());
             for occ in &doc.occurrences {
