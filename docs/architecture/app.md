@@ -46,7 +46,7 @@ libraries, impact, traceability, about, instruments), `(config)/setup/*`
 The gaps are *upstream* — thin/empty data (memory promotion, doc-drift noise,
 narration-cache not wired on some screens), not missing UI. Not-built surfaces:
 Solution segment, Bootstrap splash, consolidation, insights-reasoning drawer
-(Phase 3). See [`../requirements/open-issues.md`](../plan/README.md).
+(Phase 3). See [`../requirements/open-issues.md`](../history/plan/README.md).
 
 ## Design rationale
 

@@ -8,14 +8,14 @@ updated: 2026-07-25
 The feature index for sensei. Each bullet below becomes its own feature doc
 (`docs/features/<name>/` — a question-headed story + tests + decisions +
 mockup-ref; the cross-feature modules & layers live in [`../design/`](../design/)).
-Who each feature serves is in [`../personas/`](../personas/).
+Who each feature serves is in [`../prd/03-personas.md`](../prd/03-personas.md).
 
-> **Current status of record → [`coverage-map.md`](coverage-map.md).** The `[x]/[~]/[ ]`
-> markers below and the per-feature status tables predate the 2026-07-24/25 build wave
+> **Status of record moved (docs reorg 2026-10-13) → [`../roadmap/`](../roadmap/README.md).** The
+> legacy snapshot is [`../history/features/coverage-map.md`](../history/features/coverage-map.md).
+> The `[x]/[~]/[ ]` markers below and the per-feature status tables predate the 2026-07-24/25 build wave
 > (governance injection, rule packs + ponytail pack, stance + autonomy gate, Tier-3
-> billing + seats + console wire, the coverage audit, and the D-EXEC-TEAM design). The
-> coverage map is the authoritative built-vs-pending snapshot across mockups, journeys,
-> docs, and code; treat it as the source of truth where this index disagrees.
+> billing + seats + console wire, the coverage audit, and the D-EXEC-TEAM design). Treat
+> the roadmap as the source of truth where this index disagrees.
 
 - [Setup](01-setup.md)
 - [Configuration](02-config.md)
@@ -90,4 +90,4 @@ Who each feature serves is in [`../personas/`](../personas/).
 > where it fits · who does what · where are the screens) + `tests/` (acceptance,
 > product-owner-observable) + `decisions.md` + `mockup-ref.md`. Cross-feature
 > **modules & layers** are not per-feature — they live in [`../design/`](../design/).
-> Dated build plans are transient (`../plan/`).
+> Dated build plans are transient (`../history/plan/`).

@@ -29,10 +29,10 @@ tags: [metrics, ftr, rework, trends, retro, insights, project]
 > all three is noise, and we don't ship noise.
 
 This doc consolidates four analyses that never became a feature:
-[FTR friction](../../analysis/2026-07-31-ftr-friction-and-constitution-distillation.md),
-[Metrics & agentic behavior](../../analysis/2026-08-04-metrics.md),
-[the Metrics catalog](../../analysis/2026-08-04-metrics-catalog.md), and
-[the AI-delivery-metrics research](../../analysis/2026-08-05-ai-delivery-metrics-research.md).
+[FTR friction](../../history/analysis/2026-07-31-ftr-friction-and-constitution-distillation.md),
+[Metrics & agentic behavior](../../history/analysis/2026-08-04-metrics.md),
+[the Metrics catalog](../../history/analysis/2026-08-04-metrics-catalog.md), and
+[the AI-delivery-metrics research](../../history/analysis/2026-08-05-ai-delivery-metrics-research.md).
 The **data model + computation** is the design step that follows this
 consolidation — see [`spec/pipeline/metrics.md`](../../spec/pipeline/metrics.md).
 
@@ -53,7 +53,7 @@ It is not a productivity dashboard. Raw output is, per the research, often
 
 We surveyed the metrics the industry circulates for "AI's impact on delivery"
 and **adopt none of the benchmark numbers.** The
-[research](../../analysis/2026-08-05-ai-delivery-metrics-research.md) is blunt:
+[research](../../history/analysis/2026-08-05-ai-delivery-metrics-research.md) is blunt:
 the METR 2025 RCT found AI made experienced developers **19% slower while they
 believed it made them ~20% faster** (a ~39-pt perception gap); vendor
 "throughput/stability" figures swing 10× between sources; "AI rework 35–40% /
@@ -97,7 +97,7 @@ ability to **prove first-time-right and low rework on real delivery data.**
 whose first attempt landed without a correction. Every metric is judged by
 whether it makes FTR go up or exposes why it went down.
 
-The [friction analysis](../../analysis/2026-07-31-ftr-friction-and-constitution-distillation.md)
+The [friction analysis](../../history/analysis/2026-07-31-ftr-friction-and-constitution-distillation.md)
 found the load-bearing patterns:
 
 - **Friction concentrates in big, multi-surface repos** — cross-cutting changes.
@@ -145,7 +145,7 @@ owns the rule store. Keeping the loop here is why `memory_promotion`,
 
 Metrics group into families, each computed at a **cadence** (session · daily ·
 project · run · tool · account). The
-[catalog](../../analysis/2026-08-04-metrics-catalog.md) is the buildable source
+[catalog](../../history/analysis/2026-08-04-metrics-catalog.md) is the buildable source
 of truth (definition · formula · source column · coverage-today), governed by the
 principle **"measure, then keep what helps": you can't keep what you can't
 compute, so honest coverage comes first.**

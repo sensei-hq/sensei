@@ -6,7 +6,7 @@ revised: 2026-10-08
 status: approved (#251)
 ---
 
-> **Revised 2026-10-08 (#251, decision in [`docs/plan/decisions.md`](../../plan/decisions.md)).**
+> **Revised 2026-10-08 (#251, decision in [`docs/history/plan/decisions.md`](../../history/plan/decisions.md)).**
 > The first draft made every column a `field` node and stored schema detail in
 > `nodes.props`. Both are gone: tables, views and routines stay nodes, and
 > columns, indexes and column-level foreign keys live in four `schema_*` tables
@@ -20,7 +20,7 @@ graph facts, where the source is dbd's `SchemaModel` v2 or an ORM layer, and wha
 is deliberately not attempted yet.
 
 The measurements behind it are in
-[`docs/analysis/2026-09-27-entity-graph-feasibility.md`](../../analysis/2026-09-27-entity-graph-feasibility.md).
+[`docs/analysis/2026-09-27-entity-graph-feasibility.md`](../../history/analysis/2026-09-27-entity-graph-feasibility.md).
 
 ## The one rule this rests on
 

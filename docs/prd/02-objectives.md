@@ -2,9 +2,12 @@
 
 > The **WHAT**, broken down. Each objective states the outcome and how we know
 > it's met — never the implementation. Architecture
-> ([`architecture/`](architecture/README.md)) maps each to a layer; the
-> per-screen/per-pipeline contracts live in [`spec/`](spec/README.md).
-> Traces back to [`vision.md`](vision.md).
+> ([`architecture/`](../architecture/README.md)) maps each to a layer; the
+> contracts land in the module specs under [`modules/`](modules/README.md)
+> (legacy tree: [`spec/`](../spec/README.md)).
+> Traces back to [`01-vision.md`](01-vision.md).
+>
+> **Moved here from `docs/02-objectives.md` in the 2026-10-13 reorg.**
 
 Objectives are grouped by the four personal segments plus the cross-cutting
 Dōjō layer. Every one is judged against the north-star: **does it move FTR, or
@@ -136,7 +139,7 @@ flowchart LR
 **Make multi-agent, away-from-keyboard work legible and controllable, without
 leaking code.** A cross-cutting capability: a **coordinator** (in the daemon), a
 **zero-knowledge relay**, and a **mobile companion** — plus a modular **planner**.
-Visual: [`journeys/relay.md`](journeys/relay.md).
+Visual: [`journeys/relay.md`](../journeys/relay.md).
 
 | # | Objective | Met when |
 |---|---|---|
@@ -157,5 +160,5 @@ Visual: [`journeys/relay.md`](journeys/relay.md).
 
 ## Read next
 
-- [`open-issues.md`](plan/README.md) — how far the implementation is from these objectives, ranked, with the plan.
-- [`architecture/README.md`](architecture/README.md) — the layers that deliver them.
+- [`../roadmap/README.md`](../roadmap/README.md) — how far the implementation is from these objectives, by module.
+- [`../architecture/README.md`](../architecture/README.md) — the layers that deliver them.
