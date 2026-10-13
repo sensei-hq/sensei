@@ -75,6 +75,12 @@ impl CompilerEngine for TsEngine {
         }
     }
 
+    /// An arrow or function expression invoked where it is written, or the
+    /// function a call returned (oxc's node kinds, as the walk records them).
+    fn anonymous_callee(&self, node_kind: &str) -> bool {
+        matches!(node_kind, "ArrowFunctionExpression" | "FunctionExpression" | "CallExpression")
+    }
+
     fn target(
         &self,
         symbol: &str,
@@ -151,6 +157,19 @@ mod tests {
         for bad in ["ts src/a.ts:x:load", "ts nothing", "npm onlypackage", "scip-typescript x", ""]
         {
             assert_eq!(target(bad).0, Err(Reason::SymbolUnnamed), "{bad:?}");
+        }
+    }
+
+    /// Which callees are anonymous functions, in the walk's own words: an
+    /// arrow or function expression invoked where it is written, or the
+    /// function a call returned.
+    #[test]
+    fn an_anonymous_callee_is_a_function_literal_or_a_returned_function() {
+        for kind in ["ArrowFunctionExpression", "FunctionExpression", "CallExpression"] {
+            assert!(TS_ENGINE.anonymous_callee(kind), "{kind}");
+        }
+        for kind in ["Identifier", "StaticMemberExpression", "Super", "ComputedMemberExpression"] {
+            assert!(!TS_ENGINE.anonymous_callee(kind), "{kind}");
         }
     }
 

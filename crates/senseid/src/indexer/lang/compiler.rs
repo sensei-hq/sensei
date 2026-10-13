@@ -217,6 +217,13 @@ pub trait CompilerEngine: Sync {
     /// the binary `locate_compiler` named and the configuration at `config`.
     fn compile(&self, compiler: &str, project_root: &str, output: &str, config: &str)
     -> Invocation;
+    /// Whether a callee of this node kind (in the walk's own words) is an
+    /// anonymous function — a closure invoked where it is written, or the
+    /// function another call returned. Such a call reaches no declaration, so
+    /// it is no edge, as a call to a local is not.
+    fn anonymous_callee(&self, _node_kind: &str) -> bool {
+        false
+    }
     /// The identity a resolved symbol names.
     fn target(
         &self,
@@ -253,6 +260,9 @@ impl Targets for EngineTargets<'_> {
     fn target(&self, symbol: &str) -> Result<Fqn, Reason> {
         self.engine.target(symbol, self.index, self.declarations)
     }
+    fn anonymous_callee(&self, node_kind: &str) -> bool {
+        self.engine.anonymous_callee(node_kind)
+    }
 }
 
 /// The compiler step for one file of a language that HAS an engine: every call
@@ -286,6 +296,11 @@ pub fn place_with(
 /// The adapter's half of the compiler step — pure: it is handed what it needs.
 pub trait Targets {
     fn target(&self, symbol: &str) -> Result<Fqn, Reason>;
+    /// Whether a callee the walk named by this node kind is an anonymous
+    /// function — see [`CompilerEngine::anonymous_callee`].
+    fn anonymous_callee(&self, _node_kind: &str) -> bool {
+        false
+    }
 }
 
 /// The compiler's answers for ONE file: the project's index, the file's path as
@@ -325,6 +340,10 @@ pub fn place_calls(
                 return Some(reference);
             }
             let evidence = evidence_of(&reference);
+            // A call of an anonymous function reaches no declaration.
+            if targets.anonymous_callee(&evidence.node_kind) {
+                return None;
+            }
             let nested: Vec<Span> = calls
                 .iter()
                 .filter(|c| **c != reference.at && encloses(&reference.at, c))
@@ -350,8 +369,27 @@ enum Placement {
 }
 
 /// The name a call site's occurrence covers: the last segment of a path
-/// (`Default::default` → `default`, `a.b` → `b`), without a macro's bang.
+/// (`Default::default` → `default`, `a.b` → `b`), without a macro's bang, seen
+/// through the wrapping a callee can be written in — parentheses, a type
+/// assertion (`x as T`, `x satisfies T`), TypeScript's non-null `x!`.
 fn spelled(name: &str) -> &str {
+    let mut name = name.trim();
+    while let Some(inner) = name.strip_prefix('(').and_then(|n| n.strip_suffix(')')) {
+        name = inner.trim();
+    }
+    for assertion in [" as ", " satisfies "] {
+        if let Some((value, _)) = name.split_once(assertion) {
+            name = value.trim();
+        }
+    }
+    while let Some(inner) = name.strip_prefix('(').and_then(|n| n.strip_suffix(')')) {
+        name = inner.trim();
+    }
+    last_segment(name)
+}
+
+/// The last segment of a path, without a macro's bang.
+fn last_segment(name: &str) -> &str {
     let last = name.rsplit("::").next().unwrap_or(name);
     let last = last.rsplit('.').next().unwrap_or(last);
     last.trim_end_matches('!')
@@ -878,6 +916,46 @@ mod placement_tests {
             Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler },
             "in a chain the outer call is the later name"
         );
+    }
+
+    /// A callee written through parentheses or a type assertion is matched on
+    /// the name inside: `(GRAMMAR.names_a_type)(x)`, `(load as Loader)()`,
+    /// `maybe!()` in TypeScript's non-null form.
+    #[test]
+    fn a_wrapped_callee_is_spelled_by_the_name_inside() {
+        assert_eq!(spelled("(rust::GRAMMAR.names_a_type)"), "names_a_type");
+        assert_eq!(
+            spelled("importOriginal as () => Promise<Record<string, unknown>>"),
+            "importOriginal"
+        );
+        assert_eq!(spelled("(load satisfies Loader)"), "load");
+        assert_eq!(spelled("handlers.onSave!"), "onSave");
+        assert_eq!(spelled("format!"), "format");
+        assert_eq!(spelled("a.b.c"), "c");
+    }
+
+    /// A call of an anonymous function — an immediately invoked closure, or the
+    /// function another call returned — calls no declaration: no node, so no
+    /// edge, exactly as a call to a local.
+    #[test]
+    fn a_call_of_an_anonymous_function_is_no_edge() {
+        struct Anonymous;
+        impl Targets for Anonymous {
+            fn target(&self, _: &str) -> Result<Fqn, Reason> {
+                Err(Reason::SymbolUnnamed)
+            }
+            fn anonymous_callee(&self, node_kind: &str) -> bool {
+                node_kind == "closure_expression"
+            }
+        }
+        let ix = compiled();
+        let answers = FileAnswers::new(&ix, "src/main.rs", TEXT);
+        let mut iife = call(span(2, 4, 20), unplaced("closure_expression"));
+        if let Resolution::Unresolved { evidence, .. } = &mut iife.target {
+            evidence.node_kind = "closure_expression".into();
+        }
+        let placed = place_calls(vec![iife], Some(&answers), &Anonymous);
+        assert!(placed.is_empty(), "{placed:?}");
     }
 
     #[test]
