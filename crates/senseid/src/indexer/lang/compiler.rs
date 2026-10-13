@@ -377,6 +377,12 @@ enum Placement {
 /// assertion (`x as T`, `x satisfies T`), TypeScript's non-null `x!`.
 fn spelled(name: &str) -> &str {
     let mut name = name.trim();
+    // `<T as Trait>::member` — a Rust qualified path names `member`.
+    if name.starts_with('<')
+        && let Some((_, member)) = name.rsplit_once(">::")
+    {
+        return last_segment(member);
+    }
     while let Some(inner) = name.strip_prefix('(').and_then(|n| n.strip_suffix(')')) {
         name = inner.trim();
     }
@@ -935,6 +941,9 @@ mod placement_tests {
         assert_eq!(spelled("handlers.onSave!"), "onSave");
         assert_eq!(spelled("format!"), "format");
         assert_eq!(spelled("a.b.c"), "c");
+        // A Rust qualified path is a path, not a cast.
+        assert_eq!(spelled("<Cli as clap::CommandFactory>::command"), "command");
+        assert_eq!(spelled("<Vec<u8> as Default>::default"), "default");
     }
 
     /// A call of an anonymous function — an immediately invoked closure, or the
