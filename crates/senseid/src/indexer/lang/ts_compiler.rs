@@ -1,5 +1,5 @@
 //! The TypeScript, JavaScript and Svelte adapters' compiler step: the
-//! project's own TypeScript checker, run by `ts_compiler_driver.mjs`, read
+//! project's own TypeScript checker, run by `ts-driver/driver.mjs`, read
 //! through [`crate::indexer::lang::compiler`] and turned into the identities
 //! this indexer mints (docs/plan/2026-10-13-indexer-full-call-placement.md).
 //!
@@ -15,7 +15,7 @@ use crate::indexer::lang::compiler::{CompilerEngine, CompilerIndex, Declarations
 /// The driver, embedded: the daemon carries it, so nothing is installed beside
 /// the binary but the npm packages it loads — which sensei-bootstrap installs
 /// into its engines directory, passed to the driver.
-const DRIVER: &str = include_str!("ts_compiler_driver.mjs");
+const DRIVER: &str = include_str!("../../../ts-driver/driver.mjs");
 
 /// TypeScript's checker, as the TypeScript, JavaScript and Svelte adapters
 /// declare it.

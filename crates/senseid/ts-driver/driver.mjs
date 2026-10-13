@@ -1,7 +1,7 @@
 // sensei's TypeScript / JavaScript / Svelte compiler driver
 // (docs/plan/2026-10-13-indexer-full-call-placement.md).
 //
-//   node ts_compiler_driver.mjs <project_root> <engines_dir> <output.scip>
+//   node driver.mjs <project_root> <engines_dir> <output.scip>
 //   node --input-type=module -e "<this file>" <project_root> <engines_dir> <output.scip>
 //
 // <engines_dir> is where sensei-bootstrap installs the packages this loads when
@@ -29,12 +29,13 @@ import path from 'node:path';
 // The last three arguments: run as a file or as `-e` text, argv differs before them.
 const [rootArg, enginesDir, outPath] = process.argv.length >= 4 ? process.argv.slice(-3) : [];
 if (!rootArg || !enginesDir || !outPath) {
-  console.error('usage: ts_compiler_driver.mjs <project_root> <engines_dir> <output.scip>');
+  console.error('usage: driver.mjs <project_root> <engines_dir> <output.scip>');
   process.exit(2);
 }
 const root = fs.realpathSync(rootArg);
 
 /** A module from the project, else from sensei's engines directory. */
+/** @param {string} name */
 function load(name) {
   for (const base of [root, enginesDir]) {
     try {
@@ -43,6 +44,7 @@ function load(name) {
   }
   return null;
 }
+/** @type {typeof import('typescript')} */
 const ts = load('typescript');
 if (!ts) {
   console.error(`no typescript resolvable from ${root}`);
@@ -50,6 +52,7 @@ if (!ts) {
 }
 
 const SKIP = new Set(['node_modules', '.svelte-kit', '.git', 'build', 'dist', 'target', '.turbo', 'coverage']);
+/** @param {string} dir @param {string[]} [out] @returns {string[]} */
 function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (SKIP.has(entry.name)) continue;
@@ -101,8 +104,11 @@ const scripts = sources.filter((f) => /\.(m|c)?[jt]sx?$/.test(f) && !f.endsWith(
 rootNames = [...new Set([...rootNames, ...scripts])];
 
 // Svelte components, as TypeScript, with a map back to the component.
+/** @type {typeof import('svelte2tsx') | null} */
 const s2t = load('svelte2tsx');
+/** @type {typeof import('@jridgewell/trace-mapping') | null} */
 const traceMapping = load('@jridgewell/trace-mapping');
+/** @type {Map<string, { code: string, trace: import('@jridgewell/trace-mapping').TraceMap, original: string, lines: string[], scripts: number[][] }>} */
 const virtual = new Map(); // `<file>.svelte.ts` -> { code, trace, original, lines }
 const componentFiles = sources.filter((f) => f.endsWith('.svelte'));
 if (componentFiles.length && (!s2t || !traceMapping)) {
@@ -115,7 +121,8 @@ if (s2t && traceMapping) {
       const out = s2t.svelte2tsx(text, { filename: file, isTsFile: true, mode: 'ts' });
       virtual.set(`${file}.ts`, {
         code: out.code,
-        trace: new traceMapping.TraceMap(out.map),
+        // svelte2tsx states its map as magic-string's; it IS a v3 source map.
+        trace: new traceMapping.TraceMap(/** @type {import('@jridgewell/trace-mapping').EncodedSourceMap} */ (out.map)),
         original: file,
         lines: text.split('\n'),
         scripts: scriptLines(text),
@@ -164,10 +171,12 @@ const program = ts.createProgram({ rootNames, options, host });
 const checker = program.getTypeChecker();
 
 // ── naming ────────────────────────────────────────────────────────────────────
+/** @type {Map<import('typescript').Node, number>} */
 const locals = new Map();
 let localCount = 0;
 
 /** The package a library file belongs to; `@types/x` declares package `x`. */
+/** @param {string} file */
 function packageOf(file) {
   const at = file.lastIndexOf('/node_modules/');
   const rest = file.slice(at + '/node_modules/'.length).split('/');
@@ -177,11 +186,13 @@ function packageOf(file) {
   return typed.includes('__') ? `@${typed.replace('__', '/')}` : typed;
 }
 
+/** @param {import('typescript').SourceFile} sf */
 function isLibraryFile(sf) {
   return program.isSourceFileDefaultLibrary(sf) || sf.fileName.includes('/node_modules/');
 }
 
 /** The 0-based line ranges of a component's `<script>` blocks. */
+/** @param {string} text */
 function scriptLines(text) {
   const ranges = [];
   for (const m of text.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) {
@@ -193,15 +204,17 @@ function scriptLines(text) {
 
 /** Declared in a component's MARKUP — a snippet, an `{#each}` item, an
  *  `{@const}`: the template's own local. */
+/** @param {import('typescript').Node} decl */
 function isMarkupBinding(decl) {
   const declSf = decl.getSourceFile();
   const v = virtual.get(declSf.fileName);
   if (!v) return false;
-  const at = originalPosition(declSf, decl.name ?? decl);
+  const at = originalPosition(declSf, /** @type {import('typescript').NamedDeclaration} */ (decl).name ?? decl);
   return !!at && !v.scripts.some(([a, b]) => a <= at.line && at.line <= b);
 }
 
 /** Inside a function body — a binding no other file can name. */
+/** @param {import('typescript').Node} decl */
 function isLocal(decl) {
   if (ts.isParameter(decl) || ts.isTypeParameterDeclaration(decl)) return true;
   // An index signature's entry is a value's, not a declaration.
@@ -220,8 +233,10 @@ function isLocal(decl) {
 }
 
 /** `let { a, b } = $props()` — a Svelte component's parameters. */
+/** @param {import('typescript').Node} decl */
 function isPropsBinding(decl) {
   if (!ts.isBindingElement(decl)) return false;
+  /** @type {import('typescript').Node} */
   let p = decl.parent;
   while (p && (ts.isObjectBindingPattern(p) || ts.isArrayBindingPattern(p) || ts.isBindingElement(p))) p = p.parent;
   const init = p && ts.isVariableDeclaration(p) ? p.initializer : undefined;
@@ -230,6 +245,7 @@ function isPropsBinding(decl) {
 
 /** The property a name destructured out of a value stands for:
  *  `const { bind } = await import('./net')` is `./net`'s `bind`. */
+/** @param {import('typescript').Node} decl */
 function destructured(decl) {
   if (!ts.isBindingElement(decl) || !ts.isObjectBindingPattern(decl.parent)) return undefined;
   const owner = decl.parent.parent;
@@ -242,6 +258,7 @@ function destructured(decl) {
 
 /** What an object property that only NAMES a value stands for:
  *  `{ loadCatalog }` and `{ load: loadCatalog }` are `loadCatalog`. */
+/** @param {import('typescript').Node} decl */
 function named(decl) {
   if (ts.isShorthandPropertyAssignment(decl)) return checker.getShorthandAssignmentValueSymbol(decl);
   if (ts.isPropertyAssignment(decl) && ts.isIdentifier(decl.initializer)) {
@@ -252,6 +269,7 @@ function named(decl) {
 
 /** A symbol followed to what it stands for: through imports and re-exports,
  *  and through destructuring. */
+/** @param {import('typescript').Symbol | undefined} sym */
 function resolved(sym) {
   for (let hops = 0; sym && hops < 16; hops++) {
     if (sym.flags & ts.SymbolFlags.Alias) {
@@ -271,13 +289,15 @@ function resolved(sym) {
 }
 
 /** The class `super` reaches: what the enclosing class's `extends` names. */
+/** @param {import('typescript').Node} node */
 function baseClassOf(node) {
   let cls = node.parent;
   while (cls && !ts.isClassLike(cls)) cls = cls.parent;
-  const extended = cls?.heritageClauses?.find((h) => h.token === ts.SyntaxKind.ExtendsKeyword)?.types[0];
+  const extended = /** @type {import('typescript').ClassLikeDeclaration | undefined} */ (cls)?.heritageClauses?.find((h) => h.token === ts.SyntaxKind.ExtendsKeyword)?.types[0];
   return extended ? checker.getSymbolAtLocation(extended.expression) : undefined;
 }
 
+/** @param {import('typescript').Node} node */
 function isComponentBody(node) {
   return (
     ts.isFunctionDeclaration(node) &&
@@ -288,6 +308,7 @@ function isComponentBody(node) {
 }
 
 /** Where a node starts in its ORIGINAL file: 0-based line, UTF-8 byte column. */
+/** @param {import('typescript').SourceFile} sf @param {import('typescript').Node} node */
 function originalPosition(sf, node) {
   const start = node.getStart(sf);
   const width = node.getEnd() - start;
@@ -306,12 +327,14 @@ function originalPosition(sf, node) {
   return { file: v.original, line: at.line - 1, ...bytes(text, at.column, width) };
 }
 
+/** @param {string} text @param {number} utf16Start @param {number} utf16Width */
 function bytes(text, utf16Start, utf16Width) {
   const start = Buffer.byteLength(text.slice(0, utf16Start));
   const end = Buffer.byteLength(text.slice(0, utf16Start + utf16Width));
   return { start, end };
 }
 
+/** @param {import('typescript').Symbol} sym @param {import('typescript').NamedDeclaration} decl @param {import('typescript').SourceFile} [sf] @returns {string | null} */
 function symbolFor(sym, decl, sf) {
   const declSf = decl.getSourceFile();
   if (isLibraryFile(declSf)) {
@@ -334,11 +357,12 @@ function symbolFor(sym, decl, sf) {
   const at = originalPosition(declSf, name);
   if (!at) return null;
   // The name's VALUE, as the walk names a declaration: `'x-key'` is `x-key`.
-  const spelled = name.text ?? name.getText?.(declSf) ?? sym.getName();
+  const spelled = ('text' in name ? name.text : undefined) ?? name.getText?.(declSf) ?? sym.getName();
   return `ts ${path.relative(root, at.file)}:${at.line + 1}:${spelled}`;
 }
 
 // ── the index ─────────────────────────────────────────────────────────────────
+/** @type {Map<string, Array<{ range: number[], symbol: string, roles: number }>>} */
 const documents = new Map(); // relative path -> occurrences
 
 for (const sf of program.getSourceFiles()) {
@@ -358,6 +382,7 @@ for (const sf of program.getSourceFiles()) {
   visit(sf);
 }
 
+/** @param {import('typescript').SourceFile} sf @param {import('typescript').Node} id @param {import('typescript').Symbol | undefined} found */
 function record(sf, id, found) {
   const sym = resolved(found);
   const decl = sym && (sym.valueDeclaration ?? sym.declarations?.[0]);
@@ -368,18 +393,20 @@ function record(sf, id, found) {
   if (!symbol) return;
   const at = originalPosition(sf, id);
   if (!at) return;
-  const declaresIt = !!decl && decl.name === id;
+  const declaresIt = !!decl && /** @type {import('typescript').NamedDeclaration} */ (decl).name === id;
   const rel = path.relative(root, at.file);
   if (!documents.has(rel)) documents.set(rel, []);
   documents.get(rel).push({ range: [at.line, at.start, at.end], symbol, roles: declaresIt ? 1 : 0 });
 }
 
+/** @param {import('typescript').Node} decl */
 function localSymbol(decl) {
   if (!locals.has(decl)) locals.set(decl, ++localCount);
   return `local ${locals.get(decl)}`;
 }
 
 /** The `declare module 'x'` a declaration sits in, if any. */
+/** @param {import('typescript').Node} decl @returns {import('typescript').ModuleDeclaration | undefined} */
 function ambientModuleOf(decl) {
   for (let p = decl.parent; p; p = p.parent) {
     if (ts.isModuleDeclaration(p) && ts.isStringLiteral(p.name)) return p;
@@ -388,16 +415,18 @@ function ambientModuleOf(decl) {
 }
 
 /** The package a module specifier names: `@scope/name/…` or `name/…`. */
+/** @param {string} spec */
 function packageOfSpecifier(spec) {
   const parts = spec.split('/');
   return spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
 }
 
 /** A declaration's name path within `outer`: `kit.configure`, `Item.get`. */
+/** @param {import('typescript').Node} decl @param {import('typescript').Node} outer */
 function pathWithin(decl, outer) {
   const names = [];
   for (let n = decl; n && n !== outer; n = n.parent) {
-    const name = n.name;
+    const name = /** @type {import('typescript').NamedDeclaration} */ (n).name;
     if (name && (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isPrivateIdentifier(name))) {
       names.unshift(name.text);
     }
@@ -408,6 +437,7 @@ function pathWithin(decl, outer) {
 /** A member of an object type or literal that no declaration of its own
  *  names: one of an anonymous type literal, or an object member the walk does
  *  not mint (only the functions of a module-level object are its members). */
+/** @param {import('typescript').Node} decl */
 function isAnonymousMember(decl) {
   if (ts.isPropertySignature(decl) || ts.isMethodSignature(decl)) {
     return ts.isTypeLiteralNode(decl.parent) && !ts.isTypeAliasDeclaration(decl.parent.parent);
@@ -422,6 +452,7 @@ function isAnonymousMember(decl) {
 
 /** The walk's own rule: a function under a key of an object bound to a name
  *  at the top of a module is that object's member. */
+/** @param {import('typescript').Node} decl */
 function isWalkedObjectMember(decl) {
   const value = ts.isPropertyAssignment(decl) ? decl.initializer : decl;
   const fn =
@@ -440,12 +471,13 @@ function isWalkedObjectMember(decl) {
 
 /** A computed value's named type, as a symbol: `{ publish: fn() }` is called
  *  through what `fn()` returns. */
+/** @param {import('typescript').Node} decl */
 function typedValue(decl) {
   if (!ts.isPropertyAssignment(decl)) return null;
   const type = checker.getTypeAtLocation(decl.initializer);
   const owner = type.aliasSymbol ?? type.symbol;
   const ownerDecl = owner?.declarations?.[0];
-  if (!ownerDecl || ownerDecl === decl.initializer) return null;
+  if (!ownerDecl || /** @type {import('typescript').Node} */ (ownerDecl) === decl.initializer) return null;
   const named =
     ts.isClassDeclaration(ownerDecl) ||
     ts.isInterfaceDeclaration(ownerDecl) ||
@@ -457,6 +489,7 @@ function typedValue(decl) {
 /** A member the checker knows without a declaration of its own: one of a
  *  mapped type (`fireEvent.click`) is named by the type; one of a receiver
  *  typed `any` is marked `untyped` — nothing static names it. */
+/** @param {import('typescript').Node} id */
 function undeclared(id) {
   const access = id.parent;
   if (!access || !ts.isPropertyAccessExpression(access) || access.name !== id) return null;
@@ -464,20 +497,20 @@ function undeclared(id) {
   if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return libraryPath(access) ?? 'untyped';
   // No such property, only an index signature: an entry of the value
   // (`props.low_n` on `Record<string, unknown>`), not a member of its type.
-  const declares = checker.getPropertyOfType(type, id.text);
+  const declares = checker.getPropertyOfType(type, access.name.text);
   const indexed = checker.getIndexInfosOfType(type).length > 0;
   if (!declares && indexed) return localSymbol(id);
   // An intersection or a union has no name of its own: the member is named
   // by the part that has it (`FireFunction & FireObject` → `FireObject`).
   const parts = type.isUnionOrIntersection() ? type.types : [type];
-  const holder = parts.find((t) => checker.getPropertyOfType(t, id.text)) ?? type;
+  const holder = parts.find((t) => checker.getPropertyOfType(t, access.name.text)) ?? type;
   const owner = holder.aliasSymbol ?? holder.symbol;
   const ownerDecl = owner?.declarations?.[0];
   if (!ownerDecl) return null;
   const file = ownerDecl.getSourceFile();
   if (isLibraryFile(file)) {
     const pkg = program.isSourceFileDefaultLibrary(file) ? 'ecmascript' : packageOf(file.fileName);
-    return `npm ${pkg} ${checker.getFullyQualifiedName(owner).replace(/^".*?"\./, '')}.${id.text}`;
+    return `npm ${pkg} ${checker.getFullyQualifiedName(owner).replace(/^".*?"\./, '')}.${access.name.text}`;
   }
   return symbolFor(owner, ownerDecl);
 }
@@ -486,6 +519,7 @@ function undeclared(id) {
  *  — `commands.registerMany`, where `commands` comes from a package typed
  *  `any` — is that library's member, named by its path (R5): naming an
  *  external needs no types. */
+/** @param {import('typescript').PropertyAccessExpression} access */
 function libraryPath(access) {
   const names = [access.name.text];
   let e = access.expression;
@@ -516,6 +550,7 @@ function libraryPath(access) {
 // ── SCIP, by hand: Index.documents = 2; Document.relative_path = 1,
 //    occurrences = 2; Occurrence.range = 1 (packed int32), symbol = 2,
 //    symbol_roles = 3. ───────────────────────────────────────────────────────────
+/** @param {number} n */
 function varint(n) {
   const out = [];
   let v = n >>> 0;
@@ -526,10 +561,13 @@ function varint(n) {
   out.push(v);
   return out;
 }
+/** @param {number} n @param {number} wire */
 const field = (n, wire) => varint((n << 3) | wire);
+/** @param {number} n @param {number[]} bytes */
 function lengthDelimited(n, bytes) {
   return [...field(n, 2), ...varint(bytes.length), ...bytes];
 }
+/** @param {string} s */
 const utf8 = (s) => [...Buffer.from(s, 'utf8')];
 
 const chunks = [];

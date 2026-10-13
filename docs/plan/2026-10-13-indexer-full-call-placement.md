@@ -126,7 +126,7 @@ get neither nodes nor edges. Every graph and diagram reads 100% placed.
   in `.gitattributes` is not indexed — a generic rule, no per-repo path list.
 - **Toolchain**: sensei-bootstrap checks and installs the engines (`rustup
   component add rust-analyzer rust-src`; the TypeScript driver's npm packages
-  pinned in `crates/bootstrap/assets/ts_engines.json`, installed into
+  pinned in `crates/senseid/ts-driver/package.json`, installed into
   `~/.sensei/engines`) — from `sensei doctor --fix` and at daemon boot. A missing engine is the root-cause reason `engine_not_run`, never
   a silent fallback.
 - **SQL/DDL** (the dbd-backed scanner): the ER diagram and the SQL call graph
