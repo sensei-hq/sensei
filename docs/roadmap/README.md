@@ -1,22 +1,91 @@
-# Roadmap
+# Roadmap — where sensei is, what's next
 
-Purpose: phases, sequencing, and current status; audience: product owner.
+The **current status** of the product, module by module. The PRD
+([`../prd/README.md`](../prd/README.md)) is *what we are building*; this tree is
+*is it built, how far, and what's next*. If a module spec and this roadmap
+disagree, the roadmap's status is the bug to check first.
 
-This is an index, not a copy — the detailed, living sources are
-[`../plan/README.md`](../plan/README.md) (the gap analysis that drives sequencing)
-and [`../spec/EXECUTION-PLAN.md`](../spec/EXECUTION-PLAN.md) (the locked execution plan).
+## How to read
 
-- **[phases.md](phases.md)** — the six-phase roadmap (MVP → relay → analytics → chat → payments → orchestrator) with goals, includes, and exit criteria. Detailed phase 1–3 stories: [`../plan/2026-07-20-phases-1-3-plan.md`](../plan/2026-07-20-phases-1-3-plan.md).
+One file per plane: [`01-foundation.md`](01-foundation.md) · [`02-insight.md`](02-insight.md)
+· [`03-delivery.md`](03-delivery.md) · [`04-team.md`](04-team.md) · [`05-platform.md`](05-platform.md).
+Each plane file is a table: one row per module — status · what's done · the next
+step. The consolidated gap register is [`06-gaps.md`](06-gaps.md); issue-level open
+work is [`../backlog.md`](../backlog.md) (GitHub issues).
 
-## Current status (distilled)
+> **Status of this file:** the per-module status tables are populated in **Phase 3**
+> of the reorg ([`../reorg.md`](../reorg.md) §13), folding the old
+> `features/coverage-map.md` (now in `../history/features/`) and the
+> `plan/README.md` gap analysis (now in `../history/plan/`). The models below are
+> final now.
 
-- 25+ screens are live; surface area is largely built (Observatory + project window essentially complete).
-- The learning loop is the current focus, not more surface area: capture → graph → analyze are fresh; learn/deliver/measure are the closing work.
-- FTR (first-turn resolution — the fraction of sessions whose first attempt landed without a correction) is the north-star metric the roadmap is organized around.
-- The FTR loop closed and memory promotion unblocked as of 2026-07-15 — the reinforcement path from a proven recommendation back to its source memory now works end-to-end.
-- Doc-drift signal quality, semantic search + context-pack, and command-governance preferences have shipped or substantially progressed on `develop`.
-- Front-door intake and adaptive playbooks are shipping on `develop`; not yet released to `main`.
-- Remaining net-new surfaces (solution segment, bootstrap splash, consolidation screen, insights-reasoning drawer) are intentionally lowest priority — sequenced after the loop closes, since each is only as good as the data behind it.
-- External-blocked work (collective-intelligence, Dōjō federation) is substantially built but paused pending a remote Dōjō server and an opt-in decision.
+## Status model
 
-This page is living — updated as workstreams land.
+Six states, matching what the code can actually evidence (from the old coverage
+map's legend, kept identical):
+
+| Marker | Meaning |
+|---|---|
+| ✅ **Built** | shipped + code evidence |
+| 🟡 **Partial** | backend or UI present; the other half or wiring missing |
+| 🖼️ **Mock-only** | mockup exists, no built surface |
+| 📄 **Designed** | doc/design only, no code |
+| 💤 **Dormant** | built but behind an off-by-default flag / not merged to main |
+| ⛔ **Gap** | intended but neither designed nor built |
+
+Every status must be **evidenced** — a row without "proven by …" is a claim, and
+claims unsourced get fixed. The old "these numbers are real" discipline (the
+`# pinned:` / `NO TEST` convention, reorg §6) is the evidence style.
+
+## Priority model
+
+| Priority | Meaning | Example |
+|---|---|---|
+| **P0** | blocks everything else / the loop can't close without it | the FTR loop's closing work, capture indexing |
+| **P1** | required for the current target (macOS today; Linux + Windows are required, built in parallel) | P1 Distribution adapters |
+| **P2** | should exist for the product to be credible / sellable | the website (marketing site, confirmed 2026-10-13) |
+| **P3** | nice-to-have; only after P0–P2 | DORA module, HF-model support |
+
+Priorities are per-module and revisited when a plane file changes. "Shipped"
+beats "designed": promotion to ✅ requires evidence (tests, e2e, live data), not
+a spec.
+
+## The board — all 29 modules at a glance
+
+| Plane | Modules | Status (Phase 3 populates the cells) |
+|---|---|---:|
+| Foundation | M1 Bootstrap · M2 Setup/Preferences · M3 Capture · M4 Code Graph · M5 Inference Gateway · M6 Storage/Data Model | [01-foundation.md](01-foundation.md) |
+| Insight | M7 Analyzer · M8 Metrics/Health · M9 Memory · M10 Patterns · M11 Traceability · M12 Libraries · M13 Governance | [02-insight.md](02-insight.md) |
+| Delivery | M14 MCP/Context · M15 Observatory · M16 Project Window · M17 Atlas · M18 Instruments · M19 Insights/Impact · M20 Planner · M21 Relay · M22 Agentic Execution | [03-delivery.md](03-delivery.md) |
+| Team | T1 Dōjō Core · T2 Consoles · T3 Project Planning · T4 Billing/Seats | [04-team.md](04-team.md) |
+| Platform | P1 Distribution · P2 Website · P3 Harness/CI | [05-platform.md](05-platform.md) |
+
+## Sequencing — what gates what
+
+The dependency spine (from `../prd/01-vision.md`'s loop): **capture → graph →
+analyze → learn → deliver → measure FTR**. Each plane file lists its own gates;
+the cross-plane ones that matter now:
+
+- **M17 (Atlas L0/L1/L2) is a prerequisite for reading architecture metrics at
+  any scale** — reorg §9.7; the current layered render is unreadable (G-1).
+- **M8 (master-detail + gating eligibility) must land before T3 promises gates** —
+  2 of T3's 7 gating targets are buildable today, 2 need scoped reads, 3 are
+  blocked on #156 (reorg §9.2).
+- **M3 adapter expansion (Claude + OpenCode first)** is the capture plane's
+  facing work (decision 10; C-13, C-14).
+- **P1 design is finished before implementation distributes across the three
+  targets** (decision 7).
+
+## Gaps
+
+The consolidated register: [`06-gaps.md`](06-gaps.md) — every gap is IDed
+(`F-*` faults · `P-*` perf · `T-*` test · `D-*` docs/claims · `M-*` metrics ·
+`C-*` capture/conventions · `X-*` cross-cutting), carries one line + evidence +
+priority, and points at the module it blocks.
+
+## Read next
+
+- [`../prd/README.md`](../prd/README.md) — what we are building (the why).
+- [`../backlog.md`](../backlog.md) — the live open-issue index (GitHub).
+- [`../history/README.md`](../history/README.md) — superseded snapshots that
+  once answered "is it built" (coverage-map, plan, phases).

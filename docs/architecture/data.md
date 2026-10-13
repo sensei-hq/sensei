@@ -1,7 +1,7 @@
 # Layer · data
 
 > **Serves:** every objective — the data layer is the substrate the whole
-> [core loop](../vision.md#the-core-loop) turns on. Owns the schema,
+> [core loop](../prd/01-vision.md#the-core-loop) turns on. Owns the schema,
 > the model, and the DB conventions.
 
 ## What it is
@@ -101,4 +101,4 @@ nodes. This is enforced at scan-classification + a self-healing reconcile
 
 Orphaned tables (`inference.insights`/`insight_batches` — no writer, superseded
 by `narration_cache`) and empty-by-design dojo tables (external-blocked). See
-[the plan](../plan/README.md) G7.
+[the gap register](../roadmap/06-gaps.md).

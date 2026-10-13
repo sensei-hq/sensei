@@ -16,7 +16,7 @@ This composes with — and does not replace — three existing modules:
 orchestrator), [`assistants.md`](assistants.md) (ACP adapters, the `RunDriver`
 contract, MCP `infer`/`consensus`/`embed`), and [`playbook.md`](playbook.md) (typed
 chunks + `classified_by`/`model_fallback` outcome attribution). It is the concrete
-design for the [heterogeneous-execution-router note](../plan/2026-07-19-heterogeneous-execution-router.md)
+design for the [heterogeneous-execution-router note](../history/plan/2026-07-19-heterogeneous-execution-router.md)
 (status there: *design note — NOT planned*), pulled forward into a phased build.
 
 > Grounding convention: every claim below is tagged **EXISTS** (built + wired today)

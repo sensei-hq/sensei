@@ -5,7 +5,7 @@
 > drift is doc-**file** level (0 `section` nodes), and `expected/actual_signature` are NULL on
 > all rows (no signature-diff / `drifted` status). Requirement-level traceability depends on the
 > code-graph fixes (`section` nodes, deterministic ids). Verify against the code. See the
-> [indexer capability roadmap](../../analysis/2026-08-05-indexer-capability-coverage.md).
+> [indexer capability roadmap](../../history/analysis/2026-08-05-indexer-capability-coverage.md).
 
 **Owner files:**
 - Scanner: `crates/senseid/src/db/pg_store.rs::scan_project_doc_drift`

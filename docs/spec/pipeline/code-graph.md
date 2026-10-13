@@ -31,7 +31,7 @@ indexing pipeline is **not idempotent under re-runs**. The same scan, run twice,
 produce the same graph: `covers` edges duplicate ~918× (1.7 M rows for 1,869 real
 relations), a changed file resets its nodes' `community_id` to NULL, and stale community
 rows accumulate. Root cause:
-[`analysis/2026-08-04-deep-dive/10-graph-indexing-regression.md`](../../analysis/2026-08-04-deep-dive/10-graph-indexing-regression.md).
+[`analysis/2026-08-04-deep-dive/10-graph-indexing-regression.md`](../../history/analysis/2026-08-04-deep-dive/10-graph-indexing-regression.md).
 
 This spec makes the pipeline **convergent**: for a given working tree, N runs — full or
 incremental, in any order, across daemon restarts — produce a byte-stable graph (same node
@@ -254,7 +254,7 @@ but ≥1 doc+code stem match" as a failed, not indexed, state.
 > (`docs/api/auth.md` ↔ `src/api/auth.ts`), a doc→file N×M match — not identifier-level
 > traceability. D1/D2 fix its 918× *duplication*; they do **not** make it precise. Real
 > requirement→symbol tracing needs `section` nodes (D5b) + a `traces_to` producer — see the
-> [indexer capability roadmap](../../analysis/2026-08-05-indexer-capability-coverage.md).
+> [indexer capability roadmap](../../history/analysis/2026-08-05-indexer-capability-coverage.md).
 
 ### D3 (P0) — Stop destroying node identity on reindex
 
@@ -642,7 +642,7 @@ Anything not verifiable is listed as an open question to resolve *before* coding
 > pattern detection (adapter/strategy/…), duplication *persistence* (`duplicates`/`similar_to`
 > edges), structural anti-patterns/god-nodes, FTS, `traces_to`, and section-level drift are
 > **not** in this spec. They are audited and planned in the
-> [indexer capability roadmap](../../analysis/2026-08-05-indexer-capability-coverage.md); this
+> [indexer capability roadmap](../../history/analysis/2026-08-05-indexer-capability-coverage.md); this
 > spec only makes the graph they depend on *correct, idempotent, and durable*.
 
 ## Migration (one-time)
@@ -675,7 +675,7 @@ AND a.target_name IS NOT DISTINCT FROM b.target_name` — then create the unique
 
 > **Related churn note.** `version_rescan` re-scans every root on each daemon version bump (an
 > 8.6× indexing amplifier — see
-> [`analysis/2026-08-04-deep-dive/11-regression-churn-lifecycle.md`](../../analysis/2026-08-04-deep-dive/11-regression-churn-lifecycle.md)).
+> [`analysis/2026-08-04-deep-dive/11-regression-churn-lifecycle.md`](../../history/analysis/2026-08-04-deep-dive/11-regression-churn-lifecycle.md)).
 > Idempotency (this spec) makes those re-scans *safe*; debouncing the trigger so they are also
 > *cheap* is tracked separately.
 
@@ -688,4 +688,4 @@ AND a.target_name IS NOT DISTINCT FROM b.target_name` — then create the unique
 - [[pipeline/semantic-search]] — consumes `nodes.embedding` (must survive reindex — D3)
 - Atlas rendering (screen) — downstream consumer of the retrieval contract; **no spec yet**,
   should be written against the `tree` + per-node `community_id` contract above
-- Evidence: [`analysis/2026-08-04-deep-dive/10-graph-indexing-regression.md`](../../analysis/2026-08-04-deep-dive/10-graph-indexing-regression.md)
+- Evidence: [`analysis/2026-08-04-deep-dive/10-graph-indexing-regression.md`](../../history/analysis/2026-08-04-deep-dive/10-graph-indexing-regression.md)

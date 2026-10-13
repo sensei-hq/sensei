@@ -5,7 +5,7 @@ type: design
 
 How we design sensei / dōjō mockups so they translate to the app with no visual
 re-derivation. This is the durable half of the old `docs/mockups/DESIGN-BRIEF.md`. The
-live review of outstanding screens is separate: [`../mockups/dojo2-review.md`](../mockups/dojo2-review.md).
+live review of outstanding screens is separate: the per-screen status lives in the [roadmap](../roadmap/README.md) (the old `../mockups/dojo2-review.md` never existed as a file).
 
 Styling detail — the tokens, the type scale, spacing, and component classes — is not
 repeated here. It lives in the canonical sources:

@@ -1,10 +1,13 @@
 # Vision
 
 > **What sensei is for.** The *why* and the *what* — not the *how*.
-> Architecture ([`architecture/`](architecture/README.md)) says how we build
-> toward this; the detailed build specs live in [`spec/`](spec/README.md).
+> Architecture ([`architecture/`](../architecture/README.md)) says how we build
+> toward this; the detailed build specs fold into the module specs under
+> [`modules/`](modules/README.md) (legacy tree: [`spec/`](../spec/README.md)).
 >
-> Measurable objectives per segment → [objectives.md](objectives.md).
+> **Moved here from `docs/01-vision.md` in the 2026-10-13 reorg.** The PRD front
+> door is [`README.md`](README.md); the measurable objectives →
+> [02-objectives.md](02-objectives.md).
 
 ## One paragraph
 
@@ -58,8 +61,8 @@ its FTR impact never **measured**, the loop generates but never closes.
 
 ## The journey — four segments + a cross-cutting Dōjō
 
-Source of truth for the visuals: [`mockups/Sensei/Sensei Journey Map.html`](mockups/Sensei/Sensei%20Journey%20Map.html)
-and [`mockups/Sensei/Sensei Dōjō Journey Map.html`](mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html).
+Source of truth for the visuals: [`mockups/Sensei/Sensei Journey Map.html`](../mockups/Sensei/Sensei%20Journey%20Map.html)
+and [`mockups/Sensei/Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html).
 
 ```mermaid
 flowchart TD
@@ -103,7 +106,7 @@ Multi-agent workflows are becoming the norm: several assistants (Claude Code ·
 Codex · OpenCode · Aider) running long, mostly-autonomous jobs across your
 machines. **Relay** makes that legible and controllable when you're away from the
 keyboard — now **folded into the Dōjō**, reachable on phone and console. Visual
-source: [`mockups/Sensei/Sensei Dōjō Journey Map.html`](mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html).
+source: [`mockups/Sensei/Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html).
 
 - **Agents run on your own hardware.** The daemon supervises the agent CLIs and
   publishes only a *filtered status* — never the code, never the raw transcript.
@@ -121,7 +124,7 @@ source: [`mockups/Sensei/Sensei Dōjō Journey Map.html`](mockups/Sensei/Sensei%
 
 Relay extends the north-star: a run you can't supervise can't be corrected — it
 keeps the pair (and the fleet) legible and steerable at a distance. Detail:
-[journeys/dojo → Relay](journeys/dojo.md#relay--away-from-keyboard-through-the-dōjō).
+[journeys/dojo → Relay](../journeys/dojo.md#relay--away-from-keyboard-through-the-dōjō).
 
 ## The business model — free where public or personal
 
@@ -131,11 +134,11 @@ governance, full Relay. Payment begins only when a Dōjō is **private and share
 by a team or org: you pay to *coordinate a group's private knowledge* and for the
 control a business needs (self-hosting, SSO, audit) — never to use sensei, never
 for tokens (inference is BYO-key and local). Tiers + open pricing questions:
-[journeys/dojo → Business model](journeys/dojo.md#business-model--free-where-public-or-personal).
+[journeys/dojo → Business model](../journeys/dojo.md#business-model--free-where-public-or-personal).
 
 ## Why it's worth building — one loop, not two products
 
-Source: [`mockups/Sensei/Sensei End-to-End Journey.html`](mockups/Sensei/Sensei%20End-to-End%20Journey.html)
+Source: [`mockups/Sensei/Sensei End-to-End Journey.html`](../mockups/Sensei/Sensei%20End-to-End%20Journey.html)
 — the machine → Dōjō → beyond loop, a developer's day (Rin), an org's practice
 (Keiko), and the honest case for building it.
 
@@ -180,7 +183,7 @@ one, we call it out.
 | 3 | **Discoverability of depth** | Nothing important hidden behind a one-liner; Preferences is searchable; the sidebar clusters with a Focus mode. |
 | 4 | **Trust through proof** | No claim without a receipt — confidence scores, regression notes, before/after FTR. The user verifies; they don't take our word. |
 | 5 | **Org boundary is the Dōjō membership** | Anything that should stay inside a company or a client engagement travels through a Dōjō membership, not the global Collective. Personal sensei works perfectly with no Dōjō; when one exists, the boundary is exact. |
-| 6 | **Insight copy comes from the model** | Every human-readable insight string routes through [`insight-copy`](spec/pipeline/insight-copy.md) (embedded gemma first, static template as fallback). Actions and route labels stay deterministic. |
+| 6 | **Insight copy comes from the model** | Every human-readable insight string routes through [`insight-copy`](../spec/pipeline/insights.md) (embedded gemma first, static template as fallback). Actions and route labels stay deterministic. |
 
 ## What sensei is *not*
 
@@ -190,6 +193,7 @@ one, we call it out.
 
 ## Read next
 
-- [`objectives.md`](objectives.md) — the WHAT, broken down per segment + the Dōjō layer, with measurable outcomes.
-- [`open-issues.md`](plan/README.md) — where the implementation stands against this vision, the ranked gaps, and the specced plan to close them.
-- [`architecture/README.md`](architecture/README.md) — how the layers realise this.
+- [`02-objectives.md`](02-objectives.md) — the WHAT, broken down per segment + the Dōjō layer, with measurable outcomes.
+- [`modules/README.md`](modules/README.md) — the 29 modules that turn this vision into buildable specs.
+- [`../roadmap/README.md`](../roadmap/README.md) — where the implementation stands against this vision: per-module status, ranked gaps, sequencing.
+- [`../architecture/README.md`](../architecture/README.md) — how the layers realise this.

@@ -4,7 +4,7 @@
 > 2026-08-05 the owner files below **do not exist** (`crates/senseid/src/patterns/`), and
 > `inference.detected_patterns` holds behavioral churn (`rework:<path>`, `family` NULL), not
 > architectural patterns. Verify against the code before relying on this. See the
-> [indexer capability roadmap](../../analysis/2026-08-05-indexer-capability-coverage.md).
+> [indexer capability roadmap](../../history/analysis/2026-08-05-indexer-capability-coverage.md).
 
 **Owner files:**
 - Detection: `crates/senseid/src/patterns/detect.rs`
