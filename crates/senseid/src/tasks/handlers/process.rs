@@ -494,6 +494,41 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
             }
             None => None,
         };
+        // A compile describes the sources it saw. A file placed against one
+        // whose project has moved on would be placed against positions and
+        // declarations that are gone — and marked parsed, so nothing revisits
+        // it. Such a file writes nothing and waits for a fresh compile.
+        if let (Some(engine), Some(compiled)) = (engine, &project) {
+            match sessions.is_current(engine, compiled).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    tracing::info!(file = %rel,
+                        "its project changed since it was compiled — queued again behind a fresh compile");
+                    let compile = ctx
+                        .queue
+                        .enqueue_covered(crate::tasks::Task::new(
+                            crate::tasks::TaskKind::CompileProjects,
+                            &task.folder_path,
+                            "",
+                        ))
+                        .await;
+                    ctx.queue
+                        .enqueue(
+                            crate::tasks::Task::for_file(
+                                crate::tasks::TaskKind::ProcessFile,
+                                &task.folder_path,
+                                &task.path,
+                            )
+                            .forced(task.force)
+                            .blocked_by(vec![compile]),
+                        )
+                        .await;
+                    return Ok(0);
+                }
+                Err(e) => tracing::warn!(file = %rel, error = %e,
+                    "could not tell whether this file's compile is current — placing with it"),
+            }
+        }
         let canonical_file = crate::indexer::compiler_session::canonical(fpath);
         let path_in_project = project
             .as_ref()
@@ -1667,6 +1702,65 @@ mod tests {
         );
 
         ctx.pg().remove_watch_root(&root_id).await.ok();
+    }
+
+    /// **A FILE IS NEVER PLACED AGAINST A COMPILE OF SOURCES THAT MOVED ON.**
+    /// Edited after its project was compiled, a file was placed against the old
+    /// answers and marked parsed — wrong verdicts nothing would revisit. It now
+    /// writes nothing and goes back in the queue behind a fresh compile.
+    ///
+    /// Mutation that must break this: drop the `is_current` check.
+    #[tokio::test]
+    async fn a_file_edited_after_its_compile_waits_for_a_fresh_one() {
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("moved");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"moved\"\n[workspace]\n")
+            .unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn a() {}\npub fn b() { a(); }\n").unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "moved", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "moved", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+        ctx.pg().seed_only_file(&fid, "src/lib.rs").await.unwrap();
+        super::super::compile_projects(&ctx, &Task::new(TaskKind::CompileProjects, &repo_path, ""))
+            .await
+            .unwrap();
+
+        std::fs::write(
+            repo.join("src/lib.rs"),
+            "pub fn z() {}\npub fn a() {}\npub fn b() { a(); }\n",
+        )
+        .unwrap();
+        let abs = repo.join("src/lib.rs").to_string_lossy().to_string();
+        let wrote = process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
+            .await
+            .unwrap();
+        assert_eq!(wrote, 0, "nothing is written against a stale compile");
+        let (parsed,): (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
+            "SELECT parsed_at FROM sensei.files WHERE folder_id = $1 AND file_path = 'src/lib.rs'",
+        )
+        .bind(fid)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert_eq!(parsed, None, "the file is not marked parsed");
+        let queued = ctx.queue.snapshot_tasks().await;
+        let compile = queued
+            .iter()
+            .find(|t| t.kind == TaskKind::CompileProjects && t.folder_path == repo_path)
+            .expect("a fresh compile is queued");
+        let again = queued
+            .iter()
+            .find(|t| t.kind == TaskKind::ProcessFile && t.path == abs)
+            .expect("the file is queued again");
+        assert!(again.depends_on.contains(&compile.id), "behind the fresh compile");
+        ctx.pg().remove_watch_root(&rid).await.ok();
     }
 
     /// A LOCAL import resolves to the target's module node AT EMIT. Before this,

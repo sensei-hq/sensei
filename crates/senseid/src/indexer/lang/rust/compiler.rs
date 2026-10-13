@@ -64,6 +64,11 @@ impl CompilerEngine for RustEngine {
         }
     }
 
+    /// Rust sources and the manifests and lockfile that shape their build.
+    fn sources(&self) -> &'static [&'static str] {
+        &["rs", "toml", "lock"]
+    }
+
     /// Every Cargo feature on, once per platform: code behind a feature or a
     /// `cfg(target_os)` is the repository's own source, and one default build
     /// compiles it out. Analysing for a target needs only the std SOURCES

@@ -209,6 +209,9 @@ pub trait CompilerEngine: Sync {
     /// The command that names the compiler's binary for a project — located,
     /// never assumed to be on `PATH` (toolchains install it in different places).
     fn locate_compiler(&self, project_root: &str) -> Invocation;
+    /// What the compiler reads: the extensions of the source files whose change
+    /// makes a compile stale (a note or an image beside the code does not).
+    fn sources(&self) -> &'static [&'static str];
     /// The compiler's configurations, as the text of the file each `compile` is
     /// handed (the task layer writes it). One compile per configuration, the
     /// answers merged — a configuration per platform, for code gated to one.
