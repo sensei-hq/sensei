@@ -1154,6 +1154,10 @@ pub(crate) async fn create_source(
     State(state): State<AppState>,
     Json(b): Json<NewSourceBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let name = b.name.trim().to_string();
+    if name.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "name required"));
+    }
     let url = b.url.trim().to_string();
     // Require https unless the host is exactly a loopback — see
     // `api::util::require_secure_url` (shared with the Dōjō registration path).
@@ -1170,7 +1174,7 @@ pub(crate) async fn create_source(
         .pg
         .create_knowledge_source(&crate::db::pg_store::NewKnowledgeSource {
             kind: b.kind.unwrap_or_else(|| "hive_mind".into()),
-            name: b.name,
+            name,
             url,
             namespace_id,
             direction: b.direction.unwrap_or_else(|| "both".into()),
