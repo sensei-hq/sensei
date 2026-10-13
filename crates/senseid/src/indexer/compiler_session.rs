@@ -595,6 +595,80 @@ mod tests {
         assert_eq!(log, ["start", "end", "start", "end", "start", "end"], "one at a time");
     }
 
+    /// **WHAT TYPESCRIPT WRITES AROUND A CALL DOES NOT HIDE ITS TARGET.**
+    /// `super(…)` calls the base class; a name destructured out of a module
+    /// (`const { bind } = await import('./net')`) is that module's
+    /// declaration; a Svelte component's prop is its parameter, so a call
+    /// through it is a local's and no edge.
+    #[tokio::test]
+    async fn the_checker_sees_through_super_destructuring_and_props() {
+        use crate::indexer::facts::{RefKind, Resolution, Rung};
+        use crate::indexer::lang::compiler::{Compiled, place_with};
+        use crate::indexer::lang::ts_compiler::TS_ENGINE;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        let write = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("package.json", r#"{"name": "web", "type": "module"}"#);
+        write(
+            "tsconfig.json",
+            r#"{"compilerOptions": {"strict": true, "module": "esnext", "moduleResolution": "bundler", "target": "es2022"}}"#,
+        );
+        write("src/net.ts", "export function bind(port: number) {\n  return port;\n}\n");
+        write("src/base.ts", "export class Base {\n  constructor(public n: number) {}\n}\n");
+        write(
+            "src/kid.ts",
+            "import { Base } from './base';\n\nexport class Kid extends Base {\n  constructor() {\n    super(1);\n  }\n}\n\nexport class Oops extends Error {\n  constructor() {\n    super('x');\n  }\n}\n",
+        );
+        write(
+            "src/dyn.ts",
+            "export async function run() {\n  const { bind } = await import('./net');\n  return bind(2);\n}\n",
+        );
+        write(
+            "src/Button.svelte",
+            "<script lang=\"ts\">\n  let { onSave }: { onSave: () => void } = $props();\n  function save() {\n    onSave();\n  }\n</script>\n\n<button onclick={save}>save</button>\n",
+        );
+
+        let sessions = CompilerSessions::new(&root);
+        let project = sessions.project_for(&TS_ENGINE, &root).await.expect("the driver compiles");
+        let declarations = sessions.declarations(&project);
+        let mut placed = Vec::new();
+        for rel in ["src/kid.ts", "src/dyn.ts", "src/Button.svelte"] {
+            let facts = read_declarations(&root, &root.join(rel)).expect(rel);
+            let text = std::fs::read_to_string(root.join(rel)).unwrap();
+            let compiled =
+                Compiled { index: &project.index, path: rel, declarations: &declarations };
+            let calls: Vec<_> =
+                facts.references.iter().filter(|r| r.kind == RefKind::Calls).cloned().collect();
+            for call in place_with(&TS_ENGINE, Some(&compiled), calls, &text) {
+                placed.push((rel, call.at.start_line, call.target));
+            }
+        }
+        let to = |rel: &str, line: u32| {
+            placed
+                .iter()
+                .filter(|(r, l, _)| *r == rel && *l == line)
+                .map(|(_, _, t)| t.clone())
+                .collect::<Vec<_>>()
+        };
+        let resolved = |fqn: Fqn| vec![Resolution::Resolved { fqn, via: Rung::ResolvedByCompiler }];
+        let base = declarations.declared_at("src/base.ts", 1, "Base").expect("Base is declared");
+        let bind = declarations.declared_at("src/net.ts", 1, "bind").expect("bind is declared");
+        let error = crate::indexer::fqn::refer(&crate::indexer::fqn::Form::Lib {
+            package: "ecmascript",
+            member: "Error",
+        })
+        .unwrap();
+        assert_eq!(to("src/kid.ts", 5), resolved(base), "super is the base class");
+        assert_eq!(to("src/kid.ts", 11), resolved(error), "a library base class is its lib node");
+        assert_eq!(to("src/dyn.ts", 3), resolved(bind), "a destructured import is its declaration");
+        assert_eq!(to("src/Button.svelte", 4), vec![], "a prop is a parameter: no edge");
+    }
+
     /// **A SVELTEKIT PROJECT IS COMPILED AS ITS OWN TOOLING SEES IT.** Its
     /// tsconfig extends what `svelte-kit sync` generates (`$lib`, `$app`,
     /// `./$types`); a clean checkout, or a `make clean`, has none of it, and
