@@ -1250,7 +1250,11 @@ mod parse_task {
     /// MUTATION: drop the `persist::write` call from `index_and_persist` — the
     /// read-back is empty and the first assertion names what it got.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn a_parsed_file_reaches_the_database() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let Ok(pg) = PgStore::connect_test().await else {
             println!("no database — skipping");
             return;
