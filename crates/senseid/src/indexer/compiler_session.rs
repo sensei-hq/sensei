@@ -790,7 +790,7 @@ mod tests {
         write("node_modules/firelib/package.json", r#"{"name": "firelib", "types": "index.d.ts"}"#);
         write(
             "node_modules/firelib/index.d.ts",
-            "export type FireObject = { [K in 'click' | 'input']: (el: number) => Promise<boolean> };\nexport declare const fireEvent: FireObject;\n",
+            "export type FireObject = { [K in 'click' | 'input']: (el: number) => Promise<boolean> };\nexport type FireFunction = (el: number) => boolean;\nexport declare const fireEvent: FireFunction & FireObject;\n",
         );
         write(
             "src/fire.ts",
