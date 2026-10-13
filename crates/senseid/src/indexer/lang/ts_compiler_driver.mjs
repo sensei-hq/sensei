@@ -365,7 +365,11 @@ function undeclared(id) {
   if (!access || !ts.isPropertyAccessExpression(access) || access.name !== id) return null;
   const type = checker.getTypeAtLocation(access.expression);
   if (type.flags & ts.TypeFlags.Any) return 'untyped';
-  const owner = type.aliasSymbol ?? type.symbol;
+  // An intersection or a union has no name of its own: the member is named
+  // by the part that has it (`FireFunction & FireObject` → `FireObject`).
+  const parts = type.isUnionOrIntersection() ? type.types : [type];
+  const holder = parts.find((t) => checker.getPropertyOfType(t, id.text)) ?? type;
+  const owner = holder.aliasSymbol ?? holder.symbol;
   const ownerDecl = owner?.declarations?.[0];
   if (!ownerDecl) return null;
   const file = ownerDecl.getSourceFile();
