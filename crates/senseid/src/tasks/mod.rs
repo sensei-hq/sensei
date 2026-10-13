@@ -43,6 +43,7 @@ pub mod reconcile_scheduler;
 pub mod resume;
 pub mod retry;
 pub mod schedule;
+pub mod schema_deploy;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod ticker;

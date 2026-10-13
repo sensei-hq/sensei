@@ -59,7 +59,9 @@ flowchart TD
   `make bump` or `SENSEI_DDL_DIR`.
 - **Apply via dbd** (`dbd reconcile`/`apply`/`graph`), never `dbd combine`'s dump.
   An install converges with **reconcile**, not apply alone:
-  `sensei_bootstrap::database::deploy` (install, upgrade, doctor) plans a
+  `sensei_bootstrap::database::deploy` (install, the app's upgrade, doctor, and
+  the daemon's own boot when its version differs from `sensei.config`
+  `schema_deployed_version` — `brew upgrade` neither deploys nor restarts) plans a
   reconcile of the `default` scope; when the plan drops data it copies every
   table it alters to `~/.sensei/backup/pre-reconcile/<UTC time>/<schema.table>.csv`
   (and stops if that fails) and drops the views that read them. Then `apply`
