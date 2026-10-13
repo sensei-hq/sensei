@@ -119,9 +119,9 @@ fn rules_url(base: &str) -> String {
     format!("{}/rules", base.trim_end_matches('/'))
 }
 
-/// The credential a rules source presents: the persona's, when the source's
-/// tenant base is a membership bound to one; otherwise the source's own device
-/// token (the window). Matched on the exact tenant base, never a prefix. Pure.
+/// The credential a rules source presents: the session of the persona whose
+/// membership owns the source's tenant base, matched exactly, never by prefix.
+/// A tenant no signed-in persona has joined presents nothing. Pure.
 fn credential_for_source(
     memberships: &[DojoMembership],
     src: &KnowledgeSource,
@@ -129,11 +129,10 @@ fn credential_for_source(
     let base = src.url.trim_end_matches('/');
     memberships
         .iter()
-        .find(|m| m.persona.is_some() && tenant_base_url(&m.registry_url, &m.tenant_key) == base)
+        .filter(|m| tenant_base_url(&m.registry_url, &m.tenant_key) == base)
+        .min_by_key(|m| m.persona.is_none())
         .map(TenantCredential::of)
-        .unwrap_or_else(|| TenantCredential::DeviceToken {
-            credential_ref: src.credential_ref.clone(),
-        })
+        .unwrap_or(TenantCredential::Unbound)
 }
 
 /// [`credential_for_source`] against the stored memberships, as a Bearer.
@@ -409,7 +408,7 @@ mod tests {
         }
     }
 
-    // #236 step 4d: a rules source presents the session of the persona whose
+    // #236 step 4: a rules source presents the session of the persona whose
     // membership owns its tenant base — matched exactly, not by prefix.
     #[test]
     fn a_source_on_a_bound_tenant_presents_the_persona_session() {
@@ -429,9 +428,12 @@ mod tests {
         ));
     }
 
+    // #236 step 4e: the dōjō takes the person's session only, so a source whose
+    // tenant no signed-in persona has joined presents nothing — never a token of
+    // its own.
     #[test]
-    fn a_source_with_no_bound_membership_keeps_its_own_device_token() {
-        let device = TenantCredential::DeviceToken { credential_ref: "source-device".into() };
+    fn a_source_with_no_bound_membership_presents_nothing() {
+        let device = TenantCredential::Unbound;
         // No membership for that tenant, an unbound one, and a prefix that is not the tenant.
         assert_eq!(
             credential_for_source(&[], &src("http://localhost:7755/v1/t/organization/acme")),
@@ -478,12 +480,6 @@ mod tests {
         assert_eq!(pr.origin_repo.as_deref(), Some("sensei/daemon"));
     }
 
-    /// macOS ONLY, for the same reason as `gateway_keys`' round-trip test: this
-    /// seeds a device token with `gateway_keys::set_key`, which shells out to
-    /// `/usr/bin/security` unconditionally, so on Linux it fails with `NotFound`
-    /// before the pull under test is ever reached. The gate is about the
-    /// credential store's platform coverage, not about this test's subject.
-    #[cfg_attr(not(target_os = "macos"), ignore = "needs the macOS Keychain")]
     #[tokio::test]
     async fn e2e_daemon_pulls_a_rule_published_on_the_dojo() {
         use crate::db::pg_store::{NewKnowledgeSource, PgStore};
@@ -570,18 +566,35 @@ mod tests {
         // exact shape a rules KnowledgeSource carries post-switch.
         let dojo_url = format!("http://{addr}/v1/t/github/acme");
 
-        // 2. Register the source on the daemon (device token in the Keychain, row in
-        // PG). The stub ignores the bearer, but `pull_source` resolves it, so seed one.
+        // 2. The membership that owns the tenant, and the source on it. The stub
+        // ignores the bearer, but `pull_source` resolves the membership's, so the
+        // test registers one.
         let client = crate::federation::http_client();
-        let cref = format!("dojo-e2e-{}", uuid::Uuid::new_v4());
-        crate::gateway_keys::set_key(&cref, "device-token-e2e").unwrap();
+        let membership = uuid::Uuid::new_v4();
+        pg.create_dojo_membership(&crate::db::pg_store::NewDojoMembership {
+            id: membership,
+            registry_url: format!("http://{addr}"),
+            tenant_key: "github/acme".into(),
+            dojo_url: format!("http://{addr}/github/acme"),
+            kind: "employer".into(),
+            org_slugs: vec![],
+            role: "contributor".into(),
+            authenticated_via: "github_oauth".into(),
+            attribution_default: "named".into(),
+            credential_ref: "unused".into(),
+            sync_status: "healthy".into(),
+        })
+        .await
+        .unwrap();
+        crate::dojo::client::test_bearers::set(membership, "session-e2e");
+
         let src_id = pg
             .create_knowledge_source(&NewKnowledgeSource {
                 kind: "hive_mind".into(),
                 name: "E2E".into(),
                 url: dojo_url,
                 namespace_id: None,
-                credential_ref: cref.clone(),
+                credential_ref: "unused".into(),
                 direction: "pull".into(),
             })
             .await
@@ -599,15 +612,15 @@ mod tests {
             .bind(&content).fetch_one(pg.pool()).await.unwrap();
         assert_eq!(cnt, 1);
 
-        // 5. Cleanup (cascade ledger via source delete; remove memory + keychain entry,
-        // the namespace the pull created, and the seeded scope row).
+        // 5. Cleanup (cascade ledger via source delete; remove memory, the
+        // membership, the namespace the pull created, and the seeded scope row).
         sqlx_core::query::query("DELETE FROM sensei.memories WHERE content=$1")
             .bind(&content)
             .execute(pg.pool())
             .await
             .unwrap();
         pg.delete_knowledge_source(&src_id).await.unwrap();
-        let _ = crate::gateway_keys::delete_key(&cref);
+        pg.delete_dojo_membership(&membership).await.unwrap();
         sqlx_core::query::query(
             "DELETE FROM sensei.namespaces WHERE scope_key='organization' AND slug='e2e-org'",
         )
