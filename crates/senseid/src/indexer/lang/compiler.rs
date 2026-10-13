@@ -53,6 +53,9 @@ pub enum Answer<'a> {
     /// A binding inside a body — a closure in a `let`. No node, so no edge.
     Local,
     Nothing,
+    /// Spelled so only inside a reference nested in this one: this one wraps
+    /// that use (`HashMap<K, V>` around `HashMap`), which carries it.
+    Nested,
 }
 
 /// SCIP's `Definition` role bit.
@@ -140,7 +143,7 @@ impl CompilerIndex {
     ) -> Option<&'a str> {
         match self.answer_in(path, span, name, lines, &[]) {
             Answer::Symbol(symbol) => Some(symbol),
-            Answer::Local | Answer::Nothing => None,
+            Answer::Local | Answer::Nothing | Answer::Nested => None,
         }
     }
 
@@ -170,13 +173,21 @@ impl CompilerIndex {
             (Some(s), _) => Answer::Symbol(s.symbol.as_str()),
             (None, Some(_)) => Answer::Local,
             // Nothing so spelled: the walk named it otherwise (`Self` read as
-            // the type it stands for). The occurrence that IS the reference —
-            // its range exactly the reference's span — is the answer.
+            // the type it stands for). The occurrence at the reference's head
+            // — starting exactly where its span starts — is the answer.
             (None, None) => {
-                let exact = |o: &&Occurrence| {
-                    (o.line, o.start_col, o.end_line, o.end_col)
-                        == (span.start_line, span.start_col, span.end_line, span.end_col)
+                let inside_a_nested = |o: &Occurrence| {
+                    within(o, span)
+                        && nested.iter().any(|inner| within(o, inner))
+                        && text_of(o, lines) == Some(name)
                 };
+                let wraps = self.by_file.get(path).is_some_and(|v| v.iter().any(inside_a_nested))
+                    || self.locals.get(path).is_some_and(|v| v.iter().any(inside_a_nested));
+                if wraps {
+                    return Answer::Nested;
+                }
+                let exact =
+                    |o: &&Occurrence| (o.line, o.start_col) == (span.start_line, span.start_col);
                 match self.by_file.get(path).and_then(|v| v.iter().find(exact)) {
                     Some(s) => Answer::Symbol(s.symbol.as_str()),
                     None if self.locals.get(path).is_some_and(|v| v.iter().any(|o| exact(&o))) => {
@@ -530,7 +541,9 @@ fn place_one(
             Ok(fqn) => Placement::Target(fqn),
             Err(reason) => Placement::Miss(reason),
         },
-        Answer::Local => Placement::Local,
+        // A use of a local is no edge; nor is a wrapper around a nested use,
+        // which the nested reference carries.
+        Answer::Local | Answer::Nested => Placement::Local,
         Answer::Nothing => Placement::Miss(Reason::CompilerNoSymbol),
     }
 }
@@ -1175,6 +1188,28 @@ mod placement_tests {
         assert!(place_references(vec![literal], Some(&answers), &Expanding).is_empty());
     }
 
+    /// A use the walk records twice — `HashMap<K, V>` as a whole and its head
+    /// `HashMap` alone — is ONE use: the nested reference carries it, and the
+    /// wrapper is no edge rather than a miss.
+    #[test]
+    fn a_wrapper_around_a_nested_use_of_the_same_name_is_no_edge() {
+        let text = "fn main() {\n    let m: Bind<u8> = x;\n}";
+        let ix = index_of(&[(1, 11, 15, BIND)]);
+        let answers = FileAnswers::new(&ix, "src/main.rs", text);
+        let mut whole = call(span(2, 11, 19), unplaced("Bind"));
+        whole.kind = RefKind::TypeUse;
+        let mut head = call(span(2, 11, 15), unplaced("Bind"));
+        head.kind = RefKind::TypeUse;
+        let placed = place_references(vec![whole, head], Some(&answers), &Engine);
+        assert_eq!(
+            placed.iter().map(|r| (r.at, r.target.clone())).collect::<Vec<_>>(),
+            vec![(
+                span(2, 11, 15),
+                Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }
+            )],
+        );
+    }
+
     /// A positional element (`pair.0`) and an inferred type (`Vec<_>`) name no
     /// declaration: no edge.
     #[test]
@@ -1193,13 +1228,26 @@ mod placement_tests {
     /// type while the source spells `Self`. The occurrence covering exactly the
     /// reference's own span is the answer then.
     #[test]
-    fn a_reference_spelled_otherwise_is_its_exact_occurrence() {
+    fn a_reference_spelled_otherwise_is_the_occurrence_at_its_head() {
         let text = "impl Bind {\n    fn new() -> Self { Self }\n}";
         let ix = index_of(&[(1, 16, 20, BIND)]);
         let answers = FileAnswers::new(&ix, "src/main.rs", text);
         let mut self_use = call(span(2, 16, 20), unplaced("Bind"));
         self_use.kind = RefKind::TypeUse;
         let placed = place_references(vec![self_use], Some(&answers), &Engine);
+        assert_eq!(
+            placed[0].target,
+            Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }
+        );
+
+        // `Self { … }` — the construction's span is the whole literal; `Self`
+        // is its head, the occurrence at the span's start.
+        let text = "impl Bind {\n    fn new() -> Self {\n        Self { n: 1 }\n    }\n}";
+        let ix = index_of(&[(2, 8, 12, BIND)]);
+        let answers = FileAnswers::new(&ix, "src/main.rs", text);
+        let mut construct = call(span(3, 8, 21), unplaced("Bind"));
+        construct.kind = RefKind::Constructs;
+        let placed = place_references(vec![construct], Some(&answers), &Engine);
         assert_eq!(
             placed[0].target,
             Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }
