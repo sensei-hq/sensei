@@ -15,6 +15,8 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-10-13
+
 **Every call and reference is placed by its language's compiler.** The indexer
 now resolves Rust through rust-analyzer and TypeScript, JavaScript and Svelte
 through the project's own TypeScript checker, instead of reading names off the
