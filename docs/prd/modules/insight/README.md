@@ -6,13 +6,13 @@
 
 | ID | Module | One-line "done" | Spec |
 |---|---|---|---|
-| M7 | Analyzer & Signals | Every project has fresh derived signals on a schedule | 🚧 Phase 2 |
-| M8 | Metrics & Health | Every advertised metric computes, is rated, and cannot lie by omission — master-detail, with explicit gating eligibility | 🚧 Phase 2 |
-| M9 | Memory & Knowledge | A proven lesson becomes a durable, promoted memory | 🚧 Phase 2 |
-| M10 | Patterns & Conventions | Recurring practice (good and bad) is detected and named | 🚧 Phase 2 |
-| M11 | Traceability & Doc Drift | A doc claim that no longer matches code is flagged with a receipt | 🚧 Phase 2 |
-| M12 | Libraries | An unmanaged dependency is detected, wrapped and queryable | 🚧 Phase 2 |
-| M13 | Governance & Rules | Rules resolve by scope precedence and reach the assistant | 🚧 Phase 2 |
+| M7 | Analyzer & Signals | Every project has fresh derived signals on a schedule | ✅ [`analyzer-and-signals/`](analyzer-and-signals/README.md) · 2026-10-13 |
+| M8 | Metrics & Health | Every advertised metric computes, is rated, and cannot lie by omission — master-detail, with explicit gating eligibility | ✅ [`metrics-and-health/`](metrics-and-health/README.md) · 2026-10-13 |
+| M9 | Memory & Knowledge | A proven lesson becomes a durable, promoted memory | ✅ [`memory-and-knowledge/`](memory-and-knowledge/README.md) · 2026-10-13 |
+| M10 | Patterns & Conventions | Recurring practice (good and bad) is detected and named | ✅ [`patterns-and-conventions/`](patterns-and-conventions/README.md) · 2026-10-13 |
+| M11 | Traceability & Doc Drift | A doc claim that no longer matches code is flagged with a receipt | ✅ [`traceability-and-doc-drift/`](traceability-and-doc-drift/README.md) · 2026-10-13 |
+| M12 | Libraries | An unmanaged dependency is detected, wrapped and queryable | ✅ [`libraries/`](libraries/README.md) · 2026-10-13 |
+| M13 | Governance & Rules | Rules resolve by scope precedence and reach the assistant | ✅ [`governance-and-rules/`](governance-and-rules/README.md) · 2026-10-13 |
 
 ## What this plane owns
 
