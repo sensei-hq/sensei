@@ -406,9 +406,9 @@ export function senseiApi(port: number) {
         count: 0,
       }),
 
-    getProjectRepos: (id: string) =>
-      get<{ repos: Array<{ id: string; name: string; path: string; kind: string; role?: string }> }>(
-        `/api/projects/${enc(id)}/repos`, { repos: [] }
+    tryGetProjectRepos: (id: string) =>
+      tryGet<{ repos: Array<{ id: string; name: string; path: string; kind: string; role?: string }> }>(
+        `/api/projects/${enc(id)}/repos`,
       ),
 
     // Error-propagating (mockup-drift-audit F8): a fetch failure must be
@@ -1359,10 +1359,7 @@ export function senseiApi(port: number) {
     // state). `credential_ref` is never exposed; the device token on connect
     // is write-only. Fallback is the empty array so a daemon hiccup renders
     // the empty state, never a broken screen.
-    getDojoMemberships: () =>
-      get<DojoMembership[]>('/api/dojo/memberships', []),
-    // The connections screen's read: a failure is an error to retry, never the
-    // empty list, which there tells you to sign in.
+    // A failed read is an error to show, never the empty list (#262).
     tryGetDojoMemberships: () => tryGet<DojoMembership[]>('/api/dojo/memberships'),
 
     // Replace the git-remote owner slugs a membership covers (org-tagging) —
@@ -1374,10 +1371,9 @@ export function senseiApi(port: number) {
     // R3 infer-at-detect: the inferred (confirm-inferred) project→Dōjō binding
     // for the About-panel chip. `{ suggestion: null }` when already bound / no
     // git owner / no covering membership. Read-only — suggests, never binds.
-    getDojoSuggestion: (projectId: string) =>
-      get<{ suggestion: DojoBindingSuggestion | null }>(
+    tryGetDojoSuggestion: (projectId: string) =>
+      tryGet<{ suggestion: DojoBindingSuggestion | null }>(
         `/api/projects/${enc(projectId)}/dojo-suggestion`,
-        { suggestion: null },
       ),
 
     // Confirm a project→Dōjō binding (the user accepting the inferred chip, or
