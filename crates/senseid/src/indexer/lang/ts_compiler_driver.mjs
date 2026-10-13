@@ -183,6 +183,7 @@ function isLibraryFile(sf) {
 /** Inside a function body — a binding no other file can name. */
 function isLocal(decl) {
   if (ts.isParameter(decl) || ts.isTypeParameterDeclaration(decl)) return true;
+  if (isPropsBinding(decl)) return true;
   for (let p = decl.parent; p; p = p.parent) {
     if (ts.isSourceFile(p) || ts.isModuleBlock(p)) return false;
     if (ts.isClassLike(p) || ts.isInterfaceDeclaration(p)) return false;
@@ -192,6 +193,55 @@ function isLocal(decl) {
     if (ts.isFunctionLike(p)) return true;
   }
   return false;
+}
+
+/** `let { a, b } = $props()` — a Svelte component's parameters. */
+function isPropsBinding(decl) {
+  if (!ts.isBindingElement(decl)) return false;
+  let p = decl.parent;
+  while (p && (ts.isObjectBindingPattern(p) || ts.isArrayBindingPattern(p) || ts.isBindingElement(p))) p = p.parent;
+  const init = p && ts.isVariableDeclaration(p) ? p.initializer : undefined;
+  return !!init && ts.isCallExpression(init) && ts.isIdentifier(init.expression) && init.expression.text === '$props';
+}
+
+/** The property a name destructured out of a value stands for:
+ *  `const { bind } = await import('./net')` is `./net`'s `bind`. */
+function destructured(decl) {
+  if (!ts.isBindingElement(decl) || !ts.isObjectBindingPattern(decl.parent)) return undefined;
+  const owner = decl.parent.parent;
+  if (!ts.isVariableDeclaration(owner) || !owner.initializer) return undefined;
+  const key = decl.propertyName ?? decl.name;
+  if (!ts.isIdentifier(key)) return undefined;
+  const type = checker.getTypeAtLocation(owner.initializer);
+  return checker.getPropertyOfType(checker.getAwaitedType(type) ?? type, key.text);
+}
+
+/** A symbol followed to what it stands for: through imports and re-exports,
+ *  and through destructuring. */
+function resolved(sym) {
+  for (let hops = 0; sym && hops < 16; hops++) {
+    if (sym.flags & ts.SymbolFlags.Alias) {
+      try {
+        sym = checker.getAliasedSymbol(sym);
+        continue;
+      } catch {
+        return sym;
+      }
+    }
+    const decl = sym.valueDeclaration ?? sym.declarations?.[0];
+    const property = decl && !isPropsBinding(decl) ? destructured(decl) : undefined;
+    if (!property || property === sym) return sym;
+    sym = property;
+  }
+  return sym;
+}
+
+/** The class `super` reaches: what the enclosing class's `extends` names. */
+function baseClassOf(node) {
+  let cls = node.parent;
+  while (cls && !ts.isClassLike(cls)) cls = cls.parent;
+  const extended = cls?.heritageClauses?.find((h) => h.token === ts.SyntaxKind.ExtendsKeyword)?.types[0];
+  return extended ? checker.getSymbolAtLocation(extended.expression) : undefined;
 }
 
 function isComponentBody(node) {
@@ -254,20 +304,17 @@ for (const sf of program.getSourceFiles()) {
   if (!original.startsWith(`${root}/`) || original.includes('/node_modules/')) continue;
   if (!v && isLibraryFile(sf)) continue;
   const visit = (node) => {
-    if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) record(sf, node);
+    if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) record(sf, node, checker.getSymbolAtLocation(node));
+    // `super(…)` calls the base class: what the class's `extends` names.
+    else if (node.kind === ts.SyntaxKind.SuperKeyword) record(sf, node, baseClassOf(node));
     ts.forEachChild(node, visit);
   };
   visit(sf);
 }
 
-function record(sf, id) {
-  let sym = checker.getSymbolAtLocation(id);
+function record(sf, id, found) {
+  const sym = resolved(found);
   if (!sym) return;
-  if (sym.flags & ts.SymbolFlags.Alias) {
-    try {
-      sym = checker.getAliasedSymbol(sym);
-    } catch {}
-  }
   const decl = sym.valueDeclaration ?? sym.declarations?.[0];
   if (!decl) return;
   const at = originalPosition(sf, id);
