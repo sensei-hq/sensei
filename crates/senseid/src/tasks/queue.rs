@@ -50,14 +50,23 @@ struct QueueState {
     dependents: HashMap<u64, Vec<u64>>,
 }
 
-/// A queued or running task with `task`'s `(kind, folder_path, path)` that
-/// is at least as forceful — one whose run does everything `task`'s would.
-fn covering_twin(state: &QueueState, task: &Task) -> Option<u64> {
+/// Which twins can cover a request: any in flight, or only those still
+/// queued — a running task has already read its work list.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Twins {
+    InFlight,
+    Queued,
+}
+
+/// A twin of `task` — same `(kind, folder_path, path)`, at least as forceful,
+/// so its run does everything `task`'s would.
+fn covering_twin(state: &QueueState, task: &Task, twins: Twins) -> Option<u64> {
+    let running = state.running.values().filter(|_| twins == Twins::InFlight);
     state
         .pending
         .iter()
         .chain(state.blocked.iter())
-        .chain(state.running.values())
+        .chain(running)
         .find(|t| {
             t.kind == task.kind
                 && t.folder_path == task.folder_path
@@ -185,7 +194,7 @@ impl TaskQueue {
             t.kind == task.kind && t.folder_path == task.folder_path && t.path == task.path
         };
 
-        if covering_twin(&state, &task).is_some() {
+        if covering_twin(&state, &task, Twins::InFlight).is_some() {
             return None; // covered; the guard drops the lock on return
         }
 
@@ -207,13 +216,14 @@ impl TaskQueue {
         Some(id)
     }
 
-    /// The id of the task that will do this request's work: a queued or running
-    /// twin that COVERS it (as [`enqueue_unique`] judges coverage), else this
-    /// task, newly enqueued. For work other tasks wait on — they wait on
-    /// whichever task does it, so a request a twin covers is never a second run.
+    /// The id of the task that will do this request's work: a QUEUED twin that
+    /// covers it (as [`enqueue_unique`] judges coverage), else this task, newly
+    /// enqueued. For work other tasks wait on — they wait on whichever task
+    /// does it. A running twin does not count: it read its work list when it
+    /// started, and this request may bring more.
     pub async fn enqueue_covered(&self, task: Task) -> u64 {
         let mut state = self.inner.lock().await;
-        if let Some(twin) = covering_twin(&state, &task) {
+        if let Some(twin) = covering_twin(&state, &task, Twins::Queued) {
             return twin;
         }
         let id = self.enqueue_locked(&mut state, task);
@@ -991,9 +1001,11 @@ mod tests {
         assert_eq!(q.status().await.pending, 1, "admitted as a new task, since it cannot upgrade");
     }
 
-    /// Work others wait on is done once: a request a queued or running twin
-    /// covers is answered with the twin's id; once the twin is done, a new
-    /// request is a new task.
+    /// Work others wait on is done once: a request a QUEUED twin covers is
+    /// answered with the twin's id. A RUNNING twin covers nothing — it read
+    /// its work list when it started, and the request may bring more (a
+    /// forced rescan reopens files after the first compile began). Once the
+    /// twin is done, a new request is a new task.
     #[tokio::test]
     async fn a_covered_request_waits_on_its_twin() {
         let q = TaskQueue::new();
@@ -1004,7 +1016,10 @@ mod tests {
 
         let running = q.next_task().await;
         let during = q.enqueue_covered(Task::new(TaskKind::CompileProjects, "repo", "")).await;
-        assert_eq!(during, running.id, "a running twin covers it");
+        assert_ne!(during, running.id, "a running twin has read its work list already");
+        let queued_again =
+            q.enqueue_covered(Task::new(TaskKind::CompileProjects, "repo", "")).await;
+        assert_eq!(queued_again, during, "the queued one covers the next request");
 
         let other = q.enqueue_covered(Task::new(TaskKind::CompileProjects, "other", "")).await;
         assert_ne!(other, first, "another repository's is its own");
