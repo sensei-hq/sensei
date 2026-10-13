@@ -52,7 +52,13 @@ export interface EmptyBinding {
   state: 'empty';
 }
 
-export type BindingView = ConfirmedBinding | InferredBinding | EmptyBinding;
+/** The binding could not be read — shown as an error, never as "no binding". */
+export interface ErrorBinding {
+  state: 'error';
+  message: string;
+}
+
+export type BindingView = ConfirmedBinding | InferredBinding | EmptyBinding | ErrorBinding;
 
 /** The minimal project shape this module reads. `dojo_id` is optional so any
  *  project payload works; when present it is the primary confirmed signal, else
@@ -101,7 +107,9 @@ export function resolveBinding(
   project: BindableProject,
   suggestion: DojoBindingSuggestion | null,
   memberships: DojoMembership[],
+  error: string | null = null,
 ): BindingView {
+  if (error) return { state: 'error', message: error };
   const bound = boundMembership(project, memberships);
   if (bound) {
     return {
