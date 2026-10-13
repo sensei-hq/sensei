@@ -118,6 +118,13 @@ any single feature — is the whole requirement, because it is what stopped the
 
 - [G-1](../../../../roadmap/06-gaps.md) — graph/layered view unreadable at granular scale, no
   L0/L1/L2 level of detail (listed under M17; retrieval feeds it).
+- [G-2](../../../../roadmap/06-gaps.md) — the indexer has **no ignore mechanism** (no
+  `.senseiignore` reader, no ignore config); it walks committed mockups / vendored /
+  generated code and skews the graph and the metrics built on it. Per decision
+  2026-10-13, ignore is stored repo config synced via the Dōjō, **seeded from the
+  repo's own ignore sources** (`.gitignore`, qlty `.qlty/qlty.toml` `exclude_patterns`)
+  — not a dotfile. This repo's `.qlty/qlty.toml` already excludes `docs/mockups/**`
+  and `crates/senseid/grammars/**` for exactly this reason.
 - Watch: worker state is in-memory today (100% queue.rs) and folder-status states collapse
   to `indexed`/`archived` — D6 makes these durable and complete; until landing, restart
   resume coverage is partial.
