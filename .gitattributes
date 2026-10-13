@@ -1,0 +1,3 @@
+# Code this repository carries but does not own: not indexed by sensei, not
+# counted by GitHub Linguist.
+crates/senseid/grammars/** linguist-vendored

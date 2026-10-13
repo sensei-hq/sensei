@@ -290,6 +290,12 @@ pub enum ScanSkipReason {
     ParseError,
     /// Matched a user-configured exclude rule.
     ExcludedByConfig,
+    /// Code the repository carries but does not own: `.gitattributes` marks
+    /// it `linguist-vendored`.
+    Vendored,
+    /// Code a tool wrote: `.gitattributes` marks it `linguist-generated`, or
+    /// its head says so (`@generated`, `Code generated … DO NOT EDIT`).
+    Generated,
 }
 
 impl ScanSkipReason {
@@ -301,6 +307,8 @@ impl ScanSkipReason {
             Self::InvalidUtf8 => "invalid_utf8",
             Self::ParseError => "parse_error",
             Self::ExcludedByConfig => "excluded_by_config",
+            Self::Vendored => "vendored",
+            Self::Generated => "generated",
         }
     }
 

@@ -18,6 +18,8 @@ set search_path to sensei, extensions;
 --   unsupported_format — expected and uninteresting; ignore quietly.
 --   binary_content     — expected and uninteresting; ignore quietly.
 --   excluded_by_config — the user asked for this; ignore quietly.
+--   vendored           — `.gitattributes` says the repository does not own it.
+--   generated          — a tool wrote it (`.gitattributes` or its own header).
 create type scan_skip_reason
     as enum (
       'unsupported_format'
@@ -25,4 +27,6 @@ create type scan_skip_reason
     , 'invalid_utf8'
     , 'parse_error'
     , 'excluded_by_config'
+    , 'vendored'
+    , 'generated'
     );
