@@ -331,7 +331,9 @@ function symbolFor(sym, decl, sf) {
   const name = decl.name ?? decl;
   const at = originalPosition(declSf, name);
   if (!at) return null;
-  return `ts ${path.relative(root, at.file)}:${at.line + 1}:${name.getText?.(declSf) ?? sym.getName()}`;
+  // The name's VALUE, as the walk names a declaration: `'x-key'` is `x-key`.
+  const spelled = name.text ?? name.getText?.(declSf) ?? sym.getName();
+  return `ts ${path.relative(root, at.file)}:${at.line + 1}:${spelled}`;
 }
 
 // ── the index ─────────────────────────────────────────────────────────────────
@@ -344,6 +346,9 @@ for (const sf of program.getSourceFiles()) {
   if (!v && isLibraryFile(sf)) continue;
   const visit = (node) => {
     if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node)) record(sf, node, checker.getSymbolAtLocation(node));
+    // `o['x-key']` — a literal key names the property it reads.
+    else if (ts.isStringLiteral(node) && ts.isElementAccessExpression(node.parent) && node.parent.argumentExpression === node)
+      record(sf, node, checker.getSymbolAtLocation(node));
     // `super(…)` calls the base class: what the class's `extends` names.
     else if (node.kind === ts.SyntaxKind.SuperKeyword) record(sf, node, baseClassOf(node));
     ts.forEachChild(node, visit);

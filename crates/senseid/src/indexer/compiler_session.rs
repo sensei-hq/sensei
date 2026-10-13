@@ -1077,11 +1077,11 @@ mod tests {
         );
         write(
             "src/conf.ts",
-            "export class Box {\n  size = 1;\n}\n\nexport interface Opts {\n  n: number;\n}\n",
+            "export class Box {\n  size = 1;\n}\n\nexport interface Opts {\n  n: number;\n  'x-key': string;\n}\n",
         );
         write(
             "src/use.ts",
-            "import { Box, type Opts } from './conf';\n\nexport type Pair = Opts[];\n\nexport function pick(o: Opts) {\n  const b = new Box();\n  return o.n + b.size;\n}\n",
+            "import { Box, type Opts } from './conf';\n\nexport type Pair = Opts[];\n\nexport function pick(o: Opts, all: number[]) {\n  const b = new Box();\n  return o.n + b.size + o['x-key'].length + all[0];\n}\n",
         );
 
         let sessions = CompilerSessions::new(&root);
@@ -1114,17 +1114,35 @@ mod tests {
                 Resolution::Unresolved { .. } => None,
             })
             .collect();
-        let mut wanted: Vec<String> = [("Box", 1), ("size", 2), ("Opts", 5), ("n", 6)]
-            .iter()
-            .map(|(name, line)| {
-                declarations.declared_at("src/conf.ts", *line, name).unwrap().as_str().to_string()
+        let mut wanted: Vec<String> =
+            [("Box", 1), ("size", 2), ("Opts", 5), ("n", 6), ("x-key", 7)]
+                .iter()
+                .map(|(name, line)| {
+                    declarations
+                        .declared_at("src/conf.ts", *line, name)
+                        .unwrap()
+                        .as_str()
+                        .to_string()
+                })
+                .collect();
+        wanted.push(
+            crate::indexer::fqn::refer(&crate::indexer::fqn::Form::Lib {
+                package: "ecmascript",
+                member: "String.length",
             })
-            .collect();
+            .unwrap()
+            .as_str()
+            .to_string(),
+        );
         let mut got = targets.clone();
         wanted.sort();
         got.sort();
         got.dedup();
-        assert_eq!(got, wanted, "the type use, the construction and both field reads");
+        assert_eq!(
+            got, wanted,
+            "the type use, the construction, the field reads (a literal key's too) and the \
+             language's own `length`; `all[0]` is a value's element, no edge"
+        );
     }
 
     /// **A SVELTEKIT PROJECT IS COMPILED AS ITS OWN TOOLING SEES IT.** Its

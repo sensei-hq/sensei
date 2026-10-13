@@ -169,7 +169,22 @@ impl CompilerIndex {
             (Some(s), Some(l)) if at(l) < at(s) => Answer::Local,
             (Some(s), _) => Answer::Symbol(s.symbol.as_str()),
             (None, Some(_)) => Answer::Local,
-            (None, None) => Answer::Nothing,
+            // Nothing so spelled: the walk named it otherwise (`Self` read as
+            // the type it stands for). The occurrence that IS the reference —
+            // its range exactly the reference's span — is the answer.
+            (None, None) => {
+                let exact = |o: &&Occurrence| {
+                    (o.line, o.start_col, o.end_line, o.end_col)
+                        == (span.start_line, span.start_col, span.end_line, span.end_col)
+                };
+                match self.by_file.get(path).and_then(|v| v.iter().find(exact)) {
+                    Some(s) => Answer::Symbol(s.symbol.as_str()),
+                    None if self.locals.get(path).is_some_and(|v| v.iter().any(|o| exact(&o))) => {
+                        Answer::Local
+                    }
+                    None => Answer::Nothing,
+                }
+            }
         }
     }
 
@@ -386,8 +401,18 @@ pub fn place_references(
             if targets.anonymous_callee(&evidence.node_kind) {
                 return vec![];
             }
-            // A member chosen at run time: no declaration answers.
-            if targets.dynamic_callee(&evidence.node_kind) {
+            // A positional element (`pair.0`) or an inferred type (`_`) names
+            // no declaration.
+            let name = spelled(&evidence.name);
+            let positional = !name.is_empty() && name.chars().all(|c| c.is_ascii_digit());
+            if positional || (reference.kind == RefKind::TypeUse && name == "_") {
+                return vec![];
+            }
+            // A member chosen at run time: no declaration answers a CALL through
+            // it. A read of one is a value's element — placed if the compiler
+            // names it (a literal key on a typed object), else no edge.
+            let element = targets.dynamic_callee(&evidence.node_kind);
+            if element && matches!(reference.kind, RefKind::Calls | RefKind::MacroInvokes) {
                 let target = Resolution::Unresolved { reason: Reason::DynamicDispatch, evidence };
                 return vec![Reference { target, ..reference }];
             }
@@ -422,6 +447,8 @@ pub fn place_references(
                 }
                 // A use of a local is no edge: locals get no nodes.
                 Placement::Local => return vec![],
+                // An element the compiler cannot name is a value's, not a declaration's.
+                Placement::Miss(Reason::CompilerNoSymbol) if element => return vec![],
                 Placement::Miss(reason) => Resolution::Unresolved { reason, evidence },
             };
             vec![Reference { target, ..reference }]
@@ -1146,6 +1173,71 @@ mod placement_tests {
         let mut literal = use_;
         literal.at = span(2, 31, 33);
         assert!(place_references(vec![literal], Some(&answers), &Expanding).is_empty());
+    }
+
+    /// A positional element (`pair.0`) and an inferred type (`Vec<_>`) name no
+    /// declaration: no edge.
+    #[test]
+    fn a_positional_element_and_an_inferred_type_are_no_edge() {
+        let ix = compiled();
+        let answers = FileAnswers::new(&ix, "src/main.rs", TEXT);
+        let mut read = call(span(3, 4, 10), unplaced("pair.0"));
+        read.kind = RefKind::Reads;
+        let mut inferred = call(span(3, 4, 10), unplaced("_"));
+        inferred.kind = RefKind::TypeUse;
+        assert!(place_references(vec![read, inferred], Some(&answers), &Engine).is_empty());
+    }
+
+    /// **A NAME THE WALK RESOLVED IS NOT ALWAYS THE TEXT AT THE SITE.** The
+    /// walk reads `Self` as the type it stands for, so its evidence names the
+    /// type while the source spells `Self`. The occurrence covering exactly the
+    /// reference's own span is the answer then.
+    #[test]
+    fn a_reference_spelled_otherwise_is_its_exact_occurrence() {
+        let text = "impl Bind {\n    fn new() -> Self { Self }\n}";
+        let ix = index_of(&[(1, 16, 20, BIND)]);
+        let answers = FileAnswers::new(&ix, "src/main.rs", text);
+        let mut self_use = call(span(2, 16, 20), unplaced("Bind"));
+        self_use.kind = RefKind::TypeUse;
+        let placed = place_references(vec![self_use], Some(&answers), &Engine);
+        assert_eq!(
+            placed[0].target,
+            Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }
+        );
+    }
+
+    /// An element read with a key the compiler cannot name (`arr[i]`, a record's
+    /// entry) reads a value, not a declaration: no edge. A CALL through one is
+    /// still `dynamic_dispatch`.
+    #[test]
+    fn an_element_read_is_no_edge_and_an_element_call_is_dynamic() {
+        struct Indexed;
+        impl Targets for Indexed {
+            fn target(&self, _: &str) -> Result<Fqn, Reason> {
+                Err(Reason::SymbolUnnamed)
+            }
+            fn dynamic_callee(&self, node_kind: &str) -> bool {
+                node_kind == "index_expression"
+            }
+        }
+        let ix = compiled();
+        let answers = FileAnswers::new(&ix, "src/main.rs", TEXT);
+        let element = |kind: RefKind| {
+            let mut r = call(span(2, 4, 20), unplaced("handlers[i]"));
+            r.kind = kind;
+            if let Resolution::Unresolved { evidence, .. } = &mut r.target {
+                evidence.node_kind = "index_expression".into();
+            }
+            r
+        };
+        assert!(
+            place_references(vec![element(RefKind::Reads)], Some(&answers), &Indexed).is_empty()
+        );
+        let placed = place_references(vec![element(RefKind::Calls)], Some(&answers), &Indexed);
+        assert!(matches!(
+            placed[0].target,
+            Resolution::Unresolved { reason: Reason::DynamicDispatch, .. }
+        ));
     }
 
     /// A read of a local is no edge, as a call to one is not.
