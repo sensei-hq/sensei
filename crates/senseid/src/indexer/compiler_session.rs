@@ -1202,6 +1202,63 @@ mod tests {
         );
     }
 
+    /// A property that exists only through an index signature
+    /// (`Record<string, unknown>`) is a value's entry — no edge; a property of
+    /// an `unknown` value names nothing the checker can type — `untyped`.
+    #[tokio::test]
+    async fn an_index_entry_is_no_edge_and_an_unknown_receiver_is_untyped() {
+        use crate::indexer::facts::{RefKind, Resolution};
+        use crate::indexer::lang::compiler::{Compiled, place_with};
+        use crate::indexer::lang::ts_compiler::TS_ENGINE;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        let write = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("package.json", r#"{"name": "web", "type": "module"}"#);
+        write(
+            "tsconfig.json",
+            r#"{"compilerOptions": {"strict": true, "module": "esnext", "moduleResolution": "bundler", "target": "es2022"}}"#,
+        );
+        write(
+            "src/rec.ts",
+            "export interface Rec {\n  props: Record<string, unknown>;\n}\n\nexport function low(r: Rec) {\n  return r.props.low_n;\n}\n\nexport function text(s: unknown) {\n  // @ts-expect-error -- the shape is not stated\n  return s.text;\n}\n",
+        );
+        let sessions = CompilerSessions::new(&root);
+        let project = sessions.project_for(&TS_ENGINE, &root).await.expect("the driver compiles");
+        let declarations = sessions.declarations(&project);
+        let facts = read_declarations(&root, &root.join("src/rec.ts")).expect("reads");
+        let text = std::fs::read_to_string(root.join("src/rec.ts")).unwrap();
+        let compiled =
+            Compiled { index: &project.index, path: "src/rec.ts", declarations: &declarations };
+        let references: Vec<_> =
+            facts.references.iter().filter(|r| r.kind == RefKind::Reads).cloned().collect();
+        let placed = place_with(&TS_ENGINE, Some(&compiled), references, &text);
+        let on = |line: u32, name: &str| {
+            placed
+                .iter()
+                .filter(|r| r.at.start_line == line)
+                .filter(|r| match &r.target {
+                    Resolution::Resolved { fqn, .. } => fqn.as_str().contains(name),
+                    Resolution::Unresolved { evidence, .. } => evidence.name.ends_with(name),
+                })
+                .map(|r| r.target.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(on(6, "low_n"), vec![], "an index entry is no edge");
+        assert!(
+            matches!(
+                on(11, "text").as_slice(),
+                [Resolution::Unresolved { reason: Reason::UntypedReceiver, .. }]
+            ),
+            "{:?}",
+            on(11, "text")
+        );
+    }
+
     /// **A REFERENCE IS PLACED BY THE CHECKER AS A CALL IS.** A type use, a
     /// construction and field reads reach their declarations — through a
     /// parameter's type and through a local's.

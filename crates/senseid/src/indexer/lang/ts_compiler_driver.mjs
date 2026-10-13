@@ -461,7 +461,12 @@ function undeclared(id) {
   const access = id.parent;
   if (!access || !ts.isPropertyAccessExpression(access) || access.name !== id) return null;
   const type = checker.getTypeAtLocation(access.expression);
-  if (type.flags & ts.TypeFlags.Any) return libraryPath(access) ?? 'untyped';
+  if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) return libraryPath(access) ?? 'untyped';
+  // No such property, only an index signature: an entry of the value
+  // (`props.low_n` on `Record<string, unknown>`), not a member of its type.
+  const declares = checker.getPropertyOfType(type, id.text);
+  const indexed = checker.getIndexInfosOfType(type).length > 0;
+  if (!declares && indexed) return localSymbol(id);
   // An intersection or a union has no name of its own: the member is named
   // by the part that has it (`FireFunction & FireObject` → `FireObject`).
   const parts = type.isUnionOrIntersection() ? type.types : [type];
