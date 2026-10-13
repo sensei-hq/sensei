@@ -9,7 +9,7 @@ import type {
   ProjectSession, CallFlowModule, CallFlowCall,
   ProjectListItem,
   KnowledgeSource, NewKnowledgeSourceBody, SyncStats,
-  DojoMembership, ConnectDojoBody, DojoBindingSuggestion, DojoUpgradesResponse, CollectivePreferences,
+  DojoMembership, DojoBindingSuggestion, DojoUpgradesResponse, CollectivePreferences,
   ShareReviewResponse, PublishBatchOutcome,
   McpToolManifest, SessionToolTimeline, MemoryShareBatch, ImpactVerdictEntry,
   ProjectMcpToolStat, ToolSignal, ProjectService, ToolInsight, ToolsHealth,
@@ -1361,12 +1361,9 @@ export function senseiApi(port: number) {
     // the empty state, never a broken screen.
     getDojoMemberships: () =>
       get<DojoMembership[]>('/api/dojo/memberships', []),
-
-    // Register a Dōjō connection. `tryPost` so the validation/registration
-    // errors (bad membership uuid, insecure registry url, unknown project to
-    // bind) surface as `{ ok: false, error }` for the connect form to show.
-    connectDojo: (body: ConnectDojoBody) =>
-      tryPost<{ id: string }>('/api/dojo/memberships', body),
+    // The connections screen's read: a failure is an error to retry, never the
+    // empty list, which there tells you to sign in.
+    tryGetDojoMemberships: () => tryGet<DojoMembership[]>('/api/dojo/memberships'),
 
     // Replace the git-remote owner slugs a membership covers (org-tagging) —
     // drives the R3 infer-at-detect auto-bind. `tryPut` so a 404 (unknown
