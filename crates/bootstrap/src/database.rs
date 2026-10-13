@@ -15,7 +15,8 @@
 
 use dbd_core::adapter::postgres::PostgresAdapter;
 use dbd_core::design::Progress;
-use dbd_core::{Design, deploy::resolve_source};
+use dbd_core::{Design, EntityType, deploy::resolve_source};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::config::SenseiConfig;
@@ -113,90 +114,8 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
             .await
             .map_err(|e| format!("dbd source resolution failed ({source}): {e}"))?;
         tracing::debug!(project_dir = %project_dir.display(), "dbd source resolved");
-
-        let config_path = project_dir.join("design.yaml");
-        let design = Design::from_config_with_dir(&config_path, "prod", Some(&project_dir))
-            .map_err(|e| format!("dbd config load failed: {e}"))?;
-        tracing::debug!(entities = design.entities().len(), "dbd design loaded");
-
-        // The daemon deploys the `default` scope (everything EXCEPT the `dojo`
-        // service schema, which only `sensei-dojo` materializes). resolve_scope(None)
-        // returns the `default` scope when one is defined in design.yaml.
-        let scope = design
-            .resolve_scope(None, None)
-            .map_err(|e| format!("dbd scope resolution failed: {e}"))?;
-
-        let adapter = PostgresAdapter::new(&db_url, "sensei")
+        deploy_to(&db_url, &project_dir, &cfg.sensei_dir().join("backup").join("pre-reconcile"))
             .await
-            .map_err(|e| format!("dbd database connection failed: {e}"))?;
-
-        // Apply schema + import seed data (dbd v0.10.x). We drive the two phases
-        // via `apply`/`import_data` rather than the silent `design.deploy()` so
-        // per-item failures surface through the Progress callbacks — a seed
-        // rejected by a constraint becomes a WARN naming the table AND a hard
-        // Err, never a swallowed silent failure. Each phase runs in its own
-        // transaction and rolls back cleanly on error.
-        let apply_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-        let import_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-
-        tracing::info!("dbd phase: apply");
-        design
-            .apply(
-                &adapter,
-                None,
-                false,
-                Some(&scope),
-                Progress {
-                    on_start: |desc: &str| tracing::debug!(dbd_step = "apply", desc, "starting"),
-                    on_done: {
-                        let f = apply_failures.clone();
-                        move |desc: &str, err: Option<&str>| match err {
-                            Some(e) => {
-                                tracing::warn!(dbd_step = "apply", desc, error = e, "failed");
-                                f.lock()
-                                    .expect("apply-failure mutex poisoned")
-                                    .push(format!("{desc}: {e}"));
-                            }
-                            None => tracing::debug!(dbd_step = "apply", desc, "done"),
-                        }
-                    },
-                    on_complete: |_summary| tracing::info!("dbd apply complete"),
-                },
-            )
-            .await
-            .map_err(|e| format!("dbd apply failed: {e}"))?;
-        surface_step_failures("apply", &apply_failures)?;
-
-        tracing::info!("dbd phase: import_data");
-        design
-            .import_data(
-                &adapter,
-                None,
-                false,
-                Some(&scope),
-                Progress {
-                    on_start: |desc: &str| tracing::debug!(dbd_step = "import", desc, "starting"),
-                    on_done: {
-                        let f = import_failures.clone();
-                        move |desc: &str, err: Option<&str>| match err {
-                            Some(e) => {
-                                tracing::warn!(dbd_step = "import", desc, error = e, "failed");
-                                f.lock()
-                                    .expect("import-failure mutex poisoned")
-                                    .push(format!("{desc}: {e}"));
-                            }
-                            None => tracing::debug!(dbd_step = "import", desc, "done"),
-                        }
-                    },
-                    on_complete: |_summary| tracing::info!("dbd import complete"),
-                },
-            )
-            .await
-            .map_err(|e| format!("dbd import failed: {e}"))?;
-        surface_step_failures("import", &import_failures)?;
-
-        tracing::info!("dbd deploy complete");
-        Ok::<(), String>(())
     })?;
 
     // The bundled packs (D-SEED: the default constitution + ponytail) are seeded
@@ -209,7 +128,208 @@ pub fn deploy(db_name: &str, app_version: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Fold per-item failures captured from dbd's `apply`/`import_data` Progress
+/// Deploy the design at `project_dir` to the database at `db_url`: the schema,
+/// then the seed data. A schema change that drops data first copies every
+/// table it alters into `backup_dir`. The source-resolving half lives in
+/// [`deploy`]; this half takes its inputs as arguments so a test can point it
+/// at a scratch database.
+pub async fn deploy_to(db_url: &str, project_dir: &Path, backup_dir: &Path) -> Result<(), String> {
+    let config_path = project_dir.join("design.yaml");
+    let design = Design::from_config_with_dir(&config_path, "prod", Some(project_dir))
+        .map_err(|e| format!("dbd config load failed: {e}"))?;
+    tracing::debug!(entities = design.entities().len(), "dbd design loaded");
+
+    // The daemon deploys the `default` scope (everything EXCEPT the `dojo`
+    // service schema, which only `sensei-dojo` materializes). resolve_scope(None)
+    // returns the `default` scope when one is defined in design.yaml.
+    let scope = design
+        .resolve_scope(None, None)
+        .map_err(|e| format!("dbd scope resolution failed: {e}"))?;
+
+    let adapter = PostgresAdapter::new(db_url, "sensei")
+        .await
+        .map_err(|e| format!("dbd database connection failed: {e}"))?;
+
+    // Converge the schema, then import the seed data. `apply` alone creates
+    // what is missing but never ALTERs what an older release left — an enum
+    // that gained a value stayed at the old shape on every upgraded install, and
+    // the seed that used the value failed the import (0.11 → 0.12). So:
+    //   1. plan the reconcile; when it drops data, copy the tables it alters out
+    //      and drop the views that read them (views hold no rows);
+    //   2. apply — creates what is missing and every view and function at this
+    //      release's definition, those views included;
+    //   3. reconcile with allow_destructive — ALTERs tables and enums to the
+    //      design. Whole tables are never pruned here;
+    //   4. import the seed.
+    // Reconcile alters tables before it re-applies views, and `create or
+    // replace view` cannot drop a view's column, so without step 1 a column an
+    // old view read could not be dropped (0.11's views read folders.project_id).
+    // Each phase surfaces per-item failures as a hard Err.
+    let schema_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let import_failures: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let preview = design
+        .reconcile(
+            &adapter,
+            true,
+            true,
+            false,
+            Some(&scope),
+            step_progress("reconcile plan", &schema_failures),
+        )
+        .await
+        .map_err(|e| format!("dbd reconcile plan failed: {e}"))?;
+    surface_step_failures("reconcile plan", &schema_failures)?;
+    if preview.destructive {
+        let tables = tables_among(&design, preview.altered.iter().map(|s| s.entity_name.as_str()));
+        let saved = back_up_tables(db_url, &tables, backup_dir)?;
+        tracing::warn!(backup = %saved.display(), ?tables, "the schema drops data the design no longer declares; backed up first");
+        drop_views_reading(db_url, &tables)?;
+    }
+
+    tracing::info!("dbd phase: apply");
+    design
+        .apply(&adapter, None, false, Some(&scope), step_progress("apply", &schema_failures))
+        .await
+        .map_err(|e| format!("dbd apply failed: {e}"))?;
+    surface_step_failures("apply", &schema_failures)?;
+
+    tracing::info!("dbd phase: reconcile");
+    let plan = design
+        .reconcile(
+            &adapter,
+            false,
+            true,
+            false,
+            Some(&scope),
+            step_progress("reconcile", &schema_failures),
+        )
+        .await
+        .map_err(|e| format!("dbd reconcile failed: {e}"))?;
+    surface_step_failures("reconcile", &schema_failures)?;
+    for warning in &plan.warnings {
+        tracing::warn!(dbd_step = "reconcile", warning, "reconcile advisory");
+    }
+
+    tracing::info!("dbd phase: import_data");
+    design
+        .import_data(&adapter, None, false, Some(&scope), step_progress("import", &import_failures))
+        .await
+        .map_err(|e| format!("dbd import failed: {e}"))?;
+    surface_step_failures("import", &import_failures)?;
+
+    tracing::info!("dbd deploy complete");
+    Ok(())
+}
+
+/// The names among `altered` the design declares as tables: a plan also alters
+/// enums, and only a table holds rows to copy.
+fn tables_among<'a>(design: &Design, altered: impl Iterator<Item = &'a str>) -> Vec<&'a str> {
+    altered
+        .filter(|name| {
+            design
+                .entities()
+                .iter()
+                .any(|e| e.entity_type == EntityType::Table && e.qualified_key() == *name)
+        })
+        .collect()
+}
+
+/// Copy each of `tables` (`schema.table`) to `<backup_dir>/<UTC time>/<table>.csv`
+/// with psql's `\copy` — client-side, so it works whatever the server's major
+/// version. Returns the directory written. Any failure is an Err, and the
+/// caller does not run the destructive plan without its backup.
+fn back_up_tables(db_url: &str, tables: &[&str], backup_dir: &Path) -> Result<PathBuf, String> {
+    let dir = backup_dir.join(chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string());
+    std::fs::create_dir_all(&dir).map_err(|e| format!("backup dir {}: {e}", dir.display()))?;
+    for table in tables {
+        let file = dir.join(format!("{table}.csv"));
+        let copy = format!(
+            "\\copy {} to '{}' with (format csv, header)",
+            quoted_relation(table),
+            file.display().to_string().replace('\'', "''")
+        );
+        run_psql(db_url, &copy).map_err(|e| {
+            format!("backing up {table} before a destructive schema change failed: {e}")
+        })?;
+    }
+    Ok(dir)
+}
+
+/// Drop every view that reads one of `tables`, and what depends on those views
+/// (cascade), so the reconcile after can drop a column they read. The apply
+/// that follows recreates each one the design declares.
+fn drop_views_reading(db_url: &str, tables: &[&str]) -> Result<(), String> {
+    if tables.is_empty() {
+        return Ok(());
+    }
+    // Each table as a regclass literal: its quoted name inside a SQL string.
+    let relations = tables
+        .iter()
+        .map(|t| format!("'{}'", quoted_relation(t).replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "do $$ declare v text; begin \
+           for v in select distinct format('%I.%I', vn.nspname, vc.relname) \
+               from pg_depend d \
+               join pg_rewrite r on r.oid = d.objid \
+               join pg_class vc on vc.oid = r.ev_class and vc.relkind = 'v' \
+               join pg_namespace vn on vn.oid = vc.relnamespace \
+              where d.refobjid = any(array[{relations}]::regclass[]) and vc.oid <> d.refobjid \
+           loop execute 'drop view if exists ' || v || ' cascade'; end loop; end $$"
+    );
+    run_psql(db_url, &sql).map_err(|e| {
+        format!(
+            "dropping the views that read {tables:?} before a destructive schema change failed: {e}"
+        )
+    })
+}
+
+/// Run one command through psql, stopping on its first error; the Err is
+/// psql's own message.
+fn run_psql(db_url: &str, command: &str) -> Result<(), String> {
+    let out = crate::util::command_for("psql")?
+        .args([db_url, "-v", "ON_ERROR_STOP=1", "-c", command])
+        .output()
+        .map_err(|e| format!("could not run psql: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// `schema.table` as a quoted SQL identifier pair.
+fn quoted_relation(name: &str) -> String {
+    name.split('.')
+        .map(|part| format!("\"{}\"", part.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+/// The Progress a deploy phase reports through: each step logged, each failed
+/// step collected into `failures` for [`surface_step_failures`].
+#[allow(clippy::type_complexity)] // three closure types, named by Progress's own parameters
+fn step_progress<T>(
+    step: &'static str,
+    failures: &Arc<Mutex<Vec<String>>>,
+) -> Progress<impl FnMut(&str), impl FnMut(&str, Option<&str>), impl FnMut(T)> {
+    let failures = failures.clone();
+    Progress {
+        on_start: move |desc: &str| tracing::debug!(dbd_step = step, desc, "starting"),
+        on_done: move |desc: &str, err: Option<&str>| match err {
+            Some(e) => {
+                tracing::warn!(dbd_step = step, desc, error = e, "failed");
+                failures.lock().expect("dbd-failure mutex poisoned").push(format!("{desc}: {e}"));
+            }
+            None => tracing::debug!(dbd_step = step, desc, "done"),
+        },
+        on_complete: move |_summary: T| tracing::info!(dbd_step = step, "complete"),
+    }
+}
+
+/// Fold per-item failures captured from dbd's `reconcile`/`import_data` Progress
 /// callbacks into one hard error naming the offending item(s) — so a partial
 /// deploy surfaces its cause instead of passing silently.
 fn surface_step_failures(phase: &str, failures: &Arc<Mutex<Vec<String>>>) -> Result<(), String> {
@@ -238,6 +358,15 @@ pub fn setup(db_name: &str, app_version: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_tables_a_plan_alters_are_backed_up_not_its_enums() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../database");
+        let design =
+            Design::from_config_with_dir(&dir.join("design.yaml"), "prod", Some(&dir)).unwrap();
+        let altered = ["sensei.scan_skip_reason", "sensei.folders", "sensei.task_execution_kind"];
+        assert_eq!(tables_among(&design, altered.into_iter()), ["sensei.folders"]);
+    }
 
     #[test]
     fn database_exists_parses_psql_output() {
