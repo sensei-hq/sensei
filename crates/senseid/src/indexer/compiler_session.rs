@@ -24,10 +24,12 @@ const COMPILE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 *
 /// How long the build tool may take to name a package's project.
 const LOCATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// One compiled project: its root and what its compiler resolved.
+/// One compiled project: its root, what its compiler resolved, and the state
+/// of the sources it was compiled from.
 pub struct Project {
     pub root: PathBuf,
     pub index: CompilerIndex,
+    pub fingerprint: Fingerprint,
 }
 
 type Shared<T> = Arc<tokio::sync::OnceCell<Result<Arc<T>, String>>>;
@@ -63,6 +65,8 @@ pub struct CompilerSessions {
     compiled: Mutex<HashMap<Key, Compiles>>,
     /// Definition files read back through their adapters, since the last compile.
     declared: Mutex<HashMap<PathBuf, Result<Arc<FileFacts>, Reason>>>,
+    /// project root → its sources' state as last looked at, and when.
+    looked: Mutex<HashMap<Key, (std::time::Instant, Fingerprint)>>,
 }
 
 impl CompilerSessions {
@@ -75,7 +79,51 @@ impl CompilerSessions {
             located: Mutex::new(HashMap::new()),
             compiled: Mutex::new(HashMap::new()),
             declared: Mutex::new(HashMap::new()),
+            looked: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Whether `project` still describes its sources — nothing its compiler
+    /// reads changed since it was compiled. A file placed against a compile
+    /// that is not current would be placed against positions and declarations
+    /// that moved. The sources are looked at once per [`LOOK_AGAIN`] per
+    /// project, however many file tasks ask.
+    pub async fn is_current(
+        &self,
+        engine: &'static dyn CompilerEngine,
+        project: &Project,
+    ) -> Result<bool, String> {
+        let key = (engine.manifest(), project.root.clone());
+        let recent = self
+            .looked
+            .lock()
+            .map_err(|_| poisoned())?
+            .get(&key)
+            .filter(|(at, _)| at.elapsed() < LOOK_AGAIN)
+            .map(|(_, seen)| seen.clone());
+        let now = match recent {
+            Some(seen) => seen,
+            None => {
+                let seen = fingerprint(&project.root, engine.sources()).await?;
+                self.looked
+                    .lock()
+                    .map_err(|_| poisoned())?
+                    .insert(key, (std::time::Instant::now(), seen.clone()));
+                seen
+            }
+        };
+        Ok(now == project.fingerprint)
+    }
+
+    /// [`Self::is_current`], looking at the sources now.
+    #[cfg(test)]
+    pub async fn is_current_now(
+        &self,
+        engine: &'static dyn CompilerEngine,
+        project: &Project,
+    ) -> Result<bool, String> {
+        self.looked.lock().map_err(|_| poisoned())?.clear();
+        self.is_current(engine, project).await
     }
 
     pub fn repo_root(&self) -> &Path {
@@ -151,7 +199,7 @@ impl CompilerSessions {
         engine: &'static dyn CompilerEngine,
         root: &Path,
     ) -> Result<Arc<Project>, String> {
-        let fingerprint = fingerprint(root).await?;
+        let fingerprint = fingerprint(root, engine.sources()).await?;
         let key = (engine.manifest(), root.to_path_buf());
         let (cell, turn) = self.compile_cell(key.clone(), &fingerprint)?;
         let project = cell
@@ -239,9 +287,13 @@ impl CompilerSessions {
     }
 }
 
+/// How long a look at a project's sources stands for its current state.
+const LOOK_AGAIN: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// The state of the sources under `root`: every file the repository does not
-/// ignore, by path, length and modification time.
-async fn fingerprint(root: &Path) -> Result<Fingerprint, String> {
+/// ignore whose extension is one of `sources`, by path, length and
+/// modification time.
+async fn fingerprint(root: &Path, sources: &'static [&'static str]) -> Result<Fingerprint, String> {
     let root = root.to_path_buf();
     tokio::task::spawn_blocking(move || {
         use sha2::Digest;
@@ -249,6 +301,14 @@ async fn fingerprint(root: &Path) -> Result<Fingerprint, String> {
         for entry in ignore::WalkBuilder::new(&root).build() {
             let entry = entry.map_err(|e| format!("cannot walk {root:?}: {e}"))?;
             if !entry.file_type().is_some_and(|t| t.is_file()) {
+                continue;
+            }
+            let read = entry
+                .path()
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| sources.contains(&e));
+            if !read {
                 continue;
             }
             let meta = entry.metadata().map_err(|e| format!("cannot read {entry:?}: {e}"))?;
@@ -329,7 +389,7 @@ async fn compile(
         }
     }
     let index = merged.ok_or_else(|| "the engine declares no configuration".to_string())?;
-    Ok(Project { root: root.to_path_buf(), index })
+    Ok(Project { root: root.to_path_buf(), index, fingerprint: fingerprint.to_string() })
 }
 
 /// Run an adapter's invocation, bounded by `timeout`; its stdout on success.
@@ -432,6 +492,7 @@ mod tests {
         let project = Project {
             root: root.to_path_buf(),
             index: CompilerIndex::from_index(&scip::types::Index::new()),
+            fingerprint: String::new(),
         };
         let decl = sessions.declarations(&project);
         assert_eq!(
@@ -467,6 +528,7 @@ mod tests {
         let project = Project {
             root: root.to_path_buf(),
             index: CompilerIndex::from_index(&scip::types::Index::new()),
+            fingerprint: String::new(),
         };
         let got = sessions.declarations(&project).declared_at("src/lib.rs", 2, "listener").unwrap();
         assert!(got.as_str().ends_with("listener·listener·item"), "got {got:?}");
@@ -499,6 +561,9 @@ mod tests {
                 args: vec!["-c".into(), "echo sh".into()],
                 cwd: root.into(),
             }
+        }
+        fn sources(&self) -> &'static [&'static str] {
+            &["rs", "toml"]
         }
         fn configs(&self) -> &'static [&'static str] {
             &["{}"]
@@ -553,6 +618,35 @@ mod tests {
         std::fs::write(root.join("lib.rs"), "pub fn a() {}\npub fn b() {}\n").unwrap();
         sessions.project_for(engine, &root).await.expect("recompiles");
         assert_eq!(runs(), 2, "a changed project is compiled again");
+    }
+
+    /// **A COMPILE DESCRIBES THE SOURCES IT SAW, AND KNOWS WHEN THEY MOVED ON.**
+    /// A file edited after its project was compiled was placed against the old
+    /// answers and marked parsed — 226 calls of an edited file left
+    /// `declaration_not_found`, for good. `is_current` says whether the
+    /// project still is what was compiled; only the sources its compiler reads
+    /// count, so a note beside the code does not make it stale.
+    #[tokio::test]
+    async fn a_compile_is_current_until_a_source_it_read_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        std::fs::write(root.join("lib.rs"), "pub fn a() {}\n").unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let engine: &'static Counting = Box::leak(Box::new(Counting {
+            counter: elsewhere.path().join("compiles.txt"),
+            pause: "0",
+        }));
+        let sessions = CompilerSessions::new(&root);
+        let project = sessions.project_for(engine, &root).await.expect("compiles");
+        assert_eq!(sessions.is_current(engine, &project).await, Ok(true));
+
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write(root.join("NOTES.md"), "not a source\n").unwrap();
+        assert_eq!(sessions.is_current_now(engine, &project).await, Ok(true), "not a source");
+
+        std::fs::write(root.join("lib.rs"), "pub fn a() {}\npub fn b() {}\n").unwrap();
+        assert_eq!(sessions.is_current_now(engine, &project).await, Ok(false), "a source moved on");
     }
 
     /// **A NEWER COMPILE NEVER BLANKS AN OLDER ONE, NOR RUNS BESIDE IT.** While
@@ -750,6 +844,9 @@ mod tests {
                 args: vec!["-c".into(), "echo sh".into()],
                 cwd: root.into(),
             }
+        }
+        fn sources(&self) -> &'static [&'static str] {
+            &["rs", "toml"]
         }
         fn configs(&self) -> &'static [&'static str] {
             &["{}"]

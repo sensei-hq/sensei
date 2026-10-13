@@ -48,6 +48,11 @@ impl CompilerEngine for TsEngine {
         }
     }
 
+    /// Scripts, components, and the JSON that configures them.
+    fn sources(&self) -> &'static [&'static str] {
+        &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "svelte", "json"]
+    }
+
     /// One configuration: the driver reads the project's own `tsconfig.json`,
     /// so the file the task layer writes for it carries nothing.
     fn configs(&self) -> &'static [&'static str] {
