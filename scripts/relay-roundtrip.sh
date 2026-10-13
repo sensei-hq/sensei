@@ -8,9 +8,9 @@
 #   → phone POST reply (JWT) → daemon GET inbox?since=<cursor> re-surfaces the
 #   answered row (proving the relay_inbox seq trigger + cursor).
 #
-# DAEMON_AUTH=session runs the daemon's calls with the person's JWT instead of
-# the device token (#236 step 4) — the policies decide — and adds the other half
-# of the done gate: a signed-in NON-member is refused (403) on the daemon routes.
+# The daemon's calls present the person's JWT (#236 step 4) — the policies
+# decide. The other half of the done gate: a signed-in NON-member is refused
+# (403) on the daemon routes, and a retired device token is refused (401).
 #
 # Run from the repo (sensei/). Requires: supabase running, dojo Worker running
 # (cd dojo && PUBLIC_SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… bun run dev), jq.
@@ -18,8 +18,6 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit
 
 WORKER=${WORKER:-http://localhost:5173}
-TESTTOKEN=${TESTTOKEN:-relay-dev-device-token}
-DAEMON_AUTH=${DAEMON_AUTH:-device}   # device | session
 EMAIL=${EMAIL:-relay-dev@local.test}
 PASS=${PASS:-relaytest123}
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -37,8 +35,7 @@ USER_ID=$(echo "$USER_JSON" | jq -r '.id // empty')
 [ -n "$USER_ID" ] || fail "no auth user id ($USER_JSON)"
 echo "   user_id=$USER_ID"
 
-HASH=$(printf '%s' "$TESTTOKEN" | shasum -a 256 | cut -d' ' -f1)
-echo "== seed: tenant + membership (device_token_hash=$HASH) =="
+echo "== seed: tenant + membership =="
 psql "$DBURL" -v ON_ERROR_STOP=1 <<SQL || fail "seed sql"
 -- memberships.user_id holds a PRINCIPAL id, not the Supabase login id (spec
 -- dojo-auth-provisioning §VIII.2): the login maps to a principal first.
@@ -48,11 +45,11 @@ on conflict (auth_user_id) do nothing;
 insert into dojo.tenants (key, origin, slug, name, dojo_url)
 values ('personal/dev','personal','dev','Dev (personal)','$API')
 on conflict (key) do nothing;
-insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via, device_token_hash)
-select t.id, p.id, 'admin', 'personal', 'device_code', '$HASH'
+insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via)
+select t.id, p.id, 'admin', 'personal', 'github_oauth'
 from dojo.tenants t, dojo.principals p
 where t.key='personal/dev' and p.auth_user_id = '$USER_ID'
-on conflict (tenant_id, user_id) do update set device_token_hash = excluded.device_token_hash;
+on conflict (tenant_id, user_id) do nothing;
 -- The API roles' reach into dojo comes with the deploy now
 -- (database/apply/after/dojo_api_grants.sql), not from this seed.
 SQL
@@ -65,14 +62,8 @@ JWT=$(curl -s -X POST "$API/auth/v1/token?grant_type=password" \
 echo "   jwt len=${#JWT}"
 
 RUN="$(uuidgen | tr '[:upper:]' '[:lower:]')"   # relay_sessions.run_id is a uuid (the daemon's activity.runs.id)
-AUTH_DEV="Authorization: Bearer $TESTTOKEN"
 AUTH_JWT="Authorization: Bearer $JWT"
-case "$DAEMON_AUTH" in
-  device) AUTH_DAEMON="$AUTH_DEV" ;;
-  session) AUTH_DAEMON="$AUTH_JWT" ;;
-  *) fail "DAEMON_AUTH must be device or session" ;;
-esac
-echo "   daemon presents: $DAEMON_AUTH"
+AUTH_DAEMON="$AUTH_JWT"   # the daemon presents the person's session
 CT='content-type: application/json'
 
 # The vite DEV server compiles a route on first hit and can drop the body on that
@@ -188,41 +179,46 @@ echo "   $P2"
 echo "$P2" | jq -e '.items[] | select(.id=="'"$INBOX_ID"'" and .status=="answered" and .reply.verdict=="approve" and .run_id=="'"$RUN"'")' >/dev/null \
   || fail "answer NOT re-surfaced past cursor $CURSOR, or run_id missing ($P2)"
 
-if [ "$DAEMON_AUTH" = session ]; then
-  echo "== 6. a signed-in NON-member is refused on the daemon routes (403) =="
-  OUT_EMAIL="relay-outsider@sensei.test"
-  curl -s -o /dev/null -X POST "$API/auth/v1/admin/users" \
-    -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "$CT" \
-    -d "{\"email\":\"$OUT_EMAIL\",\"password\":\"$PASS\",\"email_confirm\":true}"
-  OUT_JWT=$(curl -s -X POST "$API/auth/v1/token?grant_type=password" -H "apikey: $ANON_KEY" -H "$CT" \
-    -d "{\"email\":\"$OUT_EMAIL\",\"password\":\"$PASS\"}" | jq -r '.access_token // empty')
-  [ -n "$OUT_JWT" ] || fail "no outsider JWT"
-  for route in "POST relay/session {\"run_id\":\"$RUN\"}" "POST relay/inbox {\"run_id\":\"$RUN\",\"kind\":\"chat\"}" \
-               "GET relay/inbox?since=0" "POST artifacts {}" "GET artifacts" "GET rules" "GET rules/resolved?ns=personal:dev"; do
-    set -- $route; M=$1; R=$2; B=${3:-}
-    if [ -n "$B" ]; then CODE=$(curl -s -o /dev/null -w '%{http_code}' -X "$M" "$WORKER/v1/t/personal/dev/$R" -H "Authorization: Bearer $OUT_JWT" -H "$CT" -d "$B")
-    else CODE=$(curl -s -o /dev/null -w '%{http_code}' -X "$M" "$WORKER/v1/t/personal/dev/$R" -H "Authorization: Bearer $OUT_JWT"); fi
-    echo "   $M $R → $CODE"; [ "$CODE" = 403 ] || fail "non-member got $CODE on $M $R"
-  done
+echo "== 6. a retired device token is refused on the daemon routes (401) =="
+for route in "GET relay/inbox?since=0" "GET artifacts" "GET rules"; do
+  set -- $route; M=$1; R=$2
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' -X "$M" "$WORKER/v1/t/personal/dev/$R" -H "Authorization: Bearer relay-dev-device-token")
+  echo "   $M $R → $CODE"; [ "$CODE" = 401 ] || fail "a device token got $CODE on $M $R"
+done
 
-  echo "== 7. the member's daemon publishes and pulls artifacts and rules as them =="
-  SIG=$(printf '%s' "roundtrip-$RUN" | shasum -a 256 | cut -d' ' -f1)
-  A=$(req POST "$WORKER/v1/t/personal/dev/artifacts" "$AUTH_DAEMON" \
-    "{\"signature\":\"$SIG\",\"tenant_key\":\"personal/dev\",\"kind\":\"principle\",\"title\":\"Round-trip\",\"body\":\"b\",\"payload\":{\"kind\":\"principle\"},\"scope\":{},\"attribution\":{\"mode\":\"anonymous\"}}")
-  echo "   artifact: $A"; ART_ID=$(echo "$A" | jq -r '.id // empty'); [ -n "$ART_ID" ] || fail "artifact publish ($A)"
-  AP=$(req GET "$WORKER/v1/t/personal/dev/artifacts?since=0" "$AUTH_DAEMON")
-  echo "$AP" | jq -e '.artifacts[] | select(.id=="'"$ART_ID"'")' >/dev/null || fail "own artifact not pulled ($AP)"
-  RH=$(printf '%s' "rule-$RUN" | shasum -a 256 | cut -d' ' -f1)
-  RP=$(req POST "$WORKER/v1/t/personal/dev/rules" "$AUTH_DAEMON" \
-    "{\"content_hash\":\"$RH\",\"scope_key\":\"user\",\"namespace_slug\":\"roundtrip-$RUN\",\"namespace_name\":\"Round-trip\",\"rule_type\":\"convention\",\"title\":\"Round-trip rule\",\"content\":\"c\",\"enforcement\":\"recommended\"}")
-  echo "   rule: $RP"; RULE_ID=$(echo "$RP" | jq -r '.id // empty'); [ -n "$RULE_ID" ] || fail "rule publish ($RP)"
-  RL=$(req GET "$WORKER/v1/t/personal/dev/rules?since=0" "$AUTH_DAEMON")
-  echo "$RL" | jq -e '.rules[] | select(.id=="'"$RULE_ID"'" and .namespace_slug=="roundtrip-'"$RUN"'" and .scope_key=="user")' >/dev/null \
-    || fail "own rule not pulled with its namespace ($RL)"
-  DC=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$WORKER/v1/t/personal/dev/rules/$RULE_ID" -H "$AUTH_DAEMON")
-  echo "   retract → $DC"; [ "$DC" = 204 ] || fail "rule retract ($DC)"
-  RR=$(req GET "$WORKER/v1/t/personal/dev/rules/resolved?ns=user:x" "$AUTH_DAEMON")
-  echo "   resolved: $RR"; echo "$RR" | jq -e '.rules | type=="array"' >/dev/null || fail "rules/resolved ($RR)"
-fi
+echo "== 7. a signed-in NON-member is refused on the daemon routes (403) =="
+OUT_EMAIL="relay-outsider@sensei.test"
+curl -s -o /dev/null -X POST "$API/auth/v1/admin/users" \
+  -H "apikey: $SERVICE_ROLE_KEY" -H "Authorization: Bearer $SERVICE_ROLE_KEY" -H "$CT" \
+  -d "{\"email\":\"$OUT_EMAIL\",\"password\":\"$PASS\",\"email_confirm\":true}"
+OUT_JWT=$(curl -s -X POST "$API/auth/v1/token?grant_type=password" -H "apikey: $ANON_KEY" -H "$CT" \
+  -d "{\"email\":\"$OUT_EMAIL\",\"password\":\"$PASS\"}" | jq -r '.access_token // empty')
+[ -n "$OUT_JWT" ] || fail "no outsider JWT"
+for route in "POST relay/session {\"run_id\":\"$RUN\"}" "POST relay/inbox {\"run_id\":\"$RUN\",\"kind\":\"chat\"}" \
+             "GET relay/inbox?since=0" "POST artifacts {}" "GET artifacts" "GET rules" "GET rules/resolved?ns=personal:dev"; do
+  set -- $route; M=$1; R=$2; B=${3:-}
+  if [ -n "$B" ]; then CODE=$(curl -s -o /dev/null -w '%{http_code}' -X "$M" "$WORKER/v1/t/personal/dev/$R" -H "Authorization: Bearer $OUT_JWT" -H "$CT" -d "$B")
+  else CODE=$(curl -s -o /dev/null -w '%{http_code}' -X "$M" "$WORKER/v1/t/personal/dev/$R" -H "Authorization: Bearer $OUT_JWT"); fi
+  echo "   $M $R → $CODE"; [ "$CODE" = 403 ] || fail "non-member got $CODE on $M $R"
+done
+
+echo "== 8. the member's daemon publishes and pulls artifacts and rules as them =="
+SIG=$(printf '%s' "roundtrip-$RUN" | shasum -a 256 | cut -d' ' -f1)
+A=$(req POST "$WORKER/v1/t/personal/dev/artifacts" "$AUTH_DAEMON" \
+  "{\"signature\":\"$SIG\",\"tenant_key\":\"personal/dev\",\"kind\":\"principle\",\"title\":\"Round-trip\",\"body\":\"b\",\"payload\":{\"kind\":\"principle\"},\"scope\":{},\"attribution\":{\"mode\":\"anonymous\"}}")
+echo "   artifact: $A"; ART_ID=$(echo "$A" | jq -r '.id // empty'); [ -n "$ART_ID" ] || fail "artifact publish ($A)"
+AP=$(req GET "$WORKER/v1/t/personal/dev/artifacts?since=0" "$AUTH_DAEMON")
+echo "$AP" | jq -e '.artifacts[] | select(.id=="'"$ART_ID"'")' >/dev/null || fail "own artifact not pulled ($AP)"
+RH=$(printf '%s' "rule-$RUN" | shasum -a 256 | cut -d' ' -f1)
+RP=$(req POST "$WORKER/v1/t/personal/dev/rules" "$AUTH_DAEMON" \
+  "{\"content_hash\":\"$RH\",\"scope_key\":\"user\",\"namespace_slug\":\"roundtrip-$RUN\",\"namespace_name\":\"Round-trip\",\"rule_type\":\"convention\",\"title\":\"Round-trip rule\",\"content\":\"c\",\"enforcement\":\"recommended\"}")
+echo "   rule: $RP"; RULE_ID=$(echo "$RP" | jq -r '.id // empty'); [ -n "$RULE_ID" ] || fail "rule publish ($RP)"
+RL=$(req GET "$WORKER/v1/t/personal/dev/rules?since=0" "$AUTH_DAEMON")
+echo "$RL" | jq -e '.rules[] | select(.id=="'"$RULE_ID"'" and .namespace_slug=="roundtrip-'"$RUN"'" and .scope_key=="user")' >/dev/null \
+  || fail "own rule not pulled with its namespace ($RL)"
+DC=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$WORKER/v1/t/personal/dev/rules/$RULE_ID" -H "$AUTH_DAEMON")
+echo "   retract → $DC"; [ "$DC" = 204 ] || fail "rule retract ($DC)"
+RR=$(req GET "$WORKER/v1/t/personal/dev/rules/resolved?ns=user:x" "$AUTH_DAEMON")
+echo "   resolved: $RR"; echo "$RR" | jq -e '.rules | type=="array"' >/dev/null || fail "rules/resolved ($RR)"
 
 echo "ROUND-TRIP OK ✓ — gate raised, answered from the phone plane, re-surfaced to the daemon poll via the seq trigger."

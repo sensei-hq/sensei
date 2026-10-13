@@ -4,16 +4,16 @@
 //   DELETE /v1/t/{origin}/{org}/rules/{id}   → tombstone/retract
 //
 // The in-Worker port of dojo-mind's `publish_rule` / `pull_rules` /
-// `retract_rule` (api.rs). Auth is `resolveTenantCaller`: the person's session,
-// or the legacy device token for one release (#236 step 4).
+// `retract_rule` (api.rs). Auth is `resolveTenantCaller`: the person's session
+// (#236 step 4).
 // This spec covers the HANDLER wiring (auth floor, body validation, error
 // mapping, audit call, status codes) with the `rules-data` store fully mocked;
 // the store's own SQL-shape logic is covered by `rules-data.spec.ts`. No live
 // Worker/DB (mirrors `relay/push/push-routes.spec.ts`).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// A member presenting their session (the default), and the same member on the
-// legacy device token (no session).
+// A member presenting their session (the default), and the same member with
+// no session — refused since #236 step 4e.
 const caller = {
 	userId: '11111111-1111-1111-1111-111111111111',
 	membershipId: 'mem-1',
@@ -39,7 +39,6 @@ const mocks = vi.hoisted(() => ({
 	upsertRuleNamespace: vi.fn(),
 	publishRule: vi.fn(),
 	pullRules: vi.fn(),
-	pullRulesAsSystem: vi.fn(),
 	retractRule: vi.fn(),
 	recordRulesAudit: vi.fn(),
 	parsePublishedRule: vi.fn()
@@ -49,7 +48,6 @@ const {
 	upsertRuleNamespace,
 	publishRule,
 	pullRules,
-	pullRulesAsSystem,
 	retractRule,
 	recordRulesAudit,
 	parsePublishedRule
@@ -74,7 +72,6 @@ vi.mock('$lib/server/rules-data', () => ({
 	upsertRuleNamespace: mocks.upsertRuleNamespace,
 	publishRule: mocks.publishRule,
 	pullRules: mocks.pullRules,
-	pullRulesAsSystem: mocks.pullRulesAsSystem,
 	retractRule: mocks.retractRule,
 	recordRulesAudit: mocks.recordRulesAudit,
 	RulesError
@@ -119,7 +116,6 @@ beforeEach(() => {
 	upsertRuleNamespace.mockClear().mockResolvedValue('ns-1');
 	publishRule.mockClear().mockResolvedValue({ id: 'rule-1', version: 1, seq: 7 });
 	pullRules.mockClear().mockResolvedValue({ rules: [], cursor: 0 });
-	pullRulesAsSystem.mockClear().mockResolvedValue({ rules: [], cursor: 0 });
 	retractRule.mockClear().mockResolvedValue(true);
 	recordRulesAudit.mockClear();
 	parsePublishedRule.mockClear().mockImplementation((body) =>
@@ -170,10 +166,11 @@ describe('POST /v1/t/{origin}/{org}/rules — publish', () => {
 		expect(recordRulesAudit.mock.calls[0][0]).toBe(SYSTEM);
 	});
 
-	it('with a legacy device token, files the rule on the service role (the window)', async () => {
+	it('with no session is 401 — the service role never files the rule (#236 step 4e)', async () => {
 		resolveTenantCaller.mockResolvedValueOnce(deviceCaller);
-		await POST(ev('POST', RULE));
-		expect(publishRule.mock.calls[0][0]).toBe(SYSTEM);
+		const res = await POST(ev('POST', RULE));
+		expect(res.status).toBe(401);
+		expect(publishRule).not.toHaveBeenCalled();
 	});
 
 	it('400s a body missing required fields (parser returns null)', async () => {
@@ -237,13 +234,12 @@ describe('GET /v1/t/{origin}/{org}/rules?since= — pull', () => {
 	it('with the person\'s session, pulls through dojo.tenant_shared_rules as them', async () => {
 		await GET(ev('GET', undefined, { url: 'http://x/' }));
 		expect(pullRules.mock.calls[0][0]).toBe(SESSION);
-		expect(pullRulesAsSystem).not.toHaveBeenCalled();
 	});
 
-	it('with a legacy device token, pulls on the service role (the window)', async () => {
+	it('with no session is 401 — nothing is pulled (#236 step 4e)', async () => {
 		resolveTenantCaller.mockResolvedValueOnce(deviceCaller);
-		await GET(ev('GET', undefined, { url: 'http://x/?since=4' }));
-		expect(pullRulesAsSystem).toHaveBeenCalledWith(SYSTEM, caller.tenantId, 4);
+		const res = await GET(ev('GET', undefined, { url: 'http://x/?since=4' }));
+		expect(res.status).toBe(401);
 		expect(pullRules).not.toHaveBeenCalled();
 	});
 
@@ -280,6 +276,14 @@ describe('DELETE /v1/t/{origin}/{org}/rules/{id} — retract', () => {
 		await DELETE(ev('DELETE', undefined, { id: 'rule-1' }));
 		expect(retractRule.mock.calls[0][0]).toBe(SESSION);
 		expect(recordRulesAudit.mock.calls[0][0]).toBe(SYSTEM);
+	});
+
+	it('with no session is 401 — the service role never retracts (#236 step 4e)', async () => {
+		resolveTenantCaller.mockResolvedValueOnce({ ...deviceCaller, role: 'maintainer', access: 2 });
+		const res = await DELETE(ev('DELETE', undefined, { id: 'rule-1' }));
+		expect(res.status).toBe(401);
+		expect(retractRule).not.toHaveBeenCalled();
+		expect(recordRulesAudit).not.toHaveBeenCalled();
 	});
 
 	it('404s when no active row matched (store returns false)', async () => {

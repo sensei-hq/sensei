@@ -205,22 +205,6 @@ interface RuleRow {
 	namespace_name: string;
 }
 
-/** The legacy select's row: the rule with its namespace EMBEDDED (PostgREST
- *  FK-embed — an object, or defensively a one-element array). */
-type EmbeddedRuleRow = Omit<RuleRow, 'scope_key' | 'namespace_slug' | 'namespace_name'> & {
-	namespaces: { scope_key: string; slug: string; name: string } | { scope_key: string; slug: string; name: string }[] | null;
-};
-
-/** The `select` list for the legacy pull join (shared_rules columns + embedded namespace). */
-export const PULL_SELECT =
-	'id, seq, status, version, content_hash, rule_type, title, content, impact, enforcement, origin_repo, published_by, published_at, namespaces(scope_key, slug, name)';
-
-/** Normalize PostgREST's embed (object or one-element array) to the single row. */
-function embeddedNamespace(ns: EmbeddedRuleRow['namespaces']): { scope_key: string; slug: string; name: string } | null {
-	if (!ns) return null;
-	return Array.isArray(ns) ? (ns[0] ?? null) : ns;
-}
-
 /**
  * Shape a set of joined rows into a `PullResponse` and compute the cursor as
  * `max(seq)` (or `since` when the page is empty) — mirrors
@@ -268,30 +252,6 @@ export async function pullRules(
 	const { data, error } = await db.rpc('tenant_shared_rules', { p_tenant: tenantId, p_since: since });
 	if (error) throw new RulesError(500, error.message);
 	return shapePullResponse((data ?? []) as RuleRow[], since);
-}
-
-/**
- * The same pull for the legacy device token (the service role), during the one
- * release window of #236 step 4 — removed with the device token in 4e. The
- * route's membership check already scoped the caller to `tenantId`.
- */
-export async function pullRulesAsSystem(
-	db: DojoClient,
-	tenantId: string,
-	since: number
-): Promise<PullResponse> {
-	const { data, error } = await db
-		.from('shared_rules')
-		.select(PULL_SELECT)
-		.eq('tenant_id', tenantId)
-		.gt('seq', since)
-		.order('seq', { ascending: true });
-	if (error) throw new RulesError(500, error.message);
-	const rows = ((data ?? []) as unknown as EmbeddedRuleRow[]).map(({ namespaces, ...r }) => {
-		const ns = embeddedNamespace(namespaces);
-		return { ...r, scope_key: ns?.scope_key ?? '', namespace_slug: ns?.slug ?? '', namespace_name: ns?.name ?? '' };
-	});
-	return shapePullResponse(rows, since);
 }
 
 /**

@@ -32,7 +32,14 @@ function makeDb() {
 }
 const db = makeDb();
 
-const caller = { userId: 'user-1', tenantId: 't1', membershipId: 'mem-1', role: 'contributor', access: 1 };
+const caller = {
+	userId: 'user-1',
+	tenantId: 't1',
+	membershipId: 'mem-1',
+	role: 'contributor',
+	access: 1,
+	accessToken: 'jwt'
+};
 
 // The mocked send — asserted on, never actually sends.
 const sendMock = vi.fn(
@@ -41,6 +48,7 @@ const sendMock = vi.fn(
 
 vi.mock('$lib/server/dojo-supabase', () => ({
 	dojoDb: () => db.builder,
+	userDb: () => db.builder,
 	ACCESS: { member: 0, contributor: 1, maintainer: 2, lead: 3, admin: 4 }
 }));
 vi.mock('$lib/server/dojo-auth', () => ({

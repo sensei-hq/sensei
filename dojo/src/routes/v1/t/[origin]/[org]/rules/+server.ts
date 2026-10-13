@@ -1,21 +1,19 @@
 // POST/GET /v1/t/{origin}/{org}/rules — the tenant's shared-rules federation
 // (Plane A). The in-Worker port of dojo-mind's `publish_rule` / `pull_rules`
 // (api.rs). The daemon's `KnowledgeSource.url` points at this tenant path and
-// presents the person's session — or, for one release, its legacy device token
-// (`resolveTenantCaller`, #236 step 4). The wire shape matches
+// presents the person's session (`resolveTenantCaller`, #236 step 4). The wire shape matches
 // `dojo_protocol` (PublishResponse / PullResponse) so senseid's federation
 // client retargets with only a URL/auth swap. See
 // docs/plan/2026-07-23-retire-dojo-mind.md (D1 option a).
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
-import { callerDb, tenantCallerDb } from '$lib/server/caller-db';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantCaller, apiError, ACCESS } from '$lib/server/dojo-auth';
 import {
 	parsePublishedRule,
 	upsertRuleNamespace,
 	publishRule,
 	pullRules,
-	pullRulesAsSystem,
 	recordRulesAudit,
 	RulesError
 } from '$lib/server/rules-data';
@@ -34,7 +32,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
 		// authenticated caller, not the body — a publisher can't spoof who
 		// published a rule.
 		const namespaceId = await upsertRuleNamespace(dojoDb(), rule);
-		const resp = await publishRule(tenantCallerDb(caller), caller.tenantId, rule, caller.userId, namespaceId);
+		const resp = await publishRule(callerDb(caller), caller.tenantId, rule, caller.userId, namespaceId);
 		// Audit-write failures don't fail the (already committed) publish — but
 		// they are logged, never silently dropped (mirrors dojo-mind).
 		await recordRulesAudit(dojoDb(), caller.tenantId, 'publish', resp.id, caller.userId, {
@@ -57,12 +55,9 @@ export const GET: RequestHandler = async ({ params, request, url }) => {
 		const sinceRaw = url.searchParams.get('since');
 		const parsed = sinceRaw == null ? 0 : Number.parseInt(sinceRaw, 10);
 		const since = Number.isFinite(parsed) ? parsed : 0;
-		// The session pulls through dojo.tenant_shared_rules (it cannot read the
-		// namespaces to embed them); the legacy device token keeps its select for
-		// the window, removed with it in 4e.
-		const page = caller.accessToken
-			? await pullRules(callerDb(caller), caller.tenantId, since)
-			: await pullRulesAsSystem(dojoDb(), caller.tenantId, since);
+		// Through dojo.tenant_shared_rules: a session cannot read the namespaces
+		// to embed them.
+		const page = await pullRules(callerDb(caller), caller.tenantId, since);
 		return Response.json(page);
 	} catch (e) {
 		if (e instanceof Response) return e;
