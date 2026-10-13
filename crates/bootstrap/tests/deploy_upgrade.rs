@@ -4,7 +4,10 @@
 //! deploy onto an empty database never exercises.
 //!
 //! Each test makes its own scratch database on the `TEST_DATABASE_URL` server
-//! (default `sensei_test`'s, the monorepo's throwaway) and drops it after.
+//! (default `sensei_test`'s, the monorepo's throwaway) and drops it after. They
+//! are `#[ignore]`d because bootstrap's suite runs without Postgres elsewhere
+//! (the no-DB coverage job); `rust.yml` runs them by name with `--ignored`:
+//! `cargo test -p sensei-bootstrap --test deploy_upgrade -- --ignored`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -63,6 +66,7 @@ fn design_dir() -> PathBuf {
 }
 
 #[tokio::test]
+#[ignore = "needs Postgres — rust.yml runs these with --ignored"]
 async fn an_enum_an_older_release_created_gains_the_values_this_release_added() {
     let db = Scratch::new("enum");
     let backups = tempfile::tempdir().unwrap();
@@ -83,6 +87,7 @@ async fn an_enum_an_older_release_created_gains_the_values_this_release_added() 
 }
 
 #[tokio::test]
+#[ignore = "needs Postgres — rust.yml runs these with --ignored"]
 async fn a_fresh_install_gets_the_whole_schema_and_its_seed() {
     let db = Scratch::new("fresh");
     let backups = tempfile::tempdir().unwrap();
@@ -103,6 +108,7 @@ async fn a_fresh_install_gets_the_whole_schema_and_its_seed() {
 }
 
 #[tokio::test]
+#[ignore = "needs Postgres — rust.yml runs these with --ignored"]
 async fn a_column_the_design_dropped_is_backed_up_before_it_goes() {
     let db = Scratch::new("drop");
     let backups = tempfile::tempdir().unwrap();
@@ -140,6 +146,7 @@ async fn a_column_the_design_dropped_is_backed_up_before_it_goes() {
 }
 
 #[tokio::test]
+#[ignore = "needs Postgres — rust.yml runs these with --ignored"]
 async fn a_deploy_that_drops_nothing_writes_no_backup() {
     let db = Scratch::new("nodrop");
     let backups = tempfile::tempdir().unwrap();
@@ -188,6 +195,7 @@ fn small_design(dir: &Path, legacy: bool) {
 }
 
 #[tokio::test]
+#[ignore = "needs Postgres — rust.yml runs these with --ignored"]
 async fn a_column_an_older_release_s_views_read_is_dropped_once_they_are_replaced() {
     let db = Scratch::new("viewdep");
     let backups = tempfile::tempdir().unwrap();

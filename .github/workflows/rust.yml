@@ -180,3 +180,9 @@ jobs:
 
       - name: Test the rest of the workspace
         run: cargo test --workspace --exclude senseid
+      # The install's schema deploy against real databases: an older release's
+      # shape, a fresh install, a destructive upgrade's backup. #[ignore]d so
+      # bootstrap stays runnable without Postgres (the no-DB coverage job); run
+      # here, by name, where Postgres is.
+      - name: Test the schema deploy (bootstrap, needs Postgres)
+        run: cargo test -p sensei-bootstrap --test deploy_upgrade -- --ignored
