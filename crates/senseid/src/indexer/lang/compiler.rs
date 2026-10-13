@@ -40,7 +40,19 @@ pub struct Definition {
 #[derive(Debug)]
 pub struct CompilerIndex {
     by_file: HashMap<String, Vec<Occurrence>>,
+    /// Where each file names a LOCAL — kept apart, because a local is never a
+    /// node, and a call to one is no edge at all.
+    locals: HashMap<String, Vec<Occurrence>>,
     definitions: HashMap<String, Definition>,
+}
+
+/// What the compiler resolved at one call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Answer<'a> {
+    Symbol(&'a str),
+    /// A binding inside a body — a closure in a `let`. No node, so no edge.
+    Local,
+    Nothing,
 }
 
 /// SCIP's `Definition` role bit.
@@ -56,12 +68,18 @@ impl CompilerIndex {
     }
 
     pub fn from_index(index: &scip::types::Index) -> Self {
-        let mut out = Self { by_file: HashMap::new(), definitions: HashMap::new() };
+        let mut out =
+            Self { by_file: HashMap::new(), locals: HashMap::new(), definitions: HashMap::new() };
         for doc in &index.documents {
             let mut occurrences = Vec::with_capacity(doc.occurrences.len());
+            let mut locals = Vec::new();
             for occ in &doc.occurrences {
+                if occ.symbol.is_empty() {
+                    continue;
+                }
                 // `local N` names a binding inside one body; it is never a node.
-                if occ.symbol.is_empty() || occ.symbol.starts_with("local ") {
+                if occ.symbol.starts_with("local ") {
+                    locals.extend(occurrence(&occ.range, &occ.symbol));
                     continue;
                 }
                 let Some(o) = occurrence(&occ.range, &occ.symbol) else { continue };
@@ -73,6 +91,7 @@ impl CompilerIndex {
                 occurrences.push(o);
             }
             out.by_file.insert(doc.relative_path.clone(), occurrences);
+            out.locals.insert(doc.relative_path.clone(), locals);
         }
         out
     }
@@ -93,13 +112,31 @@ impl CompilerIndex {
         name: &str,
         lines: &[&str],
     ) -> Option<&'a str> {
-        let occurrences = self.by_file.get(path)?;
-        occurrences
-            .iter()
-            .filter(|o| within(o, span))
-            .filter(|o| text_of(o, lines) == Some(name))
-            .map(|o| o.symbol.as_str())
-            .next_back()
+        match self.answer_in(path, span, name, lines) {
+            Answer::Symbol(symbol) => Some(symbol),
+            Answer::Local | Answer::Nothing => None,
+        }
+    }
+
+    /// What the compiler resolved for `name` inside `span`: the LAST matching
+    /// occurrence, project symbol or local alike, by position.
+    pub fn answer_in<'a>(
+        &'a self,
+        path: &str,
+        span: &Span,
+        name: &str,
+        lines: &[&str],
+    ) -> Answer<'a> {
+        let named = |o: &&Occurrence| within(o, span) && text_of(o, lines) == Some(name);
+        let symbol = self.by_file.get(path).and_then(|v| v.iter().rfind(named));
+        let local = self.locals.get(path).and_then(|v| v.iter().rfind(named));
+        let at = |o: &Occurrence| (o.line, o.start_col);
+        match (symbol, local) {
+            (Some(s), Some(l)) if at(l) > at(s) => Answer::Local,
+            (Some(s), _) => Answer::Symbol(s.symbol.as_str()),
+            (None, Some(_)) => Answer::Local,
+            (None, None) => Answer::Nothing,
+        }
     }
 
     /// Where `symbol` is declared, when the index holds its definition — the
@@ -241,18 +278,38 @@ pub fn place_calls(
 ) -> Vec<Reference> {
     references
         .into_iter()
-        .map(|reference| {
-            if reference.kind != RefKind::Calls {
-                return reference;
+        .filter_map(|reference| {
+            // What persistence writes as a `calls` edge: a call and a macro
+            // invocation. The other kinds are `references` and `imports`.
+            if !matches!(reference.kind, RefKind::Calls | RefKind::MacroInvokes) {
+                return Some(reference);
             }
             let evidence = evidence_of(&reference);
             let target = match place_one(&reference.at, &evidence.name, answers, targets) {
-                Ok(fqn) => Resolution::Resolved { fqn, via: Rung::ResolvedByCompiler },
-                Err(reason) => Resolution::Unresolved { reason, evidence },
+                Placement::Target(fqn) => {
+                    Resolution::Resolved { fqn, via: Rung::ResolvedByCompiler }
+                }
+                // A call to a local is no edge: locals get no nodes.
+                Placement::Local => return None,
+                Placement::Miss(reason) => Resolution::Unresolved { reason, evidence },
             };
-            Reference { target, ..reference }
+            Some(Reference { target, ..reference })
         })
         .collect()
+}
+
+enum Placement {
+    Target(Fqn),
+    Local,
+    Miss(Reason),
+}
+
+/// The name a call site's occurrence covers: the last segment of a path
+/// (`Default::default` → `default`, `a.b` → `b`), without a macro's bang.
+fn spelled(name: &str) -> &str {
+    let last = name.rsplit("::").next().unwrap_or(name);
+    let last = last.rsplit('.').next().unwrap_or(last);
+    last.trim_end_matches('!')
 }
 
 fn place_one(
@@ -260,16 +317,18 @@ fn place_one(
     name: &str,
     answers: Option<&FileAnswers<'_>>,
     targets: &dyn Targets,
-) -> Result<Fqn, Reason> {
-    let answers = answers.ok_or(Reason::EngineNotRun)?;
-    if !answers.index.covers(answers.path) {
-        return Err(Reason::EngineNotRun);
+) -> Placement {
+    let Some(answers) = answers.filter(|a| a.index.covers(a.path)) else {
+        return Placement::Miss(Reason::EngineNotRun);
+    };
+    match answers.index.answer_in(answers.path, at, spelled(name), &answers.lines) {
+        Answer::Symbol(symbol) => match targets.target(symbol) {
+            Ok(fqn) => Placement::Target(fqn),
+            Err(reason) => Placement::Miss(reason),
+        },
+        Answer::Local => Placement::Local,
+        Answer::Nothing => Placement::Miss(Reason::CompilerNoSymbol),
     }
-    let symbol = answers
-        .index
-        .symbol_in(answers.path, at, name, &answers.lines)
-        .ok_or(Reason::CompilerNoSymbol)?;
-    targets.target(symbol)
 }
 
 /// What the walk knew about the call: its own evidence when it left the call
@@ -570,6 +629,60 @@ mod placement_tests {
             placed[0].target,
             Resolution::Unresolved { reason: Reason::DeclarationNotFound, .. }
         ));
+    }
+
+    /// A macro invocation is persisted as a `calls` edge, so it is placed by
+    /// the compiler like any other call.
+    #[test]
+    fn a_macro_invocation_is_a_call_the_compiler_places() {
+        let ix = compiled();
+        let answers = FileAnswers::new(&ix, "src/main.rs", TEXT);
+        let mut invoke = call(span(3, 4, 10), unplaced("bind"));
+        invoke.kind = RefKind::MacroInvokes;
+        let placed = place_calls(vec![invoke], Some(&answers), &Engine);
+        assert_eq!(
+            placed[0].target,
+            Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }
+        );
+    }
+
+    /// A path call (`net::bind()`, `Default::default()`) is matched on its
+    /// LAST segment — that is the text the compiler's occurrence covers.
+    #[test]
+    fn a_path_call_is_matched_on_its_last_segment() {
+        let ix = compiled();
+        let answers = FileAnswers::new(&ix, "src/main.rs", TEXT);
+        let placed =
+            place_calls(vec![call(span(3, 4, 10), unplaced("net::bind"))], Some(&answers), &Engine);
+        assert_eq!(
+            placed[0].target,
+            Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }
+        );
+    }
+
+    /// A call to a LOCAL — a closure bound with `let` — is no edge at all:
+    /// locals get neither nodes nor edges, and the compiler says which callee is
+    /// one.
+    #[test]
+    fn a_call_to_a_local_is_dropped_not_left_unplaced() {
+        let text = "fn main() {\n    let edit = |x: u8| x;\n    edit(1);\n}";
+        let mut doc = scip::types::Document::new();
+        doc.relative_path = "src/main.rs".into();
+        let mut def = scip::types::Occurrence::new();
+        def.range = vec![1, 8, 12];
+        def.symbol = "local 3".into();
+        def.symbol_roles = 1;
+        let mut used = scip::types::Occurrence::new();
+        used.range = vec![2, 4, 8];
+        used.symbol = "local 3".into();
+        doc.occurrences = vec![def, used];
+        let mut index = scip::types::Index::new();
+        index.documents = vec![doc];
+        let ix = CompilerIndex::from_index(&index);
+        let answers = FileAnswers::new(&ix, "src/main.rs", text);
+        let placed =
+            place_calls(vec![call(span(3, 4, 11), unplaced("edit"))], Some(&answers), &Engine);
+        assert!(placed.is_empty(), "a call to a local leaves no edge, got {placed:?}");
     }
 
     #[test]
