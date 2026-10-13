@@ -67,7 +67,7 @@ gains only a language-neutral hook:
   session, and each file's scope pass asks its own adapter's session to place
   the calls its walk saw, by `(file, span)`. Default for an adapter with no
   engine: nothing — the walk's answer stands.
-- **Rust adapter**: rust-analyzer. **TypeScript/JavaScript adapters**: the
+- **Rust adapter**: rust-analyzer, one session per Cargo workspace or standalone package the pipeline's manifests name — a repository holds several (`sensei`: the root workspace, `tools/session-report`, `app/src-tauri`, the `graph-scan` fixture), and one session at the root sees only the root's members. **TypeScript/JavaScript adapters**: the
   TypeScript compiler. **Svelte adapter**: svelte2tsx into the same TS program,
   spans mapped back through its source map.
 - **Library surface.** Calls into the language/framework (internals) or a
