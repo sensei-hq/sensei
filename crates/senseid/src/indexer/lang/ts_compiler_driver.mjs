@@ -317,10 +317,20 @@ function symbolFor(sym, decl, sf) {
     const qualified = checker.getFullyQualifiedName(sym).replace(/^".*?"\./, '');
     return `npm ${pkg} ${qualified}`;
   }
+  // `declare module 'x' { … }` in the project declares a LIBRARY's shape — a
+  // virtual module, a shim for an untyped package — so what it declares is
+  // that library's member (R5), named by its path within the module.
+  const ambient = ambientModuleOf(decl);
+  if (ambient) return `npm ${packageOfSpecifier(ambient.name.text)} ${pathWithin(decl, ambient)}`;
   if (isLocal(decl)) {
     if (!locals.has(decl)) locals.set(decl, ++localCount);
     return `local ${locals.get(decl)}`;
   }
+  // A member no declaration of its own names — of an anonymous object type,
+  // or a value in an object the walk does not make a container: called
+  // through the value's named type, or else whichever function each value
+  // holds (`dynamic`).
+  if (isAnonymousMember(decl)) return typedValue(decl) ?? 'dynamic';
   const name = decl.name ?? decl;
   const at = originalPosition(declSf, name);
   if (!at) return null;
@@ -355,6 +365,81 @@ function record(sf, id, found) {
   const rel = path.relative(root, at.file);
   if (!documents.has(rel)) documents.set(rel, []);
   documents.get(rel).push({ range: [at.line, at.start, at.end], symbol, roles: declaresIt ? 1 : 0 });
+}
+
+/** The `declare module 'x'` a declaration sits in, if any. */
+function ambientModuleOf(decl) {
+  for (let p = decl.parent; p; p = p.parent) {
+    if (ts.isModuleDeclaration(p) && ts.isStringLiteral(p.name)) return p;
+  }
+  return undefined;
+}
+
+/** The package a module specifier names: `@scope/name/…` or `name/…`. */
+function packageOfSpecifier(spec) {
+  const parts = spec.split('/');
+  return spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+}
+
+/** A declaration's name path within `outer`: `kit.configure`, `Item.get`. */
+function pathWithin(decl, outer) {
+  const names = [];
+  for (let n = decl; n && n !== outer; n = n.parent) {
+    const name = n.name;
+    if (name && (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isPrivateIdentifier(name))) {
+      names.unshift(name.text);
+    }
+  }
+  return names.join('.');
+}
+
+/** A member of an object type or literal that no declaration of its own
+ *  names: one of an anonymous type literal, or an object member the walk does
+ *  not mint (only the functions of a module-level object are its members). */
+function isAnonymousMember(decl) {
+  if (ts.isPropertySignature(decl) || ts.isMethodSignature(decl)) {
+    return ts.isTypeLiteralNode(decl.parent) && !ts.isTypeAliasDeclaration(decl.parent.parent);
+  }
+  const inObject =
+    ts.isPropertyAssignment(decl) ||
+    ts.isShorthandPropertyAssignment(decl) ||
+    ((ts.isMethodDeclaration(decl) || ts.isGetAccessor(decl) || ts.isSetAccessor(decl)) &&
+      ts.isObjectLiteralExpression(decl.parent));
+  return inObject && !isWalkedObjectMember(decl);
+}
+
+/** The walk's own rule: a function under a key of an object bound to a name
+ *  at the top of a module is that object's member. */
+function isWalkedObjectMember(decl) {
+  const value = ts.isPropertyAssignment(decl) ? decl.initializer : decl;
+  const fn =
+    ts.isMethodDeclaration(value) ||
+    ts.isGetAccessor(value) ||
+    ts.isSetAccessor(value) ||
+    ts.isFunctionExpression(value) ||
+    ts.isArrowFunction(value);
+  if (!fn) return false;
+  let owner = decl.parent.parent;
+  while (owner && (ts.isParenthesizedExpression(owner) || ts.isAsExpression(owner) || ts.isSatisfiesExpression(owner))) {
+    owner = owner.parent;
+  }
+  return !!owner && ts.isVariableDeclaration(owner) && ts.isIdentifier(owner.name) && !isLocal(owner);
+}
+
+/** A computed value's named type, as a symbol: `{ publish: fn() }` is called
+ *  through what `fn()` returns. */
+function typedValue(decl) {
+  if (!ts.isPropertyAssignment(decl)) return null;
+  const type = checker.getTypeAtLocation(decl.initializer);
+  const owner = type.aliasSymbol ?? type.symbol;
+  const ownerDecl = owner?.declarations?.[0];
+  if (!ownerDecl || ownerDecl === decl.initializer) return null;
+  const named =
+    ts.isClassDeclaration(ownerDecl) ||
+    ts.isInterfaceDeclaration(ownerDecl) ||
+    ts.isTypeAliasDeclaration(ownerDecl) ||
+    ts.isFunctionDeclaration(ownerDecl);
+  return named ? symbolFor(owner, ownerDecl) : null;
 }
 
 /** A member the checker knows without a declaration of its own: one of a

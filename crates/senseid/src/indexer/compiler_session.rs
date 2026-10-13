@@ -858,6 +858,125 @@ mod tests {
         );
     }
 
+    /// **WHAT A CALL REACHES THROUGH A VALUE IS NAMED BY WHAT DECLARES IT.**
+    /// A `declare module 'x'` in the project declares a LIBRARY's shape (a
+    /// virtual module, a shim), so its members are `lib·x·…` (R5). A property
+    /// whose value is computed (`{ publish: fn() }`) is called through the
+    /// value's type. And a member of an anonymous object type (`Array<{ run:
+    /// () => … }>`) is whichever function each value holds — no declaration
+    /// names it, which is `dynamic_dispatch`.
+    #[tokio::test]
+    async fn the_checker_names_ambient_modules_values_and_anonymous_members() {
+        use crate::indexer::facts::{RefKind, Resolution, Rung};
+        use crate::indexer::lang::compiler::{Compiled, place_with};
+        use crate::indexer::lang::ts_compiler::TS_ENGINE;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        let write = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("package.json", r#"{"name": "web", "type": "module"}"#);
+        write(
+            "tsconfig.json",
+            r#"{"compilerOptions": {"strict": true, "module": "esnext", "moduleResolution": "bundler", "target": "es2022"}}"#,
+        );
+        write("node_modules/spylib/package.json", r#"{"name": "spylib", "types": "index.d.ts"}"#);
+        write(
+            "node_modules/spylib/index.d.ts",
+            "export interface Mock {\n  (...a: unknown[]): unknown;\n}\nexport declare function fn(): Mock;\n",
+        );
+        write(
+            "src/shim.d.ts",
+            "declare module 'kitlib' {\n  export const kit: { configure: (o?: {}) => void };\n  export class Item {\n    get(k: string): unknown;\n  }\n}\n",
+        );
+        write(
+            "src/use-kit.ts",
+            "import { kit, Item } from 'kitlib';\n\nexport function go(i: Item) {\n  kit.configure();\n  return i.get('x');\n}\n",
+        );
+        write(
+            "src/routes.ts",
+            "const routes: Array<{ name: string; run: () => number }> = [{ name: 'a', run: () => 1 }];\n\nexport function all() {\n  return routes.map((r) => r.run());\n}\n",
+        );
+        write(
+            "src/spies.ts",
+            "import { fn } from 'spylib';\n\nconst spies = { publish: fn() };\n\nexport function go() {\n  return spies.publish(1);\n}\n",
+        );
+        write(
+            "src/store.ts",
+            "export const store = {\n  load() {\n    return 1;\n  },\n};\n\nexport function go() {\n  return store.load();\n}\n",
+        );
+
+        let sessions = CompilerSessions::new(&root);
+        let project = sessions.project_for(&TS_ENGINE, &root).await.expect("the driver compiles");
+        let declarations = sessions.declarations(&project);
+        let mut placed = Vec::new();
+        for rel in ["src/use-kit.ts", "src/routes.ts", "src/spies.ts", "src/store.ts"] {
+            let facts = read_declarations(&root, &root.join(rel)).expect(rel);
+            let text = std::fs::read_to_string(root.join(rel)).unwrap();
+            let compiled =
+                Compiled { index: &project.index, path: rel, declarations: &declarations };
+            let calls: Vec<_> =
+                facts.references.iter().filter(|r| r.kind == RefKind::Calls).cloned().collect();
+            for call in place_with(&TS_ENGINE, Some(&compiled), calls, &text) {
+                placed.push((rel, call.at.start_line, call.target));
+            }
+        }
+        let lib = |package: &str, member: &str| {
+            vec![Resolution::Resolved {
+                fqn: crate::indexer::fqn::refer(&crate::indexer::fqn::Form::Lib {
+                    package,
+                    member,
+                })
+                .unwrap(),
+                via: Rung::ResolvedByCompiler,
+            }]
+        };
+        let to = |rel: &str, line: u32, name: &str| {
+            placed
+                .iter()
+                .filter(|(r, l, t)| {
+                    *r == rel
+                        && *l == line
+                        && match t {
+                            Resolution::Resolved { fqn, .. } => fqn.as_str().contains(name),
+                            Resolution::Unresolved { evidence, .. } => {
+                                evidence.name.ends_with(name)
+                            }
+                        }
+                })
+                .map(|(_, _, t)| t.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            to("src/use-kit.ts", 4, "configure"),
+            lib("kitlib", "kit.configure"),
+            "an ambient module is a library"
+        );
+        assert_eq!(to("src/use-kit.ts", 5, "get"), lib("kitlib", "Item.get"));
+        assert_eq!(
+            to("src/spies.ts", 6, "Mock"),
+            lib("spylib", "Mock"),
+            "a computed value is called through its type"
+        );
+        let load = declarations.declared_at("src/store.ts", 2, "load").expect("a walked member");
+        assert_eq!(
+            to("src/store.ts", 8, "load"),
+            vec![Resolution::Resolved { fqn: load, via: Rung::ResolvedByCompiler }],
+            "a function of a module-level object is its member, not a dynamic call"
+        );
+        assert!(
+            matches!(
+                to("src/routes.ts", 4, "run").as_slice(),
+                [Resolution::Unresolved { reason: Reason::DynamicDispatch, .. }]
+            ),
+            "{:?}",
+            to("src/routes.ts", 4, "run")
+        );
+    }
+
     /// **A SVELTEKIT PROJECT IS COMPILED AS ITS OWN TOOLING SEES IT.** Its
     /// tsconfig extends what `svelte-kit sync` generates (`$lib`, `$app`,
     /// `./$types`); a clean checkout, or a `make clean`, has none of it, and
