@@ -12,8 +12,7 @@
 -- console kept working while the client-direct path was blind. Covered by
 -- database/tests/dojo/rls_principal_grain.sql.
 --
--- The read path connects as `authenticated`. SELECT only — the daemon upserts
--- via the service_role path.
+-- Reads and the daemon's run upsert both connect as `authenticated`.
 --
 -- Idempotent: the pre-release deploy re-applies every DDL file declaratively on
 -- each deploy, and `create policy` is not idempotent — so drop-if-exists first.
@@ -43,4 +42,34 @@ create policy projects_select
         user_id = dojo.current_principal_id()
         or dojo.on_team_of(id)
         or (tenant_id is not null and dojo.tenant_role_at_least(tenant_id, 'admin'))
+    );
+
+-- Who files a project (#236 step 4): the relay session POST upserts the run's
+-- project on (user_id, slug) as the person whose daemon is running. The owner is
+-- the caller, and the project is personal (no tenant) or homed in a tenant they
+-- are an active member of. `phase` is not granted: a run never advances it.
+-- Covered by database/tests/dojo/projects_write.sql.
+grant insert (user_id, tenant_id, slug, name, classification, last_run_at, updated_at, constitution),
+      update (user_id, tenant_id, slug, name, classification, last_run_at, updated_at, constitution)
+   on dojo.projects to authenticated;
+
+drop policy if exists projects_file_own on dojo.projects;
+create policy projects_file_own
+    on dojo.projects
+    for insert
+    to authenticated
+    with check (
+        user_id = dojo.current_principal_id()
+        and (tenant_id is null or dojo.is_member(tenant_id))
+    );
+
+drop policy if exists projects_refile_own on dojo.projects;
+create policy projects_refile_own
+    on dojo.projects
+    for update
+    to authenticated
+    using (user_id = dojo.current_principal_id())
+    with check (
+        user_id = dojo.current_principal_id()
+        and (tenant_id is null or dojo.is_member(tenant_id))
     );

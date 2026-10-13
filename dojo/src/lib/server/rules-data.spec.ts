@@ -2,11 +2,14 @@
 // port of dojo-mind's `DojoStore` publish/pull/retract. Exercises:
 //   • parsePublishedRule — required-field validation, optional null-coercion,
 //     and that the client's published_by/published_at are NOT read.
-//   • shapePullResponse — the PullResponse wire shape (flattened PulledRule,
-//     embedded-namespace normalization) + cursor = max(seq) / since-when-empty.
-//   • publishRule — namespace upsert (sensei schema, (scope_key,slug)) then
-//     shared_rules upsert ((namespace_id,content_hash)), server-controlled
+//   • shapePullResponse — the PullResponse wire shape (PulledRule from the flat
+//     pull row) + cursor = max(seq) / since-when-empty.
+//   • upsertRuleNamespace — the namespace registry (sensei schema,
+//     (scope_key,slug)), the system's; publishRule — the shared_rules upsert
+//     ((tenant_id,namespace_id,content_hash)), the person's; server-controlled
 //     attribution, {id,version,seq} return, error → RulesError(500).
+//   • pullRules — dojo.tenant_shared_rules as the person (#236 step 4);
+//     pullRulesAsSystem — the legacy device token's select, for one release.
 //   • retractRule — status→tombstoned with the non-tombstoned guard, boolean
 //     result, error → RulesError(500).
 //   • recordRulesAudit — the audit_events insert shape; a failed write is
@@ -17,20 +20,22 @@ import {
 	parsePublishedRule,
 	shapePullResponse,
 	publishRule,
+	upsertRuleNamespace,
 	pullRules,
+	pullRulesAsSystem,
 	retractRule,
 	recordRulesAudit,
 	RulesError,
 	PULL_SELECT,
-	maxTier,
-	effectivePackRuleTier,
 	parseNamespacePairs,
-	composeAdoptedPackRules,
+	resolveTenantPackRules,
 	type DojoClient
 } from './rules-data';
 
 type Terminal = { data: unknown; error: unknown };
 interface Call {
+	rpc?: string;
+	args?: unknown;
 	schema?: string;
 	table?: string;
 	op?: string;
@@ -52,6 +57,11 @@ function makeDb() {
 	const b: Record<string, unknown> = {};
 	b.schema = (s: string) => {
 		pendingSchema = s;
+		return b;
+	};
+	b.rpc = (fn: string, args: unknown) => {
+		cur = { rpc: fn, args, filters: [] };
+		calls.push(cur);
 		return b;
 	};
 	b.from = (t: string) => {
@@ -179,10 +189,12 @@ describe('shapePullResponse (PullResponse wire shape + cursor)', () => {
 		origin_repo: null,
 		published_by: 'dev',
 		published_at: '2026-07-08T00:00:00Z',
-		namespaces: { scope_key: 'organization', slug: 'sensei-hq', name: 'Sensei HQ' }
+		scope_key: 'organization',
+		namespace_slug: 'sensei-hq',
+		namespace_name: 'Sensei HQ'
 	});
 
-	it('flattens each row into a PulledRule (id/seq/status/version + PublishedRule fields)', () => {
+	it('maps each row onto a PulledRule (id/seq/status/version + PublishedRule fields)', () => {
 		const out = shapePullResponse([row(5)], 0);
 		expect(out.rules).toHaveLength(1);
 		const r = out.rules[0];
@@ -193,15 +205,6 @@ describe('shapePullResponse (PullResponse wire shape + cursor)', () => {
 		expect(r.scope_key).toBe('organization');
 		expect(r.namespace_slug).toBe('sensei-hq');
 		expect(r.namespace_name).toBe('Sensei HQ');
-		// The nested `namespaces` embed must not leak onto the wire object.
-		expect(r).not.toHaveProperty('namespaces');
-	});
-
-	it('normalizes a one-element-array namespace embed (PostgREST array shape)', () => {
-		const r = { ...row(3), namespaces: [{ scope_key: 'project', slug: 'sensei', name: 'sensei' }] };
-		const out = shapePullResponse([r], 0);
-		expect(out.rules[0].scope_key).toBe('project');
-		expect(out.rules[0].namespace_slug).toBe('sensei');
 	});
 
 	it('computes cursor = max(seq)', () => {
@@ -220,21 +223,40 @@ describe('shapePullResponse (PullResponse wire shape + cursor)', () => {
 	});
 });
 
-describe('publishRule', () => {
-	it('upserts the namespace (sensei schema) then the rule, returning {id,version,seq}', async () => {
+describe('upsertRuleNamespace', () => {
+	// `sensei` is not exposed through PostgREST, so the registry is reached through
+	// dojo.register_rule_namespace — a `.schema('sensei')` call is "Invalid schema".
+	it('registers the namespace through dojo.register_rule_namespace, returning its id', async () => {
 		const db = makeDb();
-		db.queue(
-			{ data: { id: 'ns-1' }, error: null },
-			{ data: { id: 'rule-1', version: 1, seq: 7 }, error: null }
-		);
-		const resp = await publishRule(db.client, 't1', RULE, 'user-uuid');
-		expect(resp).toEqual({ id: 'rule-1', version: 1, seq: 7 });
+		db.queue({ data: 'ns-1', error: null });
+		expect(await upsertRuleNamespace(db.client, RULE)).toBe('ns-1');
+		expect(db.calls).toEqual([
+			expect.objectContaining({
+				rpc: 'register_rule_namespace',
+				args: { p_scope_key: 'organization', p_slug: 'sensei-hq', p_name: 'Sensei HQ' }
+			})
+		]);
+	});
 
-		const ns = db.calls.find((c) => c.table === 'namespaces')!;
-		expect(ns.schema).toBe('sensei');
-		expect(ns.op).toBe('upsert');
-		expect(ns.onConflict).toBe('scope_key,slug');
-		expect(ns.payload).toMatchObject({ scope_key: 'organization', slug: 'sensei-hq', name: 'Sensei HQ' });
+	it('throws RulesError(500) when the registration errors (never silent)', async () => {
+		const db = makeDb();
+		db.queue({ data: null, error: { message: 'ns boom' } });
+		await expect(upsertRuleNamespace(db.client, RULE)).rejects.toMatchObject({
+			status: 500,
+			message: 'ns boom'
+		});
+		expect(RulesError).toBeDefined();
+	});
+});
+
+describe('publishRule', () => {
+	it('upserts the rule under the given namespace, returning {id,version,seq}', async () => {
+		const db = makeDb();
+		db.queue({ data: { id: 'rule-1', version: 1, seq: 7 }, error: null });
+		const resp = await publishRule(db.client, 't1', RULE, 'user-uuid', 'ns-1');
+		expect(resp).toEqual({ id: 'rule-1', version: 1, seq: 7 });
+		// The namespace registry is not this client's to write (#236 step 4).
+		expect(db.calls.find((c) => c.table === 'namespaces')).toBeUndefined();
 
 		const rule = db.calls.find((c) => c.table === 'shared_rules')!;
 		expect(rule.op).toBe('upsert');
@@ -253,8 +275,8 @@ describe('publishRule', () => {
 
 	it('stamps published_by from the caller and published_at server-side (not the body)', async () => {
 		const db = makeDb();
-		db.queue({ data: { id: 'ns-1' }, error: null }, { data: { id: 'r', version: 1, seq: 1 }, error: null });
-		await publishRule(db.client, 't1', RULE, 'caller-uuid');
+		db.queue({ data: { id: 'r', version: 1, seq: 1 }, error: null });
+		await publishRule(db.client, 't1', RULE, 'caller-uuid', 'ns-1');
 		const p = db.calls.find((c) => c.table === 'shared_rules')!.payload as Record<string, unknown>;
 		expect(p.published_by).toBe('caller-uuid');
 		expect(typeof p.published_at).toBe('string');
@@ -263,50 +285,66 @@ describe('publishRule', () => {
 		expect(p.updated_at).toBe(p.published_at);
 	});
 
-	it('throws RulesError(500) when the namespace upsert errors (never silent)', async () => {
-		const db = makeDb();
-		db.queue({ data: null, error: { message: 'ns boom' } });
-		await expect(publishRule(db.client, 't1', RULE, 'u')).rejects.toMatchObject({
-			status: 500,
-			message: 'ns boom'
-		});
-		expect(RulesError).toBeDefined();
-	});
-
 	it('throws RulesError(500) when the rule upsert errors', async () => {
 		const db = makeDb();
-		db.queue({ data: { id: 'ns-1' }, error: null }, { data: null, error: { message: 'rule boom' } });
-		await expect(publishRule(db.client, 't1', RULE, 'u')).rejects.toMatchObject({ status: 500 });
+		db.queue({ data: null, error: { message: 'rule boom' } });
+		await expect(publishRule(db.client, 't1', RULE, 'u', 'ns-1')).rejects.toMatchObject({ status: 500 });
 	});
 });
 
-describe('pullRules', () => {
-	it('filters seq > since, orders by seq asc, selects the join, and shapes the response', async () => {
+const FLAT_ROW = {
+	id: 'rule-5',
+	seq: 5,
+	status: 'active',
+	version: 1,
+	content_hash: 'a'.repeat(64),
+	rule_type: 'convention',
+	title: 'T',
+	content: 'c',
+	impact: null,
+	enforcement: 'mandatory',
+	origin_repo: null,
+	published_by: 'dev',
+	published_at: '2026-07-08T00:00:00Z'
+};
+
+describe('pullRules (as the person)', () => {
+	it('calls dojo.tenant_shared_rules with the tenant and cursor, and shapes the rows', async () => {
 		const db = makeDb();
 		db.queue({
-			data: [
-				{
-					id: 'rule-5',
-					seq: 5,
-					status: 'active',
-					version: 1,
-					content_hash: 'a'.repeat(64),
-					rule_type: 'convention',
-					title: 'T',
-					content: 'c',
-					impact: null,
-					enforcement: 'mandatory',
-					origin_repo: null,
-					published_by: 'dev',
-					published_at: '2026-07-08T00:00:00Z',
-					namespaces: { scope_key: 'organization', slug: 'sensei-hq', name: 'Sensei HQ' }
-				}
-			],
+			data: [{ ...FLAT_ROW, scope_key: 'organization', namespace_slug: 'sensei-hq', namespace_name: 'Sensei HQ' }],
 			error: null
 		});
 		const out = await pullRules(db.client, 't1', 3);
+		expect(db.calls).toEqual([expect.objectContaining({ rpc: 'tenant_shared_rules', args: { p_tenant: 't1', p_since: 3 } })]);
+		expect(out.cursor).toBe(5);
+		expect(out.rules[0]).toMatchObject({ scope_key: 'organization', namespace_slug: 'sensei-hq', namespace_name: 'Sensei HQ' });
+	});
+
+	it('empty result → { rules: [], cursor: since }', async () => {
+		const db = makeDb();
+		db.queue({ data: [], error: null });
+		expect(await pullRules(db.client, 't1', 42)).toEqual({ rules: [], cursor: 42 });
+	});
+
+	it('throws RulesError(500) on an error — a refused pull is never an empty page', async () => {
+		const db = makeDb();
+		db.queue({ data: null, error: { message: 'pull boom' } });
+		await expect(pullRules(db.client, 't1', 0)).rejects.toMatchObject({ status: 500, message: 'pull boom' });
+	});
+});
+
+describe('pullRulesAsSystem (the legacy device token, one release)', () => {
+	it('filters seq > since, orders by seq asc, selects the join, and shapes the response', async () => {
+		const db = makeDb();
+		db.queue({
+			data: [{ ...FLAT_ROW, namespaces: { scope_key: 'organization', slug: 'sensei-hq', name: 'Sensei HQ' } }],
+			error: null
+		});
+		const out = await pullRulesAsSystem(db.client, 't1', 3);
 		expect(out.cursor).toBe(5);
 		expect(out.rules[0].scope_key).toBe('organization');
+		expect(out.rules[0]).not.toHaveProperty('namespaces');
 
 		const call = db.calls.find((c) => c.table === 'shared_rules')!;
 		expect(call.select).toBe(PULL_SELECT);
@@ -316,17 +354,18 @@ describe('pullRules', () => {
 		expect(call.order).toEqual(['seq', { ascending: true }]);
 	});
 
-	it('empty result → { rules: [], cursor: since }', async () => {
+	it('normalizes a one-element-array namespace embed (PostgREST array shape)', async () => {
 		const db = makeDb();
-		db.queue({ data: [], error: null });
-		const out = await pullRules(db.client, 't1', 42);
-		expect(out).toEqual({ rules: [], cursor: 42 });
+		db.queue({ data: [{ ...FLAT_ROW, namespaces: [{ scope_key: 'project', slug: 'sensei', name: 'sensei' }] }], error: null });
+		const out = await pullRulesAsSystem(db.client, 't1', 0);
+		expect(out.rules[0].scope_key).toBe('project');
+		expect(out.rules[0].namespace_slug).toBe('sensei');
 	});
 
 	it('throws RulesError(500) on a select error', async () => {
 		const db = makeDb();
 		db.queue({ data: null, error: { message: 'pull boom' } });
-		await expect(pullRules(db.client, 't1', 0)).rejects.toMatchObject({ status: 500, message: 'pull boom' });
+		await expect(pullRulesAsSystem(db.client, 't1', 0)).rejects.toMatchObject({ status: 500, message: 'pull boom' });
 	});
 });
 
@@ -391,23 +430,8 @@ describe('recordRulesAudit', () => {
 	});
 });
 
-describe('rule-pack tier precedence', () => {
-	it('maxTier returns the stronger enforcement tier', () => {
-		expect(maxTier('advisory', 'required')).toBe('required');
-		expect(maxTier('mandatory', 'required')).toBe('mandatory');
-		expect(maxTier('recommended', 'recommended')).toBe('recommended');
-	});
-
-	it('an adoption override raises a rule but never weakens it', () => {
-		// adopt an advisory pack as required → the rule is raised
-		expect(effectivePackRuleTier('advisory', 'required')).toBe('required');
-		// a mandatory rule can never be lowered by a weaker override
-		expect(effectivePackRuleTier('mandatory', 'required')).toBe('mandatory');
-		// no override → the rule keeps its own tier
-		expect(effectivePackRuleTier('required', null)).toBe('required');
-	});
-
-	it('parseNamespacePairs splits scope:slug and drops malformed', () => {
+describe('parseNamespacePairs', () => {
+	it('splits scope:slug and drops malformed', () => {
 		expect(parseNamespacePairs('organization:acme, stack:react')).toEqual([
 			{ scope_key: 'organization', slug: 'acme' },
 			{ scope_key: 'stack', slug: 'react' }
@@ -421,62 +445,75 @@ describe('rule-pack tier precedence', () => {
 	});
 });
 
-describe('composeAdoptedPackRules — pack rules carry their ADOPTION scope', () => {
-	const packs = [{ id: 'pk1', area: 'security', source: 'OWASP' }];
-	const rules = [
-		{ id: 'r1', pack_id: 'pk1', ordinal: 1, statement: 'S1', body: 'B1', rationale: 'why', enforcement: 'advisory', verification: 'manual', checker_ref: null, remediation: null, skill_ref: null, applies_to: null },
-		{ id: 'r2', pack_id: 'pk1', ordinal: 2, statement: 'S2', body: 'B2', rationale: null, enforcement: 'mandatory', verification: 'manual', checker_ref: null, remediation: null, skill_ref: null, applies_to: null }
-	];
+// The tier override (never weaker), the adoption scope and which namespaces a
+// tenant owns are dojo.tenant_pack_rules' to decide — covered against a real
+// database by database/tests/dojo/tenant_pack_rules.sql. This is the wiring.
+describe('resolveTenantPackRules', () => {
+	const ROW = {
+		pack_id: 'pk1',
+		rule_id: 'r1',
+		ordinal: 1,
+		statement: 'S1',
+		body: 'B1',
+		rationale: 'why',
+		enforcement: 'required',
+		verification: 'manual',
+		checker_ref: null,
+		remediation: null,
+		skill_ref: null,
+		applies_to: null,
+		attribution: 'OWASP',
+		area: 'security',
+		scope_key: 'organization'
+	};
 
-	it('scopes a rule by the adoption namespace scope_key, NOT the pack area', () => {
-		const out = composeAdoptedPackRules(
-			[{ pack_id: 'pk1', namespace_id: 'ns-org', enforcement: null }],
-			[{ id: 'ns-org', scope_key: 'organization' }],
-			packs,
-			rules
-		);
-		expect(out.map((r) => r.scope_key)).toEqual(['organization', 'organization']);
-		expect(out.every((r) => r.scope_key !== 'security')).toBe(true); // never the pack area
-		expect(out.map((r) => r.statement)).toEqual(['S1', 'S2']); // ordinal order
-		expect(out[0].source).toBe('OWASP');
+	it('asks dojo.tenant_pack_rules for the tenant and the folder\'s scope:slug pairs', async () => {
+		const db = makeDb();
+		db.queue({ data: [ROW], error: null });
+		const out = await resolveTenantPackRules(db.client, 't1', [
+			{ scope_key: 'organization', slug: 'acme' },
+			{ scope_key: 'technology', slug: 'react' }
+		]);
+		expect(db.calls).toEqual([
+			expect.objectContaining({
+				rpc: 'tenant_pack_rules',
+				args: { p_tenant: 't1', p_namespaces: ['organization:acme', 'technology:react'] }
+			})
+		]);
+		// The wire shape the daemon's PackRuleWire reads; `source` is the pack's attribution.
+		expect(out).toEqual([
+			{
+				pack_id: 'pk1',
+				rule_id: 'r1',
+				ordinal: 1,
+				statement: 'S1',
+				body: 'B1',
+				rationale: 'why',
+				enforcement: 'required',
+				verification: 'manual',
+				checker_ref: null,
+				remediation: null,
+				skill_ref: null,
+				applies_to: null,
+				source: 'OWASP',
+				area: 'security',
+				scope_key: 'organization'
+			}
+		]);
 	});
 
-	it('applies the adoption override never-weaken (raises advisory, keeps mandatory)', () => {
-		const out = composeAdoptedPackRules(
-			[{ pack_id: 'pk1', namespace_id: 'ns-org', enforcement: 'required' }],
-			[{ id: 'ns-org', scope_key: 'organization' }],
-			packs,
-			rules
-		);
-		expect(out.find((r) => r.statement === 'S1')?.enforcement).toBe('required'); // advisory → required
-		expect(out.find((r) => r.statement === 'S2')?.enforcement).toBe('mandatory'); // not weakened
+	it('names no namespace → no rules, without asking', async () => {
+		const db = makeDb();
+		expect(await resolveTenantPackRules(db.client, 't1', [])).toEqual([]);
+		expect(db.calls).toEqual([]);
 	});
 
-	it('emits a rule per adopting namespace, each at its own scope (daemon dedups downstream)', () => {
-		const out = composeAdoptedPackRules(
-			[
-				{ pack_id: 'pk1', namespace_id: 'ns-org', enforcement: null },
-				{ pack_id: 'pk1', namespace_id: 'ns-proj', enforcement: null }
-			],
-			[
-				{ id: 'ns-org', scope_key: 'organization' },
-				{ id: 'ns-proj', scope_key: 'project' }
-			],
-			packs,
-			rules
-		);
-		// r1 + r2 at organization, r1 + r2 at project.
-		expect(out.filter((r) => r.scope_key === 'organization').length).toBe(2);
-		expect(out.filter((r) => r.scope_key === 'project').length).toBe(2);
-	});
-
-	it('skips an adoption whose namespace is not in the resolved set', () => {
-		const out = composeAdoptedPackRules(
-			[{ pack_id: 'pk1', namespace_id: 'ns-unknown', enforcement: null }],
-			[{ id: 'ns-org', scope_key: 'organization' }],
-			packs,
-			rules
-		);
-		expect(out).toEqual([]);
+	it('throws RulesError(500) on an error — never an empty list that reads as "no packs"', async () => {
+		const db = makeDb();
+		db.queue({ data: null, error: { message: 'boom' } });
+		await expect(resolveTenantPackRules(db.client, 't1', [{ scope_key: 'organization', slug: 'acme' }])).rejects.toMatchObject({
+			status: 500,
+			message: 'boom'
+		});
 	});
 });

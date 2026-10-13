@@ -8,8 +8,9 @@
 --
 -- WHAT BREAKS THIS TEST: a write policy without owns_membership; a reply policy
 -- that admits a row already answered or one flowing human → agent; a nudge policy
--- that admits another person's membership or the agent → human direction; a
--- table-wide UPDATE grant instead of the action's columns; a missing usage grant
+-- that admits another person's membership or session; a table-wide UPDATE grant
+-- instead of the action's columns (an answer must not rewrite the agent's
+-- payload); a missing usage grant
 -- on relay_inbox_seq (every reply and nudge would be refused).
 --
 -- NOT separable here, on purpose: a write policy's OWNERSHIP check. Postgres
@@ -92,11 +93,9 @@ begin
     get diagnostics n = row_count;
     if n <> 1 then raise exception 'review: alice should review her own segment, changed %', n; end if;
 
-    begin
-        update dojo.relay_segments set title = 'renamed' where id = 'f1000000-0000-4000-8000-000000000001';
-        raise exception 'review: the outline is the agent''s, not the reviewer''s to rename';
-    exception when insufficient_privilege then null;
-    end;
+    -- (Renaming one's OWN outline is allowed since #236 step 4: the daemon that
+    -- publishes it presents the same person's session as the phone that reviews
+    -- it. relay_daemon_writes.sql holds the cross-person refusals.)
 
     -- ── nudge ────────────────────────────────────────────────────────────────
     insert into dojo.relay_inbox (session_id, membership_id, kind, direction, payload)
@@ -112,14 +111,9 @@ begin
         if sqlerrm not like '%row-level security%' then raise exception 'nudge refused for the wrong reason: %', sqlerrm; end if;
     end;
 
-    begin
-        insert into dojo.relay_inbox (session_id, membership_id, kind, direction, payload)
-        values ('c1000000-0000-4000-8000-000000000041', 'd1000000-0000-4000-8000-000000000041',
-                'approval', 'agent_to_human', '{}');
-        raise exception 'nudge: the phone must not raise a gate as if it were the agent';
-    exception when insufficient_privilege then
-        if sqlerrm not like '%row-level security%' then raise exception 'gate refused for the wrong reason: %', sqlerrm; end if;
-    end;
+    -- (Raising an agent → human gate on one's OWN run is allowed since #236 step
+    -- 4 — the person's daemon does it on their session. Raising one on another
+    -- person's run is refused in relay_daemon_writes.sql.)
 
     perform set_config('request.jwt.claims', as_bob, true);
     begin

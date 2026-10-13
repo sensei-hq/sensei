@@ -679,25 +679,11 @@ impl PgStore {
     }
 
     pub async fn list_dojo_memberships(&self) -> Result<Vec<DojoMembership>, String> {
-        let rows: Vec<(
-            uuid::Uuid,
-            String,
-            String,
-            String,
-            String,
-            Vec<String>,
-            String,
-            String,
-            String,
-            String,
-            String,
-            i64,
-            Option<String>,
-            bool,
-        )> = sqlx_core::query_as::query_as(&format!("{} ORDER BY created_at", Self::DOJO_SELECT))
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        let rows: Vec<DojoMembershipRow> =
+            sqlx_core::query_as::query_as(&format!("{} ORDER BY m.created_at", Self::DOJO_SELECT))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(Self::map_dojo_row).collect())
     }
 
@@ -705,26 +691,12 @@ impl PgStore {
         &self,
         id: &uuid::Uuid,
     ) -> Result<Option<DojoMembership>, String> {
-        let row: Option<(
-            uuid::Uuid,
-            String,
-            String,
-            String,
-            String,
-            Vec<String>,
-            String,
-            String,
-            String,
-            String,
-            String,
-            i64,
-            Option<String>,
-            bool,
-        )> = sqlx_core::query_as::query_as(&format!("{} WHERE id = $1", Self::DOJO_SELECT))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        let row: Option<DojoMembershipRow> =
+            sqlx_core::query_as::query_as(&format!("{} WHERE m.id = $1", Self::DOJO_SELECT))
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
         Ok(row.map(Self::map_dojo_row))
     }
 
@@ -762,6 +734,61 @@ impl PgStore {
         .await
         .map_err(|e| e.to_string())?;
         Ok(res.rows_affected() > 0)
+    }
+
+    /// Record which persona a membership belongs to (#236 step 4) — one per
+    /// membership; re-matching replaces it.
+    pub async fn set_membership_persona(
+        &self,
+        membership_id: &uuid::Uuid,
+        persona_id: &uuid::Uuid,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.dojo_membership_personas (membership_id, persona_id)
+             VALUES ($1, $2)
+             ON CONFLICT (membership_id) DO UPDATE
+                SET persona_id = EXCLUDED.persona_id, bound_at = now()",
+        )
+        .bind(membership_id)
+        .bind(persona_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("set_membership_persona: {e}"))?;
+        Ok(())
+    }
+
+    /// The persona a membership belongs to, with its session slot; `None` when
+    /// no persona has been matched to it.
+    pub async fn membership_persona(
+        &self,
+        membership_id: &uuid::Uuid,
+    ) -> Result<Option<MembershipPersona>, String> {
+        let row: Option<(uuid::Uuid, Option<String>)> = sqlx_core::query_as::query_as(
+            "SELECT p.id, p.session_slot
+               FROM sensei.dojo_membership_personas mp
+               JOIN sensei.personas p ON p.id = mp.persona_id
+              WHERE mp.membership_id = $1",
+        )
+        .bind(membership_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("membership_persona: {e}"))?;
+        Ok(row.map(|(persona_id, session_slot)| MembershipPersona { persona_id, session_slot }))
+    }
+
+    /// Memberships with no persona matched yet — what the binding pass still
+    /// has to place.
+    pub async fn unbound_dojo_memberships(&self) -> Result<Vec<uuid::Uuid>, String> {
+        let rows: Vec<(uuid::Uuid,)> = sqlx_core::query_as::query_as(
+            "SELECT m.id FROM sensei.dojo_memberships m
+              WHERE NOT EXISTS (SELECT 1 FROM sensei.dojo_membership_personas mp
+                                 WHERE mp.membership_id = m.id)
+              ORDER BY m.created_at",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("unbound_dojo_memberships: {e}"))?;
+        Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
     pub async fn delete_dojo_membership(&self, id: &uuid::Uuid) -> Result<bool, String> {

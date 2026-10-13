@@ -16895,3 +16895,122 @@ async fn structure_coverage_counts_only_the_edges_that_could_not_be_placed() {
 
     s.delete_nodes_by_folder(&fid).await.unwrap();
 }
+
+/// A local Dōjō membership for the persona-binding tests. The credential_ref is
+/// a placeholder name only — nothing here touches the Keychain.
+async fn persona_test_membership(s: &PgStore) -> uuid::Uuid {
+    let mid = uuid::Uuid::new_v4();
+    s.create_dojo_membership(&NewDojoMembership {
+        id: mid,
+        registry_url: "http://localhost:7755".into(),
+        tenant_key: format!("organization/persona-bind-{mid}"),
+        dojo_url: format!("http://localhost:7755/organization/persona-bind-{mid}"),
+        kind: "employer".into(),
+        org_slugs: vec![],
+        role: "contributor".into(),
+        authenticated_via: "github_oauth".into(),
+        attribution_default: "named".into(),
+        credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()),
+        sync_status: "healthy".into(),
+    })
+    .await
+    .unwrap();
+    mid
+}
+
+// #236 step 4: each local membership records the persona whose session its
+// tenant calls present — unknown until matched, one persona per membership,
+// gone with either side.
+#[tokio::test]
+async fn a_membership_records_its_persona() {
+    let s = pg_store().await;
+    let mid = persona_test_membership(&s).await;
+    let label = format!("persona-bind-{}", uuid::Uuid::new_v4());
+    let pid = s.upsert_persona(&label, true).await.unwrap();
+
+    // Unmatched: no persona, and listed for the backfill.
+    assert_eq!(s.membership_persona(&mid).await.unwrap(), None);
+    assert!(s.unbound_dojo_memberships().await.unwrap().contains(&mid));
+
+    // Matched, persona signed out: bound, but no session to present.
+    s.set_membership_persona(&mid, &pid).await.unwrap();
+    assert_eq!(
+        s.membership_persona(&mid).await.unwrap(),
+        Some(MembershipPersona { persona_id: pid, session_slot: None })
+    );
+    assert!(!s.unbound_dojo_memberships().await.unwrap().contains(&mid));
+
+    // Signed in: the slot live_access_token mints from.
+    let slot = format!("slot-{}", uuid::Uuid::new_v4());
+    sqlx_core::query::query("UPDATE sensei.personas SET session_slot = $2 WHERE id = $1")
+        .bind(pid)
+        .bind(&slot)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        s.membership_persona(&mid).await.unwrap(),
+        Some(MembershipPersona { persona_id: pid, session_slot: Some(slot) })
+    );
+
+    // Re-matched to another persona: one persona per membership, the latest.
+    let other = s.upsert_persona(&format!("{label}-other"), true).await.unwrap();
+    s.set_membership_persona(&mid, &other).await.unwrap();
+    assert_eq!(s.membership_persona(&mid).await.unwrap().map(|p| p.persona_id), Some(other));
+
+    // Gone with the persona…
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+        .bind(other)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    assert_eq!(s.membership_persona(&mid).await.unwrap(), None);
+
+    // …and with the membership.
+    s.set_membership_persona(&mid, &pid).await.unwrap();
+    s.delete_dojo_membership(&mid).await.unwrap();
+    let left: (i64,) =
+        query_as("SELECT count(*) FROM sensei.dojo_membership_personas WHERE membership_id = $1")
+            .bind(mid)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+    assert_eq!(left.0, 0);
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
+// #236 step 4d: the membership row carries its persona, so every DojoClient
+// built from it presents the right credential without a second lookup.
+#[tokio::test]
+async fn a_loaded_membership_carries_its_persona() {
+    let s = pg_store().await;
+    let mid = persona_test_membership(&s).await;
+    assert_eq!(s.get_dojo_membership(&mid).await.unwrap().unwrap().persona, None);
+
+    let pid =
+        s.upsert_persona(&format!("persona-row-{}", uuid::Uuid::new_v4()), true).await.unwrap();
+    let slot = format!("slot-{}", uuid::Uuid::new_v4());
+    sqlx_core::query::query("UPDATE sensei.personas SET session_slot = $2 WHERE id = $1")
+        .bind(pid)
+        .bind(&slot)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    s.set_membership_persona(&mid, &pid).await.unwrap();
+
+    let want = Some(MembershipPersona { persona_id: pid, session_slot: Some(slot) });
+    assert_eq!(s.get_dojo_membership(&mid).await.unwrap().unwrap().persona, want);
+    let listed = s.list_dojo_memberships().await.unwrap();
+    assert_eq!(listed.iter().find(|m| m.id == mid).map(|m| m.persona.clone()), Some(want));
+
+    s.delete_dojo_membership(&mid).await.unwrap();
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+        .bind(pid)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}

@@ -120,6 +120,22 @@ pub struct SyncPlan {
     pub denied: Vec<DeniedRepo>,
 }
 
+/// One of the signed-in person's memberships, as `GET /v1/you/memberships`
+/// lists it — what the daemon matches its local memberships against to record
+/// which persona each belongs to (#236 step 4c). `role`/`kind` are on the wire
+/// too; the match needs only the id.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct MyMembership {
+    pub id: uuid::Uuid,
+    pub tenant_key: String,
+}
+
+/// The `GET /v1/you/memberships` envelope.
+#[derive(Debug, Deserialize)]
+pub struct MyMemberships {
+    pub memberships: Vec<MyMembership>,
+}
+
 /// One repository being offered for registration.
 #[derive(Debug, serde::Serialize)]
 pub struct RepoInput<'a> {
@@ -199,6 +215,9 @@ pub trait UserPlane: Send + Sync {
 
     async fn sync_plan(&self, token: &str) -> Result<SyncPlan, String>;
 
+    /// The person's own memberships (`GET /v1/you/memberships`).
+    async fn my_memberships(&self, token: &str) -> Result<Vec<MyMembership>, String>;
+
     /// Hand the dōjō the forge token so it can re-read repository visibility.
     ///
     /// `Err` when the dōjō reports it did NOT provision, even though that answer
@@ -259,6 +278,9 @@ impl UserPlane for HttpUserPlane {
     }
     async fn sync_plan(&self, token: &str) -> Result<SyncPlan, String> {
         sync_plan(&self.dojo_url, token).await
+    }
+    async fn my_memberships(&self, token: &str) -> Result<Vec<MyMembership>, String> {
+        my_memberships(&self.dojo_url, token).await
     }
     async fn set_metric_activation(
         &self,
@@ -352,6 +374,13 @@ pub async fn push_metrics(
 pub async fn sync_plan(dojo_url: &str, token: &str) -> Result<SyncPlan, String> {
     let req = crate::federation::http_client().get(endpoint(dojo_url, "sync/plan"));
     decode("sync plan", &send(req, token, "sync plan").await?)
+}
+
+/// `GET /v1/you/memberships` — the signed-in person's own active memberships.
+pub async fn my_memberships(dojo_url: &str, token: &str) -> Result<Vec<MyMembership>, String> {
+    let req = crate::federation::http_client().get(endpoint(dojo_url, "memberships"));
+    decode::<MyMemberships>("membership list", &send(req, token, "membership list").await?)
+        .map(|m| m.memberships)
 }
 
 /// `PATCH /v1/you/metrics/activation`.
@@ -514,6 +543,31 @@ mod tests {
         assert_eq!(
             endpoint("https://dojo.test", "sync/plan"),
             "https://dojo.test/v1/you/sync/plan"
+        );
+    }
+
+    /// The literal body `GET /v1/you/memberships` returns (#236 step 4c).
+    #[test]
+    fn my_memberships_decode_from_the_literal_body() {
+        let body = serde_json::json!({
+            "memberships": [{
+                "id": "1f0c0e3a-0000-4000-8000-000000000001",
+                "tenant_key": "organization/acme",
+                "role": "contributor",
+                "kind": "employer"
+            }]
+        });
+        let got: MyMemberships = serde_json::from_value(body).expect("the list decodes");
+        assert_eq!(
+            got.memberships,
+            vec![MyMembership {
+                id: uuid::Uuid::parse_str("1f0c0e3a-0000-4000-8000-000000000001").unwrap(),
+                tenant_key: "organization/acme".into(),
+            }]
+        );
+        assert_eq!(
+            endpoint("https://dojo.test", "memberships"),
+            "https://dojo.test/v1/you/memberships"
         );
     }
 

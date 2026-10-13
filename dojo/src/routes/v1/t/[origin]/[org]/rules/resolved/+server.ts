@@ -1,28 +1,26 @@
-// GET /v1/t/{origin}/{org}/rules/resolved?ns=organization:acme,stack:react
+// GET /v1/t/{origin}/{org}/rules/resolved?ns=organization:acme,technology:react
 //
 // The full-resolve leg for rule packs (Option A). The daemon can't query the
 // Dōjō DB (Fork 1), so at get_rules time it asks the Worker for the rules of
-// every pack ADOPTED at its repo's namespaces (passed as stable scope:slug
-// pairs). The Worker unions them with the adoption's tier override applied
-// (never-weaken) and returns them; the daemon folds them into its resolved
-// ruleset → the SessionStart/PreCompact push. Member+ (any authenticated device
-// token for this tenant), mirroring the sibling rules pull.
+// every pack ADOPTED at its folder's namespaces (passed as stable scope:slug
+// pairs). A member gets those adopted at the namespace their tenant owns, with
+// each adoption's never-weaken tier override (`dojo.tenant_pack_rules`, decision
+// 2026-10-12) — folded by the daemon into its resolved ruleset → the
+// SessionStart/PreCompact push.
+//
+// As the person only (#236 step 4): the legacy device token is a 401 here. This
+// leg returned nothing to a device token since 2026-08-25, so the window keeps
+// nothing it had.
 import type { RequestHandler } from './$types';
-import { dojoDb } from '$lib/server/dojo-supabase';
-import { resolveApiKeyAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
-import {
-	parseNamespacePairs,
-	resolveNamespaces,
-	resolveAdoptedPackRules,
-	RulesError
-} from '$lib/server/rules-data';
+import { callerDb } from '$lib/server/caller-db';
+import { resolveTenantCaller, apiError, ACCESS } from '$lib/server/dojo-auth';
+import { parseNamespacePairs, resolveTenantPackRules, RulesError } from '$lib/server/rules-data';
 
 export const GET: RequestHandler = async ({ params, request, url }) => {
 	try {
-		await resolveApiKeyAccess(params.origin, params.org, request, ACCESS.member);
-		const db = dojoDb();
-		const namespaces = await resolveNamespaces(db, parseNamespacePairs(url.searchParams.get('ns')));
-		const rules = await resolveAdoptedPackRules(db, namespaces);
+		const caller = await resolveTenantCaller(params.origin, params.org, request, ACCESS.member);
+		const pairs = parseNamespacePairs(url.searchParams.get('ns'));
+		const rules = await resolveTenantPackRules(callerDb(caller), caller.tenantId, pairs);
 		return Response.json({ rules });
 	} catch (e) {
 		if (e instanceof Response) return e;
