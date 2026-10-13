@@ -164,6 +164,11 @@ jobs:
 
       # The suite that had no gate. `--bin senseid` because that is where it
       # lives; the other crates are covered separately below.
+      - name: Install the TypeScript engine's packages
+        run: |
+          mkdir -p ~/.sensei/engines
+          cp crates/senseid/src/indexer/lang/ts_compiler_engines.json ~/.sensei/engines/package.json
+          npm install --prefix ~/.sensei/engines --no-audit --no-fund
       - name: Test senseid
         run: cargo test -p senseid --bin senseid
 

@@ -36,6 +36,10 @@ use crate::indexer::resolve::Grammar;
 pub struct SvelteAdapter;
 
 impl LanguageAdapter for SvelteAdapter {
+    fn compiler(&self) -> Option<&'static dyn super::compiler::CompilerEngine> {
+        Some(&super::ts_compiler::TS_ENGINE)
+    }
+
     fn language(&self) -> Language {
         Language::TypeScript
     }

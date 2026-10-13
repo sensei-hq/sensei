@@ -64,6 +64,10 @@ pub struct TypeScriptAdapter;
 pub struct JavaScriptAdapter;
 
 impl LanguageAdapter for TypeScriptAdapter {
+    fn compiler(&self) -> Option<&'static dyn super::compiler::CompilerEngine> {
+        Some(&super::ts_compiler::TS_ENGINE)
+    }
+
     fn language(&self) -> Language {
         Language::TypeScript
     }
@@ -98,6 +102,10 @@ impl LanguageAdapter for TypeScriptAdapter {
 }
 
 impl LanguageAdapter for JavaScriptAdapter {
+    fn compiler(&self) -> Option<&'static dyn super::compiler::CompilerEngine> {
+        Some(&super::ts_compiler::TS_ENGINE)
+    }
+
     fn language(&self) -> Language {
         Language::TypeScript
     }
