@@ -77,6 +77,29 @@ gains only a language-neutral hook:
 - **Reason codes are root causes** — each miss keeps one in the data, for the
   cycle below to work through; none is an end state.
 
+### Where it runs in production (verified 2026-10-13)
+
+Production indexes per file, in parallel: `tasks/handlers/process.rs` →
+`index_and_persist` → `index_file` → `adapter.read` → `resolve` → `reconcile`.
+A call left unplaced is persisted against its target's fqn, so it links when the
+declaring file lands. (`index_repo` and its scope pass are test-only.) So:
+
+- `index_file`, after `resolve`, asks the file's own adapter to place what the
+  walk left unplaced — one language-neutral call; default no-op.
+- The adapter's compiler answer for a Cargo workspace (or TS project) is held in
+  the per-scan shared context (`TellFile::shared`, already built once and shared
+  by every file task), opened lazily by the adapter on the first file of that
+  workspace and reused by the rest.
+- **First-party targets are minted, not translated.** The index records where
+  every first-party symbol is DEFINED; the adapter runs that file through its own
+  `module_path()` and mints with the walk's minter — so the target fqn equals the
+  declaration's by construction, even before the declaring file is indexed.
+  Measured: translating the module out of the symbol instead matched 12,752 of
+  14,441 definitions (88%); every difference was a module rule (integration-test
+  crates, binary roots, `build.rs`) that the walk's own `module_path` owns.
+- The SCIP reader is shared by the Rust and TS adapters (one reader, two
+  producers of the same format).
+
 ## Scope of 100%
 
 Nodes: every declaration in every indexed file of the corpus — functions,
