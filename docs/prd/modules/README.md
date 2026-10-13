@@ -28,6 +28,13 @@ and `spec/` tree. Until a module spec exists, its status lives in
   M6 [`storage-data-model/`](foundation/storage-data-model/README.md). Each owns a `scenarios/` `.feature` set.
   The folded dossiers `features/01-setup.md` and `features/02-config.md` are stamped superseded; the shared
   pipeline specs (`capture`, `code-graph`, `inferencing`, `bootstrap-resolution`) stay live until later planes fold.
+- **Insight — ✅ all seven authored 2026-10-13.** M7 [`analyzer-and-signals/`](insight/analyzer-and-signals/README.md) ·
+  M8 [`metrics-and-health/`](insight/metrics-and-health/README.md) · M9 [`memory-and-knowledge/`](insight/memory-and-knowledge/README.md) ·
+  M10 [`patterns-and-conventions/`](insight/patterns-and-conventions/README.md) · M11 [`traceability-and-doc-drift/`](insight/traceability-and-doc-drift/README.md) ·
+  M12 [`libraries/`](insight/libraries/README.md) · M13 [`governance-and-rules/`](insight/governance-and-rules/README.md).
+  Each owns a `scenarios/` `.feature` set. The M8-owned dossiers `features/metrics/{catalog,feature,architecture-metrics}.md`
+  are stamped superseded; `features/03-observatory.md` and `features/05-governance.md` stay live (they span the Delivery
+  and Team planes too), as do the shared pipeline specs until those planes fold.
 
 ## The module-spec template
 
