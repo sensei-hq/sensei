@@ -316,13 +316,33 @@ describe('listMyMemberships — the caller’s own active memberships', () => {
 		return { db: b, filters };
 	}
 
-	it('returns id, tenant key, role and kind for each of the caller’s active memberships', async () => {
+	// What a daemon needs to hold the membership locally once signing in is
+	// joining (#236 step 4e): where it routes, how it was paired, how it credits.
+	it('returns each active membership as a daemon records it', async () => {
 		const { db, filters } = recordingDb({
-			data: [{ id: 'm1', role: 'maintainer', kind: 'employer', tenant: { key: 'organization/acme' } }],
+			data: [
+				{
+					id: 'm1',
+					role: 'maintainer',
+					kind: 'employer',
+					org_slugs: ['acme', 'acme-labs'],
+					authenticated_via: 'github_oauth',
+					attribution_default: 'anonymous',
+					tenant: { key: 'organization/acme' }
+				}
+			],
 			error: null
 		});
 		expect(await listMyMemberships(db as never, 'p1')).toEqual([
-			{ id: 'm1', tenant_key: 'organization/acme', role: 'maintainer', kind: 'employer' }
+			{
+				id: 'm1',
+				tenant_key: 'organization/acme',
+				role: 'maintainer',
+				kind: 'employer',
+				org_slugs: ['acme', 'acme-labs'],
+				authenticated_via: 'github_oauth',
+				attribution_default: 'anonymous'
+			}
 		]);
 		expect(filters).toContainEqual(['eq', 'user_id', 'p1']);
 		expect(filters).toContainEqual(['is', 'disabled_at', null]);

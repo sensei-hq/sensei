@@ -1,7 +1,7 @@
-// GET /v1/you/memberships — the signed-in person's own active memberships:
-// id, tenant key, role, kind. The daemon matches its local memberships' ids
-// against this to record which persona each belongs to (#236 step 4c), so its
-// tenant calls can present that persona's session. Read as the person; fails
+// GET /v1/you/memberships — the signed-in person's own active memberships,
+// with what the daemon records of each. Signing in is joining (#236 step 4e):
+// the daemon creates its local membership from this and binds it to the
+// persona whose session its tenant calls present. Read as the person; fails
 // closed, never a fabricated empty list.
 import type { RequestHandler } from './$types';
 import { callerDb } from '$lib/server/caller-db';
