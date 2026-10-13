@@ -115,7 +115,7 @@ jobs:
       # appear in a listing of the workspace members.
       #
       # PINNED to the SAME version as `dbd-core` in `crates/senseid` and
-      # `crates/bootstrap` — v0.19.0 everywhere.
+      # `crates/bootstrap` — v0.26.0 everywhere.
       #
       # An earlier version of this comment argued the opposite: that the CLI
       # (the schema tool) and the library (the SQL reader) are different concerns
@@ -126,7 +126,7 @@ jobs:
       # from an install. The tree had drifted four ways (v0.12.0 / v0.14.0 /
       # v0.15.0 / v0.17.0); see #197. One version, moved in one commit.
       - name: Install dbd
-        run: cargo install --git https://github.com/sensei-hq/dbd --tag v0.19.0 dbd-cli --locked
+        run: cargo install --git https://github.com/sensei-hq/dbd --tag v0.26.0 dbd-cli --locked
 
       # PROVISION FROM THE DDL TREE, not from a released bundle. A test database
       # built from a published snapshot ages out of the tree and then tests
@@ -180,3 +180,9 @@ jobs:
 
       - name: Test the rest of the workspace
         run: cargo test --workspace --exclude senseid
+      # The install's schema deploy against real databases: an older release's
+      # shape, a fresh install, a destructive upgrade's backup. #[ignore]d so
+      # bootstrap stays runnable without Postgres (the no-DB coverage job); run
+      # here, by name, where Postgres is.
+      - name: Test the schema deploy (bootstrap, needs Postgres)
+        run: cargo test -p sensei-bootstrap --test deploy_upgrade -- --ignored

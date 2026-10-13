@@ -383,9 +383,9 @@ jobs:
         #
         # That invariant was VIOLATED by this very line until #197: it pinned
         # v0.12.0 against bootstrap's v0.14.0, and this is the pin that deploys
-        # the dōjō's production schema. Now v0.19.0, matching both `dbd-core`
+        # the dōjō's production schema. Now v0.26.0, matching both `dbd-core`
         # pins and `rust.yml`.
-        run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.19.0 dbd-cli
+        run: cargo install --locked --git https://github.com/sensei-hq/dbd --tag v0.26.0 dbd-cli
 
       - name: Fail on any unparseable DDL
         # THE critical guard, and still required at 0.19.0. dbd drops a file it

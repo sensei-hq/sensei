@@ -740,6 +740,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "csv-core"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "704a3c26996a80471189265814dbc2c257598b96b8a7feae2d31ace646bb9782"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "ctor"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -791,12 +800,13 @@ dependencies = [
 
 [[package]]
 name = "dbd-core"
-version = "0.22.0"
-source = "git+https://github.com/sensei-hq/dbd?tag=v0.22.0#21ccdeb0272435a230bd1d278ed03ec71e19784b"
+version = "0.26.0"
+source = "git+https://github.com/sensei-hq/dbd?tag=v0.26.0#0f67517176294156b128db1f0cd394ee99ee8f04"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "csv-core",
  "dirs",
  "encoding_rs",
  "flate2",
@@ -3923,7 +3933,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-bootstrap"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "chrono",
  "dbd-core",
@@ -3940,7 +3950,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-desktop"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "chrono",
  "sensei-bootstrap",

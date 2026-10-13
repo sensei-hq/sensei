@@ -46,7 +46,9 @@ pub struct Skipped {
 pub fn import_design(design_yaml: &Path, package: &str) -> Result<Imported, String> {
     let design = dbd_core::Design::from_config(design_yaml, "dev")
         .map_err(|e| format!("dbd import: {}: {e}", design_yaml.display()))?;
-    facts_of(&dbd_core::schema_model::build(&design, None), package)
+    let model = dbd_core::schema_model::build(&design, None)
+        .map_err(|e| format!("dbd import: {}: {e}", design_yaml.display()))?;
+    facts_of(&model, package)
 }
 
 /// The pure half: a built model, as schema facts.
@@ -270,8 +272,11 @@ mod tests {
             schemas: vec![],
             tables,
             refs,
+            stubs: vec![],
             entities,
             deps: vec![],
+            history: vec![],
+            enums: vec![],
         }
     }
 
@@ -291,9 +296,12 @@ mod tests {
                 def: None,
                 fk: false,
                 uq: false,
+                identity: None,
+                generated: None,
                 note: None,
             }],
             indexes: vec![],
+            checks: vec![],
         }
     }
 
