@@ -50,6 +50,23 @@ struct QueueState {
     dependents: HashMap<u64, Vec<u64>>,
 }
 
+/// A queued or running task with `task`'s `(kind, folder_path, path)` that
+/// is at least as forceful — one whose run does everything `task`'s would.
+fn covering_twin(state: &QueueState, task: &Task) -> Option<u64> {
+    state
+        .pending
+        .iter()
+        .chain(state.blocked.iter())
+        .chain(state.running.values())
+        .find(|t| {
+            t.kind == task.kind
+                && t.folder_path == task.folder_path
+                && t.path == task.path
+                && (t.force || !task.force)
+        })
+        .map(|t| t.id)
+}
+
 impl TaskQueue {
     pub fn new() -> Self {
         Self::with_max_repos(DEFAULT_MAX_CONCURRENT_REPOS)
@@ -164,18 +181,11 @@ impl TaskQueue {
     /// in 2 GB of daemon log. No force had ever run.
     pub async fn enqueue_unique(&self, task: Task) -> Option<u64> {
         let mut state = self.inner.lock().await;
-        let force = task.force;
         let matches = |t: &Task| {
             t.kind == task.kind && t.folder_path == task.folder_path && t.path == task.path
         };
 
-        if state
-            .pending
-            .iter()
-            .chain(state.blocked.iter())
-            .chain(state.running.values())
-            .any(|t| matches(t) && (t.force || !force))
-        {
+        if covering_twin(&state, &task).is_some() {
             return None; // covered; the guard drops the lock on return
         }
 
@@ -195,6 +205,21 @@ impl TaskQueue {
         drop(state);
         self.notify.notify_one();
         Some(id)
+    }
+
+    /// The id of the task that will do this request's work: a queued or running
+    /// twin that COVERS it (as [`enqueue_unique`] judges coverage), else this
+    /// task, newly enqueued. For work other tasks wait on — they wait on
+    /// whichever task does it, so a request a twin covers is never a second run.
+    pub async fn enqueue_covered(&self, task: Task) -> u64 {
+        let mut state = self.inner.lock().await;
+        if let Some(twin) = covering_twin(&state, &task) {
+            return twin;
+        }
+        let id = self.enqueue_locked(&mut state, task);
+        drop(state);
+        self.notify.notify_one();
+        id
     }
 
     /// Shared enqueue body — assign an id, register dependency tracking, place
@@ -964,6 +989,29 @@ mod tests {
             .await;
         assert!(forced.is_some(), "a running unforced twin cannot satisfy a forced request");
         assert_eq!(q.status().await.pending, 1, "admitted as a new task, since it cannot upgrade");
+    }
+
+    /// Work others wait on is done once: a request a queued or running twin
+    /// covers is answered with the twin's id; once the twin is done, a new
+    /// request is a new task.
+    #[tokio::test]
+    async fn a_covered_request_waits_on_its_twin() {
+        let q = TaskQueue::new();
+        let first = q.enqueue_covered(Task::new(TaskKind::CompileProjects, "repo", "")).await;
+        let queued = q.enqueue_covered(Task::new(TaskKind::CompileProjects, "repo", "")).await;
+        assert_eq!(queued, first, "a queued twin covers it");
+        assert_eq!(q.status().await.pending, 1);
+
+        let running = q.next_task().await;
+        let during = q.enqueue_covered(Task::new(TaskKind::CompileProjects, "repo", "")).await;
+        assert_eq!(during, running.id, "a running twin covers it");
+
+        let other = q.enqueue_covered(Task::new(TaskKind::CompileProjects, "other", "")).await;
+        assert_ne!(other, first, "another repository's is its own");
+
+        q.complete(running.id).await;
+        let after = q.enqueue_covered(Task::new(TaskKind::CompileProjects, "repo", "")).await;
+        assert_ne!(after, first, "a finished twin covers nothing");
     }
 
     #[tokio::test]
