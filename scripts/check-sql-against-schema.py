@@ -97,16 +97,18 @@ def looks_complete(sql: str) -> bool:
 def collect(root: pathlib.Path) -> tuple[list[tuple[str, int, str]], list[str]]:
     """Statements to check, and the files deliberately NOT checked (with why).
 
-    Two kinds of SQL in this tree are not addressed to sensei's Postgres and
+    Three kinds of SQL in this tree are not addressed to sensei's Postgres and
     must not be judged against its schema:
 
       * a transcript adapter reading ANOTHER agent's SQLite database (Zed,
         opencode, VS Code, Copilot CLI) — a different engine and a schema this
         project does not own; and
       * `indexer/lang/sql/` — sample SQL the parser is TESTED ON, source text
-        rather than a query anyone runs.
+        rather than a query anyone runs; and
+      * the bootstrap deploy tests, which deploy fixture designs (and older
+        shapes of this one) to scratch databases of their own.
 
-    Both are reported, never silently dropped: an unchecked query this script
+    All are reported, never silently dropped: an unchecked query this script
     does not mention is precisely the gap it exists to close.
     """
     found: list[tuple[str, int, str]] = []
@@ -120,6 +122,9 @@ def collect(root: pathlib.Path) -> tuple[list[tuple[str, int, str]], list[str]]:
             continue
         if "/indexer/lang/sql/" in str(path):
             skipped.append(f"{path} — sample SQL the parser is tested on")
+            continue
+        if str(path).endswith("crates/bootstrap/tests/deploy_upgrade.rs"):
+            skipped.append(f"{path} — deploys its own fixture designs to scratch databases")
             continue
         for m in RUST_STR.finditer(text):
             sql = unescape(m.group(1))
