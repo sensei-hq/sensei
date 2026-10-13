@@ -423,6 +423,13 @@ pub trait LanguageAdapter: Send + Sync {
     fn host(&self) -> Option<&'static str> {
         None
     }
+
+    /// The compiler this language's calls are placed through, if it has one
+    /// (docs/plan/2026-10-13-indexer-full-call-placement.md). Declared here and
+    /// run by the task layer — the adapter describes it and never runs it.
+    fn compiler(&self) -> Option<&'static dyn compiler::CompilerEngine> {
+        None
+    }
 }
 
 /// EVERY adapter — the one registry.

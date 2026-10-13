@@ -109,6 +109,103 @@ impl CompilerIndex {
     }
 }
 
+/// A command the TASK LAYER runs for an adapter. The adapter only describes it:
+/// an adapter never touches the disk (`no_adapter_reads_the_filesystem`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Invocation {
+    pub program: String,
+    pub args: Vec<String>,
+    pub cwd: String,
+}
+
+/// What the task layer answers for an adapter: the identity the walk mints for
+/// the declaration named `name` at `line` of `path` (relative to the project
+/// root the index was built from). It reads that file through its own adapter,
+/// so the answer is the walk's by construction.
+pub trait Declarations: Sync {
+    fn declared_at(&self, path: &str, line: u32, name: &str) -> Result<Fqn, Reason>;
+}
+
+/// A language's compiler, as its adapter declares it. Everything here is pure;
+/// the task layer runs the invocations and hands the results back.
+pub trait CompilerEngine: Sync {
+    /// The manifest file name a project is found from.
+    fn manifest(&self) -> &'static str;
+    /// The command that names the project root for a package directory.
+    fn locate(&self, package_dir: &str) -> Invocation;
+    /// The project root, read from `locate`'s output.
+    fn project_root(&self, located: &str) -> Option<String>;
+    /// The command that names the compiler's binary for a project — located,
+    /// never assumed to be on `PATH` (toolchains install it in different places).
+    fn locate_compiler(&self, project_root: &str) -> Invocation;
+    /// The command that compiles a project into a SCIP index at `output`, with
+    /// the binary `locate_compiler` named.
+    fn compile(&self, compiler: &str, project_root: &str, output: &str) -> Invocation;
+    /// The identity a resolved symbol names.
+    fn target(
+        &self,
+        symbol: &str,
+        index: &CompilerIndex,
+        declarations: &dyn Declarations,
+    ) -> Result<Fqn, Reason>;
+}
+
+/// What the task layer hands `index_file` for a file whose project it compiled:
+/// the project's index, the file's path as that index records it (relative to
+/// the project root), and the declaration lookup.
+#[derive(Clone, Copy)]
+pub struct Compiled<'a> {
+    pub index: &'a CompilerIndex,
+    pub path: &'a str,
+    pub declarations: &'a dyn Declarations,
+}
+
+impl std::fmt::Debug for Compiled<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Compiled").field("path", &self.path).finish_non_exhaustive()
+    }
+}
+
+/// An engine's [`CompilerEngine::target`] bound to one project's answers.
+struct EngineTargets<'a> {
+    engine: &'a dyn CompilerEngine,
+    index: &'a CompilerIndex,
+    declarations: &'a dyn Declarations,
+}
+
+impl Targets for EngineTargets<'_> {
+    fn target(&self, symbol: &str) -> Result<Fqn, Reason> {
+        self.engine.target(symbol, self.index, self.declarations)
+    }
+}
+
+/// The compiler step for one file of a language that HAS an engine: every call
+/// placed through it — or, when the task layer compiled nothing for this file's
+/// project, every call [`Reason::EngineNotRun`].
+pub fn place_with(
+    engine: &dyn CompilerEngine,
+    compiled: Option<&Compiled<'_>>,
+    references: Vec<Reference>,
+    text: &str,
+) -> Vec<Reference> {
+    match compiled {
+        Some(c) => {
+            let answers = FileAnswers::new(c.index, c.path, text);
+            let targets = EngineTargets { engine, index: c.index, declarations: c.declarations };
+            place_calls(references, Some(&answers), &targets)
+        }
+        None => {
+            struct NotRun;
+            impl Targets for NotRun {
+                fn target(&self, _: &str) -> Result<Fqn, Reason> {
+                    Err(Reason::EngineNotRun)
+                }
+            }
+            place_calls(references, None, &NotRun)
+        }
+    }
+}
+
 /// How an adapter turns a compiler symbol into the identity this indexer mints.
 /// The adapter's half of the compiler step — pure: it is handed what it needs.
 pub trait Targets {
