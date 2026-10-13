@@ -400,6 +400,12 @@ pub struct FileInput<'a> {
     /// writer, which already stubs a `Proven` target and reuses its id
     /// (`OnMiss::CreateStub`).
     pub world: &'a World<'a>,
+    /// **WHAT THE LANGUAGE'S COMPILER SAID**, when the task layer compiled this
+    /// file's project (docs/plan/2026-10-13-indexer-full-call-placement.md).
+    /// For a language whose adapter declares an engine, `None` means every call
+    /// in the file is `engine_not_run` — a visible root cause, never the walk's
+    /// placement standing in.
+    pub compiled: Option<&'a lang::compiler::Compiled<'a>>,
 }
 
 /// What one file's read produced — or what it produced instead.
@@ -547,7 +553,7 @@ impl FileIndex {
 /// TAKES the parameter is what S5 removes next; passing `unknown()` here is the
 /// demonstration that it answers nothing.
 pub fn index_file(input: FileInput<'_>) -> FileIndex {
-    let FileInput { repo, path, mode, package, module, text, world } = input;
+    let FileInput { repo, path, mode, package, module, text, world, compiled } = input;
     let stamp = |language: Option<Language>, indexed: Indexed| FileIndex {
         mode,
         repo: repo.to_string(),
@@ -592,7 +598,13 @@ pub fn index_file(input: FileInput<'_>) -> FileIndex {
         // repo-wide table (S5). The LADDER may, because that is its job and the
         // world is handed to it rather than fetched.
         Ok(facts) => {
-            let placed = super::resolve::resolve(facts, adapter.grammar(), world);
+            let mut placed = super::resolve::resolve(facts, adapter.grammar(), world);
+            // THE COMPILER STEP, for a language that has one: every call placed
+            // by what its compiler resolved (or named as not run).
+            if let Some(engine) = adapter.compiler() {
+                let references = std::mem::take(&mut placed.references);
+                placed.references = lang::compiler::place_with(engine, compiled, references, text);
+            }
             stamp(language, Indexed::Read(placed))
         }
         Err(rejected) => {
@@ -673,6 +685,7 @@ mod tests {
             module: "",
             text: "IDENTIFICATION DIVISION.\n",
             world: &told.world(),
+            compiled: None,
         });
 
         assert!(
@@ -747,6 +760,7 @@ mod tests {
                 module: "gone",
                 text,
                 world: &world,
+                compiled: None,
             })
         };
         // Counted off the facts, so the assertion is on what stage 12 would

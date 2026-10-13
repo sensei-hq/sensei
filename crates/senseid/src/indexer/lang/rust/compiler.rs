@@ -11,6 +11,7 @@ use scip::types::descriptor::Suffix;
 
 use crate::indexer::facts::{Fqn, Reason};
 use crate::indexer::fqn::{self, Form};
+use crate::indexer::lang::compiler::{CompilerEngine, CompilerIndex, Declarations, Invocation};
 
 /// The [`Form::Lib`] identity of a symbol rust-analyzer resolved into a library.
 /// A symbol this cannot spell — a local, a malformed symbol, a descriptor shape
@@ -22,6 +23,78 @@ pub fn library_target(symbol: &str) -> Result<Fqn, Reason> {
     let path = rust_path(&parsed.descriptors).ok_or(Reason::SymbolUnnamed)?;
     fqn::refer(&Form::Lib { package: package.name.as_str(), member: &path })
         .map_err(|_| Reason::SymbolUnnamed)
+}
+
+/// rust-analyzer, as the Rust adapter declares it.
+pub struct RustEngine;
+
+pub static RUST_ENGINE: RustEngine = RustEngine;
+
+impl CompilerEngine for RustEngine {
+    fn manifest(&self) -> &'static str {
+        "Cargo.toml"
+    }
+
+    /// Cargo's own answer to "which workspace is this package in" — a nested
+    /// package is in an ancestor workspace only if that workspace lists it, a
+    /// rule this indexer does not restate.
+    fn locate(&self, package_dir: &str) -> Invocation {
+        Invocation {
+            program: "cargo".into(),
+            args: ["locate-project", "--workspace", "--message-format", "plain"]
+                .map(String::from)
+                .to_vec(),
+            cwd: package_dir.to_string(),
+        }
+    }
+
+    fn project_root(&self, located: &str) -> Option<String> {
+        let manifest = located.trim();
+        let root = manifest.strip_suffix("/Cargo.toml")?;
+        (!root.is_empty()).then(|| root.to_string())
+    }
+
+    /// rustup names the toolchain's own rust-analyzer for this project — the
+    /// pinned toolchain if the project pins one — however rustup was installed.
+    fn locate_compiler(&self, project_root: &str) -> Invocation {
+        Invocation {
+            program: "rustup".into(),
+            args: vec!["which".into(), "rust-analyzer".into()],
+            cwd: project_root.to_string(),
+        }
+    }
+
+    fn compile(&self, compiler: &str, project_root: &str, output: &str) -> Invocation {
+        Invocation {
+            program: compiler.to_string(),
+            args: vec!["scip".into(), project_root.into(), "--output".into(), output.into()],
+            cwd: project_root.to_string(),
+        }
+    }
+
+    /// A symbol the project DEFINES is the declaration the walk mints at that
+    /// place; anything else is a library, named and never opened.
+    fn target(
+        &self,
+        symbol: &str,
+        index: &CompilerIndex,
+        declarations: &dyn Declarations,
+    ) -> Result<Fqn, Reason> {
+        match index.definition_of(symbol) {
+            Some(definition) => {
+                let name = declared_name(symbol)?;
+                declarations.declared_at(&definition.path, definition.line, &name)
+            }
+            None => library_target(symbol),
+        }
+    }
+}
+
+/// The name a symbol declares: its last descriptor.
+fn declared_name(symbol: &str) -> Result<String, Reason> {
+    let parsed = parse_symbol(symbol).map_err(|_| Reason::SymbolUnnamed)?;
+    let last = parsed.descriptors.last().ok_or(Reason::SymbolUnnamed)?;
+    Ok(last.name.clone())
 }
 
 /// Render descriptors as a Rust path. `impl#[Self]` and `impl#[Self][Trait]`
@@ -127,5 +200,85 @@ mod tests {
     fn a_symbol_it_cannot_spell_is_a_named_root_cause() {
         assert_eq!(library_target("local 12"), Err(Reason::SymbolUnnamed));
         assert_eq!(library_target("not a symbol"), Err(Reason::SymbolUnnamed));
+    }
+}
+
+#[cfg(test)]
+mod engine_tests {
+    use super::*;
+    use crate::indexer::facts::Language;
+    use crate::indexer::fqn::Reach;
+    use crate::indexer::lang::compiler::{CompilerEngine, CompilerIndex, Declarations};
+
+    const BIND: &str = "rust-analyzer cargo demo 0.1 net/impl#[Listener]bind().";
+    const SOME: &str = "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core option/Option#Some#";
+
+    fn index() -> CompilerIndex {
+        let mut decl = scip::types::Document::new();
+        decl.relative_path = "src/net.rs".into();
+        let mut d = scip::types::Occurrence::new();
+        d.range = vec![9, 11, 15];
+        d.symbol = BIND.into();
+        d.symbol_roles = 1;
+        decl.occurrences = vec![d];
+        let mut ix = scip::types::Index::new();
+        ix.documents = vec![decl];
+        CompilerIndex::from_index(&ix)
+    }
+
+    /// The task layer's half, recorded: which declaration it was asked for.
+    struct Asked(std::sync::Mutex<Vec<(String, u32, String)>>);
+    impl Declarations for Asked {
+        fn declared_at(&self, path: &str, line: u32, name: &str) -> Result<Fqn, Reason> {
+            self.0.lock().unwrap().push((path.into(), line, name.into()));
+            fqn::refer(&Form::Member {
+                lang: Language::Rust,
+                package: "demo",
+                module: "net",
+                ty: "Listener",
+                member: name,
+                reach: Reach::Item,
+            })
+            .map_err(|_| Reason::SymbolUnnamed)
+        }
+    }
+
+    #[test]
+    fn a_project_symbol_is_the_declaration_the_walk_mints_where_the_compiler_says_it_is() {
+        let asked = Asked(Default::default());
+        let got = RUST_ENGINE.target(BIND, &index(), &asked).expect("placed");
+        assert_eq!(got.as_str(), "rust·demo·net·Listener·bind·item");
+        assert_eq!(
+            *asked.0.lock().unwrap(),
+            vec![("src/net.rs".to_string(), 10, "bind".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_symbol_with_no_definition_in_the_project_is_a_library_target() {
+        let asked = Asked(Default::default());
+        let got = RUST_ENGINE.target(SOME, &index(), &asked).expect("placed");
+        assert_eq!(got.as_str(), "lib·core·option::Option::Some");
+        assert!(asked.0.lock().unwrap().is_empty(), "a library is named, never opened");
+    }
+
+    #[test]
+    fn the_engine_runs_rust_analyzer_over_the_cargo_workspace() {
+        assert_eq!(RUST_ENGINE.manifest(), "Cargo.toml");
+        let locate = RUST_ENGINE.locate("/repo/crates/a");
+        assert_eq!(locate.program, "cargo");
+        assert_eq!(locate.args, ["locate-project", "--workspace", "--message-format", "plain"]);
+        assert_eq!(locate.cwd, "/repo/crates/a");
+        assert_eq!(RUST_ENGINE.project_root("/repo/Cargo.toml\n").as_deref(), Some("/repo"));
+        // The binary is LOCATED, not assumed on PATH: rustup names the
+        // toolchain's rust-analyzer for this project (a pinned toolchain
+        // included), whichever way rustup was installed.
+        let which = RUST_ENGINE.locate_compiler("/repo");
+        assert_eq!(which.program, "rustup");
+        assert_eq!(which.args, ["which", "rust-analyzer"]);
+        assert_eq!(which.cwd, "/repo");
+        let run = RUST_ENGINE.compile("/opt/ra/rust-analyzer", "/repo", "/tmp/out.scip");
+        assert_eq!(run.program, "/opt/ra/rust-analyzer");
+        assert_eq!(run.args, ["scip", "/repo", "--output", "/tmp/out.scip"]);
     }
 }

@@ -1057,6 +1057,19 @@ pub fn placement_on_disk(
     repo_root: &std::path::Path,
     language: crate::indexer::facts::Language,
 ) -> Option<crate::indexer::placement::Placement> {
+    let (dir, package) = owning_manifest_on_disk(file, repo_root, language)?;
+    Some(crate::indexer::placement::placement_of(file, &package, &dir, language))
+}
+
+/// The directory of the manifest that owns `file`, and the package it names —
+/// the climb [`placement_on_disk`] places a file by, exposed for the compiler
+/// step, which needs the package DIRECTORY to ask the build tool which project
+/// the package belongs to.
+pub fn owning_manifest_on_disk(
+    file: &std::path::Path,
+    repo_root: &std::path::Path,
+    language: crate::indexer::facts::Language,
+) -> Option<(std::path::PathBuf, String)> {
     let mut dir = file.parent()?;
     loop {
         // EVERY manifest an adapter claims, by name OR by extension. Probing the
@@ -1087,9 +1100,7 @@ pub fn placement_on_disk(
         for manifest in &here {
             let Ok(text) = std::fs::read_to_string(manifest) else { continue };
             if let Some(package) = crate::indexer::placement::package_named_by(manifest, &text) {
-                return Some(crate::indexer::placement::placement_of(
-                    file, &package, dir, language,
-                ));
+                return Some((dir.to_path_buf(), package));
             }
         }
         if dir == repo_root {
@@ -1287,6 +1298,7 @@ mod parse_task {
                 module: "lib",
                 text: "pub struct Widget;\npub fn make() -> Widget { Widget }\n",
                 world: &world,
+                compiled: None,
             },
         )
         .await

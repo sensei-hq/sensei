@@ -466,6 +466,48 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 std::sync::Arc::new(crate::indexer::pipeline::TellFile::about(&placement.package))
             }
         };
+        // THE COMPILER, for a language whose adapter declares one: this file's
+        // project compiled once per scan (the first file to ask waits for it,
+        // the rest share it). A failure is logged with its cause and the file's
+        // calls then say `engine_not_run` — never the walk's answer standing in.
+        let engine = crate::indexer::lang::adapter_for_ext(
+            &fpath.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default(),
+        )
+        .and_then(|a| a.compiler());
+        let sessions = crate::indexer::compiler_session::CompilerSessions::shared(fid, repo_root)?;
+        let project = match engine {
+            Some(engine) => {
+                match crate::indexer::pipeline::owning_manifest_on_disk(fpath, repo_root, language)
+                {
+                    Some((package_dir, _)) => {
+                        match sessions.project_for(engine, &package_dir).await {
+                            Ok(project) => Some(project),
+                            Err(e) => {
+                                tracing::warn!(file = %rel, error = %e,
+                                "compiler not run for this file's project — its calls are engine_not_run");
+                                None
+                            }
+                        }
+                    }
+                    None => None,
+                }
+            }
+            None => None,
+        };
+        let canonical_file = crate::indexer::compiler_session::canonical(fpath);
+        let path_in_project = project
+            .as_ref()
+            .and_then(|p| canonical_file.strip_prefix(&p.root).ok())
+            .map(|p| p.to_string_lossy().into_owned());
+        let declarations = project.as_ref().map(|p| sessions.declarations(p));
+        let compiled = match (&project, &path_in_project, &declarations) {
+            (Some(p), Some(path), Some(d)) => Some(crate::indexer::lang::compiler::Compiled {
+                index: &p.index,
+                path,
+                declarations: d,
+            }),
+            _ => None,
+        };
         let written = crate::indexer::pipeline::index_and_persist(
             ctx.pg(),
             fid,
@@ -477,6 +519,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 module: &placement.module,
                 text: &text,
                 world: &told.world(),
+                compiled: compiled.as_ref(),
             },
         )
         .await?;
@@ -1715,7 +1758,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("callarms");
         std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"callarms\"\n").unwrap();
+        // A real crate: the compiler places calls only in files a crate root
+        // reaches, exactly as rustc compiles only those.
+        std::fs::write(
+            repo.join("Cargo.toml"),
+            "[package]\nname = \"callarms\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub mod caller;\npub mod other;\n").unwrap();
         std::fs::write(repo.join("src/other.rs"), "pub fn faraway() {}\n").unwrap();
         // One file reaching three arms: a std call (lib), a call into another
         // file (stub, since `other.rs` is processed second), and a call to a
@@ -2115,10 +2165,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("libcrate");
         std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"libcrate\"\n").unwrap();
+        // A crate that compiles: a call into the standard library, which every
+        // toolchain has, rather than an undeclared dependency no compiler could
+        // resolve.
+        std::fs::write(
+            repo.join("Cargo.toml"),
+            "[package]\nname = \"libcrate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
         std::fs::write(
             repo.join("src/lib.rs"),
-            "pub fn load(s: &str) { serde_json::from_str(s); }\n",
+            "pub fn load(s: &str) { let _ = std::env::var(s); }\n",
         )
         .unwrap();
         let repo_path = repo.to_string_lossy().to_string();
@@ -2135,9 +2192,9 @@ mod tests {
 
         // The external symbol is a `lib_symbol`, grouped by package.
         let (sym_id, sym_pkg, parent): (uuid::Uuid, Option<String>, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
-            "SELECT id, props->>'package', parent_id FROM sensei.nodes WHERE folder_id=$1 AND kind='unknown'::sensei.node_kind AND name='from_str'")
+            "SELECT id, props->>'package', parent_id FROM sensei.nodes WHERE folder_id=$1 AND kind='unknown'::sensei.node_kind AND name='var'")
             .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(sym_pkg.as_deref(), Some("serde_json"), "lib symbol grouped by package");
+        assert_eq!(sym_pkg.as_deref(), Some("std"), "lib symbol grouped by package");
 
         // …under a per-package `lib_package` container.
         let (container_id, container_name): (uuid::Uuid, String) =
@@ -2150,14 +2207,14 @@ mod tests {
             .fetch_one(ctx.pg().pool())
             .await
             .unwrap();
-        assert_eq!(container_name, "serde_json", "a lib_package container per dependency");
+        assert_eq!(container_name, "std", "a lib_package container per dependency");
         assert_eq!(
             parent,
             Some(container_id),
             "the lib symbol is parented under its package container"
         );
 
-        // A RESOLVED call edge load → from_str (external call not dropped).
+        // A RESOLVED call edge load → var (external call not dropped).
         let (edge_target,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
             "SELECT e.target_id FROM sensei.edges e JOIN sensei.nodes s ON s.id=e.source_id
               WHERE e.folder_id=$1 AND s.name='load' AND e.kind='calls'::sensei.edge_kind",
@@ -2171,8 +2228,8 @@ mod tests {
         // Queryable per repo.
         let deps = ctx.pg().list_dependencies(&fid).await.unwrap();
         assert!(
-            deps.iter().any(|d| d["package"] == "serde_json" && d["symbol_count"] == 1),
-            "serde_json is a queryable dependency with one used symbol, got {deps:?}"
+            deps.iter().any(|d| d["package"] == "std" && d["symbol_count"] == 1),
+            "std is a queryable dependency with one used symbol, got {deps:?}"
         );
 
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
