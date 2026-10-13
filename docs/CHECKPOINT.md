@@ -8,25 +8,24 @@ the sensei repo. Rust, then JS/TS/Svelte, then references/imports, then SQL/ER.
 |---|---|
 | Rust engine: rust-analyzer `scip`, in-adapter `CompilerEngine`, task-layer IO | DONE `02d573fa` `13e42d80` |
 | Macro/path calls, locals dropped; renamed imports, all features × 3 platforms | DONE `2b2f9d81` `c9893779` |
-| `CompileProjects` task ahead of the files (watchdog no longer kills compiles) | DONE `6aea71ec` |
-| One compile per state of the sources (gate fired 3×/scan, sessions wiped → 50,768 `engine_not_run`) | DONE `5b1b0238` |
-| Live Rust verify (5th rescan) → per-reason root-cause cycle | IN PROGRESS |
-| TS/JS/Svelte engine: `ts_compiler_driver.mjs` (untracked, unwired) → `TsEngine` | NEXT |
-| `plumbing` / `external_boundary` placed onto `lib·` nodes, not `missed` | TODO |
-| references + imports via the compiler; vendored/generated excluded by markers | TODO |
-| bootstrap installs/checks engines; ≥90% regression gate; SQL/ER placement | TODO |
-| `graph_placement` language/package axes; final report; docs/prd/spec R5 §5 | TODO |
+| `CompileProjects` task ahead of the files | DONE `6aea71ec` |
+| Compile scheduling: once per source state `5b1b0238`, one in flight per repo `a6e0783d`, turns + last-finished read `923ce05d`, once per project per task `d46a30b5` | DONE |
+| TS/JS/Svelte engine: embedded node driver (project's typescript + svelte2tsx), `lib·ecmascript` for globals | DONE `e90bb9ce` |
+| Vendored/generated excluded by `.gitattributes` linguist marks + `@generated` header; skipped files shed nodes | DONE `6ab328ef` |
+| Live verify, 7th rescan (t0 06:52:41Z) → per-reason root-cause cycle, Rust + TS/Svelte | IN PROGRESS |
+| references + imports via the compiler (`plumbing`/`external_boundary` remain there) | TODO |
+| bootstrap installs/checks engines (`ts_compiler_engines.json` → `~/.sensei/engines`; rust-analyzer + rust-src) | TODO |
+| ≥90% regression gate; SQL/ER placement; `graph_placement` language/package axes; final report; docs/prd/spec R5 §5 | TODO |
 
-**Next command:** wait for the rescan to finish, then run
-`select * from sensei.graph_placement where project='sensei' and edge_kind='calls'`
-and take the files parsed after `/tmp/scan_t0`.
+**Next command:** when the rescan finishes, run
+`select * from sensei.graph_placement where project='sensei' and edge_kind='calls'`,
+then group the misses by language and reason over the files parsed after t0.
 
 **Open questions:** none.
 
-**Known broken:** the live DB is guarded at v1 by dbd, so additive DDL and
-reason-code rows are hand-applied with psql. `dbd import` fails on
-`model_capability.decision` (pre-existing). Release N (CHANGELOG + docs sync +
-`make bump`) and #236 4e are on hold until this slice is done. Queue afterwards:
-#225, #239–241, #245, #252, #254, #238, and the #221 visual check. Untracked
-files from another session (`src/`, `docs/components/`, `docs/rune-usage.md`,
-`svelte5-runes-*.md`) are not touched.
+**Known broken:** the live DB is guarded at v1 by dbd, so additive DDL is
+hand-applied with psql (`scan_skip_reason` += vendored, generated: done live and
+in `sensei_test`). `dbd import` fails on `model_capability.decision`
+(pre-existing). Release N and #236 4e are on hold until this slice is done.
+Queue afterwards: #225, #239–241, #245, #252, #254, #238, and the #221 visual
+check. Untracked files from another session are not touched.
