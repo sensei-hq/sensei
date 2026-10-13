@@ -81,10 +81,12 @@ describe('KnowledgeSourcesState', () => {
     const api = mockApi({ createKnowledgeSource: create, listKnowledgeSources: list });
     const state = new KnowledgeSourcesState();
     state.url = 'https://hive.example.com';
-    state.key = 'secret';
     state.name = 'Hive';
     await state.add(api);
-    expect(create).toHaveBeenCalledWith({ url: 'https://hive.example.com', key: 'secret', name: 'Hive' });
+    // No key: a source is reached with the session of the persona whose dōjō
+    // membership owns it (#236 step 4e).
+    expect(create).toHaveBeenCalledWith({ url: 'https://hive.example.com', name: 'Hive' });
+    expect(state).not.toHaveProperty('key');
     expect(list).toHaveBeenCalled();
     expect(state.url).toBe('');
     expect(state.addError).toBeNull();

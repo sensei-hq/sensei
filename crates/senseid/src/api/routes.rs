@@ -2307,6 +2307,34 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
+    // #236 step 4e: a rules source is a dōjō tenant, reached with the session
+    // of the persona whose membership owns it — the source holds no key.
+    #[tokio::test]
+    async fn a_knowledge_source_registers_without_a_key_of_its_own() {
+        let (app, state) = test_app().await;
+        let url = format!("http://localhost:7755/v1/t/organization/src-{}", uuid::Uuid::new_v4());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/knowledge/sources")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "name": "team rules", "url": url }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let id: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let id = uuid::Uuid::parse_str(id["id"].as_str().unwrap()).unwrap();
+        let source = state.pg.get_knowledge_source(&id).await.unwrap().expect("registered");
+        assert_eq!(source.url, url);
+        state.pg.delete_knowledge_source(&id).await.unwrap();
+    }
+
     #[tokio::test]
     async fn health_check() {
         let (app, _) = test_app().await;

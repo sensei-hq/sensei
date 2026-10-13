@@ -532,96 +532,49 @@ impl PgStore {
         s: &NewKnowledgeSource,
     ) -> Result<uuid::Uuid, String> {
         let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
-            "INSERT INTO sensei.knowledge_sources(kind, name, url, namespace_id, credential_ref, direction)
-             VALUES($1,$2,$3,$4,$5,$6) RETURNING id")
-            .bind(&s.kind).bind(&s.name).bind(&s.url).bind(s.namespace_id).bind(&s.credential_ref).bind(&s.direction)
-            .fetch_one(&self.pool).await.map_err(|e| e.to_string())?;
+            "INSERT INTO sensei.knowledge_sources(kind, name, url, namespace_id, direction)
+             VALUES($1,$2,$3,$4,$5) RETURNING id",
+        )
+        .bind(&s.kind)
+        .bind(&s.name)
+        .bind(&s.url)
+        .bind(s.namespace_id)
+        .bind(&s.direction)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
         Ok(id)
     }
 
+    const SOURCE_SELECT: &'static str =
+        "SELECT id, kind, name, url, namespace_id, direction, last_seq, enabled
+           FROM sensei.knowledge_sources";
+
+    fn map_source_row(row: KnowledgeSourceRow) -> KnowledgeSource {
+        let (id, kind, name, url, namespace_id, direction, last_seq, enabled) = row;
+        KnowledgeSource { id, kind, name, url, namespace_id, direction, last_seq, enabled }
+    }
+
     pub async fn list_knowledge_sources(&self) -> Result<Vec<KnowledgeSource>, String> {
-        let rows: Vec<(
-            uuid::Uuid,
-            String,
-            String,
-            String,
-            Option<uuid::Uuid>,
-            String,
-            String,
-            i64,
-            bool,
-        )> = sqlx_core::query_as::query_as(
-            "SELECT id, kind, name, url, namespace_id, credential_ref, direction, last_seq, enabled
-                   FROM sensei.knowledge_sources ORDER BY created_at",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        Ok(rows
-            .into_iter()
-            .map(
-                |(
-                    id,
-                    kind,
-                    name,
-                    url,
-                    namespace_id,
-                    credential_ref,
-                    direction,
-                    last_seq,
-                    enabled,
-                )| KnowledgeSource {
-                    id,
-                    kind,
-                    name,
-                    url,
-                    namespace_id,
-                    credential_ref,
-                    direction,
-                    last_seq,
-                    enabled,
-                },
-            )
-            .collect())
+        let rows: Vec<KnowledgeSourceRow> =
+            sqlx_core::query_as::query_as(&format!("{} ORDER BY created_at", Self::SOURCE_SELECT))
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(Self::map_source_row).collect())
     }
 
     pub async fn get_knowledge_source(
         &self,
         id: &uuid::Uuid,
     ) -> Result<Option<KnowledgeSource>, String> {
-        let row: Option<(
-            uuid::Uuid,
-            String,
-            String,
-            String,
-            Option<uuid::Uuid>,
-            String,
-            String,
-            i64,
-            bool,
-        )> = sqlx_core::query_as::query_as(
-            "SELECT id, kind, name, url, namespace_id, credential_ref, direction, last_seq, enabled
-                   FROM sensei.knowledge_sources WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| e.to_string())?;
-        Ok(row.map(
-            |(id, kind, name, url, namespace_id, credential_ref, direction, last_seq, enabled)| {
-                KnowledgeSource {
-                    id,
-                    kind,
-                    name,
-                    url,
-                    namespace_id,
-                    credential_ref,
-                    direction,
-                    last_seq,
-                    enabled,
-                }
-            },
-        ))
+        let row: Option<KnowledgeSourceRow> =
+            sqlx_core::query_as::query_as(&format!("{} WHERE id = $1", Self::SOURCE_SELECT))
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        Ok(row.map(Self::map_source_row))
     }
 
     pub async fn set_source_cursor(&self, id: &uuid::Uuid, last_seq: i64) -> Result<(), String> {

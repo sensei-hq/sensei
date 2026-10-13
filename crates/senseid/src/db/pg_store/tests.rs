@@ -9353,7 +9353,6 @@ async fn knowledge_source_crud_roundtrip() {
             name: "Org Dōjō".into(),
             url: "https://dojo.example".into(),
             namespace_id: None,
-            credential_ref: "dojo-test".into(),
             direction: "both".into(),
         })
         .await

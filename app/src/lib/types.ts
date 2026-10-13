@@ -959,7 +959,6 @@ export interface KnowledgeSource {
 
 export interface NewKnowledgeSourceBody {
   url: string;
-  key?: string;
   name?: string;
   namespace_id?: string;
 }
