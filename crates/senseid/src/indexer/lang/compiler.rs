@@ -13,7 +13,8 @@ use std::collections::HashMap;
 
 use protobuf::Message;
 
-use crate::indexer::facts::Span;
+use crate::indexer::facts::{Evidence, Fqn, Reason, RefKind, Reference, Resolution, Rung, Span};
+use crate::indexer::fqn::{self, Origin, Reach};
 
 /// One name the compiler resolved, at its position in a file.
 ///
@@ -105,6 +106,100 @@ impl CompilerIndex {
     /// case for every symbol of the indexed project itself.
     pub fn definition_of(&self, symbol: &str) -> Option<&Definition> {
         self.definitions.get(symbol)
+    }
+}
+
+/// How an adapter turns a compiler symbol into the identity this indexer mints.
+/// The adapter's half of the compiler step — pure: it is handed what it needs.
+pub trait Targets {
+    fn target(&self, symbol: &str) -> Result<Fqn, Reason>;
+}
+
+/// The compiler's answers for ONE file: the project's index, the file's path as
+/// the index knows it, and the file's text (an occurrence is matched by the
+/// callee's name as written there).
+pub struct FileAnswers<'a> {
+    index: &'a CompilerIndex,
+    path: &'a str,
+    lines: Vec<&'a str>,
+}
+
+impl<'a> FileAnswers<'a> {
+    pub fn new(index: &'a CompilerIndex, path: &'a str, text: &'a str) -> Self {
+        Self { index, path, lines: text.split('\n').collect() }
+    }
+}
+
+/// Place every CALL in a file through its language's compiler.
+///
+/// Where the compiler covers the file it is the ONE answer for every call — the
+/// walk's own placement is not kept beside it, so a library symbol is never
+/// spelled two ways. Where it does not, every call says so
+/// ([`Reason::EngineNotRun`]): a visible root cause, never a fallback to the
+/// walk. Other reference kinds are untouched.
+pub fn place_calls(
+    references: Vec<Reference>,
+    answers: Option<&FileAnswers<'_>>,
+    targets: &dyn Targets,
+) -> Vec<Reference> {
+    references
+        .into_iter()
+        .map(|reference| {
+            if reference.kind != RefKind::Calls {
+                return reference;
+            }
+            let evidence = evidence_of(&reference);
+            let target = match place_one(&reference.at, &evidence.name, answers, targets) {
+                Ok(fqn) => Resolution::Resolved { fqn, via: Rung::ResolvedByCompiler },
+                Err(reason) => Resolution::Unresolved { reason, evidence },
+            };
+            Reference { target, ..reference }
+        })
+        .collect()
+}
+
+fn place_one(
+    at: &Span,
+    name: &str,
+    answers: Option<&FileAnswers<'_>>,
+    targets: &dyn Targets,
+) -> Result<Fqn, Reason> {
+    let answers = answers.ok_or(Reason::EngineNotRun)?;
+    if !answers.index.covers(answers.path) {
+        return Err(Reason::EngineNotRun);
+    }
+    let symbol = answers
+        .index
+        .symbol_in(answers.path, at, name, &answers.lines)
+        .ok_or(Reason::CompilerNoSymbol)?;
+    targets.target(symbol)
+}
+
+/// What the walk knew about the call: its own evidence when it left the call
+/// unplaced, or — when it placed it — the callee's name read back out of the
+/// identity it placed it on.
+fn evidence_of(reference: &Reference) -> Evidence {
+    match &reference.target {
+        Resolution::Unresolved { evidence, .. } => evidence.clone(),
+        Resolution::Resolved { fqn, .. } => Evidence {
+            name: callee_name(fqn),
+            node_kind: "call".to_string(),
+            reach: Reach::Item,
+            saw: vec![crate::indexer::facts::Observation::Named(fqn.clone())],
+        },
+    }
+}
+
+/// The name a call site spells for a target the walk already placed: the last
+/// segment of a local identity, the last path segment of a library member.
+fn callee_name(target: &Fqn) -> String {
+    let Ok(parsed) = fqn::parse(target.as_str()) else {
+        return target.as_str().to_string();
+    };
+    let last = parsed.tail.last().copied().unwrap_or(parsed.package);
+    match parsed.origin {
+        Origin::Lib => last.rsplit("::").next().unwrap_or(last).trim_end_matches('!').to_string(),
+        Origin::Local { .. } => last.to_string(),
     }
 }
 
@@ -225,5 +320,168 @@ mod tests {
     #[test]
     fn an_unreadable_index_is_an_error_not_an_empty_answer() {
         assert!(CompilerIndex::from_bytes(b"\xff\xff not protobuf").is_err());
+    }
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::*;
+    use crate::indexer::facts::{Evidence, Fqn, Language, RefKind, Reference, Resolution, Rung};
+    use crate::indexer::fqn::{self, Form, Reach};
+
+    fn item(name: &str) -> Fqn {
+        fqn::refer(&Form::Item {
+            lang: Language::Rust,
+            package: "demo",
+            module: "net",
+            name,
+            reach: Reach::Item,
+        })
+        .expect("mints")
+    }
+
+    fn call(at: Span, target: Resolution) -> Reference {
+        Reference { from: item("main"), kind: RefKind::Calls, at, target }
+    }
+
+    fn unplaced(name: &str) -> Resolution {
+        Resolution::Unresolved {
+            reason: Reason::ReceiverTypeUnknown,
+            evidence: Evidence {
+                name: name.into(),
+                node_kind: "field_expression".into(),
+                reach: Reach::Item,
+                saw: vec![],
+            },
+        }
+    }
+
+    const BIND: &str = "rust-analyzer cargo demo 0.1 net/bind().";
+    const UNWRAP: &str = "rust-analyzer cargo core 1.0 result/impl#[`Result<T, E>`]unwrap().";
+    const TEXT: &str = "fn main() {\n    let x = open().unwrap();\n    bind();\n}";
+
+    /// A stand-in for an adapter: `bind` is ours, `unwrap` a library, and
+    /// anything else is a symbol it cannot spell.
+    struct Engine;
+    impl Targets for Engine {
+        fn target(&self, symbol: &str) -> Result<Fqn, Reason> {
+            match symbol {
+                BIND => Ok(item("bind")),
+                UNWRAP => {
+                    fqn::refer(&Form::Lib { package: "core", member: "result::Result::unwrap" })
+                        .map_err(|_| Reason::SymbolUnnamed)
+                }
+                _ => Err(Reason::SymbolUnnamed),
+            }
+        }
+    }
+
+    fn compiled() -> CompilerIndex {
+        let mut doc = scip::types::Document::new();
+        doc.relative_path = "src/main.rs".into();
+        let mut a = scip::types::Occurrence::new();
+        a.range = vec![1, 19, 25];
+        a.symbol = UNWRAP.into();
+        let mut b = scip::types::Occurrence::new();
+        b.range = vec![2, 4, 8];
+        b.symbol = BIND.into();
+        doc.occurrences = vec![a, b];
+        let mut index = scip::types::Index::new();
+        index.documents = vec![doc];
+        CompilerIndex::from_index(&index)
+    }
+
+    fn span(line: u32, start: u32, end: u32) -> Span {
+        Span { start_line: line, start_col: start, end_line: line, end_col: end }
+    }
+
+    #[test]
+    fn the_compiler_places_every_call_in_a_file_it_covers() {
+        let ix = compiled();
+        let answers = FileAnswers::new(&ix, "src/main.rs", TEXT);
+        let refs = vec![
+            call(span(2, 12, 27), unplaced("unwrap")),
+            // Placed by the walk already; the compiler is still the one answer.
+            call(
+                span(3, 4, 10),
+                Resolution::Resolved { fqn: item("bind"), via: Rung::DeclaredHere },
+            ),
+        ];
+        let placed = place_calls(refs, Some(&answers), &Engine);
+        assert_eq!(
+            placed[0].target,
+            Resolution::Resolved {
+                fqn: fqn::refer(&Form::Lib { package: "core", member: "result::Result::unwrap" })
+                    .unwrap(),
+                via: Rung::ResolvedByCompiler
+            }
+        );
+        assert_eq!(
+            placed[1].target,
+            Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }
+        );
+    }
+
+    #[test]
+    fn a_file_the_compiler_did_not_cover_says_so_on_every_call() {
+        let refs = vec![call(
+            span(3, 4, 10),
+            Resolution::Resolved { fqn: item("bind"), via: Rung::DeclaredHere },
+        )];
+        let placed = place_calls(refs, None, &Engine);
+        assert!(
+            matches!(&placed[0].target, Resolution::Unresolved { reason: Reason::EngineNotRun, evidence } if evidence.name == "bind"),
+            "got {:?}",
+            placed[0].target
+        );
+    }
+
+    #[test]
+    fn a_file_missing_from_the_compilers_index_is_not_run_rather_than_no_symbol() {
+        // The project was compiled, but not this file — a different root cause
+        // from "compiled it and found nothing here", with a different fix.
+        let ix = compiled();
+        let answers = FileAnswers::new(&ix, "src/elsewhere.rs", TEXT);
+        let placed =
+            place_calls(vec![call(span(3, 4, 10), unplaced("bind"))], Some(&answers), &Engine);
+        assert!(matches!(
+            placed[0].target,
+            Resolution::Unresolved { reason: Reason::EngineNotRun, .. }
+        ));
+    }
+
+    #[test]
+    fn no_symbol_at_the_span_and_an_unspellable_symbol_are_named_root_causes() {
+        let ix = compiled();
+        let answers = FileAnswers::new(&ix, "src/main.rs", TEXT);
+        let refs = vec![call(span(2, 12, 27), unplaced("expect"))];
+        let placed = place_calls(refs, Some(&answers), &Engine);
+        assert!(matches!(
+            placed[0].target,
+            Resolution::Unresolved { reason: Reason::CompilerNoSymbol, .. }
+        ));
+
+        struct Nothing;
+        impl Targets for Nothing {
+            fn target(&self, _: &str) -> Result<Fqn, Reason> {
+                Err(Reason::DeclarationNotFound)
+            }
+        }
+        let refs = vec![call(span(3, 4, 10), unplaced("bind"))];
+        let placed = place_calls(refs, Some(&answers), &Nothing);
+        assert!(matches!(
+            placed[0].target,
+            Resolution::Unresolved { reason: Reason::DeclarationNotFound, .. }
+        ));
+    }
+
+    #[test]
+    fn only_calls_are_touched() {
+        let ix = compiled();
+        let answers = FileAnswers::new(&ix, "src/main.rs", TEXT);
+        let mut read = call(span(3, 4, 10), unplaced("bind"));
+        read.kind = RefKind::Reads;
+        let placed = place_calls(vec![read.clone()], Some(&answers), &Engine);
+        assert_eq!(placed[0], read);
     }
 }
