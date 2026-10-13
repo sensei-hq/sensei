@@ -21,6 +21,14 @@ and `spec/` tree. Until a module spec exists, its status lives in
 [`../../roadmap/`](../../roadmap/README.md) and its legacy docs are still at
 `../../features/` and `../../spec/`.
 
+**Phase 2 progress (by plane, priority order):**
+- **Foundation — ✅ all six authored 2026-10-13.** M1 [`bootstrap-provisioning/`](foundation/bootstrap-provisioning/README.md) ·
+  M2 [`setup-preferences/`](foundation/setup-preferences/README.md) · M3 [`capture-sessions/`](foundation/capture-sessions/README.md) ·
+  M4 [`code-graph/`](foundation/code-graph/README.md) · M5 [`inference-gateway/`](foundation/inference-gateway/README.md) ·
+  M6 [`storage-data-model/`](foundation/storage-data-model/README.md). Each owns a `scenarios/` `.feature` set.
+  The folded dossiers `features/01-setup.md` and `features/02-config.md` are stamped superseded; the shared
+  pipeline specs (`capture`, `code-graph`, `inferencing`, `bootstrap-resolution`) stay live until later planes fold.
+
 ## The module-spec template
 
 Every module spec (`modules/<plane>/<module>/README.md`) answers the five
