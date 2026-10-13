@@ -994,6 +994,139 @@ mod tests {
         assert_eq!(to("src/routes.ts", 4, "run"), vec![], "a value's member is a local's: no edge");
     }
 
+    /// **RUST'S REFERENCES, BY RUST-ANALYZER.** A field read and a type use
+    /// reach their declarations; a library type is its `lib·` node; a generic
+    /// parameter is the declaration's own local — no edge.
+    #[tokio::test]
+    async fn rust_references_are_placed_by_rust_analyzer() {
+        use crate::indexer::facts::{RefKind, Resolution, Rung};
+        use crate::indexer::lang::compiler::{Compiled, place_with};
+        use crate::indexer::lang::rust::compiler::RUST_ENGINE;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n[workspace]\n",
+        )
+        .unwrap();
+        let text = "pub struct Point {\n    pub x: u32,\n}\n\npub fn get<T>(p: &Point, _t: T) -> Vec<Point> {\n    let _n = p.x;\n    Vec::new()\n}\n";
+        std::fs::write(root.join("src/lib.rs"), text).unwrap();
+
+        let sessions = CompilerSessions::new(&root);
+        let project =
+            sessions.project_for(&RUST_ENGINE, &root).await.expect("rust-analyzer compiles");
+        let declarations = sessions.declarations(&project);
+        let facts = read_declarations(&root, &root.join("src/lib.rs")).expect("reads");
+        let compiled =
+            Compiled { index: &project.index, path: "src/lib.rs", declarations: &declarations };
+        let references: Vec<_> = facts
+            .references
+            .iter()
+            .filter(|r| matches!(r.kind, RefKind::Reads | RefKind::TypeUse))
+            .cloned()
+            .collect();
+        let placed = place_with(&RUST_ENGINE, Some(&compiled), references, text);
+        let unplaced: Vec<_> =
+            placed.iter().filter(|r| matches!(r.target, Resolution::Unresolved { .. })).collect();
+        assert!(unplaced.is_empty(), "every reference placed: {unplaced:#?}");
+        let targets: Vec<String> = placed
+            .iter()
+            .filter_map(|r| match &r.target {
+                Resolution::Resolved { fqn, via: Rung::ResolvedByCompiler } => {
+                    Some(fqn.as_str().to_string())
+                }
+                _ => None,
+            })
+            .collect();
+        let point = declarations.declared_at("src/lib.rs", 1, "Point").unwrap();
+        let x = declarations.declared_at("src/lib.rs", 2, "x").unwrap();
+        assert!(targets.contains(&point.as_str().to_string()), "{targets:?}");
+        assert!(targets.contains(&x.as_str().to_string()), "{targets:?}");
+        assert!(
+            targets.iter().any(|t| t.starts_with("lib·alloc·") && t.contains("Vec")),
+            "{targets:?}"
+        );
+        assert!(
+            !targets.iter().any(|t| t.ends_with("·T·item") || t.contains("·T·")),
+            "a generic parameter is no edge: {targets:?}"
+        );
+    }
+
+    /// **A REFERENCE IS PLACED BY THE CHECKER AS A CALL IS.** A type use, a
+    /// construction and field reads reach their declarations — through a
+    /// parameter's type and through a local's.
+    #[tokio::test]
+    async fn references_are_placed_by_the_checker() {
+        use crate::indexer::facts::{RefKind, Resolution, Rung};
+        use crate::indexer::lang::compiler::{Compiled, place_with};
+        use crate::indexer::lang::ts_compiler::TS_ENGINE;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        let write = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("package.json", r#"{"name": "web", "type": "module"}"#);
+        write(
+            "tsconfig.json",
+            r#"{"compilerOptions": {"strict": true, "module": "esnext", "moduleResolution": "bundler", "target": "es2022"}}"#,
+        );
+        write(
+            "src/conf.ts",
+            "export class Box {\n  size = 1;\n}\n\nexport interface Opts {\n  n: number;\n}\n",
+        );
+        write(
+            "src/use.ts",
+            "import { Box, type Opts } from './conf';\n\nexport type Pair = Opts[];\n\nexport function pick(o: Opts) {\n  const b = new Box();\n  return o.n + b.size;\n}\n",
+        );
+
+        let sessions = CompilerSessions::new(&root);
+        let project = sessions.project_for(&TS_ENGINE, &root).await.expect("the driver compiles");
+        let declarations = sessions.declarations(&project);
+        let facts = read_declarations(&root, &root.join("src/use.ts")).expect("reads");
+        let text = std::fs::read_to_string(root.join("src/use.ts")).unwrap();
+        let compiled =
+            Compiled { index: &project.index, path: "src/use.ts", declarations: &declarations };
+        let references: Vec<_> = facts
+            .references
+            .iter()
+            .filter(|r| {
+                !matches!(r.kind, RefKind::Calls | RefKind::MacroInvokes | RefKind::Imports)
+            })
+            .cloned()
+            .collect();
+        assert!(!references.is_empty(), "the walk saw references");
+        let placed = place_with(&TS_ENGINE, Some(&compiled), references, &text);
+        for r in &placed {
+            assert!(
+                matches!(r.target, Resolution::Resolved { via: Rung::ResolvedByCompiler, .. }),
+                "every reference the checker answers is placed: {r:?}"
+            );
+        }
+        let targets: Vec<String> = placed
+            .iter()
+            .filter_map(|r| match &r.target {
+                Resolution::Resolved { fqn, .. } => Some(fqn.as_str().to_string()),
+                Resolution::Unresolved { .. } => None,
+            })
+            .collect();
+        let mut wanted: Vec<String> = [("Box", 1), ("size", 2), ("Opts", 5), ("n", 6)]
+            .iter()
+            .map(|(name, line)| {
+                declarations.declared_at("src/conf.ts", *line, name).unwrap().as_str().to_string()
+            })
+            .collect();
+        let mut got = targets.clone();
+        wanted.sort();
+        got.sort();
+        got.dedup();
+        assert_eq!(got, wanted, "the type use, the construction and both field reads");
+    }
+
     /// **A SVELTEKIT PROJECT IS COMPILED AS ITS OWN TOOLING SEES IT.** Its
     /// tsconfig extends what `svelte-kit sync` generates (`$lib`, `$app`,
     /// `./$types`); a clean checkout, or a `make clean`, has none of it, and

@@ -91,6 +91,11 @@ impl CompilerEngine for TsEngine {
         node_kind == "ComputedMemberExpression"
     }
 
+    /// A type annotation the walk records whole (`Opts[]`, `A | B`).
+    fn type_expression(&self, node_kind: &str) -> bool {
+        node_kind == "TSType"
+    }
+
     fn target(
         &self,
         symbol: &str,
