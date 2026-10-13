@@ -7,7 +7,7 @@
  *
  * Run: `bun run test:e2e -- e2e/tests/zz-a11y.spec.ts`
  */
-import { test, expect } from '../fixtures';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateTo, navigateToScreen, daemonGet, DAEMON_URL } from '../helpers';
 import { readFileSync, mkdirSync, writeFileSync } from 'fs';
 
@@ -17,7 +17,7 @@ const settle = (ms = 900) => new Promise<void>((r) => setTimeout(r, ms));
 
 type Violation = { id: string; impact: string; help: string; n: number; targets: string[] };
 
-async function seedSetupComplete(tauriPage: any): Promise<void> {
+async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void> {
   await fetch(`${DAEMON_URL}/api/config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -37,7 +37,7 @@ async function seedSetupComplete(tauriPage: any): Promise<void> {
 
 /** Force the color mode the same way the app does (body.dataset.mode). Returns
  *  the applied mode so the eval is value-returning (avoids the void-eval hang). */
-async function setMode(tauriPage: any, mode: 'light' | 'dark'): Promise<void> {
+async function setMode(tauriPage: TauriPageLike, mode: 'light' | 'dark'): Promise<void> {
   // Drive the app's REAL mode mechanism: store the choice and reload so app.html
   // applies it before first paint (a stored mode now wins over the OS preference).
   // Live-mutating data-mode was unreliable — the app reuses data-mode for
@@ -55,14 +55,14 @@ async function setMode(tauriPage: any, mode: 'light' | 'dark'): Promise<void> {
 }
 
 /** Inject axe-core once per page context. Value-returning. */
-async function ensureAxe(tauriPage: any): Promise<void> {
+async function ensureAxe(tauriPage: TauriPageLike): Promise<void> {
   await tauriPage.evaluate(
     `(function () { if (!window.axe) { ${AXE_SRC} } return typeof window.axe === 'object'; })()`,
   );
 }
 
 /** Run axe (WCAG A + AA) on the current DOM; return a compact violation list. */
-async function runAxe(tauriPage: any): Promise<Violation[]> {
+async function runAxe(tauriPage: TauriPageLike): Promise<Violation[]> {
   const json = (await tauriPage.evaluate(`
     (async function () {
       var r = await window.axe.run(document, {

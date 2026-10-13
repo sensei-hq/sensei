@@ -15,10 +15,10 @@
  * daemon's namespace.
  */
 
-import { test, expect } from '../fixtures';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateTo, DAEMON_URL } from '../helpers';
 
-async function seedHealth(tauriPage: any): Promise<void> {
+async function seedHealth(tauriPage: TauriPageLike): Promise<void> {
   await tauriPage.evaluate(`
     (function() {
       sessionStorage.setItem('sensei:health', 'ready');

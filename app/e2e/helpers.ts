@@ -1,3 +1,4 @@
+import type { TauriPageLike } from './fixtures';
 /**
  * Shared test helpers for Playwright e2e tests.
  *
@@ -272,7 +273,7 @@ export async function waitForDom(
  *
  * Was copied verbatim into eight specs; this is the one copy.
  */
-export async function seedSetupComplete(tauriPage: any): Promise<void> {
+export async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void> {
   await fetch(`${DAEMON_URL}/api/config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

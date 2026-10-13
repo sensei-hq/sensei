@@ -13,11 +13,11 @@
  * title/tone). The flow is identical — this asserts the plumbing, not the copy.
  */
 
-import { test, expect } from '../fixtures';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateTo, navigateToScreen, daemonGet, daemonPost, DAEMON_URL } from '../helpers';
 
 /** Mark setup complete so the app shell is reachable (not rerouted to setup). */
-async function seedSetupComplete(tauriPage: any): Promise<void> {
+async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void> {
   await fetch(`${DAEMON_URL}/api/config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -34,7 +34,7 @@ async function seedSetupComplete(tauriPage: any): Promise<void> {
   `);
 }
 
-async function pathname(tauriPage: any): Promise<string> {
+async function pathname(tauriPage: TauriPageLike): Promise<string> {
   return (await tauriPage.evaluate(`window.location.pathname`)) as string;
 }
 

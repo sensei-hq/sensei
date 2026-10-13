@@ -18,10 +18,10 @@
  * not touched.
  */
 
-import { test, expect } from '../fixtures';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateTo, DAEMON_URL } from '../helpers';
 
-async function seedHealth(tauriPage: any): Promise<void> {
+async function seedHealth(tauriPage: TauriPageLike): Promise<void> {
   await tauriPage.evaluate(`
     (function() {
       sessionStorage.setItem('sensei:health', 'ready');
@@ -39,7 +39,7 @@ async function seedHealth(tauriPage: any): Promise<void> {
  * tauri-playwright bridge.
  */
 async function waitForAttr(
-  tauriPage: any,
+  tauriPage: TauriPageLike,
   selector: string,
   attr: string,
   expected: string,
@@ -59,7 +59,7 @@ async function waitForAttr(
   throw new Error(`Timed out (${timeoutMs}ms) waiting for ${selector}[${attr}=${expected}]. Current: ${final}`);
 }
 
-async function waitForPath(tauriPage: any, expected: string, timeoutMs = 20_000): Promise<void> {
+async function waitForPath(tauriPage: TauriPageLike, expected: string, timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const p = await tauriPage.evaluate(`window.location.pathname`).catch(() => null);

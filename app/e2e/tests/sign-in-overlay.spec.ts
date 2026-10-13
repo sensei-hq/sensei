@@ -24,11 +24,11 @@
  * the reachable claim; a live OAuth round trip is not.
  */
 
-import { test, expect } from '../fixtures';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateTo, DAEMON_URL, installErrorTrap, readErrors } from '../helpers';
 
 /** Mark setup complete so the observatory shell is reachable. */
-async function seedSetupComplete(tauriPage: any): Promise<void> {
+async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void> {
   await fetch(`${DAEMON_URL}/api/config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
