@@ -72,7 +72,7 @@ used below where the journey docs named them.
 
 ### 5 · Engagement / client lead — *"the confidentiality guard"*
 
-> The former "client-lead" role, shortened to **lead**. Guards client engagements.
+> **Lead**. Guards client engagements: the lesson travels, the source never does.
 
 | | |
 |---|---|
@@ -84,12 +84,12 @@ used below where the journey docs named them.
 
 ---
 
-## Newly required viewpoints (2026-10-13) — the multi-user, multi-team case
+## Extended viewpoints — the multi-user, multi-team case
 
 ### 6 · Manager / delivery lead — *"the roll-up"*
 
-> Added in the 2026-10-13 personas decision. Needs the birds-eye view without
-> reading code; the customer for T3's sprint gates and the graph's L0.
+> Needs the birds-eye view without reading code; the customer for T3's sprint
+> gates and the graph's L0.
 
 | | |
 |---|---|
@@ -102,8 +102,8 @@ used below where the journey docs named them.
 
 ### 7 · Client / project stakeholder — *"the narrow lens"*
 
-> Added in the 2026-10-13 personas decision. Sees the same data as the lead
-> through a project-scoped, confidentiality-held lens.
+> Sees the same data as the lead through a project-scoped, confidentiality-held
+> lens.
 
 | | |
 |---|---|

@@ -14,8 +14,9 @@
 ## What this plane owns
 
 Memberships, routing, preview and the universal strip (T1); the role consoles
-(T2, old roles live in [`02-objectives.md`](../../02-objectives.md) §Dōjō — developer ·
-maintainer · org admin · **lead** — plus the new manager/client viewpoints);
+(T2 — the four Dōjō roles live in [`02-objectives.md`](../../02-objectives.md) §Dōjō:
+developer · maintainer · org admin · **lead**, alongside the manager and
+client / project viewpoints);
 project planning against external trackers (Jira / ADO read-only) with
 **delta-scoped, ratchet-fair quality gates** (T3, reorg §9); and the free-where-public
 business model with payment for private shared coordination (T4).

@@ -22,14 +22,14 @@ any single feature — is the whole requirement, because it is what stopped the
   node-identity preservation on reindex (D3); community durability/determinism (D4);
   the grouping + granularity kinds (D5); worker execution guarantees — granular, resumable,
   resilient, incremental (D6); the retrieval contract (`GET /api/graph/nodes`,
-  `communities/info`, the new `/tree` hierarchy endpoint).
+  `communities/info`, the `/tree` hierarchy endpoint).
 - Out: the Atlas Svelte rendering for the retrieval contract (downstream follow-on);
   capture / watchers / branch flips (M3 — they enqueue the work); semantic search UX.
 
 ## Surfaces
 
 - **API** — `GET /api/graph/nodes?repoId=`, `GET /api/graph/communities/info`,
-  `GET /api/graph/:repoId/tree` (new), the graph/imports breakdown endpoint.
+  `GET /api/graph/:repoId/tree`, the graph/imports breakdown endpoint.
 - **Daemon** — `process_file` / `resolve_edge` / `build_connections` workers; task queue
   (`crates/senseid/src/tasks/…`); folder-status machine (`indexed`, `archived`, …).
 - **App** — code-graph + communities views in the Project window (layout edges
