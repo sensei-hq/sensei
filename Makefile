@@ -617,7 +617,7 @@ bump:
 	@# Rust crates — every published or internally-pathed crate in the
 	@# workspace tracks the monorepo version. Adding a new crate? Append
 	@# its directory name here and to the git-add list below.
-	@for crate in senseid cli mcp bootstrap logger sensei-config; do \
+	@for crate in senseid cli mcp bootstrap logger; do \
 	  f="crates/$$crate/Cargo.toml"; \
 	  sed -i '' "s/^version = \"[^\"]*\"/version = \"$(_v)\"/" "$$f"; \
 	done
@@ -670,7 +670,7 @@ bump:
 	  app/package.json app/src-tauri/tauri.conf.json app/src-tauri/Cargo.toml \
 	  website/package.json website/src/routes/+page.svelte dojo/package.json \
 	  crates/senseid/Cargo.toml crates/cli/Cargo.toml crates/mcp/Cargo.toml \
-	  crates/bootstrap/Cargo.toml crates/logger/Cargo.toml crates/sensei-config/Cargo.toml \
+	  crates/bootstrap/Cargo.toml crates/logger/Cargo.toml \
 	  homebrew/Formula/sensei.rb homebrew/Casks/senseihq.rb \
 	  marketplace/package.json marketplace/catalog.json \
 	  marketplace/.claude-plugin/marketplace.json \
