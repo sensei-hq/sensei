@@ -57,6 +57,7 @@ use std::sync::Arc;
 use crate::api::handlers::auth::{AuthError, live_access_token};
 use crate::db::pg_store::PgStore;
 use crate::db::pg_store::sync::SyncMark;
+use crate::dojo::memberships::NewConnection;
 use crate::dojo_client::dojo_auth;
 use crate::dojo_client::settings::dojo_url;
 use crate::dojo_client::user_plane::{self, HttpUserPlane, MyMembership, RepoInput, UserPlane};
@@ -158,66 +159,57 @@ async fn sync_one(pg: &PgStore, persona: &str, plane: &dyn UserPlane) -> Result<
     sync_persona(pg, persona, &token, plane).await
 }
 
-/// The unbound local memberships a persona claims: those the dōjō lists under
-/// it. Never one it does not list, never one that is not on this machine. Pure.
-fn claims(unbound: &[uuid::Uuid], listed: &[MyMembership]) -> Vec<uuid::Uuid> {
-    unbound.iter().copied().filter(|id| listed.iter().any(|m| m.id == *id)).collect()
-}
-
-/// Record the persona of every unbound local membership the dōjō lists under
-/// the persona holding `slot` (#236 step 4c) — at join, and for memberships
-/// made before the binding existed. Asks nothing when nothing is unbound.
-/// Returns how many it bound; a list it could not read is an `Err`, never "none
-/// of yours".
-pub(crate) async fn bind_memberships(
+/// Join every dōjō membership the persona holding `slot` belongs to (#236 step
+/// 4e): signing in is joining. A listed membership this machine lacks becomes a
+/// local one — held to the same rules a connection always was
+/// ([`NewConnection::validated`]) — at `registry_url`, the dōjō that issued the
+/// session; an unbound local one is bound. Returns how many it joined or bound;
+/// a list it could not read is an `Err`, never "you belong to nothing".
+pub(crate) async fn join_memberships(
     pg: &PgStore,
     slot: &str,
     token: &str,
     plane: &dyn UserPlane,
+    registry_url: &str,
 ) -> Result<usize, String> {
-    let unbound = pg.unbound_dojo_memberships().await?;
-    if unbound.is_empty() {
-        return Ok(0);
-    }
     let persona = pg
         .persona_id_for_slot(slot)
         .await?
         .ok_or_else(|| format!("no persona holds session slot {slot}"))?;
-    let mine = claims(&unbound, &plane.my_memberships(token).await?);
-    for m in &mine {
-        pg.set_membership_persona(m, &persona).await?;
+    let mut joined = 0;
+    for m in &plane.my_memberships(token).await? {
+        match pg.get_dojo_membership(&m.id).await? {
+            Some(local) if local.persona.is_some() => continue,
+            Some(_) => {}
+            None => {
+                crate::dojo::memberships::register(pg, connection_of(m, registry_url)?).await?;
+            }
+        }
+        pg.set_membership_persona(&m.id, &persona).await?;
+        joined += 1;
     }
-    if !mine.is_empty() {
-        tracing::info!(
-            persona = slot,
-            bound = mine.len(),
-            "dojo_sync: memberships bound to persona"
-        );
+    if joined > 0 {
+        tracing::info!(persona = slot, joined, "dojo_sync: memberships joined");
     }
-    Ok(mine.len())
+    Ok(joined)
 }
 
-/// Bind unbound memberships for every signed-in persona now — the join's half of
-/// [`bind_memberships`], so a new membership does not wait for the next cycle.
-/// Returns each persona's failure for the caller to report; an empty result is
-/// "nothing failed", not "something bound".
-pub(crate) async fn bind_all_memberships(pg: &PgStore) -> Vec<String> {
-    let personas = match pg.signed_in_personas().await {
-        Ok(p) => p,
-        Err(e) => return vec![format!("signed-in personas unreadable: {e}")],
-    };
-    let plane = HttpUserPlane { dojo_url: dojo_url() };
-    let mut failures = vec![];
-    for persona in personas {
-        let outcome = match live_access_token(&persona).await {
-            Ok(token) => bind_memberships(pg, &persona, &token, &plane).await.map(|_| ()),
-            Err(e) => Err(format!("no live session: {e:?}")),
-        };
-        if let Err(e) = outcome {
-            failures.push(format!("{persona}: {e}"));
-        }
-    }
-    failures
+/// A listed membership as the local connection it becomes. Pure.
+fn connection_of(m: &MyMembership, registry_url: &str) -> Result<NewConnection, String> {
+    NewConnection::validated(
+        m.id,
+        registry_url.to_string(),
+        m.tenant_key.clone(),
+        crate::dojo::memberships::derive_dojo_url(registry_url, &m.tenant_key),
+        &m.kind,
+        &m.org_slugs,
+        &m.role,
+        &m.authenticated_via,
+        &m.attribution_default,
+        // sync_status has no producer (see dojo_memberships.sync_status).
+        "authenticating",
+    )
+    .map_err(|e| format!("membership {} cannot be joined: {e}", m.id))
 }
 
 /// Whether a user-plane failure is the dōjō refusing the CREDENTIAL itself.
@@ -285,12 +277,11 @@ async fn sync_persona(
     token: &str,
     plane: &dyn UserPlane,
 ) -> Result<(), String> {
-    // #236 step 4c: record which persona each unbound local membership belongs
-    // to, so its tenant calls can present this session. A failure here leaves
-    // the memberships unbound for the next pass and does not stop the cycle —
-    // but it is said, never swallowed.
-    if let Err(e) = bind_memberships(pg, persona, token, plane).await {
-        tracing::warn!(persona, error = %e, "dojo_sync: membership binding skipped");
+    // #236 step 4e: join every dōjō this persona belongs to, so its tenant
+    // calls present this session. A failure here leaves the memberships for the
+    // next pass and does not stop the cycle — but it is said, never swallowed.
+    if let Err(e) = join_memberships(pg, persona, token, plane, &dojo_url()).await {
+        tracing::warn!(persona, error = %e, "dojo_sync: joining memberships skipped");
     }
 
     // THE OFFER SET (§8a, finding B1): every locally-scanned repository with a
@@ -1715,7 +1706,6 @@ mod tests {
                 role: "contributor".into(),
                 authenticated_via: "github_oauth".into(),
                 attribution_default: "named".into(),
-                credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()),
                 sync_status: "healthy".into(),
             })
             .await
@@ -1737,26 +1727,28 @@ mod tests {
     }
 
     fn listed(id: uuid::Uuid) -> MyMembership {
-        MyMembership { id, tenant_key: "organization/acme".into() }
+        MyMembership {
+            id,
+            tenant_key: "organization/acme".into(),
+            role: "contributor".into(),
+            kind: "employer".into(),
+            org_slugs: vec![],
+            authenticated_via: "github_oauth".into(),
+            attribution_default: "named".into(),
+        }
     }
 
-    // #236 step 4c: a persona claims exactly the unbound LOCAL memberships the
-    // dōjō lists under it — never one it does not list, never one that is not here.
-    #[test]
-    fn a_persona_claims_only_the_unbound_memberships_listed_under_it() {
-        let (a, b, c) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
-        assert_eq!(claims(&[a, b], &[listed(a), listed(c)]), vec![a]);
-        assert!(claims(&[], &[listed(a)]).is_empty());
-        assert!(claims(&[a], &[]).is_empty());
-    }
-
+    // A persona binds exactly the memberships the dōjō lists under it: a local
+    // membership it does not list stays unbound.
     #[tokio::test]
     async fn binding_records_the_persona_of_each_listed_membership() {
         let pg = PgStore::connect_test().await.unwrap();
         let (slot, persona, mine, not_listed) = binding_fixture(&pg).await;
         let plane = StubPlane { memberships: Some(Ok(vec![listed(mine)])), ..Default::default() };
 
-        let bound = bind_memberships(&pg, &slot, "jwt", &plane).await.expect("binding runs");
+        let bound = join_memberships(&pg, &slot, "jwt", &plane, "http://localhost:7755")
+            .await
+            .expect("binding runs");
 
         assert_eq!(bound, 1);
         assert_eq!(
@@ -1765,6 +1757,67 @@ mod tests {
         );
         assert_eq!(pg.membership_persona(&not_listed).await.unwrap(), None);
         drop_binding_fixture(&pg, persona, &[mine, not_listed]).await;
+    }
+
+    /// A signed-in persona holding `slot`, with no memberships of its own yet.
+    async fn signed_in_persona(pg: &PgStore) -> (String, uuid::Uuid) {
+        let tag = uuid::Uuid::new_v4();
+        let slot = format!("join-slot-{tag}");
+        let persona = pg.upsert_persona(&format!("join-{tag}"), true).await.unwrap();
+        sqlx_core::query::query(
+            "UPDATE sensei.personas SET session_slot = $2, verified_at = now() WHERE id = $1",
+        )
+        .bind(persona)
+        .bind(&slot)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        (slot, persona)
+    }
+
+    // #236 step 4e: signing in is joining. Every dōjō membership the persona's
+    // session lists becomes a local membership bound to that persona — what it
+    // routes on (kind, org slugs), how it credits, and where its tenant lives.
+    #[tokio::test]
+    async fn signing_in_joins_every_dojo_the_persona_belongs_to() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let (slot, persona) = signed_in_persona(&pg).await;
+        let id = uuid::Uuid::new_v4();
+        let listing = MyMembership {
+            id,
+            tenant_key: format!("organization/join-{id}"),
+            role: "maintainer".into(),
+            kind: "client".into(),
+            // Unique to this run: `sensei_test` is shared, and a slug another test
+            // matches on (binding suggestions) must not leak from a failed run.
+            org_slugs: vec![format!("join-{id}")],
+            authenticated_via: "github_oauth".into(),
+            attribution_default: "anonymous".into(),
+        };
+        let plane =
+            StubPlane { memberships: Some(Ok(vec![listing.clone()])), ..Default::default() };
+
+        let joined = join_memberships(&pg, &slot, "jwt", &plane, "https://dojo.example").await;
+
+        assert_eq!(joined, Ok(1));
+        let m = pg.get_dojo_membership(&id).await.unwrap().expect("the membership is local");
+        assert_eq!(m.tenant_key, listing.tenant_key);
+        assert_eq!((m.kind.as_str(), m.role.as_str()), ("client", "maintainer"));
+        assert_eq!(m.org_slugs, vec![format!("join-{id}")]);
+        assert_eq!(
+            (m.authenticated_via.as_str(), m.attribution_default.as_str()),
+            ("github_oauth", "anonymous")
+        );
+        assert_eq!(m.registry_url, "https://dojo.example");
+        assert_eq!(m.dojo_url, format!("https://dojo.example/organization/join-{id}"));
+        assert_eq!(m.persona.map(|p| p.persona_id), Some(persona));
+
+        // Joining again creates nothing: the membership is already here.
+        assert_eq!(
+            join_memberships(&pg, &slot, "jwt", &plane, "https://dojo.example").await,
+            Ok(0)
+        );
+        drop_binding_fixture(&pg, persona, &[id]).await;
     }
 
     #[tokio::test]
@@ -1776,7 +1829,7 @@ mod tests {
             ..Default::default()
         };
 
-        let out = bind_memberships(&pg, &slot, "jwt", &plane).await;
+        let out = join_memberships(&pg, &slot, "jwt", &plane, "http://localhost:7755").await;
 
         assert!(out.as_ref().is_err_and(|e| e.contains("503")), "got {out:?}");
         assert_eq!(pg.membership_persona(&m1).await.unwrap(), None);
@@ -1789,7 +1842,8 @@ mod tests {
         let (_slot, persona, m1, m2) = binding_fixture(&pg).await;
         let plane = StubPlane { memberships: Some(Ok(vec![listed(m1)])), ..Default::default() };
 
-        let out = bind_memberships(&pg, "no-such-slot", "jwt", &plane).await;
+        let out =
+            join_memberships(&pg, "no-such-slot", "jwt", &plane, "http://localhost:7755").await;
 
         assert!(out.is_err(), "got {out:?}");
         assert_eq!(pg.membership_persona(&m1).await.unwrap(), None);

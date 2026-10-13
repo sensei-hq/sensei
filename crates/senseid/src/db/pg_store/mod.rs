@@ -167,9 +167,8 @@ pub struct KnowledgeSource {
     pub enabled: bool,
 }
 
-/// Input for registering a daemon-side Dōjō connection
-/// (`sensei.dojo_memberships`). The device token is stored in the OS Keychain
-/// (referenced by `credential_ref`), never here — mirrors [`NewKnowledgeSource`].
+/// Input for recording a daemon-side Dōjō membership (`sensei.dojo_memberships`).
+/// It holds no credential: its tenant calls present the bound persona's session.
 pub struct NewDojoMembership {
     /// The service membership id (`dojo.memberships.id`); becomes the local PK
     /// and the value `sensei.projects.dojo_id` points at. Service-assigned.
@@ -184,12 +183,10 @@ pub struct NewDojoMembership {
     pub role: String,
     pub authenticated_via: String,
     pub attribution_default: String,
-    pub credential_ref: String,
     pub sync_status: String,
 }
 
-/// A daemon-side Dōjō connection (row of `sensei.dojo_memberships`). Carries
-/// `credential_ref` for C6/C7 token resolution; the API view omits it.
+/// A daemon-side Dōjō membership (row of `sensei.dojo_memberships`).
 #[derive(Debug, Clone)]
 pub struct DojoMembership {
     pub id: uuid::Uuid,
@@ -203,7 +200,6 @@ pub struct DojoMembership {
     pub role: String,
     pub authenticated_via: String,
     pub attribution_default: String,
-    pub credential_ref: String,
     pub sync_status: String,
     pub last_seq: i64,
     /// RFC-3339 text (SELECTed as `::text`) so the API can serialize it without
@@ -223,7 +219,6 @@ pub(crate) type DojoMembershipRow = (
     String,
     String,
     Vec<String>,
-    String,
     String,
     String,
     String,
@@ -1130,7 +1125,6 @@ impl PgStore {
             role,
             authenticated_via,
             attribution_default,
-            credential_ref,
             sync_status,
             last_seq,
             last_heartbeat_at,
@@ -1148,7 +1142,6 @@ impl PgStore {
             role,
             authenticated_via,
             attribution_default,
-            credential_ref,
             sync_status,
             last_seq,
             last_heartbeat_at,
@@ -1161,7 +1154,7 @@ impl PgStore {
     /// `created_at` ambiguous unqualified.
     const DOJO_SELECT: &'static str =
         "SELECT m.id, m.registry_url, m.tenant_key, m.dojo_url, m.kind, m.org_slugs, m.role,
-                m.authenticated_via, m.attribution_default, m.credential_ref, m.sync_status,
+                m.authenticated_via, m.attribution_default, m.sync_status,
                 m.last_seq, m.last_heartbeat_at::text, m.enabled, mp.persona_id, p.session_slot
            FROM sensei.dojo_memberships m
            LEFT JOIN sensei.dojo_membership_personas mp ON mp.membership_id = m.id

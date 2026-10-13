@@ -645,10 +645,9 @@ impl PgStore {
 
     // ── Dōjō connections (daemon-side membership mirror) ───────────────
     //
-    // Local mirror of the Dōjōs this install is connected to (Fork 1: the
-    // authoritative dojo.memberships row lives in the Dōjō service DB). Mirrors
-    // the knowledge_sources CRUD discipline; the credential lives in the OS
-    // Keychain (credential_ref), never in these rows.
+    // Local mirror of the Dōjōs this install belongs to (Fork 1: the
+    // authoritative dojo.memberships row lives in the Dōjō service DB). The rows
+    // hold no credential — a membership's calls present its persona's session.
 
     /// Insert a Dōjō connection with the service-assigned `id` as the PK.
     pub async fn create_dojo_membership(
@@ -658,8 +657,8 @@ impl PgStore {
         let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
             "INSERT INTO sensei.dojo_memberships
                 (id, registry_url, tenant_key, dojo_url, kind, org_slugs, role,
-                 authenticated_via, attribution_default, credential_ref, sync_status)
-             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id",
+                 authenticated_via, attribution_default, sync_status)
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
         )
         .bind(m.id)
         .bind(&m.registry_url)
@@ -670,7 +669,6 @@ impl PgStore {
         .bind(&m.role)
         .bind(&m.authenticated_via)
         .bind(&m.attribution_default)
-        .bind(&m.credential_ref)
         .bind(&m.sync_status)
         .fetch_one(&self.pool)
         .await
