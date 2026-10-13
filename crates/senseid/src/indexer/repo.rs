@@ -138,7 +138,21 @@ pub fn discover(root: &Path, exclusions: &[String]) -> Result<Discovered, String
             None => repos.insert(root.to_path_buf()),
         };
     }
-    Ok(Discovered { repos: repos.into_iter().collect(), unreadable: result.unreadable })
+    // A checkout inside another repository's hidden directory (a tool's
+    // worktree, an editable install) is a copy, not a repository: that
+    // repository's own walk never reads a dot-directory.
+    let in_a_hidden_directory_of = |repo: &PathBuf, outer: &PathBuf| {
+        repo != outer
+            && repo.strip_prefix(outer).is_ok_and(|inner| {
+                inner.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+            })
+    };
+    let repos: Vec<PathBuf> = repos
+        .iter()
+        .filter(|repo| !repos.iter().any(|outer| in_a_hidden_directory_of(repo, outer)))
+        .cloned()
+        .collect();
+    Ok(Discovered { repos, unreadable: result.unreadable })
 }
 
 /// Step 2 — diff the discovered set against the previous run.
@@ -541,6 +555,26 @@ mod tests {
         let d = discover(t.path(), &[]).unwrap();
 
         assert_eq!(rels(&d, t.path()), vec!["a/b/c/d/e/f/g/h/i/j/deep-repo"]);
+    }
+
+    /// **A CHECKOUT INSIDE ANOTHER REPOSITORY'S HIDDEN DIRECTORY IS NOT A
+    /// REPOSITORY.** A tool's linked worktree (`.claude/worktrees/<name>`), an
+    /// editable checkout under `.venv/src` — the repository's own walk never
+    /// reads a dot-directory, and a second copy of a repository is not source
+    /// it owns. Measured: an agent's worktree inside sensei doubled every
+    /// file of the project.
+    #[tokio::test]
+    async fn a_checkout_in_a_repositorys_hidden_directory_is_not_a_repository() {
+        let t = tempfile::tempdir().unwrap();
+        mk_checkout(t.path(), "outer");
+        mk_gitfile_checkout(t.path(), "outer/.claude/worktrees/agent-1");
+        mk_checkout(t.path(), "outer/.venv/src/editable");
+        mk_checkout(t.path(), "outer/nested");
+        mk_checkout(t.path(), ".archive/kept");
+
+        let d = discover(t.path(), &[]).unwrap();
+
+        assert_eq!(rels(&d, t.path()), vec![".archive/kept", "outer", "outer/nested"]);
     }
 
     /// A CREDENTIAL DIRECTORY IS NEVER A REPOSITORY, even when it is a real
