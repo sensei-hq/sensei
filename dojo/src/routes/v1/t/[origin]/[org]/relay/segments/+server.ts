@@ -1,12 +1,11 @@
 // GET/POST /v1/t/{origin}/{org}/relay/segments — the run's outline
 // (Execution → Segment → Item). POST = the daemon publishing the outline
-// (as the person, or the legacy device token for one release — #236 step 4;
-// upsert by session+seq); GET = the phone reading it
+// (as the person — #236 step 4; upsert by session+seq); GET = the phone reading it
 // (Supabase-JWT plane). The per-segment review verdicts are phone-owned and NOT
 // touched by the daemon publish. See docs/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
 import { asOwner } from '$lib/server/relay-owner';
-import { tenantCallerDb } from '$lib/server/caller-db';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantCaller, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 
 const COLS =
@@ -24,7 +23,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
 		const runId = str(body.run_id);
 		const segments = Array.isArray(body.segments) ? (body.segments as Record<string, unknown>[]) : null;
 		if (!runId || !segments) return apiError(400, 'run_id and segments are required');
-		const db = tenantCallerDb(caller);
+		const db = callerDb(caller);
 		const { data: sess, error: sErr } = await db
 			.from('relay_sessions')
 			.select('id')

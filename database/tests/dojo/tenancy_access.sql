@@ -7,13 +7,14 @@
 -- | memberships of the tenant     | —      | R tenant; W the role                   |
 -- | identities                    | R own  | R the tenant's ACTIVE members'; never W |
 --
--- A membership's device fields (device_key, device_token_hash) are the daemon
--- plane's credential lookup and are read by nobody's session. Joining and
+-- A membership's device_key is read by nobody's session. The device token is
+-- gone (#236 step 4e): the daemon presents the person's session, so no
+-- membership carries a bearer hash. Joining and
 -- leaving are the system's (invites, provisioning): a person never inserts or
 -- deletes a membership.
 --
 -- WHAT BREAKS THIS TEST: a membership read wider than own + tenant admin; a
--- SELECT grant on the device columns; an UPDATE grant beyond role; any INSERT or
+-- SELECT grant on device_key; a device_token_hash column; an UPDATE grant beyond role; any INSERT or
 -- DELETE grant; an identity read that reaches another tenant's members or a
 -- disabled member; any identity write grant.
 --
@@ -39,13 +40,13 @@ insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
    'ztest-ten-u', 'tenancy fixture U', 'dojo.sensei-hq.org/organization/ztest-ten-u');
 
 -- Membership ids end in: 1 ada@T · 2 lea@T · 3 ola@T · 4 dis@T (disabled) · 5 uma@U · 6 ola@U
-insert into dojo.memberships (id, tenant_id, user_id, role, kind, authenticated_via, disabled_at, device_token_hash) values
-  ('db000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-0000000000ba', 'a0000000-0000-4000-8000-0000000000b1', 'admin',       'employer', 'github_oauth', null,  'h1'),
-  ('db000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-0000000000ba', 'a0000000-0000-4000-8000-0000000000b2', 'lead',        'employer', 'github_oauth', null,  'h2'),
-  ('db000000-0000-4000-8000-000000000003', 'b0000000-0000-4000-8000-0000000000ba', 'a0000000-0000-4000-8000-0000000000b3', 'contributor', 'employer', 'github_oauth', null,  'h3'),
-  ('db000000-0000-4000-8000-000000000004', 'b0000000-0000-4000-8000-0000000000ba', 'a0000000-0000-4000-8000-0000000000b4', 'contributor', 'employer', 'github_oauth', now(), 'h4'),
-  ('db000000-0000-4000-8000-000000000005', 'b0000000-0000-4000-8000-0000000000bb', 'a0000000-0000-4000-8000-0000000000b5', 'admin',       'employer', 'github_oauth', null,  'h5'),
-  ('db000000-0000-4000-8000-000000000006', 'b0000000-0000-4000-8000-0000000000bb', 'a0000000-0000-4000-8000-0000000000b3', 'contributor', 'employer', 'github_oauth', null,  'h6');
+insert into dojo.memberships (id, tenant_id, user_id, role, kind, authenticated_via, disabled_at) values
+  ('db000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-0000000000ba', 'a0000000-0000-4000-8000-0000000000b1', 'admin',       'employer', 'github_oauth', null),
+  ('db000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-0000000000ba', 'a0000000-0000-4000-8000-0000000000b2', 'lead',        'employer', 'github_oauth', null),
+  ('db000000-0000-4000-8000-000000000003', 'b0000000-0000-4000-8000-0000000000ba', 'a0000000-0000-4000-8000-0000000000b3', 'contributor', 'employer', 'github_oauth', null),
+  ('db000000-0000-4000-8000-000000000004', 'b0000000-0000-4000-8000-0000000000ba', 'a0000000-0000-4000-8000-0000000000b4', 'contributor', 'employer', 'github_oauth', now()),
+  ('db000000-0000-4000-8000-000000000005', 'b0000000-0000-4000-8000-0000000000bb', 'a0000000-0000-4000-8000-0000000000b5', 'admin',       'employer', 'github_oauth', null),
+  ('db000000-0000-4000-8000-000000000006', 'b0000000-0000-4000-8000-0000000000bb', 'a0000000-0000-4000-8000-0000000000b3', 'contributor', 'employer', 'github_oauth', null);
 
 -- Identity subjects end in the principal's letter: a ada · o ola · d dis · u uma
 insert into dojo.identities (principal_id, provider, subject, display_name) values
@@ -90,13 +91,16 @@ declare
     t constant uuid := 'b0000000-0000-4000-8000-0000000000ba';
     ola constant uuid := 'a0000000-0000-4000-8000-0000000000b3';
 begin
-    -- ── the device columns are nobody's to read ───────────────────────────────
+    -- ── no membership carries a device token (#236 step 4e) ────────────────────
+    -- pg_attribute, not information_schema: the latter hides a column the
+    -- current role (authenticated) holds no privilege on.
+    if exists (select 1 from pg_attribute
+               where attrelid = 'dojo.memberships'::regclass and attname = 'device_token_hash' and not attisdropped) then
+        raise exception 'memberships: device_token_hash still exists — the device token was retired in #236 step 4e';
+    end if;
+
+    -- ── device_key is nobody's to read ──────────────────────────────────────────
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-0000000000b1"}', true);
-    begin
-        select device_token_hash into h from dojo.memberships where id = 'db000000-0000-4000-8000-000000000003';
-        raise exception 'memberships: an admin read a member''s device_token_hash';
-    exception when insufficient_privilege then null;
-    end;
     begin
         select device_key into h from dojo.memberships where id = 'db000000-0000-4000-8000-000000000001';
         raise exception 'memberships: a person read their own device_key from their session';

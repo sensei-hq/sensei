@@ -55,7 +55,7 @@ describe('GET rules/resolved', () => {
 		]);
 	});
 
-	it('a legacy device token is 401 — this leg needs the person (it never had working data)', async () => {
+	it('a caller with no session is 401', async () => {
 		const { accessToken: _t, ...device } = member;
 		mocks.resolveTenantCaller.mockResolvedValue(device);
 		const res = await GET(ev('ns=organization:acme'));

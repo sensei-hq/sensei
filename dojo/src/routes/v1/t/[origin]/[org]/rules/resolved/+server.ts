@@ -8,9 +8,7 @@
 // 2026-10-12) — folded by the daemon into its resolved ruleset → the
 // SessionStart/PreCompact push.
 //
-// As the person only (#236 step 4): the legacy device token is a 401 here. This
-// leg returned nothing to a device token since 2026-08-25, so the window keeps
-// nothing it had.
+// As the person (#236 step 4).
 import type { RequestHandler } from './$types';
 import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantCaller, apiError, ACCESS } from '$lib/server/dojo-auth';

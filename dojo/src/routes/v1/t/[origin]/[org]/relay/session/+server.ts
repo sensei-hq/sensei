@@ -1,11 +1,11 @@
 // GET/POST /v1/t/{origin}/{org}/relay/session — a run's filtered status snapshot.
-// POST = the daemon publishing status (as the person, or the legacy device token
-// for one release — #236 step 4; upsert by run_id); GET = the
+// POST = the daemon publishing status (as the person — #236 step 4; upsert by
+// run_id); GET = the
 // phone/console reading it (Supabase-JWT plane). See docs/plan/relay-engine.md §6.
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
 import { asOwner } from '$lib/server/relay-owner';
-import { tenantCallerDb } from '$lib/server/caller-db';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantCaller, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { sendRelayPushFromEnv } from '$lib/server/relay-push-env';
 import { resolveProjectNamespaceId, openOrRefreshSeat } from '$lib/server/billing-data';
@@ -25,7 +25,7 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 		const runId = str(body.run_id);
 		if (!runId) return apiError(400, 'run_id is required');
 		// The run and its project are the person's; the seat is billing's (system).
-		const db = tenantCallerDb(caller);
+		const db = callerDb(caller);
 		const status = str(body.status) ?? 'running';
 		const title = str(body.title) ?? '';
 

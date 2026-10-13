@@ -5,9 +5,8 @@
 -- to change from their session: joining is by invitation and provisioning, both
 -- the system's.
 --
--- The SELECT grant is by column. device_key and device_token_hash are the daemon
--- plane's credential lookup, read by the server alone, so no session reads them
--- — not even the member's own.
+-- The SELECT grant is by column. device_key is read by the server alone, so no
+-- session reads it — not even the member's own.
 -- Covered by database/tests/dojo/tenancy_access.sql.
 alter table dojo.memberships enable row level security;
 

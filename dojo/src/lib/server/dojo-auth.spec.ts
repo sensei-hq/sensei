@@ -47,7 +47,7 @@ vi.mock('./dojo-supabase', async (importOriginal) => {
 });
 
 // Imported after the mock is registered.
-const { resolveTenantAccess, resolveCaller, resolveTenantCaller, isJwtShaped } = await import('./dojo-auth');
+const { resolveTenantAccess, resolveCaller, resolveTenantCaller } = await import('./dojo-auth');
 const { ACCESS } = await import('./dojo-supabase');
 
 const AUTH_OK: Terminal = { data: { user: { id: 'u1' } }, error: null };
@@ -174,8 +174,8 @@ describe('resolveCaller — user-wide JWT identity (no tenant, no role floor)', 
 	});
 });
 
-// The device-plane routes accept the person's session OR, for one release, the
-// legacy device token (#236 step 4, docs/plan/2026-10-12-dojo-device-plane-as-person.md).
+// The daemon's tenant routes accept the person's session only (#236 step 4,
+// docs/history/plan/2026-10-12-dojo-device-plane-as-person.md).
 // The bearer's SHAPE picks the path; it is never a fallback from one to the other.
 const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1MSJ9.c2lnbmF0dXJl';
 function bearer(token: string): Request {
@@ -184,22 +184,7 @@ function bearer(token: string): Request {
 const getUserOf = () => (stub as { auth: { getUser: ReturnType<typeof vi.fn> } }).auth.getUser;
 const eqColumnsOf = () => (stub as { eqColumns: string[] }).eqColumns;
 
-describe('isJwtShaped', () => {
-	it('is three non-empty base64url segments', () => {
-		expect(isJwtShaped(JWT)).toBe(true);
-		expect(isJwtShaped('a-b_c.d-e_f.g-h_i')).toBe(true);
-	});
-	it('is not a device token, a short or long dotted string, or an empty segment', () => {
-		expect(isJwtShaped('relay-dev-device-token')).toBe(false);
-		expect(isJwtShaped('a.b')).toBe(false);
-		expect(isJwtShaped('a.b.c.d')).toBe(false);
-		expect(isJwtShaped('a..c')).toBe(false);
-		expect(isJwtShaped('a.b.c=')).toBe(false);
-		expect(isJwtShaped('')).toBe(false);
-	});
-});
-
-describe('resolveTenantCaller — the credential shape picks the path', () => {
+describe('resolveTenantCaller — the daemon acts as the signed-in person', () => {
 	it('a JWT acts as the person: verified, a member, and carrying the session', async () => {
 		stub = makeDb(AUTH_OK, PRINCIPAL_OK, TENANT_OK, { data: { id: 'm1', role: 'contributor' }, error: null });
 		const caller = await resolveTenantCaller('gh', 'acme', bearer(JWT), ACCESS.member);
@@ -208,7 +193,7 @@ describe('resolveTenantCaller — the credential shape picks the path', () => {
 		expect(eqColumnsOf()).not.toContain('device_token_hash');
 	});
 
-	it('a JWT that fails verification is 401 — never retried as a device token', async () => {
+	it('a JWT that fails verification is 401', async () => {
 		stub = makeDb({ data: { user: null }, error: { message: 'bad jwt' } }, TENANT_OK, {
 			data: { id: 'm1', user_id: 'p1', role: 'contributor' },
 			error: null
@@ -219,13 +204,17 @@ describe('resolveTenantCaller — the credential shape picks the path', () => {
 		expect(eqColumnsOf()).not.toContain('device_token_hash');
 	});
 
-	it('anything else is the legacy device token: no session, the membership it hashes to', async () => {
-		stub = makeDb(AUTH_OK, TENANT_OK, { data: { id: 'm1', user_id: 'p1', role: 'contributor' }, error: null });
-		const caller = await resolveTenantCaller('gh', 'acme', bearer('relay-dev-device-token'), ACCESS.member);
-		expect(getUserOf()).not.toHaveBeenCalled();
-		expect(eqColumnsOf()).toContain('device_token_hash');
-		expect(caller).toMatchObject({ tenantId: 't1', userId: 'p1', membershipId: 'm1' });
-		expect(caller.accessToken).toBeUndefined();
+	it('a device token is 401 — it no longer names a membership (#236 step 4e)', async () => {
+		stub = makeDb({ data: { user: null }, error: { message: 'not a jwt' } }, TENANT_OK, {
+			data: { id: 'm1', user_id: 'p1', role: 'contributor' },
+			error: null
+		});
+		const err = await resolveTenantCaller('gh', 'acme', bearer('relay-dev-device-token'), ACCESS.member).catch(
+			(e) => e
+		);
+		expect(err).toBeInstanceOf(Response);
+		expect((err as Response).status).toBe(401);
+		expect(eqColumnsOf()).not.toContain('device_token_hash');
 	});
 
 	it('only the Authorization header counts — a cookie session does not stand in', async () => {

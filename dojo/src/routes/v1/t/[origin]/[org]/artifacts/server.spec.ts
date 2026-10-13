@@ -1,6 +1,6 @@
 // Route specs for POST/GET /v1/t/{origin}/{org}/artifacts — the in-Worker
 // artifact federation. Verifies the auth floors (POST=contributor, GET=member,
-// resolveTenantCaller — the person's session, or the legacy device token), that publish wires into the inline promote step, that a
+// resolveTenantCaller — the person's session), that publish wires into the inline promote step, that a
 // promote failure does NOT fail the already-committed contribution (logged, not
 // thrown — mirrors dojo-mind), and the pull passes the tenant + cursor through
 // and returns the ArtifactPullResponse shape. The `$lib/server` deps
@@ -51,7 +51,15 @@ vi.mock('$lib/server/artifacts-data', async () => {
 
 const { POST, GET } = await import('./+server');
 
-const CALLER = { tenantId: 't1', userId: 'user-uuid', role: 'contributor', access: 1, membershipId: 'm1' };
+const CALLER = {
+	tenantId: 't1',
+	userId: 'user-uuid',
+	role: 'contributor',
+	access: 1,
+	membershipId: 'm1',
+	accessToken: 'jwt'
+};
+const { accessToken: _session, ...NO_SESSION } = CALLER;
 
 function req(body?: unknown): Request {
 	return new Request('https://dojo.sensei-hq.com/v1/t/github/acme/artifacts', {
@@ -112,9 +120,19 @@ describe('POST /artifacts (contribute + promote)', () => {
 		expect(spies.promoteCluster.mock.calls[0][0]).toBe(SYSTEM);
 	});
 
-	it('with a legacy device token, contributes on the service role (the window)', async () => {
-		await POST(evt(req(ARTIFACT)));
-		expect(spies.publishArtifact.mock.calls[0][0]).toBe(SYSTEM);
+	it('with no session is 401 — the service role never contributes (#236 step 4e)', async () => {
+		spies.resolveTenantCaller.mockResolvedValue(NO_SESSION);
+		const res = await POST(evt(req(ARTIFACT)));
+		expect(res.status).toBe(401);
+		expect(spies.publishArtifact).not.toHaveBeenCalled();
+		expect(spies.promoteCluster).not.toHaveBeenCalled();
+	});
+
+	it('with no session, GET is 401 — nothing is pulled', async () => {
+		spies.resolveTenantCaller.mockResolvedValue(NO_SESSION);
+		const res = await GET(evt(req(), '0'));
+		expect(res.status).toBe(401);
+		expect(spies.pullArtifactsSince).not.toHaveBeenCalled();
 	});
 
 	it('400s when the body fails validation / kind mismatch (parse → null)', async () => {

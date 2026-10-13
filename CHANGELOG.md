@@ -15,6 +15,16 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+### Removed
+
+- **BREAKING — the dōjō no longer accepts a device token** (#236 step 4e). The
+  daemon's tenant calls (relay, artifacts, rules) present the signed-in person's
+  session, so the table policies decide what they read and write; any other
+  bearer is a 401, and the service role never stands in for a caller without a
+  session. `dojo.memberships.device_token_hash` is dropped. A daemon older than
+  0.12.0 — or a membership not yet bound to a signed-in persona — must sign in
+  to reach its dōjō.
+
 ## [0.12.0] — 2026-10-13
 
 **Every call and reference is placed by its language's compiler.** The indexer
