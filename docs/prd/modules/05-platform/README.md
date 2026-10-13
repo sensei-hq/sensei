@@ -5,9 +5,9 @@
 
 | ID | Module | One-line "done" | Spec |
 |---|---|---|---|
-| P1 | Distribution | One command installs sensei on macOS, Linux and Windows | 🚧 Phase 2 |
-| P2 | Website | The site says only what is true, and sells the built product | 🚧 Phase 2 |
-| P3 | Harness & CI | No change reaches main without tests, lint, fmt and e2e | 🚧 Phase 2 |
+| P1 | Distribution | One command installs sensei on macOS, Linux and Windows | [`README`](01-distribution/README.md) · [`distribution`](01-distribution/scenarios/distribution.feature) · [`distribution-gaps`](01-distribution/scenarios/distribution-gaps.feature) |
+| P2 | Website | The site says only what is true, and sells the built product | [`README`](02-website/README.md) · [`website`](02-website/scenarios/website.feature) · [`website-gaps`](02-website/scenarios/website-gaps.feature) |
+| P3 | Harness & CI | No change reaches main without tests, lint, fmt and e2e | [`README`](03-harness-ci/README.md) · [`harness-ci`](03-harness-ci/scenarios/harness-ci.feature) · [`harness-ci-gaps`](03-harness-ci/scenarios/harness-ci-gaps.feature) |
 
 ## What this plane owns
 
