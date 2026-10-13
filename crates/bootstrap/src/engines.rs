@@ -23,7 +23,9 @@ use crate::health::process_util::{TimedOutcome, output_with_timeout};
 
 /// The npm packages the TypeScript engine loads, pinned: written as
 /// `package.json` into [`engines_dir`] and installed there.
-pub const ENGINES_MANIFEST: &str = include_str!("../assets/ts_engines.json");
+/// The TypeScript driver's own manifest: the packages it loads are the ones
+/// installed, so the driver and its engines cannot disagree on a version.
+pub const ENGINES_MANIFEST: &str = include_str!("../../senseid/ts-driver/package.json");
 
 /// Budget for a probe (`rustup which`, `node -p`).
 const PROBE_TIMEOUT: Duration = Duration::from_secs(20);

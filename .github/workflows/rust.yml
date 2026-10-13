@@ -167,8 +167,14 @@ jobs:
       - name: Install the TypeScript engine's packages
         run: |
           mkdir -p ~/.sensei/engines
-          cp crates/bootstrap/assets/ts_engines.json ~/.sensei/engines/package.json
+          cp crates/senseid/ts-driver/package.json ~/.sensei/engines/package.json
           npm install --prefix ~/.sensei/engines --no-audit --no-fund
+      # The driver the daemon embeds is checked as the TypeScript it is
+      # (`checkJs` against its declared dependencies) — a broken compiler-API
+      # call fails here, not in a user's scan.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - name: Type-check the TypeScript driver
+        run: cd crates/senseid/ts-driver && bun install --frozen-lockfile && bun run check
       - name: Test senseid
         run: cargo test -p senseid --bin senseid
 
