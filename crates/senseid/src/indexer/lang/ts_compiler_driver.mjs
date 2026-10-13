@@ -454,7 +454,7 @@ function undeclared(id) {
   const access = id.parent;
   if (!access || !ts.isPropertyAccessExpression(access) || access.name !== id) return null;
   const type = checker.getTypeAtLocation(access.expression);
-  if (type.flags & ts.TypeFlags.Any) return 'untyped';
+  if (type.flags & ts.TypeFlags.Any) return libraryPath(access) ?? 'untyped';
   // An intersection or a union has no name of its own: the member is named
   // by the part that has it (`FireFunction & FireObject` → `FireObject`).
   const parts = type.isUnionOrIntersection() ? type.types : [type];
@@ -468,6 +468,37 @@ function undeclared(id) {
     return `npm ${pkg} ${checker.getFullyQualifiedName(owner).replace(/^".*?"\./, '')}.${id.text}`;
   }
   return symbolFor(owner, ownerDecl);
+}
+
+/** A member reached by a property path off a binding imported from a library
+ *  — `commands.registerMany`, where `commands` comes from a package typed
+ *  `any` — is that library's member, named by its path (R5): naming an
+ *  external needs no types. */
+function libraryPath(access) {
+  const names = [access.name.text];
+  let e = access.expression;
+  while (ts.isPropertyAccessExpression(e)) {
+    names.unshift(e.name.text);
+    e = e.expression;
+  }
+  if (!ts.isIdentifier(e)) return null;
+  let root = checker.getSymbolAtLocation(e);
+  if (!root || !(root.flags & ts.SymbolFlags.Alias)) return null;
+  try {
+    root = checker.getAliasedSymbol(root);
+  } catch {
+    return null;
+  }
+  const decl = root.valueDeclaration ?? root.declarations?.[0];
+  if (!decl) return null;
+  const file = decl.getSourceFile();
+  if (isLibraryFile(file)) {
+    const pkg = program.isSourceFileDefaultLibrary(file) ? 'ecmascript' : packageOf(file.fileName);
+    return `npm ${pkg} ${[checker.getFullyQualifiedName(root).replace(/^".*?"\./, ''), ...names].join('.')}`;
+  }
+  const ambient = ambientModuleOf(decl);
+  if (!ambient) return null;
+  return `npm ${packageOfSpecifier(ambient.name.text)} ${[pathWithin(decl, ambient), ...names].join('.')}`;
 }
 
 // ── SCIP, by hand: Index.documents = 2; Document.relative_path = 1,

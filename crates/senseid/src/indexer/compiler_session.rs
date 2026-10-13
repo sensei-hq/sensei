@@ -903,7 +903,11 @@ mod tests {
         );
         write(
             "src/shim.d.ts",
-            "declare module 'kitlib' {\n  export const kit: { configure: (o?: {}) => void };\n  export class Item {\n    get(k: string): unknown;\n  }\n}\n",
+            "declare module 'kitlib' {\n  export const kit: { configure: (o?: {}) => void };\n  export class Item {\n    get(k: string): unknown;\n  }\n  // eslint-disable-next-line\n  export const loose: any;\n}\n",
+        );
+        write(
+            "src/use-loose.ts",
+            "import { loose } from 'kitlib';\n\nexport function go() {\n  return loose.registry.add(1);\n}\n",
         );
         write(
             "src/use-kit.ts",
@@ -926,7 +930,9 @@ mod tests {
         let project = sessions.project_for(&TS_ENGINE, &root).await.expect("the driver compiles");
         let declarations = sessions.declarations(&project);
         let mut placed = Vec::new();
-        for rel in ["src/use-kit.ts", "src/routes.ts", "src/spies.ts", "src/store.ts"] {
+        for rel in
+            ["src/use-kit.ts", "src/routes.ts", "src/spies.ts", "src/store.ts", "src/use-loose.ts"]
+        {
             let facts = read_declarations(&root, &root.join(rel)).expect(rel);
             let text = std::fs::read_to_string(root.join(rel)).unwrap();
             let compiled =
@@ -969,6 +975,11 @@ mod tests {
             "an ambient module is a library"
         );
         assert_eq!(to("src/use-kit.ts", 5, "get"), lib("kitlib", "Item.get"));
+        assert_eq!(
+            to("src/use-loose.ts", 4, "add"),
+            lib("kitlib", "loose.registry.add"),
+            "a library binding typed any is still that library's member, named by its path"
+        );
         assert_eq!(
             to("src/spies.ts", 6, "Mock"),
             lib("spylib", "Mock"),
