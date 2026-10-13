@@ -415,6 +415,10 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         _graph_path: None,
         logger: task_logger,
     });
+    // Schema first (#260): a new binary deploys its release's schema before any
+    // worker touches the database — `brew upgrade` neither deploys nor restarts.
+    crate::tasks::schema_deploy::on_boot(&state.pg).await;
+
     // Boot reconcile (D6b/W2): before any worker can create a new
     // task_execution row, terminate rows left `running` by a dead prior
     // session — their in-memory tasks vanished with the process, so they can

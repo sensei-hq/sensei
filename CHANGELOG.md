@@ -15,6 +15,64 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-10-13
+
+**The dōjō knows the daemon only as the signed-in person.** Device tokens are
+gone: every tenant call presents the persona's session, signing in joins every
+dōjō that person belongs to, and the daemon now deploys its own schema when a
+new version starts.
+
+### Added
+
+- **The daemon deploys its schema on boot when its version changed** (#260).
+  `brew upgrade` neither deploys nor restarts the service; the first start of a
+  new binary now runs the installer's deploy (reconcile, with the backup), and
+  records `sensei.config` `schema_deployed_version` only once it succeeded. A
+  failure is logged as an error and retried at the next start.
+
+### Changed
+
+- **Signing in is joining a dōjō** (#236 step 4e). The daemon's sync creates a
+  local membership for every dōjō the signed-in persona belongs to, bound to
+  that persona; the connections screen sends you to sign in instead of
+  offering a pairing form.
+
+### Removed
+
+- **BREAKING — the dōjō no longer accepts a device token** (#236 step 4e). The
+  daemon's tenant calls (relay, artifacts, rules) present the signed-in person's
+  session, so the table policies decide what they read and write; any other
+  bearer is a 401, and the service role never stands in for a caller without a
+  session. `dojo.memberships.device_token_hash` is dropped. A daemon older than
+  0.12.0 — or a membership no signed-in persona has claimed — must sign in to
+  reach its dōjō.
+- **Device-token pairing in the daemon and the app**: `POST
+  /api/dojo/memberships` (now 405), the connect form, and
+  `sensei.dojo_memberships.credential_ref`.
+- **`SENSEI_DOJO_URL` and the `sensei-config` crate** (#261): one setting says
+  where the dōjō is — `DOJO_URL` / the local config, default
+  https://dojo.sensei-hq.com.
+
+### Fixed
+
+- **The project About panel shows a failed read as an error** (#262), not as
+  "no dōjō binding" or "Repos (0)".
+- **A knowledge source needs a name, on both sides** (#263): the form requires
+  it and the daemon refuses a blank one; a source no longer takes a key.
+- **Waiting on a gate stops at once when the persona must sign in**, instead of
+  polling to its deadline and failing open.
+- **The connections screen shows a failed read as an error**, not as "no dōjō
+  yet, sign in".
+
+### Upgrade notes
+
+- A membership that no signed-in persona has claimed stops reaching its dōjō:
+  sign in under Settings → Dōjō and the next sync binds it.
+- The dōjō's production schema drops `memberships.device_token_hash`; the
+  release's `deploy-dojo` job refuses a DROP unattended, so it is applied once
+  by hand (`dbd reconcile --scope dojo --allow-destructive`). The 0.13.0 dōjō
+  does not read the column, so the order does not matter.
+
 ## [0.12.1] — 2026-10-13
 
 **Upgrading from 0.11 or earlier works again.** An install's schema now

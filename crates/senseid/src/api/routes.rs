@@ -477,7 +477,7 @@ pub fn create_router(state: AppState) -> Router {
             get(preferences::get_collective).put(preferences::put_collective),
         )
         // Dōjō connections (memberships)
-        .route("/api/dojo/memberships", get(dojo::list_memberships).post(dojo::create_membership))
+        .route("/api/dojo/memberships", get(dojo::list_memberships))
         .route("/api/dojo/memberships/{id}/orgs", put(dojo::set_membership_orgs))
         .route("/api/dojo/metric-activation", patch(dojo::set_metric_activation))
         // When each entity last AGREED with the dōjō, and what went wrong where it
@@ -2286,6 +2286,74 @@ mod tests {
             .execute(state.pg.pool())
             .await
             .unwrap();
+    }
+
+    // #236 step 4e: signing in is joining — there is no pairing to post, so a
+    // device token has nowhere to go.
+    #[tokio::test]
+    async fn a_membership_cannot_be_posted_only_joined_by_signing_in() {
+        let (app, _) = test_app().await;
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/dojo/memberships")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"membership_id":"x","tenant_key":"a/b","kind":"employer","credential":"t"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    // #236 step 4e: a rules source is a dōjō tenant, reached with the session
+    // of the persona whose membership owns it — the source holds no key.
+    #[tokio::test]
+    async fn a_knowledge_source_registers_without_a_key_of_its_own() {
+        let (app, state) = test_app().await;
+        let url = format!("http://localhost:7755/v1/t/organization/src-{}", uuid::Uuid::new_v4());
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/knowledge/sources")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "name": "team rules", "url": url }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let id: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let id = uuid::Uuid::parse_str(id["id"].as_str().unwrap()).unwrap();
+        let source = state.pg.get_knowledge_source(&id).await.unwrap().expect("registered");
+        assert_eq!(source.url, url);
+        state.pg.delete_knowledge_source(&id).await.unwrap();
+    }
+
+    // #263: a source is listed by its name, so a blank one is refused, not stored.
+    #[tokio::test]
+    async fn a_knowledge_source_with_a_blank_name_is_refused() {
+        let (app, _) = test_app().await;
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/knowledge/sources")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "name": "  ", "url": "http://localhost:7755/v1/t/organization/x" })
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

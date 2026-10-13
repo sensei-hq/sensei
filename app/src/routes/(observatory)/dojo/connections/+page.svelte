@@ -1,42 +1,21 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
-  import { appState } from '$lib/appstate.svelte.js';
-  import { senseiApi } from '$lib/api.js';
-  import { PageHeader, EmptyState, Kanji } from '$lib/components';
-  import { Button, Select } from '@rokkit/ui';
+  import { PageHeader, EmptyState, Kanji, ScreenState } from '$lib/components';
   import type { DojoMembership } from '$lib/types.js';
   import {
-    ConnectForm,
-    KIND_OPTIONS,
     boundProjectsSummary,
     connectionsHeadline,
     kindPill,
     syncChip,
-    type MembershipKind,
   } from './dojo-connections-state.svelte.js';
 
+  // Signing in is joining (#236 step 4e): every dōjō the signed-in persona
+  // belongs to arrives here with the next sync — there is nothing to pair.
   let { data } = $props();
-
-  // Connect-form field/validation/submit state lives in the state class; the
-  // component only drives it and re-loads the list on success.
-  const form = new ConnectForm();
-
-  async function connect() {
-    const ok = await form.submit(senseiApi(appState.port));
-    if (ok) await invalidateAll();
-  }
-
-  // A static utility-class constant (a rendering rule, not a data derivation).
-  const inputClass =
-    'w-full px-3 py-2 border border-paper-edge rounded-md bg-paper-mute text-ink text-sm outline-none focus:border-ink-soft';
 </script>
 
 {#snippet chip(label: string, bg: string, text: string)}
   <span class="font-mono text-xs px-2 py-0.5 rounded-full {bg} {text}">{label}</span>
-{/snippet}
-
-{#snippet field(label: string)}
-  <span class="text-xs text-ink-mute">{label}</span>
 {/snippet}
 
 {#snippet connection(c: DojoMembership)}
@@ -88,123 +67,25 @@
   eyebrow="Observatory · Dōjō connections"
   kanji="連"
   title="Where your sensei meets the team's Dōjō."
-  description="Pair with a company, client, or community Dōjō to share what you learn and receive what the team already knows. You can belong to several at once."
+  description="Every company, client, or community Dōjō you belong to joins here when you sign in — share what you learn and receive what the team already knows. You can belong to several at once."
 >
   {#snippet right()}
-    <button
-      type="button"
-      data-connect-toggle
-      onclick={() => (form.open = !form.open)}
-      class="px-3 py-2 rounded-md border border-paper-edge bg-transparent text-sm text-ink-soft cursor-pointer"
-    >Connect a Dōjō</button>
+    <a
+      href="/settings/dojo"
+      data-sign-in
+      class="px-3 py-2 rounded-md border border-paper-edge bg-transparent text-sm text-ink-soft no-underline"
+    >Sign in to a Dōjō</a>
   {/snippet}
 </PageHeader>
 
 <div class="max-w-[1060px] mx-auto px-7 pb-10" data-connections-total={data.connections.length}>
-  {#if form.open}
-    <section data-connect-form class="mb-8 border border-paper-edge rounded-lg bg-paper-soft p-5">
-      <p class="text-sm font-medium text-ink m-0 mb-1">Connect a Dōjō</p>
-      <p class="text-xs text-ink-mute m-0 mb-4 max-w-[640px] leading-normal">
-        Pairing needs the service membership id and a device token from your Dōjō
-        console. The token is stored in your OS keychain and never read back.
-      </p>
-
-      <div class="grid grid-cols-2 gap-3">
-        <label class="flex flex-col gap-1">
-          {@render field('Membership id')}
-          <input
-            class={inputClass}
-            type="text"
-            placeholder="service membership uuid"
-            bind:value={form.membershipId}
-          />
-        </label>
-        <label class="flex flex-col gap-1">
-          {@render field('Tenant key')}
-          <input
-            class={inputClass}
-            type="text"
-            placeholder="github/acme"
-            bind:value={form.tenantKey}
-          />
-        </label>
-        <label class="flex flex-col gap-1">
-          {@render field('Registry url (optional)')}
-          <input
-            class={inputClass}
-            type="text"
-            placeholder="https://dojo.acme.internal"
-            bind:value={form.registryUrl}
-          />
-        </label>
-        <label class="flex flex-col gap-1">
-          {@render field('Kind')}
-          <Select
-            class="w-full"
-            items={KIND_OPTIONS}
-            value={form.kind}
-            onchange={(v) => (form.kind = v as MembershipKind)}
-          />
-        </label>
-        <label class="flex flex-col gap-1">
-          {@render field('Org slugs (optional)')}
-          <input
-            class={inputClass}
-            type="text"
-            data-testid="connect-org-slugs"
-            placeholder="sensei-hq, acme"
-            bind:value={form.orgSlugs}
-          />
-          <span class="text-xs text-ink-mute leading-normal">
-            git remote owners this dōjō covers — used to suggest bindings.
-          </span>
-        </label>
-        <label class="flex flex-col gap-1">
-          {@render field('Device token')}
-          <input
-            class={inputClass}
-            type="password"
-            placeholder="paste device token"
-            bind:value={form.deviceToken}
-          />
-        </label>
-        <label class="flex flex-col gap-1">
-          {@render field('Project to bind (optional)')}
-          <input
-            class={inputClass}
-            type="text"
-            placeholder="project uuid"
-            bind:value={form.projectId}
-          />
-        </label>
-      </div>
-
-      <div class="flex items-center gap-3 mt-4">
-        <Button
-          variant="primary"
-          size="sm"
-          data-connect-submit
-          disabled={!form.canSubmit}
-          onclick={connect}
-        >{form.submitting ? 'Connecting…' : 'Connect'}</Button>
-        <Button
-          variant="secondary"
-          style="outline"
-          size="sm"
-          onclick={() => (form.open = false)}
-        >Cancel</Button>
-        {#if form.error}
-          <span class="text-xs text-danger" data-connect-error>{form.error}</span>
-        {/if}
-      </div>
-    </section>
-  {/if}
-
-  {#if data.connections.length === 0}
+  {#if data.error}
+    <ScreenState status="error" error={data.error} onretry={invalidateAll} />
+  {:else if data.connections.length === 0}
     <EmptyState
       kanji="連"
-      title="no dōjō connected"
-      description="Connect one to share and receive team learnings. Employer, client, and community Dōjōs each keep their own scopes."
+      title="no dōjō yet"
+      description="Sign in under Settings → Dōjō: each Dōjō you belong to joins here on the next sync. Employer, client, and community Dōjōs each keep their own scopes."
     />
   {:else}
     <p class="text-sm text-ink-soft mb-6" data-connections-summary>

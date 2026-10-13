@@ -4,7 +4,7 @@
 //! maps a [`crate::runs::Run`] (plus the timestamp of its newest cadence event)
 //! onto the [`dojo_protocol::relay::RelaySessionUpdate`] wire type the phone /
 //! console render. The impure part (read the run + latest event from Postgres,
-//! resolve the owning membership device token, then publish via
+//! resolve the owning membership's session, then publish via
 //! [`crate::dojo::client::DojoClient::publish_session_update`]) wraps this in
 //! [`crate::tasks::handlers::publish_run`].
 //!

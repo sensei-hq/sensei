@@ -33,6 +33,7 @@ evidence is a suspicion, and gets labelled so.
 | A-1 | M2 · M17 | app is kanji-only; the kanji ⇄ solar toggle the mockups + rokkit support is not wired | decision 10; reorg §12.10 | P3 |
 | A-2 | M2 | the personal-preference surface is narrower than the config the app already supports | decision 10 | P3 |
 | G-1 | M17 | graph/layered view unreadable at granular scale — no L0/L1/L2 level of detail | reorg §9.7 | P1 |
+| G-2 | M4 · M2 · M3 | indexer has no ignore mechanism (no `.senseiignore` reader, no ignore config); it walks committed mockups / vendored / generated code and skews the graph + metrics. Ignore is stored repo config synced via the Dōjō, **seeded from the repo's own ignore sources** (`.gitignore`, qlty `.qlty/qlty.toml` `exclude_patterns`) — not a dotfile | decision 2026-10-13 | P2 |
 | M-7 | M8 | no master-detail metric model, no `gating` field, gating eligibility undefined | reorg §9.6 | P1 |
 | M-8 | M8 | coverage-gated presentation absent; thin metrics read as strong (#155 generalised) | reorg §9.6 | P1 |
 | M-9 | M8 | no per-metric design/coverage record tying a metric to its chart and LOD | reorg §9.6 | P1 |
@@ -41,6 +42,15 @@ evidence is a suspicion, and gets labelled so.
 | C-13 | M3 | Claude "mods" (supersedes plugin + hooks) — install path + migration not verified | decision 10 | P1 |
 | C-14 | M3 | multi-assistant expansion: Claude + OpenCode priority; others later; seam unspecified | decision 10 | P1 |
 | C-15 | prd | personas (incl. manager + client/stakeholder viewpoints) — ✅ authored 2026-10-13 | `../prd/03-personas.md` | done |
+| C-16 | M3 | **Copilot CLI: `SynthEvent` lacks `tool_success` field** — `tool.execution_complete` reports `success: false` (2.2% failure rate in sample) but it cannot be represented; the only direct measure of agent friction is discarded | 2026-08-26 review §Signals we are still discarding | P1 |
+| C-17 | M3 | **Copilot CLI: turn duration not captured** — `assistant.turn_start` → `turn_end` available but not parsed | 2026-08-26 review §Signals we are still discarding | P2 |
+| C-18 | M3 | **Copilot CLI: `codeChanges` from `session.shutdown` not captured** — real lines added/removed and files touched | 2026-08-26 review §Signals we are still discarding | P2 |
+| C-19 | M3 | **Copilot CLI: per-model token usage with cache read/write not fully captured** — `session.shutdown` carries `totalPremiumRequests`, cache tokens; partially parsed but not all fields | 2026-08-26 review §Signals we are still discarding | P2 |
+| C-20 | M3 | **Copilot CLI: `session.permissions_changed` not captured** — every point the agent stopped and waited for a human | 2026-08-26 review §Signals we are still discarding | P3 |
+| C-21 | M3 | **VS Code: no tool outcome recorded** — `toolInvocationSerialized` says a tool ran, never whether it worked; failure rate computed from it is 0/N (reads as flawless) | 2026-08-26 review §What VS Code does not record | P2 (known limitation) |
+| C-22 | M3 | **VS Code: no tokens of any kind recorded** | 2026-08-26 review §What VS Code does not record | P2 (known limitation) |
+| C-23 | M3 | **VS Code: turn latency not measurable** — `responseTimestamp` usually equals `timestamp`, elapsed time is not measurable | 2026-08-26 review §What VS Code does not record | P2 (known limitation) |
+| C-24 | M3 | **Cursor adapter: no real sample data to verify against** — the only adapter with no real data behind it | 2026-08-26 review §Cursor, §Suggested order | P1 |
 | T-1 | T3 | tracker adapters (Jira/ADO) mockup-only; 2/7 gates buildable now, 2 scoped-read, 3 on #156 | reorg §9.2 | P1 |
 | T-2 | T2 | join/membership flow dead ("Join" → 403) | plan gap analysis | P1 |
 | F-3 | T1 | Dōjō sync never worked | production-readiness → `07-quality.md` | P1 |

@@ -5,8 +5,8 @@
 //! paths build on this seam. The client reuses the federation module's bounded
 //! HTTP client ([`crate::federation::http_client`], DRY — same connect/total
 //! timeout discipline). Its Bearer is the membership's [`TenantCredential`]: the
-//! persona's own session when the membership is bound to one (#236 step 4), the
-//! legacy per-membership device token from the Keychain otherwise.
+//! session of the persona the membership is bound to — the only credential the
+//! dōjō accepts (#236 step 4).
 
 use crate::db::pg_store::DojoMembership;
 use dojo_protocol::relay::{
@@ -17,8 +17,8 @@ use dojo_protocol::{ArtifactPullResponse, PublishArtifactResponse, PublishedArti
 use std::time::Duration;
 
 /// A resolved endpoint for talking to one Dōjō membership: the registry base +
-/// tenant path plus the bounded HTTP client. The auth token is fetched on demand
-/// from the Keychain (never held in memory longer than a request), so calls
+/// tenant path plus the bounded HTTP client. The persona's access token is
+/// minted on demand (never held in memory longer than a request), so calls
 /// attach it per request via [`DojoClient::bearer`].
 ///
 /// C4 established construction/auth resolution; C6 adds [`DojoClient::publish_artifact`]
@@ -37,36 +37,42 @@ pub struct DojoClient {
     http: reqwest::Client,
 }
 
-/// What a membership's tenant calls present (#236 step 4,
-/// docs/plan/2026-10-12-dojo-device-plane-as-person.md). Chosen by the
-/// membership, never by trying one and then the other.
+/// What a membership's tenant calls present: the person's session, the only
+/// credential the dōjō accepts (#236 step 4,
+/// docs/history/plan/2026-10-12-dojo-device-plane-as-person.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TenantCredential {
     /// The persona's session — minted fresh per call from its Keychain slot.
     Session { slot: String },
-    /// Bound to a persona that is signed out. Presents nothing: a bound
-    /// membership falling back to its device token would let one credential
-    /// quietly stand in for the other.
+    /// Bound to a persona that is signed out. Presents nothing.
     SignedOut { persona_id: uuid::Uuid },
-    /// No persona known yet — the legacy device token, for one release.
-    DeviceToken { credential_ref: String },
+    /// No signed-in persona has claimed this membership. Presents nothing: it
+    /// joins a persona when that persona's sync lists it.
+    Unbound,
+    /// A test's fixed bearer — see [`test_bearers`].
+    #[cfg(test)]
+    Fixed { bearer: String },
 }
 
 impl TenantCredential {
     pub fn of(m: &DojoMembership) -> Self {
+        #[cfg(test)]
+        if let Some(bearer) = test_bearers::get(&m.id) {
+            return TenantCredential::Fixed { bearer };
+        }
         match &m.persona {
             Some(p) => match &p.session_slot {
                 Some(slot) => TenantCredential::Session { slot: slot.clone() },
                 None => TenantCredential::SignedOut { persona_id: p.persona_id },
             },
-            None => TenantCredential::DeviceToken { credential_ref: m.credential_ref.clone() },
+            None => TenantCredential::Unbound,
         }
     }
 
-    /// The Bearer for one call: the persona's freshly refreshed access token,
-    /// or the device token read off the async runtime (the Keychain read shells
-    /// out). A session that needs a new sign-in is [`DojoClientError::SignedOut`];
-    /// a dōjō that cannot be reached to refresh it is a retryable network fault.
+    /// The Bearer for one call: the persona's freshly refreshed access token. A
+    /// membership with no live session — signed out, or claimed by no persona —
+    /// is [`DojoClientError::SignedOut`]; a dōjō that cannot be reached to
+    /// refresh the session is a retryable network fault.
     pub async fn bearer(&self) -> Result<String, DojoClientError> {
         match self {
             TenantCredential::Session { slot } => {
@@ -78,15 +84,30 @@ impl TenantCredential {
                     }
                 })
             }
-            TenantCredential::SignedOut { .. } => Err(DojoClientError::SignedOut),
-            TenantCredential::DeviceToken { credential_ref } => {
-                let cref = credential_ref.clone();
-                tokio::task::spawn_blocking(move || crate::gateway_keys::get_key(&cref))
-                    .await
-                    .map_err(|e| DojoClientError::Join(e.to_string()))?
-                    .map_err(|e| DojoClientError::Keychain(e.to_string()))
+            TenantCredential::SignedOut { .. } | TenantCredential::Unbound => {
+                Err(DojoClientError::SignedOut)
             }
+            #[cfg(test)]
+            TenantCredential::Fixed { bearer } => Ok(bearer.clone()),
         }
+    }
+}
+
+/// Fixed bearers for tests, by membership id: [`TenantCredential::of`] presents
+/// one when a test registered it, so an HTTP test needs no Keychain session.
+#[cfg(test)]
+pub(crate) mod test_bearers {
+    use std::collections::HashMap;
+    use std::sync::{LazyLock, Mutex};
+
+    static BEARERS: LazyLock<Mutex<HashMap<uuid::Uuid, String>>> = LazyLock::new(Default::default);
+
+    pub(crate) fn set(membership: uuid::Uuid, bearer: &str) {
+        BEARERS.lock().unwrap().insert(membership, bearer.to_string());
+    }
+
+    pub(super) fn get(membership: &uuid::Uuid) -> Option<String> {
+        BEARERS.lock().unwrap().get(membership).cloned()
     }
 }
 
@@ -100,11 +121,8 @@ pub enum DojoClientError {
     Status(u16),
     /// A 2xx response body could not be decoded.
     Decode(String),
-    /// The Keychain bearer token could not be resolved.
-    Keychain(String),
-    /// The blocking Keychain task failed to join.
-    Join(String),
-    /// The membership's persona must sign in again — nothing was sent.
+    /// The membership has no live session — its persona must sign in (again),
+    /// or no signed-in persona has claimed it. Nothing was sent.
     SignedOut,
 }
 
@@ -117,10 +135,7 @@ impl DojoClientError {
         match self {
             DojoClientError::Network(_) => true,
             DojoClientError::Status(code) => (500..=599).contains(code),
-            DojoClientError::Decode(_)
-            | DojoClientError::Keychain(_)
-            | DojoClientError::Join(_)
-            | DojoClientError::SignedOut => false,
+            DojoClientError::Decode(_) | DojoClientError::SignedOut => false,
         }
     }
 }
@@ -131,10 +146,8 @@ impl std::fmt::Display for DojoClientError {
             DojoClientError::Network(m) => write!(f, "dojo network error: {m}"),
             DojoClientError::Status(c) => write!(f, "dojo service returned {c}"),
             DojoClientError::Decode(m) => write!(f, "dojo response decode error: {m}"),
-            DojoClientError::Keychain(m) => write!(f, "dojo bearer resolution failed: {m}"),
-            DojoClientError::Join(m) => write!(f, "dojo keychain task join failed: {m}"),
             DojoClientError::SignedOut => {
-                write!(f, "dojo membership's persona is signed out — sign in again")
+                write!(f, "no signed-in session for this dōjō membership — sign in")
             }
         }
     }
@@ -209,7 +222,7 @@ impl DojoClient {
 
     /// Publish (contribute) one artifact to this membership's tenant Dōjō.
     ///
-    /// `POST {registry_url}/v1/t/{tenant_key}/artifacts` with the Keychain bearer,
+    /// `POST {registry_url}/v1/t/{tenant_key}/artifacts` with the persona's bearer,
     /// JSON body = the artifact. Reuses federation's HTTP discipline (bounded
     /// connect/total timeouts via [`crate::federation::http_client`]). Errors are
     /// returned, never panicked; the caller records the outcome in the outbox.
@@ -244,7 +257,7 @@ impl DojoClient {
     /// Pull (receive) this membership's downstream artifacts since a cursor (C7).
     ///
     /// `GET {registry_url}/v1/t/{tenant_key}/artifacts?since={since}` with the
-    /// Keychain bearer, parse an [`ArtifactPullResponse`] (the delta artifacts +
+    /// persona's bearer, parse an [`ArtifactPullResponse`] (the delta artifacts +
     /// the new cursor to persist). Mirrors [`Self::publish_artifact`]'s error
     /// discipline exactly: transport faults → [`DojoClientError::Network`],
     /// non-2xx → [`DojoClientError::Status`], an undecodable 2xx →
@@ -536,12 +549,10 @@ impl DojoClient {
                 // may not have propagated yet — so keep waiting out the deadline
                 // rather than failing open early on a read that may still succeed.
                 Ok(None) => {}
-                // A bearer/keychain fault won't recover mid-loop → surface it so
-                // the caller fails open immediately rather than spinning to the
+                // No session won't recover mid-loop — a sign-in is the person's
+                // to do — so surface it at once rather than spinning to the
                 // deadline. Transient network/status blips are retried.
-                Err(e @ (DojoClientError::Keychain(_) | DojoClientError::Join(_))) => {
-                    return Err(e);
-                }
+                Err(e @ DojoClientError::SignedOut) => return Err(e),
                 Err(e) => {
                     tracing::warn!(inbox_id, error = %e, "await_reply: poll failed, retrying");
                 }
@@ -589,7 +600,7 @@ struct ResolvedRulesResponse {
 mod tests {
     use super::*;
 
-    fn membership(dojo_url: &str, credential_ref: &str) -> DojoMembership {
+    fn membership(dojo_url: &str) -> DojoMembership {
         DojoMembership {
             id: uuid::Uuid::new_v4(),
             registry_url: "http://localhost:7755".into(),
@@ -598,9 +609,8 @@ mod tests {
             kind: "client".into(),
             org_slugs: vec![],
             role: "contributor".into(),
-            authenticated_via: "device_code".into(),
+            authenticated_via: "github_oauth".into(),
             attribution_default: "anonymous".into(),
-            credential_ref: credential_ref.into(),
             sync_status: "authenticating".into(),
             last_seq: 0,
             last_heartbeat_at: None,
@@ -615,12 +625,12 @@ mod tests {
                 persona_id: uuid::Uuid::new_v4(),
                 session_slot: slot.map(str::to_string),
             }),
-            ..membership("http://127.0.0.1:9/organization/acme", "dojo-device")
+            ..membership("http://127.0.0.1:9/organization/acme")
         }
     }
 
-    // #236 step 4d: the membership decides the credential — the person's session
-    // when bound, the device token only when no persona is known (the window).
+    // #236 step 4: the membership decides the credential — the person's session
+    // when bound to a signed-in persona, nothing otherwise.
     #[test]
     fn a_bound_membership_presents_its_persona_session() {
         assert_eq!(
@@ -630,21 +640,40 @@ mod tests {
     }
 
     #[test]
-    fn an_unbound_membership_presents_its_device_token() {
+    fn an_unbound_membership_presents_nothing() {
         assert_eq!(
-            TenantCredential::of(&membership(
-                "http://127.0.0.1:9/organization/acme",
-                "dojo-device"
-            )),
-            TenantCredential::DeviceToken { credential_ref: "dojo-device".into() }
+            TenantCredential::of(&membership("http://127.0.0.1:9/organization/acme")),
+            TenantCredential::Unbound
         );
     }
 
     #[test]
     fn a_bound_membership_whose_persona_signed_out_presents_nothing() {
-        // Never the device token: a bound membership falling back would let one
-        // credential quietly stand in for the other.
         assert!(matches!(TenantCredential::of(&bound(None)), TenantCredential::SignedOut { .. }));
+    }
+
+    // #236 step 4e: the dōjō takes the person's session only, so a membership
+    // no signed-in persona has claimed asks for a sign-in — nothing is sent.
+    #[tokio::test]
+    async fn an_unbound_membership_asks_for_a_sign_in_before_any_call() {
+        let c = DojoClient::for_membership(&membership("http://127.0.0.1:9/organization/acme"));
+        let err = c.poll_inbox(0).await.unwrap_err();
+        assert!(matches!(err, DojoClientError::SignedOut), "got {err:?}");
+    }
+
+    // A sign-in is the person's to do: waiting on a gate does not spin to its
+    // deadline asking for one, it says so at once.
+    #[tokio::test]
+    async fn awaiting_a_reply_stops_at_once_when_the_persona_must_sign_in() {
+        let c = DojoClient::for_membership(&bound(None));
+        let started = std::time::Instant::now();
+        let out = c.await_reply("gate-1", std::time::Duration::from_secs(5)).await;
+        assert!(matches!(out, Err(DojoClientError::SignedOut)), "got {out:?}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "spun {:?}",
+            started.elapsed()
+        );
     }
 
     #[tokio::test]
@@ -681,8 +710,7 @@ mod tests {
 
     #[test]
     fn base_url_trims_trailing_slash() {
-        let c =
-            DojoClient::for_membership(&membership("http://localhost:7755/github/acme/", "dojo-x"));
+        let c = DojoClient::for_membership(&membership("http://localhost:7755/github/acme/"));
         assert_eq!(c.base_url(), "http://localhost:7755/github/acme");
     }
 
@@ -691,8 +719,7 @@ mod tests {
         // The Worker mounts /v1/t/[origin]/[org]/artifacts. The single encoded
         // segment (`github%2Facme`) was dojo-mind's mount and 404s on the Worker
         // (checked live 2026-10-12: 404 encoded, 401 two-segment).
-        let c =
-            DojoClient::for_membership(&membership("http://localhost:7755/github/acme", "dojo-x"));
+        let c = DojoClient::for_membership(&membership("http://localhost:7755/github/acme"));
         assert_eq!(c.artifacts_url(), "http://localhost:7755/v1/t/github/acme/artifacts");
     }
 
@@ -710,11 +737,10 @@ mod tests {
         assert!(!DojoClientError::Status(400).is_retryable());
         assert!(!DojoClientError::Status(403).is_retryable());
         assert!(!DojoClientError::Decode("bad json".into()).is_retryable());
-        assert!(!DojoClientError::Keychain("missing".into()).is_retryable());
+        assert!(!DojoClientError::SignedOut.is_retryable());
     }
 
     #[tokio::test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn pull_artifacts_forwards_since_and_parses_response() {
         use axum::{Json, Router, extract::Query, routing::get};
         use dojo_protocol::{
@@ -776,9 +802,8 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let cref = format!("dojo-pull-{}", uuid::Uuid::new_v4());
-        crate::gateway_keys::set_key(&cref, "device-token-pull").unwrap();
-        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        let mut m = membership("http://localhost:7755/github/acme");
+        test_bearers::set(m.id, "device-token-pull");
         m.registry_url = format!("http://{addr}");
         let c = DojoClient::for_membership(&m);
 
@@ -788,18 +813,6 @@ mod tests {
         assert_eq!(resp.artifacts[0].seq, 8);
         assert_eq!(resp.artifacts[0].status, ArtifactStatus::Published);
         assert_eq!(resp.artifacts[0].artifact.kind, ArtifactKind::Principle);
-
-        crate::gateway_keys::delete_key(&cref).unwrap();
-    }
-
-    #[tokio::test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
-    async fn an_unbound_membership_resolves_its_device_token_from_the_keychain() {
-        let cref = format!("dojo-test-{}", uuid::Uuid::new_v4());
-        crate::gateway_keys::set_key(&cref, "device-token-abc").unwrap();
-        let c = DojoClient::for_membership(&membership("http://localhost:7755/github/acme", &cref));
-        assert_eq!(c.bearer_async().await.unwrap(), "device-token-abc");
-        crate::gateway_keys::delete_key(&cref).unwrap();
     }
 
     #[test]
@@ -807,13 +820,11 @@ mod tests {
         // The Worker relay routes are /v1/t/[origin]/[org]/relay/… — the tenant_key's
         // '/' is a real path separator (two segments), NOT an encoded %2F. (Regression
         // guard: the daemon previously sent github%2Facme → the Worker 404'd.)
-        let c =
-            DojoClient::for_membership(&membership("http://localhost:7755/github/acme", "dojo-x"));
+        let c = DojoClient::for_membership(&membership("http://localhost:7755/github/acme"));
         assert_eq!(c.relay_url("inbox"), "http://localhost:7755/v1/t/github/acme/relay/inbox");
     }
 
     #[tokio::test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn relay_post_retries_transient_failures() {
         use axum::{Router, extract::State, routing::post};
         use dojo_protocol::relay::{RelayRunStatus, RelaySessionUpdate};
@@ -838,9 +849,8 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let cref = format!("dojo-relay-retry-{}", uuid::Uuid::new_v4());
-        crate::gateway_keys::set_key(&cref, "device-token-relay").unwrap();
-        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        let mut m = membership("http://localhost:7755/github/acme");
+        test_bearers::set(m.id, "device-token-relay");
         m.registry_url = format!("http://{addr}");
         let c = DojoClient::for_membership(&m);
 
@@ -864,12 +874,9 @@ mod tests {
             .await
             .expect("retries past the two transient 400s and succeeds");
         assert_eq!(hits.load(Ordering::SeqCst), 3, "two 400s + one 200 = 3 attempts");
-
-        crate::gateway_keys::delete_key(&cref).unwrap();
     }
 
     #[tokio::test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn raise_inbox_item_does_not_retry_ambiguous_failures() {
         use axum::{Router, extract::State, routing::post};
         use dojo_protocol::relay::{
@@ -896,9 +903,8 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let cref = format!("dojo-raise-noretry-{}", uuid::Uuid::new_v4());
-        crate::gateway_keys::set_key(&cref, "device-token-relay").unwrap();
-        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        let mut m = membership("http://localhost:7755/github/acme");
+        test_bearers::set(m.id, "device-token-relay");
         m.registry_url = format!("http://{addr}");
         let c = DojoClient::for_membership(&m);
 
@@ -917,12 +923,9 @@ mod tests {
         let err = c.raise_inbox_item(&item).await.unwrap_err();
         assert!(matches!(err, DojoClientError::Status(500)), "got {err:?}");
         assert_eq!(hits.load(Ordering::SeqCst), 1, "no retry on an ambiguous 5xx (dup-safety)");
-
-        crate::gateway_keys::delete_key(&cref).unwrap();
     }
 
     #[tokio::test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn poll_inbox_forwards_since_and_parses_response() {
         use axum::{Json, Router, extract::Query, routing::get};
         use dojo_protocol::relay::{
@@ -960,9 +963,8 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let cref = format!("dojo-relay-poll-{}", uuid::Uuid::new_v4());
-        crate::gateway_keys::set_key(&cref, "device-token-relay").unwrap();
-        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        let mut m = membership("http://localhost:7755/github/acme");
+        test_bearers::set(m.id, "device-token-relay");
         m.registry_url = format!("http://{addr}");
         let c = DojoClient::for_membership(&m);
 
@@ -972,12 +974,9 @@ mod tests {
         assert_eq!(resp.items[0].kind, RelayInboxKind::Approval);
         assert_eq!(resp.items[0].status, RelayInboxStatus::Answered);
         assert_eq!(resp.items[0].reply.as_ref().unwrap()["verdict"], "approve");
-
-        crate::gateway_keys::delete_key(&cref).unwrap();
     }
 
     #[tokio::test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn relay_publishes_serialize_and_succeed() {
         use axum::{Json, Router, routing::post};
         use dojo_protocol::relay::{
@@ -1014,9 +1013,8 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let cref = format!("dojo-relay-pub-{}", uuid::Uuid::new_v4());
-        crate::gateway_keys::set_key(&cref, "device-token-relay").unwrap();
-        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        let mut m = membership("http://localhost:7755/github/acme");
+        test_bearers::set(m.id, "device-token-relay");
         m.registry_url = format!("http://{addr}");
         let c = DojoClient::for_membership(&m);
 
@@ -1091,12 +1089,9 @@ mod tests {
         let ack = c.raise_inbox_item(&item).await.expect("inbox publish ok");
         assert_eq!(ack.id, "inbox-42", "raise decodes the Worker ack id");
         assert_eq!(ack.seq, 7, "raise decodes the Worker ack seq");
-
-        crate::gateway_keys::delete_key(&cref).unwrap();
     }
 
     #[tokio::test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn publish_session_update_returning_id_decodes_the_cloud_session_id() {
         use axum::{Json, Router, routing::post};
         use dojo_protocol::relay::{RelayRunStatus, RelaySessionUpdate};
@@ -1121,9 +1116,8 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let cref = format!("dojo-sess-id-{}", uuid::Uuid::new_v4());
-        crate::gateway_keys::set_key(&cref, "device-token-relay").unwrap();
-        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        let mut m = membership("http://localhost:7755/github/acme");
+        test_bearers::set(m.id, "device-token-relay");
         m.registry_url = format!("http://{addr}");
         let c = DojoClient::for_membership(&m);
 
@@ -1148,12 +1142,9 @@ mod tests {
             .await
             .expect("publish returns the cloud session id");
         assert_eq!(id, "cloud-sess-77");
-
-        crate::gateway_keys::delete_key(&cref).unwrap();
     }
 
     #[tokio::test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn await_reply_returns_reply_once_answered() {
         use axum::{Json, Router, extract::Query, routing::get};
         use dojo_protocol::relay::{
@@ -1199,9 +1190,8 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let cref = format!("dojo-await-{}", uuid::Uuid::new_v4());
-        crate::gateway_keys::set_key(&cref, "device-token-await").unwrap();
-        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        let mut m = membership("http://localhost:7755/github/acme");
+        test_bearers::set(m.id, "device-token-await");
         m.registry_url = format!("http://{addr}");
         let c = DojoClient::for_membership(&m);
 
@@ -1212,12 +1202,9 @@ mod tests {
             .expect("await_reply ok");
         assert_eq!(reply, Some(serde_json::json!({"verdict": "deny"})));
         assert!(CALLS.load(Ordering::SeqCst) >= 2, "polled past the pending row");
-
-        crate::gateway_keys::delete_key(&cref).unwrap();
     }
 
     #[tokio::test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn await_reply_asks_for_its_own_gate_by_id_not_a_cursor() {
         use axum::{Json, Router, routing::get};
         use dojo_protocol::relay::{
@@ -1260,14 +1247,12 @@ mod tests {
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let cref = format!("dojo-byid-{}", uuid::Uuid::new_v4());
-        crate::gateway_keys::set_key(&cref, "device-token-byid").unwrap();
-        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        let mut m = membership("http://localhost:7755/github/acme");
+        test_bearers::set(m.id, "device-token-byid");
         m.registry_url = format!("http://{addr}");
         let c = DojoClient::for_membership(&m);
 
         let reply = c.await_reply("gate-7", std::time::Duration::from_secs(5)).await;
-        crate::gateway_keys::delete_key(&cref).unwrap();
 
         assert_eq!(reply.expect("ok"), Some(serde_json::json!({"verdict": "allow"})));
         let seen = SEEN.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -1277,7 +1262,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(not(target_os = "macos"), ignore)]
     async fn await_reply_returns_none_on_timeout() {
         use axum::{Json, Router, extract::Query, routing::get};
         use dojo_protocol::relay::{
@@ -1314,9 +1298,8 @@ mod tests {
         });
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let cref = format!("dojo-await-to-{}", uuid::Uuid::new_v4());
-        crate::gateway_keys::set_key(&cref, "device-token-await").unwrap();
-        let mut m = membership("http://localhost:7755/github/acme", &cref);
+        let mut m = membership("http://localhost:7755/github/acme");
+        test_bearers::set(m.id, "device-token-await");
         m.registry_url = format!("http://{addr}");
         let c = DojoClient::for_membership(&m);
 
@@ -1326,7 +1309,5 @@ mod tests {
             .await
             .expect("await_reply ok");
         assert_eq!(reply, None, "unanswered gate times out to None (fail-open)");
-
-        crate::gateway_keys::delete_key(&cref).unwrap();
     }
 }

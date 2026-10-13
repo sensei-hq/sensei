@@ -28,7 +28,7 @@
     // confirmed override live in `BindingAction` so this stays a template.
     const bindAction = new BindingAction();
     const binding = $derived(
-        resolveBinding(p, data.suggestion, data.memberships),
+        resolveBinding(p, data.suggestion, data.memberships, data.bindingError),
     );
     // A successful confirm swaps the inferred row for the confirmed view
     // client-side (the loaded data is stale until the next navigation).
@@ -224,6 +224,8 @@
             {#if bindAction.error}
                 <p class="text-xs text-danger m-0 mt-2" data-binding-error>{bindAction.error}</p>
             {/if}
+        {:else if bindingView.state === 'error'}
+            <p class="text-xs text-danger m-0" data-binding-load-error>{bindingView.message}</p>
         {:else}
             <p class="text-sm text-ink-faint m-0">
                 no dōjō binding — this project's findings stay local.
@@ -233,8 +235,11 @@
 
     <section class="mt-5">
         <h3 class="text-xs font-semibold text-ink-mute m-0 mb-2 uppercase tracking-wide">
-            Repos ({data.repos.length})
+            Repos{data.reposError ? '' : ` (${data.repos.length})`}
         </h3>
+        {#if data.reposError}
+            <p class="text-xs text-danger m-0" data-repos-error>{data.reposError}</p>
+        {/if}
         <ul class="list-none m-0 p-0">
             {#each data.repos as repo (repo.id)}
                 <li class="repo-row flex gap-3 py-1.5 text-sm border-b border-paper-edge">

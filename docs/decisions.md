@@ -1,6 +1,6 @@
 ---
 name: Decisions log — sensei
-updated: 2026-07-20
+updated: 2026-10-13
 ---
 
 # Decisions
@@ -9,6 +9,41 @@ updated: 2026-07-20
 > The anti-rework memory — never re-derive a settled choice.
 > The **design journey** (approaches tried, what worked, what didn't) lives in
 > [`history/analysis/2026-07-24-design-journey.md`](history/analysis/2026-07-24-design-journey.md).
+
+---
+
+## 2026-10-13 — Entry point, role vocabulary, and personas
+
+Taken during the docs reorg (full text: [`reorg.md`](reorg.md) §16, decision 10).
+Recorded here because they change the product surface, not just the docs —
+the PRD states only the current result; the reasoning lives here.
+
+| Decision | Locked answer | Why |
+|---|---|---|
+| **Entry point is minimal by design** | Getting started is one gate — *point sensei at your work* (add a scan root, press Begin). The full configuration surface (Preferences) is free-navigation, reachable at any time, never blocking, and covers folders, projects, assistants, libraries, instruments, inference, assignments and profile. No mandatory setup flow. | A lighter entry makes the first run simple; everything configurable stays reachable later to adjust how sensei behaves and which features and support are enabled. |
+| **Dōjō role vocabulary** | Four roles: **developer · maintainer · org admin · lead**. **Lead** is the client/engagement confidentiality role — the lesson travels, the source never does. | Short, one-word role names; the engagement concept is unchanged. |
+| **Personas** | Solo developer · team developer · maintainer · org admin · lead, plus **manager / delivery lead** (*the roll-up*) and **client / project stakeholder** (*the narrow lens*) — the multi-user, multi-team viewpoints. Authored in [`prd/03-personas.md`](prd/03-personas.md). | The multi-user, multi-team case needs the management and client/project viewpoints. Roles that are not yet built are covered by the roadmap/gap register, not by prose in the PRD. |
+
+---
+
+## 2026-10-13 — Indexer ignore: stored configuration, synced — not a dotfile
+
+The indexer must be able to exclude paths — committed mockups, vendored or generated
+code, fixtures — so they don't skew the code graph and the metrics derived from it.
+The exclusion list is **stored configuration scoped to the repository**, not a
+committed `.senseiignore`.
+
+| Decision | Locked answer | Why |
+|---|---|---|
+| **Ignore lives in the database** | Exclusion rules are configuration rows scoped to the repository (the same store as scan roots and folder roles), editable from the Folders pane (M2). | One source of truth; the Folders pane already owns roots and roles; no dotfile clutter. |
+| **Seeded from sources the repo already carries** | The list seeds from the repo's existing ignore inputs — `.gitignore`, and a tool config such as qlty's `exclude_patterns` in `.qlty/qlty.toml` — then the DB rules layer on top. | Don't make a developer re-declare what the repo already says. This repo's `.qlty/qlty.toml` already excludes `docs/mockups/**` (prototype JSX) and `crates/senseid/grammars/**` (vendored generated parsers) — the exact noise that would skew the graph. |
+| **Shared via Dōjō sync** | A rule one user adds for a repository syncs to every other user of that repository through the Dōjō, so the whole team indexes the same files. | The first person to notice the mockup/vendored noise fixes it once for everyone. |
+| **`.senseiignore` is not the primary mechanism** | A committed ignore file is rejected *as the mechanism*; it may be supported later as an **import seed** for a repo that already keeps one. | A file is a second source that can drift from the DB, and it can't be set for a repository you don't own. |
+| **Accepted cost** | The first install may index a path once before the ignore is added; a fresh clone re-resolves the ignore from sync. | The team-wide fix outweighs one extra scan leg. |
+
+Verified 2026-10-13: **no ignore mechanism exists** — no `.senseiignore` reader and no
+ignore column or table; the indexer walks every file under a scan root. Tracked as gap
+**G-2** ([`roadmap/06-gaps.md`](roadmap/06-gaps.md)).
 
 ---
 

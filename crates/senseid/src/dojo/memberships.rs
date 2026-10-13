@@ -3,9 +3,9 @@
 //! A "connection" is the daemon's local record of one Dōjō it is a member of.
 //! Fork 1: the authoritative `dojo.memberships` row lives in the Dōjō service's
 //! own Postgres; this module manages the local mirror
-//! (`sensei.dojo_memberships`) and the Keychain credential, mirroring the
-//! federation `knowledge_sources` discipline — the device token is stored in the
-//! OS Keychain via [`crate::gateway_keys`], NEVER in Postgres.
+//! (`sensei.dojo_memberships`). A membership is joined by signing in (#236 step
+//! 4e) and holds no credential — its tenant calls present the session of the
+//! persona it is bound to.
 //!
 //! Raw SQL lives in [`crate::db::pg_store`] (next to `knowledge_sources`); this
 //! module owns the domain types, input validation, and the create/list/bind/
@@ -97,8 +97,8 @@ pub fn dojo_run_url(registry_url: &str, run_id: &uuid::Uuid) -> String {
     format!("{}/you/runs/{}", registry_url.trim_end_matches('/'), run_id)
 }
 
-/// A validated new connection — everything but the Keychain credential, which
-/// [`register`] mints. All enum-typed fields are already checked.
+/// A validated new connection, as [`register`] records it. All enum-typed fields
+/// are already checked.
 #[derive(Debug)]
 pub struct NewConnection {
     /// The service membership id (`dojo.memberships.id`) — becomes the local PK
@@ -161,28 +161,10 @@ impl NewConnection {
     }
 }
 
-/// Register a Dōjō connection: mint a Keychain credential_ref, store the device
-/// `token` in the OS Keychain (never in Postgres), then insert the local mirror
-/// row. If the row insert fails the Keychain entry is rolled back so no orphan
-/// secret is left behind. Returns the membership id (the local PK).
-pub async fn register(
-    pg: &PgStore,
-    conn: NewConnection,
-    token: &str,
-) -> Result<uuid::Uuid, String> {
-    if token.trim().is_empty() {
-        return Err("credential (device token) must not be empty".to_string());
-    }
-    let credential_ref = format!("dojo-{}", uuid::Uuid::new_v4());
-
-    // Keychain write is blocking (shells out to /usr/bin/security).
-    let cref = credential_ref.clone();
-    let tok = token.to_string();
-    tokio::task::spawn_blocking(move || crate::gateway_keys::set_key(&cref, &tok))
-        .await
-        .map_err(|e| format!("keychain task join failed: {e}"))?
-        .map_err(|e| format!("keychain store failed: {e}"))?;
-
+/// Record a Dōjō membership locally — the mirror row its routing and tenant
+/// calls read. It holds no credential: its calls present the session of the
+/// persona it is bound to (#236 step 4e). Returns the membership id.
+pub async fn register(pg: &PgStore, conn: NewConnection) -> Result<uuid::Uuid, String> {
     let row = NewDojoMembership {
         id: conn.membership_id,
         registry_url: conn.registry_url,
@@ -193,20 +175,9 @@ pub async fn register(
         role: conn.role,
         authenticated_via: conn.authenticated_via,
         attribution_default: conn.attribution_default.as_db_str().to_string(),
-        credential_ref: credential_ref.clone(),
         sync_status: conn.sync_status,
     };
-    if let Err(e) = pg.create_dojo_membership(&row).await {
-        // Roll back the Keychain entry so a failed insert leaves no orphan token.
-        let cref = credential_ref.clone();
-        if let Err(del) =
-            tokio::task::spawn_blocking(move || crate::gateway_keys::delete_key(&cref)).await
-        {
-            tracing::warn!(error = %del, "dojo: keychain rollback task join failed after insert error");
-        }
-        return Err(e);
-    }
-    Ok(conn.membership_id)
+    pg.create_dojo_membership(&row).await
 }
 
 /// Bind a local project to a Dōjō membership (sets `sensei.projects.dojo_id`).
@@ -315,8 +286,7 @@ pub struct BoundProject {
     pub name: String,
 }
 
-/// One connection as surfaced by `GET /api/dojo/memberships`. Deliberately omits
-/// `credential_ref` — the Keychain reference is never exposed over the API.
+/// One connection as surfaced by `GET /api/dojo/memberships`.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ConnectionView {
     pub id: uuid::Uuid,

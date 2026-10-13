@@ -309,7 +309,6 @@ mod tests {
             role: "contributor".into(),
             authenticated_via: "device_code".into(),
             attribution_default: "named".into(),
-            credential_ref: format!("dojo-{}", uuid::Uuid::new_v4()),
             sync_status: "healthy".into(),
         })
         .await

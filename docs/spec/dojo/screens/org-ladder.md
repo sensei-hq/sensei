@@ -63,7 +63,8 @@ above for the tables/endpoints (not restated).
   `sensei.scopes.level` (`title`→`text`, `rule_type`, `enforcement='mandatory'`→hard ★, `status`
   active/tombstoned, `content_hash`, `namespace_slug`) · `sensei.rule_pack_adoptions ⋈ rule_packs`
   (per-stack adopt) · audit → `dojo.audit_events` (tenant-scoped). **Tenant**-primary; auth boundary =
-  the device token resolving to a membership in the path tenant.
+  the signed-in person's session resolving to an active membership in the path tenant
+  (`resolveTenantCaller`).
 - **API** — loader `loadOrgLadder` (mock → real); real read = adapt the federation pull
   `GET /v1/…/rules?since=` (`PulledRule[]` → `ConstitutionRule` shape) → `rulesToSections`. Save =
   `POST /v1/…/rules` (publish), retract = `DELETE /v1/…/rules/[id]` (tombstone) — **both exist,

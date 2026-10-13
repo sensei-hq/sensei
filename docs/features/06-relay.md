@@ -4,6 +4,10 @@ type: feature
 kind: functional
 ---
 
+> **SUPERSEDED 2026-10-13 — folded into the M21 module spec.**
+> Canonical spec: [`prd/modules/03-delivery/21-relay/README.md`](../prd/modules/03-delivery/21-relay/README.md).
+> Kept for history and cross-links.
+
 # Relay
 
 Relay is remote processing — how a user handles work away from the keyboard.

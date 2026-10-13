@@ -841,7 +841,6 @@ async fn federated_ledger_and_shareability() {
             name: "H".into(),
             url: "u".into(),
             namespace_id: None,
-            credential_ref: "c".into(),
             direction: "both".into(),
         })
         .await

@@ -11,6 +11,11 @@ tags: [metrics, architecture, graph, coupling, cohesion, proposal]
 
 # Architecture metrics — proposed family
 
+> **SUPERSEDED 2026-10-13 — folded into the M8 module spec (the #156 family).**
+> The canonical spec is [`prd/modules/02-insight/08-metrics-and-health/`](../../prd/modules/02-insight/08-metrics-and-health/README.md);
+> this dossier is kept for history and cross-links. The family is blocked on graph
+> edge resolution (#146/#151/#152) and unblocks T3's layer/cycle gates.
+
 sensei computes 26 live metrics and **none of them read the code graph.** This
 document proposes the missing `architecture` family, with the feasibility of each
 candidate *measured against the real graph* rather than assumed.

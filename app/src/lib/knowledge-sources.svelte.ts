@@ -44,7 +44,6 @@ export class KnowledgeSourcesState {
 
   // Add-form fields.
   url = $state('');
-  key = $state('');
   name = $state('');
   addError = $state<string | null>(null);
   adding = $state(false);
@@ -63,20 +62,23 @@ export class KnowledgeSourcesState {
       this.addError = invalid;
       return;
     }
+    // The daemon requires a name (#263).
+    if (!this.name.trim()) {
+      this.addError = 'name required';
+      return;
+    }
 
     this.adding = true;
     this.addError = null;
     const body = {
       url: this.url,
-      ...(this.key ? { key: this.key } : {}),
-      ...(this.name ? { name: this.name } : {}),
+      name: this.name.trim(),
     };
     const res = await api.createKnowledgeSource(body);
     this.adding = false;
 
     if (res.ok) {
       this.url = '';
-      this.key = '';
       this.name = '';
       await this.load(api);
     } else {

@@ -105,9 +105,8 @@ flowchart LR
 
 ### Lead — client / engagement confidentiality (console)
 
-> The role formerly called *client-lead* is now **lead**. It guards
-> confidentiality on **client engagements** (the engagement concept is
-> unchanged; only the role name shortened).
+> **Lead** guards confidentiality on **client engagements**: the lesson travels,
+> the source never does.
 
 ```mermaid
 flowchart LR

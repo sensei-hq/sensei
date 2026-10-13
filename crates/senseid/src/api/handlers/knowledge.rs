@@ -1131,14 +1131,14 @@ pub(crate) async fn record_outcomes(
 // ============================================================================
 // Federation sources — /api/knowledge/sources*
 // GET    /api/knowledge/sources             — list registered Dōjō rules sources
-// POST   /api/knowledge/sources             — register a source (+ Keychain cred)
-// DELETE /api/knowledge/sources/{id}         — deregister (+ purge Keychain cred)
+// POST   /api/knowledge/sources             — register a source
+// DELETE /api/knowledge/sources/{id}         — deregister
 // POST   /api/knowledge/sources/{id}/sync    — pull this source now
 // GET    /api/knowledge/sources/{id}/status  — current cursor / enabled state
 //
 // D1: a rules source `url` is the Worker tenant base `{registry}/v1/t/{origin}/{org}`
-// (the daemon appends `/rules`), and `api_key` carries the per-membership device
-// token — the SAME tenant-path + device-token plane the artifacts client uses.
+// (the daemon appends `/rules`). It holds no key: its calls present the session
+// of the persona whose membership owns that tenant (#236 step 4e).
 // ============================================================================
 
 #[derive(serde::Deserialize)]
@@ -1148,13 +1148,16 @@ pub(crate) struct NewSourceBody {
     pub url: String,
     pub namespace_id: Option<String>,
     pub direction: Option<String>,
-    pub api_key: String,
 }
 
 pub(crate) async fn create_source(
     State(state): State<AppState>,
     Json(b): Json<NewSourceBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    let name = b.name.trim().to_string();
+    if name.is_empty() {
+        return Err(err(StatusCode::BAD_REQUEST, "name required"));
+    }
     let url = b.url.trim().to_string();
     // Require https unless the host is exactly a loopback — see
     // `api::util::require_secure_url` (shared with the Dōjō registration path).
@@ -1167,21 +1170,13 @@ pub(crate) async fn create_source(
         ),
         None => None,
     };
-    let credential_ref = format!("dojo-{}", uuid::Uuid::new_v4());
-    let cref = credential_ref.clone();
-    let api_key = b.api_key.clone();
-    tokio::task::spawn_blocking(move || crate::gateway_keys::set_key(&cref, &api_key))
-        .await
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let id = state
         .pg
         .create_knowledge_source(&crate::db::pg_store::NewKnowledgeSource {
             kind: b.kind.unwrap_or_else(|| "hive_mind".into()),
-            name: b.name,
+            name,
             url,
             namespace_id,
-            credential_ref,
             direction: b.direction.unwrap_or_else(|| "both".into()),
         })
         .await
@@ -1214,18 +1209,6 @@ pub(crate) async fn delete_source(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let sid = uuid::Uuid::parse_str(&id).map_err(|_| err(StatusCode::BAD_REQUEST, "bad id"))?;
-    if let Ok(Some(s)) = state.pg.get_knowledge_source(&sid).await {
-        let cref = s.credential_ref.clone();
-        match tokio::task::spawn_blocking(move || crate::gateway_keys::delete_key(&cref)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => {
-                tracing::warn!(source = %s.name, error = %e, "federation: keychain delete failed; entry may be orphaned")
-            }
-            Err(e) => {
-                tracing::warn!(source = %s.name, error = %e, "federation: keychain delete task join failed")
-            }
-        }
-    }
     let removed = state
         .pg
         .delete_knowledge_source(&sid)

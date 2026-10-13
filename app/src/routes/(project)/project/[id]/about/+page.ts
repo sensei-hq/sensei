@@ -7,17 +7,24 @@ export const load: PageLoad = async ({ params, parent }) => {
   const api = senseiApi(appState.port);
   // R3 project→Dōjō auto-bind: the inferred binding for the chip + the
   // membership list so a confirmed binding can be resolved from
-  // `bound_projects`. Both are fallback-safe (empty / null), so a daemon
-  // that predates the route never breaks the About panel.
-  const [reposData, suggestionData, memberships] = await Promise.all([
-    api.getProjectRepos(params.id),
-    api.getDojoSuggestion(params.id),
-    api.getDojoMemberships(),
+  // `bound_projects`. A failed read is an error the section shows, never the
+  // empty list or "no suggestion" a broken daemon would otherwise look like
+  // (#262).
+  const [repos, suggestion, memberships] = await Promise.all([
+    api.tryGetProjectRepos(params.id),
+    api.tryGetDojoSuggestion(params.id),
+    api.tryGetDojoMemberships(),
   ]);
   return {
     project,
-    repos: reposData.repos ?? [],
-    suggestion: suggestionData.suggestion,
-    memberships,
+    repos: repos.ok ? (repos.data.repos ?? []) : [],
+    reposError: repos.ok ? null : repos.error.message,
+    suggestion: suggestion.ok ? suggestion.data.suggestion : null,
+    memberships: memberships.ok ? memberships.data : [],
+    bindingError: !suggestion.ok
+      ? suggestion.error.message
+      : !memberships.ok
+        ? memberships.error.message
+        : null,
   };
 };

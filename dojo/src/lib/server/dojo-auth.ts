@@ -4,9 +4,8 @@
 // the web console sends its session `access_token`), whose `sub` is matched
 // against `dojo.memberships.user_id`; the membership `role` gives an access
 // level checked against the route's floor.
-//
-// The API-key plane (dojo-mind's other auth path, for machine callers) and
-// SSO identity-mapping are follow-ups — the console runs on the JWT plane.
+// The daemon is on the same plane: it presents the signed-in person's session
+// (#236 step 4). SSO identity-mapping is a follow-up.
 
 import { dojoDb, roleToAccess, accessLabel, ACCESS, type AccessLevel } from './dojo-supabase';
 import { resolvePrincipalId } from './principal-resolve';
@@ -25,21 +24,12 @@ export type Caller = {
 	userId: string;
 	role: string;
 	access: AccessLevel;
-	/** Present on the API-key (device-token) plane — the caller's membership row. */
+	/** The caller's membership row in the route's tenant. */
 	membershipId?: string;
-	/** The verified Supabase JWT, on the user (JWT) plane only — what `userDb`
-	 *  reads with, so RLS rather than route code limits the rows (#236 step 3).
-	 *  The device plane has none until it exchanges its token for one. */
+	/** The verified Supabase JWT — what `userDb` reads with, so RLS rather than
+	 *  route code limits the rows (#236 step 3). */
 	accessToken?: string;
 };
-
-/** Lowercase hex sha256 (Web Crypto — available in the Worker runtime and Node). */
-async function sha256Hex(input: string): Promise<string> {
-	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
-	return Array.from(new Uint8Array(digest))
-		.map((b) => b.toString(16).padStart(2, '0'))
-		.join('');
-}
 
 /** Resolve the `{origin}/{org}` tenant id, or throw 404/500. */
 async function resolveTenantId(
@@ -161,7 +151,6 @@ export async function resolveTenantAccess(
 	// CLOSED on a lookup error: a DB failure must never be read as "no
 	// membership" and then fall through to the default `member` access (which
 	// would grant a non-member member-level access on any `member`-floor route).
-	// Mirror `resolveApiKeyAccess` below.
 	const { data: mem, error } = await db
 		.from('memberships').select('id, role')
 		.eq('tenant_id', tenantId).eq('user_id', userId).is('disabled_at', null)
@@ -186,69 +175,11 @@ export async function resolveTenantAccess(
 }
 
 /**
- * Authenticate a MACHINE caller (the daemon) on the API-key / device-token plane
- * — relay auth plane A. The daemon sends its Keychain device token as
- * `Authorization: Bearer <token>`; we sha256 it and match
- * `dojo.memberships.device_token_hash` for the route's tenant (active only). The
- * token is **per-membership** (per tenant×user). The compared value is itself a
- * hash, so the lookup leaks nothing about the token (cf. `dojo.api_keys`). Throws
- * a Response (401/403/404) like `resolveTenantAccess`.
- *
- * Phone/console callers use `resolveTenantAccess` (Supabase-JWT plane) instead.
- * (Plane B — signed payloads via `memberships.device_key` — is a hardening
- * follow-up; see docs/plan/decisions.md.)
- */
-export async function resolveApiKeyAccess(
-	origin: string,
-	org: string,
-	request: Request,
-	floor: AccessLevel
-): Promise<Caller> {
-	const auth = request.headers.get('authorization') ?? '';
-	const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
-	if (!token) throw apiError(401, 'unauthenticated');
-
-	const db = dojoDb();
-	const tenantId = await resolveTenantId(db, origin, org);
-
-	const hash = await sha256Hex(token);
-	const { data: mem, error } = await db
-		.from('memberships')
-		.select('id, user_id, role')
-		.eq('tenant_id', tenantId)
-		.eq('device_token_hash', hash)
-		.is('disabled_at', null)
-		.maybeSingle();
-	if (error) throw apiError(500, 'device auth lookup failed');
-	if (!mem) throw apiError(401, 'invalid device token');
-
-	const access = roleToAccess(mem.role);
-	if (access < floor) throw apiError(403, `${accessLabel(floor)} role required`);
-
-	return {
-		tenantId,
-		userId: mem.user_id as string,
-		role: (mem.role as string) ?? 'member',
-		access,
-		membershipId: mem.id as string
-	};
-}
-
-/** A JWT is three non-empty base64url segments. A device token is opaque and
- *  never has that shape, so the shape alone tells the two credentials apart. */
-export function isJwtShaped(token: string): boolean {
-	return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token);
-}
-
-/**
- * The daemon's tenant calls (relay, artifacts, rules) during the one-release
- * window of #236 step 4 (docs/plan/2026-10-12-dojo-device-plane-as-person.md).
- * The bearer's SHAPE picks the path: a JWT is the person's session
- * (`resolveTenantAccess`, then `callerDb`); anything else is the legacy device
- * token (`resolveApiKeyAccess`, the service role). A JWT that fails verification
- * is a 401 and is never retried as a device token, so one credential cannot
- * stand in for the other. Only the Authorization header counts here — a browser
- * cookie session does not reach the daemon's routes.
+ * The daemon's tenant calls (relay, artifacts, rules): the signed-in person's
+ * session, presented as `Authorization: Bearer <jwt>` (#236 step 4,
+ * docs/history/plan/2026-10-12-dojo-device-plane-as-person.md). Only the header
+ * counts — a browser cookie session does not reach the daemon's routes. Any
+ * other bearer, a retired device token included, fails verification: 401.
  */
 export async function resolveTenantCaller(
 	origin: string,
@@ -259,8 +190,7 @@ export async function resolveTenantCaller(
 	const auth = request.headers.get('authorization') ?? '';
 	const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
 	if (!token) throw apiError(401, 'unauthenticated');
-	if (isJwtShaped(token)) return resolveTenantAccess(origin, org, request, {} as App.Locals, floor);
-	return resolveApiKeyAccess(origin, org, request, floor);
+	return resolveTenantAccess(origin, org, request, {} as App.Locals, floor);
 }
 
 export { ACCESS };

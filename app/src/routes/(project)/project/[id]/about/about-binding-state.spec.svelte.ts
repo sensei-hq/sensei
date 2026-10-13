@@ -91,6 +91,13 @@ describe('boundMembership', () => {
 });
 
 describe('resolveBinding', () => {
+  // #262: a failed read is an error, never "no binding" — the empty row would
+  // tell you the project stays local when the daemon simply did not answer.
+  it('error: a failed read wins over every other state', () => {
+    const view = resolveBinding(project({ dojo_id: MEMBERSHIP_ID }), null, [membership()], 'daemon unreachable');
+    expect(view).toEqual({ state: 'error', message: 'daemon unreachable' });
+  });
+
   it('confirmed: a bound project reads the membership tenant key + url', () => {
     const view = resolveBinding(
       project({ dojo_id: MEMBERSHIP_ID }),

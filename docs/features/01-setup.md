@@ -6,6 +6,10 @@ kind: functional
 
 # Setup
 
+> **SUPERSEDED 2026-10-13 — folded into the M1 module spec.**
+> The canonical spec is [`prd/modules/01-foundation/01-bootstrap-provisioning/`](../prd/modules/01-foundation/01-bootstrap-provisioning/README.md);
+> this dossier is kept for history and cross-links.
+
 A user's entry into sensei should be frictionless. The first launch does the
 least it can to get someone working: it checks the machine has what it needs,
 scans the folders the user's code lives in, and — when those repos point at an

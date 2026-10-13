@@ -1,11 +1,11 @@
-// The daemon's relay calls run AS THE PERSON when it presents their session
-// (#236 step 4, docs/plan/2026-10-12-dojo-device-plane-as-person.md).
+// The daemon's relay calls run AS THE PERSON (#236 step 4,
+// docs/history/plan/2026-10-12-dojo-device-plane-as-person.md).
 //
 // POST session / segments / inbox and GET inbox resolve the caller through
-// resolveTenantCaller: a session caller's relay rows (and the run's project) are
-// read and written with THEIR JWT, so the policies in database/policies/dojo/
-// decide; a legacy device-token caller stays on the service role for the one
-// release window. The seat stays the system's either way (billing bookkeeping).
+// resolveTenantCaller: the relay rows (and the run's project) are read and
+// written with the person's JWT, so the policies in database/policies/dojo/
+// decide. A caller with no session is refused — the service role never stands
+// in. The seat stays the system's (billing bookkeeping).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 type Terminal = { data: unknown; error: unknown };
@@ -102,7 +102,7 @@ beforeEach(() => {
 	resolveTenantCaller.mockClear();
 });
 
-describe('the daemon’s relay calls choose their credential by shape (#236 step 4)', () => {
+describe('the daemon’s relay calls run as the person (#236 step 4)', () => {
 	for (const r of routes) {
 		it(`${r.name} resolves through resolveTenantCaller at the contributor floor`, async () => {
 			caller = { ...base, accessToken: 'jwt' };
@@ -122,13 +122,13 @@ describe('the daemon’s relay calls choose their credential by shape (#236 step
 			expect(system.tables.filter((t) => t.startsWith('relay_'))).toEqual([]);
 		});
 
-		it(`${r.name} with a legacy device token stays on the service role (the window)`, async () => {
+		it(`${r.name} with no session is 401 — the service role never stands in (#236 step 4e)`, async () => {
 			caller = base;
 			system.queue(...r.queue);
 			const res = await r.run();
-			expect(res.status).toBe(200);
+			expect(res.status).toBe(401);
 			expect(sessionTokens).toEqual([]);
-			expect(system.tables.filter((t) => t.startsWith('relay_')).length).toBeGreaterThan(0);
+			expect(system.tables.filter((t) => t.startsWith('relay_'))).toEqual([]);
 		});
 	}
 

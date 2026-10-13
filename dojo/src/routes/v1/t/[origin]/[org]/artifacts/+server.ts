@@ -2,14 +2,13 @@
 // the contribute → triage → approve → distribute loop (Plane A). The in-Worker
 // port of dojo-mind's `publish_artifact` / `pull_artifacts` (api.rs). The daemon's
 // `DojoClient` points its `{registry_url}/v1/t/{tenant_key}/artifacts` here and
-// presents the person's session — or, for one release, its legacy device token
-// (`resolveTenantCaller`, #236 step 4). The wire shape matches
+// presents the person's session (`resolveTenantCaller`, #236 step 4). The wire shape matches
 // `dojo_protocol` (PublishArtifactResponse / ArtifactPullResponse) so senseid's
 // dojo client (`crates/senseid/src/dojo/client.rs`) retargets with only a
 // URL/auth swap. See docs/plan/2026-07-23-retire-dojo-mind.md (D1 option a).
 import type { RequestHandler } from './$types';
 import { dojoDb } from '$lib/server/dojo-supabase';
-import { tenantCallerDb } from '$lib/server/caller-db';
+import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantCaller, apiError, ACCESS } from '$lib/server/dojo-auth';
 import {
 	parsePublishedArtifact,
@@ -35,7 +34,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
 
 		// The contribution is the person's (artifacts_contribute); clustering it is
 		// the system's.
-		const resp = await publishArtifact(tenantCallerDb(caller), caller.tenantId, artifact, caller.userId);
+		const resp = await publishArtifact(callerDb(caller), caller.tenantId, artifact, caller.userId);
 
 		// Close the loop inline: triage this signature-cluster (auto-publish if it
 		// clears the bar, else queue for a maintainer). Promotion failure must NOT
@@ -65,7 +64,7 @@ export const GET: RequestHandler = async ({ params, request, url }) => {
 		const sinceRaw = url.searchParams.get('since');
 		const parsed = sinceRaw == null ? 0 : Number.parseInt(sinceRaw, 10);
 		const since = Number.isFinite(parsed) ? parsed : 0;
-		const page = await pullArtifactsSince(tenantCallerDb(caller), caller.tenantId, since, {
+		const page = await pullArtifactsSince(callerDb(caller), caller.tenantId, since, {
 			principalId: caller.userId,
 			seesSubmissions: caller.access >= ACCESS.maintainer
 		});

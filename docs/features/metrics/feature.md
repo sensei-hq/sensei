@@ -19,6 +19,10 @@ tags: [metrics, ftr, rework, trends, retro, insights, project]
 
 # Metrics
 
+> **SUPERSEDED 2026-10-13 — folded into the M8 module spec.**
+> The canonical spec is [`prd/modules/02-insight/08-metrics-and-health/`](../../prd/modules/02-insight/08-metrics-and-health/README.md);
+> this dossier is kept for history and cross-links.
+
 > The measurement half of sensei's retrospective loop: turn the sessions + code
 > graph sensei already captures into a small set of **measured, first-party,
 > paired** numbers — and the per-session retro that turns those numbers into

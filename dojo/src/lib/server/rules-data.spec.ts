@@ -9,7 +9,6 @@
 //     ((tenant_id,namespace_id,content_hash)), the person's; server-controlled
 //     attribution, {id,version,seq} return, error → RulesError(500).
 //   • pullRules — dojo.tenant_shared_rules as the person (#236 step 4);
-//     pullRulesAsSystem — the legacy device token's select, for one release.
 //   • retractRule — status→tombstoned with the non-tombstoned guard, boolean
 //     result, error → RulesError(500).
 //   • recordRulesAudit — the audit_events insert shape; a failed write is
@@ -22,11 +21,9 @@ import {
 	publishRule,
 	upsertRuleNamespace,
 	pullRules,
-	pullRulesAsSystem,
 	retractRule,
 	recordRulesAudit,
 	RulesError,
-	PULL_SELECT,
 	parseNamespacePairs,
 	resolveTenantPackRules,
 	type DojoClient
@@ -331,41 +328,6 @@ describe('pullRules (as the person)', () => {
 		const db = makeDb();
 		db.queue({ data: null, error: { message: 'pull boom' } });
 		await expect(pullRules(db.client, 't1', 0)).rejects.toMatchObject({ status: 500, message: 'pull boom' });
-	});
-});
-
-describe('pullRulesAsSystem (the legacy device token, one release)', () => {
-	it('filters seq > since, orders by seq asc, selects the join, and shapes the response', async () => {
-		const db = makeDb();
-		db.queue({
-			data: [{ ...FLAT_ROW, namespaces: { scope_key: 'organization', slug: 'sensei-hq', name: 'Sensei HQ' } }],
-			error: null
-		});
-		const out = await pullRulesAsSystem(db.client, 't1', 3);
-		expect(out.cursor).toBe(5);
-		expect(out.rules[0].scope_key).toBe('organization');
-		expect(out.rules[0]).not.toHaveProperty('namespaces');
-
-		const call = db.calls.find((c) => c.table === 'shared_rules')!;
-		expect(call.select).toBe(PULL_SELECT);
-		expect(call.filters).toContainEqual(['gt', 'seq', 3]);
-		// Only the caller's tenant's rules (#236).
-		expect(call.filters).toContainEqual(['eq', 'tenant_id', 't1']);
-		expect(call.order).toEqual(['seq', { ascending: true }]);
-	});
-
-	it('normalizes a one-element-array namespace embed (PostgREST array shape)', async () => {
-		const db = makeDb();
-		db.queue({ data: [{ ...FLAT_ROW, namespaces: [{ scope_key: 'project', slug: 'sensei', name: 'sensei' }] }], error: null });
-		const out = await pullRulesAsSystem(db.client, 't1', 0);
-		expect(out.rules[0].scope_key).toBe('project');
-		expect(out.rules[0].namespace_slug).toBe('sensei');
-	});
-
-	it('throws RulesError(500) on a select error', async () => {
-		const db = makeDb();
-		db.queue({ data: null, error: { message: 'pull boom' } });
-		await expect(pullRulesAsSystem(db.client, 't1', 0)).rejects.toMatchObject({ status: 500, message: 'pull boom' });
 	});
 });
 
