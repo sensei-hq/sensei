@@ -1,14 +1,14 @@
 # Architecture
 
 > **The HOW — at a design level.** How the layers realise the
-> [requirements](../requirements/README.md). Start with this high-level view,
+> [requirements](../history/requirements/README.md). Start with this high-level view,
 > then read the per-layer doc for the part you're changing. Buildable
 > per-screen/per-pipeline contracts live in [`../spec/`](../spec/README.md);
 > this folder owns component boundaries, data flow, and the rationale behind them.
 
-Every layer doc opens by naming the [objectives](../objectives.md)
+Every layer doc opens by naming the [objectives](../prd/02-objectives.md)
 it serves, then describes structure and flow. Where a design decision pushes
-against a [vision theme](../vision.md#the-six-non-negotiable-themes),
+against a [vision theme](../prd/01-vision.md#the-six-non-negotiable-themes),
 it says so.
 
 ## The system at a glance
@@ -102,4 +102,4 @@ Each links to its detailed design. The order is data-up (foundation first).
 ## Read next
 
 - Foundation: [`data.md`](data.md) → [`daemon.md`](daemon.md).
-- Where the gaps are: [the plan](../plan/README.md).
+- Where the gaps are: [the gap register](../roadmap/06-gaps.md) and [per-module status](../roadmap/README.md).

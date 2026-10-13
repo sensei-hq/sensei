@@ -25,6 +25,13 @@ import { createConnection } from 'net';
 import { resolve, join } from 'path';
 import { fileURLToPath } from 'url';
 
+/** The daemon's `/health` payload — the fields this setup reads. */
+type DaemonHealth = {
+  status?: string;
+  dbName?: string;
+  components?: Array<{ id: string; status: string }>;
+};
+
 const __dirname = resolve(fileURLToPath(import.meta.url), '..');
 const APP_REPO = resolve(__dirname, '..');
 const APP_BINARY = join(
@@ -166,7 +173,7 @@ export default async function globalSetup(): Promise<void> {
   // Authoritative DB-isolation check via /health — loopback-only daemon,
   // same URL pattern as DAEMON_URL elsewhere in e2e/helpers.ts.
   const { DAEMON_URL } = await import('./helpers.js');
-  const health = await fetch(`${DAEMON_URL}/health`).then(r => r.json());
+  const health: DaemonHealth = await fetch(`${DAEMON_URL}/health`).then(r => r.json());
   if (health.dbName !== expectedDb) {
     throw new Error(
       `[globalSetup] DB ISOLATION CHECK FAILED. ` +
@@ -195,7 +202,7 @@ export default async function globalSetup(): Promise<void> {
   //    reporting through the tests that then fail on it, with the component
   //    statuses named, rather than one opaque globalSetup error.
   const readyDeadline = Date.now() + 180_000;
-  let last = health;
+  let last: DaemonHealth | null = health;
   while (Date.now() < readyDeadline) {
     if (last?.status === 'ok') {
       console.log('[globalSetup] Daemon health is ok — tests may begin.');

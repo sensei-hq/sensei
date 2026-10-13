@@ -1,10 +1,18 @@
 ---
-name: Feature Coverage Map
-description: Built-vs-pending map across mockups, journeys, docs, and code — the authoritative status snapshot
+name: Feature Coverage Map (superseded)
+description: SUPERSEDED 2026-10-13 — the built-vs-pending snapshot moved to docs/roadmap/ (per-plane status tables + 06-gaps.md). Retained for history.
 date: 2026-07-25
+status: superseded
+superseded_by: docs/roadmap/
 ---
 
 # Feature Coverage Map
+
+> **SUPERSEDED 2026-10-13** as part of the docs reorg ([`reorg.md`](../reorg.md)).
+> Its status data folds into `docs/roadmap/`'s per-plane tables and `06-gaps.md`,
+> and its module inventory becomes `docs/prd/` (`prd/README.md` + the module
+> specs). This file is retained in `docs/history/` as the 2026-07-25 snapshot;
+> do not rely on it for current status.
 
 Cross-references four sources — **mockups** (`docs/mockups/Sensei/lib/**`), **journeys** (`docs/journeys/*`), **docs** (`docs/features/*`, `docs/design/*`), and **code** (crates + `dojo/` + `app/` + `database/ddl/`) — into one built-vs-pending snapshot. This is the current-truth status; the per-feature docs' own status tables trail it (see §F).
 

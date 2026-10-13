@@ -4,7 +4,7 @@
 variants of most screens (older/newer, simple/detailed, discarded); picking
 the wrong file wastes work.
 
-The authoritative shell is [`../mockups/Sensei/lib/observatory/observatory.jsx`](lib/observatory/observatory.jsx) — its
+The authoritative shell is [`../mockups/Sensei/lib/observatory/observatory.jsx`](../mockups/Sensei/lib/observatory/observatory.jsx) — its
 `section === "…"` switch maps a route id to the component that renders it.
 This table is built from that switch (2026-07-07 — rebuilt after the sidebar-
 consistency + Health-tab refactors). If a section is added/removed in

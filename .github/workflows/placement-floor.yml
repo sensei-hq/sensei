@@ -1,0 +1,48 @@
+name: placement floor
+
+# The calls and references of this repository, placed the way production
+# places them (each language's compiler engine), must not fall below 90% in any
+# (language, package, edge kind) cell — `indexer::quality::placement`. It
+# compiles the whole repository with rust-analyzer and the TypeScript checker,
+# which takes minutes, so it runs nightly and on demand rather than on every
+# push. The run prints the full decomposition: placed, missed and why, per cell.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  floor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # master
+        with:
+          toolchain: stable
+          components: rust-analyzer, rust-src
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      # The TypeScript engine compiles each package with the package's OWN
+      # typescript and runs its own `svelte-kit sync`, so each needs its
+      # dependencies installed, exactly as a developer's checkout has them.
+      - name: Install the front ends' dependencies
+        run: |
+          for package in app dojo website crates/senseid/ts-driver; do
+            (cd "$package" && bun install --frozen-lockfile)
+          done
+      - name: Install the TypeScript engine's packages
+        run: |
+          mkdir -p ~/.sensei/engines
+          cp crates/senseid/ts-driver/package.json ~/.sensei/engines/package.json
+          npm install --prefix ~/.sensei/engines --no-audit --no-fund
+
+      - name: Placement floor
+        run: cargo test -p senseid --bin senseid placement_never_falls_below_the_floor -- --ignored --nocapture

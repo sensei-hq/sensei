@@ -17,7 +17,7 @@
  *     which is the exact failure the registry exists to prevent.
  */
 
-import { test, expect } from '../fixtures';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateToScreen, DAEMON_URL } from '../helpers';
 
 interface SummaryRow {
@@ -63,7 +63,7 @@ async function liveSummary(): Promise<Summary> {
  * only on a database where setup already happened, which a fresh e2e DB is not.
  * Mirrors `atlas.spec.ts`, which survives a fresh DB.
  */
-async function seedSetupComplete(tauriPage: any): Promise<void> {
+async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void> {
   await fetch(`${DAEMON_URL}/api/config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

@@ -91,12 +91,125 @@ fn sniff_content(path: &std::path::Path) -> Option<ScanSkipReason> {
         return Some(ScanSkipReason::BinaryContent);
     }
     match std::str::from_utf8(slice) {
-        Ok(_) => None,
+        Ok(_) => generated_header(slice).then_some(ScanSkipReason::Generated),
         // Only call it unscannable when invalid bytes appear well before the end
         // — a trailing error is likely a UTF-8 char split at the 8KB boundary.
         Err(e) if e.valid_up_to() + 4 < n => Some(ScanSkipReason::InvalidUtf8),
-        Err(_) => None,
+        Err(e) => generated_header(&slice[..e.valid_up_to()]).then_some(ScanSkipReason::Generated),
     }
+}
+
+/// How many lines of a file's head may carry a generated-code marker. A marker
+/// is a header: further down, the words are prose about generated code.
+const GENERATED_HEADER_LINES: usize = 5;
+
+/// Whether a file's head says a tool wrote it: the `@generated` tag (Rust,
+/// Facebook's tooling, tree-sitter) or Go's `Code generated … DO NOT EDIT.`
+fn generated_header(head: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(head);
+    text.lines().take(GENERATED_HEADER_LINES).any(|line| {
+        let tagged = line.match_indices("@generated").any(|(at, tag)| {
+            !line[at + tag.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '_')
+        });
+        tagged || (line.contains("Code generated") && line.contains("DO NOT EDIT"))
+    })
+}
+
+/// The repository's `linguist-vendored` and `linguist-generated` marks, read
+/// from its `.gitattributes` files: code the repository carries but does not
+/// own, and code a tool wrote. Neither is indexed.
+pub(crate) struct LinguistMarks {
+    /// Each `.gitattributes`, shallowest first: a deeper file, and a later line
+    /// within one, overrides an earlier answer — as git reads them.
+    files: Vec<MarksIn>,
+}
+
+struct MarksIn {
+    dir: std::path::PathBuf,
+    vendored: ignore::gitignore::Gitignore,
+    generated: ignore::gitignore::Gitignore,
+}
+
+impl LinguistMarks {
+    /// No marks at all: every file is the repository's own.
+    pub(crate) fn none() -> Self {
+        Self { files: Vec::new() }
+    }
+
+    /// Read the `.gitattributes` of `repo_abs` and of each of `dirs` (relative
+    /// to it). An unreadable file is an error that names it.
+    pub(crate) fn load(
+        repo_abs: &std::path::Path,
+        dirs: impl IntoIterator<Item = std::path::PathBuf>,
+    ) -> Result<Self, String> {
+        let mut dirs: Vec<std::path::PathBuf> = dirs.into_iter().collect();
+        dirs.push(std::path::PathBuf::new());
+        dirs.sort_by_key(|d| (d.components().count(), d.clone()));
+        dirs.dedup();
+        let mut files = Vec::new();
+        for rel in dirs {
+            let dir = repo_abs.join(&rel);
+            let path = dir.join(".gitattributes");
+            let text = match std::fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+            };
+            files.push(MarksIn {
+                vendored: marked(&dir, &text, "linguist-vendored")?,
+                generated: marked(&dir, &text, "linguist-generated")?,
+                dir,
+            });
+        }
+        Ok(Self { files })
+    }
+
+    /// Why the file at `abs` is not the repository's own, if it is not.
+    pub(crate) fn classify(&self, abs: &std::path::Path) -> Option<ScanSkipReason> {
+        let set = |pick: fn(&MarksIn) -> &ignore::gitignore::Gitignore| {
+            let mut answer = false;
+            for file in self.files.iter().filter(|f| abs.starts_with(&f.dir)) {
+                match pick(file).matched(abs, false) {
+                    ignore::Match::Ignore(_) => answer = true,
+                    ignore::Match::Whitelist(_) => answer = false,
+                    ignore::Match::None => {}
+                }
+            }
+            answer
+        };
+        if set(|f| &f.vendored) {
+            Some(ScanSkipReason::Vendored)
+        } else if set(|f| &f.generated) {
+            Some(ScanSkipReason::Generated)
+        } else {
+            None
+        }
+    }
+}
+
+/// The patterns of one `.gitattributes` that set `attr` (as matches) or unset
+/// it (as whitelist entries), in file order.
+fn marked(
+    dir: &std::path::Path,
+    text: &str,
+    attr: &str,
+) -> Result<ignore::gitignore::Gitignore, String> {
+    let mut builder = ignore::gitignore::GitignoreBuilder::new(dir);
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+        let mut tokens = line.split_whitespace();
+        let Some(pattern) = tokens.next() else { continue };
+        for token in tokens {
+            let set = match token.split_once('=') {
+                Some((name, value)) if name == attr => value != "false",
+                None if token == attr => true,
+                None if token.strip_prefix(['-', '!']) == Some(attr) => false,
+                _ => continue,
+            };
+            let line = if set { pattern.to_string() } else { format!("!{pattern}") };
+            builder.add_line(None, &line).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+    }
+    builder.build().map_err(|e| format!("{}: {e}", dir.display()))
 }
 
 /// Path patterns excluded from directory discovery.
@@ -319,6 +432,48 @@ mod tests {
         assert_eq!(ScanSkipReason::InvalidUtf8.as_db(), "invalid_utf8");
         assert_eq!(ScanSkipReason::ParseError.as_db(), "parse_error");
         assert_eq!(ScanSkipReason::ExcludedByConfig.as_db(), "excluded_by_config");
+        assert_eq!(ScanSkipReason::Vendored.as_db(), "vendored");
+        assert_eq!(ScanSkipReason::Generated.as_db(), "generated");
+        assert!(!ScanSkipReason::Vendored.is_actionable());
+        assert!(!ScanSkipReason::Generated.is_actionable());
+    }
+
+    /// A header says a tool wrote the file; prose ABOUT generated code, or a
+    /// marker below the header, does not.
+    #[test]
+    fn a_generated_header_is_read_only_from_the_head_and_only_as_a_tag() {
+        assert!(generated_header(b"// @generated by tree-sitter\nint x;\n"));
+        assert!(generated_header(b"#!/bin/sh\n# @generated\n"));
+        assert!(generated_header(b"// Code generated by protoc-gen-go. DO NOT EDIT.\npackage x\n"));
+        assert!(!generated_header(b"//   (a _worker.js + auto-generated .assetsignore) which\n"));
+        assert!(!generated_header(b"const tag = '@generated_by';\n"));
+        assert!(!generated_header(b"1\n2\n3\n4\n5\n// @generated\n"));
+    }
+
+    /// A nested `.gitattributes` speaks for its own directory and overrides
+    /// the root's; a directory pattern does not reach into the directory (git
+    /// reads attributes per path, not by parents).
+    #[test]
+    fn nested_attributes_override_the_root_and_patterns_match_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("third/keep")).unwrap();
+        std::fs::write(
+            root.join(".gitattributes"),
+            "third/** linguist-vendored\nwhole linguist-vendored\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("third/keep/.gitattributes"), "*.c -linguist-vendored\n").unwrap();
+        let marks = LinguistMarks::load(root, [std::path::PathBuf::from("third/keep")]).unwrap();
+        assert_eq!(marks.classify(&root.join("third/a.c")), Some(ScanSkipReason::Vendored));
+        assert_eq!(marks.classify(&root.join("third/keep/b.c")), None, "the nested file unsets it");
+        assert_eq!(marks.classify(&root.join("third/keep/b.h")), Some(ScanSkipReason::Vendored));
+        assert_eq!(
+            marks.classify(&root.join("whole/x.rs")),
+            None,
+            "a directory pattern is not `/**`"
+        );
+        assert_eq!(marks.classify(&root.join("src/x.rs")), None);
     }
 
     #[test]

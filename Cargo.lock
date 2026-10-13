@@ -2336,7 +2336,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.57.0",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -3973,6 +3973,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "protobuf"
+version = "3.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d65a1d4ddae7d8b5de68153b48f6aa3bba8cb002b243dbdbc55a5afbc98f99f4"
+dependencies = [
+ "once_cell",
+ "protobuf-support",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "protobuf-support"
+version = "3.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e36c2f31e0a47f9280fb347ef5e461ffcd2c52dd520d8e216b52f93b0b0d7d6"
+dependencies = [
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "psm"
 version = "0.1.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4635,6 +4655,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "scip"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7f651fbd0f98742a47b58623a7bcfd8fad14455912689e4867a1f43ee7e02c6"
+dependencies = [
+ "protobuf",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4671,7 +4700,7 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sensei-bootstrap"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "chrono",
  "dbd-core",
@@ -4689,7 +4718,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-cli"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "chrono",
  "clap",
@@ -4724,7 +4753,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-config"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4807,7 +4836,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-logger"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "chrono",
  "reqwest 0.12.28",
@@ -4820,7 +4849,7 @@ dependencies = [
 
 [[package]]
 name = "sensei-mcp"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "reqwest 0.12.28",
  "sensei-bootstrap",
@@ -4837,7 +4866,7 @@ dependencies = [
 
 [[package]]
 name = "senseid"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "agent-client-protocol",
  "async-trait",
@@ -4862,11 +4891,13 @@ dependencies = [
  "oxc_ast_visit",
  "oxc_parser",
  "oxc_span",
+ "protobuf",
  "quick-xml 0.36.2",
  "regex",
  "reqwest 0.12.28",
  "rusqlite",
  "ruzstd",
+ "scip",
  "semver",
  "sensei-bootstrap",
  "sensei-config",
@@ -6660,7 +6691,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

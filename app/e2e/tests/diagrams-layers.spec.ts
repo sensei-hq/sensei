@@ -20,7 +20,7 @@
  * weakest link is `senseid/adapters -> senseid/tasks`.
  */
 
-import { test, expect } from '../fixtures';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import {
   navigateTo, navigateToScreen, daemonGet, daemonPost, DAEMON_URL,
   installErrorTrap, readErrors, type ErrBuf, seedSetupComplete,
@@ -56,14 +56,14 @@ function expectNoRuntimeErrors(errs: ErrBuf, where: string): void {
   expect(errs.console, `${where}: console.error output`).toEqual([]);
 }
 
-async function settleLayers(tauriPage: any): Promise<void> {
+async function settleLayers(tauriPage: TauriPageLike): Promise<void> {
   await tauriPage.waitForSelector(
     '[data-testid="layers-diagram"], [data-testid="layers-empty"], [data-testid="layers-error"]',
     120_000,
   );
 }
 
-async function settleCycles(tauriPage: any): Promise<void> {
+async function settleCycles(tauriPage: TauriPageLike): Promise<void> {
   await tauriPage.waitForSelector(
     '[data-testid="cycles-list"], [data-testid="cycles-none"], [data-testid="cycles-empty"], [data-testid="cycles-error"]',
     120_000,

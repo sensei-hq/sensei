@@ -2,7 +2,7 @@
 
 **Segment:** 04 · Observatory / Project window
 **Route:** `/project/[id]/diagrams/structure`
-**Source mockup:** [`lib/project/project-pages.jsx`](../../mockups/Sensei/lib/project/project-pages.jsx) → `PROJ_DIAGRAMS` `diag-structure`, rendered by [`Sensei Schema and Call Graph v8.dc.html`](../../mockups/Sensei/Sensei%20Schema%20and%20Call%20Graph%20v8.dc.html) view `structure`
+**Source mockup:** [`lib/project/project-pages.jsx`](../../mockups/Sensei/lib/project/project-pages.jsx) → `PROJ_DIAGRAMS` `diag-structure`, rendered by [`Sensei Schema and Call Graph.dc.html`](../../mockups/Sensei/Sensei%20Schema%20and%20Call%20Graph.dc.html) view `structure`
 **Data:** `sensei.graph_nodes` + `sensei.edges`, both already populated. **No new indexing.**
 **App file:** _greenfield_
 **Daemon files:** _greenfield_ — no HTTP handler serves a structure payload yet
@@ -135,5 +135,5 @@ new rokkit component. This screen ships on what exists today.
 
 ## Related
 
-- [Observatory Diagrams gap analysis](../../analysis/2026-09-30-observatory-diagrams-gap-analysis.md)
+- [Observatory Diagrams gap analysis](../../history/analysis/2026-09-30-observatory-diagrams-gap-analysis.md)
 - rokkit#165 — drill-down events, which this screen will adopt when it lands

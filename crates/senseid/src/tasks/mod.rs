@@ -80,6 +80,12 @@ pub enum TaskKind {
     /// When it runs it reads the repo's supported files back from `files` and
     /// fans out one [`TaskKind::ProcessFile`] each.
     ProcessRepoFiles,
+    /// Compile a repository's projects through each language's compiler, ONCE
+    /// per scan, ahead of its file tasks (docs/plan/2026-10-13-indexer-full-call-placement.md).
+    /// Its own task because a compile runs for minutes: inside a file task the
+    /// watchdog abandoned it, dropping the compile, and the next file restarted
+    /// it — for ever. Every `ProcessFile` of the scan is `blocked_by` it.
+    CompileProjects,
     DeleteFile,
     DeleteFolder,
     ResolveLibs,
@@ -297,6 +303,7 @@ impl TaskKind {
         Self::ProcessFile,
         Self::ProcessManifest,
         Self::ProcessRepoFiles,
+        Self::CompileProjects,
         Self::DeleteFile,
         Self::DeleteFolder,
         Self::BranchSwitch,
@@ -395,6 +402,20 @@ impl TaskKind {
                 budget_secs: 60,
                 high_priority: false,
                 retryable: true,
+            },
+            Self::CompileProjects => KindInfo {
+                name: "compile_projects",
+                pipeline: Pipeline::Index,
+                stage: Stage::Ingest,
+                // rust-analyzer over a large workspace, once per platform, is
+                // minutes — measured ~100s each on sensei, slower under a scan's
+                // load. Bounded, so a compiler that never returns cannot hold
+                // the repository's files for ever.
+                budget_secs: 1800,
+                high_priority: false,
+                // A project that does not compile stays so until it is edited;
+                // its files then say engine_not_run.
+                retryable: false,
             },
             Self::DeleteFile => KindInfo {
                 name: "delete_file",
@@ -1092,7 +1113,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), total, "a kind appears twice in ALL");
-        assert_eq!(total, 39, "ALL is missing a kind — add it beside its info() arm");
+        assert_eq!(total, 40, "ALL is missing a kind — add it beside its info() arm");
     }
 
     #[test]

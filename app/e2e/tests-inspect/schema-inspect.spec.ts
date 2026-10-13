@@ -5,7 +5,7 @@
  * schema to draw, so only this harness can show it. Captures
  * /tmp/sensei-shots/schema-*.png. Run: `bun run test:inspect`.
  */
-import { test, expect } from '../fixtures';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateTo, navigateToScreen, installErrorTrap, readErrors, DAEMON_URL } from '../helpers';
 import { mkdirSync } from 'fs';
 
@@ -19,14 +19,14 @@ async function idForName(name: string): Promise<string | null> {
   return list.find((p) => p.name === name)?.id ?? null;
 }
 
-const text = (tauriPage: any, sel: string) =>
+const text = (tauriPage: TauriPageLike, sel: string) =>
   tauriPage.evaluate(
     `document.querySelector('${sel}')?.textContent?.replace(/\\s+/g,' ').trim() ?? null`,
   ) as Promise<string | null>;
 
 /** A screenshot when the app has an on-screen window; this harness can also run
  *  where it has none, and the DOM counts below are the evidence either way. */
-async function shot(tauriPage: any, name: string): Promise<void> {
+async function shot(tauriPage: TauriPageLike, name: string): Promise<void> {
   try {
     await tauriPage.screenshot({ path: `${DIR}/${name}.png` });
   } catch (e) {
@@ -35,7 +35,7 @@ async function shot(tauriPage: any, name: string): Promise<void> {
 }
 
 /** Cards and lines the canvas actually drew. */
-async function drawn(tauriPage: any): Promise<{ nodes: number; edges: number }> {
+async function drawn(tauriPage: TauriPageLike): Promise<{ nodes: number; edges: number }> {
   return (await tauriPage.evaluate(`({
     nodes: document.querySelectorAll('[data-testid="schema-diagram"] [data-graph-node]').length,
     edges: document.querySelectorAll('[data-testid="schema-diagram"] [data-graph-edge]').length,
@@ -44,7 +44,7 @@ async function drawn(tauriPage: any): Promise<{ nodes: number; edges: number }> 
 
 /** Click the toolbar button whose label starts with `label`. The tauri bridge's
  *  locator engine has no `:has-text`, so the button is found in the page. */
-async function pick(tauriPage: any, toolbar: string, label: string): Promise<void> {
+async function pick(tauriPage: TauriPageLike, toolbar: string, label: string): Promise<void> {
   const clicked = await tauriPage.evaluate(`
     (() => {
       const bar = document.querySelector('[data-toolbar][aria-label="${toolbar}"]');

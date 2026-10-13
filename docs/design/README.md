@@ -9,7 +9,7 @@ Canonical design sources:
 
 - [`mockup-brief.md`](mockup-brief.md) — how we design mockups: the loop, the guardrails,
   the component vocabulary, and the designer task template. The live review of outstanding
-  screens is [`../mockups/dojo2-review.md`](../mockups/dojo2-review.md).
+  screens is the [roadmap's per-module status](../roadmap/README.md) (the old `../mockups/dojo2-review.md` never existed as a file).
 - [`../architecture/frontend-svelte-guidelines.md`](../architecture/frontend-svelte-guidelines.md) —
   the enforced frontend rules: the 24 design tokens, the type scale, and spacing.
 - [`../mockups/Sensei/CLAUDE.md`](../mockups/Sensei/CLAUDE.md) — the same system for

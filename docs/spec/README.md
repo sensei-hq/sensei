@@ -1,6 +1,12 @@
 # Sensei — LLM-executable spec
 
-**Purpose.** This directory translates the mockups + journey maps into
+> **TRANSITIONAL → SUPERSEDED (docs reorg 2026-10-13).** This tree folds into
+> [`prd/modules/`](../prd/modules/README.md) as each module is next touched
+> ([`reorg.md`](../reorg.md) §2.2, §13). The five-question template below is now the
+> module-spec template in [`prd/`](../prd/README.md); the per-screen/pipeline docs
+> move module-by-module into `prd/modules/<module>/` and the tree retires to
+> `docs/history/spec/` when empty. Do not write new specs here — write them under
+> `prd/modules/`.
 per-screen and per-pipeline specs an LLM (or a new engineer) can use to
 build to a defined "done." Every spec answers five questions:
 
@@ -65,7 +71,7 @@ Source of truth: [`docs/mockups/Sensei/Sensei Journey Map.html`](../mockups/Sens
 | 03 | Observatory — daily use | 家 | Walk in, learn the one thing that needs me today, act on it, stay in control of what leaves my machine. | today, projects, project, sessions, insights, memory, libraries, instruments, upgrades, impact, collective |
 | 04 | The project window | 雲 | Work inside one project end-to-end and trust what Sensei learned here before any of it travels. | overview, sessions, memories, traceability, libraries, instruments, patterns, impact, about |
 
-Dōjō (SaaS) is a companion track — [`Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sensei%20D%C5%8Djo%20Journey%20Map.html):
+Dōjō (SaaS) is a companion track — [`Sensei Dōjō Journey Map.html`](../mockups/Sensei/Sensei%20D%C5%8Dj%C5%8D%20Journey%20Map.html):
 
 | Role | Surface | Stages |
 |---|---|---|
@@ -167,7 +173,7 @@ Every spec must honour these. If a spec pushes against one, call it out.
 Status legend: **draft** = written and reviewed, **stub** = frontmatter
 only, **todo** = not started, **roadmap** = describes an intended system
 not yet built (verify against the code before relying on it — see
-[`analysis/2026-08-05-indexer-capability-coverage.md`](../analysis/2026-08-05-indexer-capability-coverage.md)).
+[`history/analysis/2026-08-05-indexer-capability-coverage.md`](../history/analysis/2026-08-05-indexer-capability-coverage.md)).
 
 ### Screen specs — personal Sensei
 

@@ -1,6 +1,6 @@
 [package]
 name = "senseid"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2024"
 description = "Sensei indexer daemon — graph-based code intelligence"
 
@@ -143,6 +143,8 @@ agent-client-protocol = "=1.2.0"
 sensei-bootstrap = { path = "../bootstrap" }
 sensei-config = { path = "../sensei-config" }
 sensei-logger = { path = "../logger" }
+scip = "0.10"
+protobuf = "3.7"
 
 [build-dependencies]
 cc = "1"

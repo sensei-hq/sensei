@@ -147,6 +147,9 @@ pub const DB_POOL_MAX_LIFETIME_SECS: u64 = 300;
 /// per machine. Used by e2e tests to avoid clobbering the user's real
 /// `sensei` DB; set `SENSEI_INSTANCE=e2e` and the daemon talks to a
 /// throw-away `sensei_e2e` DB in `~/.sensei-e2e/`.
+/// The real install's data directory, under the home directory.
+const DEFAULT_DIR_SUFFIX: &str = ".sensei";
+
 #[derive(Debug, Clone)]
 pub struct SenseiConfig {
     pub daemon_port: u16,
@@ -160,7 +163,7 @@ impl SenseiConfig {
         let instance = std::env::var("SENSEI_INSTANCE").ok().filter(|s| !s.is_empty());
         let (db_name, dir_suffix) = match instance.as_deref() {
             Some(name) => (format!("sensei_{name}"), format!(".sensei-{name}")),
-            None => ("sensei".to_string(), ".sensei".to_string()),
+            None => ("sensei".to_string(), DEFAULT_DIR_SUFFIX.to_string()),
         };
         let db_url = format!("postgresql://localhost:{POSTGRES_PORT}/{db_name}");
         Self { daemon_port: DAEMON_PORT, db_name, db_url, dir_suffix }
@@ -177,7 +180,7 @@ impl SenseiConfig {
     /// same second the port opened, and the first e2e specs then raced a
     /// daemon that was busy for minutes.
     pub fn is_isolated_instance(&self) -> bool {
-        self.dir_suffix != ".sensei"
+        self.dir_suffix != DEFAULT_DIR_SUFFIX
     }
 
     /// Daemon base URL derived from the configured port.
@@ -261,6 +264,13 @@ impl SenseiConfig {
         }
         format!("{GITHUB_ORG}/{GITHUB_REPO}/database@v{version}")
     }
+}
+
+/// Where the indexer's compiler engines' npm packages live
+/// (`~/.sensei/engines`). Machine-wide, like rustup's components: an instance
+/// (`SENSEI_INSTANCE`) reads the real install's rather than its own.
+pub fn engines_dir() -> PathBuf {
+    home_dir().join(DEFAULT_DIR_SUFFIX).join("engines")
 }
 
 /// User's home directory.
@@ -433,6 +443,7 @@ mod tests {
         assert_eq!(cfg.db_name, "sensei");
         assert_eq!(cfg.dir_suffix, ".sensei");
         assert!(!cfg.is_isolated_instance(), "the real install is not an instance");
+        assert_eq!(engines_dir(), cfg.sensei_dir().join("engines"));
 
         // 2. Override — SENSEI_INSTANCE=e2e.
         unsafe {
@@ -454,6 +465,9 @@ mod tests {
         );
         // Port is NOT instance-scoped — only one instance runs at a time.
         assert_eq!(cfg.daemon_port, 7744);
+        // Nor are the engines: like rustup's components they belong to the
+        // machine, so an instance reads the real install's.
+        assert_eq!(engines_dir(), home_dir().join(".sensei").join("engines"));
 
         // 3. Empty value — falls back to default.
         unsafe {

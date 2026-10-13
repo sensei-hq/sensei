@@ -3,6 +3,10 @@ name = "graph-scan"
 version = "0.0.0"
 edition = "2021"
 
+# Its own workspace: nested under the repository's workspace without being a
+# member, so Cargo — and the compiler the indexer runs — needs this to build it.
+[workspace]
+
 # Fixture crate for the graph_scan_end_to_end test. Present so the Rust FQN
 # producer can derive this file's package (nearest Cargo.toml) and resolve the
 # intra-file compute -> helper call AT EMIT — no resolve_edges pass (Phase 7.1).

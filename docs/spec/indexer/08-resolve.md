@@ -16,6 +16,35 @@ invisible.
 Serves G1: `get_callees` is 44% blind today, and the reason histogram is what
 turns "blind" into a ranked list of fixable causes.
 
+## 1.1 The compiler step comes first
+
+For a language whose adapter declares a compiler engine
+(`LanguageAdapter::compiler` — Rust, TypeScript, JavaScript, Svelte), every
+call, macro invocation, read, write, construction and type use is placed by
+the compiler BEFORE this ladder runs (`lang::compiler::place_with`, from
+`index::index_file`); imports stay with the ladder:
+
+- the target is the reference's own name in the compiler's index — the first
+  occurrence so spelled within its span, skipping the references nested in
+  it — read through parentheses and type assertions; a name the walk gave
+  otherwise (`Self` read as its type) is the occurrence at the span's head;
+  an expression recorded whole (a type annotation, a template tag) names
+  every symbol in it, one reference each;
+- a project symbol is the declaration the walk mints where the compiler says
+  it is declared (`Declarations::declared_at`); a library symbol is its
+  `lib·<package>·<member>` node (R5);
+- a use of a local, a parameter, an anonymous function, a value's member or
+  an index entry is no edge; a call through a member chosen at run time is
+  `dynamic_dispatch`;
+- a miss carries the compiler's reason, and the ladder passes it through
+  unchanged — it never re-files a compiler verdict as `plumbing` or retries it
+  with its own inference.
+
+The task layer compiles each project once per state of its sources, in a
+`CompileProjects` task the file tasks wait on, and a file whose project moved
+on since its compile waits for a fresh one rather than being placed against
+stale answers. See `docs/plan/2026-10-13-indexer-full-call-placement.md`.
+
 ## 2. Inputs and outputs
 
     resolve(reference: &Reference, scope: &FileScope, imports: &[Import]) -> Resolution   PURE
