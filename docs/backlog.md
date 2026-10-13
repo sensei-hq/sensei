@@ -47,6 +47,7 @@ evidence) are preserved in [`history/backlog/writeups.md`](history/backlog/write
 |-------|---------|
 | [#39](https://github.com/sensei-hq/sensei/issues/39) | Bootstrap diagnostic logging + debug mode |
 | [#50](https://github.com/sensei-hq/sensei/issues/50) | Extract `bootstrap` into a reusable library (deferred) |
+| [#258](https://github.com/sensei-hq/sensei/issues/258) | SQL indexer: adopt dbd 0.26's v3 schema model — type uses, identity/generated, partial indexes, checks |
 
 ## Open — not yet filed (file as GitHub issues)
 

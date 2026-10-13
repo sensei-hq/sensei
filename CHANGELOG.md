@@ -15,6 +15,13 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+### Changed
+
+- **Signing in is joining a dōjō** (#236 step 4e). The daemon's sync creates a
+  local membership for every dōjō the signed-in persona belongs to, bound to
+  that persona; the connections screen sends you to sign in instead of
+  offering a pairing form.
+
 ### Removed
 
 - **BREAKING — the dōjō no longer accepts a device token** (#236 step 4e). The
@@ -22,8 +29,36 @@ are marked **BREAKING**.
   session, so the table policies decide what they read and write; any other
   bearer is a 401, and the service role never stands in for a caller without a
   session. `dojo.memberships.device_token_hash` is dropped. A daemon older than
-  0.12.0 — or a membership not yet bound to a signed-in persona — must sign in
-  to reach its dōjō.
+  0.12.0 — or a membership no signed-in persona has claimed — must sign in to
+  reach its dōjō.
+- **Device-token pairing in the daemon and the app**: `POST
+  /api/dojo/memberships` (now 405), the connect form, and
+  `sensei.dojo_memberships.credential_ref`.
+
+## [0.12.1] — 2026-10-13
+
+**Upgrading from 0.11 or earlier works again.** An install's schema now
+converges with `dbd reconcile` instead of `dbd apply`, which never adds a value
+to an existing enum. On an upgraded install, 0.12.0's seed import failed on
+`model_capability.decision`, and skips marked `vendored`/`generated` and git
+history scans could not be recorded.
+
+### Fixed
+
+- **The daemon's schema deploy reconciles** (install, upgrade and `sensei
+  doctor` all use it): new enum values, columns, constraints and indexes reach
+  an existing database, and columns the design dropped are removed. A
+  destructive plan first copies each table it alters to
+  `~/.sensei/backup/pre-reconcile/<UTC time>/` (and does not run if the copy
+  fails), then drops the views that read those tables, which the deploy
+  recreates from the design. Whole tables are never pruned. Verified on a
+  database built from the v0.11.0 schema and seed.
+- **`dbd-core` v0.26.0** in the daemon and bootstrap, and the `dbd` CLI that CI
+  and the release install. v0.22 reported drift on a database it had just
+  created, so every reconcile after the first would have failed. One version
+  everywhere is now a test (`crates/bootstrap/tests/dbd_pins.rs`).
+- **Svelte script blocks come from Svelte's own parser** in the TypeScript
+  driver, not a pattern (CodeQL `js/bad-tag-filter`).
 
 ## [0.12.0] — 2026-10-13
 
