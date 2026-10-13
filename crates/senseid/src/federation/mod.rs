@@ -378,7 +378,6 @@ mod tests {
             name: "acme".into(),
             url: url.into(),
             namespace_id: None,
-            credential_ref: "source-device".into(),
             direction: "both".into(),
             last_seq: 0,
             enabled: true,
@@ -592,7 +591,6 @@ mod tests {
                 name: "E2E".into(),
                 url: dojo_url,
                 namespace_id: None,
-                credential_ref: "unused".into(),
                 direction: "pull".into(),
             })
             .await

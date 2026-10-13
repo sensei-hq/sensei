@@ -31,12 +31,6 @@
             />
             <input
                 class="ks-input w-[180px] px-3.5 py-2 border border-paper-edge rounded-md bg-paper-mute text-ink text-sm outline-none"
-                type="password"
-                placeholder="Access key (optional)"
-                bind:value={state.key}
-            />
-            <input
-                class="ks-input w-[180px] px-3.5 py-2 border border-paper-edge rounded-md bg-paper-mute text-ink text-sm outline-none"
                 type="text"
                 placeholder="Name (optional)"
                 bind:value={state.name}

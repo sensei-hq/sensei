@@ -149,7 +149,6 @@ pub struct NewKnowledgeSource {
     pub name: String,
     pub url: String,
     pub namespace_id: Option<uuid::Uuid>,
-    pub credential_ref: String,
     pub direction: String, // push | pull | both
 }
 
@@ -161,11 +160,14 @@ pub struct KnowledgeSource {
     pub name: String,
     pub url: String,
     pub namespace_id: Option<uuid::Uuid>,
-    pub credential_ref: String,
     pub direction: String,
     pub last_seq: i64,
     pub enabled: bool,
 }
+
+/// A `sensei.knowledge_sources` row as selected (`SOURCE_SELECT`).
+pub(crate) type KnowledgeSourceRow =
+    (uuid::Uuid, String, String, String, Option<uuid::Uuid>, String, i64, bool);
 
 /// Input for recording a daemon-side Dōjō membership (`sensei.dojo_memberships`).
 /// It holds no credential: its tenant calls present the bound persona's session.
