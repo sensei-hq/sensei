@@ -57,10 +57,23 @@ flowchart TD
   daemon's boot auto-apply recreates the old object. The daemon reads the
   *released* DDL bundle (`database@vVERSION`); to see local DDL changes use
   `make bump` or `SENSEI_DDL_DIR`.
-- **Apply via dbd** (`dbd deploy`/`apply`/`graph`), never `dbd combine`'s dump.
-  Pre-release additive columns go through **`dbd reconcile`** (incremental);
-  `deploy` is a declarative snapshot and won't ALTER-add. Enum variants deploy
-  **alphabetically** — never rely on declaration order; rank with a CASE.
+- **Apply via dbd** (`dbd reconcile`/`apply`/`graph`), never `dbd combine`'s dump.
+  An install converges with **reconcile**, not apply alone:
+  `sensei_bootstrap::database::deploy` (install, upgrade, doctor) plans a
+  reconcile of the `default` scope; when the plan drops data it copies every
+  table it alters to `~/.sensei/backup/pre-reconcile/<UTC time>/<schema.table>.csv`
+  (and stops if that fails) and drops the views that read them. Then `apply`
+  (missing objects; every view and function at this release's definition),
+  `reconcile` with allow-destructive (tables and enums ALTERed to the design),
+  and the seed import. `apply` alone never adds an enum value or ALTERs a table
+  an older release left, which broke the 0.11 → 0.12 upgrade; and reconcile
+  alters tables before views, so a column an old view read could not otherwise
+  be dropped. Whole tables are never pruned on an install.
+  Enum variants deploy **alphabetically** — never rely on declaration order;
+  rank with a CASE.
+- **One dbd version** — `dbd-core` in `crates/bootstrap` and `crates/senseid`
+  and the `dbd-cli` CI and the release install are pinned to the same tag
+  (`crates/bootstrap/tests/dbd_pins.rs`).
 - **Full-DDL, no ALTERs** in source — a table's `.ddl` is its whole definition;
   migrations are dbd's job.
 - **Seeding is idempotent + guarded** — staging tables + import procedures with

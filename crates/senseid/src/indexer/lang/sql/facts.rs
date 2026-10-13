@@ -348,11 +348,16 @@ impl Walk<'_> {
             //             this crate's structural-but-not-flow kind, which is
             //             also where it landed before 0.19 (via `ref_type:
             //             None`), so the edge is preserved rather than dropped.
+            //   Uses    — a column's declared type or its sequence. NOT indexed
+            //             yet: most are built-ins (`uuid`, `text`) that dbd's
+            //             resolver drops but this field keeps, so each would be
+            //             an unplaced edge. Placing them is #258.
             let kind = match reference.kind {
                 DbdRefKind::Reads => RefKind::Reads,
                 DbdRefKind::Writes => RefKind::Writes,
                 DbdRefKind::Calls => RefKind::Calls,
                 DbdRefKind::Member => RefKind::TypeUse,
+                DbdRefKind::Uses => continue,
             };
             self.refer(&fqn.clone(), kind, &reference.name);
         }

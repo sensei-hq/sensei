@@ -15,6 +15,31 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-10-13
+
+**Upgrading from 0.11 or earlier works again.** An install's schema now
+converges with `dbd reconcile` instead of `dbd apply`, which never adds a value
+to an existing enum. On an upgraded install, 0.12.0's seed import failed on
+`model_capability.decision`, and skips marked `vendored`/`generated` and git
+history scans could not be recorded.
+
+### Fixed
+
+- **The daemon's schema deploy reconciles** (install, upgrade and `sensei
+  doctor` all use it): new enum values, columns, constraints and indexes reach
+  an existing database, and columns the design dropped are removed. A
+  destructive plan first copies each table it alters to
+  `~/.sensei/backup/pre-reconcile/<UTC time>/` (and does not run if the copy
+  fails), then drops the views that read those tables, which the deploy
+  recreates from the design. Whole tables are never pruned. Verified on a
+  database built from the v0.11.0 schema and seed.
+- **`dbd-core` v0.26.0** in the daemon and bootstrap, and the `dbd` CLI that CI
+  and the release install. v0.22 reported drift on a database it had just
+  created, so every reconcile after the first would have failed. One version
+  everywhere is now a test (`crates/bootstrap/tests/dbd_pins.rs`).
+- **Svelte script blocks come from Svelte's own parser** in the TypeScript
+  driver, not a pattern (CodeQL `js/bad-tag-filter`).
+
 ## [0.12.0] — 2026-10-13
 
 **Every call and reference is placed by its language's compiler.** The indexer

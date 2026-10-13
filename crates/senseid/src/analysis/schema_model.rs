@@ -78,6 +78,8 @@ pub fn assemble(
                     def: c.default_expr.clone(),
                     fk: c.foreign_key,
                     uq: c.unique_key,
+                    identity: None,
+                    generated: None,
                     note: c.note.clone(),
                 })
                 .collect(),
@@ -88,8 +90,10 @@ pub fn assemble(
                     def: i.definition.clone(),
                     unique: i.unique,
                     name: i.name.clone(),
+                    predicate: None,
                 })
                 .collect(),
+            checks: Vec::new(),
         });
         for r in &e.refs {
             let (to_schema, to_table) = object(&r.to)?;
