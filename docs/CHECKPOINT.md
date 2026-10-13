@@ -1,31 +1,38 @@
 # Checkpoint
 
-**State 2026-10-13.** Active slice: **every call edge placed — compiler engine
-per language** (`docs/plan/2026-10-13-indexer-full-call-placement.md`). Scope:
-the sensei repo. Rust, then JS/TS/Svelte, then references/imports, then SQL/ER.
+**State 2026-10-13.** Slice **every call edge placed — compiler engine per
+language** (`docs/plan/2026-10-13-indexer-full-call-placement.md`): DONE for
+calls and references on the sensei repo. Report:
+`docs/reports/2026-10-13-placement.md`.
 
 | increment | status |
 |---|---|
-| Rust engine: rust-analyzer `scip`, in-adapter `CompilerEngine`, task-layer IO | DONE `02d573fa` `13e42d80` |
-| Macro/path calls, locals dropped; renamed imports, all features × 3 platforms | DONE `2b2f9d81` `c9893779` |
-| `CompileProjects` task ahead of the files | DONE `6aea71ec` |
-| Compile scheduling: once per source state `5b1b0238`, one in flight per repo `a6e0783d`, turns + last-finished read `923ce05d`, once per project per task `d46a30b5` | DONE |
-| TS/JS/Svelte engine: embedded node driver (project's typescript + svelte2tsx), `lib·ecmascript` for globals | DONE `e90bb9ce` |
-| Vendored/generated excluded by `.gitattributes` linguist marks + `@generated` header; skipped files shed nodes | DONE `6ab328ef` |
-| Live verify, 7th rescan (t0 06:52:41Z) → per-reason root-cause cycle, Rust + TS/Svelte | IN PROGRESS |
-| references + imports via the compiler (`plumbing`/`external_boundary` remain there) | TODO |
-| bootstrap installs/checks engines (`ts_compiler_engines.json` → `~/.sensei/engines`; rust-analyzer + rust-src) | TODO |
-| ≥90% regression gate; SQL/ER placement; `graph_placement` language/package axes; final report; docs/prd/spec R5 §5 | TODO |
+| Rust (rust-analyzer) + TS/JS/Svelte (project's checker, svelte2tsx, `svelte-kit sync`) engines | DONE |
+| Compile scheduling (once per source state, one in flight, turns, stale → re-queue) | DONE |
+| Calls: callee selection, wrapped/qualified/anonymous/dynamic callees, every TS shape | DONE — Rust 100%, TS 99.96%, Svelte 99.94% (live) |
+| References through the compiler (`0586141d` …`8902e3db`) | DONE — Rust 99.92%, TS 99.33%, Svelte 99.55% (live) |
+| Owned code only (linguist marks, `@generated`; worktrees in dot-dirs) | DONE |
+| Bootstrap installs/checks engines; doctor; daemon boot | DONE |
+| TS driver a typed package (`29df86e0`), type-checked in CI | DONE |
+| Placement floor ≥90% per language/package/kind, nightly (`e4ec0267`) | DONE — passes |
+| SQL/ER: SQL calls/refs 100%; schema store ⊇ every pg FK | DONE (verified) |
+| `resolution_quality` package axis (`571d8850`) | DONE |
+| Docs: R5, §5, `08-resolve.md`, report | DONE (this commit) |
 
-**Next command:** when the rescan finishes, run
-`select * from sensei.graph_placement where project='sensei' and edge_kind='calls'`,
-then group the misses by language and reason over the files parsed after t0.
+**Residue, each named:** `untyped_receiver` where the source says `any`
+(~90 occurrences); `macro_expansion` 25; `dynamic_dispatch` 1; Rust
+`compiler_no_symbol` 9 (let annotations in `#[tokio::test]` bodies, fn-local
+types); 3 stale C edges from file-less stubs (backlog entry).
+
+**Next command:** resume the queue — release N (CHANGELOG `[Unreleased]` +
+docs/skills/site sync, then `make bump`), #236 4e, then #225, #239–241, #245,
+#252, #254, #238, #221 visual check.
 
 **Open questions:** none.
 
-**Known broken:** the live DB is guarded at v1 by dbd, so additive DDL is
-hand-applied with psql (`scan_skip_reason` += vendored, generated: done live and
-in `sensei_test`). `dbd import` fails on `model_capability.decision`
-(pre-existing). Release N and #236 4e are on hold until this slice is done.
-Queue afterwards: #225, #239–241, #245, #252, #254, #238, and the #221 visual
-check. Untracked files from another session are not touched.
+**Known broken:** live DB guarded at v1 by dbd, so DDL and reason rows are
+hand-applied (`untyped_receiver`; `scan_skip_reason` += vendored, generated;
+`resolution_quality` package column) — live + `sensei_test`. `dbd import` fails
+on `model_capability.decision` (pre-existing). Untracked files from another
+session (`src/`, `docs/components/`, `docs/rune-usage.md`, `svelte5-runes-*.md`)
+are not touched.

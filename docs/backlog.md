@@ -15,6 +15,21 @@ Work is tracked as **GitHub issues** in [`sensei-hq/sensei`](https://github.com/
 
 ---
 
+## Indexer — a skipped file's file-less nodes outlive it (measured 2026-10-13)
+
+When a file becomes skipped (vendored, generated, binary), `write_file_rows`
+deletes the nodes it owns BY FILE (`delete_nodes_by_file`). Nodes that carry no
+`file_id` — member stubs such as `c·senseid··TSParseAction·reduce·item`, left by
+the tree-sitter grammar headers now marked `linguist-vendored` — are not
+reached, and neither are the edges they source: 4 such nodes and 3 reference
+edges (`no_import_in_scope`) remain in the live graph
+(`docs/reports/2026-10-13-placement.md`). Needs an attribution from a
+file-less node to the file that minted it (its fqn's package + module, or the
+persist step recording the minting file), then the same delete. Not a
+placement verdict: no current file produces these edges.
+
+---
+
 ## Indexer — an interrupted scan silently disables cross-package resolution (measured 2026-09-30)
 
 The structure pass downgrades EVERY directory to `kind='folder'`, and

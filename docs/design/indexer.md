@@ -305,9 +305,15 @@ would answer.
 reference must never point at a symbol that is not its target; a wrong edge is
 worse than a missing one.
 
-**R5. Externals are named, never opened.** A use of a library resolves to
+**R5. Externals are named, never walked.** A use of a library — a dependency,
+the language's own standard library, a framework's runes — resolves to
 `lib·<package>·<member>`. The graph answers "which libraries do we use" and
-"which of their members do we use". No dependency source is parsed.
+"which of their members do we use", and stops there: no dependency source
+becomes a node or an edge. (Revised 2026-10-13. It used to say "never opened",
+and that ruled out the only thing that can tell WHICH member a call reaches:
+a language's compiler reads a dependency's declarations to type
+`x.unwrap()`. Reading them to resolve a call is allowed; walking them into the
+graph is not. See §5 and `docs/plan/2026-10-13-indexer-full-call-placement.md`.)
 
 **R6. Order independence.** Indexing the same files in any order produces the
 same graph. Resolution must not depend on what has been scanned so far.
@@ -690,6 +696,26 @@ and it is the property a partial implementation loses first.
 
 ## 5. Deferred — and what is captured now so they stay cheap
 
+**SUPERSEDED for calls and references, 2026-10-13, for every language whose
+adapter declares a compiler engine** (`LanguageAdapter::compiler`): Rust through
+rust-analyzer, TypeScript, JavaScript and Svelte through the project's own
+TypeScript checker. A call, a read, a write, a construction and a type use in
+such a language is placed by its compiler, before the ladder, on the rung
+`resolved_by_compiler` — type inference, trait dispatch, blanket impls,
+macro-expanded and platform- or feature-gated code included, because the
+compiler is the thing that knows. A use the compiler leaves unplaced carries
+the compiler's own reason, which the ladder never renames: `engine_not_run`,
+`compiler_no_symbol`, `symbol_unnamed`, `declaration_not_found`,
+`untyped_receiver` (the source types the receiver `any`), `macro_expansion` (a
+declaration a macro generates, which the walk does not expand),
+`dynamic_dispatch` (a member chosen at run time). A use of a local, a
+parameter, an anonymous function, a value's member or an index entry is no
+edge at all — it names no declaration. Imports stay with the ladder. The
+deferrals below still describe the LADDER, which remains the resolver for
+languages with no engine. The floor — no language, package or edge kind below
+90% — is `indexer::quality::placement`, run nightly; the measured numbers are
+in `docs/reports/2026-10-13-placement.md`.
+
 These are not in this pass. They are NOT ruled out, and the difference
 matters: a capability declared impossible gets designed around, and the design
 then actively obstructs it later. For each, the walk captures the evidence a
@@ -741,6 +767,8 @@ later expansion pass knows what generated what and where. Without this,
 expansion would require a full re-walk.
 
 **Untyped JavaScript.** Nothing states a type, so there is nothing to read.
+(With the compiler engine: the checker types it as far as it can, and a call
+on a receiver it types `any` is `untyped_receiver`.)
 CAPTURED NOW: a distinct `Reason` for "no annotation exists here" versus "an
 annotation exists and we did not read it". The histogram must separate a gap
 that is CLOSEABLE from one that is not, or nobody can tell which is worth
