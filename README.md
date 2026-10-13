@@ -38,6 +38,22 @@ brew install --cask sensei-hq/tap/senseihq # Desktop app
 
 Homebrew formulae live in [sensei-hq/homebrew-tap](https://github.com/sensei-hq/homebrew-tap).
 
+### Indexing engines
+
+The indexer places call edges with each language's own compiler:
+
+- **Rust** — rust-analyzer plus the standard library's sources
+  (`rustup component add rust-analyzer rust-src`).
+- **TypeScript / JavaScript / Svelte** — `node`, loading `typescript`,
+  `svelte2tsx`, `svelte` and `@jridgewell/trace-mapping` from the project, or
+  else from `~/.sensei/engines` (versions pinned in
+  `crates/bootstrap/assets/ts_engines.json`).
+
+`sensei doctor` lists them under **Indexing engines** and exits non-zero when
+one is missing; `sensei doctor --fix` installs the missing ones. The daemon
+also installs missing engines in the background at startup. Neither installs
+rustup or Node.js itself — install those first.
+
 ## Prerequisites (development)
 
 - Rust stable + cargo
