@@ -167,7 +167,7 @@ jobs:
       - name: Install the TypeScript engine's packages
         run: |
           mkdir -p ~/.sensei/engines
-          cp crates/senseid/src/indexer/lang/ts_compiler_engines.json ~/.sensei/engines/package.json
+          cp crates/bootstrap/assets/ts_engines.json ~/.sensei/engines/package.json
           npm install --prefix ~/.sensei/engines --no-audit --no-fund
       - name: Test senseid
         run: cargo test -p senseid --bin senseid
