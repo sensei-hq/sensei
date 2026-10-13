@@ -492,6 +492,9 @@ pub enum Reason {
     /// The compiler points at a declaration in this repository that the walk
     /// does not mint — a gap in the walk.
     DeclarationNotFound,
+    /// The compiler typed the receiver `any` — an import it could not resolve,
+    /// or untyped JavaScript — so nothing static names the callee.
+    UntypedReceiver,
 }
 
 impl Reason {
@@ -519,6 +522,7 @@ impl Reason {
             Self::CompilerNoSymbol => "compiler_no_symbol",
             Self::SymbolUnnamed => "symbol_unnamed",
             Self::DeclarationNotFound => "declaration_not_found",
+            Self::UntypedReceiver => "untyped_receiver",
         }
     }
 
@@ -540,6 +544,7 @@ impl Reason {
             "compiler_no_symbol" => Self::CompilerNoSymbol,
             "symbol_unnamed" => Self::SymbolUnnamed,
             "declaration_not_found" => Self::DeclarationNotFound,
+            "untyped_receiver" => Self::UntypedReceiver,
             _ => return None,
         })
     }
@@ -584,6 +589,7 @@ impl Reason {
         Reason::CompilerNoSymbol,
         Reason::SymbolUnnamed,
         Reason::DeclarationNotFound,
+        Reason::UntypedReceiver,
     ];
 }
 
@@ -1345,6 +1351,7 @@ mod tests {
             Reason::CompilerNoSymbol,
             Reason::SymbolUnnamed,
             Reason::DeclarationNotFound,
+            Reason::UntypedReceiver,
         ]
     }
 
@@ -1547,10 +1554,11 @@ mod tests {
                 | Reason::EngineNotRun
                 | Reason::CompilerNoSymbol
                 | Reason::SymbolUnnamed
-                | Reason::DeclarationNotFound => {}
+                | Reason::DeclarationNotFound
+                | Reason::UntypedReceiver => {}
             }
         }
-        assert_eq!(all_reasons().len(), 14);
+        assert_eq!(all_reasons().len(), 15);
 
         for o in all_observations() {
             match o {

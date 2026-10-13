@@ -956,7 +956,8 @@ impl<'a> Ladder<'a> {
             Reason::EngineNotRun
             | Reason::CompilerNoSymbol
             | Reason::SymbolUnnamed
-            | Reason::DeclarationNotFound => reason,
+            | Reason::DeclarationNotFound
+            | Reason::UntypedReceiver => reason,
             _ if self.grammar.plumbing.contains(&evidence.name.as_str()) => Reason::Plumbing,
             // A receiver we could not type, whose MEMBER nothing first-party
             // declares. No inference reaches it, because there is nothing of
@@ -3640,6 +3641,7 @@ mod tests {
             Reason::CompilerNoSymbol,
             Reason::SymbolUnnamed,
             Reason::DeclarationNotFound,
+            Reason::UntypedReceiver,
         ] {
             let mut facts = rust::read(&Source {
                 package: "p",
