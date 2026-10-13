@@ -172,6 +172,19 @@ mod tests {
         .expect("the component reads")
     }
 
+    /// An HTML comment is not template: `<!-- the visible {folder.name} -->`
+    /// names nothing, and reading it as a use left a miss no compiler could
+    /// ever place.
+    #[test]
+    fn an_expression_inside_an_html_comment_is_not_a_use() {
+        let f = facts(
+            "<script lang=\"ts\">\n  let folder = { name: 'x' };\n</script>\n\n<!-- the visible {folder.name} labels this -->\n<p>{folder.name}</p>\n",
+        );
+        let lines: Vec<u32> = f.references.iter().map(|r| r.at.start_line).collect();
+        assert!(!lines.contains(&5), "the comment is not read: {lines:?}");
+        assert!(lines.contains(&6), "the real interpolation still is: {lines:?}");
+    }
+
     fn named(facts: &FileFacts, name: &str) -> Vec<String> {
         facts
             .references
