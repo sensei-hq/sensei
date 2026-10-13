@@ -4,6 +4,10 @@ type: feature
 kind: functional
 ---
 
+> **SUPERSEDED 2026-10-13 — folded into the M16 module spec.**
+> Canonical spec: [`prd/modules/delivery/project-window/README.md`](../prd/modules/delivery/project-window/README.md).
+> Kept for history and cross-links.
+
 # Project
 
 The project window is a focused workspace for one project. The observatory is the

@@ -4,6 +4,10 @@ type: feature
 kind: functional
 ---
 
+> **SUPERSEDED 2026-10-13 — folded into the M15 module spec.**
+> Canonical spec: [`prd/modules/delivery/observatory/README.md`](../prd/modules/delivery/observatory/README.md).
+> Kept for history and cross-links.
+
 # Observatory
 
 The observatory is where the user lives day to day. Setup gets sensei watching;

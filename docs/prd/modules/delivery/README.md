@@ -7,15 +7,15 @@
 
 | ID | Module | One-line "done" | Spec |
 |---|---|---|---|
-| M14 | MCP & Context Delivery | The assistant gets the right context on the first turn | 🚧 Phase 2 |
-| M15 | Observatory | The daily user sees *today's one thing*, with its receipt | 🚧 Phase 2 |
-| M16 | Project Window | A user trusts what sensei learned about one project | 🚧 Phase 2 |
-| M17 | Atlas | The code graph is legible at every level — birds-eye to symbol | 🚧 Phase 2 |
-| M18 | Instruments | The user can see and replay what the assistant actually did | 🚧 Phase 2 |
-| M19 | Insights & Impact | A recommendation is applied, measured, and reinforced | 🚧 Phase 2 |
-| M20 | Planner & Baseline | A goal becomes phases → features → acceptance criteria + gates | 🚧 Phase 2 |
-| M21 | Relay | A long run is supervised from anywhere, without leaking code | 🚧 Phase 2 |
-| M22 | Agentic Execution | sensei drives a multi-model Planner→Builder→Judge run | 🚧 Phase 2 |
+| M14 | MCP & Context Delivery | The assistant gets the right context on the first turn | [`README`](mcp-context-delivery/README.md) · [`mcp-surface`](mcp-context-delivery/scenarios/mcp-surface.feature) · [`context-delivery`](mcp-context-delivery/scenarios/context-delivery.feature) · [`search`](mcp-context-delivery/scenarios/search.feature) |
+| M15 | Observatory | The daily user sees *today's one thing*, with its receipt | [`README`](observatory/README.md) · [`observatory-today`](observatory/scenarios/observatory-today.feature) · [`observatory-insights`](observatory/scenarios/observatory-insights.feature) · [`observatory-surfaces`](observatory/scenarios/observatory-surfaces.feature) |
+| M16 | Project Window | A user trusts what sensei learned about one project | [`README`](project-window/README.md) · [`project-overview`](project-window/scenarios/project-overview.feature) · [`project-sections`](project-window/scenarios/project-sections.feature) |
+| M17 | Atlas | The code graph is legible at every level — birds-eye to symbol | [`README`](atlas/README.md) · [`atlas`](atlas/scenarios/atlas.feature) · [`diagrams`](atlas/scenarios/diagrams.feature) |
+| M18 | Instruments | The user can see and replay what the assistant actually did | [`README`](instruments/README.md) · [`instruments`](instruments/scenarios/instruments.feature) · [`instruments-health`](instruments/scenarios/instruments-health.feature) |
+| M19 | Insights & Impact | A recommendation is applied, measured, and reinforced | [`README`](insights-and-impact/README.md) · [`insights`](insights-and-impact/scenarios/insights.feature) · [`impact`](insights-and-impact/scenarios/impact.feature) |
+| M20 | Planner & Baseline | A goal becomes phases → features → acceptance criteria + gates | [`README`](planner-and-baseline/README.md) · [`planner`](planner-and-baseline/scenarios/planner.feature) · [`baseline`](planner-and-baseline/scenarios/baseline.feature) |
+| M21 | Relay | A long run is supervised from anywhere, without leaking code | [`README`](relay/README.md) · [`relay`](relay/scenarios/relay.feature) · [`relay-drivers`](relay/scenarios/relay-drivers.feature) |
+| M22 | Agentic Execution | sensei drives a multi-model Planner→Builder→Judge run | [`README`](agentic-execution/README.md) · [`agentic-execution`](agentic-execution/scenarios/agentic-execution.feature) |
 
 ## What this plane owns
 

@@ -35,6 +35,15 @@ and `spec/` tree. Until a module spec exists, its status lives in
   Each owns a `scenarios/` `.feature` set. The M8-owned dossiers `features/metrics/{catalog,feature,architecture-metrics}.md`
   are stamped superseded; `features/03-observatory.md` and `features/05-governance.md` stay live (they span the Delivery
   and Team planes too), as do the shared pipeline specs until those planes fold.
+- **Delivery — ✅ all nine authored 2026-10-13.** M14 [`mcp-context-delivery/`](delivery/mcp-context-delivery/README.md) ·
+  M15 [`observatory/`](delivery/observatory/README.md) · M16 [`project-window/`](delivery/project-window/README.md) ·
+  M17 [`atlas/`](delivery/atlas/README.md) · M18 [`instruments/`](delivery/instruments/README.md) ·
+  M19 [`insights-and-impact/`](delivery/insights-and-impact/README.md) · M20 [`planner-and-baseline/`](delivery/planner-and-baseline/README.md) ·
+  M21 [`relay/`](delivery/relay/README.md) · M22 [`agentic-execution/`](delivery/agentic-execution/README.md).
+  Each owns a `scenarios/` `.feature` set (M14: 3, M15: 3, M16: 2, M17: 2, M18: 2, M19: 2, M20: 2, M21: 2, M22: 1 = 19 files).
+  The module-owned dossiers `features/03-observatory.md` (M15), `features/04-project.md` (M16) and `features/06-relay.md` (M21)
+  are stamped superseded; the shared pipeline specs (`spec/pipeline/{mcp-surface,context-delivery,semantic-search,impact,agent-execution,insights,benchmarks,...}`)
+  stay live until their modules fold.
 
 ## The module-spec template
 
