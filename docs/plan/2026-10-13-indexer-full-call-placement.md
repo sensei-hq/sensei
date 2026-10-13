@@ -51,43 +51,59 @@ What remained, each a root cause with a fix:
 | `it.each([...])(…)` | few | the walk mis-names the callee → walk fix |
 | `.svelte` components | 162 (dojo) | not read by the TS engine → svelte2tsx into the same TS program (slice 4) |
 
-## Design
+## Design — compiler + AST inside each language adapter (decision 2026-10-13)
 
-The tasks → language adapter → nodes/edges flow stays. Each adapter gains one
-semantic step, and the engine is the ONE resolver of call sites for its
-language — never a fallback after the walk's ladder (no two-engine chain).
+The pattern does not change: tasks → the repo pipeline (`indexer::index`) →
+the language adapters → nodes and edges. Consistent task processors handle every
+language; adding a language is adding an adapter and listing it as supported.
+So the compiler step lives IN the adapter, beside its AST walk, and the pipeline
+gains only a language-neutral hook:
 
-- **The engine runs as a task, per workspace/package, as a subprocess**
-  (`rust-analyzer scip`, the TS program). Not in the daemon: rust-analyzer peaks
-  at 5.9 GB, which a background daemon must not hold. Its output is a per-file
-  table `(file, span) → symbol`.
-- **Files are still walked in parallel.** A call site's edge is written with its
-  span; placement joins it to the engine's symbol by `(file, span)` whenever both
-  exist — so an edge is placed as soon as its file and the engine's answer for
-  that file are in, whichever arrives first. Re-running the engine for a changed
-  workspace re-places only the files it changed.
-- **Symbol → FQN.** One mapping from a SCIP symbol (`<manager> <package> <version>
-  <descriptors>`) to our FQN minter. First-party symbols must map onto the very
-  FQNs the walk already minted (asserted, see gates). Internal and external
-  symbols mint `lib·…` nodes — the library surface — on demand, by the same
-  function.
-- **Reason codes are root causes**, written on the edge when the engine has no
-  symbol for a span: `engine_not_run` (the file's workspace has no index yet),
-  `not_in_project` (outside the tsconfig / cargo targets), `cfg_inactive`,
-  `receiver_any`, `no_occurrence` (the engine emitted nothing at that span),
-  `symbol_unmapped` (a symbol our mapping cannot yet name). The old walk
-  reasons stop being produced for these languages.
+- **Per file** — `read()` stays pure (AST, text in).
+- **Once per repository** — after the type barrier and resolution, the pipeline
+  already hands each file back to its own adapter in the scope pass
+  (`settle_imports`). Call placement joins that pass: each adapter is given, once,
+  the repository it is TOLD about (it climbs no directory) to open its compiler
+  session, and each file's scope pass asks its own adapter's session to place
+  the calls its walk saw, by `(file, span)`. Default for an adapter with no
+  engine: nothing — the walk's answer stands.
+- **Rust adapter**: rust-analyzer. **TypeScript/JavaScript adapters**: the
+  TypeScript compiler. **Svelte adapter**: svelte2tsx into the same TS program,
+  spans mapped back through its source map.
+- **Library surface.** Calls into the language/framework (internals) or a
+  dependency (externals) land on `lib·…` nodes minted from the engine's symbol by
+  the same FQN function. First-party symbols must map onto the very FQNs the walk
+  minted (asserted).
+- **Reason codes are root causes** — each miss keeps one in the data, for the
+  cycle below to work through; none is an end state.
+
+## Scope of 100%
+
+Nodes: every declaration in every indexed file of the corpus — functions,
+methods, types, modules, constants — placed. Edges: every call (and then every
+reference and import) placed. NOT local variables or function parameters: they
+get neither nodes nor edges. Every graph and diagram reads 100% placed.
+
+## The cycle, per language (Rust first, then TS/JS, then Svelte)
+
+1. Index the corpus (`sensei` first) and report placement by reason code.
+2. Take the largest reason. Pull its call sites, find the root cause, fix it in
+   the adapter (or the walk), and verify every site of that reason is now placed —
+   on the live graph, not on a fixture.
+3. Repeat for every reason code until none remain. 100% nodes and edges is the
+   end of the cycle.
 
 ## Slices (each red-first, measured on the live graph before and after)
 
-1. **Rust engine task + span join** — run `rust-analyzer scip` per Cargo
-   workspace, load the occurrence table, place `calls` by `(file, span)`;
+1. **Rust adapter: rust-analyzer + span join** — the adapter opens its session
+   once per repository (per Cargo workspace in it) and places `calls` by
+   `(file, span)` in the scope pass;
    first-party symbols must equal the walk's FQNs. Gate: Rust `calls` placed ≥
    99% on `sensei`, every miss with a root-cause code.
 2. **Library surface from symbols** — mint internal/external nodes from SCIP
    symbols (crate, version, path) with the FQN minter. Gate: no `calls` edge
    whose engine symbol is internal/external is left without a target.
-3. **TS/JS engine task** — same, per `tsconfig` project, `allowJs` on.
+3. **TS/JS adapters: the TypeScript compiler** — same, per `tsconfig` project, `allowJs` on.
 4. **Svelte through svelte2tsx** — components into the same TS program, spans
    mapped back through the source map. Gate: TS+Svelte `calls` ≥ 99%.
 5. **The remainder, one root cause at a time** — `cfg_inactive`, `super`,
