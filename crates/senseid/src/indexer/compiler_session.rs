@@ -863,8 +863,8 @@ mod tests {
     /// virtual module, a shim), so its members are `lib·x·…` (R5). A property
     /// whose value is computed (`{ publish: fn() }`) is called through the
     /// value's type. And a member of an anonymous object type (`Array<{ run:
-    /// () => … }>`) is whichever function each value holds — no declaration
-    /// names it, which is `dynamic_dispatch`.
+    /// () => … }>`) is a value, not a declaration — calling it calls whatever
+    /// function the value holds, as calling a parameter does: no edge.
     #[tokio::test]
     async fn the_checker_names_ambient_modules_values_and_anonymous_members() {
         use crate::indexer::facts::{RefKind, Resolution, Rung};
@@ -967,14 +967,7 @@ mod tests {
             vec![Resolution::Resolved { fqn: load, via: Rung::ResolvedByCompiler }],
             "a function of a module-level object is its member, not a dynamic call"
         );
-        assert!(
-            matches!(
-                to("src/routes.ts", 4, "run").as_slice(),
-                [Resolution::Unresolved { reason: Reason::DynamicDispatch, .. }]
-            ),
-            "{:?}",
-            to("src/routes.ts", 4, "run")
-        );
+        assert_eq!(to("src/routes.ts", 4, "run"), vec![], "a value's member is a local's: no edge");
     }
 
     /// **A SVELTEKIT PROJECT IS COMPILED AS ITS OWN TOOLING SEES IT.** Its
