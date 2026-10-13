@@ -481,6 +481,17 @@ pub enum Reason {
     /// the list above instead would hide the walk's incompleteness behind a
     /// cause that is not true of it (R4).
     Unplaced,
+    /// The compiler for this file's language was not run over the project the
+    /// file belongs to — the engine is missing, or the project was never handed
+    /// to it. Root cause to fix: run it (docs/plan/2026-10-13-indexer-full-call-placement.md).
+    EngineNotRun,
+    /// The compiler read this file and resolved nothing at this call site.
+    CompilerNoSymbol,
+    /// The compiler resolved a symbol whose identity this indexer cannot spell.
+    SymbolUnnamed,
+    /// The compiler points at a declaration in this repository that the walk
+    /// does not mint — a gap in the walk.
+    DeclarationNotFound,
 }
 
 impl Reason {
@@ -504,6 +515,10 @@ impl Reason {
             Self::Plumbing => "plumbing",
             Self::ExternalBoundary => "external_boundary",
             Self::Unplaced => "unplaced",
+            Self::EngineNotRun => "engine_not_run",
+            Self::CompilerNoSymbol => "compiler_no_symbol",
+            Self::SymbolUnnamed => "symbol_unnamed",
+            Self::DeclarationNotFound => "declaration_not_found",
         }
     }
 
@@ -521,6 +536,10 @@ impl Reason {
             "plumbing" => Self::Plumbing,
             "external_boundary" => Self::ExternalBoundary,
             "unplaced" => Self::Unplaced,
+            "engine_not_run" => Self::EngineNotRun,
+            "compiler_no_symbol" => Self::CompilerNoSymbol,
+            "symbol_unnamed" => Self::SymbolUnnamed,
+            "declaration_not_found" => Self::DeclarationNotFound,
             _ => return None,
         })
     }
@@ -561,6 +580,10 @@ impl Reason {
         Reason::Plumbing,
         Reason::ExternalBoundary,
         Reason::Unplaced,
+        Reason::EngineNotRun,
+        Reason::CompilerNoSymbol,
+        Reason::SymbolUnnamed,
+        Reason::DeclarationNotFound,
     ];
 }
 
@@ -758,6 +781,10 @@ pub enum Rung {
     /// A name the language puts in scope everywhere. Outranked by a glob, which
     /// could have shadowed it.
     InThePrelude,
+    /// The language's compiler resolved the call site — rust-analyzer, the
+    /// TypeScript compiler. Runs after the ladder, and where it covers a file it
+    /// is the one answer for every call in it.
+    ResolvedByCompiler,
 }
 
 impl Rung {
@@ -775,6 +802,7 @@ impl Rung {
             Self::SettledByScope => "settled_by_scope",
             Self::FullyQualifiedExternal => "fully_qualified_external",
             Self::InThePrelude => "in_the_prelude",
+            Self::ResolvedByCompiler => "resolved_by_compiler",
         }
     }
 
@@ -791,6 +819,7 @@ impl Rung {
             "settled_by_scope" => Self::SettledByScope,
             "fully_qualified_external" => Self::FullyQualifiedExternal,
             "in_the_prelude" => Self::InThePrelude,
+            "resolved_by_compiler" => Self::ResolvedByCompiler,
             _ => return None,
         })
     }
@@ -807,6 +836,7 @@ impl Rung {
         Rung::SettledByScope,
         Rung::FullyQualifiedExternal,
         Rung::InThePrelude,
+        Rung::ResolvedByCompiler,
     ];
 }
 
@@ -1311,6 +1341,10 @@ mod tests {
             Reason::Plumbing,
             Reason::ExternalBoundary,
             Reason::Unplaced,
+            Reason::EngineNotRun,
+            Reason::CompilerNoSymbol,
+            Reason::SymbolUnnamed,
+            Reason::DeclarationNotFound,
         ]
     }
 
@@ -1509,10 +1543,14 @@ mod tests {
                 | Reason::MacroExpansion
                 | Reason::Plumbing
                 | Reason::ExternalBoundary
-                | Reason::Unplaced => {}
+                | Reason::Unplaced
+                | Reason::EngineNotRun
+                | Reason::CompilerNoSymbol
+                | Reason::SymbolUnnamed
+                | Reason::DeclarationNotFound => {}
             }
         }
-        assert_eq!(all_reasons().len(), 10);
+        assert_eq!(all_reasons().len(), 14);
 
         for o in all_observations() {
             match o {

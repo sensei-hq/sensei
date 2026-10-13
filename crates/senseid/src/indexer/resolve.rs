@@ -3381,6 +3381,7 @@ mod tests {
                 "settled_by_scope",
                 "fully_qualified_external",
                 "in_the_prelude",
+                "resolved_by_compiler",
             ],
             "ALL is the ladder in climb order — a reordering here is a claim that the \
              ladder tries them differently"

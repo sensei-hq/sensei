@@ -3,24 +3,25 @@
 //! mints (docs/plan/2026-10-13-indexer-full-call-placement.md).
 //!
 //! A library target (the language's own `core`/`std`/`alloc`, or a dependency)
-//! is named, never opened: `lib·<crate>·<path>`, the path written the way Rust
+//! is named, never opened: a [`Form::Lib`] of the crate and a path written the way Rust
 //! itself qualifies a name — `option::Option::Some`, `<T as Into<U>>::into`.
 
 use scip::symbol::parse_symbol;
 use scip::types::descriptor::Suffix;
 
-use crate::indexer::facts::Fqn;
+use crate::indexer::facts::{Fqn, Reason};
 use crate::indexer::fqn::{self, Form};
 
-/// The `lib·…` identity of a symbol rust-analyzer resolved into a library, or
-/// `None` when the symbol is not one this can name (a local, a malformed
-/// symbol, or a descriptor shape no Rust path spells).
-pub fn library_target(symbol: &str) -> Option<Fqn> {
-    let parsed = parse_symbol(symbol).ok()?;
-    let package = parsed.package.as_ref()?;
-    let krate = package.name.as_str();
-    let path = rust_path(&parsed.descriptors)?;
-    fqn::refer(&Form::Lib { package: krate, member: &path }).ok()
+/// The [`Form::Lib`] identity of a symbol rust-analyzer resolved into a library.
+/// A symbol this cannot spell — a local, a malformed symbol, a descriptor shape
+/// no Rust path names — is [`Reason::SymbolUnnamed`], a root cause to fix, never
+/// a silent `None`.
+pub fn library_target(symbol: &str) -> Result<Fqn, Reason> {
+    let parsed = parse_symbol(symbol).map_err(|_| Reason::SymbolUnnamed)?;
+    let package = parsed.package.as_ref().ok_or(Reason::SymbolUnnamed)?;
+    let path = rust_path(&parsed.descriptors).ok_or(Reason::SymbolUnnamed)?;
+    fqn::refer(&Form::Lib { package: package.name.as_str(), member: &path })
+        .map_err(|_| Reason::SymbolUnnamed)
 }
 
 /// Render descriptors as a Rust path. `impl#[Self]` and `impl#[Self][Trait]`
@@ -66,7 +67,7 @@ mod tests {
     use super::*;
 
     fn lib(symbol: &str) -> Option<String> {
-        library_target(symbol).map(|f| f.to_string())
+        library_target(symbol).ok().map(|f| f.to_string())
     }
 
     const CORE: &str = "rust-analyzer cargo core https://github.com/rust-lang/rust/library/core";
@@ -123,8 +124,8 @@ mod tests {
     }
 
     #[test]
-    fn a_local_or_a_malformed_symbol_names_nothing() {
-        assert_eq!(lib("local 12"), None);
-        assert_eq!(lib("not a symbol"), None);
+    fn a_symbol_it_cannot_spell_is_a_named_root_cause() {
+        assert_eq!(library_target("local 12"), Err(Reason::SymbolUnnamed));
+        assert_eq!(library_target("not a symbol"), Err(Reason::SymbolUnnamed));
     }
 }
