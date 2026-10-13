@@ -49,6 +49,7 @@ pub mod python;
 pub mod rust;
 pub mod sql;
 pub mod svelte;
+pub mod ts_compiler;
 pub mod vue;
 
 use std::collections::{BTreeMap, BTreeSet};

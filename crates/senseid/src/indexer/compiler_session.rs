@@ -480,4 +480,91 @@ mod tests {
         let err = run(&inv, std::time::Duration::from_secs(5)).await.unwrap_err();
         assert!(err.contains("sensei-no-such-compiler"), "{err}");
     }
+
+    /// **THE CHECKER, END TO END.** A real TypeScript project with a Svelte
+    /// component, compiled by the embedded driver, each file read by its own
+    /// adapter and placed: every call the walk saw is placed by the checker —
+    /// through a renamed import, into a component's template, onto the
+    /// language's own `Array.prototype.map`.
+    #[tokio::test]
+    async fn a_typescript_and_svelte_project_is_placed_by_its_checker() {
+        use crate::indexer::facts::{RefKind, Resolution, Rung};
+        use crate::indexer::lang::compiler::{Compiled, place_with};
+        use crate::indexer::lang::ts_compiler::TS_ENGINE;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        let write = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write("package.json", r#"{"name": "web", "type": "module"}"#);
+        write(
+            "tsconfig.json",
+            r#"{"compilerOptions": {"strict": true, "module": "esnext", "moduleResolution": "bundler", "target": "es2022"}}"#,
+        );
+        write(
+            "src/net.ts",
+            "export function bind(port: number) {\n  return [port].map((p) => p + 1);\n}\n",
+        );
+        write(
+            "src/main.ts",
+            "import { bind as open } from './net';\n\nexport function start() {\n  return open(80);\n}\n",
+        );
+        write(
+            "src/App.svelte",
+            "<script lang=\"ts\">\n  import { bind } from './net';\n  function go() {\n    return bind(1);\n  }\n</script>\n\n<button onclick={() => bind(2)}>{go()}</button>\n",
+        );
+
+        let sessions = CompilerSessions::new(&root);
+        let project = sessions.project_for(&TS_ENGINE, &root).await.expect("the driver compiles");
+        let declarations = sessions.declarations(&project);
+        let bind = declarations.declared_at("src/net.ts", 1, "bind").expect("bind is declared");
+        let lib_map = crate::indexer::fqn::refer(&crate::indexer::fqn::Form::Lib {
+            package: "ecmascript",
+            member: "Array.map",
+        })
+        .unwrap();
+
+        let mut placed = Vec::new();
+        for rel in ["src/net.ts", "src/main.ts", "src/App.svelte"] {
+            let facts = read_declarations(&root, &root.join(rel)).expect(rel);
+            let text = std::fs::read_to_string(root.join(rel)).unwrap();
+            let compiled =
+                Compiled { index: &project.index, path: rel, declarations: &declarations };
+            let calls: Vec<_> =
+                facts.references.iter().filter(|r| r.kind == RefKind::Calls).cloned().collect();
+            assert!(!calls.is_empty(), "{rel}: the walk saw no call");
+            for call in place_with(&TS_ENGINE, Some(&compiled), calls, &text) {
+                placed.push((rel, call.at.start_line, call.target));
+            }
+        }
+        for (rel, line, target) in &placed {
+            assert!(
+                matches!(target, Resolution::Resolved { via: Rung::ResolvedByCompiler, .. }),
+                "{rel}:{line} was not placed by the checker: {target:?}"
+            );
+        }
+        let to = |rel: &str, line: u32| {
+            placed.iter().find(|(r, l, _)| *r == rel && *l == line).map(|(_, _, t)| t.clone())
+        };
+        let resolved = |fqn: &Fqn| {
+            Some(Resolution::Resolved { fqn: fqn.clone(), via: Rung::ResolvedByCompiler })
+        };
+        assert_eq!(to("src/main.ts", 4), resolved(&bind), "through the renamed import");
+        assert_eq!(to("src/net.ts", 2), resolved(&lib_map), "onto the language's own method");
+        assert_eq!(to("src/App.svelte", 4), resolved(&bind), "from a component's script");
+        assert_eq!(to("src/App.svelte", 8), resolved(&bind), "from a component's template");
+        // A component's own function is its top level, not a local of the
+        // function svelte2tsx wraps the script in.
+        let go = declarations.declared_at("src/App.svelte", 3, "go").expect("go is declared");
+        let on_line_8: Vec<_> =
+            placed.iter().filter(|(r, l, _)| *r == "src/App.svelte" && *l == 8).collect();
+        assert!(
+            on_line_8.iter().any(|(_, _, t)| Some(t.clone()) == resolved(&go)),
+            "{on_line_8:?}"
+        );
+        assert_eq!(placed.len(), 5, "map, open, bind ×2, go: {placed:?}");
+    }
 }
