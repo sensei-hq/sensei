@@ -322,15 +322,12 @@ function symbolFor(sym, decl, sf) {
   // that library's member (R5), named by its path within the module.
   const ambient = ambientModuleOf(decl);
   if (ambient) return `npm ${packageOfSpecifier(ambient.name.text)} ${pathWithin(decl, ambient)}`;
-  if (isLocal(decl)) {
-    if (!locals.has(decl)) locals.set(decl, ++localCount);
-    return `local ${locals.get(decl)}`;
-  }
+  if (isLocal(decl)) return localSymbol(decl);
   // A member no declaration of its own names — of an anonymous object type,
-  // or a value in an object the walk does not make a container: called
-  // through the value's named type, or else whichever function each value
-  // holds (`dynamic`).
-  if (isAnonymousMember(decl)) return typedValue(decl) ?? 'dynamic';
+  // or a value in an object the walk does not make a container — is a VALUE:
+  // reached through the value's named type when it has one, else a local's,
+  // as a callback parameter is.
+  if (isAnonymousMember(decl)) return typedValue(decl) ?? localSymbol(decl);
   const name = decl.name ?? decl;
   const at = originalPosition(declSf, name);
   if (!at) return null;
@@ -365,6 +362,11 @@ function record(sf, id, found) {
   const rel = path.relative(root, at.file);
   if (!documents.has(rel)) documents.set(rel, []);
   documents.get(rel).push({ range: [at.line, at.start, at.end], symbol, roles: declaresIt ? 1 : 0 });
+}
+
+function localSymbol(decl) {
+  if (!locals.has(decl)) locals.set(decl, ++localCount);
+  return `local ${locals.get(decl)}`;
 }
 
 /** The `declare module 'x'` a declaration sits in, if any. */

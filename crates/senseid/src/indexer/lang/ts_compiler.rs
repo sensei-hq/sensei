@@ -106,11 +106,6 @@ impl CompilerEngine for TsEngine {
         if symbol == "untyped" {
             return Err(Reason::UntypedReceiver);
         }
-        // The driver's mark for a member no declaration names: whichever
-        // function each value holds.
-        if symbol == "dynamic" {
-            return Err(Reason::DynamicDispatch);
-        }
         if let Some(library) = symbol.strip_prefix("npm ") {
             let (package, member) = library.split_once(' ').ok_or(Reason::SymbolUnnamed)?;
             return fqn::refer(&Form::Lib { package, member }).map_err(|_| Reason::SymbolUnnamed);
@@ -171,13 +166,6 @@ mod tests {
     #[test]
     fn a_call_on_an_untyped_receiver_says_so() {
         assert_eq!(target("untyped").0, Err(Reason::UntypedReceiver));
-    }
-
-    /// A member of an anonymous object type is whichever function each value
-    /// holds: the driver marks it, and no declaration answers.
-    #[test]
-    fn a_member_no_declaration_names_is_dynamic_dispatch() {
-        assert_eq!(target("dynamic").0, Err(Reason::DynamicDispatch));
     }
 
     /// A symbol this cannot read is a named root cause, never a silent miss.
