@@ -37,7 +37,7 @@ is a bug in the policy.
 | **member** | an ACTIVE membership in the tenant (`memberships.disabled_at is null`) | The floor for every tenant-scoped cell. A missing or disabled membership is **no access**, never "level 0". |
 | **contributor · maintainer · lead · admin** | `memberships.role` (`dojo.member_role`) | The TENANT role. `admin` is "management": policy, identity, billing, provisioning. A tenant-role `lead` guards client confidentiality (engagements, incidents, audit ledger). |
 | **team member / team lead** | `dojo.team_members` (+ `.role = 'lead'`) on a team that owns the project (`dojo.team_projects`) | The PROJECT relationship. "A lead's projects" means projects owned by a team on which the principal's team role is `lead`. |
-| **device** | a daemon's device token, exchanged for a short-lived JWT scoped to its principal (step 4) | Same principal, same matrix. Until step 4 the device plane stays in code. |
+| **daemon** | the signed-in persona's session, presented by the daemon for the memberships that persona joined (step 4) | Same principal, same matrix. There is no device credential: any other bearer is a 401. |
 
 **The tenant roles are ordered** `contributor < maintainer < lead < admin` —
 `dojo.member_role`'s declared order and the entity model's. The dōjō's code
@@ -191,8 +191,11 @@ Today: `my_repositories`, `register_repository`, `set_repository_election`,
    client (`callerDb`, `asOwner`, `sessionDb`). **Done for every JWT-plane route
    (2026-10-12)**; what still runs as the service role is the table above, and the
    device plane below.
-4. **The device plane**: device token → short-lived JWT for its principal, so the
-   same policies apply to the daemon.
+4. **The daemon as the person** — **done (2026-10-13)**. The daemon's tenant
+   calls present the signed-in persona's session, so the same policies apply to
+   it; the device token, `resolveApiKeyAccess` and
+   `dojo.memberships.device_token_hash` are gone (step 4e). Signing in is joining:
+   the daemon creates its membership from `GET /v1/you/memberships`.
 
 ## Related
 

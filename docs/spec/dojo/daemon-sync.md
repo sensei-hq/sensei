@@ -34,8 +34,9 @@
   `POST /v1/you/metrics` is the endpoint (§5).
 - `dojo_client/session.rs` — per-persona Keychain session slots, `needs_refresh`.
 - `dojo_client/dojo_auth.rs::refresh()` — `POST /v1/auth/cli/refresh`.
-- `dojo/client.rs` — the **tenant-plane** client (per-membership device token).
-  Untouched by this slice; artifacts are genuinely tenant-addressed.
+- `dojo/client.rs` — the **tenant-plane** client: artifacts, rules and relay rows
+  are genuinely tenant-addressed. It presents the session of the persona the
+  membership is bound to (#236 step 4) — there is no device token.
 
 ## 2. Decisions taken
 
@@ -139,8 +140,7 @@ signed-out — an expired persona must not silently stall the whole cycle.
 
 ## 5. The user-plane client
 
-New `dojo_client/user_plane.rs`. Bearer = the Supabase access token from §4, not
-a device token.
+New `dojo_client/user_plane.rs`. Bearer = the Supabase access token from §4.
 
 ```
 POST /v1/you/repositories   { repos: [{ repo_key, remote_url, name }] }

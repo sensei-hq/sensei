@@ -29,7 +29,7 @@
 ## APIs / loaders
 - **Loader** `(app)/org/[slug]/[section]/+page.ts` L230: `knowledge: knowledgeFor(slug)` — pure fixture, no fetch, no `guardTenantScope`. Explicitly flagged Tier-3/unbuilt in the loader header comment ("knowledge … still render off kit fixtures — their routes aren't built").
 - **No `GET …/knowledge` endpoint exists.** Nearest real data:
-  - `dojo.artifacts` — the federated library (`POST/GET /v1/.../artifacts`, `$lib/server/artifacts-data.ts`: `publishArtifact` / `pullArtifactsSince` / `promoteCluster`). This is the **daemon plane** (`resolveApiKeyAccess`, device-token) delta-pull for machines, NOT a JWT-plane console read. A console "list adopted artifacts" read would be a new endpoint at MAINTAINER floor.
+  - `dojo.artifacts` — the federated library (`POST/GET /v1/.../artifacts`, `$lib/server/artifacts-data.ts`: `publishArtifact` / `pullArtifactsSince` / `promoteCluster`). This is the **daemon's** delta-pull (`resolveTenantCaller`, the person's session, as the daemon presents it), NOT a console read. A console "list adopted artifacts" read would be a new endpoint at MAINTAINER floor.
   - Prune policy would live on `dojo.policies.retention_days` (per-scope; `admin-data.ts` already reads/writes `policies` for the admin surface).
 - **No mutations** — Edit / Keep / prune-policy change have no write path.
 
@@ -51,7 +51,7 @@
 - Edit/Keep — are these v1, or is Knowledge a read-only library for now (matching how thin the real data is)?
 
 ### Resolved design (2026-07-30)
-- **Q1 read → new JWT-plane `GET /v1/t/{tenant}/knowledge`** (Supabase-session plane, matching the other console screens) reading `dojo.artifacts`. NOT the device-token daemon-plane `/artifacts` pull.
+- **Q1 read → new JWT-plane `GET /v1/t/{tenant}/knowledge`** (Supabase-session plane, matching the other console screens) reading `dojo.artifacts`. NOT the daemon's `/artifacts` delta pull.
 - **Q2 prune signal → "unused" = no downstream adoption/pull within `dojo.policies.retention_days`** (retention_days is the window). Telemetry-light; reuses the retention policy.
 - **Q3 Catalog → `dojo.artifacts` where `kind ∈ {skill, agent, prompt}`** (the tenant's federated library), NOT the marketplace subtree.
 - **Q4 mutations → READ-ONLY library for v1.** No Edit/Keep writes; edits happen via triage/authoring.
@@ -62,7 +62,7 @@
 
 **DB** (reference §Elements→data): real source = `dojo.artifacts` (tenant-scoped) — published/adopted → Active, unused-past-prune → Pending, `kind ∈ {agent,command,skill}` → Catalog; prune window = `dojo.policies.retention_days`. STUB today (`knowledgeFor(slug)` fixture, only `acme` authored).
 
-**API** (reference §APIs/loaders): **no console read endpoint exists** — the daemon-plane `…/artifacts` delta-pull (device-token) is NOT a JWT console read. Needs a new `GET /v1/.../knowledge` at MAINTAINER floor. Edit (revise/republish, bump `seq`) and Keep (cancel pending prune) have **no write path**; prune-policy edit can reuse the existing `dojo.policies` admin write.
+**API** (reference §APIs/loaders): **no console read endpoint exists** — the daemon's `…/artifacts` delta-pull is NOT a console read. Needs a new `GET /v1/.../knowledge` at MAINTAINER floor. Edit (revise/republish, bump `seq`) and Keep (cancel pending prune) have **no write path**; prune-policy edit can reuse the existing `dojo.policies` admin write.
 
 **Domain types** (UI-shaped):
 ```ts

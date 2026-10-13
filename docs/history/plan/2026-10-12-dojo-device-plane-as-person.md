@@ -1,7 +1,7 @@
 ---
 title: dōjō device plane runs as the person (#236 step 4)
 date: 2026-10-12
-status: approved (decisions 2026-10-12)
+status: done (decisions 2026-10-12, 2026-10-13)
 issue: 236
 ---
 
@@ -78,7 +78,18 @@ a device token, so the window keeps nothing it had.
    publish/pull 404'd (one encoded tenant segment), and rule publish failed
    (`.schema('sensei')` — sensei is not exposed).
 6. **4e (release N+1)** — remove `resolveApiKeyAccess`, the device-token path in
-   the daemon, and `dojo.memberships.device_token_hash`.
+   the daemon, and `dojo.memberships.device_token_hash`. **Done 2026-10-13**
+   (`21647161`, `9dc4bd83`, `33f08a6c`, `52893422`, `d54ffed0`, `cdf2910c`).
+   Release N was v0.12.0. Decided on the way (2026-10-13): **signing in is
+   joining** — the device token was the only way a daemon membership came into
+   being, so the sync now creates one for every membership
+   `GET /v1/you/memberships` lists (it carries kind, role, org slugs,
+   authenticated_via and attribution) and binds it to the persona; the app's
+   pairing form and `POST /api/dojo/memberships` are gone, and
+   `sensei.dojo_memberships.credential_ref` / `knowledge_sources.credential_ref`
+   are dropped — installs converge by the reconcile deploy 0.12.1 introduced.
+   Verified: `scripts/relay-roundtrip.sh` on the local stack — a device token is
+   a 401 on every daemon route, a non-member 403, the member's session OK.
 
 ## Done gate
 
