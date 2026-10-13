@@ -13,7 +13,8 @@ use crate::indexer::fqn::{self, Form};
 use crate::indexer::lang::compiler::{CompilerEngine, CompilerIndex, Declarations, Invocation};
 
 /// The driver, embedded: the daemon carries it, so nothing is installed beside
-/// the binary but the npm packages it loads.
+/// the binary but the npm packages it loads — which sensei-bootstrap installs
+/// into its engines directory, passed to the driver.
 const DRIVER: &str = include_str!("ts_compiler_driver.mjs");
 
 /// TypeScript's checker, as the TypeScript, JavaScript and Svelte adapters
@@ -67,6 +68,7 @@ impl CompilerEngine for TsEngine {
                 "-e".into(),
                 DRIVER.into(),
                 project_root.into(),
+                sensei_bootstrap::engines_dir().to_string_lossy().into_owned(),
                 output.into(),
             ],
             cwd: project_root.to_string(),
@@ -164,7 +166,8 @@ mod tests {
     }
 
     /// The package directory is the project; node runs the embedded driver over
-    /// it — the node that `node` resolves to on this machine, located first.
+    /// it — the node that `node` resolves to on this machine, located first —
+    /// and tells it where bootstrap installs the packages a project lacks.
     #[test]
     fn the_engine_runs_the_embedded_driver_with_node_over_the_package() {
         assert_eq!(TS_ENGINE.manifest(), "package.json");
@@ -186,6 +189,7 @@ mod tests {
                 "-e".to_string(),
                 DRIVER.to_string(),
                 "/r/dojo".to_string(),
+                sensei_bootstrap::engines_dir().to_string_lossy().into_owned(),
                 "/tmp/o.scip".to_string(),
             ]
         );

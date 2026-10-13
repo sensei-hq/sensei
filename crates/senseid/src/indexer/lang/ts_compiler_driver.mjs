@@ -1,8 +1,11 @@
 // sensei's TypeScript / JavaScript / Svelte compiler driver
 // (docs/plan/2026-10-13-indexer-full-call-placement.md).
 //
-//   node ts_compiler_driver.mjs <project_root> <output.scip>
-//   node --input-type=module -e "<this file>" <project_root> <output.scip>
+//   node ts_compiler_driver.mjs <project_root> <engines_dir> <output.scip>
+//   node --input-type=module -e "<this file>" <project_root> <engines_dir> <output.scip>
+//
+// <engines_dir> is where sensei-bootstrap installs the packages this loads when
+// the project does not carry them.
 //
 // Uses the PROJECT'S OWN `typescript` (so the compiler is the one the project
 // builds with), reads its tsconfig with JS allowed, turns every `.svelte`
@@ -20,20 +23,19 @@
 //                                `ecmascript` (the walk's name for them)
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
-// The last two arguments: run as a file or as `-e` text, argv differs before them.
-const [rootArg, outPath] = process.argv.length >= 3 ? process.argv.slice(-2) : [];
-if (!rootArg || !outPath) {
-  console.error('usage: ts_compiler_driver.mjs <project_root> <output.scip>');
+// The last three arguments: run as a file or as `-e` text, argv differs before them.
+const [rootArg, enginesDir, outPath] = process.argv.length >= 4 ? process.argv.slice(-3) : [];
+if (!rootArg || !enginesDir || !outPath) {
+  console.error('usage: ts_compiler_driver.mjs <project_root> <engines_dir> <output.scip>');
   process.exit(2);
 }
 const root = fs.realpathSync(rootArg);
 
 /** A module from the project, else from sensei's engines directory. */
 function load(name) {
-  for (const base of [root, path.join(os.homedir(), '.sensei', 'engines')]) {
+  for (const base of [root, enginesDir]) {
     try {
       return createRequire(path.join(base, 'package.json'))(name);
     } catch {}
@@ -95,7 +97,7 @@ if (s2t && traceMapping) {
     }
   }
   const shims = createRequire(path.join(root, 'package.json'));
-  for (const base of [root, path.join(os.homedir(), '.sensei', 'engines')]) {
+  for (const base of [root, enginesDir]) {
     try {
       const dir = path.dirname(createRequire(path.join(base, 'package.json')).resolve('svelte2tsx/package.json'));
       for (const shim of ['svelte-shims-v4.d.ts', 'svelte-jsx-v4.d.ts']) {

@@ -7,11 +7,13 @@
 //!   * health::check_and_resolve() — streaming check + fix; sidecar uses this.
 //!   * hardware::{HardwareInfo, ModelTier, detect()} — host hardware probing.
 //!   * models::{list(), missing_models(), ...} — Ollama model helpers.
+//!   * engines::{check(), install(), ensure()} — the indexer's compiler engines.
 //!   * config::*                    — runtime config (unchanged).
 //!   * util::*                      — small utilities (unchanged).
 
 pub mod config;
 pub mod database;
+pub mod engines;
 pub mod hardware;
 pub mod health;
 pub mod models;
@@ -24,7 +26,7 @@ pub use config::{
     DB_POOL_MAX_CONNECTIONS, DB_POOL_MAX_LIFETIME_SECS, DB_POOL_MIN_CONNECTIONS, GITHUB_ORG,
     GITHUB_REPO, HOMEBREW_TAP_REPO, HOMEBREW_TAP_URL, MARKETPLACE_RAW_URL, MARKETPLACE_REPO,
     MCP_REGISTRY_KEY, OLLAMA_PORT, POSTGRES_PORT, SENSEI_BIN, SENSEI_MCP_BIN, SENSEID_BIN,
-    SenseiConfig, SenseiLocalConfig, home_dir,
+    SenseiConfig, SenseiLocalConfig, engines_dir, home_dir,
 };
 pub use hardware::{HardwareInfo, ModelTier};
 #[allow(unused_imports)]
