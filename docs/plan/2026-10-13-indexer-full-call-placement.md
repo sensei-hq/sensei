@@ -116,6 +116,38 @@ get neither nodes nor edges. Every graph and diagram reads 100% placed.
 3. Repeat for every reason code until none remain. 100% nodes and edges is the
    end of the cycle.
 
+## Decisions and scope (2026-10-13)
+
+- **Corpus: `sensei` only**, to keep the verify cycle fast and consistent;
+  hitting 100% there is the bar for dbd, gateway, torii and the rest.
+- **Only source the repository owns**, starting from the repository root.
+  Vendored and generated code is not owned: a file marked generated (e.g.
+  tree-sitter's `@generated` parser header) or `linguist-vendored`/`-generated`
+  in `.gitattributes` is not indexed — a generic rule, no per-repo path list.
+- **Toolchain**: sensei-bootstrap checks and installs the engines (`rustup
+  component add rust-analyzer rust-src`; `scip-typescript` pinned as an npm
+  dependency). A missing engine is the root-cause reason `engine_not_run`, never
+  a silent fallback.
+- **SQL/DDL** (the dbd-backed scanner): the ER diagram and the SQL call graph
+  are fully placed too; dbd's own graph places them, so there are no misses there
+  either.
+- **Regression gate**: once the cycle completes, placement for these languages
+  can never drop below 90% — a test over the corpus fails the build first.
+- **The cycle runs on the live daemon** (rebuild, install, rescan as needed);
+  commits are pushed to `develop` only — no merge to `main`, no release.
+
+- **Docs move with the code**: `docs/features/*`, `docs/prd/*` and the indexer
+  spec (which states R5 and §5) are revised as each rule is replaced, in the same
+  slice that replaces it.
+
+## Done gate — the report
+
+A report of placement **by language, by crate, by package and by app**
+(the dōjō, the desktop app, the website) showing 100% nodes and edges for
+owned source, read from the persisted graph (`graph_placement`, extended with
+the language and package axes) — and the same numbers in every diagram's
+coverage line. Then the remaining todos resume.
+
 ## Slices (each red-first, measured on the live graph before and after)
 
 1. **Rust adapter: rust-analyzer + span join** — the adapter opens its session

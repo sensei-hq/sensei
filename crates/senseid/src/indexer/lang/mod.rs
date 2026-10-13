@@ -39,6 +39,7 @@
 
 pub mod c;
 pub mod common;
+pub mod compiler;
 pub mod csharp;
 pub mod java;
 pub mod javascript;
