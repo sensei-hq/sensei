@@ -972,9 +972,8 @@ export interface SyncStats {
 //
 // Wire shape returned by `GET /api/dojo/memberships` — a top-level array whose
 // items mirror `ConnectionView` in `crates/senseid/src/dojo/memberships.rs`.
-// `credential_ref` is deliberately NOT part of the shape: the Keychain
-// reference is never exposed over the API, and the device token is write-only
-// (sent on connect, never read back).
+// Each membership arrives with the signed-in persona's sync (#236 step 4e);
+// nothing here carries a credential.
 
 /** A local project bound to a membership via `projects.dojo_id`. */
 export interface DojoBoundProject {
@@ -1018,27 +1017,6 @@ export interface DojoBindingSuggestion {
   matched_slug: string;
   tenant_key: string;
   dojo_url: string;
-}
-
-/** Body for `POST /api/dojo/memberships` — register a connection. `credential`
- *  is the write-only device token (stored in the OS Keychain, never returned).
- *  `registry_url` defaults server-side when omitted. */
-export interface ConnectDojoBody {
-  /** Service membership id (`dojo.memberships.id`, a uuid) — becomes the PK. */
-  membership_id: string;
-  registry_url?: string;
-  tenant_key: string;
-  kind: string;
-  /** Git-remote owner slugs this membership covers (org-tagging). Normalised
-   *  (lowercased/deduped) server-side. */
-  org_slugs?: string[];
-  role?: string;
-  authenticated_via?: string;
-  attribution_default?: string;
-  /** The device token (Bearer). Write-only — never read back. */
-  credential: string;
-  /** Optional project to bind to this membership on connect. */
-  project_id?: string;
 }
 
 // ─── MCP tool manifests (playground / instruments) ───────────────────────────

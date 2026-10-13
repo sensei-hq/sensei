@@ -8,8 +8,8 @@
  *   1. org_slugs round-trips end-to-end — POST /api/dojo/memberships with
  *      org_slugs, GET returns them normalized (proves the org_slugs DDL column
  *      + handler work on a live daemon, not just sensei_test).
- *   2. The Dōjō connections screen mounts and its connect form exposes the
- *      org-tagging input (data-testid="connect-org-slugs").
+ *   2. The Dōjō connections screen mounts and sends you to sign in — there
+ *      is no pairing form (#236 step 4e).
  *   3. The project About "Bindings" section mounts without a runtime throw and
  *      renders exactly one valid state (confirmed | inferred | empty) — proves
  *      the loader fires GET …/dojo-suggestion + the membership list and the
@@ -93,13 +93,13 @@ test.describe('R3 · Dōjō auto-bind', () => {
     expect(after.find((m) => m.id === membershipId)!.org_slugs).toEqual(['acme-e2e', 'globex']);
   });
 
-  test('connections screen mounts with the org-tagging input', async ({ tauriPage }) => {
-    // Wait for the (always-present) connect toggle, then open the disclosure
-    // form and assert the org-tagging input renders — attribute selectors keep
-    // this within the TauriPage adapter's supported locator surface.
-    await navigateToScreen(tauriPage, '/dojo/connections', '[data-connect-toggle]');
-    await tauriPage.locator('[data-connect-toggle]').click();
-    await expect(tauriPage.locator('[data-testid="connect-org-slugs"]')).toBeVisible({ timeout: 30_000 });
+  test('connections screen sends you to sign in, with no pairing form', async ({ tauriPage }) => {
+    // Signing in is joining (#236 step 4e): the screen links to sign-in and
+    // offers nothing to pair with — attribute selectors keep this within the
+    // TauriPage adapter's supported locator surface.
+    await navigateToScreen(tauriPage, '/dojo/connections', '[data-sign-in]');
+    await expect(tauriPage.locator('[data-sign-in]')).toBeVisible({ timeout: 30_000 });
+    expect(await tauriPage.locator('[data-connect-form]').count()).toBe(0);
     expectNoRuntimeErrors(await readErrors(tauriPage), 'connections');
   });
 

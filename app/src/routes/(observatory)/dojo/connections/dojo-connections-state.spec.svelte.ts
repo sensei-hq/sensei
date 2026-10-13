@@ -1,18 +1,11 @@
-import { describe, it, expect, vi } from 'vitest';
-import type { SenseiApi } from '$lib/api.js';
+import { describe, it, expect } from 'vitest';
 import type { DojoMembership } from '$lib/types.js';
 import {
-  ConnectForm,
   boundProjectsSummary,
   connectionsHeadline,
   kindPill,
-  parseOrgSlugs,
   syncChip,
   syncTone,
-  toConnectBody,
-  validateConnect,
-  validateRegistryUrl,
-  type ConnectDraft,
 } from './dojo-connections-state.svelte.js';
 
 const VALID_UUID = '11111111-2222-4333-8444-555555555555';
@@ -24,7 +17,7 @@ const membership = (over: Partial<DojoMembership> = {}): DojoMembership => ({
   dojo_url: 'https://dojo.acme.internal/github/acme',
   kind: 'employer',
   role: 'contributor',
-  authenticated_via: 'device_code',
+  authenticated_via: 'github_oauth',
   attribution_default: 'named',
   org_slugs: [],
   sync_status: 'healthy',
@@ -32,17 +25,6 @@ const membership = (over: Partial<DojoMembership> = {}): DojoMembership => ({
   last_heartbeat_at: null,
   enabled: true,
   bound_projects: [],
-  ...over,
-});
-
-const draft = (over: Partial<ConnectDraft> = {}): ConnectDraft => ({
-  membershipId: VALID_UUID,
-  tenantKey: 'github/acme',
-  registryUrl: '',
-  kind: 'employer',
-  deviceToken: 'tok_123',
-  projectId: '',
-  orgSlugs: '',
   ...over,
 });
 
@@ -139,175 +121,5 @@ describe('connectionsHeadline', () => {
     expect(connectionsHeadline([membership({ sync_status: 'error' })])).toBe(
       '1 connection · 0 healthy.',
     );
-  });
-});
-
-describe('validateRegistryUrl', () => {
-  it('accepts an empty url (the daemon defaults it)', () =>
-    expect(validateRegistryUrl('')).toBeNull());
-  it('accepts an https url', () =>
-    expect(validateRegistryUrl('https://dojo.acme.internal')).toBeNull());
-  it('accepts http on loopback', () =>
-    expect(validateRegistryUrl('http://localhost:8787')).toBeNull());
-  it('rejects a non-loopback http url', () =>
-    expect(validateRegistryUrl('http://dojo.acme.internal')).toBe(
-      'non-loopback url must be https',
-    ));
-});
-
-describe('validateConnect', () => {
-  it('accepts a complete valid draft', () => expect(validateConnect(draft())).toBeNull());
-  it('requires a membership id', () =>
-    expect(validateConnect(draft({ membershipId: '  ' }))).toBe('membership id required'));
-  it('requires the membership id to be a uuid', () =>
-    expect(validateConnect(draft({ membershipId: 'not-a-uuid' }))).toBe(
-      'membership id must be the service membership uuid',
-    ));
-  it('requires a tenant key', () =>
-    expect(validateConnect(draft({ tenantKey: '' }))).toBe('tenant key required'));
-  it('requires a device token', () =>
-    expect(validateConnect(draft({ deviceToken: '' }))).toBe('device token required'));
-  it('rejects an insecure registry url', () =>
-    expect(validateConnect(draft({ registryUrl: 'http://dojo.acme.internal' }))).toBe(
-      'non-loopback url must be https',
-    ));
-});
-
-describe('parseOrgSlugs', () => {
-  it('empty input yields an empty list', () => expect(parseOrgSlugs('')).toEqual([]));
-  it('whitespace-only input yields an empty list', () =>
-    expect(parseOrgSlugs('   ')).toEqual([]));
-  it('splits on commas', () =>
-    expect(parseOrgSlugs('sensei-hq,acme')).toEqual(['sensei-hq', 'acme']));
-  it('splits on whitespace', () =>
-    expect(parseOrgSlugs('sensei-hq acme')).toEqual(['sensei-hq', 'acme']));
-  it('splits on mixed commas and whitespace, dropping empties', () =>
-    expect(parseOrgSlugs(' sensei-hq ,  acme,, globex ')).toEqual([
-      'sensei-hq',
-      'acme',
-      'globex',
-    ]));
-  it('lowercases every slug', () =>
-    expect(parseOrgSlugs('Sensei-HQ, ACME')).toEqual(['sensei-hq', 'acme']));
-  it('dedupes, preserving first-seen order (case-insensitively)', () =>
-    expect(parseOrgSlugs('acme, Acme, sensei-hq, acme')).toEqual(['acme', 'sensei-hq']));
-});
-
-describe('toConnectBody', () => {
-  it('builds a trimmed body and omits blank optionals', () => {
-    expect(toConnectBody(draft({ membershipId: ` ${VALID_UUID} `, tenantKey: ' github/acme ' }))).toEqual({
-      membership_id: VALID_UUID,
-      tenant_key: 'github/acme',
-      kind: 'employer',
-      credential: 'tok_123',
-    });
-  });
-  it('includes registry_url and project_id when provided', () => {
-    expect(
-      toConnectBody(
-        draft({ registryUrl: 'https://dojo.acme.internal', projectId: 'proj-9', kind: 'client' }),
-      ),
-    ).toEqual({
-      membership_id: VALID_UUID,
-      tenant_key: 'github/acme',
-      kind: 'client',
-      credential: 'tok_123',
-      registry_url: 'https://dojo.acme.internal',
-      project_id: 'proj-9',
-    });
-  });
-  it('includes normalised org_slugs when provided', () => {
-    expect(toConnectBody(draft({ orgSlugs: 'Sensei-HQ, acme, acme' }))).toEqual({
-      membership_id: VALID_UUID,
-      tenant_key: 'github/acme',
-      kind: 'employer',
-      credential: 'tok_123',
-      org_slugs: ['sensei-hq', 'acme'],
-    });
-  });
-  it('omits org_slugs when the input parses to nothing', () => {
-    const body = toConnectBody(draft({ orgSlugs: '  ,  ' }));
-    expect(body.org_slugs).toBeUndefined();
-  });
-});
-
-// Hand-rolled mock api — only `connectDojo` is exercised by the form; cast to
-// SenseiApi since the state touches nothing else.
-function mockApi(overrides: Partial<SenseiApi> = {}): SenseiApi {
-  return {
-    connectDojo: vi.fn().mockResolvedValue({ ok: true, data: { id: VALID_UUID } }),
-    ...overrides,
-  } as unknown as SenseiApi;
-}
-
-describe('ConnectForm', () => {
-  it('validationError reflects the current fields; canSubmit tracks it', () => {
-    const form = new ConnectForm();
-    expect(form.validationError).toBe('membership id required');
-    expect(form.canSubmit).toBe(false);
-
-    form.membershipId = VALID_UUID;
-    form.tenantKey = 'github/acme';
-    form.deviceToken = 'tok';
-    expect(form.validationError).toBeNull();
-    expect(form.canSubmit).toBe(true);
-  });
-
-  it('submit() with an invalid draft sets error and never calls connectDojo', async () => {
-    const connectDojo = vi.fn();
-    const form = new ConnectForm();
-    form.membershipId = 'nope';
-    const ok = await form.submit(mockApi({ connectDojo }));
-    expect(ok).toBe(false);
-    expect(form.error).toBe('membership id must be the service membership uuid');
-    expect(connectDojo).not.toHaveBeenCalled();
-  });
-
-  it('parsedOrgSlugs normalises the raw input from the form field', () => {
-    const form = new ConnectForm();
-    form.orgSlugs = 'Sensei-HQ, acme  acme';
-    expect(form.parsedOrgSlugs).toEqual(['sensei-hq', 'acme']);
-  });
-
-  it('submit() posts the built body, resets and closes on success', async () => {
-    const connectDojo = vi.fn().mockResolvedValue({ ok: true, data: { id: VALID_UUID } });
-    const form = new ConnectForm();
-    form.open = true;
-    form.membershipId = VALID_UUID;
-    form.tenantKey = 'github/acme';
-    form.deviceToken = 'tok_123';
-    form.kind = 'client';
-    form.orgSlugs = 'acme, globex';
-
-    const ok = await form.submit(mockApi({ connectDojo }));
-    expect(ok).toBe(true);
-    expect(connectDojo).toHaveBeenCalledWith({
-      membership_id: VALID_UUID,
-      tenant_key: 'github/acme',
-      kind: 'client',
-      credential: 'tok_123',
-      org_slugs: ['acme', 'globex'],
-    });
-    expect(form.membershipId).toBe('');
-    expect(form.deviceToken).toBe('');
-    expect(form.orgSlugs).toBe('');
-    expect(form.open).toBe(false);
-    expect(form.error).toBeNull();
-  });
-
-  it('submit() keeps the fields and surfaces the wire error on failure', async () => {
-    const connectDojo = vi
-      .fn()
-      .mockResolvedValue({ ok: false, error: { status: 400, message: 'bad membership_id' } });
-    const form = new ConnectForm();
-    form.membershipId = VALID_UUID;
-    form.tenantKey = 'github/acme';
-    form.deviceToken = 'tok_123';
-
-    const ok = await form.submit(mockApi({ connectDojo }));
-    expect(ok).toBe(false);
-    expect(form.error).toBe('bad membership_id');
-    expect(form.membershipId).toBe(VALID_UUID);
-    expect(form.submitting).toBe(false);
   });
 });
