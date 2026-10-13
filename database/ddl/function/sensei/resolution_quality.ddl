@@ -25,12 +25,14 @@ drop function if exists resolution_quality(uuid) cascade;
 create or replace function resolution_quality(p_project_id uuid)
 returns table (
   language       text
+, package        text
 , edge_kind      text
 , outcome        text
 , code           text
 , code_kind      text
 , edges          bigint
 , pct_of_lang_kind numeric
+, pct_of_package_kind numeric
 )
 language sql
 stable
@@ -40,6 +42,9 @@ set search_path = sensei, extensions
 as $fn$
   with e as (
     select coalesce(sn.language, '(unknown)') as language
+         -- The crate or the app: segment 2 of the source's fqn, the same
+         -- decomposition `structure_graph` draws packages by.
+         , coalesce(nullif(split_part(sn.fqn, '·', 2), ''), '(unknown)') as package
          , ed.kind::text                      as edge_kind
          , ed.resolved_via
          , ed.unresolved_reason
@@ -56,6 +61,7 @@ as $fn$
      where fp.project_id = p_project_id
   )
   select e.language
+       , e.package
        , e.edge_kind
        -- THREE outcomes, never two. An edge with neither verdict was not
        -- attempted, and folding it into "missed" reports a resolver that tried
@@ -76,12 +82,16 @@ as $fn$
        , round(100.0 * count(*)
                / sum(count(*)) over (partition by e.language, e.edge_kind), 2)
                                                          as pct_of_lang_kind
+       -- The (package, kind) cell: which crate or app holds the misses.
+       , round(100.0 * count(*)
+               / sum(count(*)) over (partition by e.language, e.package, e.edge_kind), 2)
+                                                         as pct_of_package_kind
     from e
     left join sensei.reason_codes rc
       on rc.code = coalesce(e.resolved_via, e.unresolved_reason)
      and rc.domain = case when e.resolved_via is not null
                           then 'code_graph_rung' else 'code_graph' end
-   group by e.language, e.edge_kind, e.resolved_via, e.unresolved_reason, rc.kind
+   group by e.language, e.package, e.edge_kind, e.resolved_via, e.unresolved_reason, rc.kind
 $fn$;
 
 comment on function resolution_quality(uuid) is
