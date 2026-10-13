@@ -138,27 +138,35 @@ impl CompilerIndex {
         name: &str,
         lines: &[&str],
     ) -> Option<&'a str> {
-        match self.answer_in(path, span, name, lines) {
+        match self.answer_in(path, span, name, lines, &[]) {
             Answer::Symbol(symbol) => Some(symbol),
             Answer::Local | Answer::Nothing => None,
         }
     }
 
-    /// What the compiler resolved for `name` inside `span`: the LAST matching
-    /// occurrence, project symbol or local alike, by position.
+    /// What the compiler resolved for the callee `name` of the call at `span`:
+    /// the FIRST occurrence so spelled within the span — a callee precedes its
+    /// arguments — that does not lie in one of the `nested` calls' spans (the
+    /// calls inside this one's arguments, and the inner calls of a chain, own
+    /// their occurrences). Project symbol or local alike.
     pub fn answer_in<'a>(
         &'a self,
         path: &str,
         span: &Span,
         name: &str,
         lines: &[&str],
+        nested: &[Span],
     ) -> Answer<'a> {
-        let named = |o: &&Occurrence| within(o, span) && text_of(o, lines) == Some(name);
-        let symbol = self.by_file.get(path).and_then(|v| v.iter().rfind(named));
-        let local = self.locals.get(path).and_then(|v| v.iter().rfind(named));
+        let named = |o: &&Occurrence| {
+            within(o, span)
+                && !nested.iter().any(|inner| within(o, inner))
+                && text_of(o, lines) == Some(name)
+        };
+        let symbol = self.by_file.get(path).and_then(|v| v.iter().find(named));
+        let local = self.locals.get(path).and_then(|v| v.iter().find(named));
         let at = |o: &Occurrence| (o.line, o.start_col);
         match (symbol, local) {
-            (Some(s), Some(l)) if at(l) > at(s) => Answer::Local,
+            (Some(s), Some(l)) if at(l) < at(s) => Answer::Local,
             (Some(s), _) => Answer::Symbol(s.symbol.as_str()),
             (None, Some(_)) => Answer::Local,
             (None, None) => Answer::Nothing,
@@ -307,16 +315,22 @@ pub fn place_calls(
     answers: Option<&FileAnswers<'_>>,
     targets: &dyn Targets,
 ) -> Vec<Reference> {
+    let calls: Vec<Span> = references.iter().filter(|r| is_call(r)).map(|r| r.at).collect();
     references
         .into_iter()
         .filter_map(|reference| {
             // What persistence writes as a `calls` edge: a call and a macro
             // invocation. The other kinds are `references` and `imports`.
-            if !matches!(reference.kind, RefKind::Calls | RefKind::MacroInvokes) {
+            if !is_call(&reference) {
                 return Some(reference);
             }
             let evidence = evidence_of(&reference);
-            let target = match place_one(&reference.at, &evidence.name, answers, targets) {
+            let nested: Vec<Span> = calls
+                .iter()
+                .filter(|c| **c != reference.at && encloses(&reference.at, c))
+                .copied()
+                .collect();
+            let target = match place_one(&reference.at, &nested, &evidence.name, answers, targets) {
                 Placement::Target(fqn) => {
                     Resolution::Resolved { fqn, via: Rung::ResolvedByCompiler }
                 }
@@ -343,8 +357,20 @@ fn spelled(name: &str) -> &str {
     last.trim_end_matches('!')
 }
 
+/// What persistence writes as a `calls` edge: a call and a macro invocation.
+fn is_call(reference: &Reference) -> bool {
+    matches!(reference.kind, RefKind::Calls | RefKind::MacroInvokes)
+}
+
+/// Whether `inner` lies within `outer`.
+fn encloses(outer: &Span, inner: &Span) -> bool {
+    (outer.start_line, outer.start_col) <= (inner.start_line, inner.start_col)
+        && (inner.end_line, inner.end_col) <= (outer.end_line, outer.end_col)
+}
+
 fn place_one(
     at: &Span,
+    nested: &[Span],
     name: &str,
     answers: Option<&FileAnswers<'_>>,
     targets: &dyn Targets,
@@ -352,7 +378,7 @@ fn place_one(
     let Some(answers) = answers.filter(|a| a.index.covers(a.path)) else {
         return Placement::Miss(Reason::EngineNotRun);
     };
-    match answers.index.answer_in(answers.path, at, spelled(name), &answers.lines) {
+    match answers.index.answer_in(answers.path, at, spelled(name), &answers.lines, nested) {
         Answer::Symbol(symbol) => match targets.target(symbol) {
             Ok(fqn) => Placement::Target(fqn),
             Err(reason) => Placement::Miss(reason),
@@ -749,6 +775,109 @@ mod placement_tests {
         let placed =
             place_calls(vec![call(span(3, 4, 11), unplaced("edit"))], Some(&answers), &Engine);
         assert!(placed.is_empty(), "a call to a local leaves no edge, got {placed:?}");
+    }
+
+    /// An index of `text` in `src/main.rs`: each `(line0, start, end, symbol)`.
+    fn index_of(occurrences: &[(i32, i32, i32, &str)]) -> CompilerIndex {
+        let mut doc = scip::types::Document::new();
+        doc.relative_path = "src/main.rs".into();
+        doc.occurrences = occurrences
+            .iter()
+            .map(|(line, start, end, symbol)| {
+                let mut o = scip::types::Occurrence::new();
+                o.range = vec![*line, *start, *end];
+                o.symbol = (*symbol).into();
+                o
+            })
+            .collect();
+        let mut index = scip::types::Index::new();
+        index.documents = vec![doc];
+        CompilerIndex::from_index(&index)
+    }
+
+    /// **THE CALLEE IS THE CALL'S OWN NAME, NOT ITS ARGUMENT'S.** A call's span
+    /// covers its arguments, and the same name may appear there: as a value
+    /// (`items.filter(filter)`), or as a nested call (`bind(bind(1))`). The
+    /// last occurrence in the span was taken — the argument, a local, so the
+    /// call was dropped; the inner call, so the outer was placed on it.
+    #[test]
+    fn the_callee_is_the_calls_own_name_not_one_in_its_arguments() {
+        // A local passed to a method of the same name.
+        let text = "fn main() {\n    let bind = 1;\n    net.bind(bind);\n}";
+        let ix = index_of(&[(1, 8, 12, "local 1"), (2, 8, 12, BIND), (2, 13, 17, "local 1")]);
+        let answers = FileAnswers::new(&ix, "src/main.rs", text);
+        let placed =
+            place_calls(vec![call(span(3, 4, 18), unplaced("bind"))], Some(&answers), &Engine);
+        assert_eq!(
+            placed.iter().map(|r| r.target.clone()).collect::<Vec<_>>(),
+            vec![Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }],
+            "the argument is a local; the callee is not"
+        );
+
+        // A function of the same name passed as a value: a symbol too, and
+        // still not the callee.
+        let text = "fn main() {\n    net.bind(bind);\n}";
+        let ix = index_of(&[
+            (1, 8, 12, BIND),
+            (1, 13, 17, "rust-analyzer cargo demo 0.1 other/bind()."),
+        ]);
+        let answers = FileAnswers::new(&ix, "src/main.rs", text);
+        let placed =
+            place_calls(vec![call(span(2, 4, 18), unplaced("bind"))], Some(&answers), &Engine);
+        assert_eq!(
+            placed[0].target,
+            Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler },
+            "the value passed is not the callee"
+        );
+
+        // A call nested in the arguments of a call of the same name: each is
+        // placed on its own occurrence.
+        let text = "fn main() {\n    bind(unwrap(1));\n}";
+        let ix = index_of(&[(1, 4, 8, BIND), (1, 9, 15, UNWRAP)]);
+        let answers = FileAnswers::new(&ix, "src/main.rs", text);
+        let inner = call(span(2, 9, 18), unplaced("unwrap"));
+        let outer = call(span(2, 4, 19), unplaced("bind"));
+        let placed = place_calls(vec![outer, inner], Some(&answers), &Engine);
+        assert_eq!(
+            placed[0].target,
+            Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler }
+        );
+
+        let text = "fn main() {\n    bind(bind(1));\n}";
+        let ix =
+            index_of(&[(1, 4, 8, BIND), (1, 9, 13, "rust-analyzer cargo demo 0.1 net/other().")]);
+        let answers = FileAnswers::new(&ix, "src/main.rs", text);
+        let inner = call(span(2, 9, 16), unplaced("bind"));
+        let outer = call(span(2, 4, 17), unplaced("bind"));
+        let placed = place_calls(vec![outer, inner], Some(&answers), &Engine);
+        assert_eq!(
+            placed[0].target,
+            Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler },
+            "the outer call is its own first name, not the inner call's"
+        );
+        assert_eq!(
+            placed[1].target,
+            Resolution::Unresolved {
+                reason: Reason::SymbolUnnamed,
+                evidence: evidence_of(&call(span(2, 9, 16), unplaced("bind")))
+            },
+            "the inner call is the inner occurrence"
+        );
+
+        // A chain: the outer call's callee is the LAST name before its own
+        // arguments — the first belongs to the inner call.
+        let text = "fn main() {\n    a.bind(1).bind(2);\n}";
+        let ix =
+            index_of(&[(1, 6, 10, "rust-analyzer cargo demo 0.1 net/other()."), (1, 14, 18, BIND)]);
+        let answers = FileAnswers::new(&ix, "src/main.rs", text);
+        let inner = call(span(2, 4, 13), unplaced("bind"));
+        let outer = call(span(2, 4, 21), unplaced("bind"));
+        let placed = place_calls(vec![outer, inner], Some(&answers), &Engine);
+        assert_eq!(
+            placed[0].target,
+            Resolution::Resolved { fqn: item("bind"), via: Rung::ResolvedByCompiler },
+            "in a chain the outer call is the later name"
+        );
     }
 
     #[test]
