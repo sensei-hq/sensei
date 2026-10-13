@@ -145,18 +145,38 @@ async fn compile(engine: &'static dyn CompilerEngine, root: &Path) -> Result<Pro
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
-    let output = out_dir.join(format!("{name}.scip"));
     let root_str = root.to_string_lossy();
     let compiler = run(&engine.locate_compiler(&root_str), LOCATE_TIMEOUT).await?;
     let compiler = compiler.trim();
     if compiler.is_empty() {
         return Err("the compiler's binary could not be located".to_string());
     }
-    run(&engine.compile(compiler, &root_str, &output.to_string_lossy()), COMPILE_TIMEOUT).await?;
-    let bytes = tokio::fs::read(&output)
-        .await
-        .map_err(|e| format!("compiler wrote no index at {output:?}: {e}"))?;
-    let index = CompilerIndex::from_bytes(&bytes)?;
+    // One compile per configuration (per platform), merged: code gated to a
+    // platform is answered by that platform's compile.
+    let mut merged: Option<CompilerIndex> = None;
+    for (n, text) in engine.configs().iter().enumerate() {
+        let config = out_dir.join(format!("{name}.{n}.config.json"));
+        tokio::fs::write(&config, text)
+            .await
+            .map_err(|e| format!("cannot write the compiler's configuration {config:?}: {e}"))?;
+        let output = out_dir.join(format!("{name}.{n}.scip"));
+        let invocation = engine.compile(
+            compiler,
+            &root_str,
+            &output.to_string_lossy(),
+            &config.to_string_lossy(),
+        );
+        run(&invocation, COMPILE_TIMEOUT).await?;
+        let bytes = tokio::fs::read(&output)
+            .await
+            .map_err(|e| format!("compiler wrote no index at {output:?}: {e}"))?;
+        let index = CompilerIndex::from_bytes(&bytes)?;
+        match merged.as_mut() {
+            Some(all) => all.merge(index),
+            None => merged = Some(index),
+        }
+    }
+    let index = merged.ok_or_else(|| "the engine declares no configuration".to_string())?;
     Ok(Project { root: root.to_path_buf(), index })
 }
 

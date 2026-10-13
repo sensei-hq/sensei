@@ -96,6 +96,32 @@ impl CompilerIndex {
         out
     }
 
+    /// Fold another compile of the SAME project into this one — another
+    /// platform's, which sees the code gated to it. A file's answers become the
+    /// union of both; an answer both runs gave is kept once.
+    pub fn merge(&mut self, other: CompilerIndex) {
+        fn union(
+            into: &mut HashMap<String, Vec<Occurrence>>,
+            from: HashMap<String, Vec<Occurrence>>,
+        ) {
+            for (path, occurrences) in from {
+                let mine = into.entry(path).or_default();
+                let seen: std::collections::HashSet<_> = mine
+                    .iter()
+                    .map(|o| (o.line, o.start_col, o.end_line, o.end_col, o.symbol.clone()))
+                    .collect();
+                mine.extend(occurrences.into_iter().filter(|o| {
+                    !seen.contains(&(o.line, o.start_col, o.end_line, o.end_col, o.symbol.clone()))
+                }));
+            }
+        }
+        union(&mut self.by_file, other.by_file);
+        union(&mut self.locals, other.locals);
+        for (symbol, definition) in other.definitions {
+            self.definitions.entry(symbol).or_insert(definition);
+        }
+    }
+
     /// Whether the compiler read this file at all — "no answer for the file" and
     /// "no symbol at this span" are different root causes.
     pub fn covers(&self, path: &str) -> bool {
@@ -175,9 +201,14 @@ pub trait CompilerEngine: Sync {
     /// The command that names the compiler's binary for a project — located,
     /// never assumed to be on `PATH` (toolchains install it in different places).
     fn locate_compiler(&self, project_root: &str) -> Invocation;
+    /// The compiler's configurations, as the text of the file each `compile` is
+    /// handed (the task layer writes it). One compile per configuration, the
+    /// answers merged — a configuration per platform, for code gated to one.
+    fn configs(&self) -> &'static [&'static str];
     /// The command that compiles a project into a SCIP index at `output`, with
-    /// the binary `locate_compiler` named.
-    fn compile(&self, compiler: &str, project_root: &str, output: &str) -> Invocation;
+    /// the binary `locate_compiler` named and the configuration at `config`.
+    fn compile(&self, compiler: &str, project_root: &str, output: &str, config: &str)
+    -> Invocation;
     /// The identity a resolved symbol names.
     fn target(
         &self,
@@ -471,6 +502,41 @@ mod tests {
         let ix = read();
         assert!(ix.covers("src/main.rs"));
         assert!(!ix.covers("src/never_compiled.rs"));
+    }
+
+    /// Each platform's compile sees the code gated to it; merged, a file's
+    /// answers are the union — code gated to Linux is answered by the Linux run.
+    #[test]
+    fn indexes_of_one_project_merge_into_every_answer_either_had() {
+        let mut host = read();
+        let mut other = scip::types::Index::new();
+        let mut linux = scip::types::Document::new();
+        linux.relative_path = "src/main.rs".into();
+        linux.occurrences =
+            vec![occ(vec![4, 4, 8], "rust-analyzer cargo demo 0.1 sys/linux_only().", 0)];
+        let mut gated = scip::types::Document::new();
+        gated.relative_path = "src/linux.rs".into();
+        gated.occurrences =
+            vec![occ(vec![0, 7, 17], "rust-analyzer cargo demo 0.1 sys/linux_only().", DEFINITION)];
+        other.documents = vec![linux, gated];
+        host.merge(CompilerIndex::from_index(&other));
+
+        let lines: Vec<&str> = MAIN.split('\n').collect();
+        let span = Span { start_line: 3, start_col: 15, end_line: 3, end_col: 45 };
+        assert_eq!(
+            host.symbol_in("src/main.rs", &span, "unwrap", &lines),
+            Some(UNWRAP),
+            "the host's answers stay"
+        );
+        assert!(host.covers("src/linux.rs"), "a file only the other platform compiled is covered");
+        assert!(host.definition_of("rust-analyzer cargo demo 0.1 sys/linux_only().").is_some());
+        let before = host.by_file["src/main.rs"].len();
+        host.merge(read());
+        assert_eq!(
+            host.by_file["src/main.rs"].len(),
+            before,
+            "an answer two runs share is kept once"
+        );
     }
 
     #[test]
