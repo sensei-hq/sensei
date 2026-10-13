@@ -64,10 +64,35 @@ impl CompilerEngine for RustEngine {
         }
     }
 
-    fn compile(&self, compiler: &str, project_root: &str, output: &str) -> Invocation {
+    /// Every Cargo feature on, once per platform: code behind a feature or a
+    /// `cfg(target_os)` is the repository's own source, and one default build
+    /// compiles it out. Analysing for a target needs only the std SOURCES
+    /// (rust-src), not that target's installed std.
+    fn configs(&self) -> &'static [&'static str] {
+        &[
+            r#"{"cargo": {"features": "all", "target": "aarch64-apple-darwin"}}"#,
+            r#"{"cargo": {"features": "all", "target": "x86_64-unknown-linux-gnu"}}"#,
+            r#"{"cargo": {"features": "all", "target": "x86_64-pc-windows-msvc"}}"#,
+        ]
+    }
+
+    fn compile(
+        &self,
+        compiler: &str,
+        project_root: &str,
+        output: &str,
+        config: &str,
+    ) -> Invocation {
         Invocation {
             program: compiler.to_string(),
-            args: vec!["scip".into(), project_root.into(), "--output".into(), output.into()],
+            args: vec![
+                "scip".into(),
+                project_root.into(),
+                "--output".into(),
+                output.into(),
+                "--config-path".into(),
+                config.into(),
+            ],
             cwd: project_root.to_string(),
         }
     }
@@ -262,6 +287,24 @@ mod engine_tests {
         assert!(asked.0.lock().unwrap().is_empty(), "a library is named, never opened");
     }
 
+    /// Code behind a Cargo feature is compiled only when the feature is on, so
+    /// the compiler is run with EVERY feature: a call in feature-gated code is
+    /// still a call of the repository's own source.
+    #[test]
+    fn the_compiler_sees_every_feature_on_every_platform() {
+        let mut targets = Vec::new();
+        for config in RUST_ENGINE.configs() {
+            let config: serde_json::Value = serde_json::from_str(config).expect("JSON");
+            assert_eq!(config["cargo"]["features"], "all");
+            targets.push(config["cargo"]["target"].as_str().unwrap_or_default().to_string());
+        }
+        // Code gated to a platform is compiled only for it, so each platform the
+        // repository's own source targets is compiled and the answers merged.
+        for os in ["linux", "windows", "apple-darwin"] {
+            assert!(targets.iter().any(|t| t.contains(os)), "no compile for {os}: {targets:?}");
+        }
+    }
+
     #[test]
     fn the_engine_runs_rust_analyzer_over_the_cargo_workspace() {
         assert_eq!(RUST_ENGINE.manifest(), "Cargo.toml");
@@ -277,8 +320,12 @@ mod engine_tests {
         assert_eq!(which.program, "rustup");
         assert_eq!(which.args, ["which", "rust-analyzer"]);
         assert_eq!(which.cwd, "/repo");
-        let run = RUST_ENGINE.compile("/opt/ra/rust-analyzer", "/repo", "/tmp/out.scip");
+        let run =
+            RUST_ENGINE.compile("/opt/ra/rust-analyzer", "/repo", "/tmp/out.scip", "/tmp/ra.json");
         assert_eq!(run.program, "/opt/ra/rust-analyzer");
-        assert_eq!(run.args, ["scip", "/repo", "--output", "/tmp/out.scip"]);
+        assert_eq!(
+            run.args,
+            ["scip", "/repo", "--output", "/tmp/out.scip", "--config-path", "/tmp/ra.json"]
+        );
     }
 }

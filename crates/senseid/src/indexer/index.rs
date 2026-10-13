@@ -598,13 +598,18 @@ pub fn index_file(input: FileInput<'_>) -> FileIndex {
         // repo-wide table (S5). The LADDER may, because that is its job and the
         // world is handed to it rather than fetched.
         Ok(facts) => {
-            let mut placed = super::resolve::resolve(facts, adapter.grammar(), world);
-            // THE COMPILER STEP, for a language that has one: every call placed
-            // by what its compiler resolved (or named as not run).
+            // THE COMPILER STEP, for a language that has one, BEFORE the ladder:
+            // every call placed by what its compiler resolved (or named as not
+            // run). Before, because the walk's raw call site carries the name
+            // the SOURCE spells — `open()` through `use … bind as open` — and
+            // the ladder would replace it with an identity named for the
+            // declaration, which the compiler's occurrence does not spell.
+            let mut facts = facts;
             if let Some(engine) = adapter.compiler() {
-                let references = std::mem::take(&mut placed.references);
-                placed.references = lang::compiler::place_with(engine, compiled, references, text);
+                let references = std::mem::take(&mut facts.references);
+                facts.references = lang::compiler::place_with(engine, compiled, references, text);
             }
+            let placed = super::resolve::resolve(facts, adapter.grammar(), world);
             stamp(language, Indexed::Read(placed))
         }
         Err(rejected) => {
@@ -674,6 +679,89 @@ mod tests {
     ///
     /// The mutation that must break it: return `Empty::Deleted` from the
     /// unclaimed arm.
+    /// **THE COMPILER PLACES A CALL BY THE NAME THE SOURCE SPELLS.** A call
+    /// through a renamed import (`use crate::net::bind as open;` then
+    /// `open()`) is placed on the declaration the compiler resolves — so the
+    /// compiler step must see the walk's raw call site, whose evidence carries
+    /// the SPELLED name, before the ladder replaces it with an identity named
+    /// for the declaration.
+    #[test]
+    fn a_call_through_a_renamed_import_is_placed_by_its_spelled_name() {
+        use crate::indexer::facts::{Reason, Resolution, Rung};
+        use crate::indexer::lang::compiler::{Compiled, CompilerIndex, Declarations};
+
+        const BIND: &str = "rust-analyzer cargo p 0.1 net/bind().";
+        let text = "use crate::net::bind as open;\npub fn go() {\n    open();\n}\n";
+        let mut doc = scip::types::Document::new();
+        doc.relative_path = "src/main.rs".into();
+        let mut used = scip::types::Occurrence::new();
+        used.range = vec![2, 4, 8];
+        used.symbol = BIND.into();
+        doc.occurrences = vec![used];
+        let mut decl = scip::types::Document::new();
+        decl.relative_path = "src/net.rs".into();
+        let mut def = scip::types::Occurrence::new();
+        def.range = vec![0, 7, 11];
+        def.symbol = BIND.into();
+        def.symbol_roles = 1;
+        decl.occurrences = vec![def];
+        let mut ix = scip::types::Index::new();
+        ix.documents = vec![doc, decl];
+        let index = CompilerIndex::from_index(&ix);
+
+        struct Net;
+        impl Declarations for Net {
+            fn declared_at(
+                &self,
+                path: &str,
+                line: u32,
+                name: &str,
+            ) -> Result<crate::indexer::facts::Fqn, Reason> {
+                assert_eq!((path, line, name), ("src/net.rs", 1, "bind"));
+                crate::indexer::fqn::refer(&crate::indexer::fqn::Form::Item {
+                    lang: Language::Rust,
+                    package: "p",
+                    module: "net",
+                    name: "bind",
+                    reach: crate::indexer::fqn::Reach::Item,
+                })
+                .map_err(|_| Reason::SymbolUnnamed)
+            }
+        }
+        let told = Told::of("p");
+        let compiled = Compiled { index: &index, path: "src/main.rs", declarations: &Net };
+        let out = index_file(FileInput {
+            repo: "/w/p",
+            path: "src/main.rs",
+            mode: Mode::New,
+            package: "p",
+            module: "",
+            text,
+            world: &told.world(),
+            compiled: Some(&compiled),
+        });
+        let facts = out.facts().expect("read");
+        let call = facts
+            .references
+            .iter()
+            .find(|r| r.kind == RefKind::Calls)
+            .expect("the call to open() is a call");
+        assert_eq!(
+            call.target,
+            Resolution::Resolved {
+                fqn: crate::indexer::fqn::refer(&crate::indexer::fqn::Form::Item {
+                    lang: Language::Rust,
+                    package: "p",
+                    module: "net",
+                    name: "bind",
+                    reach: crate::indexer::fqn::Reach::Item,
+                })
+                .unwrap(),
+                via: Rung::ResolvedByCompiler
+            }
+        );
+    }
+
     #[test]
     fn an_unclaimed_extension_yields_empty_with_a_reason() {
         let told = Told::of("p");
