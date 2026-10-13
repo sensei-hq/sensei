@@ -30,9 +30,9 @@ docs/skills/site sync, then `make bump`), #236 4e, then #225, #239–241, #245,
 
 **Open questions:** none.
 
-**Known broken:** live DB guarded at v1 by dbd, so DDL and reason rows are
-hand-applied (`untyped_receiver`; `scan_skip_reason` += vendored, generated;
-`resolution_quality` package column) — live + `sensei_test`. `dbd import` fails
-on `model_capability.decision` (pre-existing). Untracked files from another
+**Known broken:** none in the schema — the live DB was reconciled to the DDL
+tree with `dbd reconcile` and the import files loaded with `dbd import` (the
+project is pre-release, so reconcile is the path; earlier hand-applied DDL and
+reason rows are all in `database/`). Untracked files from another
 session (`src/`, `docs/components/`, `docs/rune-usage.md`, `svelte5-runes-*.md`)
 are not touched.
