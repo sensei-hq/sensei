@@ -49,7 +49,7 @@ pub use process::{
 };
 pub use publish_run::publish_run;
 pub use publish_segments::publish_relay_segments;
-pub use repo_scan::{process_git_folder, process_manifest, process_repo_files};
+pub use repo_scan::{compile_projects, process_git_folder, process_manifest, process_repo_files};
 pub use scan::{branch_switch, scan_root};
 pub use tool_insights::aggregate_tool_insights;
 pub use verdicts::measure_verdicts;

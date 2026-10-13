@@ -21,6 +21,7 @@
 // This module has no caller on purpose — see the note in `indexer/mod.rs`.
 #![allow(dead_code)]
 
+pub mod compiler;
 pub mod receiver;
 mod types;
 mod walk;
@@ -39,6 +40,10 @@ use crate::indexer::resolve::{Grammar, Root};
 pub struct RustAdapter;
 
 impl LanguageAdapter for RustAdapter {
+    fn compiler(&self) -> Option<&'static dyn super::compiler::CompilerEngine> {
+        Some(&compiler::RUST_ENGINE)
+    }
+
     /// `use a::b::C` is two readings and the importing file states neither: the
     /// last segment may be a MODULE or an ITEM inside the one before it.
     /// `specifier_names_a_module` refuses to guess, so the walk emits no

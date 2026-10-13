@@ -9,7 +9,7 @@ kind: functional
 > The implementation / design name for this feature is **dōjō** — a shared
 > control plane for a team or organization.
 
-> **Status of record → [`coverage-map.md`](coverage-map.md).** This doc's status
+> **Status of record → [`history/features/coverage-map.md`](../history/features/coverage-map.md).** This doc's status
 > table predates the 2026-07-24/25 governance build wave — rule packs (+ ponytail),
 > tier-aware injection (D-INJECT), stance + autonomy gate, the constitution
 > endpoint, and Tier-3 billing all shipped since. See the coverage map for the

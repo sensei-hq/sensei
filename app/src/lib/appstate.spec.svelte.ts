@@ -214,14 +214,14 @@ describe('AppState', () => {
 
   it('dismissSuggestion adds to list', async () => {
     await state.dismissSuggestion('tip-1');
-    const dismissed = JSON.parse(state.config['dismissed_suggestions']);
+    const dismissed: string[] = JSON.parse(state.config['dismissed_suggestions']);
     expect(dismissed).toContain('tip-1');
   });
 
   it('dismissSuggestion does not duplicate', async () => {
     state.config = { dismissed_suggestions: '["tip-1"]' };
     await state.dismissSuggestion('tip-1');
-    const dismissed = JSON.parse(state.config['dismissed_suggestions']);
+    const dismissed: string[] = JSON.parse(state.config['dismissed_suggestions']);
     expect(dismissed.filter((d: string) => d === 'tip-1').length).toBe(1);
   });
 

@@ -37,3 +37,6 @@ docs/spec/baseline/
 
 # Build output for the detached analysis tool (its own workspace).
 tools/session-report/target/
+
+# The TypeScript driver package: its dependencies give the driver its types.
+crates/senseid/ts-driver/node_modules/

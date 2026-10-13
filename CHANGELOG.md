@@ -15,6 +15,78 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-10-13
+
+**Every call and reference is placed by its language's compiler.** The indexer
+now resolves Rust through rust-analyzer and TypeScript, JavaScript and Svelte
+through the project's own TypeScript checker, instead of reading names off the
+source text. On this repository calls went from 44% placed to 100% (Rust),
+99.96% (TS/JS) and 99.94% (Svelte); references to 99.92%, 99.33% and 99.55%.
+Every remaining miss carries its root cause. See
+`docs/reports/2026-10-13-placement.md`.
+
+### Added
+
+- **Compiler engines in the language adapters** — rust-analyzer (`scip`, all
+  features, three target platforms merged) and an embedded TypeScript/Svelte
+  driver (`crates/senseid/ts-driver`) that uses the project's own `typescript`,
+  runs the project's `svelte-kit sync`, and maps Svelte components through
+  svelte2tsx. A repository's projects compile once per state of their sources,
+  in a `compile_projects` task the file tasks wait on.
+- **New reason codes**, persisted on every edge and visible in
+  `sensei.graph_placement`: `resolved_by_compiler` (rung), `engine_not_run`,
+  `compiler_no_symbol`, `symbol_unnamed`, `declaration_not_found`,
+  `untyped_receiver`.
+- **Indexing engines are installed and checked by bootstrap.** `sensei doctor`
+  reports them (`--fix` installs what is missing) and the daemon installs
+  missing ones at boot: `rust-analyzer` + `rust-src` via rustup, the driver's
+  npm packages into `~/.sensei/engines`.
+- **Only code the repository owns is indexed** — files `.gitattributes` marks
+  `linguist-vendored` / `linguist-generated`, or whose head says `@generated`,
+  are recorded with skip reason `vendored` / `generated` and shed their nodes.
+- **The placement floor** (`indexer::quality::placement`, nightly workflow):
+  no language, package or edge kind may fall below 90%.
+- `sensei.resolution_quality` decomposes placement by package (crate or app).
+- **Diagrams**: World (#219), Neighbourhood (#220), Layers and Cycles (#222,
+  #232), Zones (#223), Schema/ER from the schema store (#221, #251) — with a
+  coverage line on each.
+- **Schema store** — `schema_entities/_columns/_indexes/_refs`, filled from dbd
+  designs and EF Core mappings (#251).
+- **dōjō access as the person** (#236): every console read and write and every
+  daemon call (runs, projects, artifacts, rules, metrics) runs as the signed-in
+  person under row-level security; `GET /v1/you/memberships`; personas claim
+  the memberships the dōjō lists under them.
+- Reading an assistant's conversation history is its own consent, off by
+  default (#218). Removing a scan root asks keep-or-remove (#247).
+
+### Changed
+
+- **R5 is now "externals are named, never walked"**: a compiler may read a
+  dependency's declarations to resolve a call; nothing of it becomes a node.
+  A use of a local, a parameter, an anonymous function or a value's member is
+  no edge at all.
+- Twenty-five metric queries and the last positional writers moved into the
+  persistence layer as typed rows (#161, #227). Diagram payloads are cached
+  against the project's graph version (#233).
+- Installs no longer take a full `pg_dump` first; two essential-backup
+  snapshots are kept, not five.
+- gateway v0.5.1 → v0.7.0; `decision` routes to `Capability::Decision` (#202).
+
+### Fixed
+
+- A file edited during a scan is no longer placed against a stale compile and
+  marked parsed; it waits for a fresh compile.
+- A call is placed on its own callee, not on a same-named argument
+  (`items.filter(filter)` was silently dropped).
+- A tool's linked worktree under a repository's dot-directory is no longer
+  indexed as a second copy of the repository.
+- Capture: a failed tool call (`PostToolUseFailure`) is recorded, and each tool
+  call is paired with its own response (#238).
+- `git_history` drops stored tips the repository no longer has (#253).
+- An isolated daemon instance never writes the user's `~/.claude/CLAUDE.md`
+  (#248). Relay data is its owner's alone (#249).
+
+
 ## [0.11.0] — 2026-09-28
 
 **The repository was rebuilt.** `sensei-hq/sensei` is a new repository as of this

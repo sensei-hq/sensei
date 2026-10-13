@@ -1,4 +1,5 @@
 pub mod community;
+pub mod compiler_session;
 pub mod cross_repo;
 pub mod doc_indexer;
 pub mod index;

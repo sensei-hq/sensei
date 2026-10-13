@@ -22,7 +22,7 @@
  * a real user has after passing the health screen once in the same session.
  */
 
-import { test, expect } from '../fixtures';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateTo, navigateToScreen, DAEMON_URL } from '../helpers';
 import { execFileSync } from 'child_process';
 import { mkdirSync, writeFileSync, existsSync } from 'fs';
@@ -57,7 +57,7 @@ function createRealCorpus(): void {
 
 // ── Navigation helpers ────────────────────────────────────────────────────────
 
-async function bodyText(tauriPage: any): Promise<string> {
+async function bodyText(tauriPage: TauriPageLike): Promise<string> {
   return (await tauriPage.evaluate(`document.body.textContent ?? ''`)) as string;
 }
 
@@ -68,7 +68,7 @@ async function bodyText(tauriPage: any): Promise<string> {
 // bounces to / and the rail never mounts.
 const WELCOME = '/setup/welcome?force=1';
 
-async function startAtWelcome(tauriPage: any): Promise<void> {
+async function startAtWelcome(tauriPage: TauriPageLike): Promise<void> {
   // /logs is ALWAYS_REACHABLE — visiting it unmounts the (config) layout so the
   // next navigation remounts fresh (onMount → loadWizardData with the reset
   // daemon).
@@ -80,7 +80,7 @@ async function startAtWelcome(tauriPage: any): Promise<void> {
 }
 
 async function clickAndExpectNav(
-  tauriPage: any,
+  tauriPage: TauriPageLike,
   selector: string,
   expectedPath: string,
   timeout = 10_000,
@@ -112,7 +112,7 @@ async function clickAndExpectNav(
 }
 
 /** Clear any roots accumulated from previous runs (idempotent). */
-async function clearRoots(tauriPage: any): Promise<void> {
+async function clearRoots(tauriPage: TauriPageLike): Promise<void> {
   const removes = tauriPage.locator('[data-testid="root-remove"]');
   // Remove one at a time, waiting for EACH removal (api + state update) to land
   // before the next click — clicking all at once races the async removals and
@@ -125,7 +125,7 @@ async function clearRoots(tauriPage: any): Promise<void> {
 
 /** Drive the wizard from welcome to the scan page with the given corpus path.
  *  The scan stage auto-starts on mount, so no "Begin scan" click is needed. */
-async function driveToScan(tauriPage: any, corpusPath: string): Promise<void> {
+async function driveToScan(tauriPage: TauriPageLike, corpusPath: string): Promise<void> {
   await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/assistants');
   await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/roots');
   await tauriPage.locator('.folder-input').fill(corpusPath);

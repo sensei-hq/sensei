@@ -35,7 +35,7 @@
  * worse than one that skips.
  */
 
-import { test, expect } from '../fixtures';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateToScreen, DAEMON_URL } from '../helpers';
 
 interface SyncResponse {
@@ -57,7 +57,7 @@ async function live<T>(path: string): Promise<T> {
 
 /** Past the health and setup gates. Setup completion is DAEMON state, not just a
  *  localStorage flag — see settings-metrics.spec.ts. */
-async function seedSetupComplete(tauriPage: any): Promise<void> {
+async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void> {
   await fetch(`${DAEMON_URL}/api/config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

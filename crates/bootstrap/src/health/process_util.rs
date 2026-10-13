@@ -7,11 +7,10 @@
 //! deadline: if the child has not exited by then it is killed and the caller
 //! sees a `TimedOut` outcome distinct from spawn failure.
 //!
-//! Implementation note: stdout/stderr are captured via piped descriptors
-//! and drained after the child exits. The pipe buffer (~16KB on macOS) is
-//! larger than any checker we currently invoke, so we do not need
-//! concurrent draining. Callers that expect large output should not use
-//! this helper.
+//! Implementation note: stdout/stderr are captured via piped descriptors,
+//! each drained by its own thread while the child runs, so a child that
+//! writes more than a pipe holds (an `npm install`, a `rustup component add`)
+//! never stalls waiting for a reader.
 use std::io::Read;
 use std::process::{Command, Output, Stdio};
 use std::thread;
@@ -36,20 +35,17 @@ pub fn output_with_timeout(mut cmd: Command, timeout: Duration) -> TimedOutcome 
         Err(e) => return TimedOutcome::Failed(e),
     };
 
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+
     let deadline = Instant::now() + timeout;
     let poll = Duration::from_millis(50);
 
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
-                let mut stdout = Vec::new();
-                let mut stderr = Vec::new();
-                if let Some(mut s) = child.stdout.take() {
-                    let _ = s.read_to_end(&mut stdout);
-                }
-                if let Some(mut s) = child.stderr.take() {
-                    let _ = s.read_to_end(&mut stderr);
-                }
+                let stdout = stdout.join().unwrap_or_default();
+                let stderr = stderr.join().unwrap_or_default();
                 return TimedOutcome::Done(Output { status, stdout, stderr });
             }
             Ok(None) => {
@@ -63,6 +59,17 @@ pub fn output_with_timeout(mut cmd: Command, timeout: Duration) -> TimedOutcome 
             Err(e) => return TimedOutcome::Failed(e),
         }
     }
+}
+
+/// Read `pipe` to its end on a thread of its own; the handle yields the bytes.
+fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> thread::JoinHandle<Vec<u8>> {
+    thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut p) = pipe {
+            let _ = p.read_to_end(&mut bytes);
+        }
+        bytes
+    })
 }
 
 /// Default wall-clock budget for a single health checker invocation.
@@ -104,6 +111,23 @@ mod tests {
             "expected to return near the 200ms timeout, took {:?}",
             elapsed,
         );
+    }
+
+    /// A child writing more than a pipe holds must not stall waiting for a
+    /// reader: `npm install` and `rustup component add` both can.
+    #[test]
+    fn output_larger_than_a_pipe_buffer_is_read_in_full() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "head -c 200000 /dev/zero; head -c 100000 /dev/zero >&2"]);
+        match output_with_timeout(cmd, Duration::from_secs(5)) {
+            TimedOutcome::Done(out) => {
+                assert!(out.status.success());
+                assert_eq!(out.stdout.len(), 200_000);
+                assert_eq!(out.stderr.len(), 100_000);
+            }
+            TimedOutcome::TimedOut => panic!("stalled on a full pipe"),
+            TimedOutcome::Failed(e) => panic!("failed: {e}"),
+        }
     }
 
     #[test]

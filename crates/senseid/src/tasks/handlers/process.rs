@@ -466,6 +466,83 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 std::sync::Arc::new(crate::indexer::pipeline::TellFile::about(&placement.package))
             }
         };
+        // THE COMPILER, for a language whose adapter declares one: this file's
+        // project compiled once per scan (the first file to ask waits for it,
+        // the rest share it). A failure is logged with its cause and the file's
+        // calls then say `engine_not_run` — never the walk's answer standing in.
+        let engine = crate::indexer::lang::adapter_for_ext(
+            &fpath.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default(),
+        )
+        .and_then(|a| a.compiler());
+        let sessions = crate::indexer::compiler_session::CompilerSessions::shared(fid, repo_root)?;
+        let project = match engine {
+            Some(engine) => {
+                match crate::indexer::pipeline::owning_manifest_on_disk(fpath, repo_root, language)
+                {
+                    Some((package_dir, _)) => {
+                        match sessions.compiled_for(engine, &package_dir).await {
+                            Ok(project) => Some(project),
+                            Err(e) => {
+                                tracing::warn!(file = %rel, error = %e,
+                                "compiler not run for this file's project — its calls are engine_not_run");
+                                None
+                            }
+                        }
+                    }
+                    None => None,
+                }
+            }
+            None => None,
+        };
+        // A compile describes the sources it saw. A file placed against one
+        // whose project has moved on would be placed against positions and
+        // declarations that are gone — and marked parsed, so nothing revisits
+        // it. Such a file writes nothing and waits for a fresh compile.
+        if let (Some(engine), Some(compiled)) = (engine, &project) {
+            match sessions.is_current(engine, compiled).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    tracing::info!(file = %rel,
+                        "its project changed since it was compiled — queued again behind a fresh compile");
+                    let compile = ctx
+                        .queue
+                        .enqueue_covered(crate::tasks::Task::new(
+                            crate::tasks::TaskKind::CompileProjects,
+                            &task.folder_path,
+                            "",
+                        ))
+                        .await;
+                    ctx.queue
+                        .enqueue(
+                            crate::tasks::Task::for_file(
+                                crate::tasks::TaskKind::ProcessFile,
+                                &task.folder_path,
+                                &task.path,
+                            )
+                            .forced(task.force)
+                            .blocked_by(vec![compile]),
+                        )
+                        .await;
+                    return Ok(0);
+                }
+                Err(e) => tracing::warn!(file = %rel, error = %e,
+                    "could not tell whether this file's compile is current — placing with it"),
+            }
+        }
+        let canonical_file = crate::indexer::compiler_session::canonical(fpath);
+        let path_in_project = project
+            .as_ref()
+            .and_then(|p| canonical_file.strip_prefix(&p.root).ok())
+            .map(|p| p.to_string_lossy().into_owned());
+        let declarations = project.as_ref().map(|p| sessions.declarations(p));
+        let compiled = match (&project, &path_in_project, &declarations) {
+            (Some(p), Some(path), Some(d)) => Some(crate::indexer::lang::compiler::Compiled {
+                index: &p.index,
+                path,
+                declarations: d,
+            }),
+            _ => None,
+        };
         let written = crate::indexer::pipeline::index_and_persist(
             ctx.pg(),
             fid,
@@ -477,6 +554,7 @@ pub async fn process_file(ctx: &TaskContext, task: &Task) -> Result<u32, String>
                 module: &placement.module,
                 text: &text,
                 world: &told.world(),
+                compiled: compiled.as_ref(),
             },
         )
         .await?;
@@ -1426,6 +1504,9 @@ mod tests {
             .ok_or_else(|| format!("processed: the folder at {repo_path} carries no id"))?;
         let rel = abs.strip_prefix(repo_path).map(|r| r.trim_start_matches('/')).unwrap_or(abs);
         ctx.pg().seed_only_file(&folder_id, rel).await?;
+        // As the gate orders it: the repository's compile, then the file.
+        super::super::compile_projects(ctx, &Task::new(TaskKind::CompileProjects, repo_path, ""))
+            .await?;
         process_file(ctx, &Task::for_file(TaskKind::ProcessFile, repo_path, abs)).await
     }
 
@@ -1623,6 +1704,69 @@ mod tests {
         ctx.pg().remove_watch_root(&root_id).await.ok();
     }
 
+    /// **A FILE IS NEVER PLACED AGAINST A COMPILE OF SOURCES THAT MOVED ON.**
+    /// Edited after its project was compiled, a file was placed against the old
+    /// answers and marked parsed — wrong verdicts nothing would revisit. It now
+    /// writes nothing and goes back in the queue behind a fresh compile.
+    ///
+    /// Mutation that must break this: drop the `is_current` check.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
+    async fn a_file_edited_after_its_compile_waits_for_a_fresh_one() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
+        let ctx = make_ctx().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("moved");
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"moved\"\n[workspace]\n")
+            .unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub fn a() {}\npub fn b() { a(); }\n").unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let rid = ctx
+            .pg()
+            .add_watch_root(&tmp.path().to_string_lossy(), "moved", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx.pg().upsert_repo_kind(&rid, "git", "moved", &repo_path).await.unwrap();
+        ctx.pg().update_folder_status(&fid, "indexing").await.unwrap();
+        ctx.pg().seed_only_file(&fid, "src/lib.rs").await.unwrap();
+        super::super::compile_projects(&ctx, &Task::new(TaskKind::CompileProjects, &repo_path, ""))
+            .await
+            .unwrap();
+
+        std::fs::write(
+            repo.join("src/lib.rs"),
+            "pub fn z() {}\npub fn a() {}\npub fn b() { a(); }\n",
+        )
+        .unwrap();
+        let abs = repo.join("src/lib.rs").to_string_lossy().to_string();
+        let wrote = process_file(&ctx, &Task::for_file(TaskKind::ProcessFile, &repo_path, &abs))
+            .await
+            .unwrap();
+        assert_eq!(wrote, 0, "nothing is written against a stale compile");
+        let (parsed,): (Option<chrono::DateTime<chrono::Utc>>,) = sqlx_core::query_as::query_as(
+            "SELECT parsed_at FROM sensei.files WHERE folder_id = $1 AND file_path = 'src/lib.rs'",
+        )
+        .bind(fid)
+        .fetch_one(ctx.pg().pool())
+        .await
+        .unwrap();
+        assert_eq!(parsed, None, "the file is not marked parsed");
+        let queued = ctx.queue.snapshot_tasks().await;
+        let compile = queued
+            .iter()
+            .find(|t| t.kind == TaskKind::CompileProjects && t.folder_path == repo_path)
+            .expect("a fresh compile is queued");
+        let again = queued
+            .iter()
+            .find(|t| t.kind == TaskKind::ProcessFile && t.path == abs)
+            .expect("the file is queued again");
+        assert!(again.depends_on.contains(&compile.id), "behind the fresh compile");
+        ctx.pg().remove_watch_root(&rid).await.ok();
+    }
+
     /// A LOCAL import resolves to the target's module node AT EMIT. Before this,
     /// `process.rs` passed `target_id = None` for every import, so 0 of 162,690
     /// import edges resolved — 25,693 of them pointing at local code.
@@ -1642,7 +1786,11 @@ mod tests {
     ///
     /// Breaking mutation: restore the `for pref in &result.parent_refs` emit.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn a_type_with_methods_emits_no_extends_edge_but_keeps_its_parent_link() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("cont");
@@ -1708,14 +1856,25 @@ mod tests {
     /// Internal arm — `calls/in-file` stops firing while every other call test
     /// stays green.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn every_call_emit_arm_fires() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         const ARMS: [&str; 3] = ["calls/lib", "calls/stub", "calls/in-file"];
 
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("callarms");
         std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"callarms\"\n").unwrap();
+        // A real crate: the compiler places calls only in files a crate root
+        // reaches, exactly as rustc compiles only those.
+        std::fs::write(
+            repo.join("Cargo.toml"),
+            "[package]\nname = \"callarms\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub mod caller;\npub mod other;\n").unwrap();
         std::fs::write(repo.join("src/other.rs"), "pub fn faraway() {}\n").unwrap();
         // One file reaching three arms: a std call (lib), a call into another
         // file (stub, since `other.rs` is processed second), and a call to a
@@ -1768,7 +1927,11 @@ mod tests {
     /// Breaking mutation: delete any one arm's `bump` call, or collapse two
     /// branches into one — the missing arm is named in the failure.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn every_inheritance_emit_arm_fires() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // Kind-agnostic: the persister serves every edge kind. Only inheritance
         // is migrated in this increment, so attribution is unambiguous; when
         // calls migrate too, this test must scope by kind or it will pass on
@@ -1846,7 +2009,11 @@ mod tests {
     /// exist yet; (2) drop the props stamp — the discriminant is NULL and a rust
     /// trait impl becomes indistinguishable from java `implements`.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn a_trait_impl_persists_as_an_implements_edge_before_its_trait_exists() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("inh");
@@ -1935,7 +2102,11 @@ mod tests {
     /// `PRODUCTION_LANGUAGES`. Each fails with that language's node names
     /// printed.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn kotlin_and_c_symbols_reach_the_db_with_fqns() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("mixed");
@@ -2002,7 +2173,11 @@ mod tests {
     /// Breaking mutation: revert either arm to the unconditional
     /// `insert_edge(.., None, Some(x), .., "references")`.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn doc_references_resolve_to_files_and_unambiguous_symbols() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let ctx = make_ctx().await;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("docref");
@@ -2107,7 +2282,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn external_calls_link_to_lib_nodes() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // Phase 4: a call into a dependency links to a first-class external node
         // grouped (props.package + parent_id) under a per-package `package`
         // container, and the dependency is queryable per repo. No external call dropped.
@@ -2115,10 +2294,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("libcrate");
         std::fs::create_dir_all(repo.join("src")).unwrap();
-        std::fs::write(repo.join("Cargo.toml"), "[package]\nname = \"libcrate\"\n").unwrap();
+        // A crate that compiles: a call into the standard library, which every
+        // toolchain has, rather than an undeclared dependency no compiler could
+        // resolve.
+        std::fs::write(
+            repo.join("Cargo.toml"),
+            "[package]\nname = \"libcrate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
         std::fs::write(
             repo.join("src/lib.rs"),
-            "pub fn load(s: &str) { serde_json::from_str(s); }\n",
+            "pub fn load(s: &str) { let _ = std::env::var(s); }\n",
         )
         .unwrap();
         let repo_path = repo.to_string_lossy().to_string();
@@ -2135,9 +2321,9 @@ mod tests {
 
         // The external symbol is a `lib_symbol`, grouped by package.
         let (sym_id, sym_pkg, parent): (uuid::Uuid, Option<String>, Option<uuid::Uuid>) = sqlx_core::query_as::query_as(
-            "SELECT id, props->>'package', parent_id FROM sensei.nodes WHERE folder_id=$1 AND kind='unknown'::sensei.node_kind AND name='from_str'")
+            "SELECT id, props->>'package', parent_id FROM sensei.nodes WHERE folder_id=$1 AND kind='unknown'::sensei.node_kind AND name='var'")
             .bind(fid).fetch_one(ctx.pg().pool()).await.unwrap();
-        assert_eq!(sym_pkg.as_deref(), Some("serde_json"), "lib symbol grouped by package");
+        assert_eq!(sym_pkg.as_deref(), Some("std"), "lib symbol grouped by package");
 
         // …under a per-package `lib_package` container.
         let (container_id, container_name): (uuid::Uuid, String) =
@@ -2150,14 +2336,14 @@ mod tests {
             .fetch_one(ctx.pg().pool())
             .await
             .unwrap();
-        assert_eq!(container_name, "serde_json", "a lib_package container per dependency");
+        assert_eq!(container_name, "std", "a lib_package container per dependency");
         assert_eq!(
             parent,
             Some(container_id),
             "the lib symbol is parented under its package container"
         );
 
-        // A RESOLVED call edge load → from_str (external call not dropped).
+        // A RESOLVED call edge load → var (external call not dropped).
         let (edge_target,): (Option<uuid::Uuid>,) = sqlx_core::query_as::query_as(
             "SELECT e.target_id FROM sensei.edges e JOIN sensei.nodes s ON s.id=e.source_id
               WHERE e.folder_id=$1 AND s.name='load' AND e.kind='calls'::sensei.edge_kind",
@@ -2171,15 +2357,19 @@ mod tests {
         // Queryable per repo.
         let deps = ctx.pg().list_dependencies(&fid).await.unwrap();
         assert!(
-            deps.iter().any(|d| d["package"] == "serde_json" && d["symbol_count"] == 1),
-            "serde_json is a queryable dependency with one used symbol, got {deps:?}"
+            deps.iter().any(|d| d["package"] == "std" && d["symbol_count"] == 1),
+            "std is a queryable dependency with one used symbol, got {deps:?}"
         );
 
         ctx.pg().delete_nodes_by_folder(&fid).await.unwrap();
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_flags_test_file_nodes_is_test() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // Every node in a test file gets is_test=true (UI filters tests out);
         // production-file nodes stay is_test=false.
         let ctx = make_ctx().await;
@@ -2238,7 +2428,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_ts_emits_fqn_nodes() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // THE END-TO-END PROOF OF THE TYPESCRIPT CUTOVER. A `.ts` file with a
         // package.json goes in and nodes come out — through
         // `crate::indexer::lang`, because TypeScript is in PRODUCTION_LANGUAGES
@@ -2367,7 +2561,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn graph_scan_end_to_end() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // 7.5: scan the committed fixture repo through the real handler chain and
         // assert the WHOLE graph at once — code + doc-section + rationale nodes,
         // resolved edges (dup-factor 1.0), deterministic communities, the folder
@@ -2585,7 +2783,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn processing_order_invariant() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // 7.4: processing the same files in DIFFERENT orders yields an identical
         // graph — the node set (by natural key), per-kind edge counts, and the
         // deterministic community_id per node all match. This is the convergence
@@ -2679,7 +2881,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_fatal_db_write_marks_folder_failed_and_skips_scan_state() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // D6c-trigger: a fatal DB-write failure (simulated via the test fault
         // seam) propagates as Err, marks the folder `failed` (so the fail-closed
         // barrier D6d won't mark it indexed), and does NOT advance the file's
@@ -2724,7 +2930,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_success_advances_scan_state_and_keeps_folder_status() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // The success counterpart: a fully-written file advances its `files` row and
         // does NOT spuriously mark the folder failed (it stays `indexing` for the
         // barrier to flip to `indexed`).
@@ -2758,7 +2968,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_fatal_on_one_file_does_not_block_a_sibling() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // The fatal path is per-file: a sibling file still indexes (its `files` row
         // is written) even though another file in the same folder failed fatally.
         // The folder ends `failed` (fail-closed), but the healthy file's work is
@@ -2817,7 +3031,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_reindex_keeps_surviving_node_and_prunes_removed() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // D3 end-to-end: re-indexing a file KEEPS a surviving symbol's node id
         // (and its community_id — proving upsert-then-prune, not delete-then-
         // insert) and PRUNES a symbol removed from the source.
@@ -2881,7 +3099,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn doc_decomposes_into_nested_sections() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // D5b: a design doc decomposes into nested `section` nodes (file → H1 → H2
         // → H3 via parent_id, level in props), keyed on the heading PATH so a
         // re-index reconciles the set (no duplicate headings). Line-independent
@@ -2993,7 +3215,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn doc_duplicate_sibling_headings_are_distinct_sections() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // D5b review fix: two identical-text siblings under the same parent must be
         // DISTINCT section nodes — else the second's upsert collides onto the first
         // (same heading-path + parent_id) and silently clobbers it. The Nth (N>1)
@@ -3059,7 +3285,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn doc_rationale_comment_emits_rationale_node() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // D5b: a NOTE/WHY/HACK/TODO/IMPORTANT marker in a doc becomes a `rationale`
         // node parented to the file, with the marker in props. Re-indexing the
         // unchanged doc is idempotent (no duplicate rationale).
@@ -3117,7 +3347,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_persists_is_exported_from_visibility() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // A `pub` symbol is exported; a private one is not. The parser computes
         // is_exported from the visibility modifier; process_file must PERSIST it
         // (via upsert_node_ex) — it was previously dropped, so every symbol read
@@ -3150,7 +3384,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn process_file_reindex_reconciles_a_removed_out_edge() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         // D3 per-file out-edge reconcile (end-to-end): a SURVIVING symbol whose
         // call is removed on re-edit drops its stale edge — the surviving node
         // isn't deleted, so the edge doesn't cascade; delete_edges_from_sources

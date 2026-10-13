@@ -4,11 +4,11 @@
  * sidebar nav item lands on it, in the real built Tauri app.
  */
 
-import { test, expect } from '../fixtures';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateTo, DAEMON_URL } from '../helpers';
 
 /** Mark setup complete so the observatory shell is reachable (not rerouted to setup). */
-async function seedSetupComplete(tauriPage: any): Promise<void> {
+async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void> {
   await fetch(`${DAEMON_URL}/api/config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -25,7 +25,7 @@ async function seedSetupComplete(tauriPage: any): Promise<void> {
   `);
 }
 
-async function pathname(tauriPage: any): Promise<string> {
+async function pathname(tauriPage: TauriPageLike): Promise<string> {
   return await tauriPage.evaluate(`window.location.pathname`);
 }
 

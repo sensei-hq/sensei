@@ -1057,6 +1057,19 @@ pub fn placement_on_disk(
     repo_root: &std::path::Path,
     language: crate::indexer::facts::Language,
 ) -> Option<crate::indexer::placement::Placement> {
+    let (dir, package) = owning_manifest_on_disk(file, repo_root, language)?;
+    Some(crate::indexer::placement::placement_of(file, &package, &dir, language))
+}
+
+/// The directory of the manifest that owns `file`, and the package it names —
+/// the climb [`placement_on_disk`] places a file by, exposed for the compiler
+/// step, which needs the package DIRECTORY to ask the build tool which project
+/// the package belongs to.
+pub fn owning_manifest_on_disk(
+    file: &std::path::Path,
+    repo_root: &std::path::Path,
+    language: crate::indexer::facts::Language,
+) -> Option<(std::path::PathBuf, String)> {
     let mut dir = file.parent()?;
     loop {
         // EVERY manifest an adapter claims, by name OR by extension. Probing the
@@ -1087,9 +1100,7 @@ pub fn placement_on_disk(
         for manifest in &here {
             let Ok(text) = std::fs::read_to_string(manifest) else { continue };
             if let Some(package) = crate::indexer::placement::package_named_by(manifest, &text) {
-                return Some(crate::indexer::placement::placement_of(
-                    file, &package, dir, language,
-                ));
+                return Some((dir.to_path_buf(), package));
             }
         }
         if dir == repo_root {
@@ -1239,7 +1250,11 @@ mod parse_task {
     /// MUTATION: drop the `persist::write` call from `index_and_persist` — the
     /// read-back is empty and the first assertion names what it got.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
     async fn a_parsed_file_reaches_the_database() {
+        // The version-rescan sweep deletes every `files` row; this test's own
+        // must survive from the seed to its last assertion.
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
         let Ok(pg) = PgStore::connect_test().await else {
             println!("no database — skipping");
             return;
@@ -1276,6 +1291,21 @@ mod parse_task {
         let told = TellFile::about("p");
         let world = told.world();
 
+        // The file on disk, in a crate its compiler can read: Rust's references
+        // are placed by rust-analyzer, as in production (`process_file`).
+        let text = "pub struct Widget;\npub fn make() -> Widget { Widget }\n";
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"p\"\n[workspace]\n").unwrap();
+        std::fs::write(root.join("src/lib.rs"), text).unwrap();
+        let engine = &crate::indexer::lang::rust::compiler::RUST_ENGINE;
+        let sessions = crate::indexer::compiler_session::CompilerSessions::new(root);
+        let project = sessions.project_for(engine, root).await.expect("rust-analyzer compiles");
+        let declarations = sessions.declarations(&project);
+        let compiled = crate::indexer::lang::compiler::Compiled {
+            index: &project.index,
+            path: "src/lib.rs",
+            declarations: &declarations,
+        };
+
         let written = index_and_persist(
             &pg,
             &folder_id,
@@ -1285,8 +1315,9 @@ mod parse_task {
                 mode: crate::indexer::index::Mode::New,
                 package: "p",
                 module: "lib",
-                text: "pub struct Widget;\npub fn make() -> Widget { Widget }\n",
+                text,
                 world: &world,
+                compiled: Some(&compiled),
             },
         )
         .await

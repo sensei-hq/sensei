@@ -12,7 +12,7 @@ they watch, approve the gates that matter, and steer from their phone. Code and
 transcripts never leave the machine — only status, and the decisions the user is
 asked to make.
 
-> **Status of record → [`coverage-map.md`](coverage-map.md).** P0–P4 + seat
+> **Status of record → [`history/features/coverage-map.md`](../history/features/coverage-map.md).** P0–P4 + seat
 > attribution shipped on `develop` (drive/gate flags OFF, not merged to `main`).
 > The status table below predates that; see the coverage map §C for the
 > authoritative relay built-vs-pending, and `docs/design/agentic-execution-team.md`
@@ -35,7 +35,7 @@ asked to make.
 - [Phone — run dashboard · detail · gate · nudge](../mockups/Sensei/lib/relay/relay.jsx) · [phone planner](../mockups/Sensei/lib/relay/relay-planner.jsx)
 - [Desktop — relay coordinator + plan author](../mockups/Sensei/lib/relay/relay-desktop.jsx)
 - [Console — inbox · watch · PR-review · nudge](../mockups/Sensei/lib/dojo/dojo-relay.jsx)
-- Design: [`plan/relay-engine.md`](../plan/relay-engine.md) · journey: [`journeys/relay.md`](../journeys/relay.md)
+- Design: [`plan/relay-engine.md`](../history/plan/relay-engine.md) · journey: [`journeys/relay.md`](../journeys/relay.md)
 
 ## What's involved
 
@@ -72,7 +72,7 @@ asked to make.
 
 ### Under the hood
 
-- The control channel is the assistant's hooks: a blocking pre-tool-use hook holds at a gate, and the daemon injects nudges on the next hook fire. Full design in [`plan/relay-engine.md`](../plan/relay-engine.md).
+- The control channel is the assistant's hooks: a blocking pre-tool-use hook holds at a gate, and the daemon injects nudges on the next hook fire. Full design in [`plan/relay-engine.md`](../history/plan/relay-engine.md).
 
 ## Status
 

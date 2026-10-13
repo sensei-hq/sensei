@@ -186,6 +186,49 @@ pub async fn process_manifest(ctx: &TaskContext, task: &Task) -> Result<u32, Str
 /// Carries no work list — it reads the unparsed set back from `files`, which is
 /// what makes a re-run idempotent (see
 /// [`crate::db::pg_store::PgStore::list_unparsed_files`]).
+/// **COMPILE THE REPOSITORY'S PROJECTS** — every file's project, through its
+/// language's compiler, once for the scan. The answers stay in the scan's
+/// `CompilerSessions`, which the file tasks read. A project that fails to
+/// compile is logged with its cause; its files say `engine_not_run`.
+pub async fn compile_projects(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
+    let Some(repo) = ctx.pg().get_repo_by_path(&task.folder_path).await? else {
+        return Ok(0);
+    };
+    let Some(folder_id) = crate::api::util::json_uuid(&repo["id"]) else {
+        return Err(format!("compile_projects: repo row for {} has no id", task.folder_path));
+    };
+    let repo_root = Path::new(&task.folder_path);
+    let sessions =
+        crate::indexer::compiler_session::CompilerSessions::shared(&folder_id, repo_root)?;
+    // Each package directory once, with the engine its files' language
+    // declares; the session dedups packages that share one project.
+    let mut packages: std::collections::BTreeMap<
+        (&'static str, std::path::PathBuf),
+        &'static dyn crate::indexer::lang::compiler::CompilerEngine,
+    > = std::collections::BTreeMap::new();
+    for rel in ctx.pg().list_unparsed_files(&folder_id).await? {
+        let abs = repo_root.join(&rel);
+        let ext = abs.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+        let Some(adapter) = crate::indexer::lang::adapter_for_ext(&ext) else { continue };
+        let Some(engine) = adapter.compiler() else { continue };
+        if let Some((dir, _)) =
+            crate::indexer::pipeline::owning_manifest_on_disk(&abs, repo_root, adapter.language())
+        {
+            packages.entry((engine.manifest(), dir)).or_insert(engine);
+        }
+    }
+    let mut compiled = 0u32;
+    let packages: Vec<_> = packages.into_iter().map(|((_, dir), engine)| (engine, dir)).collect();
+    for (project, answer) in sessions.compile_packages(packages).await {
+        match answer {
+            Ok(_) => compiled += 1,
+            Err(e) => tracing::warn!(project = %project.display(), error = %e,
+                "compile_projects: not compiled — its files' calls will be engine_not_run"),
+        }
+    }
+    Ok(compiled)
+}
+
 pub async fn process_repo_files(ctx: &TaskContext, task: &Task) -> Result<u32, String> {
     let Some(repo) = ctx.pg().get_repo_by_path(&task.folder_path).await? else {
         tracing::warn!(repo = %task.folder_path, "process_repo_files: repo folder row missing");
@@ -201,6 +244,9 @@ pub async fn process_repo_files(ctx: &TaskContext, task: &Task) -> Result<u32, S
     // second invalidation site would let it change mid-scan and reintroduce the
     // order dependence R6 forbids.
     crate::indexer::pipeline::TellFile::forget(&folder_id);
+    // The compiler's answers are NOT cleared here: they are keyed by the state
+    // of the sources they were compiled from (`CompilerSessions::project_for`),
+    // so a gate that fires twice in one scan shares one compile.
 
     // A FORCED scan clears `parsed_at` first, so every file falls back into the
     // unparsed set below. Nothing is deleted — the writer upserts by path, so a
@@ -213,6 +259,24 @@ pub async fn process_repo_files(ctx: &TaskContext, task: &Task) -> Result<u32, S
     let files = ctx.pg().list_unparsed_files(&folder_id).await?;
     let mut file_ids: Vec<u64> = Vec::with_capacity(files.len());
     let mut enqueued = 0u32;
+
+    // THE COMPILE, ahead of every file: each language with a compiler compiles
+    // the repository's projects ONCE, in a task of its own, and the files read
+    // its answers. See `TaskKind::CompileProjects` for why it is not done by the
+    // first file to ask.
+    //
+    // ONE compile in flight per repository: a gate that fires again while one
+    // is queued or running hangs its files on that one. Nothing to parse,
+    // nothing to compile.
+    let compile = if files.is_empty() {
+        None
+    } else {
+        Some(
+            ctx.queue
+                .enqueue_covered(Task::new(TaskKind::CompileProjects, &task.folder_path, ""))
+                .await,
+        )
+    };
     for rel in &files {
         // ABSOLUTE. `files.file_path` is repo-RELATIVE, and `process_file`
         // reads `task.path` as an absolute path (`process.rs`: `let abs_path =
@@ -230,11 +294,10 @@ pub async fn process_repo_files(ctx: &TaskContext, task: &Task) -> Result<u32, S
         // that will never report to it.
         if let Some(id) = ctx
             .queue
-            .enqueue_unique(Task::for_file(
-                TaskKind::ProcessFile,
-                &task.folder_path,
-                &abs.to_string_lossy(),
-            ))
+            .enqueue_unique(
+                Task::for_file(TaskKind::ProcessFile, &task.folder_path, &abs.to_string_lossy())
+                    .blocked_by(compile.into_iter().collect()),
+            )
             .await
         {
             file_ids.push(id);
@@ -504,6 +567,14 @@ async fn write_file_rows(
 
     let mut out = FileRowOutcome::default();
     let mut written = 0u32;
+    // What the repository marks as not its own. Unreadable marks are reported
+    // and read as no marks: the files are then indexed, not silently dropped.
+    let dirs = contents.entries.iter().filter_map(|e| e.rel_path.parent().map(Path::to_path_buf));
+    let marks = super::helpers::LinguistMarks::load(repo_abs, dirs).unwrap_or_else(|e| {
+        tracing::warn!(repo = %repo_abs.display(), error = %e,
+            "repo scan: .gitattributes unreadable — vendored/generated marks not applied");
+        super::helpers::LinguistMarks::none()
+    });
     for entry in &contents.entries {
         let rel = entry.rel_path.to_string_lossy().to_string();
         let res = match entry.class {
@@ -515,12 +586,26 @@ async fn write_file_rows(
                 // returns early for such a file WITHOUT writing a row, and a
                 // file with no row reads as changed on the next pass.
                 let abs = repo_abs.join(&entry.rel_path);
-                match super::helpers::classify_unscannable(&abs, ext_of(&entry.rel_path)) {
+                let skip = marks.classify(&abs).or_else(|| {
+                    super::helpers::classify_unscannable(&abs, ext_of(&entry.rel_path))
+                });
+                match skip {
                     Some(reason) => {
                         let Some((mtime, hash)) = super::helpers::file_fingerprint(&abs) else {
                             continue;
                         };
-                        ctx.pg().upsert_file_row(folder_id, &rel, mtime, &hash, Some(reason)).await
+                        let row = ctx
+                            .pg()
+                            .upsert_file_row(folder_id, &rel, mtime, &hash, Some(reason))
+                            .await;
+                        // A file that is skipped NOW may have been indexed before
+                        // (it became vendored, generated, binary): what it put in
+                        // the graph goes with it.
+                        if let Err(e) = ctx.pg().delete_nodes_by_file(folder_id, &rel).await {
+                            tracing::warn!(file = %rel, error = %e,
+                                "repo scan: a skipped file's nodes were not deleted");
+                        }
+                        row
                     }
                     None => {
                         // A supported source file, recorded at its REAL fingerprint.
@@ -1280,6 +1365,219 @@ mod scan_tests {
             still_unparsed.is_empty(),
             "an indexed file is still listed unparsed, so it is re-enqueued for ever: {still_unparsed:?}"
         );
+    }
+
+    /// **THE COMPILE IS ITS OWN TASK, AHEAD OF THE FILES.** A language's
+    /// compiler runs over a whole project for minutes; inside a file task the
+    /// 180s watchdog abandoned it, which dropped the compile, and the next file
+    /// started it again — for ever. So the gate enqueues ONE `CompileProjects`
+    /// per repository and every file task waits on it.
+    ///
+    /// Mutations that must break this: drop the enqueue; drop `blocked_by` on a
+    /// file task.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
+    async fn every_file_task_waits_on_one_compile_of_the_repository() {
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let name = format!("compiled-{}", uuid::Uuid::new_v4().simple());
+        let repo = t.path().join(&name);
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(
+            repo.join("Cargo.toml"),
+            "[package]\nname = \"compiled\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join("src/lib.rs"), "pub mod a;\npub fn f() {}\n").unwrap();
+        std::fs::write(repo.join("src/a.rs"), "pub fn g() { crate::f(); }\n").unwrap();
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", &name, &repo.to_string_lossy())
+            .await
+            .unwrap();
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, &name).await.unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
+            .await
+            .unwrap();
+        super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
+            .await
+            .unwrap();
+
+        let full = ctx.queue.snapshot_tasks().await;
+        let compiles: Vec<_> =
+            full.iter().filter(|t| t.kind == TaskKind::CompileProjects).collect();
+        assert_eq!(compiles.len(), 1, "one compile per repository scan");
+        let files: Vec<_> = full.iter().filter(|t| t.kind == TaskKind::ProcessFile).collect();
+        assert!(!files.is_empty());
+        assert!(
+            files.iter().all(|f| f.depends_on.contains(&compiles[0].id)),
+            "every file task must wait on the compile"
+        );
+
+        // The gate fires again while that compile is still waiting (a forced
+        // rescan reopens files mid-scan): the compile that covers the files
+        // is the one in flight, not a second compile of the same tree.
+        super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
+            .await
+            .unwrap();
+        let again = ctx.queue.snapshot_tasks().await;
+        let compiles_again: Vec<_> =
+            again.iter().filter(|t| t.kind == TaskKind::CompileProjects).collect();
+        assert_eq!(compiles_again.len(), 1, "a gate firing again shares the compile in flight");
+    }
+
+    /// **ONLY THE CODE THE REPOSITORY OWNS IS INDEXED.** A file its
+    /// `.gitattributes` marks `linguist-vendored` or `linguist-generated`, or
+    /// whose head says a tool wrote it, is recorded with that reason and never
+    /// parsed — and a file that BECOMES so sheds the nodes it had.
+    ///
+    /// Mutations that must break this: skip the attributes; skip the header
+    /// sniff; drop the node deletion on a skip.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
+    async fn vendored_and_generated_code_is_recorded_and_never_indexed() {
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let name = format!("owned-{}", uuid::Uuid::new_v4().simple());
+        let repo = t.path().join(&name);
+        for dir in [".git", "src", "vendor/lib", "gen"] {
+            std::fs::create_dir_all(repo.join(dir)).unwrap();
+        }
+        std::fs::write(
+            repo.join("pyproject.toml"),
+            "[project]\nname = \"owned\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join("src/app.py"), "def run():\n    return 1\n").unwrap();
+        std::fs::write(repo.join("vendor/lib/x.py"), "def borrowed():\n    return 2\n").unwrap();
+        std::fs::write(
+            repo.join("src/schema.py"),
+            "# @generated by schemagen\ndef made():\n    return 3\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join("gen/table.py"), "def tabled():\n    return 4\n").unwrap();
+        std::fs::write(repo.join("gen/model.py"), "def modeled():\n    return 5\n").unwrap();
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", &name, &repo.to_string_lossy())
+            .await
+            .unwrap();
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, &name).await.unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        let scan = || async {
+            super::process_git_folder(&ctx, &Task::new(TaskKind::ProcessGitFolder, &repo_path, ""))
+                .await
+                .unwrap();
+        };
+
+        // Parsed once, before anything marks it: the vendored file has nodes.
+        scan().await;
+        let vendored = repo.join("vendor/lib/x.py").to_string_lossy().to_string();
+        crate::tasks::handlers::process_file(
+            &ctx,
+            &Task::for_file(TaskKind::ProcessFile, &repo_path, &vendored),
+        )
+        .await
+        .unwrap();
+        let nodes_of = |rel: &'static str| {
+            let pool = ctx.pg().pool().clone();
+            async move {
+                let (n,): (i64,) = sqlx_core::query_as::query_as(
+                    "SELECT count(*) FROM sensei.nodes n JOIN sensei.files f ON f.id = n.file_id
+                      WHERE f.folder_id = $1 AND f.file_path = $2",
+                )
+                .bind(fid)
+                .bind(rel)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                n
+            }
+        };
+        assert!(nodes_of("vendor/lib/x.py").await > 0, "precondition: the file was indexed");
+
+        std::fs::write(
+            repo.join(".gitattributes"),
+            "vendor/** linguist-vendored\ngen/*.py linguist-generated=true\ngen/table.py -linguist-generated\n",
+        )
+        .unwrap();
+        scan().await;
+
+        let reason = |rel: &'static str| {
+            let pool = ctx.pg().pool().clone();
+            async move {
+                let (r,): (Option<String>,) = sqlx_core::query_as::query_as(
+                    "SELECT skip_reason::text FROM sensei.files WHERE folder_id = $1 AND file_path = $2",
+                )
+                .bind(fid)
+                .bind(rel)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                r
+            }
+        };
+        assert_eq!(reason("src/app.py").await, None);
+        assert_eq!(reason("vendor/lib/x.py").await.as_deref(), Some("vendored"));
+        assert_eq!(reason("src/schema.py").await.as_deref(), Some("generated"), "by its header");
+        assert_eq!(reason("gen/model.py").await.as_deref(), Some("generated"), "by its attribute");
+        assert_eq!(reason("gen/table.py").await, None, "a later line unsets the attribute");
+        assert_eq!(
+            nodes_of("vendor/lib/x.py").await,
+            0,
+            "a file that became vendored sheds its nodes"
+        );
+    }
+
+    /// A gate with nothing unparsed compiles nothing: a compile exists for the
+    /// files that wait on it.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // TestSweepGate is a blocking lock — see test_support
+    async fn a_gate_with_no_files_to_parse_compiles_nothing() {
+        let _scan_state = crate::tasks::test_support::SCAN_STATE_SWEEP_GATE.using();
+        let ctx = make_ctx().await;
+        let t = tempfile::tempdir().unwrap();
+        let name = format!("parsed-{}", uuid::Uuid::new_v4().simple());
+        let repo = t.path().join(&name);
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("README.txt"), "no source here\n").unwrap();
+        let root_id = ctx
+            .pg()
+            .add_watch_root(&t.path().to_string_lossy(), "wt", &serde_json::json!([]))
+            .await
+            .unwrap();
+        let fid = ctx
+            .pg()
+            .upsert_repo_kind(&root_id, "git", &name, &repo.to_string_lossy())
+            .await
+            .unwrap();
+        crate::tasks::test_support::give_folder_a_repository(ctx.pg(), &fid, &name).await.unwrap();
+        let repo_path = repo.to_string_lossy().to_string();
+        super::process_repo_files(&ctx, &Task::new(TaskKind::ProcessRepoFiles, &repo_path, ""))
+            .await
+            .unwrap();
+        let compiles = ctx
+            .queue
+            .snapshot_tasks()
+            .await
+            .into_iter()
+            .filter(|t| t.kind == TaskKind::CompileProjects && t.folder_path == repo_path)
+            .count();
+        assert_eq!(compiles, 0);
     }
 
     /// **A DBD DESIGN'S DETAIL LANDS ON THE NODES THE WALK WROTE (#251).** The

@@ -1,6 +1,6 @@
 # Layer · mcp
 
-> **Serves:** the *deliver* step of the [core loop](../vision.md#the-core-loop)
+> **Serves:** the *deliver* step of the [core loop](../prd/01-vision.md#the-core-loop)
 > — getting the right context to the assistant, first try. This is where FTR is
 > won or lost in the moment.
 
@@ -78,7 +78,7 @@ inventory (`assistant_tools` / `mcp_servers`).
 - **Capability Registry** (design, deferred): features declare required data +
   source + `discard_when` (upstream issue) + a workaround that stays inert until
   upstream lands, then is cleaned; the UI degrades with "est." badges. See
-  [decisions](../plan/decisions.md).
+  [decisions](../history/plan/decisions.md).
 
 Intended contracts: [`../spec/pipeline/context-delivery.md`](../spec/pipeline/context-delivery.md),
 [`../spec/pipeline/semantic-search.md`](../spec/pipeline/semantic-search.md),

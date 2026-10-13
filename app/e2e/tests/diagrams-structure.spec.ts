@@ -21,7 +21,7 @@
  * that makes the assertion mean something.
  */
 
-import { test, expect } from '../fixtures';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import {
   navigateTo, navigateToScreen, daemonGet, daemonPost, DAEMON_URL,
   installErrorTrap, readErrors, type ErrBuf, seedSetupComplete,
@@ -71,7 +71,7 @@ function expectNoRuntimeErrors(errs: ErrBuf, where: string): void {
 }
 
 /** Wait past the loading state to whichever terminal state the data produces. */
-async function settle(tauriPage: any): Promise<void> {
+async function settle(tauriPage: TauriPageLike): Promise<void> {
   await tauriPage.waitForSelector(
     '[data-testid="structure-diagram"], [data-testid="structure-empty"], [data-testid="structure-error"]',
     30_000,

@@ -64,6 +64,10 @@ pub struct TypeScriptAdapter;
 pub struct JavaScriptAdapter;
 
 impl LanguageAdapter for TypeScriptAdapter {
+    fn compiler(&self) -> Option<&'static dyn super::compiler::CompilerEngine> {
+        Some(&super::ts_compiler::TS_ENGINE)
+    }
+
     fn language(&self) -> Language {
         Language::TypeScript
     }
@@ -98,6 +102,10 @@ impl LanguageAdapter for TypeScriptAdapter {
 }
 
 impl LanguageAdapter for JavaScriptAdapter {
+    fn compiler(&self) -> Option<&'static dyn super::compiler::CompilerEngine> {
+        Some(&super::ts_compiler::TS_ENGINE)
+    }
+
     fn language(&self) -> Language {
         Language::TypeScript
     }
@@ -560,6 +568,7 @@ fn interpolations(text: &str, blocks: &[super::svelte::ScriptBlock]) -> Vec<Inte
         .iter()
         .map(|b| (b.start as usize, b.end as usize))
         .chain(style_blocks(text))
+        .chain(html_comments(text))
         .collect();
     let mut i = 0usize;
     while i < bytes.len() {
@@ -608,6 +617,18 @@ fn interpolations(text: &str, blocks: &[super::svelte::ScriptBlock]) -> Vec<Inte
 
 /// `<style>` block CONTENT ranges — CSS, which declares nothing this graph
 /// names and whose braces are not interpolations.
+/// Every `<!-- … -->`: commentary, not template — a `{…}` in it names nothing.
+fn html_comments(text: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    while let Some(open) = text[at..].find("<!--").map(|i| i + at) {
+        let close = text[open..].find("-->").map_or(text.len(), |i| i + open + "-->".len());
+        out.push((open, close));
+        at = close;
+    }
+    out
+}
+
 fn style_blocks(text: &str) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     let mut at = 0usize;
@@ -1601,20 +1622,10 @@ impl Walk<'_> {
             Statement::ClassDeclaration(c) => self.class(c, scope, flow),
             Statement::VariableDeclaration(v) => self.variables(v, scope, flow),
             Statement::TSInterfaceDeclaration(i) => self.interface(i, scope, flow),
-            Statement::TSTypeAliasDeclaration(a) => {
-                let symbol = self.symbol(
-                    a.span,
-                    scope,
-                    &a.id.name,
-                    SymbolKind::TypeAlias,
-                    Reach::Item,
-                    DeclaredType::Stated(self.text_of(a.type_annotation.span()).to_string()),
-                );
-                let inner = self.push(symbol, scope);
-                self.type_use(a.type_annotation.span(), &inner);
-            }
+            Statement::TSTypeAliasDeclaration(a) => self.type_alias(a, scope),
             Statement::TSEnumDeclaration(e) => self.enumeration(e, scope),
             Statement::TSModuleDeclaration(m) => self.namespace(m, scope, flow),
+            Statement::TSGlobalDeclaration(g) => self.global(g, scope, flow),
             Statement::ImportDeclaration(i) => self.import(i),
             Statement::ExportNamedDeclaration(e) => self.export_named(e, scope, flow),
             Statement::ExportDefaultDeclaration(e) => self.export_default(e, scope, flow),
@@ -2097,6 +2108,95 @@ impl Walk<'_> {
         }
     }
 
+    /// An object literal's properties, as expressions of `scope`.
+    fn object_properties(
+        &mut self,
+        properties: &[ObjectPropertyKind<'_>],
+        scope: &Scope,
+        flow: &mut Flow,
+    ) {
+        for property in properties {
+            match property {
+                ObjectPropertyKind::ObjectProperty(p) => {
+                    // A COMPUTED key is an expression that runs:
+                    // `{ [includeKey('company', 1)]: false }` carries a
+                    // call in the key, not in the value.
+                    if p.computed
+                        && let Some(key) = p.key.as_expression()
+                    {
+                        self.expression(key, scope, flow);
+                    }
+                    // A function under a property is a BODY named by its
+                    // key — the third shape of the function-body rule,
+                    // after an `id` and a call. An object of methods is
+                    // how every API client here is written, and without
+                    // this their locals all landed in the enclosing
+                    // function's scope.
+                    match (property_name(&p.key), &p.value) {
+                        (Some(key), value) if is_a_function(value) => {
+                            let mut inner = scope.clone();
+                            inner.fn_scope.push(key);
+                            self.expression(value, &inner, flow);
+                        }
+                        _ => self.expression(&p.value, scope, flow),
+                    }
+                }
+                // `{ ...authHeaders(token) }` — a SPREAD is the same
+                // expression it would be without the dots, and skipping
+                // it drops the call inside. MEASURED: spread in all
+                // three positions was most of A2's 383 dropped
+                // references.
+                ObjectPropertyKind::SpreadProperty(s) => self.expression(&s.argument, scope, flow),
+            }
+        }
+    }
+
+    /// The properties of an object that is a container (see `variables`): a
+    /// function under a key is a member — a method, or a property for a getter
+    /// or setter — whose body is its own; anything else is an expression of
+    /// the enclosing `scope`.
+    fn object_members(
+        &mut self,
+        object: &ObjectExpression<'_>,
+        scope: &Scope,
+        container: &Scope,
+        flow: &mut Flow,
+    ) {
+        for property in &object.properties {
+            let ObjectPropertyKind::ObjectProperty(p) = property else {
+                self.object_properties(std::slice::from_ref(property), scope, flow);
+                continue;
+            };
+            let (Some(key), true) = (property_name(&p.key), is_a_function(&p.value)) else {
+                self.object_properties(std::slice::from_ref(property), scope, flow);
+                continue;
+            };
+            if p.computed
+                && let Some(computed) = p.key.as_expression()
+            {
+                self.expression(computed, scope, flow);
+            }
+            let kind = match p.kind {
+                PropertyKind::Get | PropertyKind::Set => SymbolKind::Property,
+                PropertyKind::Init => SymbolKind::Method,
+            };
+            let params = match &p.value {
+                Expression::FunctionExpression(f) => self.params(&f.params),
+                Expression::ArrowFunctionExpression(a) => self.params(&a.params),
+                _ => Vec::new(),
+            };
+            let symbol = self
+                .symbol(p.span, container, &key, kind, Reach::Item, DeclaredType::Unstated)
+                .map(|mut s| {
+                    s.params = params;
+                    s
+                });
+            let mut inner = self.push(symbol, container);
+            inner.fn_scope.push(key);
+            self.expression(&p.value, &inner, flow);
+        }
+    }
+
     fn class_element(&mut self, element: &ClassElement<'_>, scope: &Scope, flow: &mut Flow) {
         match element {
             ClassElement::MethodDefinition(m) => {
@@ -2204,7 +2304,40 @@ impl Walk<'_> {
                 name: i.id.name.to_string(),
             },
         };
-        for member in &i.body.body {
+        self.type_members(&i.body.body, &inner);
+    }
+
+    /// `type T = …`. A type alias of an OBJECT type is a named type with
+    /// members, exactly as an interface is.
+    fn type_alias(&mut self, a: &TSTypeAliasDeclaration<'_>, scope: &Scope) {
+        let symbol = self.symbol(
+            a.span,
+            scope,
+            &a.id.name,
+            SymbolKind::TypeAlias,
+            Reach::Item,
+            DeclaredType::Stated(self.text_of(a.type_annotation.span()).to_string()),
+        );
+        let outer = self.push(symbol, scope);
+        self.type_use(a.type_annotation.span(), &outer);
+        if let TSType::TSTypeLiteral(literal) = &a.type_annotation {
+            let inner = Scope {
+                from: outer.from.clone(),
+                container_at: outer.fn_scope.len(),
+                fn_scope: outer.fn_scope.clone(),
+                container: Container::Type {
+                    module: self.module_of(scope),
+                    name: a.id.name.to_string(),
+                },
+            };
+            self.type_members(&literal.members, &inner);
+        }
+    }
+
+    /// The members a named object type declares: a property signature is a
+    /// field, a method signature a method.
+    fn type_members(&mut self, members: &[TSSignature<'_>], inner: &Scope) {
+        for member in members {
             let (span, key, kind, reach) = match member {
                 TSSignature::TSPropertySignature(p) => {
                     (p.span, property_name(&p.key), SymbolKind::Field, Reach::Field)
@@ -2215,8 +2348,8 @@ impl Walk<'_> {
                 _ => continue,
             };
             let Some(key) = key else { continue };
-            let symbol = self.symbol(span, &inner, &key, kind, reach, DeclaredType::Unstated);
-            self.push(symbol, &inner);
+            let symbol = self.symbol(span, inner, &key, kind, reach, DeclaredType::Unstated);
+            self.push(symbol, inner);
         }
     }
 
@@ -2287,6 +2420,15 @@ impl Walk<'_> {
         }
     }
 
+    /// `declare global { … }` — declarations into the global scope (SvelteKit's
+    /// `App.Platform`), which the checker places uses on. Their home in the
+    /// graph is the file that states them.
+    fn global(&mut self, g: &TSGlobalDeclaration<'_>, scope: &Scope, flow: &mut Flow) {
+        for statement in &g.body.body {
+            self.statement(statement, scope, flow);
+        }
+    }
+
     /// `const`/`let`/`var`. A `const` whose initialiser IS a function is a
     /// function — `export const load = () => {}` is the shape SvelteKit states
     /// every route entry point in, and filing it as a constant would leave the
@@ -2311,12 +2453,25 @@ impl Walk<'_> {
             // body instead of de-duplicating it.
             let re_walked_below = matches!(declarator.id, BindingPattern::BindingIdentifier(_))
                 && declarator.init.as_ref().is_some_and(is_a_function);
+            // An OBJECT bound to a plain name outside any body is the container
+            // of the functions it holds (`export const store = { load() {} }`),
+            // walked below once its own node exists.
+            let members = match (&declarator.id, declarator.init.as_ref().and_then(object_literal))
+            {
+                (BindingPattern::BindingIdentifier(_), Some(o))
+                    if scope.fn_scope.len() <= scope.container_at =>
+                {
+                    Some(o)
+                }
+                _ => None,
+            };
 
             // Otherwise the INITIALISER is walked first, in the outer state:
             // `const x = x.foo()` reads the outer `x`, and binding first would
             // type it as itself.
             if let Some(init) = &declarator.init
                 && !re_walked_below
+                && members.is_none()
             {
                 self.expression(init, scope, flow);
             }
@@ -2377,6 +2532,18 @@ impl Walk<'_> {
                     self.symbol(declarator.span, scope, &id.name, kind, Reach::Item, declared);
                 self.push(symbol, scope)
             };
+            if let Some(object) = members {
+                let container = Scope {
+                    from: inner.from.clone(),
+                    container_at: scope.fn_scope.len(),
+                    fn_scope: scope.fn_scope.clone(),
+                    container: Container::Type {
+                        module: self.module_of(scope),
+                        name: id.name.to_string(),
+                    },
+                };
+                self.object_members(object, scope, &container, flow);
+            }
 
             // The two STATED routes a binding can carry, annotation first: it is
             // what the author wrote about the binding, while the initialiser is
@@ -2592,44 +2759,7 @@ impl Walk<'_> {
                     }
                 }
             }
-            Expression::ObjectExpression(o) => {
-                for property in &o.properties {
-                    match property {
-                        ObjectPropertyKind::ObjectProperty(p) => {
-                            // A COMPUTED key is an expression that runs:
-                            // `{ [includeKey('company', 1)]: false }` carries a
-                            // call in the key, not in the value.
-                            if p.computed
-                                && let Some(key) = p.key.as_expression()
-                            {
-                                self.expression(key, scope, flow);
-                            }
-                            // A function under a property is a BODY named by its
-                            // key — the third shape of the function-body rule,
-                            // after an `id` and a call. An object of methods is
-                            // how every API client here is written, and without
-                            // this their locals all landed in the enclosing
-                            // function's scope.
-                            match (property_name(&p.key), &p.value) {
-                                (Some(key), value) if is_a_function(value) => {
-                                    let mut inner = scope.clone();
-                                    inner.fn_scope.push(key);
-                                    self.expression(value, &inner, flow);
-                                }
-                                _ => self.expression(&p.value, scope, flow),
-                            }
-                        }
-                        // `{ ...authHeaders(token) }` — a SPREAD is the same
-                        // expression it would be without the dots, and skipping
-                        // it drops the call inside. MEASURED: spread in all
-                        // three positions was most of A2's 383 dropped
-                        // references.
-                        ObjectPropertyKind::SpreadProperty(s) => {
-                            self.expression(&s.argument, scope, flow)
-                        }
-                    }
-                }
-            }
+            Expression::ObjectExpression(o) => self.object_properties(&o.properties, scope, flow),
             Expression::TemplateLiteral(t) => {
                 for e in &t.expressions {
                     self.expression(e, scope, flow);
@@ -3232,21 +3362,12 @@ impl Walk<'_> {
             Declaration::VariableDeclaration(v) => self.variables(v, scope, flow),
             Declaration::FunctionDeclaration(f) => self.function(f, scope, flow),
             Declaration::ClassDeclaration(c) => self.class(c, scope, flow),
-            Declaration::TSTypeAliasDeclaration(a) => {
-                let symbol = self.symbol(
-                    a.span,
-                    scope,
-                    &a.id.name,
-                    SymbolKind::TypeAlias,
-                    Reach::Item,
-                    DeclaredType::Stated(self.text_of(a.type_annotation.span()).to_string()),
-                );
-                self.push(symbol, scope);
-            }
+            Declaration::TSTypeAliasDeclaration(a) => self.type_alias(a, scope),
             Declaration::TSInterfaceDeclaration(i) => self.interface(i, scope, flow),
             Declaration::TSEnumDeclaration(e) => self.enumeration(e, scope),
             Declaration::TSModuleDeclaration(m) => self.namespace(m, scope, flow),
-            Declaration::TSImportEqualsDeclaration(_) | Declaration::TSGlobalDeclaration(_) => {}
+            Declaration::TSGlobalDeclaration(g) => self.global(g, scope, flow),
+            Declaration::TSImportEqualsDeclaration(_) => {}
         }
     }
 }
@@ -3283,6 +3404,18 @@ fn import_origin(path: &str) -> ImportOrigin {
 
 /// Whether an expression IS a function — the shape that gets a scope of its own
 /// and must therefore be walked exactly once.
+/// The object literal an initialiser is, through the type assertions and
+/// parentheses it can be written in (`{…} satisfies T`, `({…}) as T`).
+fn object_literal<'a, 'b>(expression: &'b Expression<'a>) -> Option<&'b ObjectExpression<'a>> {
+    match expression {
+        Expression::ObjectExpression(o) => Some(o),
+        Expression::TSAsExpression(a) => object_literal(&a.expression),
+        Expression::TSSatisfiesExpression(s) => object_literal(&s.expression),
+        Expression::ParenthesizedExpression(p) => object_literal(&p.expression),
+        _ => None,
+    }
+}
+
 fn is_a_function(expression: &Expression<'_>) -> bool {
     matches!(expression, Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_))
 }
@@ -3653,6 +3786,70 @@ mod tests {
     /// `name -> candidate identity or reason`.
     fn member_targets(facts: &FileFacts) -> Vec<(String, String)> {
         targets(facts)
+    }
+
+    /// **A TYPE ALIAS OF AN OBJECT TYPE HAS MEMBERS, AS AN INTERFACE DOES.**
+    /// `type PushDbQuery = { select(…): …; eq: … }` is how a structural client
+    /// surface is written, and the checker places `db.select()` on its member
+    /// — which had no node, so the call was `declaration_not_found`.
+    #[test]
+    fn the_members_of_a_type_alias_of_an_object_type_are_its_members() {
+        let facts = facts(
+            "export type Query = {\n  select(cols: string): Query;\n  eq: (c: string) => Query;\n};\ntype Local = { run(): void };\n",
+        );
+        let member = |ty: &str, name: &str, reach: Reach| {
+            fqn::define(&Form::Member {
+                lang: Language::TypeScript,
+                package: "pkg",
+                module: "lib/fixture",
+                ty,
+                member: name,
+                reach,
+            })
+            .unwrap()
+        };
+        let kind_of = |fqn: &Fqn| facts.symbols.iter().find(|s| &s.fqn == fqn).map(|s| s.kind);
+        assert_eq!(kind_of(&member("Query", "select", Reach::Item)), Some(SymbolKind::Method));
+        assert_eq!(kind_of(&member("Query", "eq", Reach::Field)), Some(SymbolKind::Field));
+        assert_eq!(kind_of(&member("Local", "run", Reach::Item)), Some(SymbolKind::Method));
+    }
+
+    /// **A MODULE-LEVEL OBJECT OF FUNCTIONS IS ITS FUNCTIONS' CONTAINER.**
+    /// `export const store = { load() {…} }` is how a Svelte store or an API
+    /// client is written; its methods are functions with bodies, and a call
+    /// reaches them (`store.load()`). They were walked as anonymous bodies —
+    /// no node, so the checker's answer ("`load`, declared here") had nothing
+    /// to land on, and their calls came from the module instead.
+    #[test]
+    fn the_functions_of_a_module_level_object_are_its_members() {
+        let facts = facts(
+            "export const store = {\n  load(next: number) {\n    helper(next);\n  },\n  get size() {\n    return 1;\n  },\n  save: (x: number) => helper(x),\n  name: 'x',\n} satisfies object;\nfunction helper(n: number) {\n  return n;\n}\n",
+        );
+        let member = |name: &str| {
+            fqn::define(&Form::Member {
+                lang: Language::TypeScript,
+                package: "pkg",
+                module: "lib/fixture",
+                ty: "store",
+                member: name,
+                reach: Reach::Item,
+            })
+            .unwrap()
+        };
+        let kind_of = |fqn: &Fqn| facts.symbols.iter().find(|s| &s.fqn == fqn).map(|s| s.kind);
+        assert_eq!(kind_of(&member("load")), Some(SymbolKind::Method));
+        assert_eq!(kind_of(&member("size")), Some(SymbolKind::Property));
+        assert_eq!(kind_of(&member("save")), Some(SymbolKind::Method));
+        assert_eq!(kind_of(&member("name")), None, "a value is not a member node");
+        let from_of_line = |line: u32| {
+            facts
+                .references
+                .iter()
+                .find(|r| r.kind == RefKind::Calls && r.at.start_line == line)
+                .map(|r| r.from.clone())
+        };
+        assert_eq!(from_of_line(3), Some(member("load")), "a call in a method is the method's");
+        assert_eq!(from_of_line(8), Some(member("save")));
     }
 
     /// A private member is a use site in every position a public one is.

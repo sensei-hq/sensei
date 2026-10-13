@@ -112,6 +112,6 @@ deferred until measurement says it matters.
 
 ## Related
 
-- [Observatory Diagrams gap analysis](../../analysis/2026-09-30-observatory-diagrams-gap-analysis.md)
+- [Observatory Diagrams gap analysis](../../history/analysis/2026-09-30-observatory-diagrams-gap-analysis.md)
 - #205 — the Structure screen this unblocks
 - #206 — diagram view performance, to be tuned only after this changes the shape

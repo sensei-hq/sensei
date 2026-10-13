@@ -10,7 +10,7 @@
  * previous run's leftovers cannot make this pass.
  */
 
-import { test, expect } from '../fixtures';
+import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateTo, daemonGet, DAEMON_URL, seedSetupComplete } from '../helpers';
 
 type Row = { source: string; label: string; consented: boolean };
@@ -23,7 +23,7 @@ async function setConsent(source: string, consented: boolean): Promise<void> {
   });
 }
 
-async function seedHealth(tauriPage: any): Promise<void> {
+async function seedHealth(tauriPage: TauriPageLike): Promise<void> {
   await tauriPage.evaluate(`
     (function() {
       sessionStorage.setItem('sensei:health', 'ready');

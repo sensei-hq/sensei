@@ -947,9 +947,17 @@ impl<'a> Ladder<'a> {
     /// [`Reason::UnhandledForm`] is left alone: it names a gap in the WALK, not
     /// a name the ladder declined to chase, and moving one into the plumbing list
     /// would hide exactly what the histogram exists to show.
+    /// So is every reason the COMPILER step stated: they are final.
     fn filtered(&self, reason: Reason, evidence: &Evidence) -> Reason {
         match reason {
             Reason::UnhandledForm => reason,
+            // The compiler's verdicts are root causes it stated, and renaming
+            // one would turn "never compiled" into what reads as a refusal.
+            Reason::EngineNotRun
+            | Reason::CompilerNoSymbol
+            | Reason::SymbolUnnamed
+            | Reason::DeclarationNotFound
+            | Reason::UntypedReceiver => reason,
             _ if self.grammar.plumbing.contains(&evidence.name.as_str()) => Reason::Plumbing,
             // A receiver we could not type, whose MEMBER nothing first-party
             // declares. No inference reaches it, because there is nothing of
@@ -3381,6 +3389,7 @@ mod tests {
                 "settled_by_scope",
                 "fully_qualified_external",
                 "in_the_prelude",
+                "resolved_by_compiler",
             ],
             "ALL is the ladder in climb order — a reordering here is a claim that the \
              ladder tries them differently"
@@ -3617,6 +3626,50 @@ mod tests {
             got.iter().any(|t| t == "ReceiverTypeUnknown(width)"),
             "a genuine miss keeps its own reason; got {got:?}"
         );
+    }
+
+    /// **A COMPILER'S VERDICT IS FINAL.** When the compiler step has named why
+    /// a call is not placed — not run over the project, no symbol at the site,
+    /// a symbol it cannot spell, a declaration not found — the ladder must not
+    /// rename it. Filtering `x.clone()` into `plumbing` turned 594 Rust calls
+    /// whose project was never compiled into what read as a deliberate refusal.
+    #[test]
+    fn a_reason_the_compiler_stated_is_never_renamed_by_the_ladder() {
+        use crate::indexer::facts::Reason;
+        for reason in [
+            Reason::EngineNotRun,
+            Reason::CompilerNoSymbol,
+            Reason::SymbolUnnamed,
+            Reason::DeclarationNotFound,
+            Reason::UntypedReceiver,
+        ] {
+            let mut facts = rust::read(&Source {
+                package: "p",
+                module: "m",
+                path: "src/fixture.rs",
+                text: "fn f(x: &Thing) { x.clone(); }",
+            })
+            .expect("the fixture parses");
+            for r in &mut facts.references {
+                if let Resolution::Unresolved { evidence, .. } = &r.target {
+                    r.target = Resolution::Unresolved { reason, evidence: evidence.clone() };
+                }
+            }
+            let scanned = BTreeSet::new();
+            let placed = resolve(
+                facts,
+                &rust::GRAMMAR,
+                &World {
+                    first_party: &BTreeSet::new(),
+                    first_party_members: &BTreeSet::from(["width".to_string()]),
+                    declared_members: &BTreeSet::new(),
+                    returns: &std::collections::BTreeMap::new(),
+                    scanned: &scanned,
+                },
+            );
+            let got = targets(&placed);
+            assert!(got.contains(&format!("{reason:?}(clone)")), "{reason:?} was renamed: {got:?}");
+        }
     }
 
     /// A3. Every reason the ladder can reach is reached by something, and the
