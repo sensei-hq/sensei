@@ -52,6 +52,7 @@ create type task_execution_kind as enum (
   -- via the queue's ordinary dependency barrier; when they drain it fans out
   -- one `process_file` per supported file.
 , 'process_repo_files'
+, 'compile_projects'
 , 'delete_file'
 , 'delete_folder'
 , 'branch_switch'
