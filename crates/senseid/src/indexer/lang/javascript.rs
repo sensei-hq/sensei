@@ -568,6 +568,7 @@ fn interpolations(text: &str, blocks: &[super::svelte::ScriptBlock]) -> Vec<Inte
         .iter()
         .map(|b| (b.start as usize, b.end as usize))
         .chain(style_blocks(text))
+        .chain(html_comments(text))
         .collect();
     let mut i = 0usize;
     while i < bytes.len() {
@@ -616,6 +617,18 @@ fn interpolations(text: &str, blocks: &[super::svelte::ScriptBlock]) -> Vec<Inte
 
 /// `<style>` block CONTENT ranges — CSS, which declares nothing this graph
 /// names and whose braces are not interpolations.
+/// Every `<!-- … -->`: commentary, not template — a `{…}` in it names nothing.
+fn html_comments(text: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    while let Some(open) = text[at..].find("<!--").map(|i| i + at) {
+        let close = text[open..].find("-->").map_or(text.len(), |i| i + open + "-->".len());
+        out.push((open, close));
+        at = close;
+    }
+    out
+}
+
 fn style_blocks(text: &str) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     let mut at = 0usize;
