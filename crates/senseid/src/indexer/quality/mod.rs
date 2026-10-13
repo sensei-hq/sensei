@@ -5,6 +5,8 @@
 //! assert a threshold.
 //!
 //! - [`acceptance`] — §6's criteria and R8. What the graph must achieve.
+//! - [`placement`] — the floor: calls and references placed by the
+//!   production path (each language's compiler), by language and package.
 //! - [`reachability`] — the two barriers a good graph clears: a declaration
 //!   should be the callee end of some edge, and WHICH end the caller sits on
 //!   says a different thing. What the graph must not lose.
@@ -21,4 +23,5 @@
 
 pub mod acceptance;
 pub mod corpus;
+pub mod placement;
 pub mod reachability;
