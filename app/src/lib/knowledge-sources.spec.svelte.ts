@@ -92,11 +92,25 @@ describe('KnowledgeSourcesState', () => {
     expect(state.addError).toBeNull();
   });
 
+  // #263: the daemon requires a name, so a blank one is caught here with a
+  // clear message instead of reaching it as a 422.
+  it('add() without a name sets addError and does NOT call createKnowledgeSource', async () => {
+    const create = vi.fn();
+    const api = mockApi({ createKnowledgeSource: create });
+    const state = new KnowledgeSourcesState();
+    state.url = 'https://hive.example.com';
+    state.name = '   ';
+    await state.add(api);
+    expect(state.addError).toBe('name required');
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('add() keeps form + sets addError when create fails', async () => {
     const create = vi.fn().mockResolvedValue({ ok: false, error: { status: 400, message: 'bad' } });
     const api = mockApi({ createKnowledgeSource: create });
     const state = new KnowledgeSourcesState();
     state.url = 'https://hive.example.com';
+    state.name = 'Hive';
     await state.add(api);
     expect(state.addError).toBe('bad');
     expect(state.url).toBe('https://hive.example.com');

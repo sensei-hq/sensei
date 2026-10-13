@@ -2335,6 +2335,27 @@ mod tests {
         state.pg.delete_knowledge_source(&id).await.unwrap();
     }
 
+    // #263: a source is listed by its name, so a blank one is refused, not stored.
+    #[tokio::test]
+    async fn a_knowledge_source_with_a_blank_name_is_refused() {
+        let (app, _) = test_app().await;
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/knowledge/sources")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "name": "  ", "url": "http://localhost:7755/v1/t/organization/x" })
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
     #[tokio::test]
     async fn health_check() {
         let (app, _) = test_app().await;
