@@ -1,6 +1,7 @@
 # Daemon → dōjō graph sync — a repository's code graph, shared (#225)
 
-> **Status:** plan. Q1 (§9) answered 2026-10-14: default branch only.
+> **Status:** plan. Q1 (§9) answered 2026-10-14: one configured branch per
+> repository, set on the dōjō; each person tracks a branch locally.
 >
 > **Decided 2026-10-14:** sync the **raw graph** — nodes and edges — rather than
 > derived diagram payloads or aggregates. A repository is shared, so its graph
@@ -84,6 +85,10 @@ and the schema rows of its nodes.
   (`path → content_hash`); the dōjō prunes files absent from it. A manifest is
   small (5,302 paths here) and makes a rename or delete converge without a
   tombstone protocol.
+- **Nodes with no file** (6,032 here: 5,161 `unknown` placeholders, 583
+  `package`, 187 `module`, 101 `field`; 45 edges leave them) travel as the
+  repository's *unplaced* slice — a slice with a null path — carried with the
+  manifest and replaced whole. A manifest never prunes them: they are not a file.
 - **Batches never split a file.** A batch is whole slices up to the byte cap; a
   single slice over the cap is refused and counted, never truncated.
 
@@ -102,7 +107,11 @@ and resolves when that file arrives.
   `dojo.graph_edges`, `dojo.graph_schema_*` — each with `tenant_id`,
   `repository_id` → `dojo.repositories(id)`, RLS on the same predicate as
   `repository_metrics` (a member of the tenant reads; nobody writes directly).
-- `dojo.file_graph_slices(repo_key, manifest, slices)` — SECURITY DEFINER,
+- `dojo.graph_heads` — one row per repository: the branch and the newest
+  accepted commit (`sha`, `committed_at`); the order rule for the unplaced slice
+  and for manifests.
+- `dojo.repositories.default_branch` and `.graph_branch` (§9).
+- `dojo.file_graph_slices(repository_id, commit, slices, manifest)` — SECURITY DEFINER,
   the `file_metric_rows` contract: principal from the session, repository checked
   against `all_my_repositories`, whole batch refused on any failure, tenant from
   the verdict.
@@ -168,20 +177,35 @@ components are reusable; the loaders are not.
 
 Alice indexed `main` this morning; Bob is on a feature branch with half the
 files changed. Both push the same repository. **Decided 2026-10-14: the dōjō
-holds the default branch only; per file, the newest commit wins.** The team
-sees `main`; feature-branch work stays local. Rejected: newest commit on any
-branch (unmerged work leaks into the shared graph) and one graph per branch
-(storage × branches, and a branch picker on every screen).
+holds ONE branch's graph per repository, and the dōjō says which branch.**
+Rejected: newest commit on any branch (unmerged work leaks into the shared
+graph) and one graph per branch (storage × branches, and a branch picker on
+every screen).
 
-- **The daemon enforces the branch.** It pushes a repository's graph only while
-  the clone is on the default branch, read from the remote
-  (`git symbolic-ref refs/remotes/origin/HEAD`); otherwise the repository is
-  `skipped` with reason `not_on_default_branch`. An unknown default branch is
-  also skipped, never guessed. The dōjō cannot verify a branch name, so it does
-  not pretend to.
-- **The dōjō enforces the order.** Each slice carries its commit and the
-  commit's time; `dojo.graph_files` keeps both, and a slice older than the stored
-  one for that path is refused and counted — a member a few commits behind does
-  not roll the shared graph back.
-- **The manifest prunes only with a newer commit.** A manifest older than the
-  repository's newest accepted commit prunes nothing.
+**The branch is the dōjō's setting.** `dojo.repositories` gains:
+
+- `default_branch` — captured from the forge with visibility (GitHub's
+  `/repos/{owner}/{repo}` already returns `default_branch`; same read, same
+  rules: a read that does not succeed writes nothing).
+- `graph_branch` — an override, e.g. `develop` for a team that treats it as the
+  latest. Set by whoever holds authority over the repository's settings
+  (`configurable_by_me`, the rule elections use).
+- The effective branch is `coalesce(graph_branch, default_branch)`. **Neither
+  known → the repository's graph does not sync** (reason `branch_unknown`),
+  never a guessed `main`.
+
+**The dōjō enforces it.** Every slice and manifest carries its branch and
+commit; `file_graph_slices` refuses a branch other than the effective one
+(`branch_mismatch`). Per file, the newest commit wins: a slice older than the
+stored one is refused and counted, so a member a few commits behind does not
+roll the shared graph back. A manifest older than the repository's newest
+accepted commit prunes nothing.
+
+**Each person tracks a branch locally.** A per-repository *tracked branch* in
+the app, defaulting to the dōjō's effective branch (sent with the plan), which
+the person may switch. The daemon pushes a repository's graph only while the
+checkout is on the tracked branch AND it equals the dōjō's branch; otherwise
+the repository is `skipped` with `not_on_tracked_branch` or
+`tracking_other_branch`, and the app says which — tracking your own branch is a
+local choice, and the screen must make plain that nothing of it is shared.
+Local diagrams always show the working tree, whichever branch that is.
