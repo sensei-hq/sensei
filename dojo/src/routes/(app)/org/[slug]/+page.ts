@@ -1,7 +1,10 @@
 import { redirect } from '@sveltejs/kit';
 import type { PageLoad } from './$types';
 import { orgBySlug } from '$lib/chrome';
-import { needsYou } from '$lib/components/kit/fixtures';
+import { listTriage } from '$lib/triage-data';
+import { toKitNeeds } from '$lib/triage-map';
+import { rankOf, K2_ROLE_RANK } from '$lib/nav';
+import type { KitNeed } from '$lib/components/kit/types';
 import { listProjects, DojoApiError } from '$lib/client-data';
 import { toKitProjects } from '$lib/projects-map';
 import type { KitProject } from '$lib/components/kit/types';
@@ -11,11 +14,9 @@ import type { KitProject } from '$lib/components/kit/types';
 // shows the right dōjō. A slug the caller isn't a member of redirects to the
 // personal landing — never a fabricated org (DJ1).
 //
-// The projects-in-jurisdiction, org needs band, and jurisdiction stat row render
-// off the ported kit fixtures (presentational — real `/v1` wiring is a later
-// chunk). The stat row is drawn from the resolved membership (members · pending →
-// "need a maintainer" · the jurisdiction project count) so it stays honest to the
-// org the caller actually belongs to.
+// Everything here is real: the jurisdiction's projects, the "needs a maintainer"
+// band (the tenant's open triage queue, maintainer floor — #241), and the stat
+// row drawn from the resolved membership (members · pending · project count).
 export const load: PageLoad = async ({ parent, params, fetch }) => {
 	const { memberships, accessToken } = await parent();
 	const org = orgBySlug(memberships, params.slug);
@@ -32,15 +33,25 @@ export const load: PageLoad = async ({ parent, params, fetch }) => {
 	} catch (e) {
 		projectsError = e instanceof DojoApiError ? e.message : 'could not reach the dojo service';
 	}
-	// The org "needs a maintainer" band — the first couple cross-dōjō items,
-	// re-cast as this jurisdiction's queue (mockup `needsYou.slice(0, 2)`).
-	const needs = needsYou.slice(0, 2);
+	// The "needs a maintainer" band: the open triage queue's first items. Below
+	// maintainer it is not the viewer's queue — nothing is asked, nothing shown.
+	// A failed read is an error, never an empty or invented band.
+	let needs: KitNeed[] = [];
+	let needsError: string | null = null;
+	if (rankOf(org.role) >= K2_ROLE_RANK.maintainer) {
+		try {
+			needs = toKitNeeds(await listTriage(org.url, { fetch, accessToken }), org.name);
+		} catch (e) {
+			needsError = e instanceof Error && e.message ? e.message : 'could not read the triage queue';
+		}
+	}
 	return {
 		slug: params.slug,
 		orgName: org.name,
 		projects,
 		projectsError,
 		needs,
+		needsError,
 		stats: { members: org.members, needs: org.pending, projects: projects.length }
 	};
 };

@@ -6,7 +6,8 @@ import {
 	toKitCandidate,
 	toKitTriageGroups,
 	toKitApprovals,
-	toKitCandidateDetail
+	toKitCandidateDetail,
+	toKitNeeds
 } from './triage-map';
 
 const NOW = new Date('2026-07-23T12:00:00Z');
@@ -107,5 +108,25 @@ describe('toKitCandidateDetail', () => {
 		expect(d.learning).toMatch(/select a candidate/i);
 		expect(d.scopes).toEqual([]);
 		expect(d.evidence).toEqual([]);
+	});
+});
+
+// #241: the org home's "needs a maintainer" band is the tenant's open triage
+// queue — its first items, as the queue ranks them — never a fixture.
+describe('toKitNeeds', () => {
+	it('maps the first open items to the band, in queue order', () => {
+		const needs = toKitNeeds(
+			[row({ signature: 's1', title: 'First' }), row({ signature: 's2', title: 'Second', contributor_count: 1 }), row({ signature: 's3' })],
+			'Acme',
+			NOW
+		);
+		expect(needs).toEqual([
+			{ id: 's1', kind: 'review', title: 'First', project: 'Payments', dojo: 'Acme', why: '3 contributors · pattern', age: '1d' },
+			{ id: 's2', kind: 'review', title: 'Second', project: 'Payments', dojo: 'Acme', why: '1 contributor · pattern', age: '1d' }
+		]);
+	});
+
+	it('is empty when the queue is', () => {
+		expect(toKitNeeds([], 'Acme', NOW)).toEqual([]);
 	});
 });

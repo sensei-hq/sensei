@@ -17,13 +17,14 @@
 	// summarize the jurisdiction (desktop only — the phone drops the row); the band
 	// is the maintainer's remote control (act inline, nothing routes away); the
 	// list is every project under this dōjō. Presentational: the page supplies the
-	// projects · needs · stats (kit fixtures this chunk); `onOpenProject` bubbles a
+	// projects · needs (the open triage queue) · stats; `onOpenProject` bubbles a
 	// row open → the org project preview, `onAct` an inline band action. Degrades to
 	// an honest empty state when nothing is in jurisdiction (DJ1).
 	let {
 		orgName,
 		projects = [],
 		needs = [],
+		needsError = null,
 		stats,
 		resolved,
 		onOpenProject,
@@ -32,6 +33,8 @@
 		orgName: string;
 		projects?: KitProject[];
 		needs?: KitNeed[];
+		/** A failed read of the band's queue — shown, never an empty band. */
+		needsError?: string | null;
 		stats?: KitOrgStats;
 		resolved?: Record<string, string>;
 		onOpenProject?: (p: KitProject) => void;
@@ -67,7 +70,11 @@
 		</div>
 	{/if}
 
-	<NeedsYouBand items={needs} {resolved} title="Needs a maintainer" {onAct} />
+	{#if needsError}
+		<p class="text-danger m-0 text-xs" data-needs-error>Needs a maintainer — {needsError}</p>
+	{:else}
+		<NeedsYouBand items={needs} {resolved} title="Needs a maintainer" {onAct} />
+	{/if}
 
 	<ListSection icon="folder" title="Projects" count={projects.length}>
 		{#snippet right()}

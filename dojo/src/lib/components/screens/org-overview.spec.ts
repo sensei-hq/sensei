@@ -55,6 +55,14 @@ describe('ScrOrgHome — jurisdiction projects + needs + stats', () => {
 		expect(onOpenProject).toHaveBeenCalledWith(projects.find((p) => p.name === 'lumen-auth'));
 	});
 
+	it('shows a failed queue read as an error in place of the band (#241)', () => {
+		const { container, queryByText } = render(ScrOrgHome, {
+			props: { orgName: 'Acme Corp', projects, needs: [], needsError: 'service down', stats }
+		});
+		expect(container.querySelector('[data-needs-error]')?.textContent).toContain('service down');
+		expect(queryByText(needs[0].title)).toBeNull();
+	});
+
 	it('degrades to an honest empty state with no projects in jurisdiction', () => {
 		const { getByText } = render(ScrOrgHome, {
 			props: { orgName: 'Acme Corp', projects: [], needs: [], stats }

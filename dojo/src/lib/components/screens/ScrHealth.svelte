@@ -75,8 +75,13 @@
 		</div>
 
 		<!-- Leak-guard & anomalies — the alert feed. -->
-		<ListSection icon="bell" title="Leak-guard & anomalies" count={health.alerts.length}>
-			{#each health.alerts as a (a.title)}
+		<ListSection icon="bell" title="Leak-guard & anomalies" count={health.alerts?.length}>
+			{#if health.alerts === null}
+				<p class="text-ink-faint m-0 text-xs" style="padding: 12px 16px" data-alerts-unmeasured>
+					Not measured yet — anomaly detection needs containment events.
+				</p>
+			{/if}
+			{#each health.alerts ?? [] as a (a.title)}
 				<div class="border-paper-edge flex items-start gap-3 border-b" style="padding: 12px 16px">
 					<KanjiToken char={a.kanji} size="base" toneClass={alertToneClass(a.sev)} w={20} />
 					<div class="flex-1" style="min-width: 0">

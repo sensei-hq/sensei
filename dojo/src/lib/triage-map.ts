@@ -21,7 +21,8 @@ import type {
 	KitTriageGroup,
 	KitTriageCandidate,
 	KitApproval,
-	KitCandidateDetail
+	KitCandidateDetail,
+	KitNeed
 } from './components/kit/types';
 
 /**
@@ -118,4 +119,21 @@ export function toKitCandidateDetail(row: TriageRow | undefined): KitCandidateDe
 		conflict: { loser: '', winner: '' },
 		scopes: [scope]
 	};
+}
+
+/** How many open items the org home's "needs a maintainer" band shows. */
+export const NEEDS_BAND_SIZE = 2;
+
+/** The org home's "needs a maintainer" band (#241): the first open triage items,
+ *  in the order the queue ranks them. Pure. */
+export function toKitNeeds(rows: TriageRow[], dojo: string, now: Date = new Date()): KitNeed[] {
+	return rows.slice(0, NEEDS_BAND_SIZE).map((r) => ({
+		id: r.signature,
+		kind: 'review',
+		title: r.title,
+		project: scopeLabel(r.owner_scope),
+		dojo,
+		why: `${r.contributor_count} ${r.contributor_count === 1 ? 'contributor' : 'contributors'} · ${r.kind}`,
+		age: relativeAge(r.created_at, now)
+	}));
 }
