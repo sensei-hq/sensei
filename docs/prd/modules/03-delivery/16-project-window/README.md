@@ -11,10 +11,10 @@ One project, deep: everything sensei knows about a single codebase, the work in
 flight, and the controls for what binds to or leaves it. The project window is the
 place a user goes to **trust** sensei's read on a project — Overview shows the FTR,
 the top recommendation and its provenance, memory / doc-drift / session stats and
-recent rows; each section (Sessions · Memories · Traceability · Libraries ·
-Instruments · Patterns · Impact · About · Atlas) offers exactly one action
-(Apply / Review / Dismiss, or send to the assistant). The user feels this as *I
-can see why sensei believes this, and act on it here*.
+recent rows; each section (Overview · Sessions · Metrics · Memories · Traceability ·
+Libraries · Instruments · Patterns · Impact · About) plus the Diagrams group offers
+exactly one action (Apply / Review / Dismiss, or send to the assistant). The user
+feels this as *I can see why sensei believes this, and act on it here*.
 
 > **Status honesty.** Overview, Sessions, Memories, Traceability, Libraries,
 > Instruments, Patterns, Impact, About and Atlas are built. The **solution-track
@@ -125,6 +125,9 @@ curl -s http://localhost:7744/api/projects/$ID/overview \
 
 ## Related
 
+- [design/project-management-detailed-requirements.md](../../../../design/project-management-detailed-requirements.md) —
+  the shell, the sidebar section list, the diagrams group, and the About document,
+  grounded in the mockup symbols.
 - [features/04-project.md](../../../../features/04-project.md) — the project-window
   dossier (legacy depth, folds here).
 - [spec/screen/project-*](../../../../spec/screen/) — overview, sessions, memories,

@@ -327,10 +327,12 @@ GET   /api/projects/{id}/sessions/unlinked
 
 ---
 
-## 6 · Reconciliation — where T3's spec contradicts its source
+## 6 · Reconciliation — where T3's spec contradicted its source
 
-These are **findings**, not edits. Each needs a decision (→ `decisions.md`) before
-the T3 spec is complete.
+> **Resolved 2026-10-14** — decided in [`decisions.md`](../decisions.md)
+> (“T3 tracker & gating reconciliation”) and folded into
+> [`prd/modules/04-team/03-dojo-project-planning/`](../prd/modules/04-team/03-dojo-project-planning/README.md).
+> The findings are kept below as the record of what was wrong.
 
 ### 6.1 The seven targets don't match, and FTR is gated
 
@@ -357,8 +359,10 @@ Two problems:
    cohesion are broader *architecture metrics* (`#156`) that may be
    ratchet-only, not sprint gates.
 
-**Needed decision:** which seven does T3 gate on — the mockup's code-health set
-(delta-scoped, §3.5) or the spec's current set — and is FTR gate or improvement?
+**Decision (2026-10-14):** T3 gates on the **mockup's code-health set**
+(delta-scoped, §3.5). **FTR is an insight, never a gate**, and coupling/cohesion
+are not sprint gates (absolute project-level ratios are improvement-only). The
+T3 spec's target table and Done gate were rewritten accordingly.
 
 ### 6.2 "Read-only" vs "exports run status back"
 
@@ -370,10 +374,9 @@ T3's gaps feature contains **both**:
   item statuses are updated in ADO."*
 
 The mockup is unambiguous (*"synced read-only"*, *"Closes in Sensei; Jira's sprint
-is untouched"*). The two export scenarios should be **removed or explicitly
-scoped as a separate, opt-in, non-sync export action** — as written they
-contradict the invariant and the wrong gate. (Reorg §9.5 also says *"Out of scope:
-writing back to the tracker"*.)
+is untouched"*). **Decision (2026-10-14): read-only means read-only** — the export
+scenarios were removed and replaced by a single “adapters never write back”
+scenario; there is no export action in scope.
 
 ### 6.3 The inheritance ladder, modes and Slack are missing
 
@@ -386,8 +389,10 @@ T3's spec has **no** mention of:
 - one-sprint-owner (§2.2);
 - the task matrix / scorecard / close-with-note shape (§4).
 
-These are all first-class in the mockup and in `reorg.md` §9.1. Adding them is the
-bulk of the "flesh out" work for T3.
+These are all first-class in the mockup and in `reorg.md` §9.1. **Decision
+(2026-10-14): all added** — the ladder, the three modes, the Slack hooks, unlinked
+sessions, one-sprint-owner and the close-with-note rule are now sections in the T3
+spec.
 
 ---
 

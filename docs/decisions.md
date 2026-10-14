@@ -1,6 +1,6 @@
 ---
 name: Decisions log — sensei
-updated: 2026-10-13
+updated: 2026-10-14
 ---
 
 # Decisions
@@ -9,6 +9,31 @@ updated: 2026-10-13
 > The anti-rework memory — never re-derive a settled choice.
 > The **design journey** (approaches tried, what worked, what didn't) lives in
 > [`history/analysis/2026-07-24-design-journey.md`](history/analysis/2026-07-24-design-journey.md).
+
+---
+
+## 2026-10-14 — T3 tracker & gating reconciliation
+
+The T3 spec (Dōjō Project Planning) had drifted from its design source. Its seven
+"gating targets" were a different set from the mockup's, one of them gated on FTR —
+which reorg §9.3 lists as **improvement-only** — and its Done gate said the
+adapters "export status back" while its own wrong-gate said read-only. Reconciled
+to the mockup (`dojo2-project.jsx`) and reorg §9 as the single source.
+
+| Decision | Locked answer | Why |
+|---|---|---|
+| **Targets gate on the code; insights never gate** | Every gated reading is code-derived. Behavioural readings — **FTR, corrections/session, AI-assisted share, gate wait time** — are insights only and can never block a merge or sprint close. The old "FTR ≥ baseline + δ" gate is **removed**. | reorg §9.1/§9.3 and the mockup both state it; an inherited codebase would otherwise fail every sprint on behaviour it did not cause. |
+| **The seven targets are the mockup's seven** | 1 hard-rule violations `=0` · 2 coverage on guarded paths `≥75/80%` · 3 new layer violations `=0` · 4 new dependency cycles `=0` · 5 modules in the zone of pain `≤2/1` (warn) · 6 changed functions over complexity 10 `≤3/2` · 7 new high-severity anti-patterns `=0` (warn). Coupling/cohesion are **not** gates — they are absolute project-level ratios (improvement-only). | Matches `PJ_TARGETS` in the mockup and reorg §9.2's buildable map (1 ✅, 2 🟡 scoped reads, 4 ⛔ #156). |
+| **Read-only means read-only** | Tracker adapters **never write back**. There is no export-back path; the Done-gate line is removed and the gaps feature's export scenarios are replaced by one read-only scenario. | The mockup is unambiguous (*"synced read-only"*); the spec contradicted its own wrong-gate. |
+| **Inheritance is most-specific-wins** | Dōjō → Project → Sprint → Task type → Task; a target with no value at a scope **inherits** the nearest ancestor's. Overrides narrow, never widen. | `PJ_CHAIN` in the mockup; reorg §9.1. |
+| **Modes are `block` / `warn` / `off`** | Only `block` prevents a sprint close; `warn` surfaces; `off` disables the check. | `TargetEditor` in the mockup offers all three. |
+| **A blocking miss needs a note; unlinked sessions don't count** | A sprint missing a blocking target cannot close without a note (maintainer+). A session counts toward a task only when its branch, commit or prompt carries the ticket key; the rest are unlinked and count toward nothing. | Mockup sprint-close rule + key-linkage row. |
+| **One tracker owns sprints** | Several trackers may contribute projects/issues/task types; exactly one owns the sprint calendar. | Mockup *"Owned by Jira — 6 imported"*. |
+| **Slack hooks** | Three: `miss` (blocking target missed mid-sprint), `close` (sprint closed, with its note), `gate` (a session waits on a gate > 30 m). | Mockup `ProjIntegrations` notifications block. |
+| **The ratchet is own-baseline, for readings that can't be delta-scoped** | Gates are delta-scoped where possible (new violations, changed functions, guarded paths); the ratchet covers project-level readings by comparing against the project's **own trailing baseline**, and advances only when a reading improves **and holds**. Not FTR-based. | reorg §9.3–9.4; the ratchet was previously mis-attached to FTR. |
+
+Full requirements: [`design/integrations-and-gating-requirements.md`](design/integrations-and-gating-requirements.md) ·
+folded into [`prd/modules/04-team/03-dojo-project-planning/README.md`](prd/modules/04-team/03-dojo-project-planning/README.md).
 
 ---
 
