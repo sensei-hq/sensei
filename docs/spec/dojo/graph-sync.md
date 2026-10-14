@@ -56,8 +56,8 @@ schema and has no `pgvector`.
 | `files` | `file_path` (repository-relative), `content_hash` | the unit of sync (§3) and its change marker |
 | `nodes` | every column the views read: `kind`, `name`, `fqn`, `parent` (by key), `line_start/end`, `is_exported`, `is_test`, `signature`, `description`, `docstring`, `language`, `community_id`, `tags`, `props` | the diagrams read these |
 | `edges` | `kind`, source (by key), target (by key, or `target_name` when unresolved), `confidence`, `resolved_via`, `unresolved_reason`, `props.occurrences` | the diagrams read these; unresolved edges are part of the graph |
-| `folders` | repository-relative `path`, `kind`, `role`, `name` | packages and modules; the world view groups by them |
-| `schema_*` | as is, keyed by node | the schema view |
+| `schema_*` | on the node they describe, inside its slice; a ref's target as a node key | the schema view |
+| `folders` | **does not travel** | measured 2026-10-14: the diagram views join `folders` only to reach a node's checkout for project membership — on the dōjō that is `tenant → team → projects → repositories`, which already exists. Every node, edge and file hangs off the checkout folder itself |
 | `nodes.embedding` | **does not travel** | no `pgvector` on the dōjō; search there is a later decision |
 | `nodes.content` | **does not travel** | empty today; source text is not graph |
 | `folders.abs_path`, `remote_urls`, `branch` | **do not travel** | machine-local; the repository is already identified by `repo_key` |
@@ -107,8 +107,9 @@ and resolves when that file arrives.
 - `sensei.sync_entity` gains `repository_graph` (status per repository, keyed by
   `repo_key`). Shared-closure enum: it reaches both planes, and the `dojo`
   scope's `includes` must list it.
-- `dojo.graph_files`, `dojo.graph_folders`, `dojo.graph_nodes`,
-  `dojo.graph_edges`, `dojo.graph_schema_*` — each with `tenant_id`,
+- `dojo.graph_files`, `dojo.graph_nodes`, `dojo.graph_edges`,
+  `dojo.graph_schema_*` (hanging off `graph_nodes`, so a slice's replace takes
+  them with its nodes) — each with `tenant_id`,
   `repository_id` → `dojo.repositories(id)`, RLS on the same predicate as
   `repository_metrics` (a member of the tenant reads; nobody writes directly).
 - `dojo.graph_heads` — one row per (repository, branch): the newest accepted

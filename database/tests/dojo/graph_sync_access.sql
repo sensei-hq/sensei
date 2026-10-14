@@ -141,6 +141,47 @@ begin
         raise exception 'move: a.f should now belong to src/c.ts';
     end if;
 
+    -- ── schema: a table's columns, indexes and keys ride on its node ─────────
+    select to_jsonb(g) into r from dojo.file_graph_slices(repo, c2, jsonb_build_array(jsonb_build_object(
+        'path', 'db/t.sql', 'content_hash', 'ht1',
+        'nodes', jsonb_build_array(
+            jsonb_build_object('folder_path', '', 'fqn', 'app.orders', 'kind', 'table', 'name', 'orders',
+                'schema', jsonb_build_object(
+                    'entity', jsonb_build_object('kind', 'table', 'db_schema', 'app', 'source', 'dbd', 'naming', 'stated'),
+                    'columns', jsonb_build_array(
+                        jsonb_build_object('ordinal', 1, 'name', 'id', 'sql_type', 'uuid', 'primary_key', true, 'not_null', true),
+                        jsonb_build_object('ordinal', 2, 'name', 'customer_id', 'sql_type', 'uuid', 'foreign_key', true)),
+                    'indexes', jsonb_build_array(
+                        jsonb_build_object('name', 'orders_customer', 'definition', 'create index …', 'unique_index', false)),
+                    'refs', jsonb_build_array(
+                        jsonb_build_object('from_column', 'customer_id', 'to_folder', '', 'to_fqn', 'app.customers',
+                                           'to_column', 'id', 'on_delete', 'cascade')))),
+            jsonb_build_object('folder_path', '', 'fqn', 'app.customers', 'kind', 'table', 'name', 'customers')),
+        'edges', '[]'::jsonb)), null) g;
+    select count(*) into n from dojo.graph_schema_columns c
+      join dojo.graph_nodes g on g.id = c.node_id where g.repository_id = repo and g.fqn = 'app.orders';
+    if n <> 2 then raise exception 'schema: orders should carry 2 columns, carries %', n; end if;
+    if (select db_schema from dojo.graph_schema_entities e join dojo.graph_nodes g on g.id = e.node_id
+         where g.repository_id = repo and g.fqn = 'app.orders') is distinct from 'app' then
+        raise exception 'schema: the entity row did not land';
+    end if;
+    if (select to_fqn from dojo.graph_schema_refs x join dojo.graph_nodes g on g.id = x.from_node_id
+         where g.repository_id = repo and g.fqn = 'app.orders') is distinct from 'app.customers' then
+        raise exception 'schema: the foreign key should name its target by key';
+    end if;
+    select count(*) into n from dojo.graph_schema_indexes i join dojo.graph_nodes g on g.id = i.node_id
+     where g.repository_id = repo and g.fqn = 'app.orders';
+    if n <> 1 then raise exception 'schema: orders should carry 1 index, carries %', n; end if;
+    -- Re-filed without a schema: the old rows go with the old nodes.
+    select to_jsonb(g) into r from dojo.file_graph_slices(repo, c2, jsonb_build_array(jsonb_build_object(
+        'path', 'db/t.sql', 'content_hash', 'ht2',
+        'nodes', jsonb_build_array(jsonb_build_object('folder_path', '', 'fqn', 'app.orders', 'kind', 'table', 'name', 'orders')),
+        'edges', '[]'::jsonb)), null) g;
+    if exists (select 1 from dojo.graph_schema_columns c join dojo.graph_nodes g on g.id = c.node_id
+                where g.repository_id = repo and g.fqn = 'app.orders') then
+        raise exception 'schema: a re-filed slice left its old columns behind';
+    end if;
+
     -- ── order: an older commit does not roll a file back ─────────────────────
     select to_jsonb(g) into r from dojo.file_graph_slices(repo, c0, jsonb_build_array(jsonb_set(b, '{content_hash}', '"hb0"')), null) g;
     if (r ->> 'refused_older')::int <> 1 then raise exception 'order: an older slice should be refused and counted, got %', r; end if;

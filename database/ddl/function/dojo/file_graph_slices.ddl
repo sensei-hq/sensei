@@ -15,7 +15,8 @@ set search_path to dojo, extensions;
 --      (dojo.repository_graph_branches): none tracked → branch_unknown; another →
 --      branch_not_tracked (invalid_parameter_value). Each tracked branch is its
 --      own graph; this call touches only the one it names.
---   3. A slice REPLACES its file's rows on that branch. One older than the commit
+--   3. A slice REPLACES its file's rows on that branch — nodes, their edges,
+--      and the schema rows riding on them. One older than the commit
 --      stored for its path (or, unplaced, than the branch's head) is refused and
 --      counted — a member a few commits behind does not roll the branch back.
 --   4. A manifest prunes the branch's files absent from it, only when its commit
@@ -123,6 +124,51 @@ begin
                coalesce(array(select jsonb_array_elements_text(n -> 'tags')), '{}'),
                coalesce(n -> 'props', '{}'::jsonb)
           from jsonb_array_elements(coalesce(v_slice -> 'nodes', '[]'::jsonb)) n;
+
+        -- A schema node's entity, columns, indexes and keys ride on it in the
+        -- slice; they hang off the node row, so the replace above took the old ones.
+        insert into dojo.graph_schema_entities
+               (node_id, tenant_id, repository_id, kind, db_schema, source, naming, note, note_md)
+        select g.id, v_tenant, p_repository_id, x ->> 'kind', x ->> 'db_schema', x ->> 'source',
+               x ->> 'naming', x ->> 'note', x ->> 'note_md'
+          from jsonb_array_elements(coalesce(v_slice -> 'nodes', '[]'::jsonb)) n
+          cross join lateral (select n -> 'schema' -> 'entity' as x) e
+          join dojo.graph_nodes g
+            on g.repository_id = p_repository_id and g.branch = v_branch
+           and g.folder_path = n ->> 'folder_path' and g.fqn = n ->> 'fqn'
+         where jsonb_typeof(x) = 'object';
+
+        insert into dojo.graph_schema_columns
+               (node_id, tenant_id, repository_id, ordinal, name, sql_type, primary_key, not_null,
+                unique_key, foreign_key, enum_typed, default_expr, note)
+        select g.id, v_tenant, p_repository_id, (c ->> 'ordinal')::int, c ->> 'name', c ->> 'sql_type',
+               coalesce((c ->> 'primary_key')::boolean, false), coalesce((c ->> 'not_null')::boolean, false),
+               coalesce((c ->> 'unique_key')::boolean, false), coalesce((c ->> 'foreign_key')::boolean, false),
+               coalesce((c ->> 'enum_typed')::boolean, false), c ->> 'default_expr', c ->> 'note'
+          from jsonb_array_elements(coalesce(v_slice -> 'nodes', '[]'::jsonb)) n
+          cross join lateral jsonb_array_elements(coalesce(n -> 'schema' -> 'columns', '[]'::jsonb)) c
+          join dojo.graph_nodes g
+            on g.repository_id = p_repository_id and g.branch = v_branch
+           and g.folder_path = n ->> 'folder_path' and g.fqn = n ->> 'fqn';
+
+        insert into dojo.graph_schema_indexes (node_id, tenant_id, repository_id, name, definition, unique_index)
+        select g.id, v_tenant, p_repository_id, i ->> 'name', i ->> 'definition',
+               coalesce((i ->> 'unique_index')::boolean, false)
+          from jsonb_array_elements(coalesce(v_slice -> 'nodes', '[]'::jsonb)) n
+          cross join lateral jsonb_array_elements(coalesce(n -> 'schema' -> 'indexes', '[]'::jsonb)) i
+          join dojo.graph_nodes g
+            on g.repository_id = p_repository_id and g.branch = v_branch
+           and g.folder_path = n ->> 'folder_path' and g.fqn = n ->> 'fqn';
+
+        insert into dojo.graph_schema_refs
+               (from_node_id, tenant_id, repository_id, from_column, to_folder, to_fqn, to_column, on_delete)
+        select g.id, v_tenant, p_repository_id, x ->> 'from_column', x ->> 'to_folder', x ->> 'to_fqn',
+               x ->> 'to_column', x ->> 'on_delete'
+          from jsonb_array_elements(coalesce(v_slice -> 'nodes', '[]'::jsonb)) n
+          cross join lateral jsonb_array_elements(coalesce(n -> 'schema' -> 'refs', '[]'::jsonb)) x
+          join dojo.graph_nodes g
+            on g.repository_id = p_repository_id and g.branch = v_branch
+           and g.folder_path = n ->> 'folder_path' and g.fqn = n ->> 'fqn';
 
         insert into dojo.graph_edges
                (tenant_id, repository_id, branch, source_id, kind, target_folder, target_fqn, target_name,
