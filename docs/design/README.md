@@ -47,7 +47,7 @@ themselves.
 - [`project-management-detailed-requirements.md`](project-management-detailed-requirements.md) — the M16 project window: shell/nav, sections, settings, the diagrams embed protocol, permissions, acceptance criteria.
 - [`integrations-and-gating-requirements.md`](integrations-and-gating-requirements.md) — T3: external trackers (Jira · ADO · GitHub Issues · Slack), the target inheritance ladder, the seven code-health targets, the gate/improvement split and own-baseline ratchet, the sprint scorecard — **plus three spec contradictions to resolve**.
 - [`diagrams-zoom-pan-detail-requirements.md`](diagrams-zoom-pan-detail-requirements.md) — Atlas + diagrams: controlled zoom/pan, detail levels (LOD), and the indexer depth-scoping they need (G-1).
-- [`governance-track-depth-review.md`](governance-track-depth-review.md) — depth verdict on M13/M9/M10/T1/T2; the authoring surface (epic #91) was the one real gap — now specified in [T2 §The governance authoring surface](../prd/modules/04-team/02-dojo-consoles/README.md#the-governance-authoring-surface).
+- [`governance-track-depth-review.md`](governance-track-depth-review.md) — depth verdict on M13/M9/M10/T1/T2; all findings closed 2026-10-14 (the authoring surface in [T2 §The governance authoring surface](../prd/modules/04-team/02-dojo-consoles/README.md#the-governance-authoring-surface), stickiness in [M13 §Instruction delivery & stickiness](../prd/modules/02-insight/13-governance-and-rules/README.md#instruction-delivery--stickiness), the canonical order in [governance.md §Resolution order](governance.md#resolution-order-the-one-order)).
 
 
 ## Layers

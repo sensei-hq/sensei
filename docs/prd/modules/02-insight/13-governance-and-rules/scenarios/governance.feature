@@ -119,3 +119,51 @@ Feature: Governance & Rules — resolution, personal file, promotion, enforcemen
     When the bypass is requested
     Then it is refused without an override row
     And any granted override carries an expiry and an approver
+
+  # gap: instruction-stickiness
+  NO TEST
+  Scenario: a mandatory rule is in context at session start without a pull
+    Given an org rule at the mandatory tier
+    When a session starts in that org's repo
+    Then the mandatory rule is in the session context from turn zero
+    And the model did not have to call get_rules
+
+  # gap: instruction-stickiness
+  NO TEST
+  Scenario: an advisory rule is not pushed
+    Given an advisory rule
+    When a session starts
+    Then the advisory rule is not injected
+    And it resolves only when the model pulls it
+
+  # gap: instruction-stickiness
+  NO TEST
+  Scenario: compaction re-injects the full mandatory tier
+    Given a long session that has crossed compaction
+    When the PreCompact hook runs
+    Then the full mandatory and required tier is re-injected
+    And it is not replaced by the thinner refocus summary
+
+  # gap: instruction-stickiness
+  NO TEST
+  Scenario: a drift signal re-emits the mandatory tier
+    Given a session where the mandatory tier has drifted out of attention
+    When a drift signal fires
+    Then the mandatory tier is re-emitted
+    Drift-triggered re-assert is the recommended trigger, not yet a decision (design doc §7.3).
+
+  # gap: instruction-stickiness
+  NO TEST
+  Scenario: the durable anchor names the resolved artifact for hostless ACPs
+    Given an assistant that never runs a SessionStart hook
+    When the session begins
+    Then the managed CLAUDE.md/AGENTS.md pointer names the resolved artifact
+    And that pointer is the backstop, not the constitution itself
+
+  # gap: instruction-stickiness
+  NO TEST
+  Scenario: a mandatory tool-observable rule denies the violating call
+    Given a mandatory rule that carries a machine checker
+    When a tool call violates it
+    Then the PreToolUse gate denies the call
+    And a mandatory rule without a checker stays delivery-only

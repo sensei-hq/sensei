@@ -9,6 +9,38 @@ feature (the dōjō plane). The feature doc says what a developer, maintainer,
 lead, or admin sees and does; this says how it resolves and where the code
 lives.
 
+## Resolution order (the one order)
+
+Every consumer of the constitution — M13's `get_rules`, T1's federation,
+`get_layered_context` — resolves in **one order**. It is stated here and nowhere
+else; M13 and T1 link to it rather than restating it.
+
+1. **Confidentiality filters the set.** A client-bound repo resolves against the
+   client dōjō and **excludes the employer for client-origin findings**; the
+   universal strip applies regardless. Confidentiality is a *precondition on
+   which rows exist*, not a rung — a P0 rule that would carry client data to the
+   employer is not ranked lower, it is **absent**. So confidentiality does not
+   "beat" a P0: it is decided before ranking begins. **Anonymization is not a
+   rule at all**, and therefore cannot be out-ranked or out-voted.
+2. **Enforcement, strongest first** — `mandatory > required > recommended >
+   advisory` (`sensei.enforcement`, ascending so `ORDER BY enforcement DESC`
+   reads strongest-first). A `mandatory` rule is **locked**: a narrower scope may
+   refine it but never weaken it (the mandatory-lock).
+3. **Priority, then impact** — within a tier, `P0 > P1 > P2 > P3`, then impact
+   (`critical … low`).
+4. **Scope specificity** — then `sensei.scopes.level` descending (`repository >
+   project > team > technology > client > organization > user > general`); the
+   more specific scope refines the broader.
+5. **Dedup** — an identical rule keeps its highest-authority, first occurrence.
+
+One floor rides on steps 1–3: for a repo bound to a client the **owning org wins
+ordinary conflicts** while the **employer's own mandatory rules still load and
+remain a floor** — the one thing a client scope cannot strip.
+
+The tier-1 engine implements exactly this: gather → order by enforcement desc,
+scope level desc → mandatory-lock → dedup, cached 5 min
+(`crates/senseid/src/governance.rs`).
+
 ## Scopes, namespaces & precedence
 
 - Data model, not a hierarchy: `sensei.scopes` (the ladder — `general < user <

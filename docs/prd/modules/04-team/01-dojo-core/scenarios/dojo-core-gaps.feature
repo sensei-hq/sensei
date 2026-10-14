@@ -55,6 +55,14 @@ Feature: Dōjō Core — the unbuilt org context and create-Dōjō flow
     Then the finding is accumulated, triaged, approved, distributed, and received downstream
     Per the plan's own record (reorg §12): "Dōjō sync never worked" — this is unbuilt end-to-end.
 
+  # gap: F-3
+  NO TEST
+  Scenario: a Dōjō-authored rule appears in the member's resolved set
+    Given an org that authored a mandatory rule at its scope
+    When a member whose repo is bound to that org calls get_rules
+    Then the org's rule is in the resolved set
+    Today it cannot be pinned — the sync path above never completes, so the shared half silently no-ops.
+
   NO TEST
   Scenario: the personal landing is work-first for members too
     Given a member of a Dōjō

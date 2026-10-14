@@ -2,9 +2,11 @@
 
 > **Status:** Assessment (2026-10-14). Answers one question: *are the governance
 > track's PRD specs deep enough to build from?* Findings only — no spec edits here.
-> **Acted on 2026-10-14:** §3.1 and §3.2 are now specified in T2
-> ([*The governance authoring surface*](../prd/modules/04-team/02-dojo-consoles/README.md#the-governance-authoring-surface));
-> §3.3–3.5 remain open (§5).
+> **Acted on 2026-10-14 — every finding closed:** §3.1–3.2 in
+> [T2 *The governance authoring surface*](../prd/modules/04-team/02-dojo-consoles/README.md#the-governance-authoring-surface),
+> §3.3 in M13 *Instruction delivery & stickiness*, §3.4 in
+> [governance.md §Resolution order](governance.md#resolution-order-the-one-order),
+> §3.5 in T1's wrong gates + scenario, and §3.6 in the T2 library section (§5).
 > **Track:** epic [#91](https://github.com/sensei-hq/sensei/issues/91) — *Dōjō
 > governance track: admin site + policies + preferences + skills/agents* — plus the
 > governance half of the insight plane.
@@ -134,6 +136,12 @@ exact thing M13's Purpose leads with (*"re-grounded after context compaction"*).
 `instruction-delivery` requirement section), with the re-assert trigger and durable
 anchor as testable claims.
 
+> **✅ Done 2026-10-14.** M13 gains **Instruction delivery & stickiness** — tiered
+> push by enforcement, PreCompact full-tier re-assert, the durable pointer anchor,
+> the recommended drift trigger (flagged as an open decision), the enforceable
+> gate, and the `checker?`/`skill?` rule fields — with done/wrong gates and six
+> `NO TEST` `# gap: instruction-stickiness` scenarios.
+
 ### 3.4 Cross-module resolution order is stated two ways
 
 - **T1** (`Data invariants`): ① confidentiality first → ② mandatory locks → ③
@@ -150,6 +158,11 @@ anonymization · always on"* as adjacent-to-but-not-part-of the dial set.
 order across confidentiality · enforcement · priority · scope; link it from both
 M13 and T1.
 
+> **✅ Done 2026-10-14.** [`design/governance.md` §Resolution order](governance.md#resolution-order-the-one-order)
+> is now the one place — confidentiality *filters* (so it is decided before
+> ranking, and anonymization is not a rule at all), then enforcement, priority,
+> scope, dedup. M13 and T1 link it and no longer restate the order.
+
 ### 3.5 The Dōjō **sync** gap is a correctness risk under a governance spec
 
 `F-3` — *"Dōjō sync never worked"* (P1) — sits under T1. If rules resolve locally and
@@ -159,6 +172,11 @@ currently include *"the Dōjō's rules never actually reach `get_rules`"*.
 
 **Recommendation:** add that wrong gate to T1 and a scenario that a Dōjō-authored
 rule appears in the member's resolved set (today it cannot be pinned).
+
+> **✅ Done 2026-10-14.** T1's wrong gates gain *"a Dōjō-authored rule never reaches
+> the member's `get_rules` at all"* (distinct from the stale-after-cache case), its
+> `F-3` open gap states the member-facing consequence, and
+> `dojo-core-gaps.feature` gains the scenario.
 
 ### 3.6 A shipped-but-unreachable pack
 
@@ -180,27 +198,28 @@ point, and file it as a gap row if it isn't one already.
 
 | Question | Answer |
 |---|---|
-| Is M13 deep enough for the **solo/rule-model** half? | **Yes.** Deep, specific, test-pinned. Its only content gap is stance + stickiness (§3.2–3.3). |
+| Is M13 deep enough for the **solo/rule-model** half? | **Yes.** Deep, specific, test-pinned. Stance and stickiness are now specified too (§3.2–3.3 ✅). |
 | Are M9 / M10 deep enough? | **Yes.** |
 | Are T1 / T2 deep enough for **membership + routing**? | **T1 yes; T2 yes for role routing.** |
 | Is the **Dōjō governance authoring surface** (epic #91) specced? | **Yes (2026-10-14).** The scope ladder, stance dials, the five artifact kinds, inherit/override display, onboarding preview and the constitution library are now a T2 section + scenario file (§3.1 ✅). |
-| One-line verdict | **The rule *engine* was well specified; the *authoring surface* is now too.** Remaining: three small insertions — stickiness (§3.3), one canonical resolution order (§3.4), and T1's Dōjō-sync wrong gate (§3.5). |
+| One-line verdict | **The governance track is depth-complete (2026-10-14).** All five additions landed: the authoring spec (§3.1), stance (§3.2), stickiness (§3.3), one canonical resolution order (§3.4) and T1's Dōjō-sync wrong gate (§3.5). What remains is *build*, not spec: `F-3`, instruction stickiness, and the pony-tail opt-in surface. |
 
 ---
 
-## 5 · Recommended additions (smallest set)
+## 5 · Recommended additions (smallest set) — all landed 2026-10-14
 
 1. **New module spec — Dōjō Governance Authoring** (T2 subsection or its own
    `05-…`): scope ladder · stance · authored artifact kinds · inherit/override
    rendering · onboarding preview · constitution library. *(§3.1)* —
    **✅ done** as a T2 section + `dojo-governance-authoring.feature`.
 2. **M13 — add a Stance block** and a Stickiness block, or link the authoring spec.
-   *(§3.2–3.3)* — **🟡 half done**: stance is specified in T2; M13's link and the
-   stickiness block are still open.
+   *(§3.2–3.3)* — **✅ done**: stance is specified in T2 and linked from M13;
+   stickiness is M13's **Instruction delivery & stickiness** section.
 3. **One canonical resolution-order paragraph** (confidentiality · enforcement ·
-   priority · scope), linked from M13 and T1. *(§3.4)* — **⛔ open.**
+   priority · scope), linked from M13 and T1. *(§3.4)* — **✅ done** in
+   [`governance.md` §Resolution order](governance.md#resolution-order-the-one-order).
 4. **T1 — new wrong gate + scenario** for "a Dōjō-authored rule reaches the
-   member's `get_rules`". *(§3.5)* — **⛔ open.**
+   member's `get_rules`". *(§3.5)* — **✅ done**.
 5. **Gap row** for the unreachable opt-in pack (ponytail) if not already tracked.
    *(§3.6)* — **✅ done**: folded into the T2 library section; already tracked as
    M13's `C-2` follow-on.

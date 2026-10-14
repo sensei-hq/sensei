@@ -387,8 +387,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   & precedence; the identity/membership routing; the stance concept (§Budgets &
   controls).
 - [design/governance-track-depth-review.md](../../../../design/governance-track-depth-review.md)
-  — the depth review that named this surface the track's one real gap
-  (§3.1–3.2).
+  — the depth review that named this surface the track's one real gap (closed
+  2026-10-14).
 - [design/instruction-delivery-model.md](../../../../design/instruction-delivery-model.md)
   — how authored skills / agents / commands actually reach and *stick* in a
   session.

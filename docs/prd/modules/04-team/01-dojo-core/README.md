@@ -80,7 +80,11 @@ feels this as *I sign in once, and the right rules just work — wherever I code
   anonymized the same way every time, or it doesn't leave.
 - **Lead.** Governance resolution order: ① confidentiality first → ② mandatory
   locks (★ / mandatory) so no narrower scope can relax → ③ otherwise more
-  specific scope refines broader.
+  specific scope refines broader. The single canonical statement across
+  confidentiality · enforcement · priority · scope — and how confidentiality
+  interacts with a P0 — is [design/governance.md §Resolution
+  order](../../../../design/governance.md#resolution-order-the-one-order); this
+  module links it rather than restating it.
 
 ## Signals shown
 
@@ -116,6 +120,9 @@ curl -s "https://dojo.sensei-hq.com/v1/t/org/sensei-hq/rules/resolved?repo=..." 
   when a Dōjō exists) — routing regressed.
 - **A promoted rule doesn't appear in `get_rules`** after cache expiry —
   federation/push regressed.
+- **A Dōjō-authored rule never reaches the member's `get_rules` at all** — the
+  pull/sync path is dead, not merely stale (`F-3`). The "shared" half of
+  governance silently no-ops while every local path still looks healthy.
 - **An election row silently becomes a mandate** — the two-row invariant
   regressed.
 - **Two identical metric pushes create duplicate rows** — `NULLS NOT DISTINCT`
@@ -138,7 +145,9 @@ curl -s "https://dojo.sensei-hq.com/v1/t/org/sensei-hq/rules/resolved?repo=..." 
   creates `auth.users` but no membership; "Join" dead → every console surface
   403s (P1). Blocks T2 consoles.
 - [F-3](../../../../roadmap/06-gaps.md) — Dōjō sync never worked (reorg §12)
-  (P1).
+  (P1). Member-facing consequence: a Dōjō-authored rule never reaches the
+  member's `get_rules`, so the shared half of governance silently no-ops
+  (the wrong gate below; scenario in `dojo-core-gaps.feature`).
 - **Create a Dōjō + starter constitution** — unbuilt.
 - **Role-scoped surfaces** (developer/maintainer/lead/admin) — unbuilt.
 
