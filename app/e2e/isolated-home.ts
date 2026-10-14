@@ -17,7 +17,7 @@
  */
 
 import { execFileSync } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
 
@@ -94,4 +94,17 @@ export function e2eKeychainHas(service: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Declare an MCP server in the isolated home's Cursor config, as a user who
+ *  configured one would have. Discovery picks it up on its next scan. */
+export function seedCursorMcpServer(key: string): void {
+  const dir = join(E2E_HOME, '.cursor');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'mcp.json'), JSON.stringify({ mcpServers: { [key]: { command: '/usr/bin/true', args: [] } } }));
+}
+
+/** Remove the Cursor config {@link seedCursorMcpServer} wrote. */
+export function clearCursorMcpServers(): void {
+  rmSync(join(E2E_HOME, '.cursor', 'mcp.json'), { force: true });
 }

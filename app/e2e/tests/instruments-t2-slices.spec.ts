@@ -17,6 +17,7 @@
 
 import { test, expect } from '../fixtures';
 import { navigateTo, DAEMON_URL } from '../helpers';
+import { seedCursorMcpServer, clearCursorMcpServers } from '../isolated-home';
 
 test.describe('Observatory Instruments — T2 Slices', () => {
   test.beforeEach(async ({ tauriPage }) => {
@@ -72,14 +73,18 @@ test.describe('Observatory Instruments — T2 Slices', () => {
   });
 
   test('Server row toggle button switches between on and off', async ({ tauriPage }) => {
+    // A server to toggle, declared the way a user would: in an assistant's
+    // config inside the isolated home, then found by a real discovery scan.
+    seedCursorMcpServer('e2e-probe');
+    expect((await fetch(`${DAEMON_URL}/api/instruments/mcp-servers/refresh`, { method: 'POST' })).ok).toBe(true);
     const list = await fetch(`${DAEMON_URL}/api/instruments/mcp-servers`).then(r => r.json()) as {
       servers: Array<{ id: string; mcp_key: string; enabled: boolean }>;
     };
-    if (list.servers.length === 0) {
-      test.skip(true, 'No discovered servers to toggle — empty e2e DB');
-      return;
-    }
-    const first = list.servers[0];
+    const first = list.servers.find((s) => s.mcp_key === 'e2e-probe');
+    expect(first, 'discovery found the seeded server').toBeTruthy();
+    await tauriPage.locator('[data-testid="refresh-servers"]').click();
+    await expect(tauriPage.locator('[data-testid="refresh-servers"]')).toHaveText('+ scan', { timeout: 15_000 });
+    if (!first) return;
     const toggle = tauriPage.locator(`[data-testid="server-toggle-${first.mcp_key}"]`);
     await expect(toggle).toBeVisible({ timeout: 5_000 });
     // Text reflects current state.
@@ -90,9 +95,11 @@ test.describe('Observatory Instruments — T2 Slices', () => {
     // flips. Allow a couple hundred ms for reactivity to settle.
     await expect(toggle).toHaveText(first.enabled ? /off/ : /on/, { timeout: 3_000 });
 
-    // Flip back so the test doesn't leave state dirty for the next spec.
+    // Flip back, then take the seeded server out again so no later spec sees it.
     await toggle.click();
     await expect(toggle).toHaveText(first.enabled ? /on/ : /off/, { timeout: 3_000 });
+    clearCursorMcpServers();
+    await fetch(`${DAEMON_URL}/api/instruments/mcp-servers/refresh`, { method: 'POST' });
   });
 
   // ─── Slice C — Replay tab verdict badges ───────────────────────────────
