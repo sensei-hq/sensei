@@ -16,7 +16,7 @@
 import { test, expect } from '../fixtures';
 import {
   navigateTo, navigateToScreen, waitForDom, daemonGet, DAEMON_URL,
-  installErrorTrap, readErrors, type ErrBuf, seedSetupComplete,
+  installErrorTrap, readErrors, type ErrBuf, seedSetupComplete, seedProject,
 } from '../helpers';
 
 /** A project + the repo name its atlas scopes to (the project's primary git root,
@@ -28,7 +28,9 @@ async function projectScope(): Promise<{ id: string; repo: string }> {
     if (git) return { id: p.id, repo: git.name };
   }
   if (projects.length) return { id: projects[0].id, repo: projects[0].name };
-  throw new Error('e2e daemon has no projects to scope the atlas to');
+  // A reset e2e DB has no projects: seed one rather than fail before testing.
+  const id = await seedProject('e2e-atlas', 'fixture for the Atlas spec');
+  return { id, repo: 'e2e-atlas' };
 }
 
 /** Mark setup complete so the app shell is reachable. */

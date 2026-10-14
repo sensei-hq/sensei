@@ -106,6 +106,21 @@ export async function daemonPost<T>(path: string, body?: unknown): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+/**
+ * A project for a spec to scope to, SEEDED rather than assumed: `reset-e2e-db`
+ * drops `sensei_e2e` before a run, so a fresh database has no projects and a spec
+ * reading `/api/projects[0]` throws before it tests anything. Reused by name, so
+ * a spec's project is the same across runs and never one another spec left.
+ * Nothing is indexed under it — screens land in their empty terminal state.
+ */
+export async function seedProject(name: string, description: string): Promise<string> {
+  const existing = await daemonGet<Array<{ id: string; name: string }>>('/api/projects');
+  const mine = existing.find((p) => p.name === name);
+  if (mine) return mine.id;
+  const created = await daemonPost<{ ok: boolean; id: string }>('/api/projects', { name, description });
+  return created.id;
+}
+
 /** Set the daemon port in the browser's localStorage so the app connects to dev daemon. */
 export async function setAppPort(page: import('@playwright/test').Page): Promise<void> {
   await page.addInitScript((port) => {

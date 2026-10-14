@@ -64,11 +64,11 @@ test.describe('Observatory Instruments — T2 Slices', () => {
     await expect(refreshBtn).toBeVisible();
     await expect(refreshBtn).toBeEnabled();
 
-    // The button transitions to "Scanning…" during the request and back
-    // to "Refresh" on settle. We only assert the settle: the request is
-    // fast on an empty DB and can race the assertion mid-frame.
+    // The button reads "scanning…" during the request and "+ scan" on settle.
+    // We only assert the settle: the request is fast on an empty DB and can
+    // race the assertion mid-frame.
     await refreshBtn.click();
-    await expect(refreshBtn).toHaveText(/Refresh/i, { timeout: 15_000 });
+    await expect(refreshBtn).toHaveText('+ scan', { timeout: 15_000 });
   });
 
   test('Server row toggle button switches between on and off', async ({ tauriPage }) => {
@@ -130,8 +130,9 @@ test.describe('Observatory Instruments — T2 Slices', () => {
     // Click the first session in the sidebar. The list uses task text +
     // date; picking by the session id via a page.evaluate is more
     // stable than matching prose.
-    const clicked = await tauriPage.evaluate((expectedSid: string) => {
-      const btns = Array.from(document.querySelectorAll<HTMLElement>('button.tool-card'));
+    // The adapter's evaluate takes a script string.
+    const clicked = await tauriPage.evaluate(`(() => {
+      const btns = Array.from(document.querySelectorAll('button.tool-card'));
       for (const b of btns) {
         // Session buttons carry no id; pick the first that isn't a
         // sensei-tool row (those have data-tool-kind).
@@ -140,20 +141,18 @@ test.describe('Observatory Instruments — T2 Slices', () => {
           return true;
         }
       }
-      // Ignore the argument — we just need something callable.
-      void expectedSid;
       return false;
-    }, sid);
+    })()`);
     expect(clicked).toBe(true);
 
     if (replay.summary.total > 0) {
       // Session summary counters appear next to the "Calls" header.
-      const anyVerdictText = tauriPage.getByText(new RegExp(
-        `${replay.summary.used}.*${replay.summary.partial}.*${replay.summary.ignored}.*${replay.summary.total}`, 's',
-      )).first();
-      // Give the reactive update a moment; verdict summary shows once
-      // the endpoint returns.
-      await expect(anyVerdictText).toBeVisible({ timeout: 10_000 });
+      // Give the reactive update a moment; verdict summary shows once the
+      // endpoint returns. toContainText takes a RegExp (getByText does not).
+      await expect(tauriPage.locator('body')).toContainText(
+        new RegExp(`${replay.summary.used}.*${replay.summary.partial}.*${replay.summary.ignored}.*${replay.summary.total}`, 's'),
+        { timeout: 10_000 },
+      );
     }
   });
 

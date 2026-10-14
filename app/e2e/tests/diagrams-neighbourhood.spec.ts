@@ -15,20 +15,12 @@
 
 import { test, expect } from '../fixtures';
 import {
-  navigateTo, navigateToScreen, daemonGet, daemonPost, DAEMON_URL,
+  navigateTo, navigateToScreen, DAEMON_URL,
   installErrorTrap, readErrors, type ErrBuf, seedSetupComplete,
+  seedProject,
 } from '../helpers';
 
-async function seedProjectId(): Promise<string> {
-  const existing = await daemonGet<Array<{ id: string; name: string }>>('/api/projects');
-  const mine = existing.find((p) => p.name === 'e2e-neighbourhood');
-  if (mine) return mine.id;
-  const created = await daemonPost<{ ok: boolean; id: string }>('/api/projects', {
-    name: 'e2e-neighbourhood',
-    description: 'fixture for the Neighbourhood diagram spec',
-  });
-  return created.id;
-}
+const seedProjectId = (): Promise<string> => seedProject('e2e-neighbourhood', 'fixture for the Neighbourhood diagram spec');
 
 
 function expectNoRuntimeErrors(errs: ErrBuf, where: string): void {
