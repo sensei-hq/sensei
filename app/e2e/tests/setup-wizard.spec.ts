@@ -23,7 +23,7 @@
  */
 
 import { test, expect, type TauriPageLike } from '../fixtures';
-import { navigateTo, navigateToScreen, DAEMON_URL, WELCOME, startAtWelcome, clickAndExpectNav } from '../helpers';
+import { navigateTo, navigateToScreen, DAEMON_URL, WELCOME, startAtWelcome, clickAndExpectNav, removeRootsUnder } from '../helpers';
 import { execFileSync } from 'child_process';
 import { mkdirSync, writeFileSync, existsSync } from 'fs';
 
@@ -90,6 +90,9 @@ async function driveToScan(tauriPage: TauriPageLike, corpusPath: string): Promis
 }
 
 // ── Flow A: Empty corpus ──────────────────────────────────────────────────────
+
+// Both corpora live under /tmp/sensei-e2e-; the roots the wizard added go with the run.
+test.afterAll(async () => { await removeRootsUnder('/tmp/sensei-e2e-'); });
 
 test.describe('Setup Wizard — Flow A: empty corpus', () => {
   // /setup/* is health-gated; a cold e2e boot takes ~50s, longer than the

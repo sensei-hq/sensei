@@ -107,6 +107,19 @@ export async function daemonPost<T>(path: string, body?: unknown): Promise<T> {
 }
 
 /**
+ * Remove every watch root under `prefix`, and what it indexed. A spec that adds
+ * roots takes them out again: the e2e database persists between runs, and a
+ * left-over root fails the next spec that expects none.
+ */
+export async function removeRootsUnder(prefix: string): Promise<void> {
+  const roots = await daemonGet<Array<{ id: string; path: string }>>('/api/scan/roots');
+  for (const r of roots.filter((r) => r.path.startsWith(prefix))) {
+    const resp = await fetch(`${DAEMON_URL}/api/scan/roots/${r.id}?repositories=remove`, { method: 'DELETE' });
+    if (!resp.ok) throw new Error(`removing root ${r.path}: HTTP ${resp.status}`);
+  }
+}
+
+/**
  * A project for a spec to scope to, SEEDED rather than assumed: `reset-e2e-db`
  * drops `sensei_e2e` before a run, so a fresh database has no projects and a spec
  * reading `/api/projects[0]` throws before it tests anything. Reused by name, so
