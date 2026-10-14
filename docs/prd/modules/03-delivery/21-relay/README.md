@@ -51,8 +51,10 @@ this as *sensei is doing the work, and I'm in the loop.*
   (hook endpoints).
 - **App** — **mobile relay screen** (greenfield) · **desktop relay screen**
   (greenfield) · run detail in Observatory.
-- **Data** — `sensei.runs`, `sensei.run_events`; `dojo.relay_inbox`,
-  `dojo.relay_segments`, `dojo.relay_messages`, `dojo.relay_gates`.
+- **Data** — **`activity.runs`, `activity.run_events`**; `dojo.relay_inbox`,
+  `dojo.relay_sessions`, `dojo.relay_segments`.
+  **No `sensei.runs` / `dojo.relay_messages` / `dojo.relay_gates` tables** — the
+  telemetry is in `activity` schema, the relay protocol in `dojo` schema.
 
 ## Data invariants
 

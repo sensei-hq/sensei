@@ -41,10 +41,12 @@ see exactly what sensei did and whether it worked.*
   `POST /api/mcp/call` · `GET /api/observatory/tool-{usage,signals,insights}`.
 - **Daemon** — `api/handlers/{verdicts.rs, tool_signals.rs, tools_health.rs,
   mcp_servers.rs, sessions.rs, mcp.rs, observatory.rs}`;
-  `tasks/verdict_classifier.rs`; `db/pg_store/tool_calls.rs`.
+  `tasks/verdict_classifier.rs`; `db/pg_store/tool_calls_tests.rs` (test helper —
+  the real store code is in `db/pg_store/session.rs`).
 - **App** — `(project)/project/[id]/instruments/{playground,replay,health}/+page.svelte`.
 - **Data** — `sensei.tool_call_verdicts`, `activity.assistant_events`,
-  `activity.tool_calls`, `sensei.mcp_servers` / `mcp_tool_manifests`.
+  **`session_tool_calls` (view)**, `sensei.mcp_servers` / `mcp_tool_manifests`.
+  **No `activity.tool_calls` table** — the telemetry lands in a view.
 
 ## Data invariants
 
@@ -119,4 +121,4 @@ curl -s http://localhost:7744/api/instruments/verdicts/summary | jq
 - [prd/02-objectives.md §05](../../../02-objectives.md) · [prd/03-personas.md §1](../../../03-personas.md#1--solo-developer--the-wedge).
 - Crates: `crates/senseid/src/{api/handlers/verdicts.rs, api/handlers/tool_signals.rs,
   api/handlers/tools_health.rs, api/handlers/mcp_servers.rs, api/handlers/sessions.rs,
-  tasks/verdict_classifier.rs, db/pg_store/tool_calls.rs}`.
+  tasks/verdict_classifier.rs, db/pg_store/session.rs}`.

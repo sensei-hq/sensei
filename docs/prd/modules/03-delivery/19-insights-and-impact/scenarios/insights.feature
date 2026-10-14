@@ -118,7 +118,7 @@ Feature: Insights & Impact — the verdict engine, narration and model insight
     When they are folded
     Then they merge and order by volume
 
-  # pinned: narration_cache_key_is_sha256_of_kind_plus_canonical_json
+  # NO TEST (real test: facts_hash_is_order_independent): narration_cache_key_is_sha256_of_kind_plus_canonical_json
   Scenario: the narration cache key is sha256 of kind plus canonical json
     Given identical inputs in different orders
     When the cache key is computed
@@ -127,19 +127,19 @@ Feature: Insights & Impact — the verdict engine, narration and model insight
     When the cache key is computed
     Then the keys differ
 
-  # pinned: positive_verdict_idempotently_promotes_reinforce_memory
+  # NO TEST (real test: reinforce_source_memory_for_rec_bumps_promotes_and_is_idempotent): positive_verdict_idempotently_promotes_reinforce_memory
   Scenario: a positive verdict idempotently promotes a reinforce memory
     Given a positive verdict with a source memory
     When MeasureVerdicts runs twice
     Then exactly one reinforce memory is promoted
 
-  # pinned: negative_verdict_idempotently_promotes_challenge_memory_with_revision
+  # NO TEST (real test: measure_regressed_rec_challenges_source_memory_once): negative_verdict_idempotently_promotes_challenge_memory_with_revision
   Scenario: a negative verdict idempotently promotes a challenge memory with revision
     Given a negative verdict with a suggested revision
     When MeasureVerdicts runs twice
     Then exactly one challenge memory with that revision is promoted
 
-  # pinned: neutral_verdict_promotes_no_memory
+  # NO TEST (no test exists — neutral verdict promotes nothing): neutral_verdict_promotes_no_memory
   Scenario: a neutral verdict promotes no memory
     Given a neutral verdict
     When MeasureVerdicts runs

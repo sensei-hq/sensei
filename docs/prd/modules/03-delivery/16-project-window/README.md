@@ -39,16 +39,18 @@ feels this as *I can see why sensei believes this, and act on it here*.
 
 - **API** — `/api/projects/{id}/overview` · `/drift` · `/drift/scan` · `/patterns` ·
   `/libraries` · `/instruments` · `/mcp-tool-stats` · `/memories` · `/impact` ·
-  `/sessions` · `/ftr` · `/icon` · `/health`; `/api/patterns/{project}`;
-  `/api/dojo-binding`.
+  `/sessions` · `/ftr` · `/icon` · `/health`; `/api/patterns/{project}`.
+  **No `/api/dojo-binding` endpoint** (gap `G-DOJO-AUDIT`).
 - **App** — `app/src/routes/(project)/project/[id]/{overview,sessions,memories,
   traceability,libraries,instruments,patterns,impact,about,atlas}/+page.svelte`;
   shell `ProjectSidebar.svelte`.
 - **Data** — `sensei.projects`, `sensei.project_ftr_metrics` (view `project_metrics`),
   `sensei.memories`, `sensei.project_drift` (view), `inference.drift_items`,
   `inference.recommendations`, `activity.sessions`, `sensei.project_libraries`,
-  `sensei.libraries`, `sensei.project_dependencies`, `sensei.promoted_patterns`
-  (view `project_patterns`), `sensei.rules`, `sensei.folder_projects`.
+  `sensei.libraries`, `sensei.project_dependencies`, **`project_patterns` (view —
+  the table `sensei.promoted_patterns` does not exist)**, `sensei.folder_projects`.
+  **No `sensei.rules` table** — rules are `memories` rows with `namespace_id` +
+  `enforcement` + `origin`.
 
 ## Data invariants
 
@@ -137,4 +139,5 @@ curl -s http://localhost:7744/api/projects/$ID/overview \
 - [architecture/app](../../../../architecture/app.md) · [design/mockup-brief](../../../../design/mockup-brief.md).
 - [prd/02-objectives.md §04](../../../02-objectives.md) · [prd/01-vision.md](../../../01-vision.md#the-core-loop).
 - Crates: `crates/senseid/src/{project_overview.rs, api/handlers/project_detail.rs,
-  api/handlers/knowledge.rs, api/handlers/codebase.rs, db/pg_store.rs}`.
+  api/handlers/knowledge.rs, api/handlers/codebase.rs, db/pg_store/project.rs,
+  db/pg_store/graph.rs}`.
