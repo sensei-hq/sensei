@@ -15,6 +15,19 @@ are marked **BREAKING**.
 
 ## [Unreleased]
 
+### Added
+
+- **A team sees THAT a run is going on its project** (#252) — status only,
+  never content: `GET …/relay/status` over `dojo.peer_run_status`, for the
+  run's owner, a member or lead of a team owning the project, and a tenant
+  admin. A relay session now carries its owner's project.
+
+### Fixed
+
+- **The dōjō org home's "needs a maintainer" band is the open triage queue**
+  (#241), not kit fixtures; below maintainer it shows nothing, and a failed read
+  is an error. Health's anomaly feed says "not measured" instead of counting 0.
+
 ## [0.13.0] — 2026-10-13
 
 **The dōjō knows the daemon only as the signed-in person.** Device tokens are
