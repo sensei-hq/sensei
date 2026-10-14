@@ -22,14 +22,14 @@ set search_path to dojo, extensions;
 --      is at least the head's. The unplaced nodes are not a file and are never
 --      pruned.
 --
--- Returns {files, refused_older, pruned}. SECURITY DEFINER: the graph tables take
--- no session write.
+-- Returns one row (files, refused_older, pruned). SECURITY DEFINER: the graph
+-- tables take no session write.
 create or replace function dojo.file_graph_slices(
   p_repository_id uuid,
   p_commit        jsonb,
   p_slices        jsonb,
   p_manifest      jsonb
-) returns jsonb
+) returns table (files integer, refused_older integer, pruned integer)
 language plpgsql
 volatile
 security definer
@@ -154,7 +154,7 @@ begin
                committed_at = excluded.committed_at, pushed_at = now();
     end if;
 
-    return jsonb_build_object('files', v_files, 'refused_older', v_older, 'pruned', v_pruned);
+    return query select v_files, v_older, v_pruned;
 end;
 $$;
 
@@ -162,4 +162,4 @@ revoke all on function dojo.file_graph_slices(uuid, jsonb, jsonb, jsonb) from pu
 grant execute on function dojo.file_graph_slices(uuid, jsonb, jsonb, jsonb) to authenticated;
 
 comment on function dojo.file_graph_slices(uuid, jsonb, jsonb, jsonb) is
-'File a batch of a repository''s code-graph slices for the caller (#225): the repository must be one they may sync (tenant from their verdict row); the branch must be one the repository tracks (branch_unknown / branch_not_tracked) and only that branch''s graph is touched; a slice replaces its file, one older than the stored commit is refused and counted; a manifest at least as new as the head prunes absent files. Returns {files, refused_older, pruned}.';
+'File a batch of a repository''s code-graph slices for the caller (#225): the repository must be one they may sync (tenant from their verdict row); the branch must be one the repository tracks (branch_unknown / branch_not_tracked) and only that branch''s graph is touched; a slice replaces its file, one older than the stored commit is refused and counted; a manifest at least as new as the head prunes absent files. Returns one row (files, refused_older, pruned).';

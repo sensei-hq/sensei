@@ -107,7 +107,7 @@ begin
         'edges', '[]'::jsonb);
 
     -- ── file: the slices land, under the verdict's tenant ────────────────────
-    r := dojo.file_graph_slices(repo, c1, jsonb_build_array(a, b, unplaced), null);
+    select to_jsonb(g) into r from dojo.file_graph_slices(repo, c1, jsonb_build_array(a, b, unplaced), null) g;
     if (r ->> 'files')::int <> 2 then raise exception 'file: two file slices should be filed, got %', r; end if;
     select count(*) into n from dojo.graph_nodes where repository_id = repo;
     if n <> 4 then raise exception 'file: 4 nodes expected (2 + 1 + 1 unplaced), got %', n; end if;
@@ -122,7 +122,7 @@ begin
     a := jsonb_set(jsonb_set(a, '{content_hash}', '"ha2"'), '{nodes}',
         jsonb_build_array(jsonb_build_object('folder_path', '', 'fqn', 'a.f', 'kind', 'function', 'name', 'f', 'line_start', 1, 'line_end', 4)));
     a := jsonb_set(a, '{edges}', '[]'::jsonb);
-    r := dojo.file_graph_slices(repo, c2, jsonb_build_array(a), null);
+    select to_jsonb(g) into r from dojo.file_graph_slices(repo, c2, jsonb_build_array(a), null) g;
     select count(*) into n from dojo.graph_nodes where repository_id = repo and file_path = 'src/a.ts';
     if n <> 1 then raise exception 'replace: a.ts should hold exactly its new slice''s 1 node, holds %', n; end if;
     select count(*) into n from dojo.graph_edges where repository_id = repo;
@@ -131,10 +131,10 @@ begin
     if n <> 1 then raise exception 'replace: b.ts must be untouched by a.ts''s slice, holds %', n; end if;
 
     -- ── move: a symbol that moved files leaves no stale copy, and no edge ────
-    r := dojo.file_graph_slices(repo, c2, jsonb_build_array(jsonb_build_object(
+    select to_jsonb(g) into r from dojo.file_graph_slices(repo, c2, jsonb_build_array(jsonb_build_object(
         'path', 'src/c.ts', 'content_hash', 'hc1',
         'nodes', jsonb_build_array(jsonb_build_object('folder_path', '', 'fqn', 'a.f', 'kind', 'function', 'name', 'f')),
-        'edges', '[]'::jsonb)), null);
+        'edges', '[]'::jsonb)), null) g;
     select count(*) into n from dojo.graph_nodes where repository_id = repo and fqn = 'a.f';
     if n <> 1 then raise exception 'move: a.f should exist once, in c.ts, exists % time(s)', n; end if;
     if (select file_path from dojo.graph_nodes where repository_id = repo and fqn = 'a.f') <> 'src/c.ts' then
@@ -142,7 +142,7 @@ begin
     end if;
 
     -- ── order: an older commit does not roll a file back ─────────────────────
-    r := dojo.file_graph_slices(repo, c0, jsonb_build_array(jsonb_set(b, '{content_hash}', '"hb0"')), null);
+    select to_jsonb(g) into r from dojo.file_graph_slices(repo, c0, jsonb_build_array(jsonb_set(b, '{content_hash}', '"hb0"')), null) g;
     if (r ->> 'refused_older')::int <> 1 then raise exception 'order: an older slice should be refused and counted, got %', r; end if;
     if (select content_hash from dojo.graph_files where repository_id = repo and branch = 'main' and path = 'src/b.ts') <> 'hb1' then
         raise exception 'order: an older commit rolled b.ts back';
@@ -153,7 +153,7 @@ begin
     if not exists (select 1 from dojo.graph_files where repository_id = repo and branch = 'main' and path = 'src/b.ts') then
         raise exception 'prune: a manifest older than the newest accepted commit pruned b.ts';
     end if;
-    r := dojo.file_graph_slices(repo, c2, '[]'::jsonb, '{"src/a.ts": "ha2", "src/c.ts": "hc1"}'::jsonb);
+    select to_jsonb(g) into r from dojo.file_graph_slices(repo, c2, '[]'::jsonb, '{"src/a.ts": "ha2", "src/c.ts": "hc1"}'::jsonb) g;
     if exists (select 1 from dojo.graph_files where repository_id = repo and branch = 'main' and path = 'src/b.ts')
        or exists (select 1 from dojo.graph_nodes where repository_id = repo and branch = 'main' and file_path = 'src/b.ts') then
         raise exception 'prune: b.ts is absent from a current manifest and should be gone';
@@ -178,13 +178,13 @@ begin
 
     -- ── two branches: production is a second graph, beside main ─────────────
     -- Dated before main's head: branches do not order each other.
-    r := dojo.file_graph_slices(repo, c0 || '{"branch": "production"}', jsonb_build_array(
+    select to_jsonb(g) into r from dojo.file_graph_slices(repo, c0 || '{"branch": "production"}', jsonb_build_array(
         jsonb_build_object('path', 'src/a.ts', 'content_hash', 'hp1',
             'nodes', jsonb_build_array(jsonb_build_object('folder_path', '', 'fqn', 'a.f', 'kind', 'function', 'name', 'f')),
             'edges', '[]'::jsonb),
         jsonb_build_object('path', 'src/p.ts', 'content_hash', 'hpp',
             'nodes', jsonb_build_array(jsonb_build_object('folder_path', '', 'fqn', 'p.q', 'kind', 'function', 'name', 'q')),
-            'edges', '[]'::jsonb)), null);
+            'edges', '[]'::jsonb)), null) g;
     if (r ->> 'files')::int <> 2 then raise exception 'two branches: production''s slices should land, got %', r; end if;
     if (select content_hash from dojo.graph_files where repository_id = repo and branch = 'main' and path = 'src/a.ts') <> 'ha2' then
         raise exception 'two branches: production''s a.ts overwrote main''s';
@@ -203,6 +203,25 @@ begin
     if n <> 2 then raise exception 'two branches: main''s work changed production''s graph (% node(s) left of 2)', n; end if;
     select count(*) into n from dojo.graph_files where repository_id = repo and branch = 'production';
     if n <> 2 then raise exception 'two branches: main''s manifest pruned production''s files (% left of 2)', n; end if;
+
+    -- ── hashes: what the dōjō holds, readable by whoever may sync it ─────────
+    -- ola can sync repository 1 (she is also on its team, but the read must not
+    -- depend on that — see the eve case below).
+    select count(*) into n from dojo.graph_file_hashes(repo, 'main');
+    if n <> (select count(*) from dojo.graph_files where repository_id = repo and branch = 'main') then
+        raise exception 'hashes: should list every main file, listed %', n;
+    end if;
+    if (select content_hash from dojo.graph_file_hashes(repo, 'main') h where h.path = 'src/a.ts') <> 'ha2' then
+        raise exception 'hashes: a.ts should read back its accepted hash';
+    end if;
+    if exists (select 1 from dojo.graph_file_hashes(repo, 'main') h where h.path = 'src/p.ts') then
+        raise exception 'hashes: production''s file p.ts was listed under main';
+    end if;
+    begin
+        perform dojo.graph_file_hashes('92000000-0000-4000-8000-000000000004', 'main');
+        raise exception 'hashes: another tenant''s repository was read';
+    exception when insufficient_privilege then null;
+    end;
 
     -- ── access: only a repository the caller may sync ────────────────────────
     begin
@@ -231,6 +250,10 @@ begin
     perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000143"}', true);
     select count(*) into n from dojo.graph_nodes where repository_id = repo;
     if n <> 0 then raise exception 'read: a contributor on no team owning the repository read % node(s)', n; end if;
+    -- …yet she may SYNC it (the organisation shares its private repositories), so
+    -- her daemon must see what the dōjō holds, or it re-pushes every file forever.
+    select count(*) into n from dojo.graph_file_hashes(repo, 'main');
+    if n = 0 then raise exception 'hashes: a member who may sync the repository read no hashes'; end if;
 end $$;
 
 -- ── untrack: removing production removes its graph, and only its graph ──────
