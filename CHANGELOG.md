@@ -32,8 +32,27 @@ are marked **BREAKING**.
   run's owner, a member or lead of a team owning the project, and a tenant
   admin. A relay session now carries its owner's project.
 
+- **Instruments lists the discovered MCP servers by assistant, each with an
+  on/off toggle** (#245) — restored after the redesign folded them into the
+  Playground rail. A failed read says so instead of showing "none", and a
+  refused toggle leaves the row as it was.
+- **A repository's code graph has a home on the dōjō** (#225, store only): the
+  `dojo.graph_*` tables and `dojo.file_graph_slices`, which files a
+  repository's graph file by file, only from the repository's configured
+  branch (`repositories.graph_branch`, else the forge's `default_branch`).
+  The daemon side and the Worker route are not built yet.
+  **Deploy:** the release's `deploy-dojo` job creates them; nothing calls them
+  until the daemon side ships.
+
 ### Fixed
 
+- **The setup/health gate no longer sticks after it recovers** (#245). SvelteKit
+  caches a `reroute` result per URL for the whole session, so once `/` resolved
+  to the setup screen it stayed there after setup completed — re-running setup
+  or a daemon blip was enough. The gate is now a redirect from the root layout
+  load, asked on every navigation.
+- **A failed config read no longer sends a set-up user back to setup**: the
+  wizard read config through a `{}` fallback, which reads as "incomplete".
 - **The dōjō org home's "needs a maintainer" band is the open triage queue**
   (#241), not kit fixtures; below maintainer it shows nothing, and a failed read
   is an error. Health's anomaly feed says "not measured" instead of counting 0.

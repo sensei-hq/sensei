@@ -2,7 +2,7 @@
 
 **State 2026-10-14.** v0.13.0 shipped (the dōjō takes the person's session
 only; production 401s a device token). History scrub done. Working the queue
-on `develop` (`eb7ba702`), toward 0.14.0.
+on `develop` (`0da4b0a7`), toward 0.14.0.
 
 | increment | status |
 |---|---|
@@ -11,12 +11,13 @@ on `develop` (`eb7ba702`), toward 0.14.0.
 | #241 org-home needs band = triage queue; health alerts "not measured" | DONE `da9b5419` (sparkline/needs/billing wait on sources) |
 | #252 a team sees THAT a run is going (status only) | DONE `6176afd0` |
 | #240 provable user-scoped metrics reach the dōjō | DONE `79f14390`, `6cd03d62` |
-| #245 app e2e gate | 142/2/20 before; Discovered MCP servers + toggle restored (`eb7ba702`, `1bf808ef`); left: kind-chip filter (user call) |
+| #245 app e2e gate | CLOSED — 144/0/19; boot gate fix, Instruments servers+toggle restored, kind chip retired |
 | #254 next ORM | MEASURED: JPA; spec 20 §8 written (`9eb44cdf`); next 8b annotation fact |
+| #225 dōjō graph sync | spec `graph-sync.md`; branch = dōjō setting (graph_branch / default_branch), local tracked branch; STORE done `0da4b0a7` (tables, file_graph_slices, RLS, test 7/7 mutants); left: schema_*/folders tables, forge default_branch capture, set_graph_branch, Worker route, daemon side |
 
-**Next command:** #254 8b — red test for `Annotation` facts in the Java walk
-(`crates/senseid/src/indexer/lang/java/walk.rs::annotations`).
-#225 decided: sync the RAW graph (spec next); #238 needs Claude Code ≥ 2.1.289 (brew cask still 2.1.287).
+**Next command:** #225 — capture `default_branch` in `dojo/src/lib/server/provisioning.ts`
+(`refreshForgeVisibility`, same GitHub read), then `set_graph_branch`, then the Worker route.
+#254 8b (annotation fact) after. #238 waits on the brew cask (2.1.287 < 2.1.289).
 
 **Open questions (user's):**
 - Discovered-MCP-servers section and per-server toggle were dropped in the
@@ -27,5 +28,5 @@ on `develop` (`eb7ba702`), toward 0.14.0.
   "Workers Builds: dojo" check — delete it in the dashboard.
 - Sign in under Settings → Dōjō on this machine: nothing syncs until then (#184).
 
-**Known-broken:** e2e: kind-chip test awaits the product call (#245); 0.14.0 needs `deploy-dojo` before
+**Known-broken:** e2e green; 0.14.0 needs `deploy-dojo` before
 the Worker can file metrics (`dojo.file_metric_rows`).
