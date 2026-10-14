@@ -1,0 +1,119 @@
+-- Who sees THAT a run is going on a project (#252; docs/spec/dojo/access-matrix.md
+-- "Relay" — run status row).
+--
+-- | caller                                  | sees                                   |
+-- |-----------------------------------------|----------------------------------------|
+-- | the run's owner                         | their runs                             |
+-- | a member or lead of a team owning P     | runs on P — status only                |
+-- | a tenant admin                          | every run in the tenant — status only  |
+-- | anyone else (tenant lead off-team, a    | nothing                                |
+-- | member of another tenant)               |                                        |
+--
+-- Status only: `dojo.peer_run_status` returns no title, goal, phase or feature —
+-- relay CONTENT stays the owner's (#249). And a session can only be filed under
+-- the caller's own project, so nobody can post their run into another's team.
+--
+-- WHAT BREAKS THIS TEST: returning a content column; dropping the team clause;
+-- letting a tenant lead or another tenant's admin see runs; letting a session's
+-- project_id name somebody else's project.
+
+begin;
+
+insert into dojo.principals (id, auth_user_id, display_name) values
+  ('a0000000-0000-4000-8000-000000000031', 'a1000000-0000-4000-8000-000000000031', 'alice'),
+  ('a0000000-0000-4000-8000-000000000032', 'a1000000-0000-4000-8000-000000000032', 'dave'),
+  ('a0000000-0000-4000-8000-000000000033', 'a1000000-0000-4000-8000-000000000033', 'mia'),
+  ('a0000000-0000-4000-8000-000000000034', 'a1000000-0000-4000-8000-000000000034', 'zed'),
+  ('a0000000-0000-4000-8000-000000000035', 'a1000000-0000-4000-8000-000000000035', 'bob'),
+  ('a0000000-0000-4000-8000-000000000036', 'a1000000-0000-4000-8000-000000000036', 'erin'),
+  ('a0000000-0000-4000-8000-000000000037', 'a1000000-0000-4000-8000-000000000037', 'carol');
+
+insert into dojo.tenants (id, key, origin, slug, name, dojo_url) values
+  ('b0000000-0000-4000-8000-00000000003a', 'organization/ztest-peer-t', 'organization',
+   'ztest-peer-t', 'peer fixture T', 'dojo.sensei-hq.org/organization/ztest-peer-t'),
+  ('b0000000-0000-4000-8000-00000000003b', 'organization/ztest-peer-u', 'organization',
+   'ztest-peer-u', 'peer fixture U', 'dojo.sensei-hq.org/organization/ztest-peer-u');
+
+insert into dojo.memberships (id, tenant_id, user_id, role, kind, authenticated_via) values
+  ('e0000000-0000-4000-8000-000000000031', 'b0000000-0000-4000-8000-00000000003a', 'a0000000-0000-4000-8000-000000000031', 'contributor', 'employer', 'github_oauth'),
+  ('e0000000-0000-4000-8000-000000000032', 'b0000000-0000-4000-8000-00000000003a', 'a0000000-0000-4000-8000-000000000032', 'contributor', 'employer', 'github_oauth'),
+  ('e0000000-0000-4000-8000-000000000033', 'b0000000-0000-4000-8000-00000000003a', 'a0000000-0000-4000-8000-000000000033', 'contributor', 'employer', 'github_oauth'),
+  ('e0000000-0000-4000-8000-000000000034', 'b0000000-0000-4000-8000-00000000003a', 'a0000000-0000-4000-8000-000000000034', 'contributor', 'employer', 'github_oauth'),
+  ('e0000000-0000-4000-8000-000000000035', 'b0000000-0000-4000-8000-00000000003a', 'a0000000-0000-4000-8000-000000000035', 'lead',        'employer', 'github_oauth'),
+  ('e0000000-0000-4000-8000-000000000036', 'b0000000-0000-4000-8000-00000000003a', 'a0000000-0000-4000-8000-000000000036', 'admin',       'employer', 'github_oauth'),
+  ('e0000000-0000-4000-8000-000000000037', 'b0000000-0000-4000-8000-00000000003b', 'a0000000-0000-4000-8000-000000000037', 'admin',       'employer', 'github_oauth');
+
+-- Project P (alice's) is owned by team X: dave leads it, mia is on it.
+-- Project Q is zed's, on no team.
+insert into dojo.projects (id, user_id, tenant_id, slug, name) values
+  ('c0000000-0000-4000-8000-0000000000a1', 'a0000000-0000-4000-8000-000000000031',
+   'b0000000-0000-4000-8000-00000000003a', 'ztest-peer-p', 'project P'),
+  ('c0000000-0000-4000-8000-0000000000a2', 'a0000000-0000-4000-8000-000000000034',
+   'b0000000-0000-4000-8000-00000000003a', 'ztest-peer-q', 'project Q');
+insert into dojo.teams (id, tenant_id, name) values
+  ('d0000000-0000-4000-8000-0000000000a1', 'b0000000-0000-4000-8000-00000000003a', 'ztest peer team X');
+insert into dojo.team_members (team_id, principal_id, role) values
+  ('d0000000-0000-4000-8000-0000000000a1', 'a0000000-0000-4000-8000-000000000032', 'lead'),
+  ('d0000000-0000-4000-8000-0000000000a1', 'a0000000-0000-4000-8000-000000000033', 'contributor');
+insert into dojo.team_projects (team_id, project_id) values
+  ('d0000000-0000-4000-8000-0000000000a1', 'c0000000-0000-4000-8000-0000000000a1');
+
+-- Runs, by last digit: 1 alice on P · 2 alice on no project · 3 zed on Q.
+insert into dojo.relay_sessions (membership_id, run_id, title, goal, status, project_id) values
+  ('e0000000-0000-4000-8000-000000000031', 'f0000000-0000-4000-8000-000000000001', 'secret title', 'secret goal', 'running', 'c0000000-0000-4000-8000-0000000000a1'),
+  ('e0000000-0000-4000-8000-000000000031', 'f0000000-0000-4000-8000-000000000002', 'secret title', 'secret goal', 'running', null),
+  ('e0000000-0000-4000-8000-000000000034', 'f0000000-0000-4000-8000-000000000003', 'secret title', 'secret goal', 'paused',  'c0000000-0000-4000-8000-0000000000a2');
+
+-- ── the result carries status, never content ────────────────────────────────
+do $$
+declare
+    result text := pg_get_function_result('dojo.peer_run_status(uuid)'::regprocedure);
+begin
+    if result ~* '(title|goal|phase|feature|pause_reason|membership)' then
+        raise exception 'peer_run_status returns content: %', result;
+    end if;
+end $$;
+
+set local role authenticated;
+
+create temp table expect (who text, sub text, want text) on commit drop;
+insert into expect values
+  ('alice', 'a1000000-0000-4000-8000-000000000031', '1,2'),   -- own runs
+  ('dave',  'a1000000-0000-4000-8000-000000000032', '1'),     -- team lead of P
+  ('mia',   'a1000000-0000-4000-8000-000000000033', '1'),     -- team member on P
+  ('zed',   'a1000000-0000-4000-8000-000000000034', '3'),     -- own run; P is not his team's
+  ('bob',   'a1000000-0000-4000-8000-000000000035', ''),      -- tenant lead, no team: nothing
+  ('erin',  'a1000000-0000-4000-8000-000000000036', '1,2,3'), -- tenant admin: every run
+  ('carol', 'a1000000-0000-4000-8000-000000000037', '');      -- admin of ANOTHER tenant
+
+do $$
+declare
+    r record;
+    got text;
+begin
+    for r in select * from expect loop
+        perform set_config('request.jwt.claims', json_build_object('sub', r.sub)::text, true);
+        select coalesce(string_agg(right(run_id::text, 1), ',' order by run_id), '') into got
+          from dojo.peer_run_status('b0000000-0000-4000-8000-00000000003a');
+        if got is distinct from r.want then
+            raise exception 'peer_run_status: % should see [%], saw [%]', r.who, r.want, got;
+        end if;
+    end loop;
+end $$;
+
+-- ── a session is filed only under the caller's own project ───────────────────
+do $$
+begin
+    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000031"}', true);
+    begin
+        update dojo.relay_sessions set project_id = 'c0000000-0000-4000-8000-0000000000a2'
+         where run_id = 'f0000000-0000-4000-8000-000000000002';
+        raise exception 'relay_sessions: alice filed her run under zed''s project';
+    exception when insufficient_privilege or check_violation then null;
+    end;
+    -- Her own project is fine.
+    update dojo.relay_sessions set project_id = 'c0000000-0000-4000-8000-0000000000a1'
+     where run_id = 'f0000000-0000-4000-8000-000000000002';
+end $$;
+
+rollback;

@@ -56,19 +56,21 @@ create policy relay_sessions_select_own
 -- row on a membership the caller owns. Covered by
 -- database/tests/dojo/relay_daemon_writes.sql.
 grant insert (membership_id, run_id, title, goal, status, progress_done, progress_total, current_phase,
-              current_feature, last_event_at, paused_until, pause_reason, heartbeat_at, updated_at)
+              current_feature, last_event_at, paused_until, pause_reason, heartbeat_at, updated_at,
+              project_id)
     on dojo.relay_sessions to authenticated;
 grant update (membership_id, run_id, title, goal, status, progress_done, progress_total, current_phase,
-              current_feature, last_event_at, paused_until, pause_reason, heartbeat_at, updated_at)
+              current_feature, last_event_at, paused_until, pause_reason, heartbeat_at, updated_at,
+              project_id)
     on dojo.relay_sessions to authenticated;
 
 drop policy if exists relay_sessions_publish_own on dojo.relay_sessions;
 create policy relay_sessions_publish_own on dojo.relay_sessions
     for insert to authenticated
-    with check (dojo.owns_membership(membership_id));
+    with check (dojo.owns_membership(membership_id) and dojo.owns_project_or_none(project_id));
 
 drop policy if exists relay_sessions_update_own on dojo.relay_sessions;
 create policy relay_sessions_update_own on dojo.relay_sessions
     for update to authenticated
     using (dojo.owns_membership(membership_id))
-    with check (dojo.owns_membership(membership_id));
+    with check (dojo.owns_membership(membership_id) and dojo.owns_project_or_none(project_id));

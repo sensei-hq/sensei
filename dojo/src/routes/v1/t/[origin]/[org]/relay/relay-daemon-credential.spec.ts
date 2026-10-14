@@ -134,7 +134,7 @@ describe('the daemon’s relay calls run as the person (#236 step 4)', () => {
 
 	it('session POST files the run’s project as the person, and keeps the seat the system’s', async () => {
 		caller = { ...base, accessToken: 'jwt' };
-		session.queue({ data: null, error: null }, { data: { id: 's1' }, error: null }, { data: null, error: null });
+		session.queue({ data: null, error: null }, { data: { id: 's1' }, error: null }, { data: { id: 'proj-1' }, error: null });
 		system.queue({ data: null, error: null });
 		const scheduled: Promise<unknown>[] = [];
 		const platform = { context: { waitUntil: (p: Promise<unknown>) => scheduled.push(p) } };
@@ -148,6 +148,8 @@ describe('the daemon’s relay calls run as the person (#236 step 4)', () => {
 		expect(res.status).toBe(200);
 		expect(session.tables).toContain('projects');
 		expect(system.tables).not.toContain('projects');
+		// #252: the run is then filed under that project, as the person.
+		expect(session.tables.slice(session.tables.indexOf('projects'))).toContain('relay_sessions');
 		expect(system.tables).toContain('namespaces');
 		expect(session.tables).not.toContain('namespaces');
 	});

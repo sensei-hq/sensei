@@ -9,7 +9,7 @@ import { callerDb } from '$lib/server/caller-db';
 import { resolveTenantCaller, resolveTenantAccess, apiError, ACCESS } from '$lib/server/dojo-auth';
 import { sendRelayPushFromEnv } from '$lib/server/relay-push-env';
 import { resolveProjectNamespaceId, openOrRefreshSeat } from '$lib/server/billing-data';
-import { upsertProjectFromRun } from '$lib/server/projects-data';
+import { upsertProjectFromRun, fileRunUnderProject } from '$lib/server/projects-data';
 
 const COLS =
 	'id, run_id, title, goal, status, progress_done, progress_total, current_phase, current_feature, last_event_at, paused_until, pause_reason, heartbeat_at, started_at, completed_at';
@@ -124,7 +124,10 @@ export const POST: RequestHandler = async ({ params, request, platform }) => {
 					// through to the jsonb column; absent → preserved on conflict.
 					constitution: project.constitution
 				}
-			).catch(() => {});
+			)
+				// #252: file the run under the project, so its team sees THAT it runs.
+				.then((projectId) => fileRunUnderProject(db, data.id as string, projectId))
+				.catch(() => {});
 			if (platform?.context?.waitUntil) platform.context.waitUntil(projWork);
 		}
 
