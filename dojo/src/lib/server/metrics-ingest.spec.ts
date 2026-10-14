@@ -62,6 +62,7 @@ describe('ingestMetrics', () => {
 				{
 					repository_id: 'r-api',
 					metric_id: 'met-commits',
+					scope: 'repo',
 					commit_sha: 'abc',
 					computed_on: '2026-08-27',
 					grain: 'daily',
@@ -109,9 +110,20 @@ describe('ingestMetrics', () => {
 		expect(out.rejected.map((r) => r.reason)).toEqual(['unknown_metric']);
 	});
 
-	it('refuses a user-scoped row loudly instead of dropping it', async () => {
+	// #240: a user-scoped row is the caller's — the database stamps the person
+	// from the session, so the row carries only its scope, never a principal.
+	it('files a user-scoped row with its scope and no principal of its own', async () => {
 		const db = fakeDojoDb(tables());
 		const out = await ingestMetrics(db as never, [row({ scope: 'user' })]);
+		expect(out).toEqual({ accepted: 1, rejected: [] });
+		const [batch] = sent(db) as Array<Array<Record<string, unknown>>>;
+		expect(batch[0].scope).toBe('user');
+		expect(batch[0]).not.toHaveProperty('principal_id');
+	});
+
+	it('refuses a scope that is neither repo nor user, by name', async () => {
+		const db = fakeDojoDb(tables());
+		const out = await ingestMetrics(db as never, [row({ scope: 'team' })]);
 		expect(out.rejected.map((r) => r.reason)).toEqual(['unsupported_scope']);
 		expect(sent(db)).toEqual([]);
 	});

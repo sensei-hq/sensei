@@ -41,16 +41,19 @@
 //! consent, or an organization's mandate on that organization's own private
 //! code"*.
 //!
-//! # What it deliberately does NOT do yet
+//! # User-scoped rows
 //!
-//! **User-scoped rows are held back**, counted, and logged with the reason.
-//! `dojo.repository_metrics.principal_id` is a principal, never a git email —
-//! commit trailers are unverified — and `personas.principal_id` is unset until a
-//! persona is linked, so there is nothing honest to attribute a per-person row
-//! to. The ingest endpoint refuses them, so sending them would earn a rejection
-//! every cycle forever.
+//! **A user-scoped row leaves only when it is provably the signed-in person's**
+//! (#240): a row with no identity — this machine's own session metric — when the
+//! persona is the only signed-in one that elected the repository, or a row whose
+//! author address the persona CLAIMED (verified by GitHub at sign-in). An
+//! unverified `git` address proves nothing and a colleague's never travels; both
+//! are held back, counted, and logged. The dōjō stamps the person from the
+//! session, never from the row.
 //!
-//! Per-repo governance pull (D3) is not here.
+//! # Not here yet
+//!
+//! Per-repo governance pull (D3).
 
 use std::sync::Arc;
 
@@ -117,8 +120,33 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
     let plane = HttpUserPlane { dojo_url: dojo_url() };
     let total = personas.len();
     let mut failures = Vec::new();
+
+    // Plan EVERY persona before pushing any: a row with no identity is the
+    // machine's own session metric, and it is a persona's only when no other
+    // signed-in persona elected the same repository (#240).
+    let mut planned = Vec::new();
     for persona in personas {
-        if let Err(e) = sync_one(&pg, &persona, &plane).await {
+        let outcome = match persona_token(&persona).await {
+            Ok(token) => {
+                plan_persona(&pg, &persona, &token, &plane).await.map(|p| p.map(|p| (token, p)))
+            }
+            Err(e) => Err(e),
+        };
+        match outcome {
+            Ok(Some((token, p))) => planned.push((persona, token, p)),
+            Ok(None) => {}
+            Err(e) => {
+                tracing::warn!(persona, error = %e, "dojo_sync: persona skipped");
+                failures.push(format!("{persona}: {e}"));
+            }
+        }
+    }
+    let plans: Vec<(String, user_plane::SyncPlan)> =
+        planned.iter().map(|(who, _, p)| (who.clone(), p.plan.clone())).collect();
+    let mut exclusive = exclusive_repos(&plans);
+    for (persona, token, p) in &planned {
+        let mine = exclusive.remove(persona).unwrap_or_default();
+        if let Err(e) = push_planned(&pg, persona, token, &plane, p, &mine).await {
             tracing::warn!(persona, error = %e, "dojo_sync: persona skipped");
             failures.push(format!("{persona}: {e}"));
         }
@@ -129,34 +157,33 @@ pub async fn tick(pg: Arc<PgStore>) -> Result<(), String> {
     // observed live (plan rows 0, shared 0, last_ok = true). A PARTIAL failure
     // still returns Ok: D1's whole point is that one expired session must not
     // stall the others, and the survivors did work.
-    if failures.len() == total {
+    if failures.len() >= total {
         return Err(format!("all {total} personas failed: {}", failures.join("; ")));
     }
     Ok(())
 }
 
-/// Resolve the persona's credential, then run the cycle.
+/// The persona's live access token.
 ///
-/// Split from [`sync_persona`] so the cycle itself is reachable in a test: token
-/// resolution needs the real Keychain, and everything after it does not.
-async fn sync_one(pg: &PgStore, persona: &str, plane: &dyn UserPlane) -> Result<(), String> {
-    let token = match live_access_token(persona).await {
-        Ok(t) => t,
+/// Separate from the cycle so the cycle is reachable in a test: token resolution
+/// needs the real Keychain, and everything after it does not.
+async fn persona_token(persona: &str) -> Result<String, String> {
+    match live_access_token(persona).await {
+        Ok(t) => Ok(t),
         Err(e) => {
             // Distinguished rather than collapsed: "sign in again" is worth
             // saying out loud, a network blip is not worth saying at all.
             let needs_sign_in = e.needs_sign_in();
-            return Err(match e {
+            Err(match e {
                 AuthError::SignedOut => "no stored session".to_string(),
                 AuthError::Rejected(d) => format!("session rejected, sign in again: {d}"),
                 AuthError::Unreachable(d) if !needs_sign_in => {
                     format!("dōjō unreachable, session kept: {d}")
                 }
                 AuthError::Unreachable(d) => d,
-            });
+            })
         }
-    };
-    sync_persona(pg, persona, &token, plane).await
+    }
 }
 
 /// Join every dōjō membership the persona holding `slot` belongs to (#236 step
@@ -271,12 +298,12 @@ async fn record_plane_failure(
 }
 
 /// One persona's cycle, with the credential and the transport handed in.
-async fn sync_persona(
+async fn plan_persona(
     pg: &PgStore,
     persona: &str,
     token: &str,
     plane: &dyn UserPlane,
-) -> Result<(), String> {
+) -> Result<Option<Planned>, String> {
     // #236 step 4e: join every dōjō this persona belongs to, so its tenant
     // calls present this session. A failure here leaves the memberships for the
     // next pass and does not stop the cycle — but it is said, never swallowed.
@@ -312,7 +339,7 @@ async fn sync_persona(
     let offered = pg.offerable_repositories(REGISTER_LIMIT).await?;
     if offered.is_empty() {
         tracing::debug!(persona, "dojo_sync: no cloned repository has a cross-install identity");
-        return Ok(());
+        return Ok(None);
     }
 
     let inputs: Vec<RepoInput<'_>> = offered
@@ -443,17 +470,103 @@ async fn sync_persona(
         Err(e) => tracing::warn!(persona, error = %e, "could not record metric deactivations"),
     }
 
-    let pushed = push_allowed(pg, persona, token, plane, &plan).await?;
+    Ok(Some(Planned { plan, mapped: registered.mapped.len(), unmapped: registered.unmapped.len() }))
+}
+
+/// What one persona's pass decided before anything was pushed.
+struct Planned {
+    plan: user_plane::SyncPlan,
+    mapped: usize,
+    unmapped: usize,
+}
+
+/// Push a persona's planned rows. `exclusive` — the repositories only this
+/// persona elected — is where its rows with no identity may go (#240).
+async fn push_planned(
+    pg: &PgStore,
+    persona: &str,
+    token: &str,
+    plane: &dyn UserPlane,
+    planned: &Planned,
+    exclusive: &[String],
+) -> Result<(), String> {
+    let pushed = push_allowed(pg, persona, token, plane, &planned.plan, exclusive).await?;
     tracing::info!(
         persona,
-        allowed = plan.allowed.len(),
-        denied = plan.denied.len(),
-        mapped = registered.mapped.len(),
-        unmapped = registered.unmapped.len(),
+        allowed = planned.plan.allowed.len(),
+        denied = planned.plan.denied.len(),
+        mapped = planned.mapped,
+        unmapped = planned.unmapped,
         pushed,
         "dojo_sync: cycle complete"
     );
     Ok(())
+}
+
+/// One persona's whole pass on its own — every repository it may sync is its
+/// alone. Tests drive this; [`tick`] plans every persona before pushing any.
+#[cfg(test)]
+async fn sync_persona(
+    pg: &PgStore,
+    persona: &str,
+    token: &str,
+    plane: &dyn UserPlane,
+) -> Result<(), String> {
+    let Some(planned) = plan_persona(pg, persona, token, plane).await? else {
+        return Ok(());
+    };
+    let exclusive = exclusive_repos(&[(persona.to_string(), planned.plan.clone())])
+        .remove(persona)
+        .unwrap_or_default();
+    push_planned(pg, persona, token, plane, &planned, &exclusive).await
+}
+
+/// For each persona, the repositories in its plan that no other signed-in
+/// persona's plan allows (#240). Pure.
+fn exclusive_repos(
+    plans: &[(String, user_plane::SyncPlan)],
+) -> std::collections::HashMap<String, Vec<String>> {
+    let mut electors: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (_, plan) in plans {
+        let keys: std::collections::HashSet<&str> =
+            plan.allowed.iter().map(|a| a.repo_key.as_str()).collect();
+        for k in keys {
+            *electors.entry(k).or_default() += 1;
+        }
+    }
+    plans
+        .iter()
+        .map(|(who, plan)| {
+            let mine = plan
+                .allowed
+                .iter()
+                .filter(|a| electors.get(a.repo_key.as_str()) == Some(&1))
+                .map(|a| a.repo_key.clone())
+                .collect();
+            (who.clone(), mine)
+        })
+        .collect()
+}
+
+/// Hold back user-scoped rows that would land on ONE dōjō row. The dōjō keys a
+/// user row by person, not author address, so two of the person's verified
+/// addresses with a row for the same metric and day would overwrite each other
+/// silently; both are held back instead. Returns what to push and how many were
+/// held. Order preserved. Pure.
+fn drop_colliding(
+    rows: Vec<crate::db::pg_store::sync::PushableMetric>,
+) -> (Vec<crate::db::pg_store::sync::PushableMetric>, usize) {
+    type Key = (String, String, Option<String>, chrono::NaiveDate, String);
+    let key = |m: &crate::db::pg_store::sync::PushableMetric| -> Key {
+        (m.repo_key.clone(), m.metric.clone(), m.commit_sha.clone(), m.computed_on, m.grain.clone())
+    };
+    let mut seen: std::collections::HashMap<Key, usize> = std::collections::HashMap::new();
+    for m in rows.iter().filter(|m| m.scope == "user") {
+        *seen.entry(key(m)).or_default() += 1;
+    }
+    let (kept, held): (Vec<_>, Vec<_>) =
+        rows.into_iter().partition(|m| m.scope != "user" || seen.get(&key(m)) == Some(&1));
+    (kept, held.len())
 }
 
 /// Push the metric rows the plan allows, and mark exactly those as shared.
@@ -465,6 +578,7 @@ async fn push_allowed(
     token: &str,
     plane: &dyn UserPlane,
     plan: &user_plane::SyncPlan,
+    exclusive: &[String],
 ) -> Result<u32, String> {
     // The allow-list, as a set, and since §8a it is the ONLY gate on the push. The
     // daemon syncs the set it was HANDED — it never asks "may I sync X?", so it
@@ -482,33 +596,38 @@ async fn push_allowed(
         return Ok(0);
     }
 
-    // `["repo"]`, filtered in SQL so the LIMIT applies to rows we can actually
-    // push. Scope is a CAPABILITY question, not an entitlement one:
-    // `dojo.repository_metrics.principal_id` is a principal, never a git email,
-    // and `personas.principal_id` is unset until a persona is linked, so a
-    // per-person row has nothing honest to attribute to. The ingest refuses them.
-    //
-    // Filtering here rather than after the fetch is load-bearing — see
-    // `unpushed_metric_rows`. Held-back rows once crowded the window and a pass
-    // pushed 66 of 132.
+    // Repo-scoped rows first, then the user-scoped rows PROVABLY this persona's
+    // (#240): no identity on a repository only they elected, or an author address
+    // they claimed. Everything filtered in SQL so the LIMIT applies to rows that
+    // can actually go — held-back rows once crowded the window and a pass pushed
+    // 66 of 132. See `unpushed_metric_rows`.
     let keys: Vec<&str> = allowed.iter().copied().collect();
-    let pushable = pg.unpushed_metric_rows(&["repo"], &keys, PUSH_LIMIT).await?;
-    // A failure here must not print "0 held back" — that is the exact mislead the
-    // counter exists to prevent.
-    // Scoped to the SAME allow-list, so the number means "held back out of what this
-    // pass could otherwise have sent" rather than "user-scoped rows on this machine".
-    let held = match pg.unpushed_metric_count(&["user"], &keys).await {
-        Ok(n) => n,
-        Err(e) => {
-            tracing::warn!(persona, error = %e, "could not count held-back rows");
-            0
+    let exclusive: Vec<&str> = exclusive.iter().map(String::as_str).collect();
+    let mut rows = pg.unpushed_metric_rows(&["repo"], &keys, PUSH_LIMIT).await?;
+    let room = PUSH_LIMIT - rows.len() as i64;
+    let persona_id = pg.persona_id_for_slot(persona).await?;
+    let mut unprovable = 0;
+    if let Some(pid) = persona_id {
+        if room > 0 {
+            rows.extend(pg.unpushed_user_metric_rows(&pid, &keys, &exclusive, room).await?);
         }
-    };
-    if held > 0 {
+        // A failure here must not print "0 held back" — that is the exact mislead
+        // the counter exists to prevent.
+        unprovable = match pg.unprovable_user_metric_count(&pid, &keys, &exclusive).await {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!(persona, error = %e, "could not count held-back rows");
+                0
+            }
+        };
+    }
+    let (pushable, colliding) = drop_colliding(rows);
+    if unprovable > 0 || colliding > 0 {
         tracing::info!(
             persona,
-            held,
-            "dojo_sync: user-scoped rows held back — no principal to attribute them to yet"
+            unprovable,
+            colliding,
+            "dojo_sync: user-scoped rows held back — not provably this person's, or two of their addresses on one day"
         );
     }
     if pushable.is_empty() {
@@ -1818,6 +1937,62 @@ mod tests {
             Ok(0)
         );
         drop_binding_fixture(&pg, persona, &[id]).await;
+    }
+
+    fn plan_of(keys: &[&str]) -> SyncPlan {
+        SyncPlan { allowed: keys.iter().map(|k| mapped(k, "t")).collect(), denied: vec![] }
+    }
+
+    // #240: a row with no identity is the machine's own — the persona's only when
+    // no other signed-in persona elected the same repository.
+    #[test]
+    fn a_repository_is_exclusive_to_the_one_persona_that_elected_it() {
+        let plans = vec![
+            ("work".to_string(), plan_of(&["a", "shared"])),
+            ("home".to_string(), plan_of(&["b", "shared"])),
+        ];
+        let ex = exclusive_repos(&plans);
+        assert_eq!(ex["work"], vec!["a".to_string()]);
+        assert_eq!(ex["home"], vec!["b".to_string()]);
+        assert_eq!(
+            exclusive_repos(&plans[..1])["work"],
+            vec!["a".to_string(), "shared".to_string()]
+        );
+    }
+
+    fn push_row(metric: &str, scope: &str, day: u32) -> crate::db::pg_store::sync::PushableMetric {
+        crate::db::pg_store::sync::PushableMetric {
+            id: uuid::Uuid::new_v4(),
+            repo_key: "r".into(),
+            metric: metric.into(),
+            scope: scope.into(),
+            grain: "daily".into(),
+            computed_on: chrono::NaiveDate::from_ymd_opt(2026, 1, day).unwrap(),
+            value: 1.0,
+            commit_sha: None,
+            props: serde_json::json!({}),
+            source: "measured".into(),
+        }
+    }
+
+    // Two of the person's verified addresses with a row for the same metric and
+    // day would land on ONE dōjō row (it keys by person, not address) — one would
+    // silently overwrite the other. Both are held back, and counted.
+    #[test]
+    fn user_rows_that_would_collide_on_the_dojo_are_held_back_together() {
+        let rows = vec![
+            push_row("churn", "user", 1),
+            push_row("churn", "user", 1),
+            push_row("churn", "user", 2),
+            push_row("churn", "repo", 1),
+        ];
+        let (kept, held) = drop_colliding(rows);
+        assert_eq!(held, 2);
+        let kept: Vec<_> = kept
+            .iter()
+            .map(|r| (r.scope.as_str(), chrono::Datelike::day(&r.computed_on)))
+            .collect();
+        assert_eq!(kept, vec![("user", 2), ("repo", 1)]);
     }
 
     #[tokio::test]

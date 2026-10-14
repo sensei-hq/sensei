@@ -48,7 +48,7 @@ export type RejectReason =
 	| 'not_permitted'
 	| 'unknown_metric' //     no sensei.metrics row has that key
 	| 'ambiguous' //          that repo_key is registered under two of the caller's tenants
-	| 'unsupported_scope'; // scope=user, which has no principal to attribute to
+	| 'unsupported_scope'; // a scope other than repo or user
 
 export interface IngestResult {
 	accepted: number;
@@ -56,8 +56,7 @@ export interface IngestResult {
 }
 
 /**
- * File a batch of the caller's repo-scoped metric rows (daemon-sync.md §7), as
- * them (#236).
+ * File a batch of the caller's metric rows (daemon-sync.md §7), as them (#236).
  *
  * This side RESOLVES: each row to one of the caller's repositories (their own
  * verdict rows, from dojo.my_repositories()) and to a catalogue metric, and
@@ -65,13 +64,11 @@ export interface IngestResult {
  * re-checks every row against the caller's own verdict, takes the tenant from
  * it, and upserts on the seven-column key — one call for the batch.
  *
- * **`scope='user'` is refused, loudly.** `dojo.repository_metrics.principal_id`
- * is a PRINCIPAL, never a git email — commit trailers are unverified, so
- * accepting one would let anyone attribute work to a colleague. The bridge is
- * `sensei.personas.principal_id`, which is NULL until a persona is linked, so
- * there is currently nothing honest to attribute a user-scoped row to. Rejecting
- * names the gap; silently skipping would report a successful push that quietly
- * moved thousands of rows fewer than the daemon offered.
+ * **A `scope='user'` row is the caller's own** (#240). It carries no person:
+ * `dojo.upsert_repository_metrics` stamps `principal_id` from the session, never
+ * from the input, so no row can be filed under a colleague. The daemon decides
+ * which of its rows are provably the signed-in person's before sending. Any
+ * other scope is refused by name.
  */
 export async function ingestMetrics(db: DojoClient, rows: MetricInput[]): Promise<IngestResult> {
 	const rejected: IngestResult['rejected'] = [];
@@ -119,7 +116,7 @@ export async function ingestMetrics(db: DojoClient, rows: MetricInput[]): Promis
 	for (const row of rows) {
 		const reject = (reason: RejectReason) => rejected.push({ repo_key: row.repo_key, metric: row.metric, reason });
 
-		if (row.scope !== 'repo') {
+		if (row.scope !== 'repo' && row.scope !== 'user') {
 			reject('unsupported_scope');
 			continue;
 		}
@@ -154,6 +151,7 @@ export async function ingestMetrics(db: DojoClient, rows: MetricInput[]): Promis
 		toWrite.push({
 			repository_id: ours[0].repository_id,
 			metric_id: metricId,
+			scope: row.scope,
 			commit_sha: row.commit_sha ?? null,
 			computed_on: row.computed_on,
 			grain: row.grain,

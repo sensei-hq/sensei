@@ -98,6 +98,10 @@ content-free view (#252).
 `dojo.can_read_repository_metric` today grants own, repo-scope and tenant admin.
 The team-lead clause is new.
 
+A `scope = user` row arrives only as its own person's: `dojo.upsert_repository_metrics`
+takes `principal_id` from the session, never the input, and the daemon sends only rows
+provably the signed-in person's (#240; `docs/spec/dojo/daemon-sync.md` §8, item 4).
+
 ### Knowledge — artifacts, triage, rules, policies
 
 | Data | contributor | maintainer | admin |

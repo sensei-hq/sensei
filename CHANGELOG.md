@@ -17,6 +17,12 @@ are marked **BREAKING**.
 
 ### Added
 
+- **A person's own metrics reach their dōjō** (#240): user-scoped rows that are
+  provably the signed-in person's — their session metrics on a repository only
+  they elected, and commit metrics under an address GitHub verified for them.
+  The dōjō files them under the person from the session; their team lead and a
+  tenant admin can read them (access matrix). Colleagues' commits and unverified
+  addresses stay on the machine, counted in the sync log.
 - **A team sees THAT a run is going on its project** (#252) — status only,
   never content: `GET …/relay/status` over `dojo.peer_run_status`, for the
   run's owner, a member or lead of a team owning the project, and a tenant

@@ -28,6 +28,14 @@ declare
     v_refused   integer;
     v_written   integer;
 begin
+    -- A scope is 'repo' or 'user'; anything else is the caller's bug, refused
+    -- by name rather than filed under a guess.
+    if exists (select 1 from jsonb_array_elements(p_rows) e
+                where coalesce(e ->> 'scope', 'repo') not in ('repo', 'user')) then
+        raise exception 'a metric row''s scope must be repo or user'
+            using errcode = 'invalid_parameter_value';
+    end if;
+
     select count(*) into v_refused
       from jsonb_array_elements(p_rows) e
      where not exists (
@@ -43,11 +51,15 @@ begin
     insert into dojo.repository_metrics as rm
            (tenant_id, repository_id, metric_id, scope, principal_id, commit_sha,
             computed_on, grain, value, props, source)
-    select distinct on (x.metric_id, x.repository_id, x.commit_sha, x.computed_on, x.grain)
-           v.tenant_id, x.repository_id, x.metric_id, 'repo', null, x.commit_sha,
+    -- A user-scoped row belongs to the CALLER — the session's principal, never
+    -- a principal (or email) named in the input (#240).
+    select distinct on (x.metric_id, x.repository_id, x.scope, x.commit_sha, x.computed_on, x.grain)
+           v.tenant_id, x.repository_id, x.metric_id, x.scope,
+           case when x.scope = 'user' then v_principal end, x.commit_sha,
            x.computed_on, x.grain, x.value, x.props, x.source
       from (select (e ->> 'repository_id')::uuid               as repository_id
                  , (e ->> 'metric_id')::uuid                   as metric_id
+                 , coalesce(e ->> 'scope', 'repo')             as scope
                  , e ->> 'commit_sha'                          as commit_sha
                  , (e ->> 'computed_on')::date                 as computed_on
                  , coalesce(e ->> 'grain', 'daily')            as grain
@@ -60,7 +72,7 @@ begin
         on v.principal_id = v_principal
        and v.sync_enabled
        and v.repository_id = x.repository_id
-     order by x.metric_id, x.repository_id, x.commit_sha, x.computed_on, x.grain, x.ord desc
+     order by x.metric_id, x.repository_id, x.scope, x.commit_sha, x.computed_on, x.grain, x.ord desc
     on conflict (metric_id, repository_id, scope, principal_id, commit_sha, computed_on, grain)
     do update set value = excluded.value, props = excluded.props, source = excluded.source, pushed_at = now();
     get diagnostics v_written = row_count;
@@ -72,7 +84,8 @@ revoke all on function dojo.upsert_repository_metrics(jsonb) from public;
 grant execute on function dojo.upsert_repository_metrics(jsonb) to authenticated;
 
 comment on function dojo.upsert_repository_metrics(jsonb) is
-'File a batch of repo-scoped metric rows for the caller. Every row must name a
+'File a batch of metric rows for the caller — repo-scoped, or user-scoped and
+then the caller''s own (principal from the session, never the input; #240). Every row must name a
 repository the caller may sync (their own verdict row); the tenant comes from
 that row, never the input; one failing row refuses the whole batch
 (insufficient_privilege). Upserts on the seven-column key; returns rows written

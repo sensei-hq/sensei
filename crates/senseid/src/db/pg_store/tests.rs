@@ -12359,52 +12359,6 @@ async fn seed_sync_fixture_at(
 }
 
 #[tokio::test]
-async fn the_held_back_count_carries_the_same_predicates_as_the_push_window() {
-    // The count exists so "pushed 66" is never printed without the reason 596 were
-    // not — which is only a true statement if it counts the population the window
-    // draws from, differing in `scopes` alone.
-    //
-    // B2 changed both together: `visibility = 'shared'` came out of each, and
-    // `allowed_keys` — which the count had never carried — went in. Without that
-    // second half an unfiltered count would sweep in every cloned repository on the
-    // machine, reporting a hold-back no pass could ever have sent. That misleads in
-    // the opposite direction to the bug the counter was added for, which is still
-    // misleading.
-    let s = pg_store().await;
-    let mine_uniq = uuid::Uuid::new_v4();
-    let other_uniq = uuid::Uuid::new_v4();
-    // Locally PRIVATE, so the count also proves the visibility term is gone.
-    let (mine_pid, _) = seed_sync_fixture_at(&s, &mine_uniq, "private").await;
-    let (other_pid, _) = seed_sync_fixture_at(&s, &other_uniq, "private").await;
-    let mine_key = format!("test/bare-{mine_uniq}");
-    let other_key = format!("test/bare-{other_uniq}");
-
-    let window = s.unpushed_metric_rows(&["user"], &[&mine_key], 500).await.unwrap();
-    let held_mine = s.unpushed_metric_count(&["user"], &[&mine_key]).await.unwrap();
-    let held_other = s.unpushed_metric_count(&["user"], &[&other_key]).await.unwrap();
-    let held_none = s.unpushed_metric_count(&["user"], &[]).await.unwrap();
-
-    crate::tasks::test_support::cleanup_metrics_fixture(&s, &mine_pid, None, &[]).await;
-    crate::tasks::test_support::cleanup_metrics_fixture(&s, &other_pid, None, &[]).await;
-
-    assert_eq!(
-        held_mine,
-        window.len() as i64,
-        "the count and the window see the same rows for the same allow-list"
-    );
-    assert_eq!(held_mine, 1, "including a row whose repository is locally PRIVATE");
-    assert_eq!(
-        held_other, 1,
-        "a different allow-list counts that repository's rows, not this one's"
-    );
-    assert_eq!(
-        held_none, 0,
-        "and an EMPTY allow-list holds back nothing — the count must not report rows \
-         no pass could have sent"
-    );
-}
-
-#[tokio::test]
 async fn a_pulled_row_is_never_pushed_back() {
     // The loop-breaker. Without `computed_by`, a value dojo handed down is
     // indistinguishable from one this machine produced — so it gets pushed
@@ -17007,4 +16961,91 @@ async fn a_loaded_membership_carries_its_persona() {
         .execute(s.pool())
         .await
         .unwrap();
+}
+
+/// #240: a user-scoped row leaves the machine only when it is provably the
+/// signed-in person's — a row with no identity (this machine's own session
+/// metrics) when the persona is the only one that elected the repository, or a
+/// row whose author email is one of the persona's CLAIMED (provider-verified)
+/// addresses. An unverified `git` address, and a colleague's, never travel.
+#[tokio::test]
+async fn only_rows_provably_the_persons_are_pushable_user_metrics() {
+    let s = pg_store().await;
+    let uniq = uuid::Uuid::new_v4();
+    let (pid, rid) = seed_sync_fixture_at(&s, &uniq, "private").await; // one no-identity row
+    let key = format!("test/bare-{uniq}");
+    let persona = s.upsert_persona(&format!("_test:provable:{uniq}"), true).await.unwrap();
+    let (claimed, unverified, colleague) = (
+        format!("me-{uniq}@x.test"),
+        format!("me-git-{uniq}@x.test"),
+        format!("them-{uniq}@x.test"),
+    );
+    s.link_persona_email(&persona, &claimed, "claimed").await.unwrap();
+    s.link_persona_email(&persona, &unverified, "git").await.unwrap();
+    let churn =
+        seed_metric(&s, &format!("_test:provable:{uniq}:churn"), "ComputeChurn", 0, None).await;
+    for who in [&claimed, &unverified, &colleague] {
+        s.upsert_project_metric_repo(&MetricRow {
+            metric_id: &churn,
+            repository_id: &rid,
+            scope: "user",
+            identity: Some(who.as_str()),
+            commit_sha: None,
+            computed_on: chrono::NaiveDate::from_ymd_opt(2020, 5, 1).unwrap(),
+            grain: "daily",
+            value: 0.3,
+            props: &serde_json::json!({}),
+            source: "measured",
+        })
+        .await
+        .unwrap();
+    }
+    let identities = |rows: Vec<crate::db::pg_store::sync::PushableMetric>| {
+        let s = &s;
+        async move {
+            let mut out = vec![];
+            for r in rows {
+                let (who,): (Option<String>,) = sqlx_core::query_as::query_as(
+                    "SELECT identity FROM sensei.repository_metrics WHERE id = $1",
+                )
+                .bind(r.id)
+                .fetch_one(s.pool())
+                .await
+                .unwrap();
+                out.push(who);
+            }
+            out.sort();
+            out
+        }
+    };
+
+    let exclusive = s.unpushed_user_metric_rows(&persona, &[&key], &[&key], 500).await.unwrap();
+    let shared = s.unpushed_user_metric_rows(&persona, &[&key], &[], 500).await.unwrap();
+    let held = s.unprovable_user_metric_count(&persona, &[&key], &[&key]).await.unwrap();
+    let got_exclusive = identities(exclusive).await;
+    let got_shared = identities(shared).await;
+
+    sqlx_core::query::query("DELETE FROM sensei.personas WHERE id = $1")
+        .bind(persona)
+        .execute(s.pool())
+        .await
+        .unwrap();
+    crate::tasks::test_support::cleanup_metrics_fixture(&s, &pid, None, &[]).await;
+
+    assert_eq!(
+        got_exclusive,
+        vec![None, Some(claimed.clone())],
+        "own session row + verified address"
+    );
+    assert_eq!(
+        got_shared,
+        vec![Some(claimed)],
+        "another persona elected it too: only the verified address"
+    );
+    assert_eq!(held, 2, "the unverified address and the colleague are held back, and counted");
+    assert_eq!(
+        got_exclusive.len() as i64 + held,
+        4,
+        "pushed + held = every user row in play: the window and the count see one population"
+    );
 }
