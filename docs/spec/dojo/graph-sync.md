@@ -1,6 +1,6 @@
 # Daemon → dōjō graph sync — a repository's code graph, shared (#225)
 
-> **Status:** plan. One question is open (Q1, §9) and blocks step 4 only.
+> **Status:** plan. Q1 (§9) answered 2026-10-14: default branch only.
 >
 > **Decided 2026-10-14:** sync the **raw graph** — nodes and edges — rather than
 > derived diagram payloads or aggregates. A repository is shared, so its graph
@@ -164,21 +164,24 @@ components are reusable; the loaders are not.
 - Author attribution on graph rows: a graph is the repository's, so rows carry
   no person (anonymisation, #224, does not arise).
 
-## 9. Open questions
+## 9. Decided: whose checkout (Q1)
 
-**Q1 — two members, two commits.** Alice indexed `main` this morning; Bob is on
-a feature branch with half the files changed. Both push the same repository.
-Per-file replacement means the dōjō graph becomes a mix of both checkouts.
-Options:
+Alice indexed `main` this morning; Bob is on a feature branch with half the
+files changed. Both push the same repository. **Decided 2026-10-14: the dōjō
+holds the default branch only; per file, the newest commit wins.** The team
+sees `main`; feature-branch work stays local. Rejected: newest commit on any
+branch (unmerged work leaks into the shared graph) and one graph per branch
+(storage × branches, and a branch picker on every screen).
 
-- **(a) Default branch only (recommended).** A slice carries the branch and the
-  commit; the dōjō accepts slices only from the repository's default branch,
-  newest commit wins per file. The team sees `main`, which is what a shared view
-  is for; feature-branch work stays local.
-- (b) Newest commit wins per file, any branch. Simple, but the shared graph
-  mixes unmerged work into it.
-- (c) One graph per branch. Faithful, but multiplies storage and needs a branch
-  picker on every dōjō screen.
-
-The local `folders.branch` gives the current branch; the default branch must be
-read from the remote (`git symbolic-ref refs/remotes/origin/HEAD`).
+- **The daemon enforces the branch.** It pushes a repository's graph only while
+  the clone is on the default branch, read from the remote
+  (`git symbolic-ref refs/remotes/origin/HEAD`); otherwise the repository is
+  `skipped` with reason `not_on_default_branch`. An unknown default branch is
+  also skipped, never guessed. The dōjō cannot verify a branch name, so it does
+  not pretend to.
+- **The dōjō enforces the order.** Each slice carries its commit and the
+  commit's time; `dojo.graph_files` keeps both, and a slice older than the stored
+  one for that path is refused and counted — a member a few commits behind does
+  not roll the shared graph back.
+- **The manifest prunes only with a newer commit.** A manifest older than the
+  repository's newest accepted commit prunes nothing.
