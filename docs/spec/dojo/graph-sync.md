@@ -125,16 +125,28 @@ and resolves when that file arrives.
 
 ## 5. The cycle
 
-After the metrics push in `tick`, for each allowed repository with a graph:
+After the metrics push in `tick`, for each allowed repository with tracked
+branches, each local checkout (a `git` folder) on one of them — one per branch:
 
-1. Build the manifest from `files` (repository-relative paths).
-2. Diff it against the plan's accepted hashes → changed and deleted paths.
-3. Read the changed files' slices (§2), rewrite paths, batch to the cap.
-4. `POST /v1/you/graph` per batch; the last batch of a repository carries the
-   manifest so the dōjō prunes.
-5. Record `sync_state(repository_graph, repo_key)` as `synced`, `skipped` (no
-   graph yet) or `failed` with the reason; a refused oversized slice is counted
-   in the reason.
+1. **Is the index this branch's?** The live `HEAD` branch must be the branch
+   the folder was indexed on; otherwise `skipped: index_not_current`. A
+   checkout on an untracked branch is `skipped: not_a_tracked_branch`.
+2. **Only committed work.** The local graph is the working tree's, so every
+   path `git status --porcelain` reports (edited, added, deleted, untracked,
+   both sides of a rename) is held back: not pushed, and kept in the manifest at
+   the hash the dōjō already has, so it is not pruned either.
+3. Diff the committed files' hashes against `GET /v1/you/graph` → changed paths.
+4. Read their slices (§2) 200 files at a time, batch whole slices under 3 MB
+   (the route caps at 4 MB), `POST /v1/you/graph` per batch.
+5. Last request: the unplaced slice and the manifest, so the dōjō prunes.
+6. Record `sync_state(repository_graph, <repo_key>@<branch>)`: `synced`, the
+   `skipped` reason, or `error` — including a file whose single slice is over the
+   cap, which is named rather than split.
+
+A checkout's files are already repository-relative (`files.file_path` is
+relative to the `git` folder), and every node and edge hangs off that folder,
+so `folder_path` is `''`. An edge into another folder (another repository's
+checkout) is sent with no target key, only its name.
 
 A first sync is a few dozen requests at today's caps (edge `props` alone are
 74 MB across the two repositories measured, at 2 MB a request); afterwards a

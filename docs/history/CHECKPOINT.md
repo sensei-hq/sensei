@@ -2,7 +2,7 @@
 
 **State 2026-10-14.** v0.13.0 shipped (the dōjō takes the person's session
 only; production 401s a device token). History scrub done. Working the queue
-on `develop` (`ade610a6`), toward 0.14.0.
+on `develop` (`abcc52cc`), toward 0.14.0.
 
 | increment | status |
 |---|---|
@@ -13,11 +13,10 @@ on `develop` (`ade610a6`), toward 0.14.0.
 | #240 provable user-scoped metrics reach the dōjō | DONE `79f14390`, `6cd03d62` |
 | #245 app e2e gate | CLOSED — 144/0/19; boot gate fix, Instruments servers+toggle restored, kind chip retired |
 | #254 next ORM | MEASURED: JPA; spec 20 §8 written (`9eb44cdf`); next 8b annotation fact |
-| #225 dōjō graph sync | DŌJŌ SIDE DONE: tables + file_graph_slices (`a84aa8fc`), default_branch capture (`0f35f6ac`), set_graph_branch (`64949f44`), hash read (`237ab3d1`), /v1/you/graph (`9bf0141a`), plan branches (`ade610a6`); dbd#65 filed; left: schema_*/folders tables, DAEMON side (manifest/diff/slices/batch/push per tracked checkout), app 'tracked branch' setting |
+| #225 dōjō graph sync | dōjō side + DAEMON push done (`abcc52cc`: committed work only, stale-index skip, per-branch sync_state); left: schema_*/folders tables, live verification on a test tenant (spec §6 step 6), app per-checkout status, dōjō diagram screens (next issue) |
 
-**Next command:** #225 daemon side — `crates/senseid/src/tasks/dojo_sync.rs`: after the metrics push,
-for each allowed repo's `graph_branches`, each local checkout (folders.repository_id, folders.branch)
-on one → manifest, GET hashes, slices of changed files, batch ≤4 MB, POST /v1/you/graph.
+**Next command:** #225 — graph schema_* / folders tables (graph-sync.md §2), then live verification
+against local Supabase with a test tenant (deploy-twice, conservation counts).
 
 **Open questions (user's):**
 - Discovered-MCP-servers section and per-server toggle were dropped in the
