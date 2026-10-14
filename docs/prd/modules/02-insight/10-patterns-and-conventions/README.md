@@ -23,6 +23,12 @@ knows how we do things here*.
 > patterns. This module's Done gate is therefore the *engine's* bar, and its Wrong
 > gate is about not lying on the way there. The roadmap calls the pattern detector
 > one of the two unbuilt feeds that starve Delivery and Team surfaces.
+>
+> **Also missing (2026-10-14):** `sensei.pattern_registries` and
+> `sensei.pattern_choices` are **not in the DDL**, and `get_pattern_options` is **not a
+> registered MCP tool** (the four real ones are `get_patterns`, `get_pattern_for`,
+> `match_pattern`, `get_project_conventions`). Storage is a prerequisite gap before the
+> engine can land — see `G-PATTERN-STORE`.
 
 ## In scope / out of scope
 
@@ -131,6 +137,8 @@ knows how we do things here*.
   starve Delivery and Team surfaces. No dedicated register row beyond that; the
   auto-promotion policy (threshold vs opt-in) is an open decision with a stated
   bias. The assister-adapter trait seam is the canonical custom-pattern example.
+- **`G-PATTERN-STORE`** — `sensei.pattern_choices` / `sensei.pattern_registries` have no
+  DDL; a chosen architectural option cannot persist or read back until they do.
 
 ## Related
 

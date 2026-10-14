@@ -22,6 +22,11 @@ catches the doc lie before the next reader does* — "Doc drift: 3".
 > identifier-level), drift is doc-**file** level (0 `section` nodes), and
 > `expected/actual_signature` are NULL everywhere. Requirement-level traceability
 > depends on the M4 code-graph fixes (`section` nodes, deterministic ids).
+>
+> **Also (2026-10-14):** `sensei.trace_links` and `sensei.doc_lint_findings` are **not
+> in the DDL**, and `get_trace_links` is **not a registered MCP tool** — both are
+> designed, not built. `drift_items` lives in the **`inference`** schema with a 3-value
+> `drift_status` (`current | drifted | broken`), not a confidence tier.
 
 ## In scope / out of scope
 
@@ -37,9 +42,10 @@ catches the doc lie before the next reader does* — "Doc drift: 3".
 ## Surfaces
 
 - **API** — `POST /api/traceability/{id}/apply-fix`; Project Overview `Doc drift`
-  stat; Observatory + Project Traceability screens; expansion drawer via
-  `get_trace_links(node)`.
-- **Daemon** — `pg_store.rs::scan_project_doc_drift`, `analysis/doc_drift.rs`
+  stat; Observatory + Project Traceability screens. The expansion drawer's
+  `get_trace_links(node)` tool **does not exist** (gap `G-TRACE-TOOL`).
+- **Daemon** — `db/pg_store/graph.rs::scan_project_doc_drift` (+
+  `api/handlers/project_detail.rs`), `analysis/doc_drift.rs`
   (identifier extraction — unit-tested, no DB round-trip).
 - **App** — Traceability screens (list, filter by confidence/state, Expected-vs-Actual
   drawer); Insights violation cards for high-confidence drift; /sensei:validate
@@ -47,11 +53,13 @@ catches the doc lie before the next reader does* — "Doc drift: 3".
 
 ## Data invariants
 
-- `sensei.drift_items` — one row per broken reference: `doc_node_id` + `doc_path` +
-  `line_number` + `mentioned_identifier`; `expected_signature` / `actual_signature`
-  nullable; `confidence` enum `high | medium | low`; `state` enum
-  `open | dismissed | fixed | resolved_auto`; `suggestion` (narration-cache
-  `drift_fix`); `detected_at` / `resolved_at`.
+- `inference.drift_items` (note: the **`inference`** schema, not `sensei`) — one row per
+  broken reference: `folder_id` + `doc_node_id` + `code_node_id` (nullable);
+  `expected_signature` / `actual_signature`; **`status`** (`drift_status`:
+  `current | drifted | broken`); `detail`; `detected_at` / `resolved_at`. There is **no**
+  `doc_path` / `line_number` / `mentioned_identifier` / `confidence` / `suggestion`
+  column — the confidence-tier + `open|dismissed|fixed|resolved_auto` state machine
+  described here is **designed, not built**.
 - **Idempotent scan.** Same doc scanned twice produces the same rows.
 - **Branch-scoped.** Drift items record against the active branch (M3 branch
   versioning); a branch switch flips the list.
@@ -60,10 +68,10 @@ catches the doc lie before the next reader does* — "Doc drift: 3".
   credit the fix.
 - **Auto-fix bar is strict.** Auto-fix only for high-confidence unambiguous renames:
   `follow_count ≥ N` AND `name_similarity ≥ 0.85`.
-- `sensei.trace_links` — one row per doc↔code link (`direction`,
-  `source_node_id`, `target_node_id`, `confidence`, `detected_at`), both directions.
-- `sensei.doc_lint_findings` — `severity error | warning | info`; enforcement modes
-  per project (default `warn`); compliance packs may raise specific rules to `block`.
+- `sensei.trace_links` — **does not exist in the DDL** (designed). Bidirectional
+  doc↔code links are unbuilt → gap `G-TRACE-STORE`.
+- `sensei.doc_lint_findings` — **does not exist in the DDL** (designed) → gap
+  `G-TRACE-STORE`.
 - **Stopwords.** `` `TODO` ``/`` `TBD` `` must never become drift items.
 
 ## Signals shown
@@ -73,7 +81,7 @@ catches the doc lie before the next reader does* — "Doc drift: 3".
 | Project Overview `Doc drift` stat | `count(*) … where state='open' and project_id=X` | "Doc drift: 3" |
 | High-confidence drift | identifier gone (or unambiguous rename) | README: `authenticate()` → `authenticateWithCredentials` |
 | Medium-confidence drift | identifier exists, signature changed | Expected-vs-Actual drawer |
-| `get_trace_links(node)` | both directions around a node | "3 docs reference `RefreshTokenStore`" |
+| `get_trace_links(node)` *(not built)* | both directions around a node | "3 docs reference `RefreshTokenStore`" |
 | Doc-doctor findings | stale / undocumented / inconsistent / broken | severity-filtered on the Traceability screen |
 
 ## Done gate
@@ -90,10 +98,10 @@ catches the doc lie before the next reader does* — "Doc drift: 3".
 - False positives stay out: `` `TODO` ``-class words never drift.
 
 ```bash
-psql -A -t -c "select confidence, state, count(*)
-                 from sensei.drift_items
-                 where project_id = (select id from sensei.projects where name='sensei')
-                 group by confidence, state" -d sensei
+psql -A -t -c "select status, count(*)
+                 from inference.drift_items
+                 where folder_id in (select id from sensei.folders where name='sensei')
+                 group by status" -d sensei
 ```
 
 ## Wrong gate
@@ -119,6 +127,9 @@ psql -A -t -c "select confidence, state, count(*)
   — see [02-insight.md](../../../../roadmap/02-insight.md) and the indexer capability
   roadmap (`history/analysis/2026-08-05-indexer-capability-coverage.md`). No
   dedicated register row beyond that.
+- **`G-TRACE-STORE`** — `sensei.trace_links` / `sensei.doc_lint_findings` have no DDL;
+  bidirectional links and doc-doctor findings cannot persist.
+- **`G-TRACE-TOOL`** — `get_trace_links` is not a registered MCP tool.
 
 ## Related
 
@@ -133,4 +144,5 @@ psql -A -t -c "select confidence, state, count(*)
 - [features/03-observatory.md](../../../../features/03-observatory.md) — Traceability
   section status.
 - [prd/02-objectives.md](../../../02-objectives.md) · [prd/01-vision.md §The core loop](../../../01-vision.md#the-core-loop).
-- Crate: `crates/senseid/src/{db/pg_store.rs,analysis/doc_drift.rs}`.
+- Crate: `crates/senseid/src/db/pg_store/graph.rs` (`scan_project_doc_drift`),
+  `crates/senseid/src/analysis/doc_drift.rs`.
