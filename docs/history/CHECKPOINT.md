@@ -2,7 +2,7 @@
 
 **State 2026-10-14.** v0.13.0 shipped (the dōjō takes the person's session
 only; production 401s a device token). History scrub done. Working the queue
-on `develop` (`a84aa8fc`), toward 0.14.0.
+on `develop` (`0f35f6ac`), toward 0.14.0.
 
 | increment | status |
 |---|---|
@@ -13,11 +13,10 @@ on `develop` (`a84aa8fc`), toward 0.14.0.
 | #240 provable user-scoped metrics reach the dōjō | DONE `79f14390`, `6cd03d62` |
 | #245 app e2e gate | CLOSED — 144/0/19; boot gate fix, Instruments servers+toggle restored, kind chip retired |
 | #254 next ORM | MEASURED: JPA; spec 20 §8 written (`9eb44cdf`); next 8b annotation fact |
-| #225 dōjō graph sync | spec `graph-sync.md`; one graph per TRACKED branch (`repository_graph_branches`: forge default + team-added, e.g. production); store `a84aa8fc` (10/10 mutants); left: schema_*/folders tables, default_branch capture (adds the default row), add/remove-branch function, Worker route, daemon side |
+| #225 dōjō graph sync | spec `graph-sync.md`; one graph per TRACKED branch (`repository_graph_branches`: forge default + team-added, e.g. production); store `a84aa8fc` (10/10 mutants); default_branch capture `0f35f6ac`; dbd#65 filed (PK re-key with dependent FK); left: add/remove-branch function, schema_*/folders tables, Worker route, daemon side |
 
-**Next command:** #225 — capture `default_branch` in `dojo/src/lib/server/provisioning.ts`
-(`refreshForgeVisibility`, same GitHub read; insert the default's tracked row), then the
-add/remove tracked-branch function, then the Worker route.
+**Next command:** #225 — `dojo.track_graph_branch` / `untrack_graph_branch` (authority:
+`configurable_by_me`), red test in `database/tests/dojo/`, then the Worker route.
 #254 8b (annotation fact) after. #238 waits on the brew cask (2.1.287 < 2.1.289).
 
 **Open questions (user's):**
