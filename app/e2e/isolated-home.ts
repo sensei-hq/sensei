@@ -7,10 +7,16 @@
  * `~/.claude/settings.json` and `~/.claude/plugins/`. Under the developer's HOME
  * an e2e run uninstalled their own sensei plugin in its cleanup.
  *
+ * The Keychain is reached the same way: router API keys and dōjō sessions are
+ * stored under fixed service names, so a spec clearing the OpenAI key cleared the
+ * developer's. The isolated home gets its own empty, unlocked keychain as its
+ * default — `security` finds the default through HOME.
+ *
  * Machine-wide installs the daemon reads through HOME are pointed back at the
  * real ones: the indexer's compiler engines and the Rust toolchain.
  */
 
+import { execFileSync } from 'child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -31,6 +37,24 @@ export function isolatedHomeEnv(): Record<string, string> {
   rmSync(E2E_HOME, { recursive: true, force: true });
   mkdirSync(join(E2E_HOME, '.claude'), { recursive: true });
   mkdirSync(join(E2E_HOME, '.sensei'), { recursive: true });
+
+  const keychain = join(E2E_HOME, 'Library', 'Keychains', 'e2e.keychain-db');
+  mkdirSync(join(E2E_HOME, 'Library', 'Keychains'), { recursive: true });
+  // `default-keychain` records the choice in Library/Preferences; without the
+  // directory it records nothing, every Keychain call in the app finds no default,
+  // and macOS raises "A keychain cannot be found" on the developer's screen.
+  mkdirSync(join(E2E_HOME, 'Library', 'Preferences'), { recursive: true });
+  const security = (...args: string[]) =>
+    execFileSync('/usr/bin/security', args, { env: { ...process.env, HOME: E2E_HOME }, stdio: 'pipe' });
+  security('create-keychain', '-p', '', keychain);
+  security('set-keychain-settings', keychain); // no auto-lock mid-run
+  security('unlock-keychain', '-p', '', keychain);
+  security('list-keychains', '-d', 'user', '-s', keychain);
+  security('default-keychain', '-d', 'user', '-s', keychain);
+  const chosen = security('default-keychain', '-d', 'user').toString();
+  if (!chosen.includes(keychain)) {
+    throw new Error(`isolated home: default keychain is ${chosen.trim() || 'unset'}, not ${keychain}`);
+  }
 
   const engines = join(real, '.sensei', 'engines');
   if (existsSync(engines)) symlinkSync(engines, join(E2E_HOME, '.sensei', 'engines'));
@@ -59,4 +83,15 @@ export function senseiPluginInstalls(): number {
 export function senseiPluginEnabled(): boolean {
   const enabled = (readJson(E2E_CLAUDE_SETTINGS)?.enabledPlugins ?? {}) as Record<string, unknown>;
   return enabled['sensei@sensei-marketplace'] === true;
+}
+
+/** Whether the isolated home's keychain holds an item for `service`. */
+export function e2eKeychainHas(service: string): boolean {
+  try {
+    execFileSync('/usr/bin/security', ['find-generic-password', '-s', service],
+      { env: { ...process.env, HOME: E2E_HOME }, stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
 }

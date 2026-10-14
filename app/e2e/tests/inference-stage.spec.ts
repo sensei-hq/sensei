@@ -9,14 +9,15 @@
  * key-write flow triggers on the daemon's save endpoint directly (the
  * ProvidersSection wires the same wizardState methods).
  *
- * Uses the daemon's actual /api/gateway/routers/{id}/key endpoints
- * for setup/teardown to avoid touching real OpenAI keys in the user's
- * Keychain — we only ever set/clear a known-fake key against the dev
- * daemon's namespace.
+ * Uses the daemon's actual /api/gateway/routers/{id}/key endpoints for
+ * setup/teardown. Router keys live under one fixed Keychain service, so these
+ * set and clear the key of whichever keychain the daemon reaches — the isolated
+ * home's own (e2e/isolated-home.ts), asserted below, never the user's.
  */
 
 import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateTo, DAEMON_URL } from '../helpers';
+import { e2eKeychainHas } from '../isolated-home';
 
 async function seedHealth(tauriPage: TauriPageLike): Promise<void> {
   await tauriPage.evaluate(`
@@ -57,6 +58,8 @@ test.describe('Providers — Settings surface', () => {
   test('Clear button removes the key', async ({ tauriPage }) => {
     // Pre-set so the Clear button renders on hydrate.
     await setRouterKey('openai', 'sk-pretend');
+    // In the isolated home's keychain — never the developer's login keychain.
+    expect(e2eKeychainHas('com.sensei.gateway.router.openai')).toBe(true);
     await navigateTo(tauriPage, '/logs');
     await new Promise(r => setTimeout(r, 800));
     await navigateTo(tauriPage, '/settings/providers');
@@ -66,5 +69,6 @@ test.describe('Providers — Settings surface', () => {
 
     await tauriPage.locator('[data-testid="router-clear-openai"]').click();
     await expect(card).toHaveAttribute('data-configured', 'false', { timeout: 5_000 });
+    expect(e2eKeychainHas('com.sensei.gateway.router.openai')).toBe(false);
   });
 });
