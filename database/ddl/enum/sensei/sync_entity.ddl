@@ -21,4 +21,7 @@ create type sync_entity as enum (
     -- It doubles as the per-persona last-sync watermark (synced_at), which is
     -- why the withdrawn sensei.dojo_personas table was not needed.
   , 'dojo_sync_plan'
+    -- One tracked branch of a repository's shared code graph (#225), keyed
+    -- `<repo_key>@<branch>`: one checkout's push, or why it was not pushed.
+  , 'repository_graph'
 );

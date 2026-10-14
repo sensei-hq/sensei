@@ -41,9 +41,15 @@ are marked **BREAKING**.
   repository's graph file by file, one graph per tracked branch
   (`dojo.repository_graph_branches`: the forge default plus any the team adds,
   e.g. production).
-  The daemon side and the Worker route are not built yet.
-  **Deploy:** the release's `deploy-dojo` job creates them; nothing calls them
-  until the daemon side ships.
+  The daemon pushes each tracked branch it has a checkout of after the metrics:
+  committed changes only — a file `git status` reports is held back and kept at
+  the dōjō's hash — skipping a checkout whose working tree has moved to another
+  branch since it was indexed. Each branch's outcome is in `sensei.sync_state`
+  (`repository_graph`, `<repo_key>@<branch>`). The dōjō's diagram screens over
+  this graph are not built yet.
+  **Deploy:** `deploy-dojo` first (tables, functions, `/v1/you/graph`); the daemon
+  then needs `sync_entity.repository_graph`, which a released daemon deploys on
+  first start — a debug build at the same version needs `dbd reconcile`.
 
 ### Fixed
 

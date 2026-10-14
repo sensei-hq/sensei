@@ -28,6 +28,7 @@ pub mod dojo_sync;
 pub mod executor;
 pub mod forge_token_check;
 pub mod git_history_pruner;
+pub mod graph_push;
 pub mod handlers;
 pub mod index_audit;
 pub mod library_update_scheduler;

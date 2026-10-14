@@ -491,6 +491,9 @@ async fn push_planned(
     exclusive: &[String],
 ) -> Result<(), String> {
     let pushed = push_allowed(pg, persona, token, plane, &planned.plan, exclusive).await?;
+    // After the metrics: a graph push is larger and slower, and must not hold
+    // the metrics back. Each checkout records its own outcome (#225).
+    let graph_batches = push_graphs(pg, persona, token, plane, &planned.plan).await?;
     tracing::info!(
         persona,
         allowed = planned.plan.allowed.len(),
@@ -498,9 +501,151 @@ async fn push_planned(
         mapped = planned.mapped,
         unmapped = planned.unmapped,
         pushed,
+        graph_batches,
         "dojo_sync: cycle complete"
     );
     Ok(())
+}
+
+/// The `sensei.sync_entity` a graph push records against, keyed `<repo_key>@<branch>`.
+const GRAPH_ENTITY: &str = "repository_graph";
+
+/// Bytes of slices per graph request: under the route's 4 MB cap, leaving room
+/// for the envelope (repo key, commit) and the last batch's manifest.
+const GRAPH_BATCH_BYTES: usize = 3 * 1024 * 1024;
+
+/// Files read from the database per slice query, so one repository's changes are
+/// never held in memory all at once.
+const GRAPH_SLICE_CHUNK: usize = 200;
+
+/// What became of one checkout.
+enum CheckoutPush {
+    /// Batches sent; files whose single slice was over the cap, if any.
+    Sent {
+        batches: usize,
+        oversize: Vec<String>,
+    },
+    Skipped(&'static str),
+}
+
+/// Push the code graph of every tracked branch this persona has a checkout of
+/// (#225; graph-sync.md §5, §9). Returns the number of batches sent.
+///
+/// Each (repository, branch) records its outcome in `sensei.sync_state` under
+/// `repository_graph`, keyed `<repo_key>@<branch>`: synced, skipped with why
+/// (`not_a_tracked_branch`, `index_not_current`), or the error. One checkout's
+/// failure does not stop the others.
+async fn push_graphs(
+    pg: &PgStore,
+    persona: &str,
+    token: &str,
+    plane: &dyn UserPlane,
+    plan: &user_plane::SyncPlan,
+) -> Result<usize, String> {
+    let mut sent = 0;
+    for repo in plan.allowed.iter().filter(|r| !r.graph_branches.is_empty()) {
+        let tracked: std::collections::HashSet<&str> =
+            repo.graph_branches.iter().map(|b| b.branch.as_str()).collect();
+        // Two checkouts of one branch (two clones of main): the first one pushed
+        // speaks for the branch this cycle.
+        let mut pushed_branches = std::collections::HashSet::new();
+        for checkout in pg.graph_checkouts(&repo.repo_key).await? {
+            let Some(branch) = checkout.branch.clone() else { continue };
+            let key = format!("{}@{}", repo.repo_key, branch);
+            let mark = SyncMark { entity: GRAPH_ENTITY, key: &key, direction: "push" };
+            if !tracked.contains(branch.as_str()) {
+                pg.mark_sync_skipped(&mark, "not_a_tracked_branch").await?;
+                continue;
+            }
+            if pushed_branches.contains(&branch) {
+                continue;
+            }
+            match push_checkout(pg, token, plane, &repo.repo_key, &branch, &checkout).await {
+                Ok(CheckoutPush::Sent { batches, oversize }) => {
+                    sent += batches;
+                    pushed_branches.insert(branch.clone());
+                    if oversize.is_empty() {
+                        pg.mark_synced(&mark, None).await?;
+                    } else {
+                        // Pushed, but not whole: the shared graph lacks these files.
+                        let why = format!(
+                            "{} file(s) over the {GRAPH_BATCH_BYTES}-byte request cap, not shared: {}",
+                            oversize.len(),
+                            oversize.join(", ")
+                        );
+                        tracing::warn!(persona, repo = %repo.repo_key, branch, %why, "dojo_sync: graph incomplete");
+                        pg.mark_sync_error(&mark, &why).await?;
+                    }
+                }
+                Ok(CheckoutPush::Skipped(reason)) => pg.mark_sync_skipped(&mark, reason).await?,
+                Err(e) => {
+                    tracing::warn!(persona, repo = %repo.repo_key, branch, error = %e, "dojo_sync: graph push failed");
+                    pg.mark_sync_error(&mark, &e).await?;
+                }
+            }
+        }
+    }
+    Ok(sent)
+}
+
+/// One checkout's push: committed changes in batches, then the unplaced slice
+/// and the manifest. See `graph_push` for what is held back and why.
+async fn push_checkout(
+    pg: &PgStore,
+    token: &str,
+    plane: &dyn UserPlane,
+    repo_key: &str,
+    branch: &str,
+    checkout: &crate::db::pg_store::GraphCheckout,
+) -> Result<CheckoutPush, String> {
+    use crate::tasks::graph_push::{HEAD_FORMAT, batch, parse_head, parse_porcelain_z, plan_push};
+    let dir = std::path::Path::new(&checkout.abs_path);
+    let git = |args: &[&str]| {
+        crate::git::run_text(dir, args)
+            .map_err(|e| format!("git {args:?} in {}: {e}", checkout.abs_path))
+    };
+
+    // The graph is the last index of this folder; if the working tree has since
+    // moved to another branch, that index is not this branch's state any more.
+    if git(&["rev-parse", "--abbrev-ref", "HEAD"])?.trim() != branch {
+        return Ok(CheckoutPush::Skipped("index_not_current"));
+    }
+    let (sha, committed_at) = parse_head(&git(&["log", "-1", HEAD_FORMAT])?)?;
+    let dirty = parse_porcelain_z(
+        &crate::git::run_bytes(dir, &["status", "--porcelain", "-z", "--untracked-files=all"])
+            .map_err(|e| format!("git status in {}: {e}", checkout.abs_path))?,
+    );
+
+    let local = pg.graph_manifest(&checkout.folder_id).await?;
+    let remote = plane.graph_hashes(token, repo_key, branch).await?.files;
+    let plan = plan_push(&local, &remote, &dirty);
+    let commit = user_plane::GraphCommit { branch: branch.to_string(), sha, committed_at };
+
+    let mut batches = 0;
+    let mut oversize = Vec::new();
+    for chunk in plan.changed.chunks(GRAPH_SLICE_CHUNK) {
+        let grouped = batch(pg.graph_slices(&checkout.folder_id, chunk).await?, GRAPH_BATCH_BYTES);
+        oversize.extend(grouped.oversize);
+        for slices in &grouped.batches {
+            let push = user_plane::GraphPush { repo_key, commit: &commit, slices, manifest: None };
+            plane.push_graph(token, &push).await?;
+            batches += 1;
+        }
+    }
+
+    // Last: the unplaced nodes and the manifest that prunes deleted files.
+    let unplaced = pg.graph_unplaced_slice(&checkout.folder_id).await?;
+    let mut last = batch(vec![("(unplaced)".to_string(), unplaced)], GRAPH_BATCH_BYTES);
+    oversize.append(&mut last.oversize);
+    let slices = last.batches.pop().unwrap_or_default();
+    let push = user_plane::GraphPush {
+        repo_key,
+        commit: &commit,
+        slices: &slices,
+        manifest: Some(&plan.manifest),
+    };
+    plane.push_graph(token, &push).await?;
+    Ok(CheckoutPush::Sent { batches: batches + 1, oversize })
 }
 
 /// One persona's whole pass on its own — every repository it may sync is its
@@ -929,8 +1074,9 @@ mod tests {
     }
 
     use crate::dojo_client::user_plane::{
-        ActivationOutcome, DeniedRepo, IngestResult, MappedRepo, MetricPush, MyMembership,
-        ProvisionOutcome, RegisterResult, RejectedMetric, SyncPlan, UnmappedRepo, VisibilityCounts,
+        ActivationOutcome, DeniedRepo, GraphHashes, GraphPush, GraphPushResult, IngestResult,
+        MappedRepo, MetricPush, MyMembership, ProvisionOutcome, RegisterResult, RejectedMetric,
+        SyncPlan, UnmappedRepo, VisibilityCounts,
     };
     use std::sync::Mutex;
 
@@ -968,6 +1114,21 @@ mod tests {
         /// What `GET /v1/you/memberships` answers — `None` is an empty list.
         memberships: Option<Result<Vec<MyMembership>, String>>,
         membership_calls: Mutex<usize>,
+        /// What `GET /v1/you/graph` answers, per (repo_key, branch); absent → {}.
+        graph_remote:
+            std::collections::HashMap<(String, String), std::collections::HashMap<String, String>>,
+        /// Every graph batch: (repo_key, branch, sha, slice paths, manifest).
+        graph_pushes: Mutex<Vec<GraphPushSeen>>,
+    }
+
+    /// One graph batch as the stub saw it.
+    #[derive(Debug, Clone, PartialEq)]
+    struct GraphPushSeen {
+        repo_key: String,
+        branch: String,
+        sha: String,
+        paths: Vec<Option<String>>,
+        manifest: Option<std::collections::BTreeMap<String, String>>,
     }
 
     #[async_trait::async_trait]
@@ -1042,6 +1203,37 @@ mod tests {
                 .clone()
                 .unwrap_or(Ok(IngestResult { accepted: m.len() as u32, rejected: vec![] }))
         }
+        async fn graph_hashes(
+            &self,
+            _t: &str,
+            repo_key: &str,
+            branch: &str,
+        ) -> Result<GraphHashes, String> {
+            Ok(GraphHashes {
+                files: self
+                    .graph_remote
+                    .get(&(repo_key.to_string(), branch.to_string()))
+                    .cloned()
+                    .unwrap_or_default(),
+            })
+        }
+        async fn push_graph(
+            &self,
+            _t: &str,
+            push: &GraphPush<'_>,
+        ) -> Result<GraphPushResult, String> {
+            let paths: Vec<Option<String>> =
+                push.slices.iter().map(|s| s["path"].as_str().map(str::to_string)).collect();
+            let files = paths.iter().filter(|p| p.is_some()).count() as u32;
+            self.graph_pushes.lock().unwrap().push(GraphPushSeen {
+                repo_key: push.repo_key.to_string(),
+                branch: push.commit.branch.clone(),
+                sha: push.commit.sha.clone(),
+                paths,
+                manifest: push.manifest.cloned(),
+            });
+            Ok(GraphPushResult { files, refused_older: 0, pruned: 0 })
+        }
     }
 
     /// The self-heal, end to end against a scripted dōjō.
@@ -1067,6 +1259,7 @@ mod tests {
                 repo_id: "22222222-2222-2222-2222-222222222222".into(),
                 // Nothing switched off: the default every dōjō starts in.
                 disabled_metrics: vec![],
+                graph_branches: vec![],
             }
         }
 
@@ -1156,6 +1349,7 @@ mod tests {
             tenant_id: tenant_id.to_string(),
             repo_id: uuid::Uuid::new_v4().to_string(),
             disabled_metrics: vec![],
+            graph_branches: vec![],
         }
     }
 
@@ -2053,5 +2247,256 @@ mod tests {
 
         assert_eq!(*plane.plan_calls.lock().unwrap(), 1, "the plan is still read");
         drop_binding_fixture(&pg, persona, &[m1, m2]).await;
+    }
+
+    /// #225: a tracked checkout's graph reaches the dōjō — committed work only.
+    mod graph_sync {
+        use super::*;
+        use std::collections::{BTreeMap, HashMap};
+
+        struct Checkout {
+            dir: tempfile::TempDir,
+            repo_key: String,
+            folder: uuid::Uuid,
+            repository: uuid::Uuid,
+        }
+
+        fn git(dir: &std::path::Path, args: &[&str]) -> String {
+            let out = std::process::Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .expect("git runs");
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        }
+
+        /// A git checkout on `main` with src/a.ts and src/b.ts committed, then
+        /// src/b.ts EDITED and not committed; indexed as such in the database.
+        async fn checkout(pg: &PgStore, indexed_branch: &str) -> Checkout {
+            let dir = tempfile::tempdir().unwrap();
+            let d = dir.path();
+            git(d, &["init", "-q", "-b", "main"]);
+            std::fs::create_dir_all(d.join("src")).unwrap();
+            std::fs::write(d.join("src/a.ts"), "export const a = 1;").unwrap();
+            std::fs::write(d.join("src/b.ts"), "export const b = 1;").unwrap();
+            git(d, &["add", "."]);
+            git(d, &["commit", "-q", "-m", "c1"]);
+            std::fs::write(d.join("src/b.ts"), "export const b = 2; // not committed").unwrap();
+
+            crate::tasks::test_support::ensure_test_watch_root(pg).await;
+            let u = uuid::Uuid::new_v4();
+            let repo_key = format!("test/graph-sync-{u}");
+            let (repository,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                "insert into sensei.repositories(repo_key, name) values($1, $1) returning id",
+            )
+            .bind(&repo_key)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            let folder = uuid::Uuid::new_v4();
+            sqlx_core::query::query(
+                "insert into sensei.folders(id, root_id, kind, name, path, abs_path, repository_id, branch) \
+                 values($1, '00000000-0000-0000-0000-000000000001', 'git', $2, $2, $3, $4, $5)",
+            )
+            .bind(folder)
+            .bind(format!("gs-{u}"))
+            .bind(d.to_string_lossy().to_string())
+            .bind(repository)
+            .bind(indexed_branch)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+            for (path, hash, fqn) in [("src/a.ts", "ha", "a.x"), ("src/b.ts", "hb-dirty", "b.y")] {
+                sqlx_core::query::query(
+                    "insert into sensei.files(folder_id, file_path, mtime, content_hash) values($1, $2, 0, $3)",
+                )
+                .bind(folder)
+                .bind(path)
+                .bind(hash)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+                sqlx_core::query::query(
+                    "insert into sensei.nodes(folder_id, file_id, kind, name, fqn) \
+                     values($1, (select id from sensei.files where folder_id = $1 and file_path = $2), 'function', $3, $3)",
+                )
+                .bind(folder)
+                .bind(path)
+                .bind(fqn)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+            }
+            Checkout { dir, repo_key, folder, repository }
+        }
+
+        async fn drop_checkout(pg: &PgStore, c: Checkout) {
+            sqlx_core::query::query("delete from sensei.folders where id = $1")
+                .bind(c.folder)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+            sqlx_core::query::query("delete from sensei.sync_state where entity = 'repository_graph' and entity_key like $1")
+                .bind(format!("{}@%", c.repo_key))
+                .execute(pg.pool())
+                .await
+                .unwrap();
+            sqlx_core::query::query("delete from sensei.repositories where id = $1")
+                .bind(c.repository)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+        }
+
+        fn plan_tracking(repo_key: &str, branches: &[&str]) -> SyncPlan {
+            SyncPlan {
+                allowed: vec![MappedRepo {
+                    repo_key: repo_key.into(),
+                    tenant: "organization/acme".into(),
+                    tenant_id: "t".into(),
+                    repo_id: "r".into(),
+                    disabled_metrics: vec![],
+                    graph_branches: branches
+                        .iter()
+                        .enumerate()
+                        .map(|(i, b)| user_plane::GraphBranch {
+                            branch: b.to_string(),
+                            is_default: i == 0,
+                        })
+                        .collect(),
+                }],
+                denied: vec![],
+            }
+        }
+
+        async fn state(pg: &PgStore, key: &str) -> Option<(String, Option<String>)> {
+            sqlx_core::query_as::query_as(
+                "select state::text, last_error from sensei.sync_state where entity = 'repository_graph' and entity_key = $1",
+            )
+            .bind(key)
+            .fetch_optional(pg.pool())
+            .await
+            .unwrap()
+        }
+
+        #[tokio::test]
+        async fn a_tracked_checkout_pushes_its_committed_changes_and_holds_back_its_edits() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let c = checkout(&pg, "main").await;
+            let head = git(c.dir.path(), &["rev-parse", "HEAD"]);
+            let mut plane = StubPlane::default();
+            // The dōjō holds b.ts at its committed hash; a.ts is new to it.
+            plane.graph_remote.insert(
+                (c.repo_key.clone(), "main".into()),
+                HashMap::from([("src/b.ts".to_string(), "hb-committed".to_string())]),
+            );
+
+            let batches =
+                push_graphs(&pg, "p", "tok", &plane, &plan_tracking(&c.repo_key, &["main"]))
+                    .await
+                    .unwrap();
+
+            let seen = plane.graph_pushes.lock().unwrap().clone();
+            assert_eq!(batches, seen.len());
+            assert!(
+                seen.iter()
+                    .all(|p| p.repo_key == c.repo_key && p.branch == "main" && p.sha == head)
+            );
+            let pushed: Vec<Option<String>> = seen.iter().flat_map(|p| p.paths.clone()).collect();
+            assert!(
+                pushed.contains(&Some("src/a.ts".into())),
+                "the committed change goes: {pushed:?}"
+            );
+            assert!(
+                !pushed.contains(&Some("src/b.ts".into())),
+                "the uncommitted edit stays local: {pushed:?}"
+            );
+            // The last batch carries the unplaced slice and the manifest; b.ts is
+            // kept at the dōjō's hash, not pruned and not overwritten.
+            let last = seen.last().unwrap();
+            assert!(last.paths.contains(&None), "the unplaced slice rides the last batch");
+            assert_eq!(
+                last.manifest,
+                Some(BTreeMap::from([
+                    ("src/a.ts".to_string(), "ha".to_string()),
+                    ("src/b.ts".to_string(), "hb-committed".to_string()),
+                ]))
+            );
+            assert!(
+                seen[..seen.len() - 1].iter().all(|p| p.manifest.is_none()),
+                "only the last batch prunes"
+            );
+            assert_eq!(
+                state(&pg, &format!("{}@main", c.repo_key)).await.map(|s| s.0),
+                Some("synced".into())
+            );
+            drop_checkout(&pg, c).await;
+        }
+
+        #[tokio::test]
+        async fn a_checkout_on_a_branch_the_dojo_does_not_track_pushes_nothing_and_says_why() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let c = checkout(&pg, "main").await;
+            let plane = StubPlane::default();
+            push_graphs(&pg, "p", "tok", &plane, &plan_tracking(&c.repo_key, &["production"]))
+                .await
+                .unwrap();
+            assert!(plane.graph_pushes.lock().unwrap().is_empty());
+            assert_eq!(
+                state(&pg, &format!("{}@main", c.repo_key)).await,
+                Some(("skipped".into(), Some("not_a_tracked_branch".into())))
+            );
+            drop_checkout(&pg, c).await;
+        }
+
+        #[tokio::test]
+        async fn a_checkout_whose_branch_moved_since_indexing_is_not_pushed_as_the_old_one() {
+            // Indexed on main, now checked out on feature-x: its graph is main's
+            // as of the last index, but its working tree is not — skip, say why.
+            let pg = PgStore::connect_test().await.unwrap();
+            let c = checkout(&pg, "main").await;
+            git(c.dir.path(), &["checkout", "-q", "-b", "feature-x"]);
+            let plane = StubPlane::default();
+            push_graphs(&pg, "p", "tok", &plane, &plan_tracking(&c.repo_key, &["main"]))
+                .await
+                .unwrap();
+            assert!(plane.graph_pushes.lock().unwrap().is_empty());
+            assert_eq!(
+                state(&pg, &format!("{}@main", c.repo_key)).await,
+                Some(("skipped".into(), Some("index_not_current".into())))
+            );
+            drop_checkout(&pg, c).await;
+        }
+
+        #[tokio::test]
+        async fn a_persona_pass_pushes_the_graph_after_the_metrics() {
+            // The wiring: the cycle a schedule runs reaches push_graphs.
+            let pg = PgStore::connect_test().await.unwrap();
+            let c = checkout(&pg, "main").await;
+            let plane = StubPlane {
+                plan: Some(plan_tracking(&c.repo_key, &["main"])),
+                ..Default::default()
+            };
+            sync_persona(&pg, "p", "tok", &plane).await.unwrap();
+            assert!(
+                plane.graph_pushes.lock().unwrap().iter().any(|p| p.repo_key == c.repo_key),
+                "the pass never pushed the tracked checkout's graph"
+            );
+            drop_checkout(&pg, c).await;
+        }
+
+        #[tokio::test]
+        async fn graph_entity_is_a_real_sync_entity() {
+            let pg = PgStore::connect_test().await.unwrap();
+            let (labels,): (Vec<String>,) = sqlx_core::query_as::query_as(
+                "select enum_range(null::sensei.sync_entity)::text[]",
+            )
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+            assert!(labels.iter().any(|l| l == GRAPH_ENTITY), "{GRAPH_ENTITY} not in {labels:?}");
+        }
     }
 }

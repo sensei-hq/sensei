@@ -18,7 +18,7 @@
 //! module's own structs: a round-trip agrees with itself no matter how far both
 //! ends have drifted from the server.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// A repository the dōjō resolved to a tenant.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -42,6 +42,53 @@ pub struct MappedRepo {
     /// nobody asked to stop.
     #[serde(default)]
     pub disabled_metrics: Vec<String>,
+    /// The branches whose code graph this repository shares (#225;
+    /// graph-sync.md §9): a checkout is pushed only when its branch is one of
+    /// these. Absent (a dōjō that predates the field) or empty → the graph does
+    /// not sync. Never a guessed `main`.
+    #[serde(default)]
+    pub graph_branches: Vec<GraphBranch>,
+}
+
+/// One tracked branch of a repository's shared code graph.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct GraphBranch {
+    pub branch: String,
+    pub is_default: bool,
+}
+
+/// The commit a graph push was read at: its branch, sha and committer time.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct GraphCommit {
+    pub branch: String,
+    pub sha: String,
+    /// RFC 3339; the dōjō orders slices of one file by it.
+    pub committed_at: String,
+}
+
+/// One `POST /v1/you/graph` batch. `slices` are the JSON the dōjō's
+/// `file_graph_slices` reads; `manifest` (path → content hash) only on a
+/// repository's last batch — `None` is sent as null and never prunes.
+#[derive(Debug, Serialize)]
+pub struct GraphPush<'a> {
+    pub repo_key: &'a str,
+    pub commit: &'a GraphCommit,
+    pub slices: &'a [serde_json::Value],
+    pub manifest: Option<&'a std::collections::BTreeMap<String, String>>,
+}
+
+/// What the dōjō did with a graph batch.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct GraphPushResult {
+    pub files: u32,
+    pub refused_older: u32,
+    pub pruned: u32,
+}
+
+/// The accepted content hash of each file the dōjō holds for one branch.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct GraphHashes {
+    pub files: std::collections::HashMap<String, String>,
 }
 
 /// Which metrics are still wanted for each repository, across every tenant.
@@ -240,6 +287,21 @@ pub trait UserPlane: Send + Sync {
         metrics: &[MetricPush<'_>],
     ) -> Result<IngestResult, String>;
 
+    /// The content hashes the dōjō holds for one branch of a repository (#225).
+    async fn graph_hashes(
+        &self,
+        token: &str,
+        repo_key: &str,
+        branch: &str,
+    ) -> Result<GraphHashes, String>;
+
+    /// File one batch of a repository's graph slices (#225).
+    async fn push_graph(
+        &self,
+        token: &str,
+        push: &GraphPush<'_>,
+    ) -> Result<GraphPushResult, String>;
+
     /// Switch one catalogue metric off (or back on) for one repository.
     ///
     /// The daemon does not decide this and does not cache the decision — it
@@ -311,6 +373,21 @@ impl UserPlane for HttpUserPlane {
     ) -> Result<IngestResult, String> {
         push_metrics(&self.dojo_url, token, metrics).await
     }
+    async fn graph_hashes(
+        &self,
+        token: &str,
+        repo_key: &str,
+        branch: &str,
+    ) -> Result<GraphHashes, String> {
+        graph_hashes(&self.dojo_url, token, repo_key, branch).await
+    }
+    async fn push_graph(
+        &self,
+        token: &str,
+        push: &GraphPush<'_>,
+    ) -> Result<GraphPushResult, String> {
+        push_graph(&self.dojo_url, token, push).await
+    }
 }
 
 /// One metric row on the wire.
@@ -370,6 +447,30 @@ pub async fn push_metrics(
         .post(endpoint(dojo_url, "metrics"))
         .json(&serde_json::json!({ "metrics": metrics }));
     decode("metric push result", &send(req, token, "metric push").await?)
+}
+
+/// `GET /v1/you/graph` — the content hashes the dōjō holds for one branch of a
+/// repository, which the daemon diffs against to push only what changed.
+pub async fn graph_hashes(
+    dojo_url: &str,
+    token: &str,
+    repo_key: &str,
+    branch: &str,
+) -> Result<GraphHashes, String> {
+    let req = crate::federation::http_client()
+        .get(endpoint(dojo_url, "graph"))
+        .query(&[("repo_key", repo_key), ("branch", branch)]);
+    decode("graph hashes", &send(req, token, "graph hashes").await?)
+}
+
+/// `POST /v1/you/graph` — file one batch of a repository's graph slices.
+pub async fn push_graph(
+    dojo_url: &str,
+    token: &str,
+    push: &GraphPush<'_>,
+) -> Result<GraphPushResult, String> {
+    let req = crate::federation::http_client().post(endpoint(dojo_url, "graph")).json(push);
+    decode("graph push result", &send(req, token, "graph push").await?)
 }
 
 /// `GET /v1/you/sync/plan` — what this persona may sync right now.
@@ -610,6 +711,61 @@ mod tests {
         assert!(plan.denied.is_empty());
     }
 
+    /// #225: each allowed repository names its tracked graph branches.
+    #[test]
+    fn a_plan_carries_the_tracked_graph_branches_and_none_means_none() {
+        let body = serde_json::json!({
+            "allowed": [{
+                "repo_key": "github.com/acme/api", "tenant": "organization/acme",
+                "tenant_id": "t", "repo_id": "r",
+                "graph_branches": [{ "branch": "main", "is_default": true },
+                                   { "branch": "production", "is_default": false }]
+            }, {
+                "repo_key": "github.com/acme/old", "tenant": "organization/acme",
+                "tenant_id": "t", "repo_id": "r2"
+            }],
+            "denied": []
+        });
+        let plan: SyncPlan = serde_json::from_value(body).expect("the plan decodes");
+        let names: Vec<&str> =
+            plan.allowed[0].graph_branches.iter().map(|b| b.branch.as_str()).collect();
+        assert_eq!(names, ["main", "production"]);
+        assert!(plan.allowed[0].graph_branches[0].is_default);
+        // A dōjō that predates the field tracks nothing for this daemon — the graph
+        // does not sync. Never a guessed `main`.
+        assert!(plan.allowed[1].graph_branches.is_empty());
+    }
+
+    #[test]
+    fn graph_hashes_and_a_push_result_decode_as_the_routes_answer() {
+        let h: GraphHashes =
+            serde_json::from_value(serde_json::json!({ "files": { "src/a.ts": "ha" } })).unwrap();
+        assert_eq!(h.files.get("src/a.ts").map(String::as_str), Some("ha"));
+        let r: GraphPushResult = serde_json::from_value(
+            serde_json::json!({ "files": 2, "refused_older": 1, "pruned": 0 }),
+        )
+        .unwrap();
+        assert_eq!((r.files, r.refused_older, r.pruned), (2, 1, 0));
+    }
+
+    #[test]
+    fn a_push_without_a_manifest_says_so_and_never_prunes() {
+        let commit = GraphCommit {
+            branch: "main".into(),
+            sha: "c1".into(),
+            committed_at: "2026-10-01T10:00:00Z".into(),
+        };
+        let push = GraphPush {
+            repo_key: "github.com/acme/api",
+            commit: &commit,
+            slices: &[],
+            manifest: None,
+        };
+        let v = serde_json::to_value(&push).unwrap();
+        assert_eq!(v["manifest"], serde_json::Value::Null);
+        assert_eq!(v["commit"]["branch"], "main");
+    }
+
     #[test]
     fn a_non_empty_denied_list_decodes_rather_than_crashing_the_cycle() {
         // D6: phase 1 never populates this, so nothing would notice it being
@@ -731,6 +887,7 @@ mod activation_union {
             tenant_id: format!("t-{tenant}"),
             repo_id: format!("r-{key}"),
             disabled_metrics: disabled.iter().map(|s| (*s).to_string()).collect(),
+            graph_branches: vec![],
         }
     }
     fn plan(allowed: Vec<MappedRepo>) -> SyncPlan {

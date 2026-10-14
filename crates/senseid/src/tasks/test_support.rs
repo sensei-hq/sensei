@@ -226,7 +226,7 @@ pub(crate) async fn make_ctx() -> Arc<crate::tasks::executor::TaskContext> {
 /// Ensure the fixed `/_test` watch root exists (idempotent) — the root every
 /// metric-fixture folder hangs off (the same root-id convention the pg_store
 /// tests use). Extracted so the synthetic- and git-path folder seeders share it.
-async fn ensure_test_watch_root(pg: &PgStore) {
+pub(crate) async fn ensure_test_watch_root(pg: &PgStore) {
     pg.execute_raw(
         "INSERT INTO sensei.folders_to_watch(id, path, name, status) \
          VALUES('00000000-0000-0000-0000-000000000001', '/_test', '_test', 'watching'::sensei.watch_status) \
