@@ -23,13 +23,33 @@ pub struct GraphCheckout {
 }
 
 /// One node as the dōjō reads it (`n` = the node, `p` = its parent). Keys only:
-/// the parent by fqn, never a local uuid; no embedding, no content.
+/// the parent by fqn, never a local uuid; no embedding, no content. A schema
+/// node carries its entity, columns, indexes and foreign keys (a key's target by
+/// node key, by the rule edges follow); any other node carries `schema: null`.
 const NODE_JSON: &str = "jsonb_build_object(\
     'folder_path', '', 'fqn', n.fqn, 'kind', n.kind::text, 'name', n.name, \
     'parent_fqn', p.fqn, 'line_start', n.line_start, 'line_end', n.line_end, \
     'is_exported', n.is_exported, 'is_test', n.is_test, 'signature', n.signature, \
     'description', n.description, 'docstring', n.docstring, 'language', n.language, \
-    'community_id', n.community_id, 'tags', n.tags, 'props', n.props)";
+    'community_id', n.community_id, 'tags', n.tags, 'props', n.props, \
+    'schema', (select jsonb_build_object( \
+        'entity', jsonb_build_object('kind', se.kind::text, 'db_schema', se.db_schema, \
+            'source', se.source::text, 'naming', se.naming::text, 'note', se.note, 'note_md', se.note_md), \
+        'columns', coalesce((select jsonb_agg(jsonb_build_object('ordinal', c.ordinal, 'name', c.name, \
+            'sql_type', c.sql_type, 'primary_key', c.primary_key, 'not_null', c.not_null, \
+            'unique_key', c.unique_key, 'foreign_key', c.foreign_key, 'enum_typed', c.enum_typed, \
+            'default_expr', c.default_expr, 'note', c.note) order by c.ordinal, c.name) \
+            from sensei.schema_columns c where c.node_id = n.id), '[]'::jsonb), \
+        'indexes', coalesce((select jsonb_agg(jsonb_build_object('name', i.name, \
+            'definition', i.definition, 'unique_index', i.unique_index) order by i.name) \
+            from sensei.schema_indexes i where i.node_id = n.id), '[]'::jsonb), \
+        'refs', coalesce((select jsonb_agg(jsonb_build_object('from_column', r.from_column, \
+            'to_folder', case when tn.folder_id = $1 then '' end, \
+            'to_fqn', case when tn.folder_id = $1 then tn.fqn end, \
+            'to_column', r.to_column, 'on_delete', r.on_delete::text) order by r.id) \
+            from sensei.schema_refs r left join sensei.nodes tn on tn.id = r.to_node_id \
+            where r.from_node_id = n.id), '[]'::jsonb)) \
+      from sensei.schema_entities se where se.node_id = n.id))";
 
 /// One edge as the dōjō reads it (`e` = the edge, `s` its source, `t` its
 /// target, `$1` the checkout). A target in another folder gets no key.
@@ -181,6 +201,7 @@ mod tests {
             .unwrap();
         }
         for (fid, path, hash, skip) in [
+            (folder, "db/t.sql", "ht", None),
             (folder, "src/a.ts", "ha", None),
             (folder, "skipped.bin", "hs", Some("binary_content")),
             (other, "x.ts", "hx", None),
@@ -203,6 +224,8 @@ mod tests {
             (folder, Some("src/a.ts"), "a.C.f", "method", Some("a.C")),
             (folder, Some("src/a.ts"), "a.g", "function", None),
             (folder, None, "pkg", "package", None),
+            (folder, Some("db/t.sql"), "app.orders", "struct", None),
+            (folder, Some("db/t.sql"), "app.customers", "struct", None),
             (other, Some("x.ts"), "x.h", "function", None),
         ] {
             let (id,): (uuid::Uuid,) = query_as(
@@ -238,6 +261,34 @@ mod tests {
             .await
             .unwrap_or_else(|e| panic!("edge {src}→{name}: {e}"));
         }
+        // app.orders declares a table: two columns, an index, a key to customers.
+        for sql in [
+            "insert into sensei.schema_entities(node_id, kind, db_schema, source, naming) values($1, 'table', 'app', 'dbd', 'stated')",
+            "insert into sensei.schema_columns(node_id, ordinal, name, sql_type, primary_key, not_null) values($1, 1, 'id', 'uuid', true, true)",
+            "insert into sensei.schema_columns(node_id, ordinal, name, sql_type, foreign_key) values($1, 2, 'customer_id', 'uuid', true)",
+            "insert into sensei.schema_indexes(node_id, name, definition, unique_index) values($1, 'orders_customer', 'create index', false)",
+        ] {
+            query(sql)
+                .bind(ids["app.orders"])
+                .execute(pg.pool())
+                .await
+                .unwrap_or_else(|e| panic!("{sql}: {e}"));
+        }
+        // A key's target must be an entity locally (schema_refs' foreign key).
+        query("insert into sensei.schema_entities(node_id, kind, db_schema, source, naming) values($1, 'table', 'app', 'dbd', 'stated')")
+            .bind(ids["app.customers"])
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        query(
+            "insert into sensei.schema_refs(from_node_id, from_column, to_node_id, to_column, on_delete) \
+             values($1, 'customer_id', $2, 'id', 'cascade')",
+        )
+        .bind(ids["app.orders"])
+        .bind(ids["app.customers"])
+        .execute(pg.pool())
+        .await
+        .unwrap();
         Fixture { pg, repo_key, folder, other, repository }
     }
 
@@ -272,7 +323,13 @@ mod tests {
     async fn the_manifest_lists_files_with_graph_and_leaves_skipped_ones_out() {
         let f = fixture().await;
         let m = f.pg.graph_manifest(&f.folder).await.unwrap();
-        assert_eq!(m, BTreeMap::from([("src/a.ts".to_string(), "ha".to_string())]));
+        assert_eq!(
+            m,
+            BTreeMap::from([
+                ("db/t.sql".to_string(), "ht".to_string()),
+                ("src/a.ts".to_string(), "ha".to_string())
+            ])
+        );
         drop_fixture(f).await;
     }
 
@@ -318,6 +375,43 @@ mod tests {
         // Another repository's node: no key that would mean nothing here.
         assert!(to("h")["target_fqn"].is_null() && to("h")["target_folder"].is_null());
         assert!(to("unknown_fn")["target_fqn"].is_null());
+        drop_fixture(f).await;
+    }
+
+    #[tokio::test]
+    async fn a_schema_node_carries_its_entity_columns_indexes_and_keys_and_others_carry_none() {
+        let f = fixture().await;
+        let slices =
+            f.pg.graph_slices(&f.folder, &["db/t.sql".into(), "src/a.ts".into()]).await.unwrap();
+        let node = |path: &str, fqn: &str| {
+            let (_, s) = slices.iter().find(|(p, _)| p == path).unwrap();
+            s["nodes"].as_array().unwrap().iter().find(|n| n["fqn"] == fqn).unwrap().clone()
+        };
+        let orders = node("db/t.sql", "app.orders");
+        let sc = &orders["schema"];
+        assert_eq!(sc["entity"]["kind"], "table");
+        assert_eq!(sc["entity"]["db_schema"], "app");
+        assert_eq!(sc["entity"]["source"], "dbd");
+        let cols: Vec<&str> =
+            sc["columns"].as_array().unwrap().iter().map(|c| c["name"].as_str().unwrap()).collect();
+        assert_eq!(cols, ["id", "customer_id"], "in ordinal order");
+        assert_eq!(sc["columns"][0]["primary_key"], true);
+        assert_eq!(sc["indexes"][0]["name"], "orders_customer");
+        let fk = &sc["refs"][0];
+        assert_eq!(
+            (fk["from_column"].as_str(), fk["to_fqn"].as_str(), fk["to_column"].as_str()),
+            (Some("customer_id"), Some("app.customers"), Some("id"))
+        );
+        assert_eq!(fk["to_folder"], "", "the referenced table as a key, in this checkout");
+        assert_eq!(fk["on_delete"], "cascade");
+        // An entity with no columns, indexes or keys carries empty lists, not nulls.
+        let customers = node("db/t.sql", "app.customers");
+        assert_eq!(customers["schema"]["entity"]["kind"], "table");
+        assert_eq!(customers["schema"]["columns"], serde_json::json!([]));
+        assert!(
+            node("src/a.ts", "a.g")["schema"].is_null(),
+            "a node that declares nothing carries null"
+        );
         drop_fixture(f).await;
     }
 
