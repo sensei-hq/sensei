@@ -2,7 +2,7 @@
 
 **State 2026-10-14.** v0.13.0 shipped (the dōjō takes the person's session
 only; production 401s a device token). History scrub done. Working the queue
-on `develop` (`0f35f6ac`), toward 0.14.0.
+on `develop` (`ade610a6`), toward 0.14.0.
 
 | increment | status |
 |---|---|
@@ -13,11 +13,11 @@ on `develop` (`0f35f6ac`), toward 0.14.0.
 | #240 provable user-scoped metrics reach the dōjō | DONE `79f14390`, `6cd03d62` |
 | #245 app e2e gate | CLOSED — 144/0/19; boot gate fix, Instruments servers+toggle restored, kind chip retired |
 | #254 next ORM | MEASURED: JPA; spec 20 §8 written (`9eb44cdf`); next 8b annotation fact |
-| #225 dōjō graph sync | spec `graph-sync.md`; one graph per TRACKED branch (`repository_graph_branches`: forge default + team-added, e.g. production); store `a84aa8fc` (10/10 mutants); default_branch capture `0f35f6ac`; dbd#65 filed (PK re-key with dependent FK); left: add/remove-branch function, schema_*/folders tables, Worker route, daemon side |
+| #225 dōjō graph sync | DŌJŌ SIDE DONE: tables + file_graph_slices (`a84aa8fc`), default_branch capture (`0f35f6ac`), set_graph_branch (`64949f44`), hash read (`237ab3d1`), /v1/you/graph (`9bf0141a`), plan branches (`ade610a6`); dbd#65 filed; left: schema_*/folders tables, DAEMON side (manifest/diff/slices/batch/push per tracked checkout), app 'tracked branch' setting |
 
-**Next command:** #225 — `dojo.track_graph_branch` / `untrack_graph_branch` (authority:
-`configurable_by_me`), red test in `database/tests/dojo/`, then the Worker route.
-#254 8b (annotation fact) after. #238 waits on the brew cask (2.1.287 < 2.1.289).
+**Next command:** #225 daemon side — `crates/senseid/src/tasks/dojo_sync.rs`: after the metrics push,
+for each allowed repo's `graph_branches`, each local checkout (folders.repository_id, folders.branch)
+on one → manifest, GET hashes, slices of changed files, batch ≤4 MB, POST /v1/you/graph.
 
 **Open questions (user's):**
 - Discovered-MCP-servers section and per-server toggle were dropped in the
