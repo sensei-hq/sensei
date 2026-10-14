@@ -2,7 +2,7 @@
 
 **State 2026-10-14.** v0.13.0 shipped (the dōjō takes the person's session
 only; production 401s a device token). History scrub done. Working the queue
-on `develop` (`abcc52cc`), toward 0.14.0.
+on `develop` (`ab978687`), toward 0.14.0.
 
 | increment | status |
 |---|---|
@@ -13,10 +13,10 @@ on `develop` (`abcc52cc`), toward 0.14.0.
 | #240 provable user-scoped metrics reach the dōjō | DONE `79f14390`, `6cd03d62` |
 | #245 app e2e gate | CLOSED — 144/0/19; boot gate fix, Instruments servers+toggle restored, kind chip retired |
 | #254 next ORM | MEASURED: JPA; spec 20 §8 written (`9eb44cdf`); next 8b annotation fact |
-| #225 dōjō graph sync | dōjō side + DAEMON push done (`abcc52cc`: committed work only, stale-index skip, per-branch sync_state); left: schema_*/folders tables, live verification on a test tenant (spec §6 step 6), app per-checkout status, dōjō diagram screens (next issue) |
+| #225 dōjō graph sync | dōjō side + daemon push + schema rows done (`abcc52cc`, `310682e7`, `ab978687`); folders deliberately not synced (measured); left: live verification on local Supabase test tenant (spec §6 step 6), app per-checkout status, dōjō diagram screens (new issue) |
 
-**Next command:** #225 — graph schema_* / folders tables (graph-sync.md §2), then live verification
-against local Supabase with a test tenant (deploy-twice, conservation counts).
+**Next command:** #225 live verification — local Supabase test tenant, `make install-debug`,
+reconcile the live daemon DB (`sync_entity.repository_graph`), sync this repo, compare per-table counts.
 
 **Open questions (user's):**
 - Discovered-MCP-servers section and per-server toggle were dropped in the
