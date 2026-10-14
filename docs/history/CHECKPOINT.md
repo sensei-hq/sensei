@@ -2,7 +2,7 @@
 
 **State 2026-10-14.** v0.13.0 shipped (the dōjō takes the person's session
 only; production 401s a device token). History scrub done. Working the queue
-on `develop` (`ab978687`), toward 0.14.0.
+on `develop` (`96893f0d`), toward 0.14.0.
 
 | increment | status |
 |---|---|
@@ -13,19 +13,27 @@ on `develop` (`ab978687`), toward 0.14.0.
 | #240 provable user-scoped metrics reach the dōjō | DONE `79f14390`, `6cd03d62` |
 | #245 app e2e gate | CLOSED — 144/0/19; boot gate fix, Instruments servers+toggle restored, kind chip retired |
 | #254 next ORM | MEASURED: JPA; spec 20 §8 written (`9eb44cdf`); next 8b annotation fact |
-| #225 dōjō graph sync | dōjō side + daemon push + schema rows done (`abcc52cc`, `310682e7`, `ab978687`); folders deliberately not synced (measured); left: live verification on local Supabase test tenant (spec §6 step 6), app per-checkout status, dōjō diagram screens (new issue) |
+| #268 dōjō diagram screens | FILED |
+| #225 dōjō graph sync | dōjō side + daemon push + schema rows done (`abcc52cc`, `310682e7`, `ab978687`); folders deliberately not synced (measured); left: live verification on local Supabase test tenant (spec §6 step 6), app per-checkout status; screens → #268 |
 
-**Next command:** #225 live verification — local Supabase test tenant, `make install-debug`,
-reconcile the live daemon DB (`sync_entity.repository_graph`), sync this repo, compare per-table counts.
+**Next — todos in order:**
+1. #225 live verification (local Supabase test tenant): `make install-debug`; `dbd reconcile`
+   the live daemon DB for `sync_entity.repository_graph`; sync this repo; per-table counts
+   match local; one committed edit moves only its file; a deleted file is pruned.
+2. #225 app: per-checkout graph sync status from `sync_state` (`repository_graph`).
+3. #268 dōjō diagram screens over the shared graph (branch picker, team scoping).
+4. #254 JPA 8b — `Annotation` fact in the Java walk (red test first), then 8c/8d.
+5. #238 mods — blocked: brew cask at Claude Code 2.1.287, mods need ≥ 2.1.289.
 
 **Open questions (user's):**
-- Discovered-MCP-servers section and per-server toggle were dropped in the
-  Instruments redesign — restore, or retire their two e2e tests?
 - `deploy-dojo` for 0.13.0 awaits approval; the `device_token_hash` drop needs an
   attended `dbd reconcile --scope dojo --allow-destructive`.
 - Stray Cloudflare build config `1ad95662…` (trigger "develop") still fails the
   "Workers Builds: dojo" check — delete it in the dashboard.
 - Sign in under Settings → Dōjō on this machine: nothing syncs until then (#184).
 
-**Known-broken:** e2e green; 0.14.0 needs `deploy-dojo` before
-the Worker can file metrics (`dojo.file_metric_rows`).
+**Known-broken / deploy order:** e2e green. 0.14.0 needs `deploy-dojo` FIRST
+(`file_metric_rows`, the `graph_*` tables and functions, `/v1/you/graph`); a debug
+daemon at the same version needs `dbd reconcile` for `sync_entity.repository_graph`
+or its graph step errors each cycle (metrics unaffected). dbd#65 open (PK re-key
+with a dependent FK; changed function return type).
