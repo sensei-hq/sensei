@@ -5,7 +5,9 @@
 
 ## Purpose
 
-One PostgreSQL database, `sensei`, at port 7744. The DDL under `database/ddl/` — organised
+One PostgreSQL database, `sensei`, on the standard PostgreSQL port (5432 — the *daemon*
+listens on 7744; `crates/bootstrap/src/config.rs`: `POSTGRES_PORT = 5432`,
+`DAEMON_PORT = 7744`). The DDL under `database/ddl/` — organised
 by object type (`enum/`, `table/`, `function/`, `procedure/`, `view/`) then by schema — is
 the declarative source of truth, applied with **dbd**. The daemon owns runtime migrations.
 Five local schemas (plus the cloud `dojo` schema on Supabase) separate the knowledge core

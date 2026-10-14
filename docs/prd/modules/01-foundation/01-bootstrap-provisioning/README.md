@@ -34,7 +34,8 @@ a repo the team has history on" (persona 2).
   one resolver per component; a resolver whose dependency failed is skipped in this pass.
 - **Hardware inspector** — `crates/bootstrap/src/hardware.rs`; model tier feeds M5's
   Preferences → Inference recommendation.
-- **Tauri sidecar** — `app/src-tauri/src/bootstrap_sidecar.rs`; app-only mode that bootstraps
+- **Tauri sidecar** — `app/src-tauri/src/commands/bootstrap.rs` (sidecar spawn in
+  `app/src-tauri/src/lib.rs`); app-only mode that bootstraps
   without a full daemon stack.
 
 ## Data invariants
@@ -109,4 +110,5 @@ curl -s http://localhost:7744/api/bootstrap/status | jq '{state, gates: (.gates 
   (stamped superseded; this spec is the replacement).
 - [prd/02-objectives.md §01 Bootstrap](../../../02-objectives.md) ·
   [prd/01-vision.md §The core loop](../../../01-vision.md#the-core-loop).
-- Crate: `crates/bootstrap/`; API: `crates/senseid/src/api/handlers/bootstrap.rs`.
+- Crate: `crates/bootstrap/`; API: `crates/senseid/src/api/handlers/upgrades.rs`
+  (`/api/upgrades`) and `crates/senseid/src/api/handlers/health.rs` (`/api/health`).

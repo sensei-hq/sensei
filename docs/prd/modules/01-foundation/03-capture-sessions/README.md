@@ -29,17 +29,18 @@ The user's experience: *point sensei at a folder once and it just keeps knowing*
 
 - **API** — `POST /api/scan/roots`, `GET /api/projects/suggestions`, `POST /api/projects/merge`
   (+ split), `crates/senseid/src/api/handlers/sessions.rs::materialise_session`,
-  `crates/senseid/src/api/handlers/hooks.rs` (assistant-event ingest), MCP `log_event`.
-- **Daemon** — scanner (`crates/senseid/src/scan/`), watcher (`watcher/root_watcher.rs`),
-  branch handler (`scan/branch.rs`).
-- **Adapters** — `crates/senseid/src/adapters/{claude,zed,cursor…}/` behind
-  `adapters/mod.rs`'s trait; Claude Code hook plugin at `marketplace/plugins/sensei/hooks/`.
+  `crates/senseid/src/api/handlers/sessions.rs` (`ingest_hook_event`, `hook_gate`,
+  `hook_nudge` — the `/hook/*` event ingest), MCP `log_event`.
+- **Daemon** — scanner (`crates/senseid/src/indexer/scan_repo.rs`,
+  `crates/senseid/src/tasks/handlers/scan.rs`), watcher (`watcher/root_watcher.rs`).
+- **Adapters** — `crates/senseid/src/adapters.rs`'s trait with `adapters/{config,manifest}`
+  children; Claude Code hook plugin at `marketplace/plugins/sensei/hooks/`.
 - **App** — Observatory project list shows discovered projects and multi-repo suggestions;
   Sessions list reads `activity.sessions`.
 
 ## Data invariants
 
-- `sensei.scan_roots` holds the user's watch roots; a folder whose `content_hash` is
+- `sensei.folders_to_watch` holds the user's watch roots; a folder whose `content_hash` is
   unchanged since the last scan is skipped end-to-end (incremental).
 - `sensei.folders` — one row per discovered repo/folder under a root
   (`path, name, kind, project_id?, scan_state, content_hash, stack, manifest_summary`);

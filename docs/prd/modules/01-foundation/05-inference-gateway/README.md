@@ -14,6 +14,13 @@ propose → challenge → synthesize consensus for high-stakes calls. The user's
 reasoning just works, stays within budget, and never blocks on a dead provider* — and on an
 offline machine the whole thing runs on the local model.
 
+> **Status honesty.** The gateway engine — chains, adapters, the circuit breaker, budget
+> cuts and MOE consensus — lives in the **external** crate `sensei-hq/gateway` (git dep,
+> not vendored here). The cost ledger **`sensei.inference_calls` is not in this repo's DDL**
+> and the name appears nowhere in this tree; either the external gateway owns a
+> differently-named ledger or it is unbuilt. Do not quote `sensei.inference_calls` as an
+> existing table until that is settled (see gap `G-COST-LEDGER`).
+
 ## In scope / out of scope
 
 - In: chain configuration (named ordered provider lists with fallback rules); provider
