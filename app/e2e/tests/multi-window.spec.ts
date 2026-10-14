@@ -8,9 +8,12 @@
  */
 
 import { test, expect } from '../fixtures';
-import { navigateTo, navigateToScreen, DAEMON_URL, daemonGet } from '../helpers';
+import { navigateTo, navigateToScreen, DAEMON_URL, daemonGet, seedSetupComplete } from '../helpers';
 
 // ─── Observatory shell ─────────────────────────────────────────────────────
+
+// Every screen here sits behind the setup gate; a spec before this one may have reset it.
+test.beforeEach(async ({ tauriPage }) => { await seedSetupComplete(tauriPage); });
 
 test.describe('Observatory shell', () => {
   // `/` is health+setup-gated; a cold e2e boot takes ~50s to settle and

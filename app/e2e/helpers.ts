@@ -183,17 +183,17 @@ function sleep(ms: number): Promise<void> {
  * Navigate to a gated observatory screen, RE-navigating until its root selector
  * mounts (or the budget elapses).
  *
- * The observatory shell is gated by `reroute` (health + setup). Two async
+ * The observatory shell is gated by the boot gate (routes/+layout.ts) (health + setup). Two async
  * conditions delay a screen mounting right after a test seeds setup:
  *   1. Cold health-bootstrap — on a fresh e2e DB the daemon's health probe can
- *      take ~30s to reach 'ok'. While it isn't ok, every gated route reroutes
+ *      take ~30s to reach 'ok'. While it isn't ok, every gated route redirects
  *      to /health.
  *   2. Setup reconciliation — `wizardState.setupComplete` reconciles from the
  *      daemon config ONLY inside an `$effect` that fires when `healthState.isOk`
  *      *changes* (wizard-state.svelte.ts). A test's PUT of `setup_complete=1`
- *      doesn't itself trigger a transition, so `reroute` only sees it once the
+ *      doesn't itself trigger a transition, so the gate only sees it once the
  *      next health transition reconciles — which on a cold boot lands with the
- *      health-ready transition ~50s in. Until then a gated route reroutes to
+ *      health-ready transition ~50s in. Until then a gated route redirects to
  *      /setup.
  * In both cases a SINGLE navigation lands on the wrong route and the target
  * selector never appears — waiting longer on it can't help (we're elsewhere).
@@ -294,7 +294,7 @@ export async function waitForDom(
 /**
  * Mark setup complete — in the daemon's config AND in the page's cached state.
  *
- * `hooks.ts` reroutes every page to `/setup/welcome` until setup is complete,
+ * the boot gate (routes/+layout.ts) redirects every page to `/setup/welcome` until setup is complete,
  * and `make reset-e2e-db` drops the row that says it is. A spec that skips this
  * passes only when an earlier run happened to leave `setup_complete` behind:
  * the whole Settings rail failed on a reset DB for exactly that reason.
@@ -307,16 +307,26 @@ export async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ setup_complete: '1' }),
   });
-  await tauriPage.evaluate(`
-    (function() {
-      try { localStorage.setItem('sensei:setup-complete', '1'); } catch (e) { /* shim */ }
-      var s = window.__sensei_state__;
-      if (s && s.appState) {
-        s.appState.config = Object.assign({}, s.appState.config, { setup_complete: '1' });
-        s.appState.loaded = true;
-      }
-    })()
-  `);
+  // The gate reads the wizard's in-memory flag, which reconciles against the
+  // daemon only when the setup layout mounts (or on a health TRANSITION) — so a
+  // config write alone changes nothing in a running page, and writing
+  // localStorage behind the wizard's back is ignored until a boot. A spec that
+  // followed one resetting setup sat on /setup/welcome for its whole budget.
+  //
+  // Do what the app does instead: mount the setup layout. Its load() reads
+  // setup_complete=1 and sends a completed setup on to `/`. (A full reload would
+  // also re-read it, but WKWebView mounts nothing after one — see navigateTo.)
+  await navigateTo(tauriPage, '/logs');
+  await navigateTo(tauriPage, '/setup/welcome');
+  await waitFor(async () => {
+    try {
+      return (await tauriPage.evaluate(
+        `!!document.querySelector('[data-component="observatory-sidebar"]')`,
+      )) === true;
+    } catch {
+      return false;
+    }
+  }, 30_000);
 }
 
 // ── Setup wizard navigation (shared by every wizard spec) ─────────────────────
@@ -333,7 +343,7 @@ export async function startAtWelcome(tauriPage: TauriPageLike): Promise<void> {
   // next navigation remounts fresh (onMount → loadWizardData with the reset
   // daemon).
   await navigateTo(tauriPage, '/logs');
-  // /setup/* is gated behind healthOk (hooks.ts::reroute); on a cold e2e DB the
+  // /setup/* is gated behind healthOk (the boot gate (routes/+layout.ts)); on a cold e2e DB the
   // health probe takes ~50s to reach 'ok', so RE-navigate until the rail mounts.
   // Mirrors the observatory shell's navigateToScreen.
   await navigateToScreen(tauriPage, WELCOME, '[data-testid="rail"]');
