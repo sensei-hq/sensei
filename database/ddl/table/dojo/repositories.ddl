@@ -21,6 +21,8 @@ create table if not exists repositories (
       check (visibility is null or visibility in ('private', 'public'))
 , visibility_captured_at timestamptz
 , provider    dojo.forge_provider not null
+, default_branch text
+, graph_branch   text
 , created_at  timestamptz not null default now()
 , updated_at  timestamptz not null default now()
 , unique (tenant_id, repo_key)
@@ -44,3 +46,7 @@ comment on column repositories.provider
      is 'Which forge this repository lives on. Derived from `repo_key`''s host at registration and STORED, rather than re-derived in SQL: the host→provider mapping already exists once, in the registration path, and a second copy in a view would be two things to keep in step. Pulled forward from phase 2 (spec §V.2) for exactly that reason; `external_id` stays in phase 2, since nothing yet knows the forge''s id for a repository.';
 comment on column repositories.visibility
      is 'The forge''s answer about this repository''s visibility, captured at sign-in. NULLABLE with NO DEFAULT: ''not captured'' must be its own state, because the two consumers have opposite safe defaults — entitlement assumes private, authority assumes public. See docs/database/dojo.md.';
+comment on column repositories.default_branch
+     is 'The forge''s default branch, captured with visibility (GitHub''s repository read returns both). NULL until captured; a failed read writes nothing. The branch the shared graph follows unless graph_branch overrides it (graph-sync.md §9).';
+comment on column repositories.graph_branch
+     is 'An override of the branch the shared code graph follows — e.g. develop, for a team that treats it as the latest. Set by whoever holds authority over the repository''s settings. The effective branch is coalesce(graph_branch, default_branch); with neither, the graph does not sync (branch_unknown), never a guessed main.';
