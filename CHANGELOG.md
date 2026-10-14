@@ -38,8 +38,9 @@ are marked **BREAKING**.
   refused toggle leaves the row as it was.
 - **A repository's code graph has a home on the dōjō** (#225, store only): the
   `dojo.graph_*` tables and `dojo.file_graph_slices`, which files a
-  repository's graph file by file, only from the repository's configured
-  branch (`repositories.graph_branch`, else the forge's `default_branch`).
+  repository's graph file by file, one graph per tracked branch
+  (`dojo.repository_graph_branches`: the forge default plus any the team adds,
+  e.g. production).
   The daemon side and the Worker route are not built yet.
   **Deploy:** the release's `deploy-dojo` job creates them; nothing calls them
   until the daemon side ships.
