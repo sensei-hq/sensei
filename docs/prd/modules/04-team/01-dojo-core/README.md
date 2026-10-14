@@ -32,10 +32,10 @@ feels this as *I sign in once, and the right rules just work — wherever I code
   ladder (`member < contributor < lead < maintainer < admin`); the `dojo`
   schema (`repositories`, `repository_elections`, `repository_metrics`,
   `memberships`, `shared_rules`, `tenants`, `tenant_scopes`);
-  routing (`dojo.routing.rs` — client binding routes to client Dōjō and excludes
+  routing (`dojo/routing.rs` — client binding routes to client Dōjō and excludes
   employer; employer binding routes to employer; personal is the fallback);
   the federation wire (`dojo_protocol` — rules + artifacts push/pull);
-  contribution pipeline (`dojo.contribute.rs` — publish, already-sent guard,
+  contribution pipeline (`dojo/contribute.rs` — publish, already-sent guard,
   artifact kinds: `memory`, `rule`, `skill`, `command`, `agent`, `pattern`);
   triage/approval with scoring (auto-approve 0.8, per-contributor weight,
   FTR-delta credit, k-anonymity ≥3); anonymization (origin-based strip +
@@ -62,7 +62,7 @@ feels this as *I sign in once, and the right rules just work — wherever I code
   (GitHub, magic-link, self-hosted URL).
 - **Data** — `dojo.repositories` (visibility: public/private/not-captured),
   `repository_elections`, `repository_metrics`, `memberships`, `shared_rules`,
-  `tenants`, `tenant_scopes`, `audit_ledger`, `engagements`.
+  `tenants`, `tenant_scopes`, `audit_log`, `audit_events`, `engagements`.
 
 ## Data invariants
 

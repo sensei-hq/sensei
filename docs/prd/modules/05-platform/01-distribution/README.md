@@ -135,5 +135,7 @@ sensei doctor --json | jq '.components[] | select(.status != "ready")'
 - [architecture/cli.md](../../../../architecture/cli.md) — CLI structure.
 - [homebrew/](../../../../../homebrew/) — Formula + tap (subtree).
 - [prd/03-personas.md §1,2](../../../03-personas.md).
-- Crates: `crates/bootstrap/src/{bootstrap.rs, health/platforms/{macos,linux,windows}.rs,
-  engines.rs, database.rs, upgrade.rs, config.rs}`.
+- Crates: `crates/bootstrap/src/{lib.rs, health/platforms/{macos,windows}.rs,
+  engines.rs, database.rs, upgrade.rs, config.rs}` — **no `linux.rs` in
+  health/platforms** (gap P-5); the bootstrap entry point is `lib.rs`, not
+  `bootstrap.rs`.

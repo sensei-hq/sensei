@@ -15,18 +15,23 @@ e2e suite (known reds from T-3 block green-main claims), and the release
 automation. The job is **no change reaches main without tests, lint, fmt, and
 e2e**. The user feels this as *main is always shippable — I trust the gate.*
 
-> **Status honesty.** The pre-commit suite and Rust/app unit tests run on every
-> PR and are **green** (1,962 tests). The e2e suite has **known reds (T-3)**
-> that block green-main claims. The release automation (bump, publish, tag) is
-> designed but not fully automated. The `.github/` workflows + `.qlty/` config
-> exist.
+> **Status honesty.** The pre-commit suite (leak check + `make test-fast`) and
+> Rust/app unit tests run on every PR and are **green** (198 bootstrap tests +
+> 1,781 app tests). The e2e suite has **known reds (T-3)** that block
+> green-main claims. The release automation (bump, publish, tag) is designed
+> but not fully automated. The `.github/` workflows + `.qlty/` config exist.
+> **The 9-step chain (fmt → clippy → SQL layer → grant targets → DDL comments
+> → brew tokens → dbd pins → JSON wire → deploy/upgrade) runs in CI
+> (`.github/workflows/rust.yml`); the LOCAL pre-commit hook runs only
+> `check-no-leaks` + `make test-fast`.**
 
 ## In scope / out of scope
 
-- In: the pre-commit hook chain (fmt → clippy → SQL layer → grant targets →
-  DDL comments → brew tokens → dbd pins → JSON wire shapes → deploy/upgrade
-  tests); the Rust test suite (`cargo test --workspace`); the app unit tests
-  (`bun run test:unit` — 1,764 tests); the e2e suite (Playwright, known reds
+- In: the pre-commit hook (leak check → `make test-fast`); the CI 9-step chain
+  (fmt → clippy → SQL layer → grant targets → DDL comments → brew tokens → dbd
+  pins → JSON wire shapes → deploy/upgrade tests) in `.github/workflows/rust.yml`;
+  the Rust test suite (`cargo test --workspace`); the app unit tests
+  (`bun run test:unit` — 1,781 tests); the e2e suite (Playwright, known reds
   T-3); the release automation (version bump, crate publish, Homebrew formula
   update, git tag, GitHub Release); the qlty config (`.qlty/qlty.toml` with
   `exclude_patterns` for mockups, grammars, minified files).
@@ -72,7 +77,7 @@ e2e**. The user feels this as *main is always shippable — I trust the gate.*
 
 ```bash
 # Local pre-commit (fast)
-git commit -m "..."  # runs fmt, clippy, sql-layer, grant-targets, ddl-comments, brew-tokens, dbd-pins, json-wire, deploy-upgrade
+git commit -m "..."  # runs check-no-leaks.sh + make test-fast
 
 # CI full suite
 cargo test --workspace
@@ -113,4 +118,6 @@ npx playwright test  # e2e
 - [.qlty/](../../../../../.qlty/) — qlty config (exclude_patterns).
 - [Makefile](../../../../../Makefile) — dev convenience.
 - [prd/03-personas.md §1,2,3](../../../03-personas.md).
-- Crates: `crates/bootstrap/` (the pre-commit test suite lives here).
+- Crates: the pre-commit fast suite runs `cargo test -p sensei-bootstrap` (unit
+  tests in `crates/bootstrap/`); the CI chain runs the full workspace. The
+  release automation is manual/scripted (no crate).

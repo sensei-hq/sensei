@@ -25,8 +25,9 @@ for everyone below. That half of the console is specified in
 
 > **Status honesty.** The data layer exists (memberships, roles, `dojo.member_role`
 > enum, role ladder in `dojo-auth.ts`), the personal screens (`/you/*`, Relay,
-> Library, Preview) are built and tested. The **org context `/org/[slug]` with its
-> own nav and the four role-scoped surfaces are unbuilt** (gap T-2). The current
+> Library, Preview) are built and tested. The **org context `/org/[slug]` exists**
+> (`dojo/src/routes/(app)/org/[slug]/+page.svelte` + `/projects` + `/[section]`)
+> but the **four role-scoped surfaces within it are unbuilt** (gap T-2). The current
 > `/console/*` screens are a flat shell — they don't role-gate. The org-switcher
 > popover is built (top bar: "Relay · you — all Dōjōs" + one row per membership +
 > "Your Dōjōs" + "＋ Create or join").
@@ -41,8 +42,9 @@ for everyone below. That half of the console is specified in
   - **Lead** — client engagements, confidentiality, audit trail.
   - **Admin** — **change member roles + access policies**: members, identities/SSO,
     scopes & precedence, billing.
-  - The org context `/org/[slug]` with its own nav pane (projects, governance,
-    role surfaces).
+  - The **org context `/org/[slug]` exists** (`+page.svelte` + `/projects` +
+    `/[section]`) with its own nav pane (projects, governance,
+    role surfaces); the **four role-scoped surfaces within it are unbuilt** (gap T-2).
   - **The governance authoring surface** (`/org/[slug]/governance`, maintainer):
     the **scope ladder** (free personal ladder vs the paid company ladder), the
     **stance** axes, the **five authored artifact kinds** (rules · skills ·
@@ -79,11 +81,11 @@ for everyone below. That half of the console is specified in
   MCP tools.
 - **Data** — `dojo.memberships` (user_id, org_id, role, kind), `dojo.member_role`
   enum (`member < contributor < lead < maintainer < admin`), `dojo.shared_rules`,
-  `dojo.tenants`, `dojo.audit_ledger`; plus the governance ladder the authoring
-  surface writes against: `sensei.scopes` (levels `general` … `repository`,
-  `level` = most-specific-wins), `sensei.namespaces` (instances — a repo is a
-  member of a **set** of namespaces, there is no parent tree),
-  `sensei.rule_packs` + `sensei.rule_pack_adoptions` (library adoption).
+  `dojo.tenants`, `dojo.audit_log`, `dojo.audit_events`; plus the governance
+  ladder the authoring surface writes against: `sensei.scopes` (levels
+  `general` … `repository`, `level` = most-specific-wins), `sensei.namespaces`
+  (instances — a repo is a member of a **set** of namespaces, there is no parent
+  tree), `sensei.rule_packs` + `sensei.rule_pack_adoptions` (library adoption).
 
 ## Data invariants
 
