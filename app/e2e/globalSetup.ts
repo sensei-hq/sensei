@@ -24,6 +24,7 @@ import { existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'f
 import { createConnection } from 'net';
 import { resolve, join } from 'path';
 import { fileURLToPath } from 'url';
+import { isolatedHomeEnv } from './isolated-home';
 
 /** The daemon's `/health` payload — the fields this setup reads. */
 type DaemonHealth = {
@@ -127,6 +128,9 @@ export default async function globalSetup(): Promise<void> {
       // model (gateway_init.rs) — a warming model would peg it and stall
       // data-dependent screens within test timeouts.
       SENSEI_INSTANCE: INSTANCE,
+      // HOME is a throwaway too: the daemon's assistant work runs the real
+      // `claude plugin` commands, which act on whatever ~/.claude HOME names.
+      ...isolatedHomeEnv(),
     },
   });
   await new Promise<void>((res, rej) => {

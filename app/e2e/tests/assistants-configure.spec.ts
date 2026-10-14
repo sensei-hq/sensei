@@ -14,8 +14,8 @@
  *   4. Continue persists setup.assistants=done and routes to /setup/roots.
  *
  * The daemon is real (e2e daemon on port 7744 against the sensei_e2e DB,
- * driven by SENSEI_INSTANCE=e2e in globalSetup). The user's prod config is
- * not touched.
+ * driven by SENSEI_INSTANCE=e2e in globalSetup), and runs under the isolated
+ * E2E_HOME, so configure and remove act on a throwaway ~/.claude (#267).
  */
 
 import { test, expect, type TauriPageLike } from '../fixtures';

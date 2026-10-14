@@ -1,46 +1,26 @@
 /**
- * Configure Assistants E2E — hook registration flow.
+ * Configure Assistants E2E — Claude Code plugin install.
  *
- * Verifies that when a user advances through the Assistants wizard stage,
- * the dev daemon registers sensei-hook-dev.ts entries in ~/.claude/settings.json.
+ * Verifies that configuring Claude Code installs and enables the sensei plugin,
+ * and that removing it uninstalls it.
  *
  * Tests 1-2 drive the Tauri UI.
- * Tests 3-4 call the daemon API directly to verify hook write/remove/idempotency.
+ * Tests 3-4 call the daemon API directly to verify install/remove/idempotency.
  *
- * Runs against the dev daemon (port 7744) — never touches production config.
+ * The daemon runs under the isolated E2E_HOME, so the real `claude plugin`
+ * commands it issues act on a throwaway ~/.claude, never the developer's (#267).
  */
 
 import { test, expect, type TauriPageLike } from '../fixtures';
 import { DAEMON_URL, startAtWelcome, clickAndExpectNav } from '../helpers';
-import { readFileSync, existsSync } from 'fs';
-import { homedir } from 'os';
-import { join } from 'path';
+import { senseiPluginEnabled, senseiPluginInstalls } from '../isolated-home';
 
-const SETTINGS  = join(homedir(), '.claude', 'settings.json');
-const DEV_HOOK  = join(homedir(), '.claude', 'hooks', 'sensei-hook-dev.ts');
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function readSettings(): Record<string, unknown> | null {
-    if (!existsSync(SETTINGS)) return null;
-    try { return JSON.parse(readFileSync(SETTINGS, 'utf8')); }
-    catch { return null; }
-}
-
-function hookEntries(settings: Record<string, unknown> | null, event: string): string[] {
-    if (!settings?.hooks) return [];
-    const arr = (settings.hooks as Record<string, unknown>)[event];
-    if (!Array.isArray(arr)) return [];
-    return arr.flatMap((entry: unknown) => {
-        const hooks = (entry as Record<string, unknown>)?.hooks;
-        if (!Array.isArray(hooks)) return [];
-        return hooks.map((h: unknown) => (h as Record<string, string>)?.command ?? '');
+async function assistants(action: 'configure' | 'remove'): Promise<Response> {
+    return fetch(`${DAEMON_URL}/api/assistants/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acps: ['claude-code'] }),
     });
-}
-
-function devHookRegistered(settings: Record<string, unknown> | null): boolean {
-    const coreEvents = ['SessionStart', 'PreToolUse', 'PostToolUse', 'Stop'];
-    return coreEvents.every(ev => hookEntries(settings, ev).includes(DEV_HOOK));
 }
 
 /** Welcome → assistants, through the wizard as a user would. `startAtWelcome`
@@ -91,55 +71,20 @@ test.describe('Configure Assistants — hook registration', () => {
 
     // ── Daemon API tests (no UI required) ─────────────────────────────────────
 
-    test('dev daemon configure writes hook entries to settings.json', async ({ tauriPage }) => {
-        const before = readSettings();
-        const hadDevHookBefore = devHookRegistered(before);
+    test('configure installs and enables the sensei plugin; remove uninstalls it', async () => {
+        test.setTimeout(180_000);
+        expect((await assistants('configure')).status).toBe(200);
+        expect(senseiPluginInstalls(), 'installed_plugins.json records sensei').toBe(1);
+        expect(senseiPluginEnabled(), 'settings.json enables sensei@sensei-marketplace').toBe(true);
 
-        const resp = await fetch(`${DAEMON_URL}/api/assistants/configure`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ acps: ['claude-code'] }),
-        });
-        expect(resp.status).toBe(200);
-
-        await tauriPage.evaluate(`new Promise(r => setTimeout(r, 400))`);
-
-        const after = readSettings();
-        expect(after).not.toBeNull();
-        expect(devHookRegistered(after), 'sensei-hook-dev.ts registered for core events').toBe(true);
-
-        // Cleanup: remove if not present before
-        if (!hadDevHookBefore) {
-            await fetch(`${DAEMON_URL}/api/assistants/remove`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ acps: ['claude-code'] }),
-            });
-            await tauriPage.evaluate(`new Promise(r => setTimeout(r, 300))`);
-            expect(devHookRegistered(readSettings()), 'entries removed after uninstall').toBe(false);
-        }
+        expect((await assistants('remove')).status).toBe(200);
+        expect(senseiPluginInstalls(), 'sensei uninstalled').toBe(0);
     });
 
-    test('configure is idempotent — no duplicate entries', async ({ tauriPage }) => {
-        // Call configure twice
-        for (let i = 0; i < 2; i++) {
-            await fetch(`${DAEMON_URL}/api/assistants/configure`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ acps: ['claude-code'] }),
-            });
-        }
-        await tauriPage.evaluate(`new Promise(r => setTimeout(r, 400))`);
-
-        const settings = readSettings();
-        const devEntries = hookEntries(settings, 'SessionStart').filter(cmd => cmd === DEV_HOOK);
-        expect(devEntries).toHaveLength(1);
-
-        // Cleanup
-        await fetch(`${DAEMON_URL}/api/assistants/remove`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ acps: ['claude-code'] }),
-        });
+    test('configure is idempotent — one install after two', async () => {
+        test.setTimeout(180_000);
+        for (let i = 0; i < 2; i++) expect((await assistants('configure')).status).toBe(200);
+        expect(senseiPluginInstalls()).toBe(1);
+        await assistants('remove');
     });
 });
