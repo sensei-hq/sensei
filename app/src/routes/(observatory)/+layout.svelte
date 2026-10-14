@@ -78,7 +78,8 @@
             projectCount={appState.projectCount ?? undefined}
         />
 
-        <main data-component="observatory-main" class="flex-1 overflow-auto">
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <main data-component="observatory-main" class="flex-1 overflow-auto" tabindex="0">
             {@render children()}
         </main>
     </div>

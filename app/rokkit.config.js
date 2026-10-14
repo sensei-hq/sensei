@@ -79,7 +79,7 @@ export default {
     // accent override (shade 400 dark shift) is kept for dark-mode legibility.
     // Light value darkened shu.500 (0.58L, 4.27:1) → 0.520L (5.5:1) so vermillion
     // TEXT (stat numbers, arrows, kanji labels) passes WCAG AA. Dark keeps shu.400.
-    accent:        { light: "oklch(0.520 0.145 35)", dark: "shu.400" },
+    accent:        { light: "oklch(0.500 0.145 35)", dark: "shu.400" },
 
     // ── Primary named token — ink-colored CTA (design system: --primary: var(--ink)) ─
     // Named `bg-primary` / `text-primary` = ink color (for ink-on-paper buttons).
