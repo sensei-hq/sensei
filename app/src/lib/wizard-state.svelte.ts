@@ -284,7 +284,7 @@ function cloneStages(): WizardStage[] {
 }
 
 /** Seed for `setupComplete` $state — reads localStorage[`setupComplete`]
- *  as the cold-start fallback so the reroute hook gets a stable answer
+ *  as the cold-start fallback so the boot gate gets a stable answer
  *  before any async load(). Updated by load() (from daemon truth) and
  *  setCompleted() (when the user finishes the wizard). */
 function initialSetupComplete(): boolean {
@@ -308,7 +308,7 @@ export class WizardState {
    * this through its `setupComplete` / `setupOk` facade.
    *
    * Lifecycle:
-   *   - Initial value seeded from localStorage so reroute has a stable
+   *   - Initial value seeded from localStorage so the boot gate has a stable
    *     answer on cold start.
    *   - `load()` reconciles against daemon's `config['setup_complete']`
    *     on every invocation, and syncs localStorage to whatever the
@@ -383,7 +383,7 @@ export class WizardState {
 
   /**
    * Mirror of healthState.isOk — true when the user has finished the setup
-   * wizard. Read by hooks.reroute to decide whether the user should be in
+   * wizard. Read by the boot gate (routes/+layout.ts) to decide whether the user should be in
    * the setup flow or the observatory. Reads our own `setupComplete`
    * field, which is the canonical owner of this state (see field docs).
    */
@@ -591,7 +591,7 @@ export class WizardState {
   /**
    * Mark the wizard as completed end-to-end. Writes setup_complete to the
    * daemon and updates the appState cache + localStorage sync-gate so the
-   * reroute hook sees the new state immediately on the next navigation.
+   * boot gate sees the new state immediately on the next navigation.
    *
    * Lives here (not on appState) because completion is a wizard concern —
    * appState just exposes the resulting flag via .setupOk for callers that
@@ -916,7 +916,7 @@ export class WizardState {
     if (handler) {
       await handler(this, api);
       // Marker write goes through appState so the in-memory config picks
-      // up the `setup.X: done` keys — that matters for reroute()'s setup
+      // up the `setup.X: done` keys — that matters for the boot gate's setup
       // gate and any other reader of appState.config that runs before the
       // next load().
       await appState.setConfigs({ [`setup.${stageId}`]: 'done' });

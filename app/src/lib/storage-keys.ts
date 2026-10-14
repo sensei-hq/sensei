@@ -9,7 +9,7 @@
  *   - `port` was a runtime override for the daemon port. A stale value
  *     from a previous session silently routed every fetch to the wrong
  *     port. Removed — port is build-time.
- *   - `health` was a sessionStorage cache for the reroute hook. Nothing
+ *   - `health` was a sessionStorage cache for the boot gate. Nothing
  *     read it; HealthState is the authoritative source. Removed.
  *   - `testMode` belonged to a dead mock-data module. Removed.
  */

@@ -7,7 +7,7 @@
 import { test, expect, type TauriPageLike } from '../fixtures';
 import { navigateTo, DAEMON_URL } from '../helpers';
 
-/** Mark setup complete so the observatory shell is reachable (not rerouted to setup). */
+/** Mark setup complete so the observatory shell is reachable (not redirected to setup). */
 async function seedSetupComplete(tauriPage: TauriPageLike): Promise<void> {
   await fetch(`${DAEMON_URL}/api/config`, {
     method: 'PUT',

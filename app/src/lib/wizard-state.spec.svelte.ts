@@ -479,7 +479,7 @@ describe('WizardState', () => {
       await expect(ws.commitStage('welcome')).resolves.toBeUndefined();
 
       // The marker write is the reason this path touches appState at all, and
-      // nothing pinned it before — reroute()'s setup gate reads these keys.
+      // nothing pinned it before — the boot gate's setup gate reads these keys.
       expect(spy).toHaveBeenCalledWith({ 'setup.welcome': 'done' });
       expect(ws.stages.find(s => s.id === 'welcome')?.status).toBe('done');
       spy.mockRestore();

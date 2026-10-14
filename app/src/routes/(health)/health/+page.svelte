@@ -18,7 +18,7 @@
         healthState.init();
     });
 
-    // Auto-leave the health page once the gate is green. The reroute hook
+    // Auto-leave the health page once the gate is green. The boot gate
     // then decides whether to land at /setup/welcome (setup not complete)
     // or / (observatory). Only fires when `auto` is true.
     $effect(() => {

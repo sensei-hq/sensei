@@ -37,7 +37,7 @@ test.describe('Settings · Assistants · Conversation history', () => {
     test.setTimeout(120_000);
     await seedHealth(tauriPage);
     // AFTER seedHealth, which clears the local flag. Setup must be complete or
-    // `hooks.ts` reroutes every page to setup, and a reset e2e DB has no
+    // the boot gate (routes/+layout.ts) redirects every page to setup, and a reset e2e DB has no
     // `setup_complete` row.
     await seedSetupComplete(tauriPage);
   });

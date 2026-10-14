@@ -2,7 +2,7 @@ import { appState } from '$lib/appstate.svelte.js';
 import type { LayoutLoad } from './$types.js';
 
 /** Project window layout. `appState.load()` always succeeds (falls back to
- *  defaults on daemon failure); routing is hooks::reroute's job. */
+ *  defaults on daemon failure); routing is the boot gate (routes/+layout.ts)'s job. */
 export const load: LayoutLoad = async () => {
   if (appState.loaded) return;
   await appState.load();
