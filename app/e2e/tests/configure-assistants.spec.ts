@@ -10,8 +10,8 @@
  * Runs against the dev daemon (port 7744) — never touches production config.
  */
 
-import { test, expect } from '../fixtures';
-import { navigateTo, DAEMON_URL } from '../helpers';
+import { test, expect, type TauriPageLike } from '../fixtures';
+import { DAEMON_URL, startAtWelcome, clickAndExpectNav } from '../helpers';
 import { readFileSync, existsSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -43,26 +43,13 @@ function devHookRegistered(settings: Record<string, unknown> | null): boolean {
     return coreEvents.every(ev => hookEntries(settings, ev).includes(DEV_HOOK));
 }
 
-async function seedHealth(tauriPage: { evaluate: (s: string) => Promise<unknown> }): Promise<void> {
-    await tauriPage.evaluate(`
-        (function() {
-            sessionStorage.setItem('sensei:health', 'ready');
-            localStorage.removeItem('sensei:setup-complete');
-        })()
-    `);
-}
-
-async function goToAssistants(tauriPage: { evaluate: (s: string) => Promise<unknown>; click: (s: string) => Promise<void>; locator: (s: string) => unknown }): Promise<void> {
-    await seedHealth(tauriPage);
-    await navigateTo(tauriPage, '/logs');
-    await navigateTo(tauriPage, '/setup/welcome');
-    // welcome → preferences
-    await (tauriPage as import('@playwright/test').Page).click('[data-action="next"]');
-    await expect((tauriPage as import('@playwright/test').Page).locator('.name-input')).toBeVisible({ timeout: 8_000 });
-    await (tauriPage as import('@playwright/test').Page).locator('.name-input').fill('Test User');
-    // preferences → assistants
-    await (tauriPage as import('@playwright/test').Page).click('[data-action="next"]');
-    await expect((tauriPage as import('@playwright/test').Page).locator('[data-action="next"]')).toBeEnabled({ timeout: 10_000 });
+/** Welcome → assistants, through the wizard as a user would. `startAtWelcome`
+ *  opens `/setup/welcome?force=1`: setup is marked complete for the observatory
+ *  specs, and without `force` the wizard bounces to the observatory. */
+async function goToAssistants(tauriPage: TauriPageLike): Promise<void> {
+    await startAtWelcome(tauriPage);
+    await clickAndExpectNav(tauriPage, '[data-action="next"]', '/setup/assistants');
+    await expect(tauriPage.locator('[data-action="next"]')).toBeEnabled({ timeout: 10_000 });
 }
 
 // ── UI tests ──────────────────────────────────────────────────────────────────
