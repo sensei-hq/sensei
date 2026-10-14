@@ -39,6 +39,24 @@ insert into dojo.repositories (id, tenant_id, repo_key, name, visibility, visibi
   ('93000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-00000000015b', 'github.com/ztest-ola/own', 'own',  'public',  now(), 'github', 'main'),
   ('93000000-0000-4000-8000-000000000003', 'b0000000-0000-4000-8000-00000000015b', 'github.com/ztest-ola/unk', 'unk',  null,      null,  'github', null);
 
+-- U: a tenant ola is not in, with a tracked repository of its own.
+insert into dojo.tenants (id, key, origin, slug, name, dojo_url, claimed_at) values
+  ('b0000000-0000-4000-8000-00000000015c', 'organization/ztest-gb-u', 'organization', 'ztest-gb-u', 'U', 'x', now());
+insert into dojo.repositories (id, tenant_id, repo_key, name, visibility, visibility_captured_at, provider, default_branch) values
+  ('93000000-0000-4000-8000-000000000004', 'b0000000-0000-4000-8000-00000000015c', 'github.com/ztest-gu/x', 'x', 'public', now(), 'github', 'main');
+-- ada belongs to U and has elected its public repository, so it has a SYNCABLE
+-- verdict row — hers, not ola's. Only the principal pin keeps it out of ola's.
+insert into dojo.memberships (tenant_id, user_id, role, kind, authenticated_via) values
+  ('b0000000-0000-4000-8000-00000000015c', 'a0000000-0000-4000-8000-000000000151', 'admin', 'employer', 'github_oauth');
+insert into dojo.repository_graph_branches (repository_id, tenant_id, branch, is_default) values
+  ('93000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-00000000015a', 'main', true),
+  ('93000000-0000-4000-8000-000000000004', 'b0000000-0000-4000-8000-00000000015c', 'main', true),
+  -- ola's own repository whose visibility was never captured: hers, NOT syncable.
+  ('93000000-0000-4000-8000-000000000003', 'b0000000-0000-4000-8000-00000000015b', 'main', true);
+insert into dojo.repository_elections (tenant_id, repository_id, authority, principal_id, elected) values
+  ('b0000000-0000-4000-8000-00000000015c', '93000000-0000-4000-8000-000000000004', 'user',
+   'a0000000-0000-4000-8000-000000000151', true);
+
 -- Repository 2 tracks main, and staging with a graph already filed.
 insert into dojo.repository_graph_branches (repository_id, tenant_id, branch, is_default) values
   ('93000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-00000000015b', 'main',    true),
@@ -92,6 +110,20 @@ begin
         raise exception 'untrack: untracking staging untracked production too';
     end if;
     set local role authenticated;
+
+    -- ── the plan's branches: every repository she may sync, none she may not ─
+    -- ola is a contributor on no team: the table's read policy shows her nothing,
+    -- yet her daemon must know which of her checkouts to push.
+    if not exists (select 1 from dojo.my_graph_branches() b
+                    where b.repository_id = '93000000-0000-4000-8000-000000000001' and b.branch = 'main' and b.is_default) then
+        raise exception 'plan: ola may sync T''s repository, but its tracked main is not in her branches';
+    end if;
+    if exists (select 1 from dojo.my_graph_branches() b where b.repository_id = '93000000-0000-4000-8000-000000000004') then
+        raise exception 'plan: another member''s repository leaked into ola''s branches';
+    end if;
+    if exists (select 1 from dojo.my_graph_branches() b where b.repository_id = '93000000-0000-4000-8000-000000000003') then
+        raise exception 'plan: a repository of ola''s that may not sync is in her branches';
+    end if;
 
     -- ── refusals ─────────────────────────────────────────────────────────────
     begin
