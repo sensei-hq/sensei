@@ -76,9 +76,12 @@ the file row, the nodes declared in it, the edges whose source node is in it,
 and the schema rows of its nodes.
 
 - **Change detection** is `files.content_hash`. The daemon pushes a file when its
-  hash differs from the hash the dōjō last accepted for that path. The accepted
-  hashes come back with the plan (one map per repository), so the daemon needs
-  no local watermark beyond `sync_state` status.
+  hash differs from the hash the dōjō last accepted for that path, read with
+  `GET /v1/you/graph?repo_key=&branch=` (`dojo.graph_file_hashes`) — gated like
+  the write, so a syncing member on no team still sees it. Not in the plan: a
+  plan carrying thousands of paths per tracked branch would be fetched every
+  cycle for repositories with nothing to push. The daemon needs no local
+  watermark beyond `sync_state` status.
 - **Replace per file.** The dōjō deletes the file's nodes and edges and inserts
   the slice, in one transaction per batch — the rule `call_sites` already
   follows locally (the fact belongs to the file that states it).
@@ -116,8 +119,9 @@ and resolves when that file arrives.
   the `file_metric_rows` contract: principal from the session, repository checked
   against `all_my_repositories`, whole batch refused on any failure, tenant from
   the verdict.
-- `GET /v1/you/sync/plan` returns, per allowed repository, the accepted
-  `path → content_hash` map.
+- `GET /v1/you/sync/plan` returns, per allowed repository, its tracked branches.
+- `POST /v1/you/graph` (a batch) and `GET /v1/you/graph` (the accepted hashes of
+  one branch, paged).
 
 ## 5. The cycle
 
