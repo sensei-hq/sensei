@@ -7,7 +7,8 @@ describe('refusalStatus', () => {
 	for (const [code, status] of [
 		['P0002', 404], // no_data_found
 		['55000', 409], // object_not_in_prerequisite_state
-		['42501', 403] // insufficient_privilege
+		['42501', 403], // insufficient_privilege
+		['22023', 422] // invalid_parameter_value: the request names something the function refuses by name
 	] as const) {
 		it(`turns ${code} into ${status}`, () => {
 			expect(refusalStatus({ code })).toBe(status);
