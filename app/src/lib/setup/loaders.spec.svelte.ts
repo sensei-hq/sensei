@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { extractCompletion, extractPreferences, mapLibraries } from './loaders.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { extractCompletion, extractPreferences, mapLibraries, loadWizardData } from './loaders.js';
+import { wizardState } from '$lib/wizard-state.svelte.js';
 import type { LibEntry } from '$lib/types.js';
 
 describe('extractCompletion', () => {
@@ -130,5 +131,35 @@ describe('mapLibraries', () => {
   it('treats malformed JSON config as empty', () => {
     const result = mapLibraries(fixture, { 'setup.libraries': 'not-json{' });
     expect(result.every(l => l.enabled)).toBe(true);
+  });
+});
+
+describe('loadWizardData — a config read that fails', () => {
+  // The config is what says setup is complete. Read through a fallback it came
+  // back `{}` on any failure, which reads as "setup incomplete": the wizard then
+  // cleared the cached flag and the gate sent a set-up user back to setup.
+  function stubFetch(configStatus: number) {
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      const path = new URL(String(input), 'http://localhost').pathname;
+      if (path === '/api/config') return new Response('boom', { status: configStatus });
+      const body = path === '/api/libs' ? { total: 0, libs: [] }
+        : path === '/api/instruments' ? { mcps: [] }
+        : path === '/api/gateway/routers' ? { routers: [] }
+        : [];
+      return new Response(JSON.stringify(body), { status: 200 });
+    }));
+  }
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('rejects instead of loading an empty config', async () => {
+    stubFetch(500);
+    await expect(loadWizardData(7744)).rejects.toThrow(/config/);
+  });
+
+  it('leaves the wizard as it was: load() reports failure, setup stays complete', async () => {
+    stubFetch(500);
+    wizardState.setupComplete = true;
+    expect(await wizardState.load()).toBe(false);
+    expect(wizardState.setupComplete).toBe(true);
   });
 });
