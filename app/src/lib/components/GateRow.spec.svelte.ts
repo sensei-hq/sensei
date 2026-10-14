@@ -39,6 +39,14 @@ describe('GateRow', () => {
     expect(desc.className).toMatch(/\btext-ink-soft\b/);
   });
 
+  // A stable hook for the gate's state — the e2e bootstrap specs wait on it.
+  it('exposes its status as data-gate-status', () => {
+    const m = mountComponent(GateRowHarness, { gate: makeGate({ status: 'failed' }), numeral: '一' });
+    cleanup.push(m.destroy);
+    const row = m.container.querySelector('[data-component="gate-row"]') as HTMLElement;
+    expect(row.dataset.gateStatus).toBe('failed');
+  });
+
   it('numeral is success-colored when status="ready"', () => {
     const m = mountComponent(GateRowHarness, { gate: makeGate({ status: 'ready' }), numeral: '一' });
     cleanup.push(m.destroy);

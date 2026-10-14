@@ -197,6 +197,7 @@ test.describe('Project window — chrome', () => {
       { kanji: '憶', label: 'Memories'     },
       { kanji: '跡', label: 'Traceability' },
       { kanji: '図', label: 'Atlas'        },
+      { kanji: '構', label: 'Diagrams'     },
       { kanji: '蔵', label: 'Libraries'    },
       { kanji: '器', label: 'Instruments'  },
       { kanji: '型', label: 'Patterns'     },
