@@ -179,7 +179,7 @@ test.describe('Assistants — re-entry and removal', () => {
     const card = tauriPage.locator('[data-testid="assistant-card-claude"]');
     await expect(card).toBeVisible({ timeout: 10_000 });
     await waitForAttr(tauriPage, '[data-testid="assistant-card-claude"]', 'data-configured', 'true');
-    await expect(card.locator('.mono').filter({ hasText: /configured/i })).toBeVisible({ timeout: 5_000 });
+    await expect(card.locator('[data-component="assistant-status"]').filter({ hasText: /configured/i })).toBeVisible({ timeout: 5_000 });
   });
 
   test('toggling off a configured family fires remove → chips return to idle', async ({ tauriPage }) => {

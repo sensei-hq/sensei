@@ -88,6 +88,10 @@ describe('AssistantCard', () => {
     });
     cleanup.push(m2.destroy);
     expect(card(m2, 'claude').textContent).toMatch(/configured/);
+    // The label carries a stable hook — e2e selected a `.mono` class that a
+    // restyle renamed, and the re-entry test went red with the label on screen.
+    const label = card(m2, 'claude').querySelector('[data-component="assistant-status"]');
+    expect(label?.textContent?.trim()).toBe('configured');
   });
 
   it('renders consolidated error block + retry when error and any part failed', () => {
