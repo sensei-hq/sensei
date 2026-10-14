@@ -2,7 +2,7 @@
 
 **State 2026-10-14.** v0.13.0 shipped (the dōjō takes the person's session
 only; production 401s a device token). History scrub done. Working the queue
-on `develop` (`426ea426`), toward 0.14.0.
+on `develop` (`14422e2e`), toward 0.14.0.
 
 | increment | status |
 |---|---|
@@ -11,9 +11,9 @@ on `develop` (`426ea426`), toward 0.14.0.
 | #241 org-home needs band = triage queue; health alerts "not measured" | DONE `da9b5419` (sparkline/needs/billing wait on sources) |
 | #252 a team sees THAT a run is going (status only) | DONE `6176afd0` |
 | #240 provable user-scoped metrics reach the dōjō | DONE `79f14390`, `6cd03d62` |
-| #245 app e2e gate | PARTIAL `42bcca43`…`426ea426` — atlas, diagrams, dojo-binding, scan, knowledge-sources, db-setup, multi-window, project-window-depth, a11y, setup-wizard green; left: #267, Instruments call |
+| #245 app e2e gate | PARTIAL `42bcca43`…`14422e2e` — all known groups green; #267 CLOSED `656027f7` (e2e under throwaway HOME); left: Instruments call, full-suite count |
 
-**Next command:** `gh issue view 267` (e2e must not touch the real `~/.claude`),
+**Next command:** read `/tmp/e2e-full.log` (full suite), post the count on #245,
 then #225, #238, #254.
 
 **Open questions (user's):**
@@ -25,5 +25,5 @@ then #225, #238, #254.
   "Workers Builds: dojo" check — delete it in the dashboard.
 - Sign in under Settings → Dōjō on this machine: nothing syncs until then (#184).
 
-**Known-broken:** e2e: assistants dev-hook (#267), 2 Instruments tests (#245); 0.14.0 needs `deploy-dojo` before
+**Known-broken:** e2e: 2 Instruments tests await the product call (#245); 0.14.0 needs `deploy-dojo` before
 the Worker can file metrics (`dojo.file_metric_rows`).
