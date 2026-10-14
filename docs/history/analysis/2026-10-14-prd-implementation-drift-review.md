@@ -114,10 +114,12 @@ needed) · **conf** = confidence.
 
 #### M05 Inference gateway — DW (conf: high)
 - `sensei.inference_calls` is the cost ledger (`README.md:21,47,64,76,81,95`).
-  **No `inference_calls` table exists in any schema.** The `gateway` schema holds only
+  **No `inference_calls` table exists in any schema in this repo**, and the name appears
+  nowhere in this tree (`.rs`/`.sql`/`.ddl`/`.toml`). The `gateway` schema holds only
   `fallback_chains fallback_chain_models models models_in_router providers routers` — no
-  call/cost log. The `sensei` schema has no such table either. The cost surface documented
-  here has no storage.
+  call/cost log. The gateway crate itself is an external git dep (`sensei-hq/gateway`
+  v0.7.0, not vendored here), so if the ledger lives there it is **not** in the `sensei`
+  schema as written. Either way the doc's `sensei.`-qualified ledger is wrong → **IG/DW**.
 - Note the sibling files `consensus.rs · budget.rs · breaker.rs` (`README.md:31-32`) are
   **not** a finding: the same line says they live in the external `sensei-hq/gateway` repo.
 

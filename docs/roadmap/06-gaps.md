@@ -65,6 +65,17 @@ evidence is a suspicion, and gets labelled so.
 | D-12 | P0(deps) | dependency drift: `@rokkit/*`, `@kavach/*` held back by lockfiles | production-readiness | P3 |
 | D-13 | P0(deps) | 28 medium osv advisories (transitive; none code-fixable) | production-readiness | P3 |
 | P-5 | P1 | Makefile/Homebrew macOS-only; Linux/Windows service + data-dir design first | reorg §10.3 | P1 |
+| G-MEM-FEEDBACK | M9 | LLM-facing memory feedback tools (`report_memory_use`, `report_learning`) do not exist; feedback is HTTP-only (`…/reinforce`, `…/challenge`) | M9 status honesty; tool registry | P1 |
+| G-MEM-SCOPE | M9 | `memory_scope` has no `user` / `org` rung; the cross-project and org-overlay ladder is designed, not built | M9 `memory_scope` enum vs doc ladder | P1 |
+| G-PATTERN-STORE | M10 | `sensei.pattern_choices` / `sensei.pattern_registries` have no DDL; chosen options cannot persist | M10 status honesty; DDL inventory | P1 |
+| G-TRACE-STORE | M11 | `sensei.trace_links` / `sensei.doc_lint_findings` have no DDL; bidirectional links and doc-doctor findings cannot persist | M11 status honesty; DDL inventory | P1 |
+| G-TRACE-TOOL | M11 | `get_trace_links` is not a registered MCP tool | M11 status honesty; tool registry | P1 |
+| G-GOV-AUDIT | M13 | `sensei.rule_violations`, `sensei.governance_overrides` have no DDL; only `rule_check_runs` ships; verifier gate + override store unbuilt | M13 status honesty; DDL inventory | P1 |
+| G-LIB-WRAP | M12 | no `wrap_library` MCP tool; the wrap-me workflow has no write surface | M12 status honesty; tool registry | P2 |
+| G-DOJO-AUDIT | M16 | no `/api/dojo-binding` endpoint; the About screen's Dōjō binding is opt-in only | M16 Surfaces; route inventory | P2 |
+| G-IMPACT-TEST | M19 | impact/insights endpoints and tables (`applied_recommendations`, `impact_regressions`, `insights`) unbuilt | M19 scenarios all `NO TEST` | P2 |
+| G-BILLING-DATA | T4 | billing tables (`billing_accounts`, `seats`, `subscriptions`, `active_contributors`, `invoices`) planned only | T4 status honesty; DDL inventory | P2 |
+| G-COST-LEDGER | M5 | `inference_calls` table (cost/usage ledger) does not exist in DDL or code | M5 status honesty; DDL inventory | P2 |
 
 ## Remaining population (Phase 3)
 
