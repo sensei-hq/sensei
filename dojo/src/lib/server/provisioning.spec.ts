@@ -55,6 +55,11 @@ function tables(seed: Partial<Record<string, FakeTable>> = {}): Record<string, F
 			// identify a row (§8a "the sign-in refresh must be scoped").
 			uniques: [{ columns: ['tenant_id', 'repo_key'] }],
 			...seed.repositories
+		},
+		repository_graph_branches: {
+			rows: [],
+			uniques: [{ columns: ['repository_id', 'branch'] }],
+			...seed.repository_graph_branches
 		}
 	};
 }
@@ -302,7 +307,7 @@ describe('ensureProvisioned — without forge facts', () => {
 /** A fetch stub for `GET /repos/{owner}/{repo}`, answering by `owner/repo`. An
  *  unlisted repository answers 404, which is what a token that cannot see it
  *  really gets. */
-function repoFetch(answers: Record<string, { status?: number; private?: boolean }>) {
+function repoFetch(answers: Record<string, { status?: number; private?: boolean; default_branch?: string }>) {
 	const calls: string[] = [];
 	const fn = (async (url: string | URL | Request) => {
 		const u = String(url);
@@ -313,7 +318,7 @@ function repoFetch(answers: Record<string, { status?: number; private?: boolean 
 		return {
 			ok: status >= 200 && status < 300,
 			status,
-			json: async () => ({ private: a?.private })
+			json: async () => ({ private: a?.private, default_branch: a?.default_branch })
 		} as Response;
 	}) as unknown as typeof fetch;
 	return { fn, calls };
@@ -374,6 +379,81 @@ describe('refreshForgeVisibility — capturing the forge answer at sign-in', () 
 		// A value with no timestamp is indistinguishable from the old bad default,
 		// and the view's staleness rule has nothing to measure. Always both.
 		expect(Date.parse(String(row.visibility_captured_at))).not.toBeNaN();
+	});
+
+	it('captures the default branch and tracks it as the graph default', async () => {
+		// The shared code graph follows the tracked branches; the forge default is
+		// one of them unless someone removes it (graph-sync.md §9).
+		const db = fakeDojoDb(tables({ memberships: { rows: [MINE] }, repositories: { rows: [repoRow()] } }));
+		const { fn } = repoFetch({ 'sensei-hq/dbd': { private: false, default_branch: 'main' } });
+		await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		expect(db.tables.repositories.rows[0].default_branch).toBe('main');
+		expect(
+			db.tables.repository_graph_branches.rows.map((r) => [r.repository_id, r.tenant_id, r.branch, r.is_default])
+		).toEqual([['r1', 't-mine', 'main', true]]);
+	});
+
+	it('a re-read of the same default adds no second row', async () => {
+		const db = fakeDojoDb(
+			tables({
+				memberships: { rows: [MINE] },
+				repositories: { rows: [repoRow({ default_branch: 'main' })] },
+				repository_graph_branches: {
+					rows: [{ repository_id: 'r1', tenant_id: 't-mine', branch: 'main', is_default: true }]
+				}
+			})
+		);
+		const { fn } = repoFetch({ 'sensei-hq/dbd': { private: false, default_branch: 'main' } });
+		await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		expect(db.tables.repository_graph_branches.rows).toHaveLength(1);
+		expect(db.tables.repository_graph_branches.rows[0].is_default).toBe(true);
+	});
+
+	it('a moved default is tracked too; the old one stays tracked, only no longer the default', async () => {
+		// Removing a tracked branch deletes its graph, so it is a person's decision,
+		// never a side effect of the forge renaming its default.
+		const db = fakeDojoDb(
+			tables({
+				memberships: { rows: [MINE] },
+				repositories: { rows: [repoRow({ default_branch: 'main' })] },
+				repository_graph_branches: {
+					rows: [
+						{ repository_id: 'r1', tenant_id: 't-mine', branch: 'main', is_default: true },
+						{ repository_id: 'r1', tenant_id: 't-mine', branch: 'production', is_default: false }
+					]
+				}
+			})
+		);
+		const { fn } = repoFetch({ 'sensei-hq/dbd': { private: false, default_branch: 'trunk' } });
+		await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		expect(db.tables.repositories.rows[0].default_branch).toBe('trunk');
+		const tracked = Object.fromEntries(
+			db.tables.repository_graph_branches.rows.map((r) => [r.branch, r.is_default])
+		);
+		expect(tracked).toEqual({ main: false, production: false, trunk: true });
+	});
+
+	it('a read that states no default branch leaves the captured one and the tracked set alone', async () => {
+		const db = fakeDojoDb(
+			tables({
+				memberships: { rows: [MINE] },
+				repositories: { rows: [repoRow({ default_branch: 'main' })] },
+				repository_graph_branches: {
+					rows: [{ repository_id: 'r1', tenant_id: 't-mine', branch: 'main', is_default: true }]
+				}
+			})
+		);
+		const { fn } = repoFetch({ 'sensei-hq/dbd': { private: true } });
+		await refreshForgeVisibility(db as never, PRINCIPAL, 'tok', fn);
+
+		expect(db.tables.repositories.rows[0].visibility).toBe('private');
+		expect(db.tables.repositories.rows[0].default_branch).toBe('main');
+		expect(db.tables.repository_graph_branches.rows).toEqual([
+			{ repository_id: 'r1', tenant_id: 't-mine', branch: 'main', is_default: true }
+		]);
 	});
 
 	it('re-stamps captured_at even when the value did not change', async () => {

@@ -30,12 +30,12 @@
 import { AdminError, slugify, type DojoClient } from './admin-data';
 import {
 	fetchGithubFacts,
-	fetchGithubRepoVisibility,
+	fetchGithubRepoFacts,
 	ForgeReadError,
 	type ForgeFacts,
 	type ForgeOrg,
 	type ForgeProvider,
-	type ForgeVisibility
+	type ForgeRepoFacts
 } from './forge-github';
 import { forgeRefFromRepoKey } from './repo-mapping';
 
@@ -577,6 +577,7 @@ export const MAX_VISIBILITY_REFRESH_PER_PASS = 40;
 /** One `dojo.repositories` row this pass may refresh. */
 interface RepoVisibilityRow {
 	id: string;
+	tenant_id: string;
 	repo_key: string;
 	visibility_captured_at: string | null;
 }
@@ -608,6 +609,39 @@ function captureAge(row: RepoVisibilityRow): number {
 	// A finite sentinel, not -Infinity: comparing two uncaptured rows would then
 	// subtract two infinities and hand `sort` a NaN.
 	return Number.isNaN(at) ? -1 : at;
+}
+
+/**
+ * Make the forge's default branch a tracked branch of the repository's shared
+ * code graph, flagged as the default (graph-sync.md §9).
+ *
+ * Adds; never removes. A default that moved leaves the old branch tracked but no
+ * longer the default — untracking deletes that branch's graph, so it is a
+ * person's decision, not a side effect of the forge renaming its default.
+ */
+async function trackDefaultBranch(
+	db: DojoClient,
+	row: { id: string; tenant_id: string },
+	branch: string
+): Promise<void> {
+	const cleared = await db
+		.from('repository_graph_branches')
+		.update({ is_default: false })
+		.eq('repository_id', row.id);
+	if (cleared.error) throw new AdminError(500, cleared.error.message);
+
+	const added = await db
+		.from('repository_graph_branches')
+		.insert({ repository_id: row.id, tenant_id: row.tenant_id, branch, is_default: true });
+	if (!added.error) return;
+	// Already tracked: it only needs the flag back.
+	if ((added.error as { code?: string }).code !== '23505') throw new AdminError(500, added.error.message);
+	const flagged = await db
+		.from('repository_graph_branches')
+		.update({ is_default: true })
+		.eq('repository_id', row.id)
+		.eq('branch', branch);
+	if (flagged.error) throw new AdminError(500, flagged.error.message);
 }
 
 /**
@@ -657,7 +691,7 @@ export async function refreshForgeVisibility(
 
 	const found = await db
 		.from('repositories')
-		.select('id, repo_key, visibility_captured_at')
+		.select('id, tenant_id, repo_key, visibility_captured_at')
 		.in('tenant_id', tenantIds);
 	if (found.error) throw new AdminError(500, found.error.message);
 
@@ -683,16 +717,16 @@ export async function refreshForgeVisibility(
 
 	const capturedAt = new Date().toISOString();
 	for (const group of groups.slice(0, MAX_VISIBILITY_REFRESH_PER_PASS)) {
-		let visibility: ForgeVisibility | null;
+		let facts: ForgeRepoFacts | null;
 		try {
-			visibility = await fetchGithubRepoVisibility(group.owner, group.repo, token, fetchImpl);
+			facts = await fetchGithubRepoFacts(group.owner, group.repo, token, fetchImpl);
 		} catch {
 			// The forge would not answer. The row keeps whatever it had — including
 			// nothing — and the view fails closed on it.
 			out.failed += group.rows.length;
 			continue;
 		}
-		if (!visibility) {
+		if (!facts) {
 			out.unavailable += group.rows.length;
 			continue;
 		}
@@ -701,9 +735,15 @@ export async function refreshForgeVisibility(
 			// what keeps property 2 true of the WRITE and not just of the read.
 			const upd = await db
 				.from('repositories')
-				.update({ visibility, visibility_captured_at: capturedAt })
+				.update({
+					visibility: facts.visibility,
+					visibility_captured_at: capturedAt,
+					// Unstated is not a value: the captured branch stays as it was.
+					...(facts.defaultBranch ? { default_branch: facts.defaultBranch } : {})
+				})
 				.eq('id', row.id);
 			if (upd.error) throw new AdminError(500, upd.error.message);
+			if (facts.defaultBranch) await trackDefaultBranch(db, row, facts.defaultBranch);
 			out.captured += 1;
 		}
 	}
