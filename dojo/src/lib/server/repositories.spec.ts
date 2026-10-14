@@ -11,6 +11,7 @@ const ALICE = 'p-alice';
  *  personal dōjō. `organization/other` exists but she is not a member. */
 function tables(): Record<string, FakeTable> {
 	return {
+		'rpc:my_graph_branches': { rows: [] },
 		memberships: {
 			rows: [
 				{ id: 'm1', tenant_id: 't-acme', user_id: ALICE },
@@ -205,6 +206,29 @@ describe('syncPlan', () => {
 		const db = fakeDojoDb(withView(MINE));
 		const plan = await syncPlan(db as never);
 		expect(plan.allowed[0].tenant_id).toBe('t-acme');
+	});
+
+	it('carries each repository\'s tracked graph branches, so the daemon pushes only checkouts on them', async () => {
+		// graph-sync.md §9: the dōjō says which branches; the daemon contributes a
+		// checkout only when its branch is one of them. A repository tracking none
+		// carries [] — its graph does not sync — never a guessed main.
+		const db = fakeDojoDb({
+			...withView(MINE),
+			'rpc:my_graph_branches': {
+				rows: [
+					{ repository_id: 'r1', branch: 'production', is_default: false },
+					{ repository_id: 'r1', branch: 'main', is_default: true }
+				]
+			}
+		});
+		const plan = await syncPlan(db as never);
+		const api = plan.allowed.find((a) => a.repo_key === 'github.com/acme/api');
+		const web = plan.allowed.find((a) => a.repo_key === 'github.com/acme/web');
+		expect(api?.graph_branches).toEqual([
+			{ branch: 'main', is_default: true },
+			{ branch: 'production', is_default: false }
+		]);
+		expect(web?.graph_branches).toEqual([]);
 	});
 
 	it('carries the metrics a tenant has switched OFF for that repository', async () => {

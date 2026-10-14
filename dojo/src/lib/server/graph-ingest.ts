@@ -8,6 +8,7 @@
 // the caller's repositories, refuses by name what it can, and checks the shape.
 import { refusalStatus } from './db-refusal';
 import { AdminError, type DojoClient } from './admin-data';
+import { readAllPages } from './repositories';
 
 /** What the daemon sends. Slices are passed through: their shape is the
  *  function's to read, and an unreadable field is its to refuse. */
@@ -25,9 +26,6 @@ export interface GraphPushResult {
 	refused_older: number;
 	pruned: number;
 }
-
-/** PostgREST's row ceiling (`PGRST_DB_MAX_ROWS`); a read is paged under it. */
-const PAGE = 1000;
 
 const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 
@@ -104,14 +102,8 @@ export async function graphHashes(
 ): Promise<{ files: Record<string, string> }> {
 	if (!nonEmpty(repoKey) || !nonEmpty(branch)) throw new AdminError(400, 'repo_key and branch are required');
 	const repositoryId = await myRepository(db, repoKey);
-	const files: Record<string, string> = {};
-	for (let from = 0; ; from += PAGE) {
-		const { data, error } = await db
-			.rpc('graph_file_hashes', { p_repository_id: repositoryId, p_branch: branch })
-			.range(from, from + PAGE - 1);
-		if (error) throw new AdminError(refusalStatus(error), error.message);
-		const page = (data ?? []) as { path: string; content_hash: string }[];
-		for (const r of page) files[r.path] = r.content_hash;
-		if (page.length < PAGE) return { files };
-	}
+	const rows = await readAllPages<{ path: string; content_hash: string }>((from, to) =>
+		db.rpc('graph_file_hashes', { p_repository_id: repositoryId, p_branch: branch }).range(from, to)
+	);
+	return { files: Object.fromEntries(rows.map((r) => [r.path, r.content_hash])) };
 }
