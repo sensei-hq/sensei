@@ -16,7 +16,11 @@ set search_path to dojo, extensions;
 -- number of rows written.
 --
 -- SECURITY DEFINER: dojo.repository_metrics takes no session write.
-create or replace function dojo.upsert_repository_metrics(p_rows jsonb)
+-- Named afresh (was dojo.upsert_repository_metrics, which wrote every row as
+-- scope 'repo'): a Worker that sends user-scoped rows to a database still on the
+-- old function must fail loudly — "function does not exist" — never file a
+-- person's row as repository-wide (#240).
+create or replace function dojo.file_metric_rows(p_rows jsonb)
     returns integer
     language plpgsql
     volatile
@@ -80,10 +84,10 @@ begin
 end;
 $$;
 
-revoke all on function dojo.upsert_repository_metrics(jsonb) from public;
-grant execute on function dojo.upsert_repository_metrics(jsonb) to authenticated;
+revoke all on function dojo.file_metric_rows(jsonb) from public;
+grant execute on function dojo.file_metric_rows(jsonb) to authenticated;
 
-comment on function dojo.upsert_repository_metrics(jsonb) is
+comment on function dojo.file_metric_rows(jsonb) is
 'File a batch of metric rows for the caller — repo-scoped, or user-scoped and
 then the caller''s own (principal from the session, never the input; #240). Every row must name a
 repository the caller may sync (their own verdict row); the tenant comes from

@@ -23,6 +23,10 @@ are marked **BREAKING**.
   The dōjō files them under the person from the session; their team lead and a
   tenant admin can read them (access matrix). Colleagues' commits and unverified
   addresses stay on the machine, counted in the sync log.
+  **Deploy order:** the ingest now calls `dojo.file_metric_rows`; until the
+  release's `deploy-dojo` job applies it, metric pushes fail loudly ("function
+  does not exist") and retry, rather than the old `upsert_repository_metrics`
+  filing a person's row as repository-wide. Drop the old function once deployed.
 - **A team sees THAT a run is going on its project** (#252) — status only,
   never content: `GET …/relay/status` over `dojo.peer_run_status`, for the
   run's owner, a member or lead of a team owning the project, and a tenant

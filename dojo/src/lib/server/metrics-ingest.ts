@@ -60,12 +60,12 @@ export interface IngestResult {
  *
  * This side RESOLVES: each row to one of the caller's repositories (their own
  * verdict rows, from dojo.my_repositories()) and to a catalogue metric, and
- * rejects by name what it can. The database WRITES: dojo.upsert_repository_metrics
+ * rejects by name what it can. The database WRITES: dojo.file_metric_rows
  * re-checks every row against the caller's own verdict, takes the tenant from
  * it, and upserts on the seven-column key — one call for the batch.
  *
  * **A `scope='user'` row is the caller's own** (#240). It carries no person:
- * `dojo.upsert_repository_metrics` stamps `principal_id` from the session, never
+ * `dojo.file_metric_rows` stamps `principal_id` from the session, never
  * from the input, so no row can be filed under a colleague. The daemon decides
  * which of its rows are provably the signed-in person's before sending. Any
  * other scope is refused by name.
@@ -162,7 +162,7 @@ export async function ingestMetrics(db: DojoClient, rows: MetricInput[]): Promis
 	}
 
 	if (toWrite.length > 0) {
-		const { error } = await db.rpc('upsert_repository_metrics', { p_rows: toWrite });
+		const { error } = await db.rpc('file_metric_rows', { p_rows: toWrite });
 		if (error) throw new AdminError(refusalStatus(error), error.message);
 	}
 	return { accepted: toWrite.length, rejected };
