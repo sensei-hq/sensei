@@ -990,18 +990,16 @@ export function senseiApi(port: number) {
     },
 
     // #84 T2 Slice A — discovered MCP servers (Claude / Cursor / Zed configs).
+    // Error-propagating: an empty list is "nothing discovered", so a failed
+    // read must not come back as one; nor a refused toggle as a done one.
     getMcpServers: (projectId?: string) => {
       const q = projectId ? `?project_id=${enc(projectId)}` : '';
-      return get<{ servers: McpServerRow[] }>(
-        `/api/instruments/mcp-servers${q}`, { servers: [] },
-      );
+      return tryGet<{ servers: McpServerRow[] }>(`/api/instruments/mcp-servers${q}`);
     },
     setMcpServerEnabled: (id: string, enabled: boolean) =>
-      put(`/api/instruments/mcp-servers/${enc(id)}/enabled`, { enabled }),
+      tryPut(`/api/instruments/mcp-servers/${enc(id)}/enabled`, { enabled }),
     refreshMcpServers: () =>
-      post<{ discovered: number; pruned: number }>(
-        '/api/instruments/mcp-servers/refresh', {}, { discovered: 0, pruned: 0 },
-      ),
+      tryPost<{ discovered: number; pruned: number }>('/api/instruments/mcp-servers/refresh', {}),
 
     // #84 T2 Slice B — cached tool manifest per server. `?refresh=true`
     // forces a re-probe; `?probe=false` returns stale-badged cache without
