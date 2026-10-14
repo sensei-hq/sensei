@@ -2,7 +2,7 @@
 
 **State 2026-10-14.** v0.13.0 shipped (the dōjō takes the person's session
 only; production 401s a device token). History scrub done. Working the queue
-on `develop` (`14422e2e`), toward 0.14.0.
+on `develop` (`9eb44cdf`), toward 0.14.0.
 
 | increment | status |
 |---|---|
@@ -11,10 +11,12 @@ on `develop` (`14422e2e`), toward 0.14.0.
 | #241 org-home needs band = triage queue; health alerts "not measured" | DONE `da9b5419` (sparkline/needs/billing wait on sources) |
 | #252 a team sees THAT a run is going (status only) | DONE `6176afd0` |
 | #240 provable user-scoped metrics reach the dōjō | DONE `79f14390`, `6cd03d62` |
-| #245 app e2e gate | PARTIAL `42bcca43`…`14422e2e` — all known groups green; #267 CLOSED `656027f7` (e2e under throwaway HOME); left: Instruments call, full-suite count |
+| #245 app e2e gate | 142 pass / 2 fail / 20 skip (`9f7cfdf4`); boot gate now a layout-load redirect (`e0f9cec2`); left: Instruments product call |
+| #254 next ORM | MEASURED: JPA; spec 20 §8 written (`9eb44cdf`); next 8b annotation fact |
 
-**Next command:** read `/tmp/e2e-full.log` (full suite), post the count on #245,
-then #225, #238, #254.
+**Next command:** #254 8b — red test for `Annotation` facts in the Java walk
+(`crates/senseid/src/indexer/lang/java/walk.rs::annotations`).
+#225 waits on the sync-shape decision; #238 needs Claude Code ≥ 2.1.289.
 
 **Open questions (user's):**
 - Discovered-MCP-servers section and per-server toggle were dropped in the
