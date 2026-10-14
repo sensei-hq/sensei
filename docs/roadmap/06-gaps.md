@@ -21,6 +21,7 @@ its evidence, its priority, and the module it blocks. This replaces the old
 | `M-*` | metrics / health / gating |
 | `C-*` | capture / conventions / adapters / personas |
 | `G-*` | graph / visualisation |
+| `ACP-*` | relay / ACP agent runtime |
 | `X-*` | cross-cutting / docs-repo |
 
 Every row: **ID · module · one line · evidence · priority.** A gap with no
@@ -51,6 +52,12 @@ evidence is a suspicion, and gets labelled so.
 | C-22 | M3 | **VS Code: no tokens of any kind recorded** | 2026-08-26 review §What VS Code does not record | P2 (known limitation) |
 | C-23 | M3 | **VS Code: turn latency not measurable** — `responseTimestamp` usually equals `timestamp`, elapsed time is not measurable | 2026-08-26 review §What VS Code does not record | P2 (known limitation) |
 | C-24 | M3 | **Cursor adapter: no real sample data to verify against** — the only adapter with no real data behind it | 2026-08-26 review §Cursor, §Suggested order | P1 |
+| ACP-1 | M21 | No ACP-native driver for Claude (hooks are legacy) | `relay_drivers/claude.rs` uses hooks, not ACP | P1 |
+| ACP-2 | M21 | ACP driver `drive_step` unsupported — observe only | `acp.rs`: `drive_step` returns unsupported | P1 |
+| ACP-3 | M21 | No agent capability negotiation (tools, modes, limits) | ACP protocol supports; not implemented | P2 |
+| ACP-4 | M21 | No streaming response handling in relay | streaming not parsed in transcript or relay | P2 |
+| ACP-5 | M21 | Permission/gate flow not implemented for ACP | only Claude hooks have gate logic | P2 |
+| ACP-6 | M21 | Model selection via ACP not wired | ACP supports; not used | P3 |
 | T-1 | T3 | tracker adapters (Jira/ADO) mockup-only; 2/7 gates buildable now, 2 scoped-read, 3 on #156 | reorg §9.2 | P1 |
 | T-2 | T2 | join/membership flow dead ("Join" → 403) | plan gap analysis | P1 |
 | F-3 | T1 | Dōjō sync never worked | production-readiness → `07-quality.md` | P1 |

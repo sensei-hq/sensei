@@ -38,6 +38,17 @@ they produce the guiding principles. **Recommendations & guidance come later**,
 once the analysis reports give something to guide with. MVP grouping + phases
 are decided together, after every bullet is written up.
 
+## Requirements & assessments
+
+Fleshed-out requirements pulled from the mockups + legacy depth, and depth
+reviews of existing specs. These feed the module PRDs; they are not PRDs
+themselves.
+
+- [`project-management-detailed-requirements.md`](project-management-detailed-requirements.md) — the M16 project window: shell/nav, sections, settings, the diagrams embed protocol, permissions, acceptance criteria.
+- [`integrations-and-gating-requirements.md`](integrations-and-gating-requirements.md) — T3: external trackers (Jira · ADO · GitHub Issues · Slack), the target inheritance ladder, the seven code-health targets, the gate/improvement split and own-baseline ratchet, the sprint scorecard — **plus three spec contradictions to resolve**.
+- [`diagrams-zoom-pan-detail-requirements.md`](diagrams-zoom-pan-detail-requirements.md) — Atlas + diagrams: controlled zoom/pan, detail levels (LOD), and the indexer depth-scoping they need (G-1).
+- [`governance-track-depth-review.md`](governance-track-depth-review.md) — depth verdict on M13/M9/M10/T1/T2; the authoring surface (epic #91) is the one real gap.
+
 
 ## Layers
 
