@@ -66,9 +66,12 @@ async function clearRoots(tauriPage: TauriPageLike): Promise<void> {
   const removes = tauriPage.locator('[data-testid="root-remove"]');
   // Remove one at a time, waiting for EACH removal (api + state update) to land
   // before the next click — clicking all at once races the async removals and
-  // leaves a residual root, which then fails a "no roots" assertion.
+  // leaves a residual root, which then fails a "no roots" assertion. The × only
+  // opens the keep-or-remove panel (#247); the row goes once Remove is chosen.
   for (let n = await removes.count(); n > 0; n--) {
     await removes.first().click();
+    await tauriPage.waitForSelector('[data-testid="root-removal-remove"]', 30_000);
+    await tauriPage.locator('[data-testid="root-removal-remove"]').click();
     await expect(removes).toHaveCount(n - 1, { timeout: 10_000 });
   }
 }
