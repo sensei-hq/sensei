@@ -1,7 +1,8 @@
 # Governance Track — PRD Depth Review
 
 > **Status:** Assessment (2026-10-14). Answers one question: *are the governance
-> track's PRD specs deep enough to build from?* Findings only — no spec edits here.
+> track's PRD specs deep enough to build from?* Findings only — the spec edits live
+> in the specs; the ✅ notes below point at them.
 > **Acted on 2026-10-14 — every finding closed:** §3.1–3.2 in
 > [T2 *The governance authoring surface*](../prd/modules/04-team/02-dojo-consoles/README.md#the-governance-authoring-surface),
 > §3.3 in M13 *Instruction delivery & stickiness*, §3.4 in
@@ -18,16 +19,17 @@
 
 | Spec | Lines | Scenarios | Verdict |
 |---|---:|---:|---|
-| **M13** Governance & Rules | 170 | 120 | ✅ **Deep** — the strongest spec in the track |
+| **M13** Governance & Rules | 259 | 168 | ✅ **Deep** (2026-10-14) — the strongest spec in the track; stance linked to T2, delivery/stickiness specified |
 | **M9** Memory & Knowledge | 154 | 150 | ✅ **Deep** |
 | **M10** Patterns & Conventions | 146 | 111 | ✅ **Sufficient** |
 | **M11** Traceability & Doc Drift | 135 | 106 | ✅ Sufficient (adjacent) |
 | **M12** Libraries | 129 | 147 | ✅ Sufficient (adjacent) |
-| **T1** Dōjō Core | 159 | 443 | ✅ **Deep** |
+| **T1** Dōjō Core | 167 | 451 | ✅ **Deep** (2026-10-14) — federation · routing · anonymization; links the canonical resolution order |
 | **T2** Dōjō Consoles | 403 | 335 | ✅ **Deep** (2026-10-14) — role routing **and** the authoring surface: ladder · stance · artifact kinds · inherit/override · onboarding preview · library · playbook proposals |
 
 Supporting design depth (not PRDs, but the source the specs fold):
-`design/governance.md` (138), `design/instruction-delivery-model.md` (319),
+`design/governance.md` (170, incl. the canonical resolution order),
+`design/instruction-delivery-model.md` (319),
 `spec/pipeline/governance.md` (317), `features/governance/feature.md` (87),
 `features/05-governance.md` (137).
 
@@ -45,14 +47,15 @@ dedup, cached 5 min), tier-2 LLM consolidation, the four enforcement agents with
 their audit tables, compliance packs, the personal `~/.sensei/rules.md` hot-reload,
 and the solution cascade. Its signals table has worked examples and its wrong-gate
 list is specific (priority inversion, mandatory relaxation, provenance break).
-Scenarios are pinned to real test names.
+Scenarios are pinned to real test names. Delivery/stickiness (Option C) is now a
+section of its own, and the stance axes live in T2 and are linked, not restated.
 
 **M9 / M10** mirror that depth for memory promotion and pattern sources.
 
 **T1** is the deepest team spec: routing rules, the election-vs-mandate two-row
 invariant, `NULLS NOT DISTINCT` idempotency, universal-strip anonymization, the
 three-step resolution order (confidentiality → mandatory-lock → specificity), and
-443 lines of scenarios.
+451 lines of scenarios.
 
 ---
 
