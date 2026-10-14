@@ -2,6 +2,9 @@
 
 > **Status:** Assessment (2026-10-14). Answers one question: *are the governance
 > track's PRD specs deep enough to build from?* Findings only — no spec edits here.
+> **Acted on 2026-10-14:** §3.1 and §3.2 are now specified in T2
+> ([*The governance authoring surface*](../prd/modules/04-team/02-dojo-consoles/README.md#the-governance-authoring-surface));
+> §3.3–3.5 remain open (§5).
 > **Track:** epic [#91](https://github.com/sensei-hq/sensei/issues/91) — *Dōjō
 > governance track: admin site + policies + preferences + skills/agents* — plus the
 > governance half of the insight plane.
@@ -19,7 +22,7 @@
 | **M11** Traceability & Doc Drift | 135 | 106 | ✅ Sufficient (adjacent) |
 | **M12** Libraries | 129 | 147 | ✅ Sufficient (adjacent) |
 | **T1** Dōjō Core | 159 | 443 | ✅ **Deep** |
-| **T2** Dōjō Consoles | 146 | 170 | 🟡 **Thin on authoring** — role routing is deep, the authoring surface is one line |
+| **T2** Dōjō Consoles | 403 | 335 | ✅ **Deep** (2026-10-14) — role routing **and** the authoring surface: ladder · stance · artifact kinds · inherit/override · onboarding preview · library · playbook proposals |
 
 Supporting design depth (not PRDs, but the source the specs fold):
 `design/governance.md` (138), `design/instruction-delivery-model.md` (319),
@@ -79,20 +82,26 @@ Missing requirements (all in the mockup):
 | **Playbook-learning proposals** — accept a re-weighting → becomes a rule at this scope | `PlaybookReview` | M13 lists `accept_playbook_rule` / `list_playbook_rule_proposals` as MCP surfaces, not requirements |
 
 **Recommendation:** a module spec (or a T2 subsection) for **Dōjō Governance
-Authoring** with the scope ladder, the four stance axes, the five artifact kinds,
+Authoring** with the scope ladder, the stance dials, the five artifact kinds,
 inherit/override rendering, the onboarding preview, and library browse. This is the
 single largest depth gap in the track.
 
+> **✅ Resolved 2026-10-14.** Written as a T2 section —
+> [*The governance authoring surface*](../prd/modules/04-team/02-dojo-consoles/README.md#the-governance-authoring-surface)
+> — with `scenarios/dojo-governance-authoring.feature`. The stance model (§3.2)
+> is specified there too; the remaining insertions are §3.3–3.5.
+
 ### 3.2 The **stance** model is under-specified
 
-The mockup's stance is four axes × three stops, each with a consequence line:
+The mockup's stance is **three dials plus a fixed floor**, each dial's stop
+carrying a consequence line:
 
 | Axis | Stops | Consequence (low → high) |
 |---|---|---|
 | Autonomy | Gate often · Balanced · Run free | every risky step gates → only flagged commands gate |
 | Sharing | Manual · Opt-in · Automatic | nothing leaves → past the bar leaves on a cadence |
 | Review | 1 approval · 2 approvals · Consensus | one maintainer → all scope owners |
-| Anonymization | (mock shows "always on" for client scope) | client work is never un-anonymized |
+| Anonymization | *no stops* — the mock shows "always on" | client work is never un-anonymized |
 
 M13's feature file already pins the behaviour (`most_specific_scoped_stance_beats_default_and_lower_rungs`,
 `strict_fails_closed_on_every_dial`, `composes_effective_rules_in_daemon_scope_vocabulary_strongest_first`),
@@ -100,7 +109,12 @@ but **the README never states the axes, the stop semantics, or the resolution
 rule**. A builder reading only M13 cannot implement stance.
 
 **Recommendation:** add a "Stance" block to M13 (or the new authoring spec) with the
-four axes, the 3-stop semantics, "most specific wins", and fail-closed strict.
+three dials, the 3-stop semantics, "most specific wins", and fail-closed strict.
+
+> **✅ Done 2026-10-14** in the T2 authoring section (§Stance) — the three dials
+> with per-stop consequences, the default, most-specific resolution, and the
+> strict posture (flagged: the mock has no strict control). M13 still needs its
+> one-line link (§5.2).
 
 ### 3.3 Instruction **stickiness** is designed, not specified
 
@@ -156,6 +170,10 @@ UI reaches it). The mockup's "Browse library →" is exactly the missing surface
 **Recommendation:** fold this into the authoring spec (§3.1) as the library entry
 point, and file it as a gap row if it isn't one already.
 
+> **✅ Done 2026-10-14.** Folded into the T2 authoring section (constitution
+> library) and carried in T2's Open gaps. Already tracked as M13's `C-2`
+> follow-on, so no new gap row is needed.
+
 ---
 
 ## 4 · Depth verdict, per the original question
@@ -165,8 +183,8 @@ point, and file it as a gap row if it isn't one already.
 | Is M13 deep enough for the **solo/rule-model** half? | **Yes.** Deep, specific, test-pinned. Its only content gap is stance + stickiness (§3.2–3.3). |
 | Are M9 / M10 deep enough? | **Yes.** |
 | Are T1 / T2 deep enough for **membership + routing**? | **T1 yes; T2 yes for role routing.** |
-| Is the **Dōjō governance authoring surface** (epic #91) specced? | **No.** It is mock + one T2 line. Scope ladder, stance dials, the five artifact kinds, inherit/override display, onboarding preview and the constitution library are unowned (§3.1). |
-| One-line verdict | **The rule *engine* is well specified; the *authoring surface* is not.** Add one authoring module spec and three small insertions (stance, stickiness, resolution order), and the track is complete. |
+| Is the **Dōjō governance authoring surface** (epic #91) specced? | **Yes (2026-10-14).** The scope ladder, stance dials, the five artifact kinds, inherit/override display, onboarding preview and the constitution library are now a T2 section + scenario file (§3.1 ✅). |
+| One-line verdict | **The rule *engine* was well specified; the *authoring surface* is now too.** Remaining: three small insertions — stickiness (§3.3), one canonical resolution order (§3.4), and T1's Dōjō-sync wrong gate (§3.5). |
 
 ---
 
@@ -174,15 +192,18 @@ point, and file it as a gap row if it isn't one already.
 
 1. **New module spec — Dōjō Governance Authoring** (T2 subsection or its own
    `05-…`): scope ladder · stance · authored artifact kinds · inherit/override
-   rendering · onboarding preview · constitution library. *(§3.1)*
+   rendering · onboarding preview · constitution library. *(§3.1)* —
+   **✅ done** as a T2 section + `dojo-governance-authoring.feature`.
 2. **M13 — add a Stance block** and a Stickiness block, or link the authoring spec.
-   *(§3.2–3.3)*
+   *(§3.2–3.3)* — **🟡 half done**: stance is specified in T2; M13's link and the
+   stickiness block are still open.
 3. **One canonical resolution-order paragraph** (confidentiality · enforcement ·
-   priority · scope), linked from M13 and T1. *(§3.4)*
+   priority · scope), linked from M13 and T1. *(§3.4)* — **⛔ open.**
 4. **T1 — new wrong gate + scenario** for "a Dōjō-authored rule reaches the
-   member's `get_rules`". *(§3.5)*
+   member's `get_rules`". *(§3.5)* — **⛔ open.**
 5. **Gap row** for the unreachable opt-in pack (ponytail) if not already tracked.
-   *(§3.6)*
+   *(§3.6)* — **✅ done**: folded into the T2 library section; already tracked as
+   M13's `C-2` follow-on.
 
 None of these require a decision on top of the existing ones (D-RULEPACK, D-SEED,
 D-LOCAL-PACKS, D-PACK-KIND, D-INJECT already settle the mechanics) — they are
