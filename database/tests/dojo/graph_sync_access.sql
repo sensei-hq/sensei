@@ -10,9 +10,12 @@
 -- file), replaced whole. A manifest prunes the files absent from it — only when
 -- its commit is at least the repository's newest accepted commit.
 --
--- The branch: one per repository, coalesce(graph_branch, default_branch). A
--- slice from another branch is refused (branch_mismatch); with neither known,
--- nothing is filed (branch_unknown) — never a guessed main.
+-- Branches: a repository's graph is kept per TRACKED branch — the rows of
+-- dojo.repository_graph_branches (the forge default and any the team adds). A
+-- slice from an untracked branch is refused (branch_not_tracked); with no
+-- tracked branch, nothing is filed (branch_unknown) — never a guessed main. Two
+-- tracked branches are two graphs side by side; removing a branch removes its
+-- graph and nothing else.
 --
 -- Reads: dojo.can_read_repository — the repo-scoped rule repository metrics use.
 --
@@ -42,17 +45,21 @@ insert into dojo.billing_accounts (tenant_id, plan, status, period_start, period
   ('b0000000-0000-4000-8000-00000000014a', 'team', 'active', current_date - 1, current_date + 30);
 insert into dojo.tenant_share_policy (tenant_id, private_repos_shared) values ('b0000000-0000-4000-8000-00000000014a', true);
 
--- 1 T private (syncs for ola via the org policy; default branch main) ·
--- 2 T public (nobody elected it) · 3 T private, branch never captured ·
--- 4 U public (not ola's) · 5 T private, default main overridden to develop
-insert into dojo.repositories (id, tenant_id, repo_key, name, visibility, visibility_captured_at, provider, default_branch, graph_branch) values
-  ('92000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-00000000014a', 'github.com/ztest-gs/priv', 'priv', 'private', now(), 'github', 'main', null),
-  ('92000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-00000000014a', 'github.com/ztest-gs/pub',  'pub',  'public',  now(), 'github', 'main', null),
-  ('92000000-0000-4000-8000-000000000003', 'b0000000-0000-4000-8000-00000000014a', 'github.com/ztest-gs/nob',  'nob',  'private', now(), 'github', null,   null),
-  ('92000000-0000-4000-8000-000000000004', 'b0000000-0000-4000-8000-00000000014c', 'github.com/ztest-gu/x',    'x',    'public',  now(), 'github', 'main', null),
-  ('92000000-0000-4000-8000-000000000005', 'b0000000-0000-4000-8000-00000000014a', 'github.com/ztest-gs/dev',  'dev',  'private', now(), 'github', 'main', 'develop');
+-- 1 T private (syncs for ola via the org policy) · 2 T public (nobody elected it) ·
+-- 3 T private, no branch tracked · 4 U public (not ola's)
+insert into dojo.repositories (id, tenant_id, repo_key, name, visibility, visibility_captured_at, provider, default_branch) values
+  ('92000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-00000000014a', 'github.com/ztest-gs/priv', 'priv', 'private', now(), 'github', 'main'),
+  ('92000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-00000000014a', 'github.com/ztest-gs/pub',  'pub',  'public',  now(), 'github', 'main'),
+  ('92000000-0000-4000-8000-000000000003', 'b0000000-0000-4000-8000-00000000014a', 'github.com/ztest-gs/nob',  'nob',  'private', now(), 'github', null),
+  ('92000000-0000-4000-8000-000000000004', 'b0000000-0000-4000-8000-00000000014c', 'github.com/ztest-gu/x',    'x',    'public',  now(), 'github', 'main');
+-- Repository 1 tracks its default (main) and production.
+insert into dojo.repository_graph_branches (repository_id, tenant_id, branch, is_default, label) values
+  ('92000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-00000000014a', 'main',       true,  null),
+  ('92000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-00000000014a', 'production', false, 'production'),
+  ('92000000-0000-4000-8000-000000000002', 'b0000000-0000-4000-8000-00000000014a', 'main',       true,  null),
+  ('92000000-0000-4000-8000-000000000004', 'b0000000-0000-4000-8000-00000000014c', 'main',       true,  null);
 
--- ola is on team X, which owns project P holding repositories 1 and 5; eve is
+-- ola is on team X, which owns project P holding repository 1; eve is
 -- on no team, so she reads nothing.
 insert into dojo.projects (id, user_id, tenant_id, slug, name) values
   ('c0000000-0000-4000-8000-0000000000b1', 'a0000000-0000-4000-8000-000000000141',
@@ -64,8 +71,7 @@ insert into dojo.team_members (team_id, principal_id, role) values
 insert into dojo.team_projects (team_id, project_id) values
   ('d0000000-0000-4000-8000-0000000000b1', 'c0000000-0000-4000-8000-0000000000b1');
 insert into dojo.repositories_in_projects (project_id, repository_id, tenant_id) values
-  ('c0000000-0000-4000-8000-0000000000b1', '92000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-00000000014a'),
-  ('c0000000-0000-4000-8000-0000000000b1', '92000000-0000-4000-8000-000000000005', 'b0000000-0000-4000-8000-00000000014a');
+  ('c0000000-0000-4000-8000-0000000000b1', '92000000-0000-4000-8000-000000000001', 'b0000000-0000-4000-8000-00000000014a');
 
 set local role authenticated;
 
@@ -138,45 +144,65 @@ begin
     -- ── order: an older commit does not roll a file back ─────────────────────
     r := dojo.file_graph_slices(repo, c0, jsonb_build_array(jsonb_set(b, '{content_hash}', '"hb0"')), null);
     if (r ->> 'refused_older')::int <> 1 then raise exception 'order: an older slice should be refused and counted, got %', r; end if;
-    if (select content_hash from dojo.graph_files where repository_id = repo and path = 'src/b.ts') <> 'hb1' then
+    if (select content_hash from dojo.graph_files where repository_id = repo and branch = 'main' and path = 'src/b.ts') <> 'hb1' then
         raise exception 'order: an older commit rolled b.ts back';
     end if;
 
     -- ── prune: a stale manifest prunes nothing; a current one prunes ─────────
     perform dojo.file_graph_slices(repo, c0, '[]'::jsonb, '{"src/a.ts": "ha2", "src/c.ts": "hc1"}'::jsonb);
-    if not exists (select 1 from dojo.graph_files where repository_id = repo and path = 'src/b.ts') then
+    if not exists (select 1 from dojo.graph_files where repository_id = repo and branch = 'main' and path = 'src/b.ts') then
         raise exception 'prune: a manifest older than the newest accepted commit pruned b.ts';
     end if;
     r := dojo.file_graph_slices(repo, c2, '[]'::jsonb, '{"src/a.ts": "ha2", "src/c.ts": "hc1"}'::jsonb);
-    if exists (select 1 from dojo.graph_files where repository_id = repo and path = 'src/b.ts')
-       or exists (select 1 from dojo.graph_nodes where repository_id = repo and file_path = 'src/b.ts') then
+    if exists (select 1 from dojo.graph_files where repository_id = repo and branch = 'main' and path = 'src/b.ts')
+       or exists (select 1 from dojo.graph_nodes where repository_id = repo and branch = 'main' and file_path = 'src/b.ts') then
         raise exception 'prune: b.ts is absent from a current manifest and should be gone';
     end if;
-    if not exists (select 1 from dojo.graph_nodes where repository_id = repo and file_path is null) then
+    if not exists (select 1 from dojo.graph_nodes where repository_id = repo and branch = 'main' and file_path is null) then
         raise exception 'prune: the unplaced nodes are not a file and must survive a manifest';
     end if;
 
-    -- ── branch: the repository's one branch, never a guess ───────────────────
+    -- ── branch: tracked branches only, never a guess ─────────────────────────
     begin
         perform dojo.file_graph_slices(repo, c1 || '{"branch": "feature-x"}', jsonb_build_array(b), null);
-        raise exception 'branch: a slice from another branch was filed';
+        raise exception 'branch: a slice from an untracked branch was filed';
     exception when invalid_parameter_value then
-        if sqlerrm not like '%branch_mismatch%' then raise exception 'branch: wrong refusal: %', sqlerrm; end if;
+        if sqlerrm not like '%branch_not_tracked%' then raise exception 'branch: wrong refusal: %', sqlerrm; end if;
     end;
     begin
         perform dojo.file_graph_slices('92000000-0000-4000-8000-000000000003', c1, jsonb_build_array(b), null);
-        raise exception 'branch: a repository with no known branch was filed under a guess';
+        raise exception 'branch: a repository tracking no branch was filed under a guess';
     exception when invalid_parameter_value then
         if sqlerrm not like '%branch_unknown%' then raise exception 'branch: wrong refusal: %', sqlerrm; end if;
     end;
-    -- The override wins over the forge default.
-    begin
-        perform dojo.file_graph_slices('92000000-0000-4000-8000-000000000005', c1, jsonb_build_array(b), null);
-        raise exception 'branch: the forge default was accepted where the team overrode it to develop';
-    exception when invalid_parameter_value then null;
-    end;
-    r := dojo.file_graph_slices('92000000-0000-4000-8000-000000000005', c1 || '{"branch": "develop"}', jsonb_build_array(b), null);
-    if (r ->> 'files')::int <> 1 then raise exception 'branch: the overriding branch should be filed, got %', r; end if;
+
+    -- ── two branches: production is a second graph, beside main ─────────────
+    -- Dated before main's head: branches do not order each other.
+    r := dojo.file_graph_slices(repo, c0 || '{"branch": "production"}', jsonb_build_array(
+        jsonb_build_object('path', 'src/a.ts', 'content_hash', 'hp1',
+            'nodes', jsonb_build_array(jsonb_build_object('folder_path', '', 'fqn', 'a.f', 'kind', 'function', 'name', 'f')),
+            'edges', '[]'::jsonb),
+        jsonb_build_object('path', 'src/p.ts', 'content_hash', 'hpp',
+            'nodes', jsonb_build_array(jsonb_build_object('folder_path', '', 'fqn', 'p.q', 'kind', 'function', 'name', 'q')),
+            'edges', '[]'::jsonb)), null);
+    if (r ->> 'files')::int <> 2 then raise exception 'two branches: production''s slices should land, got %', r; end if;
+    if (select content_hash from dojo.graph_files where repository_id = repo and branch = 'main' and path = 'src/a.ts') <> 'ha2' then
+        raise exception 'two branches: production''s a.ts overwrote main''s';
+    end if;
+    select count(*) into n from dojo.graph_nodes where repository_id = repo and branch = 'production';
+    if n <> 2 then raise exception 'two branches: production should hold its 2 nodes, holds %', n; end if;
+
+    -- main works on: re-files a.ts, re-claims a.f in c.ts, sends a manifest
+    -- without p.ts. None of it may reach production.
+    perform dojo.file_graph_slices(repo, c2, jsonb_build_array(a), null);
+    perform dojo.file_graph_slices(repo, c2, jsonb_build_array(jsonb_build_object(
+        'path', 'src/c.ts', 'content_hash', 'hc1',
+        'nodes', jsonb_build_array(jsonb_build_object('folder_path', '', 'fqn', 'a.f', 'kind', 'function', 'name', 'f')),
+        'edges', '[]'::jsonb)), '{"src/a.ts": "ha2", "src/c.ts": "hc1"}'::jsonb);
+    select count(*) into n from dojo.graph_nodes where repository_id = repo and branch = 'production';
+    if n <> 2 then raise exception 'two branches: main''s work changed production''s graph (% node(s) left of 2)', n; end if;
+    select count(*) into n from dojo.graph_files where repository_id = repo and branch = 'production';
+    if n <> 2 then raise exception 'two branches: main''s manifest pruned production''s files (% left of 2)', n; end if;
 
     -- ── access: only a repository the caller may sync ────────────────────────
     begin
@@ -207,29 +233,19 @@ begin
     if n <> 0 then raise exception 'read: a contributor on no team owning the repository read % node(s)', n; end if;
 end $$;
 
--- ── switch: the team moves the graph to develop; the main graph goes ─────────
+-- ── untrack: removing production removes its graph, and only its graph ──────
 reset role;
-update dojo.repositories set graph_branch = 'develop' where id = '92000000-0000-4000-8000-000000000001';
-set local role authenticated;
-
+delete from dojo.repository_graph_branches
+ where repository_id = '92000000-0000-4000-8000-000000000001' and branch = 'production';
 do $$
-declare
-    repo uuid := '92000000-0000-4000-8000-000000000001';
-    r    jsonb;
-    n    int;
 begin
-    perform set_config('request.jwt.claims', '{"sub":"a1000000-0000-4000-8000-000000000142"}', true);
-    -- Dated BEFORE the main head: it must still land, because main's dates say
-    -- nothing about develop.
-    r := dojo.file_graph_slices(repo, '{"branch": "develop", "sha": "d1", "committed_at": "2026-09-01T10:00:00Z"}',
-        jsonb_build_array(jsonb_build_object('path', 'src/d.ts', 'content_hash', 'hd1',
-            'nodes', jsonb_build_array(jsonb_build_object('folder_path', '', 'fqn', 'd.k', 'kind', 'function', 'name', 'k')),
-            'edges', '[]'::jsonb)), null);
-    if (r ->> 'files')::int <> 1 then raise exception 'switch: develop''s first slice should land, got %', r; end if;
-    select count(*) into n from dojo.graph_nodes where repository_id = repo;
-    if n <> 1 then raise exception 'switch: only develop''s node should remain, % node(s) found', n; end if;
-    if (select branch from dojo.graph_heads where repository_id = repo) <> 'develop' then
-        raise exception 'switch: the head should follow develop';
+    if exists (select 1 from dojo.graph_nodes where repository_id = '92000000-0000-4000-8000-000000000001' and branch = 'production')
+       or exists (select 1 from dojo.graph_files where repository_id = '92000000-0000-4000-8000-000000000001' and branch = 'production')
+       or exists (select 1 from dojo.graph_heads where repository_id = '92000000-0000-4000-8000-000000000001' and branch = 'production') then
+        raise exception 'untrack: production''s graph outlived its branch';
+    end if;
+    if not exists (select 1 from dojo.graph_nodes where repository_id = '92000000-0000-4000-8000-000000000001' and branch = 'main') then
+        raise exception 'untrack: removing production took main''s graph with it';
     end if;
 end $$;
 

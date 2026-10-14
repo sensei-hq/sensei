@@ -1,7 +1,8 @@
 # Daemon → dōjō graph sync — a repository's code graph, shared (#225)
 
-> **Status:** plan. Q1 (§9) answered 2026-10-14: one configured branch per
-> repository, set on the dōjō; each person tracks a branch locally.
+> **Status:** plan. Q1 (§9) answered 2026-10-14: a configured SET of tracked
+> branches per repository (the forge default, plus e.g. production), one graph
+> each; each person contributes the tracked branches they have checked out.
 >
 > **Decided 2026-10-14:** sync the **raw graph** — nodes and edges — rather than
 > derived diagram payloads or aggregates. A repository is shared, so its graph
@@ -107,10 +108,10 @@ and resolves when that file arrives.
   `dojo.graph_edges`, `dojo.graph_schema_*` — each with `tenant_id`,
   `repository_id` → `dojo.repositories(id)`, RLS on the same predicate as
   `repository_metrics` (a member of the tenant reads; nobody writes directly).
-- `dojo.graph_heads` — one row per repository: the branch and the newest
-  accepted commit (`sha`, `committed_at`); the order rule for the unplaced slice
-  and for manifests.
-- `dojo.repositories.default_branch` and `.graph_branch` (§9).
+- `dojo.graph_heads` — one row per (repository, branch): the newest accepted
+  commit (`sha`, `committed_at`); the order rule for the unplaced slice and for
+  manifests. Every `dojo.graph_*` row carries its branch.
+- `dojo.repositories.default_branch` and `dojo.repository_graph_branches` (§9).
 - `dojo.file_graph_slices(repository_id, commit, slices, manifest)` — SECURITY DEFINER,
   the `file_metric_rows` contract: principal from the session, repository checked
   against `all_my_repositories`, whole batch refused on any failure, tenant from
@@ -173,39 +174,44 @@ components are reusable; the loaders are not.
 - Author attribution on graph rows: a graph is the repository's, so rows carry
   no person (anonymisation, #224, does not arise).
 
-## 9. Decided: whose checkout (Q1)
+## 9. Decided: whose checkout, which branches (Q1)
 
 Alice indexed `main` this morning; Bob is on a feature branch with half the
 files changed. Both push the same repository. **Decided 2026-10-14: the dōjō
-holds ONE branch's graph per repository, and the dōjō says which branch.**
-Rejected: newest commit on any branch (unmerged work leaks into the shared
-graph) and one graph per branch (storage × branches, and a branch picker on
-every screen).
+holds one graph per TRACKED branch — a small set configured per repository —
+and never a mix of checkouts.** Unmerged work on an untracked branch stays local.
 
-**The branch is the dōjō's setting.** `dojo.repositories` gains:
+**The indexer already supports this.** A checkout is a folder with its own
+graph; `main` and `production` checked out side by side (two clones, or git
+worktrees) are two folders of one repository, each with its branch in
+`folders.branch` (the column's comment: "develop vs main = two folders, one
+repository"). There is no branch dimension INSIDE one folder, and none is needed.
 
-- `default_branch` — captured from the forge with visibility (GitHub's
-  `/repos/{owner}/{repo}` already returns `default_branch`; same read, same
-  rules: a read that does not succeed writes nothing).
-- `graph_branch` — an override, e.g. `develop` for a team that treats it as the
-  latest. Set by whoever holds authority over the repository's settings
+**The set is the dōjō's setting.**
+
+- `dojo.repositories.default_branch` — captured from the forge with visibility
+  (GitHub's `/repos/{owner}/{repo}` returns `default_branch`; same read, same
+  rule: a read that does not succeed writes nothing).
+- `dojo.repository_graph_branches(repository_id, branch, label)` — the tracked
+  branches beyond the default, e.g. `production`, `develop`. Added and removed
+  by whoever holds authority over the repository's settings
   (`configurable_by_me`, the rule elections use).
-- The effective branch is `coalesce(graph_branch, default_branch)`. **Neither
-  known → the repository's graph does not sync** (reason `branch_unknown`),
-  never a guessed `main`.
+- The tracked set is the default branch plus those rows. No default captured and
+  no rows → the graph does not sync (`branch_unknown`), never a guessed `main`.
+- Removing a branch from the set deletes its graph; adding one starts it empty.
+  Nothing is dropped by a change elsewhere in the set.
 
-**The dōjō enforces it.** Every slice and manifest carries its branch and
-commit; `file_graph_slices` refuses a branch other than the effective one
-(`branch_mismatch`). Per file, the newest commit wins: a slice older than the
-stored one is refused and counted, so a member a few commits behind does not
-roll the shared graph back. A manifest older than the repository's newest
-accepted commit prunes nothing.
+**The dōjō enforces it.** Every slice and manifest carries its branch and commit;
+`file_graph_slices` refuses a branch outside the set (`branch_not_tracked`). Per
+branch and file the newest commit wins: an older slice is refused and counted, so
+a member a few commits behind does not roll that branch back. A manifest older
+than its branch's newest accepted commit prunes nothing.
 
-**Each person tracks a branch locally.** A per-repository *tracked branch* in
-the app, defaulting to the dōjō's effective branch (sent with the plan), which
-the person may switch. The daemon pushes a repository's graph only while the
-checkout is on the tracked branch AND it equals the dōjō's branch; otherwise
-the repository is `skipped` with `not_on_tracked_branch` or
-`tracking_other_branch`, and the app says which — tracking your own branch is a
-local choice, and the screen must make plain that nothing of it is shared.
-Local diagrams always show the working tree, whichever branch that is.
+**Each person contributes the tracked branches they have.** The plan lists each
+repository's tracked set; the daemon pushes every local checkout whose branch is
+in it — a person with `main` and `production` worktrees contributes both. A
+checkout on any other branch is not pushed, and the app says so per checkout
+(`not_a_tracked_branch`). Local diagrams always show the working tree.
+
+**Storage is one graph per tracked branch** — which is why it is a configured
+set and not every branch. Dōjō screens show a branch picker over the tracked set.

@@ -1,6 +1,6 @@
 set search_path to dojo, extensions;
 
--- A file of a repository's shared code graph, at the commit its slice came from
+-- A file of a tracked branch of a repository's shared code graph, at the commit its slice came from
 -- (#225; docs/spec/dojo/graph-sync.md §3).
 --
 -- The unit of sync. `path` is repository-relative — the daemon rewrites it
@@ -10,12 +10,14 @@ set search_path to dojo, extensions;
 create table if not exists graph_files (
   tenant_id     uuid        not null references dojo.tenants(id) on delete cascade
 , repository_id uuid        not null references dojo.repositories(id) on delete cascade
+, branch        text        not null
 , path          text        not null
 , content_hash  text        not null
 , commit_sha    text        not null
 , committed_at  timestamptz not null
 , pushed_at     timestamptz not null default now()
-, primary key (repository_id, path)
+, primary key (repository_id, branch, path)
+, foreign key (repository_id, branch) references dojo.repository_graph_branches(repository_id, branch) on delete cascade
 );
 
 comment on table graph_files is
