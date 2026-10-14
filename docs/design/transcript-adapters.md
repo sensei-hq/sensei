@@ -1,6 +1,6 @@
 # Transcript Adapters — state and remaining gaps
 
-> **Source:** 2026-08-26 Copilot adapter review (`docs/history/2026-08-26-copilot-adapter-review.md`)
+> **Source:** 2026-08-26 Copilot adapter review — kept with the shared transcripts, not in this repository (it names the people who shared them)
 > **Status:** assimilated 2026-10-13 — fixed items are in code; remaining gaps are in
 > [`roadmap/06-gaps.md`](../roadmap/06-gaps.md) as C-16..C-24.
 
@@ -108,5 +108,4 @@ These are **not fixed in code** and are tracked in [`roadmap/06-gaps.md`](../roa
 
 - [`roadmap/06-gaps.md`](../roadmap/06-gaps.md) — C-16..C-24
 - [`crates/senseid/src/transcript/`](../../crates/senseid/src/transcript/) — three adapter files
-- [`docs/history/2026-08-26-copilot-adapter-review.md`](../history/2026-08-26-copilot-adapter-review.md) — original review (archived)
 - [`docs/reorg.md`](../reorg.md) §12 — gap register framework
