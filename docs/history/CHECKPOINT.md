@@ -1,32 +1,29 @@
 # Checkpoint
 
-**State 2026-10-13.** Slice **#236 step 4e — the daemon acts as the person,
-signing in is joining** (`docs/history/plan/2026-10-12-dojo-device-plane-as-person.md`):
-DONE on `develop` (`9cae35fd`), ships as **0.13.0** with its dōjō side.
+**State 2026-10-14.** v0.13.0 shipped (the dōjō takes the person's session
+only; production 401s a device token). History scrub done. Working the queue
+on `develop` (`6cd03d62`), toward 0.14.0.
 
 | increment | status |
 |---|---|
-| v0.12.0 released + merged (#257), dōjō live at `5ecceca` | DONE |
-| v0.12.1 hotfix: install schema converges with reconcile (enum values on upgrade), dbd 0.26 pinned everywhere (#259 → main `cc322f8e`) | DONE — CI green, dōjō `/version` 0.12.1 |
-| dōjō: tenant calls session-only, `device_token_hash` dropped, round trip live (401/403) | DONE `21647161` |
-| dōjō: `/v1/you/memberships` carries routing fields | DONE `9dc4bd83` |
-| daemon: unbound → SignedOut, `await_reply` stops on SignedOut | DONE `33f08a6c` |
-| app: connections screen → sign-in, load error ≠ empty | DONE `52893422` |
-| daemon: sync joins memberships, POST 405, `credential_ref` dropped | DONE `d54ffed0` |
-| knowledge sources hold no key | DONE `cdf2910c` |
-| docs/spec | DONE `9cae35fd` |
+| History scrub: transcript review + 5 contributor names out of all history | DONE — force-pushed develop/main/6 tags; PR refs need GitHub Support purge |
+| #266 session retrospective as an independent capability | FILED (later) |
+| #241 org-home needs band = triage queue; health alerts "not measured" | DONE `da9b5419` (sparkline/needs/billing wait on sources) |
+| #252 a team sees THAT a run is going (status only) | DONE `6176afd0` |
+| #240 provable user-scoped metrics reach the dōjō | DONE `79f14390`, `6cd03d62` |
+| #245 app e2e gate | PARTIAL `42bcca43` — harness RegExp + atlas seed fixed; 17 left |
 
-**Next command:** `make bump v=minor` from develop once the user approves 0.13.0
-(merges develop → main → dōjō deploys 4e at once).
+**Next command:** continue #245 (wizard `[data-action="next"]`, assistants dev
+hook, missing surfaces, a11y), then #225, #238, #254.
 
 **Open questions (user's):**
-- A CLI-only `brew upgrade` never deploys the schema (only first install and the
-  app's upgrade flow do) — recommend a boot-time deploy on version change.
-- `deploy-dojo` jobs for v0.12.0 / v0.12.1 await environment approval.
-- Cloudflare Workers Builds (branch) is bound to a wrongly named Worker.
+- Discovered-MCP-servers section and per-server toggle were dropped in the
+  Instruments redesign — restore, or retire their two e2e tests?
+- `deploy-dojo` for 0.13.0 awaits approval; the `device_token_hash` drop needs an
+  attended `dbd reconcile --scope dojo --allow-destructive`.
+- Stray Cloudflare build config `1ad95662…` (trigger "develop") still fails the
+  "Workers Builds: dojo" check — delete it in the dashboard.
+- Sign in under Settings → Dōjō on this machine: nothing syncs until then (#184).
 
-**Known-broken / not run:**
-- App e2e (`app/e2e/tests/dojo-binding.spec.ts`) updated but not executed.
-- Live join not exercised end-to-end (needs dōjō ≥ `9dc4bd83`); unit + stub tests only.
-- This machine's `personal/jerry` membership is unbound and its persona signed
-  out: after 0.13.0 it needs a sign-in.
+**Known-broken:** 17 e2e failures (#245); 0.14.0 needs `deploy-dojo` before
+the Worker can file metrics (`dojo.file_metric_rows`).
