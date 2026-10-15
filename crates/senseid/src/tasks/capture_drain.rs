@@ -324,6 +324,40 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// The usage mod's SessionMeasure (#238 step 2) carries the session's /cost
+    /// total; that figure, and only that, is the session's list cost.
+    #[test]
+    fn a_session_measure_yields_its_cost_total() {
+        let p = json!({"hook_event_name": "SessionMeasure", "session_id": "s", "cost": {"usd": 4.27}});
+        assert_eq!(measured_list_cost(&p), Some(4.27));
+    }
+
+    #[test]
+    fn a_zero_cost_is_a_reading_not_an_absence() {
+        let p = json!({"hook_event_name": "SessionMeasure", "cost": {"usd": 0.0}});
+        assert_eq!(measured_list_cost(&p), Some(0.0));
+    }
+
+    #[test]
+    fn a_measure_without_a_cost_ledger_yields_none_never_zero() {
+        let p = json!({"hook_event_name": "SessionMeasure", "context": {"window": 200000}});
+        assert_eq!(measured_list_cost(&p), None);
+    }
+
+    #[test]
+    fn only_a_session_measure_is_read_for_cost() {
+        let p = json!({"hook_event_name": "TurnComplete", "cost": {"usd": 4.27}});
+        assert_eq!(measured_list_cost(&p), None);
+    }
+
+    #[test]
+    fn a_negative_or_non_numeric_cost_is_not_a_reading() {
+        for cost in [json!({"usd": -1.0}), json!({"usd": "4.27"}), json!(4.27)] {
+            let p = json!({"hook_event_name": "SessionMeasure", "cost": cost});
+            assert_eq!(measured_list_cost(&p), None, "{cost}");
+        }
+    }
+
     #[test]
     fn hook_event_fields_maps_every_column_the_insert_consumes() {
         let p = json!({
