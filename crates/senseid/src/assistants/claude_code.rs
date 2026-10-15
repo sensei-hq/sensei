@@ -108,10 +108,10 @@ pub(super) fn check_plugin(manifest_path: &Path) -> AdapterCheck {
 }
 
 /// The plugin's installPath exists and its `.claude-plugin/plugin.json` declares
-/// both PreToolUse and PostToolUse hooks. The sensei plugin registers all hooks via
-/// the plugin manifest's `hooks` field (it ships no separate hooks/hooks.json), so
-/// this reads the same manifest Claude Code loads — otherwise a healthy install
-/// false-positive-fails. `install_path` is read from installed_plugins.json.
+/// both PreToolUse and PostToolUse hooks. The sensei plugin registers its command
+/// hooks via the plugin manifest's `hooks` field (its hooks/hooks.json names only
+/// the mods module, `modules`), so this reads the same manifest Claude Code loads
+/// for them — otherwise a healthy install false-positive-fails. `install_path` is read from installed_plugins.json.
 pub(super) fn check_hooks(install_path: Option<&Path>) -> AdapterCheck {
     let id = "hooks";
     let label = "hooks registered";
@@ -1292,9 +1292,10 @@ mod tests {
     }
     #[test]
     fn check_hooks_ok_when_declared_in_plugin_manifest() {
-        // The real sensei plugin declares hooks in `.claude-plugin/plugin.json`'s
-        // `hooks` field and ships NO hooks/hooks.json. The check must read the same
-        // manifest Claude Code loads, or it false-positive-fails on a healthy install.
+        // The real sensei plugin declares its command hooks in
+        // `.claude-plugin/plugin.json`'s `hooks` field; hooks/hooks.json holds only
+        // the mods `modules` list. The check must read the manifest Claude Code
+        // loads the command hooks from, or it false-positive-fails on a healthy install.
         let tmp = make_tmp_home();
         let dir = tmp.path().join("plugin");
         std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
