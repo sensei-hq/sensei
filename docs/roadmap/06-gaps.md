@@ -52,6 +52,7 @@ evidence is a suspicion, and gets labelled so.
 | C-22 | M3 | **VS Code: no tokens of any kind recorded** | 2026-08-26 review §What VS Code does not record | P2 (known limitation) |
 | C-23 | M3 | **VS Code: turn latency not measurable** — `responseTimestamp` usually equals `timestamp`, elapsed time is not measurable | 2026-08-26 review §What VS Code does not record | P2 (known limitation) |
 | C-24 | M3 | **Cursor adapter: no real sample data to verify against** — the only adapter with no real data behind it | 2026-08-26 review §Cursor, §Suggested order | P1 |
+| C-25 | M3 | **Usage & cost contract not met beyond Claude Code** — the M3 adapter contract (token split, model, billed vs list cost, per-turn usage, context, headroom) is met in full only by Claude Code (transcript + usage mod); OpenCode lacks per-turn/context, Zed and VS Code report no cost, Copilot CLI is partial (C-19), Cursor reports nothing (C-24) | `prd/modules/01-foundation/03-capture-sessions` §Usage & cost capture; #238 | P2 |
 | ACP-1 | M21 | No ACP-native driver for Claude (hooks are legacy) | `relay_drivers/claude.rs` uses hooks, not ACP | P1 |
 | ACP-2 | M21 | ACP driver `drive_step` unsupported — observe only | `acp.rs`: `drive_step` returns unsupported | P1 |
 | ACP-3 | M21 | No agent capability negotiation (tools, modes, limits) | ACP protocol supports; not implemented | P2 |
