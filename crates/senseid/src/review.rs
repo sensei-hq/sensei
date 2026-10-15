@@ -211,6 +211,42 @@ mod tests {
         resolve_risk_class(&paths.iter().map(|s| s.to_string()).collect::<Vec<_>>(), None).class
     }
 
+    // ── routing.risk_models (#238 step 3) ──────────────────────────────────
+
+    #[test]
+    fn a_configured_map_names_a_model_per_class() {
+        let m = RiskModels::parse(Some(r#"{"approve":"opus","review":"sonnet","auto":"haiku"}"#))
+            .expect("a full map parses");
+        assert_eq!(m.model_for(RiskClass::Approve), Some("opus"));
+        assert_eq!(m.model_for(RiskClass::Review), Some("sonnet"));
+        assert_eq!(m.model_for(RiskClass::Auto), Some("haiku"));
+    }
+
+    #[test]
+    fn an_unmapped_class_has_no_model_so_nothing_is_overridden() {
+        let m = RiskModels::parse(Some(r#"{"approve":"opus","auto":"  "}"#)).expect("parses");
+        assert_eq!(m.model_for(RiskClass::Approve), Some("opus"));
+        assert_eq!(m.model_for(RiskClass::Review), None);
+        assert_eq!(m.model_for(RiskClass::Auto), None, "a blank model is no model");
+    }
+
+    #[test]
+    fn no_map_is_none_not_a_default() {
+        assert!(RiskModels::parse(None).is_none());
+        assert!(RiskModels::parse(Some("  ")).is_none());
+        assert!(RiskModels::parse(Some("{}")).is_none(), "maps nothing → not configured");
+    }
+
+    #[test]
+    fn a_malformed_map_is_rejected_rather_than_half_read() {
+        assert!(RiskModels::parse(Some("opus")).is_none());
+        assert!(RiskModels::parse(Some(r#"{"approve":42}"#)).is_none());
+        assert!(
+            RiskModels::parse(Some(r#"{"aprove":"opus"}"#)).is_none(),
+            "a misspelt class must not silently map nothing"
+        );
+    }
+
     #[test]
     fn auth_and_money_and_schema_require_approve() {
         assert_eq!(class_of(&["crates/senseid/src/auth/session.rs"]), RiskClass::Approve);

@@ -340,3 +340,31 @@ pub(crate) async fn remove_all(
         })?;
     Ok(Json(result))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_subscription_must_parse_or_be_blank() {
+        let key = crate::cost::SUBSCRIPTION_CONFIG_KEY;
+        assert!(config_value_is_valid(key, r#"{"amount":200,"period":"monthly"}"#));
+        assert!(config_value_is_valid(key, ""), "blank clears the setting");
+        assert!(!config_value_is_valid(key, "two hundred"));
+    }
+
+    #[test]
+    fn a_risk_model_map_must_parse_or_be_blank() {
+        let key = crate::review::RISK_MODELS_CONFIG_KEY;
+        assert!(config_value_is_valid(key, r#"{"approve":"opus"}"#));
+        assert!(config_value_is_valid(key, " "), "blank clears the setting");
+        assert!(!config_value_is_valid(key, r#"{"aprove":"opus"}"#));
+        assert!(!config_value_is_valid(key, "{}"), "a map that maps nothing is not a setting");
+    }
+
+    #[test]
+    fn other_keys_are_not_validated_here() {
+        assert!(config_value_is_valid("theme", "anything"));
+    }
+}
+
