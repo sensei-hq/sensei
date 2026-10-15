@@ -13,8 +13,8 @@ async function daemonUrl($: EngineInterface) {
 }
 
 /**
- * POSTs `body` as JSON to the daemon's `path`, resolving the response text on a
- * 2xx and `undefined` on any failure: unreachable, non-2xx, or slower than
+ * POSTs `body` as JSON to the daemon's `path` (a GET when `body` is undefined),
+ * resolving the response text on a 2xx and `undefined` on any failure: unreachable, non-2xx, or slower than
  * `timeoutMs`. `timeoutMs: undefined` sets no bound of the plugin's own, for an
  * endpoint the daemon bounds itself: the bound is a `$.clock.sleep`, which
  * spends the hook's budget, so it cannot outlast ten seconds.
@@ -22,15 +22,14 @@ async function daemonUrl($: EngineInterface) {
 export async function request(
   $: EngineInterface,
   path: string,
-  body: string,
+  body: string | undefined,
   timeoutMs: number | undefined = REQUEST_TIMEOUT_MS,
 ) {
   const sent = $.http
-    .fetch(`${await daemonUrl($)}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    })
+    .fetch(
+      `${await daemonUrl($)}${path}`,
+      body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body },
+    )
     .then(
       r => (r.ok ? r.text : undefined),
       () => undefined,

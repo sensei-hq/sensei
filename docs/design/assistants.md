@@ -75,6 +75,14 @@ docs say what the user sees; this says how connect + observe actually work.
   the call; anything else keeps the engine's own verdict, so it never skips a
   permission prompt. **Fail-open** — daemon down/error leaves the engine's
   verdict. Replaces the shell `hooks/gate`, which was never registered.
+- `hooks/drive.ts` (mods module, #238) — **opt-in run drive** through the
+  plugin's `runDrive` option, off by default. When this session's `start_run`
+  creates a run, the run's dōjō nudges (`GET /api/runs/{id}/nudges`) are polled
+  every 30 s and each is submitted once as a prompt, queued by the engine until
+  the session is idle; `report_run_outcome` for that run stops it. Off, nudges
+  stay pull-only (`get_pending_nudges`) — see `../decisions.md` 2026-10-15.
+- Options are set in the plugin's `/config` rows or in settings:
+  `"pluginConfigs": { "sensei": { "options": { "relayGate": true, "runDrive": true } } }`.
 - Claude Code hook limits that shape this design: hook payloads carry no token
   or cost counts (`PostToolUse` does carry `duration_ms`), so usage comes from
   the mods module `hooks/usage.ts` — `SessionMeasure` / `TurnComplete`, see
