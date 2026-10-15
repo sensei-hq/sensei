@@ -17,6 +17,23 @@ are marked **BREAKING**.
 
 ### Added
 
+- **Claude Code usage at the source** (#238): the sensei plugin's mods module
+  (Claude Code 2.1.300+) reports each session's context fill, rate-limit
+  windows and `/cost` total, and each turn's four token counts and model.
+  The cost lands in the new `activity.sessions.list_cost_usd`. It is the list
+  price, not billed spend: `metered_cost` keeps a source's billed figure.
+  The per-assistant contract is in PRD M3 §Usage & cost capture.
+- **Subagent model by risk class** (#238): with a `routing.risk_models` map
+  configured (e.g. `{"approve":"opus","review":"sonnet","auto":"haiku"}`), a
+  spawned agent runs on the model its change's risk class maps to, through
+  `POST /api/review/subagent-model`. With no map, nothing is overridden.
+- **Opt-in relay tool gate and run drive** (#238): two plugin options, both off
+  by default (`pluginConfigs.sensei.options`).
+  - `relayGate` puts tool calls to the daemon's gate. It only tightens a
+    decision and fails open.
+  - `runDrive` submits a run's dōjō nudges as prompts, each once.
+  - The never-registered shell `hooks/gate` is removed.
+- **Settings · Dōjō says why a checkout was skipped**, in words (#225).
 - **A person's own metrics reach their dōjō** (#240): user-scoped rows that are
   provably the signed-in person's — their session metrics on a repository only
   they elected, and commit metrics under an address GitHub verified for them.
@@ -53,6 +70,17 @@ are marked **BREAKING**.
 
 ### Fixed
 
+- **A deleted file leaves the index, and so the dōjō** (#225). Two causes:
+  - A watcher batch that only deleted reached no repository.
+  - A vanished file with no symbols was never pruned. On the development
+    machine 363 of 3,078 file rows were stale (185 gone from disk, 178 under a
+    since-ignored path), and they rode in the graph manifest.
+- **A repository with an unnamed index can push its graph** (#225):
+  `dojo.graph_schema_indexes.name` is nullable, as the local column is; the
+  whole batch used to be refused.
+- **`make test` with Supabase up**: `database/tests/run.sh` runs each directory
+  against the database its scope deploys to, so `gateway/` no longer runs
+  against the dōjō.
 - **The setup/health gate no longer sticks after it recovers** (#245). SvelteKit
   caches a `reroute` result per URL for the whole session, so once `/` resolved
   to the setup screen it stayed there after setup completed — re-running setup
