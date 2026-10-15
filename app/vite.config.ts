@@ -41,14 +41,22 @@ function webkitNodeReexportFix(): Plugin {
 
       // --- app.js: wrap every node loader to await _wk_ready ---
       // WKWebView resolves import() BEFORE the module body executes (SK#15287).
-      // setTimeout(0) crosses a full event-loop iteration, guaranteeing the module
-      // body has run and _wk_ready is set before we inspect it.  Used in both dev
-      // and production so behaviour is identical in both environments.
+      // One setTimeout(0) is not always enough: WebKitGTK can leave a large graph
+      // (the root layout) unevaluated for several event-loop turns, and reading
+      // `_wk_ready` while it is still undefined skipped the wait, so the root
+      // layout's `component` reached SvelteKit as undefined and the app mounted
+      // blank with no error. The export *name* exists from link time, so
+      // `'_wk_ready' in _m` marks a transformed node; poll until the body has
+      // assigned it (bounded, so a non-WebKit engine never spins). Used in both
+      // dev and production so behaviour is identical in both environments.
+      // The replacement stays an expression (not an `async () => {}` block) so
+      // loaders that chain on the import — dev's
+      // `get_error_template = () => import(...).then(m => m.default)` — still parse.
       if (id.includes('.svelte-kit/generated/client/app.js')) {
         return code.replace(
           /\(\) => import\((['"][^'"]+['"])\)/g,
           (_, path) =>
-            `async () => { var _m = await import(${path}); await new Promise(r => setTimeout(r, 0)); if (_m._wk_ready) await _m._wk_ready; return _m; }`,
+            `() => import(${path}).then(async function (_m) { for (var _i = 0; _i < 500 && '_wk_ready' in _m && _m._wk_ready === undefined; _i++) await new Promise(r => setTimeout(r, 0)); if (_m._wk_ready) await _m._wk_ready; return _m; })`,
         );
       }
     },
@@ -75,11 +83,12 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 export default defineConfig(({ command }) => ({
   // The WebKit ES-module TDZ workaround (webkitNodeReexportFix) is only needed
   // for the Tauri WebKit webview — production builds and `tauri dev` (which sets
-  // TAURI_DEV_HOST). A plain-browser `vite dev` (used for fast visual review in
+  // TAURI_ENV_PLATFORM for its beforeDevCommand on every platform; TAURI_DEV_HOST
+  // is only set for mobile dev). A plain-browser `vite dev` (used for fast visual review in
   // Chromium/Firefox) doesn't need the generated-module rewrite, and a non-WebKit
   // parser trips on it, so skip it there; builds and tauri-dev still apply it.
   plugins: [
-    ...(command === 'build' || process.env.TAURI_DEV_HOST ? [webkitNodeReexportFix()] : []),
+    ...(command === 'build' || process.env.TAURI_ENV_PLATFORM ? [webkitNodeReexportFix()] : []),
     UnoCSS(),
     sveltekit(),
   ],

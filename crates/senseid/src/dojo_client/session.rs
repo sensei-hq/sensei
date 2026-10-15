@@ -13,6 +13,8 @@
 
 use serde::Deserialize;
 
+use crate::gateway_keys::{keychain_get, keychain_set};
+
 /// Keychain service namespace, matching `com.sensei.gateway.router.*`.
 const KEYCHAIN_SERVICE: &str = "com.sensei.supabase";
 
@@ -43,12 +45,12 @@ pub fn store_provider_token(
     persona: &str,
     token: &str,
 ) -> Result<(), crate::gateway_keys::KeychainError> {
-    keychain_write(KEYCHAIN_SERVICE, &provider_account_for(persona), token)
+    keychain_set(KEYCHAIN_SERVICE, &provider_account_for(persona), token)
 }
 
 /// The GitHub token for a persona, if the sign-in captured one.
 pub fn load_provider_token(persona: &str) -> Result<String, crate::gateway_keys::KeychainError> {
-    keychain_read(KEYCHAIN_SERVICE, &provider_account_for(persona))
+    keychain_get(KEYCHAIN_SERVICE, &provider_account_for(persona))
 }
 
 /// Slot for GitHub's own refresh token, when the OAuth App issues expiring ones.
@@ -146,13 +148,13 @@ impl Session {
 ///
 /// # Blocking
 ///
-/// Shells out to `/usr/bin/security` (~50ms). Async callers must wrap this in
-/// `spawn_blocking`, exactly as `gateway_keys` documents.
+/// Talks to the OS credential store synchronously. Async callers must wrap this
+/// in `spawn_blocking`, exactly as `gateway_keys` documents.
 pub fn store_refresh_token(
     persona: &str,
     token: &str,
 ) -> Result<(), crate::gateway_keys::KeychainError> {
-    keychain_write(KEYCHAIN_SERVICE, &account_for(persona), token)
+    keychain_set(KEYCHAIN_SERVICE, &account_for(persona), token)
 }
 
 /// The single un-namespaced slot used before sessions became per-persona.
@@ -165,19 +167,19 @@ const LEGACY_ACCOUNT: &str = "refresh_token";
 /// the daemon, invisible in the UI, and impossible to sign out of — a credential
 /// left behind with no way to revoke it.
 pub fn load_refresh_token(persona: &str) -> Result<String, crate::gateway_keys::KeychainError> {
-    match keychain_read(KEYCHAIN_SERVICE, &account_for(persona)) {
-        Ok(t) => Ok(t),
-        Err(_) => {
-            let legacy = keychain_read(KEYCHAIN_SERVICE, LEGACY_ACCOUNT)?;
+    match keychain_get(KEYCHAIN_SERVICE, &account_for(persona)) {
+        Err(crate::gateway_keys::KeychainError::NotFound) => {
+            let legacy = keychain_get(KEYCHAIN_SERVICE, LEGACY_ACCOUNT)?;
             // Move it under the persona, then drop the old slot so the migration
             // happens once and no orphan credential lingers.
-            keychain_write(KEYCHAIN_SERVICE, &account_for(persona), &legacy)?;
-            let _ = std::process::Command::new("/usr/bin/security")
-                .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", LEGACY_ACCOUNT])
-                .output();
+            keychain_set(KEYCHAIN_SERVICE, &account_for(persona), &legacy)?;
+            if let Err(e) = delete_one(LEGACY_ACCOUNT) {
+                tracing::warn!(persona, error = %e, "could not remove the pre-persona session slot");
+            }
             tracing::info!(persona, "migrated a pre-persona Supabase session into its own slot");
             Ok(legacy)
         }
+        other => other,
     }
 }
 
@@ -208,18 +210,7 @@ fn session_accounts_for(persona: &str) -> Vec<String> {
 /// A MISSING entry is success — the goal is "no token stored", and that already
 /// holds.
 fn delete_one(account: &str) -> Result<(), crate::gateway_keys::KeychainError> {
-    let out = std::process::Command::new("/usr/bin/security")
-        .args(["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account])
-        .output()
-        .map_err(crate::gateway_keys::KeychainError::from)?;
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    match out.status.success() || stderr.contains("could not be found") {
-        true => Ok(()),
-        false => Err(crate::gateway_keys::KeychainError::CommandFailed(format!(
-            "{account}: {}",
-            stderr.trim()
-        ))),
-    }
+    crate::gateway_keys::keychain_delete(KEYCHAIN_SERVICE, account)
 }
 
 /// Delete each account, and report the first real failure.
@@ -295,30 +286,6 @@ fn clear_session_with(
     delete: impl FnMut(&str) -> Result<(), crate::gateway_keys::KeychainError>,
 ) -> Result<(), crate::gateway_keys::KeychainError> {
     delete_each(&session_accounts_for(persona), delete)
-}
-
-/// Store a session secret. Delegates to [`crate::gateway_keys::keychain_set`],
-/// which keeps the secret out of `argv` — this used to pass it as an argument,
-/// where an unprivileged `ps` captured a live refresh token once per cadence.
-fn keychain_write(
-    service: &str,
-    account: &str,
-    secret: &str,
-) -> Result<(), crate::gateway_keys::KeychainError> {
-    crate::gateway_keys::keychain_set(service, account, secret)
-}
-
-fn keychain_read(
-    service: &str,
-    account: &str,
-) -> Result<String, crate::gateway_keys::KeychainError> {
-    let out = std::process::Command::new("/usr/bin/security")
-        .args(["find-generic-password", "-s", service, "-a", account, "-w"])
-        .output()?;
-    if !out.status.success() {
-        return Err(crate::gateway_keys::KeychainError::NotFound);
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 #[cfg(test)]
@@ -500,8 +467,7 @@ mod tests {
         let persona = "discard-test";
         // Skipped where the Keychain is unavailable (CI, a locked login
         // keychain). A machine that cannot store secrets is not evidence.
-        if keychain_write(KEYCHAIN_SERVICE, &provider_refresh_account_for(persona), "ghr_x")
-            .is_err()
+        if keychain_set(KEYCHAIN_SERVICE, &provider_refresh_account_for(persona), "ghr_x").is_err()
         {
             return;
         }
@@ -509,7 +475,10 @@ mod tests {
 
         assert!(discard_provider_refresh_token(persona).is_ok());
         assert!(
-            keychain_read(KEYCHAIN_SERVICE, &provider_refresh_account_for(persona)).is_err(),
+            matches!(
+                keychain_get(KEYCHAIN_SERVICE, &provider_refresh_account_for(persona)),
+                Err(crate::gateway_keys::KeychainError::NotFound)
+            ),
             "the refresh slot must be gone"
         );
         // The ACCESS token is a different credential with a live consumer and
