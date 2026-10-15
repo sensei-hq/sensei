@@ -78,6 +78,25 @@ export function agreementLine(row: SyncStateRow): string {
   return `agreed ${agreed}`;
 }
 
+/** What each recorded skip reason means for the checkout it names (#225). The
+ *  daemon records a code; a code is not something a reader should have to look up. */
+const SKIP_REASONS: Record<string, string> = {
+  not_a_tracked_branch: 'this branch is not one the dōjō tracks, so its graph stays on this machine',
+  index_not_current: 'the checkout moved to another branch since it was indexed; it syncs once re-indexed',
+};
+
+/**
+ * Pure: the line under a row — a skipped row's reason in words, a failed row's
+ * message as recorded. Only a SKIP is translated: a failure message is the
+ * fault's own text, even if it happens to spell a code. An unknown reason passes
+ * through unchanged rather than being hidden. `null` when there is nothing to say.
+ */
+export function detailLine(row: SyncStateRow): string | null {
+  if (row.last_error === null) return null;
+  if (row.state === 'skipped') return SKIP_REASONS[row.last_error] ?? row.last_error;
+  return row.last_error;
+}
+
 /** Rank of a sync state for "what most needs saying". Lower sorts first.
  *  `pending` outranks `skipped`: one is unfinished, the other is settled. */
 const STATE_RANK: Record<string, number> = {
