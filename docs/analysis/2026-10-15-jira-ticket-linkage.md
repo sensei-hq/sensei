@@ -8,6 +8,13 @@ next: /sensei:design
 
 # Jira ticket linkage — local slice (analysis)
 
+> **Superseded in part by the spec** [`spec/daemon/tracker-jira-linkage.md`](../spec/daemon/tracker-jira-linkage.md)
+> (see its "Overrides of parents" table): D7/D8 repo binding → existing
+> `repositories_in_projects` (no `tracker_links`); D10 window → by sprint state;
+> D11 issue source → Agile board endpoints, statuses gain `pending` and errors are stored
+> as fixed codes (no raw message); §3.2 routes and field names → spec R7/R8;
+> §4 sprint field → membership set. The spec is authoritative where they differ.
+
 **Ask (verbatim):** *"Connect Jira and get sprints and tickets; local sessions need
 to detect the ticket id and link it; then get metrics like hours spent on a ticket
 and total AI tokens spent for a ticket."*

@@ -75,12 +75,29 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
   the env var.
 
 - **Jira ticket linkage — local slice (T-1a + T-1d, local-first)** — analysis
-  [`analysis/2026-10-15-jira-ticket-linkage.md`](analysis/2026-10-15-jira-ticket-linkage.md).
+  [`analysis/2026-10-15-jira-ticket-linkage.md`](analysis/2026-10-15-jira-ticket-linkage.md),
+  spec [`spec/daemon/tracker-jira-linkage.md`](spec/daemon/tracker-jira-linkage.md).
   **Deliberate deviations from T3, decided 2026-10-15:** (1) local daemon first,
   Dōjō rollup behind F-3; (2) link sources `branch` + `prompt` only — `commit`
   deferred (needs new capture, contradicting T3 §2.5's "no new capture"), enum
-  value reserved; (3) no assignee synced/stored (no per-person figure). Blocked
-  on **P0**: session synthesis + transcript ingest on Linux (0 sessions today).
+  value reserved; (3) no assignee synced/stored (no per-person figure);
+  (4) T3 §5.1 `sensei.tracker_links` dropped — repo binding is the existing
+  `sensei.repositories_in_projects` junction, sync status lives on
+  `sensei.trackers`; (5) per-repo key pattern and per-source toggles deferred to
+  T-1c — keys match against synced issue keys instead; (6) API-token auth only —
+  OAuth (integrations §2.3) deferred. Blocked on **P0**: session
+  synthesis + transcript ingest on Linux (0 sessions today).
+- **Daemon routes reachable from any web page** (found by the Jira-spec security
+  review 2026-10-15) — `api/server.rs` sets `CorsLayer::allow_origin(Any)` with all
+  methods and no auth middleware (loopback bind by default), so any page the user
+  visits can call `127.0.0.1:7744` and read most responses. One route is guarded
+  (`PATCH /api/repositories/{repo_key}`, `origin_may_mutate`); the Jira slice
+  extracts that guard to `api/origin_guard.rs`, adds a loopback-`Host` check (DNS
+  rebinding) and applies both to its own routes. Daemon-wide: apply the shared
+  guard to every mutating and private-data route.
+- **Stale DDL comment** — `database/ddl/table/sensei/repositories.ddl:24-25` still
+  says only the repo-root folder carries `repository_id` (I16); `folders.ddl`
+  records that D-REPO-ANCHOR (2026-10-01) superseded it — every folder carries it.
 
 ## Where open work is described
 

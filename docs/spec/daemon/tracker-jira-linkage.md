@@ -1,0 +1,394 @@
+---
+name: Jira tracker linkage (local)
+status: reviewed
+date: 2026-10-15
+parent: docs/prd/modules/04-team/03-dojo-project-planning/README.md (T3) · docs/design/integrations-and-gating-requirements.md §2, §5
+analysis: docs/analysis/2026-10-15-jira-ticket-linkage.md
+---
+
+# Jira tracker linkage — local daemon (T-1a + T-1d, local slice)
+
+## Purpose
+
+Connect a sensei **project** to a Jira Cloud board **read-only**, mirror its sprints
+and issues into the local DB, link the project's AI sessions to those issues by the
+issue key found in the session's **branch** or **prompts**, and report per-ticket and
+per-sprint **active AI-session time** and **token usage**. Insight only — never a
+gate, never keyed by person.
+
+## Overrides of parents
+
+Rows marked **T3** override the parent design and are recorded in
+`docs/backlog.md` (Jira entry). Rows marked **A** refine this slice's own analysis;
+the analysis carries a "superseded in part" note pointing here, and they are not
+backlog items.
+
+| Src | Parent says | This spec | Why |
+|---|---|---|---|
+| T3 | tracker connections configured in Dōjō, project-scoped | **local daemon first**; Dōjō rollup behind F-3 | analysis D1 |
+| T3 | integrations §2.3: OAuth where offered, PAT fallback | **API token only** | v1 scope; OAuth later |
+| T3 | T3 §5.1 `sensei.tracker_links` (repo → key regex, cursor) | **dropped**; repo binding = `sensei.repositories_in_projects` (R1); cursor/status on `trackers` | the junction already is "THE one place a project's membership lives" |
+| T3 | T3 PRD: key pattern **per repo**, sources **all three selectable** | key prefixes **derived from synced keys** (R6); sources fixed to `branch` + `prompt` | matching against synced keys makes a user regex redundant; toggles deferred to T-1c |
+| T3 | T3 §2.5 sources branch · commit · prompt | `commit` deferred (enum value reserved) | needs new capture (analysis D4) |
+| T3 | T3 §5.1 `tracker_tasks.assignee` | no assignee | analysis D9 |
+| A | Analysis D10 window `[start, end)` | R7 window by sprint **state** | overrunning active sprints; future sprints with planned dates |
+| A | Analysis D11 issues "via JQL search" | Agile board endpoints (R4) | board scope = the configured board; sprint membership comes from the same API |
+| A | Analysis §3.2 `…/usage` sub-routes, `sessions_missing_*` fields | usage embedded in list/detail responses (R8); per-field `_n` counts (R7) | one read per screen; per-field `n` is more precise than one "missing" count |
+| A | Analysis §3.2 #1 "≥1 bound repo" at connect | binding is the project's existing membership (R1) | follows from row 1 |
+| A | Analysis §4 "current sprint from the Agile API" | sprint **membership set** from per-sprint issue lists (R5) | no reliance on a per-issue sprint field |
+| A | Analysis D11 statuses `connected`/`stale`/`error`, "message kept" | adds `pending` (never synced); `last_error` is a fixed code, never the raw message (R2, R9) | a raw reqwest error carries the URL and may carry issue text |
+
+## Resolved design
+
+### R1 · Scope of a connection
+
+- One Jira connection per **sensei project** (`unique(project_id, kind)`).
+- **Candidate sessions** of a connection: `activity.sessions s JOIN
+  sensei.folder_projects fp ON fp.folder_id = s.repo_folder_id WHERE fp.project_id =
+  tracker.project_id`. `folder_projects` is the existing view over
+  `folders ⨝ repositories_in_projects` (the M:N membership).
+- Joined on `repo_folder_id`, not the raw `folder_id`, because the sessions DDL
+  says "Attribution keys off repo_folder_id, not this": `folder_id` is the cwd,
+  which is often a subfolder; `repo_folder_id` is the repo anchor. **Both** are
+  nullable and `on delete set null` — a pruned anchor un-candidates its sessions
+  (next bullet). Existing reads are
+  mixed: most filter the single-valued `s.project_id`; some (`sessions.rs`
+  `reset_project_sessions_for_reenrichment`, `get_project_tool_breakdown`;
+  also `metrics.rs`, `api/routes.rs`) join
+  `folder_projects` on `s.folder_id`. The single-valued column can't serve a
+  repository that belongs to two projects (the junction's DDL comment measured 4
+  such repos, 2026-09-30), so this spec uses the view.
+- A session with NULL `repo_folder_id`, or whose anchor folder has NULL
+  `repository_id` (not yet resolved by the scanner), is not a candidate for any
+  tracker (it appears in no partition).
+
+### R2 · Tables (DDL under `database/ddl/table/sensei/`, enums under `database/ddl/enum/sensei/`)
+
+| Table | Columns | Keys / notes |
+|---|---|---|
+| `sensei.trackers` | `id uuid pk`, `project_id uuid not null → projects on delete cascade`, `kind tracker_kind not null` (enum: `jira`), `base_url text not null` (normalised `https://<host>`), `account_email text not null`, `external_project_key text not null`, `board_id bigint not null`, `secret_service text not null`, `last_attempt_at`, `last_success_at`, `last_error tracker_error` (enum, nullable), `created_at` | `unique(project_id, kind)`. No secret in the row. |
+| `sensei.sprints` | `id uuid pk`, `tracker_id → trackers cascade`, `external_id bigint not null`, `name text not null`, `state text not null` (`future`/`active`/`closed`), `start_at`, `end_at`, `complete_at` (nullable), `members_fetched_state text` (state at last membership fetch), `removed_at`, `last_seen_at` | `unique(tracker_id, external_id)` |
+| `sensei.tracker_tasks` | `id uuid pk`, `tracker_id → trackers cascade`, `external_id text not null` (Jira issue id), `key text not null` (stored UPPER), `summary text`, `issue_type text`, `status text`, `current_sprint_id uuid → sprints on delete set null`, `removed_at`, `last_seen_at` | `unique(tracker_id, external_id)`; index `(tracker_id, key)` |
+| `sensei.tracker_task_sprints` | `task_id → tracker_tasks cascade`, `sprint_id → sprints cascade` | `pk(task_id, sprint_id)`; index `(sprint_id)` — which sprints list the issue |
+| `sensei.session_task_links` | `session_id → activity.sessions cascade`, `task_id → tracker_tasks cascade`, `source link_source not null` (enum: `branch`, `prompt`, `commit` — `commit` never written in v1), `matched_key text not null`, `mentions integer not null check (mentions > 0)`, `linked_at` | `pk(session_id, task_id, source)`; index `(task_id)` |
+
+`tracker_error` enum: `unauthorized`, `forbidden`, `not_found`, `rate_limited`,
+`http_error`, `transport`, `decode`, `redirect`, `token_missing`,
+`credential_store`. `last_error` and sync/connect failures caused by Jira or the
+credential store carry only these codes — never a raw error string (a reqwest error
+carries the URL; a body may carry issue text). R8 adds request-validation codes of
+its own (`invalid_base_url`, `board_not_found`, `board_project_mismatch`, `busy`),
+which are likewise fixed strings.
+
+The `dojo` deploy scope is an explicit `includes:` list; the `default` (daemon)
+scope `excludes: [dojo, …]`. None of these tables reach the Dōjō DB.
+
+### R3 · Credential
+
+- Token stored via `gateway_keys::keychain_set(service, account, token)`,
+  `service = "com.sensei.tracker.jira.{tracker_id}"`, `account = account_email`.
+- `keychain_get` mapping (all five `KeychainError` variants): `NotFound` →
+  `token_missing`; `Unavailable`, `Store`, `CommandFailed`, `Io` →
+  `credential_store`. No fallback value.
+- The request type holds the token in a newtype `ApiToken(String)` whose `Debug`
+  prints `ApiToken(***)`; request structs are never logged.
+- **Connect ordering:** DB transaction inserts/updates the row → `keychain_set` →
+  commit. `keychain_set` failure → rollback, 500 `{error:"credential_store"}`.
+  Commit failure → `keychain_delete` then 500. On re-connect with a **different**
+  email, the old `(service, old_email)` entry is deleted after the new one commits.
+- Disconnect: delete the row (cascades sprints/tasks/memberships/links), then
+  `keychain_delete`.
+
+### R4 · Jira client — GET-only, Cloud-only, no redirects
+
+- `base_url` validation at connect: parse as URL; scheme must be `https`; no
+  userinfo, no port, no query/fragment; host must end in `.atlassian.net` and not
+  be an IP literal. Path is discarded; stored as `https://<host>`. Anything else →
+  422 `{error:"invalid_base_url"}`.
+- Transport:
+
+  ```rust
+  #[async_trait] pub trait JiraTransport: Send + Sync {
+      async fn get_json(&self, path: &str, query: &[(&str, String)]) -> Result<serde_json::Value, JiraError>;
+  }
+  ```
+
+  One method. Production impl: a `reqwest::Client` built from a new shared
+  `http::bounded_builder()` (connect 5 s, total 30 s — extracted from
+  `federation::http_client()`, which then calls it) **plus**
+  `.redirect(reqwest::redirect::Policy::none())`. A build failure is an error, not
+  a fallback client. Auth: HTTP Basic `email:token`. Any 3xx → `JiraError::Redirect`.
+- `JiraError` → `tracker_error`: 401 `unauthorized`, 403 `forbidden`, 404
+  `not_found`, 429-exhausted `rate_limited`, other non-2xx `http_error`, network
+  `transport`, JSON shape `decode`, 3xx `redirect`.
+- **429:** wait `Retry-After` seconds if it parses as an integer, else 5 s; cap 60 s;
+  at most 3 retries per request.
+- Sync is written against `&dyn JiraTransport`; tests use an in-memory fake.
+
+Endpoints (Jira Cloud; paths from Atlassian's Agile REST board-API operations index,
+2026-10-15; response field names confirmed by the build-start fixture, C11):
+
+| Purpose | Call |
+|---|---|
+| validate credential | `GET /rest/api/3/myself` |
+| validate board | `GET /rest/agile/1.0/board/{boardId}` |
+| sprints | `GET /rest/agile/1.0/board/{boardId}/sprint?startAt&maxResults=50` |
+| board issues | `GET /rest/agile/1.0/board/{boardId}/issue?fields=summary,issuetype,status&startAt&maxResults=100` |
+| sprint members | `GET /rest/agile/1.0/board/{boardId}/sprint/{sprintId}/issue?fields=summary&startAt&maxResults=100` |
+
+Pagination: advance `startAt` by the number of items returned; stop when
+`isLast == true`, or `startAt >= total`, or a page returns 0 items.
+
+### R5 · Sync — `tracker::jira::sync(&TrackerRow, &dyn JiraTransport, &PgStore)`
+
+1. Take `pg_try_advisory_xact_lock(hashtext('tracker_sync:' || tracker_id))` in the
+   sync transaction; if not acquired → return `Busy` (manual sync → 409; scheduled
+   sync → skip this tracker this tick). Set `last_attempt_at = now()` (own statement).
+2. Fetch all sprints and all board issues (all pages).
+3. Fetch the member list of every sprint that **needs it**: state ≠ `closed`, or
+   closed and (`members_fetched_state` is NULL or ≠ `closed`). A closed sprint whose
+   members were fetched after it closed is never re-fetched (closed sprints don't
+   change).
+4. **Only if every request in 2–3 succeeded**, in the transaction:
+   - upsert sprints and tasks by `(tracker_id, external_id)`; a changed key
+     overwrites `key`; set `last_seen_at = now()`; clear `removed_at` on seen rows;
+   - `removed_at = now()` on rows not seen **and `removed_at IS NULL`**;
+   - for each fetched sprint, replace its `tracker_task_sprints` rows; set its
+     `members_fetched_state = state`;
+   - `current_sprint_id` per task = among sprints listing it: `active` > `future` >
+     `closed`; tie → later `start_at` (NULL last), then higher `external_id`; none → NULL;
+   - **relink** (R6);
+   - `last_success_at = now()`, `last_error = NULL`.
+5. Any failure → transaction rolled back (no data rows change); `last_error = <code>`
+   written in its own statement; error returned. A partial fetch is never committed.
+
+Scheduling: new task **`tracker_sync`** — entry in `tasks::schedule::SCHEDULABLE`,
+in `DESCRIPTIONS` (`api/handlers/scheduled_tasks.rs`), a line in
+`database/import/staging/schedules.jsonl` (`interval_secs: 1800`), and a `tick()` in
+`tasks/tracker_sync.rs`, whose `pub fn spawn(pg)` calls
+`tasks::ticker::run_scheduled(pg, "tracker_sync", …)` like `forge_token_check.rs`,
+**and** a `crate::tasks::tracker_sync::spawn(...)` call at daemon start in
+`api/server.rs` next to `forge_token_check::spawn`. `SCHEDULABLE` stays sorted
+(test `schedulable_names_are_unique_and_sorted`). A tick syncs every tracker sequentially; one tracker's
+failure is recorded on its row and does not stop the others.
+
+### R6 · Linking (pure core + one SQL write)
+
+```rust
+fn extract_links(branches: &[String], prompts: &[String], known: &HashMap<String /*UPPER key*/, Uuid>)
+    -> Vec<Link { task_id: Uuid, source: Source, matched_key: String, mentions: u32 }>
+```
+
+- `known` = **every** task of this tracker, **including removed ones** (links to a
+  removed issue survive and stay attributable; reads flag them).
+- Prefixes `P` = distinct prefixes (text before the last `-`) of the keys in `known`
+  (a board can span projects; Jira keys may contain `_`).
+- For each prefix `p`: find case-insensitive occurrences of `p` + `-` + `[0-9]+`
+  (digits greedy). Accept an occurrence only if the character before it is not an
+  ASCII letter or digit (or it is at the start). `_`, `/`, `-`, space and
+  punctuation are all valid separators. Key = `UPPER(p)-digits`, exactly as
+  written (so `AUTH-0420` is a different string from `AUTH-420` and does not
+  link).
+- Link iff key ∈ `known`. With no `known` keys, nothing links — `UTF-8` and
+  `AES-256` cannot match unless `UTF`/`AES` is a synced prefix *and* that issue
+  exists.
+- `branch`: each **distinct** `git_branch` across the session's transcript turns;
+  `mentions` = number of distinct branches containing the key.
+- `prompt`: each turn's `user_text`; `mentions` = total accepted occurrences.
+- Matching is case-insensitive because branch names are free-form
+  (`fix/auth-420-store`).
+
+Inputs per candidate session: `activity.transcript_turns WHERE session_id =
+sessions.client_session_id`. No `client_session_id` or no turns → no links.
+
+**Relink** (inside the sync transaction): delete every `session_task_links` row whose
+task belongs to this tracker, then insert `extract_links` output for all candidate
+sessions. Full recompute — deterministic and idempotent.
+
+### R7 · Metrics (computed at read; nothing materialised)
+
+**Usage** of a distinct session set `S`:
+
+| Field | Definition |
+|---|---|
+| `sessions` | `|S|` |
+| `by_source.branch`, `by_source.prompt` | sessions in `S` with ≥1 link of that source (to the ticket, for ticket usage; to any sprint member, for `linked_sprint`) — may sum past `sessions` |
+| `shared` | sessions in `S` linked to ≥2 distinct tasks of this tracker |
+| `active_secs`, `active_n` | `Σ extract(epoch from duration)` over sessions with `duration IS NOT NULL`; `active_n` = that count |
+| `tokens_fresh`, `cache_read`, `cache_write`, `tokens_out`, `tokens_reasoning` | each `Σ field` over sessions where **that field** IS NOT NULL, each with `<field>_n` |
+| `metered_cost`, `metered_cost_n` | same rule |
+
+A sum over zero non-NULL values is `null` (not `0`); its `_n` is `0`. `tokens_in` is
+not reported (folded total incl. cache).
+
+**Ticket usage:** `S` = distinct sessions with any link to the task.
+
+**Sprint usage:**
+- `state = 'future'` → `usage: null, reason: "not_started"`.
+- Window: `active` → `[start_at, now())`; `closed` → `[start_at, coalesce(complete_at, end_at))`.
+- `candidates_in_window` = candidate sessions (R1) with `started_at` in the window.
+- Partition: `linked_sprint` = links to ≥1 task in this sprint's
+  `tracker_task_sprints`; `linked_other` = links to tasks of this tracker but none in
+  this sprint; `unlinked` = **no link to any task of this tracker** (links to another
+  tracker's tasks don't count). Each part carries a usage object.
+
+### R8 · API (`api/handlers/trackers.rs`)
+
+All routes below — **reads included**, because they return client issue summaries —
+sit behind one guard layer built from **existing** code:
+
+- **Origin:** reuse `origin_may_mutate` + `ALLOWED_ORIGINS` from
+  `api/handlers/repositories.rs` (no Origin → allow; the Tauri app and its dev
+  origins → allow; any other Origin → 403). Extract both into a shared
+  `api/origin_guard.rs` and have `repositories.rs` call it from there — one
+  allow-list, not two.
+- **Host (new, added to the same module):** 403 unless `Host` is `127.0.0.1`,
+  `localhost` or `[::1]` (any port). Closes DNS rebinding, where a page's request
+  is same-origin to the browser and so carries no `Origin` on a GET.
+- Exposed as an axum middleware `local_caller_guard` applied to the tracker route
+  group; the existing `repositories.rs` behaviour is unchanged.
+
+| Route | Behaviour |
+|---|---|
+| `GET /api/projects/{id}/trackers` | `[{id, kind, base_url, account_email, external_project_key, board_id, status, last_success_at, last_error, counts:{tasks, sprints}}]`; `[]` when none. Unknown project → 404. |
+| `POST /api/projects/{id}/trackers/jira/connect` | body `{base_url, email, api_token, project_key, board_id}`. Validate URL (R4) → 422; `myself` 401/403 → 401 `{error:"unauthorized"}`; board 404 → 404 `{error:"board_not_found"}`; board's project key ≠ `project_key` → 422 `{error:"board_project_mismatch"}`. Then persist (R3), run the first sync, return **201** `{tracker, first_sync:{ok:true, counts} \| {ok:false, error:<code>}}`. A failed first sync keeps the connection (credential was valid); `status` shows `error`. |
+| `DELETE /api/projects/{id}/trackers/jira` | R3 disconnect; 204; 404 if none. |
+| `POST /api/projects/{id}/trackers/jira/sync` | R5 now. 200 `{counts:{sprints, tasks, removed, links}}`; 409 `{error:"busy"}`; 502 `{error:<code>}`; 404 if no tracker. |
+| `GET /api/projects/{id}/sprints` | `[{id, name, state, start_at, end_at, complete_at, candidates_in_window, linked_sprint, linked_other, unlinked}]` (each part a usage object; `null` + `reason` for future). Removed sprints excluded. |
+| `GET /api/projects/{id}/tracker-tasks?sprint={uuid}&include_removed=bool` | `[{key, summary, issue_type, status, current_sprint, removed, usage}]`. `sprint` filters to its members; unknown sprint → 404. |
+| `GET /api/projects/{id}/tracker-tasks/{key}` | `{task, usage, sessions:[{id, started_at, sources, matched_key}]}`; case-insensitive key; 404 if absent. |
+| `GET /api/projects/{id}/sessions/unlinked?sprint={uuid}` | the sprint's `unlinked` sessions `[{id, started_at, task}]`; sprint required; unknown → 404. |
+
+DB errors → 500 via `.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?`. No list
+pagination in v1 (bounded by one board). Errors are logged with the code only.
+
+### R9 · Status (pure fn of row + `interval_secs`, unit-tested)
+
+In order: `error` if `last_error IS NOT NULL`; `pending` if `last_success_at IS NULL`;
+`stale` if `now − last_success_at > 2 × interval_secs`; else `connected`.
+`interval_secs` is read from the `tracker_sync` schedules row whether or not it is
+enabled; a missing row is a 500 (the row is seeded and test-enforced).
+
+### R10 · CLI (`crates/cli`, via `daemon_url()` + the blocking client)
+
+- `sensei tracker connect jira --project <p> --url <site> --email <e> --project-key <K> --board <id>`
+  — token from `SENSEI_JIRA_TOKEN` if set, else one line read from stdin (the help
+  text notes env vars are visible to same-user processes). Never an argv flag.
+- `sensei tracker sync --project <p>` · `sensei tracker disconnect --project <p>`
+- `sensei tracker usage --project <p> [--sprint <s> | <KEY>]` — giving both is an
+  error. Table: key · summary · sessions (branch/prompt) · **"active AI time"** `h:mm` ·
+  fresh / cache-read / out tokens · cost (blank when unknown, not `0`), then for a
+  sprint the `unlinked` count.
+- `<p>`: a uuid, or an exact project name from `GET /api/projects`; 0 or >1 matches
+  → error listing the candidates. `<s>`: uuid or exact sprint name; same rule.
+
+### Out of scope
+
+Write-back to Jira; Dōjō UI / rollup / upload (F-3); ADO / GitHub Issues; task-type
+mapping; per-repo key patterns and source toggles (T-1c); commit linkage; OAuth;
+Jira Server/DC; assignee or any per-person figure; desktop-app screen; daemon-wide
+route auth/CORS (backlog).
+
+## Prerequisites (build gate)
+
+1. **P0 — sessions exist on this machine:**
+   ```sql
+   select (select count(*) from activity.sessions) > 0
+      and (select count(*) from activity.transcript_turns where git_branch is not null) > 0;
+   ```
+   Must return `t`. Today `f` (0 / 0).
+2. **Jira tenant (human):** the user supplies a Jira Cloud site, board id and API
+   token for the live gates and the C11 fixture. Build task 1 records one response
+   per R4 endpoint (secrets and issue text scrubbed) under
+   `crates/senseid/tests/fixtures/jira/`. Until then the build halts at that task.
+
+## Done gate
+
+Unattended (CI):
+1. `cargo test -p senseid tracker` passes, including:
+   a. `extract_links` with `known = {AUTH-420, AUTH-421, MY_PROJ-12}`: `UTF-8`, `AES-256`, `CVE-2026` → none; `fix/auth-420-store` → AUTH-420/branch; `AUTH-420_fix`, `feature_AUTH-420` → AUTH-420; `xAUTH-420`, `AUTH-4201`, `AUTH-0420` → none; `MY_PROJ-12` → MY_PROJ-12; a prompt with AUTH-420 twice → `mentions = 2`; AUTH-420 and AUTH-421 → two links; empty `known` → none.
+   b. Sync on the fake transport (fixture-shaped): 2 issue pages + 2 sprints → all rows; a second identical sync changes nothing but `last_seen_at`; an issue missing on the third sync → `removed_at` set once (unchanged on a fourth sync) **and its links still present**; a renamed key → same row, new key.
+   c. Page 2 errors → zero data rows changed, `last_error` set, `last_success_at` unchanged.
+   d. Issue listed by a closed and an active sprint → `current_sprint_id` = active; both rows in `tracker_task_sprints`; a closed sprint fetched after closing is not re-fetched.
+   e. R9 status: never synced → `pending`; failed first sync → `error`; success then 2×interval+1s → `stale`; just inside → `connected`.
+   f. 429 + `Retry-After: 1` then 200 → ok; 429 with no header → 5 s wait (clock injected); 4× 429 → `rate_limited`; 302 → `redirect`.
+   g. URL validation: `http://x.atlassian.net`, `https://evil.com`, `https://1.2.3.4`, `https://u:p@x.atlassian.net`, `https://x.atlassian.net:8443` → rejected; `https://acme.atlassian.net/jira/` → `https://acme.atlassian.net`.
+   h. `local_caller_guard`: `Origin: https://evil.com` → 403; `Origin: tauri://localhost` → passes; `Host: evil.com` → 403; no Origin + `Host: 127.0.0.1:7744` → passes. The existing `repositories.rs` origin tests still pass after the extraction.
+   i. Sentinel-token test: run connect (fake), failed sync and status with token `SENTINEL-TOKEN-XYZ`; captured logs, `last_error`, and every response body do not contain it.
+   j. Sprint usage against seeded DB rows: `candidates_in_window` equals an independent `count(*)` written in the test; a session linked only to another tracker's task lands in `unlinked`; a future sprint → `not_started`; an active sprint past `end_at` includes a session started after `end_at`.
+2. `rg -n '\.(post|put|patch|delete)\(' crates/senseid/src/tracker/` → no output.
+3. `rg -n 'api_token|SENSEI_JIRA_TOKEN' crates/senseid/src crates/cli/src` hits only the connect request type, its keyring call, and the CLI token reader; no DDL column holds a token.
+4. `tracker_sync` is in `SCHEDULABLE`, `DESCRIPTIONS` and `schedules.jsonl`; `every_schedulable_worker_has_a_description`, `every_schedulable_worker_has_a_schedule_row`, `every_schedule_row_names_a_real_worker` and `schedulable_names_are_unique_and_sorted` pass; `rg -n 'tracker_sync::spawn' crates/senseid/src/api/server.rs` → 1 hit (the tests above can't see a missing spawn).
+5. `rg -n 'const ALLOWED_ORIGINS|fn origin_may_mutate' crates/senseid/src` → exactly one definition each, in `api/origin_guard.rs`.
+
+Human (after both prerequisites; needs the user's tenant):
+6. Connect via CLI → `GET …/trackers` shows `connected`; sprint and issue counts equal the Jira board UI.
+7. For one ticket, `active_secs` and `tokens_fresh` from the API equal a hand-written `select sum(...)` over its linked session ids (recorded in Evidence).
+8. A real session on a branch carrying a real key appears under that ticket.
+9. Precision sample: ≥10 real linked sessions reviewed; 0 links to non-existent keys; precision per source recorded in Evidence.
+10. Bad token on connect → CLI prints the `unauthorized` error; `GET …/trackers` returns no row.
+
+## Wrong gate
+
+- A link to a key not in `tracker_tasks`, or a regex hit treated as a key.
+- Links to a removed issue disappear on the next sync.
+- `tokens_in` shown as "tokens"; a NULL field summed as `0`; a field without its `_n`.
+- Ticket sums added to make a sprint total (double-counts shared sessions).
+- A failed/partial sync changes data rows, or a never-successful tracker shows `connected`.
+- Any non-GET request to Jira, or a request to a host not under `.atlassian.net`, or a followed redirect.
+- The token in a DB row, log line, API response, `last_error`, or argv.
+- A tracker route answering a foreign `Origin` or a non-loopback `Host`; a second copy of `ALLOWED_ORIGINS`.
+- A session from a repo outside the project counted in any partition.
+- Assignee, author, or any person attribute in usage output.
+- "hours" / "time spent" without the "active AI time" label.
+- A future sprint showing `0` usage; an overrunning active sprint dropping sessions after `end_at`.
+
+## Evidence
+
+| Gate | Result | Date |
+|---|---|---|
+| 7 hand-SQL equality | — | — |
+| 9 precision (branch / prompt) | — | — |
+
+## Claims (verified 2026-10-15 — independent re-derivation by `sensei-claims-verifier`, re-checked after rewrite)
+
+| # | claim | check | expect | actual | verdict |
+|---|---|---|---|---|---|
+| C1 | No tracker tables/enums exist | `ls database/ddl/table/sensei \| rg -c 'tracker\|sprint'`; `to_regclass`/`to_regtype` on live DB | 0 / null | 0; all null | CONFIRMED |
+| C2 | `repositories_in_projects` pk(project_id, repository_id), "THE one place a project's membership lives" | read DDL | as stated | as stated, both FKs cascade | CONFIRMED |
+| C3 | session→repo via `repo_folder_id → folders.repository_id` in `session_outcomes.rs` | `rg -c 'rf.id = s.repo_folder_id'` | ≥1 | 8 | CONFIRMED |
+| C4 | `transcript_turns.session_id` (text, no FK) joins `sessions.client_session_id` | DDL; `logs.rs:255`; `usage.rs:36` | as stated | as stated | CONFIRMED |
+| C5 | turns have `git_branch`, `user_text`; sessions has no branch column | DDL + `information_schema` | as stated | as stated (`folders.branch` is checkout grain) | CONFIRMED |
+| C6 | `keychain_set/get/delete(service, account, …)` public and generic | `rg 'pub fn keychain_'` | 3 | 3; already used by `dojo_client/session.rs` | CONFIRMED |
+| C7 | `KeychainError` has `NotFound`, `Unavailable`, `Store`, `CommandFailed`, `Io` | read `gateway_keys/mod.rs:35-49` | 5 | 5 | CONFIRMED *(was MISLEADING: draft R3 mapped only 2 — fixed)* |
+| C8 | `federation::http_client()` = 5 s / 30 s, falls back to an untimed client on build failure, sets no redirect policy | read `federation/mod.rs:23-29`; `rg -c 'redirect::Policy' crates/senseid/src` | as stated; 0 | as stated; 0 | CONFIRMED |
+| C9 | Schedule registration = `SCHEDULABLE` (sorted, tested) + `DESCRIPTIONS` (+ `every_schedulable_worker_has_a_description`) + `schedules.jsonl` + `spawn` → `ticker::run_scheduled` + a start-up `spawn` call in `server.rs` | `rg SCHEDULABLE\|DESCRIPTIONS\|run_scheduled`; `forge_token_check.rs:158-160`; `server.rs:555`; `schedule.rs:365` | all present | all present | CONFIRMED *(MISLEADING twice: draft 1 omitted `DESCRIPTIONS`/`tick()`, draft 2 omitted the `server.rs` spawn — both fixed)* |
+| C10 | `dojo` scope is `includes:` + `deps: include`; `default` scope `excludes: [dojo, …]` | read `database/design.yaml` | as stated | as stated | CONFIRMED |
+| C11 | Agile endpoints paginate by `startAt`/`maxResults` with `isLast`/`total` | recorded live response | present | not run | UNCHECKABLE until prerequisite 2 — build task 1 makes it checkable; build halts there |
+| C12 | `duration` gap-aware; `tokens_in` folded total, ~8× cost | `sessions.ddl` comments | as stated | as stated | CONFIRMED |
+| C13 | No per-ticket/session-set usage aggregation exists (only day×repo in `session_outcomes.rs`, `usage.rs`); `tokens_fresh` is never read | `rg sum(…tokens\|duration…)`; `rg tokens_fresh` | day×repo only | day×repo only; `tokens_fresh` written only at `sessions.rs:1410` | CONFIRMED |
+| C14 | CLI uses `daemon_url()` + `reqwest::blocking` | `rg 'fn daemon_url\|fn client\('` | 2 | 2 | CONFIRMED |
+| C15 | No HTTP-mock dev-dependency; `async-trait`, `regex` already deps | `rg` Cargo.toml | 0 / present | 0 / present | CONFIRMED |
+| C16 | Handler idiom `.map_err(\|_\| StatusCode::INTERNAL_SERVER_ERROR)?` | `rg -c` | many | 130 in 13 files | CONFIRMED |
+| C17 | No trackers/sprints/tracker-tasks/sessions-unlinked routes | `rg -i 'tracker\|sprint\|unlinked' crates/senseid/src/api/` | 0 routes | 0 | CONFIRMED |
+| C18 | Daemon CORS is `allow_origin(Any)` with all methods; no auth middleware; loopback bind is the **default**, overridable by `SENSEI_BIND_HOST` | read `api/server.rs:91-120,148-165`; `rg 'from_fn\|route_layer'` | as stated | as stated; 0 middleware | CONFIRMED *(was MISLEADING: "loopback only" — fixed)* |
+| C19 | An Origin guard exists — `ALLOWED_ORIGINS` + `origin_may_mutate` in `api/handlers/repositories.rs`, used on `PATCH /api/repositories/{repo_key}`, tested; **no Host guard** exists | `rg -n 'ALLOWED_ORIGINS\|origin_may_mutate\|header::HOST' crates/senseid/src` | guard in repositories.rs; 0 Host | `repositories.rs:39,53,83`; 0 Host | CONFIRMED *(was FALSE: draft claimed no guard and designed a new `local_cli_guard` — R8 now reuses the existing one)* |
+| C20 | Project-scoped session reads are mixed: most filter `s.project_id`; some join `sensei.folder_projects` (a view over `folders ⨝ repositories_in_projects`) on `s.folder_id` | `rg 'project_id\s*=\s*\$'`; `rg folder_projects`; `pg_get_viewdef('sensei.folder_projects')` | mixed | `usage.rs:38` etc.; `sessions.rs:547,575,1029`, `metrics.rs:600`, `routes.rs:5522`; view as stated | CONFIRMED *(was FALSE: draft said no read uses the junction — R1 now reuses the view)* |
+| C21 | The `tracker_links` drop + project-membership binding is recorded in `docs/backlog.md` | `rg -n 'tracker_links' docs/backlog.md` | ≥1 | 0 at review; 1 after fix (`backlog.md:84`) | CONFIRMED *(was FALSE — fixed)* |
+| C22 | Prerequisite P0 returns `f` today | P0 SQL | f | f (0 / 0) | CONFIRMED |
+| C23 | `folders.repository_id` is set on **every** folder (D-REPO-ANCHOR, 2026-10-01; supersedes I16), NULL only until the scanner resolves it | `folders.ddl` column comment; `select count(*), count(repository_id) from sensei.folders` | as stated | as stated; 2237 / 2237 | CONFIRMED *(`repositories.ddl:24-25` still states the superseded I16 rule — inherited doc defect, backlog)* |
+| C24 | `activity.sessions.folder_id` and `repo_folder_id` are both nullable `→ folders on delete set null`; the DDL designates `repo_folder_id` for attribution | `sessions.ddl:4-5` + column comment; `pg_constraint` | as stated | as stated | CONFIRMED *(was MISLEADING: implied only `folder_id` could be nulled — fixed)* |
+
+**Contested ground:** C19 and C20 were FALSE in the second draft and reversed two
+design choices: a new guard became reuse of the existing one, and a hand-built join
+became the existing `folder_projects` view. C21 was FALSE — the draft claimed a backlog record that did
+not exist, for the deviation the analysis called "the client-confidentiality
+guard". C7 and C9 were MISLEADING and would have produced an unmapped credential
+error and a failing test respectively.
+
+## Related
+
+- Parents: T3 PRD module; integrations requirements §2.5, §5.1/§5.2 (overrides in
+  the table above).
+- Analysis: `docs/analysis/2026-10-15-jira-ticket-linkage.md` (amended to point here).
+- Gaps: T-1 (partially), F-3 (rollup, later); daemon-wide CORS/auth (backlog).
