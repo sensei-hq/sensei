@@ -74,6 +74,14 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
   one-time re-write migration), then remove the module, the `Backend` enum and
   the env var.
 
+- **Jira ticket linkage — local slice (T-1a + T-1d, local-first)** — analysis
+  [`analysis/2026-10-15-jira-ticket-linkage.md`](analysis/2026-10-15-jira-ticket-linkage.md).
+  **Deliberate deviations from T3, decided 2026-10-15:** (1) local daemon first,
+  Dōjō rollup behind F-3; (2) link sources `branch` + `prompt` only — `commit`
+  deferred (needs new capture, contradicting T3 §2.5's "no new capture"), enum
+  value reserved; (3) no assignee synced/stored (no per-person figure). Blocked
+  on **P0**: session synthesis + transcript ingest on Linux (0 sessions today).
+
 ## Where open work is described
 
 | Concern | Source |
