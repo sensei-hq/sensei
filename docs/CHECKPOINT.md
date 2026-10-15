@@ -18,6 +18,17 @@
 - **C20** (draft 2): "no session read uses the project junction". The `folder_projects` view already does this, so R1 now reuses it on `repo_folder_id`.
 - MISLEADING, all fixed: C7 (5 `KeychainError` variants, not 2), C9 (`DESCRIPTIONS` + `tick()` + the `server.rs` spawn), C18 (loopback is the default, not the only bind), C24 (`repo_folder_id` is also set-null).
 
+## Change after design (2026-10-15, user)
+
+One Jira board can serve several sensei projects. The connection is now its own row
+(`sensei.trackers`, unique by site + board), bound to projects via
+`sensei.tracker_projects` (a project binds at most one). Per-ticket usage is
+tracker-wide with a `by_project` breakdown. Re-reviewed by the data-correctness and
+conformance reviewers. Fixed as a result: a bind/last-unbind race (`for update` lock
+order), read-time candidate intersection so an unbind takes effect immediately, the
+CLI deferring URL matching to the server, DELETE returning 200 + body, and the
+Wrong-gate scope. Backlog deviations (7) and (8).
+
 ## Gate for `/sensei:build`
 
 - **P0** (Linux session synthesis) must make the spec's P0 SQL return `t`. Today `f`. Separate slice. Blocks F5 only.

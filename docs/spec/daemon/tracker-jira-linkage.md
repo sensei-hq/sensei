@@ -25,6 +25,8 @@ backlog items.
 
 | Src | Parent says | This spec | Why |
 |---|---|---|---|
+| T3 | a tracker connection is **per project** (§2.3, §5.1 `trackers`: "connection per project") | a connection (one Jira board) is bound to **one or more** sensei projects; a project binds to **at most one** (R1) | one Jira project commonly spans several sensei projects (user, 2026-10-15); a ticket's cost must sum across them |
+| T3 | §2.2 / PRD: a project may have several trackers; one owns sprints, the others still supply issues | **one tracker per project** in v1; secondary (issue-only) trackers deferred | v1 is Jira-only; a board spanning several Jira projects already covers multi-project issue sources |
 | T3 | tracker connections configured in Dōjō, project-scoped | **local daemon first**; Dōjō rollup behind F-3 | analysis D1 |
 | T3 | integrations §2.3: OAuth where offered, PAT fallback | **API token only** | v1 scope; OAuth later |
 | T3 | T3 §5.1 `sensei.tracker_links` (repo → key regex, cursor) | **dropped**; repo binding = `sensei.repositories_in_projects` (R1); cursor/status on `trackers` | the junction already is "THE one place a project's membership lives" |
@@ -42,11 +44,23 @@ backlog items.
 
 ### R1 · Scope of a connection
 
-- One Jira connection per **sensei project** (`unique(project_id, kind)`).
-- **Candidate sessions** of a connection: `activity.sessions s JOIN
-  sensei.folder_projects fp ON fp.folder_id = s.repo_folder_id WHERE fp.project_id =
-  tracker.project_id`. `folder_projects` is the existing view over
-  `folders ⨝ repositories_in_projects` (the M:N membership).
+- A **tracker** is one Jira board connection, identified by
+  `(kind, base_url, board_id)`. It is **bound to one or more sensei projects**
+  (`sensei.tracker_projects`). One Jira project is commonly worked on across several
+  sensei projects (several repos each), and a ticket's time and tokens must add up
+  across all of them.
+- A sensei project binds to **at most one** tracker (`unique(project_id)`) in v1.
+  This **narrows** T3, which lets a project draw issues from several trackers with one
+  owning sprints. Secondary trackers are deferred (see the overrides table).
+- Connecting a board that is already connected **binds** the project to the existing
+  tracker. It never creates a second tracker, second sync, or second token.
+- **Candidate sessions** of a tracker: the **distinct** sessions whose repo anchor
+  belongs to **any** bound project:
+  `select distinct s.id from activity.sessions s join sensei.folder_projects fp on
+  fp.folder_id = s.repo_folder_id join sensei.tracker_projects tp on tp.project_id =
+  fp.project_id where tp.tracker_id = $1`. `folder_projects` is the existing view over
+  `folders ⨝ repositories_in_projects` (the M:N membership). `distinct` matters
+  because a repository can sit in two bound projects.
 - Joined on `repo_folder_id`, not the raw `folder_id`, because the sessions DDL
   says "Attribution keys off repo_folder_id, not this": `folder_id` is the cwd,
   which is often a subfolder; `repo_folder_id` is the repo anchor. **Both** are
@@ -66,7 +80,8 @@ backlog items.
 
 | Table | Columns | Keys / notes |
 |---|---|---|
-| `sensei.trackers` | `id uuid pk`, `project_id uuid not null → projects on delete cascade`, `kind tracker_kind not null` (enum: `jira`), `base_url text not null` (normalised `https://<host>`), `account_email text not null`, `external_project_key text not null`, `board_id bigint not null`, `secret_service text not null`, `last_attempt_at`, `last_success_at`, `last_error tracker_error` (enum, nullable), `created_at` | `unique(project_id, kind)`. No secret in the row. |
+| `sensei.trackers` | `id uuid pk`, `kind tracker_kind not null` (enum: `jira`), `base_url text not null` (normalised `https://<host>`), `account_email text not null`, `external_project_key text not null`, `board_id bigint not null`, `secret_service text not null`, `last_attempt_at`, `last_success_at`, `last_error tracker_error` (enum, nullable), `created_at` | `unique(kind, base_url, board_id)`. No secret in the row. No `project_id` (see `tracker_projects`). |
+| `sensei.tracker_projects` | `tracker_id → trackers on delete cascade`, `project_id → projects on delete cascade`, `bound_at` | `pk(tracker_id, project_id)`; **`unique(project_id)`**; index `(tracker_id)` |
 | `sensei.sprints` | `id uuid pk`, `tracker_id → trackers cascade`, `external_id bigint not null`, `name text not null`, `state text not null` (`future`/`active`/`closed`), `start_at`, `end_at`, `complete_at` (nullable), `members_fetched_state text` (state at last membership fetch), `removed_at`, `last_seen_at` | `unique(tracker_id, external_id)` |
 | `sensei.tracker_tasks` | `id uuid pk`, `tracker_id → trackers cascade`, `external_id text not null` (Jira issue id), `key text not null` (stored UPPER), `summary text`, `issue_type text`, `status text`, `current_sprint_id uuid → sprints on delete set null`, `removed_at`, `last_seen_at` | `unique(tracker_id, external_id)`; index `(tracker_id, key)` |
 | `sensei.tracker_task_sprints` | `task_id → tracker_tasks cascade`, `sprint_id → sprints cascade` | `pk(task_id, sprint_id)`; index `(sprint_id)` — which sprints list the issue |
@@ -96,8 +111,25 @@ scope `excludes: [dojo, …]`. None of these tables reach the Dōjō DB.
   commit. `keychain_set` failure → rollback, 500 `{error:"credential_store"}`.
   Commit failure → `keychain_delete` then 500. On re-connect with a **different**
   email, the old `(service, old_email)` entry is deleted after the new one commits.
-- Disconnect: delete the row (cascades sprints/tasks/memberships/links), then
-  `keychain_delete`.
+- One token per **tracker**, shared by all its bound projects. Binding a project to
+  an existing tracker without a token leaves the stored token untouched. Supplying a
+  token replaces it, after validation (`myself`).
+- **Unbind** (disconnect a project): delete its `tracker_projects` row. If that was
+  the tracker's **last** binding, also delete the tracker row (cascades
+  sprints/tasks/memberships/links) and then `keychain_delete`. A tracker orphaned by
+  a project's deletion (junction cascade) is removed the same way by the next
+  `tracker_sync` tick.
+- **Lock order:** bind, unbind and the orphan sweep each start with
+  `select … from sensei.trackers where id = $1 for update`. Only then do they read or
+  write `tracker_projects`. Bind re-checks after taking the lock that the tracker
+  still exists; if a concurrent last-unbind deleted it, bind falls through to the
+  new-tracker path (which needs a token → 422 `token_required`). Unbind and the sweep
+  count the remaining bindings only under the lock, so a racing bind is never
+  cascaded away after it was reported bound. `keychain_delete` runs only after the
+  deleting transaction commits.
+- Credential calls go through a narrow `SecretStore` trait (`set/get/delete`) with
+  one production impl delegating to `gateway_keys::keychain_*` and an in-memory impl
+  for tests. It is an adapter, not a second store.
 
 ### R4 · Jira client — GET-only, Cloud-only, no redirects
 
@@ -169,8 +201,9 @@ in `DESCRIPTIONS` (`api/handlers/scheduled_tasks.rs`), a line in
 `tasks::ticker::run_scheduled(pg, "tracker_sync", …)` like `forge_token_check.rs`,
 **and** a `crate::tasks::tracker_sync::spawn(...)` call at daemon start in
 `api/server.rs` next to `forge_token_check::spawn`. `SCHEDULABLE` stays sorted
-(test `schedulable_names_are_unique_and_sorted`). A tick syncs every tracker sequentially; one tracker's
-failure is recorded on its row and does not stop the others.
+(test `schedulable_names_are_unique_and_sorted`). A tick first removes orphaned trackers (no `tracker_projects` rows, per R3). It
+then syncs every remaining tracker in turn. One tracker's failure is recorded on its
+row and does not stop the others.
 
 ### R6 · Linking (pure core + one SQL write)
 
@@ -221,7 +254,16 @@ sessions. Full recompute — deterministic and idempotent.
 A sum over zero non-NULL values is `null` (not `0`); its `_n` is `0`. `tokens_in` is
 not reported (folded total incl. cache).
 
-**Ticket usage:** `S` = distinct sessions with any link to the task.
+**Ticket usage:** `S` = distinct sessions with any link to the task **that are
+currently candidates of the tracker (R1)**, i.e. across all **currently bound**
+projects (a ticket's full cost). The read-time intersection means an unbind takes
+effect immediately, without waiting for the next relink to drop stale links. The
+same intersection applies to the sprint partitions, which are already defined over
+candidates. Also returns `by_project:
+[{project_id, name, usage}]`, one entry per bound project, where a project's set is
+the sessions of `S` whose repo anchor is in that project. A repository in two bound
+projects puts its sessions in both entries, so `by_project` may sum to more than the
+total, and the total is authoritative.
 
 **Sprint usage:**
 - `state = 'future'` → `usage: null, reason: "not_started"`.
@@ -231,6 +273,8 @@ not reported (folded total incl. cache).
   `tracker_task_sprints`; `linked_other` = links to tasks of this tracker but none in
   this sprint; `unlinked` = **no link to any task of this tracker** (links to another
   tracker's tasks don't count). Each part carries a usage object.
+- The sprint (and its partition) is tracker-wide, across all bound projects. Each part
+  also carries a `by_project` breakdown under the same rule as ticket usage.
 
 ### R8 · API (`api/handlers/trackers.rs`)
 
@@ -248,11 +292,16 @@ sit behind one guard layer built from **existing** code:
 - Exposed as an axum middleware `local_caller_guard` applied to the tracker route
   group; the existing `repositories.rs` behaviour is unchanged.
 
+Project-scoped routes resolve the project's tracker (via `tracker_projects`) and
+return **tracker-wide** data with `by_project` breakdowns. Asking from project A or
+from project B gives the same numbers.
+
 | Route | Behaviour |
 |---|---|
+| `GET /api/trackers` | every tracker with `bound_projects:[{id, name}]`, status and counts (for listing; connect does its own server-side match). |
 | `GET /api/projects/{id}/trackers` | `[{id, kind, base_url, account_email, external_project_key, board_id, status, last_success_at, last_error, counts:{tasks, sprints}}]`; `[]` when none. Unknown project → 404. |
-| `POST /api/projects/{id}/trackers/jira/connect` | body `{base_url, email, api_token, project_key, board_id}`. Validate URL (R4) → 422; `myself` 401/403 → 401 `{error:"unauthorized"}`; board 404 → 404 `{error:"board_not_found"}`; board's project key ≠ `project_key` → 422 `{error:"board_project_mismatch"}`. Then persist (R3), run the first sync, return **201** `{tracker, first_sync:{ok:true, counts} \| {ok:false, error:<code>}}`. A failed first sync keeps the connection (credential was valid); `status` shows `error`. |
-| `DELETE /api/projects/{id}/trackers/jira` | R3 disconnect; 204; 404 if none. |
+| `POST /api/projects/{id}/trackers/jira/connect` | body `{base_url, email?, api_token?, project_key?, board_id}`. Validate URL (R4) → 422. If the project is already bound to a **different** tracker → 409 `{error:"project_already_bound"}`. **If a tracker with this `(base_url, board_id)` exists:** bind the project (idempotent). If `api_token` is given, validate it and replace the stored token. Return **200** `{tracker, bound:true}`, with no first sync. **Otherwise (new tracker):** `email`, `api_token` and `project_key` are required (422 `{error:"token_required"}` etc.); `myself` 401/403 → 401 `{error:"unauthorized"}`; board 404 → 404 `{error:"board_not_found"}`; board's project key ≠ `project_key` → 422 `{error:"board_project_mismatch"}`. Then persist (R3), run the first sync, return **201** `{tracker, first_sync:{ok:true, counts} \| {ok:false, error:<code>}}`. A failed first sync keeps the connection (credential was valid); `status` shows `error`. |
+| `DELETE /api/projects/{id}/trackers/jira` | R3 unbind (and delete the tracker if this was its last project); 200 `{tracker_deleted: bool}`; 404 if the project is not bound. |
 | `POST /api/projects/{id}/trackers/jira/sync` | R5 now. 200 `{counts:{sprints, tasks, removed, links}}`; 409 `{error:"busy"}`; 502 `{error:<code>}`; 404 if no tracker. |
 | `GET /api/projects/{id}/sprints` | `[{id, name, state, start_at, end_at, complete_at, candidates_in_window, linked_sprint, linked_other, unlinked}]` (each part a usage object; `null` + `reason` for future). Removed sprints excluded. |
 | `GET /api/projects/{id}/tracker-tasks?sprint={uuid}&include_removed=bool` | `[{key, summary, issue_type, status, current_sprint, removed, usage}]`. `sprint` filters to its members; unknown sprint → 404. |
@@ -271,14 +320,22 @@ enabled; a missing row is a 500 (the row is seeded and test-enforced).
 
 ### R10 · CLI (`crates/cli`, via `daemon_url()` + the blocking client)
 
-- `sensei tracker connect jira --project <p> --url <site> --email <e> --project-key <K> --board <id>`
-  — token from `SENSEI_JIRA_TOKEN` if set, else one line read from stdin (the help
+- `sensei tracker connect jira --project <p> --url <site> --board <id> [--email <e> --project-key <K>]`.
+  The CLI first POSTs connect **without** a token and lets the server decide (the
+  server normalises the URL per R4; the CLI never matches URLs itself). A 200 reply
+  means the board was already connected: it prints "bound <p> to existing connection
+  (also: <other projects>)". A 422 `token_required` reply means a new connection:
+  `--email`/`--project-key` are required, and the token comes from `SENSEI_JIRA_TOKEN` if set, else one line read from stdin (the help
   text notes env vars are visible to same-user processes). Never an argv flag.
-- `sensei tracker sync --project <p>` · `sensei tracker disconnect --project <p>`
+  `--rotate-token` is the only way the CLI sends a token for an existing connection,
+  because that token is shared by every bound project.
+- `sensei tracker sync --project <p>` · `sensei tracker disconnect --project <p>` (unbinds; says
+  whether the connection was deleted or is still used by other projects)
 - `sensei tracker usage --project <p> [--sprint <s> | <KEY>]` — giving both is an
   error. Table: key · summary · sessions (branch/prompt) · **"active AI time"** `h:mm` ·
   fresh / cache-read / out tokens · cost (blank when unknown, not `0`), then for a
-  sprint the `unlinked` count.
+  sprint the `unlinked` count. Totals are tracker-wide; `--by-project` adds one row per
+  bound project.
 - `<p>`: a uuid, or an exact project name from `GET /api/projects`; 0 or >1 matches
   → error listing the candidates. `<s>`: uuid or exact sprint name; same rule.
 
@@ -316,13 +373,14 @@ Unattended (CI):
    h. `local_caller_guard`: `Origin: https://evil.com` → 403; `Origin: tauri://localhost` → passes; `Host: evil.com` → 403; no Origin + `Host: 127.0.0.1:7744` → passes. The existing `repositories.rs` origin tests still pass after the extraction.
    i. Sentinel-token test: run connect (fake), failed sync and status with token `SENTINEL-TOKEN-XYZ`; captured logs, `last_error`, and every response body do not contain it.
    j. Sprint usage against seeded DB rows: `candidates_in_window` equals an independent `count(*)` written in the test; a session linked only to another tracker's task lands in `unlinked`; a future sprint → `not_started`; an active sprint past `end_at` includes a session started after `end_at`.
+   k. Multi-project binding (also: two interleaved transactions, B binding while A last-unbinds → tracker survives with 1 binding and its secret; after unbinding A, AUTH-420 usage drops A's session immediately with no resync; connect with `https://ACME.atlassian.net/jira/software` binds to the existing `https://acme.atlassian.net` tracker without a token) (seeded DB, fake transport and fake `SecretStore`): connecting the same `(base_url, board_id)` from project B → same tracker id, 2 `tracker_projects` rows, 1 sync, 1 secret. Sessions in A's repo and in B's repo both on `fix/AUTH-420-x` → AUTH-420 usage `sessions = 2` with a `by_project` entry for each. A repo in both A and B → its session counted once in the total and once in each `by_project` entry. Project A already bound to tracker X connecting board Y → 409 `project_already_bound`. Unbinding A leaves the tracker; unbinding B deletes it and its secret. Deleting project B's row orphans the tracker, and the next tick removes it and its secret.
 2. `rg -n '\.(post|put|patch|delete)\(' crates/senseid/src/tracker/` → no output.
 3. `rg -n 'api_token|SENSEI_JIRA_TOKEN' crates/senseid/src crates/cli/src` hits only the connect request type, its keyring call, and the CLI token reader; no DDL column holds a token.
 4. `tracker_sync` is in `SCHEDULABLE`, `DESCRIPTIONS` and `schedules.jsonl`; `every_schedulable_worker_has_a_description`, `every_schedulable_worker_has_a_schedule_row`, `every_schedule_row_names_a_real_worker` and `schedulable_names_are_unique_and_sorted` pass; `rg -n 'tracker_sync::spawn' crates/senseid/src/api/server.rs` → 1 hit (the tests above can't see a missing spawn).
 5. `rg -n 'const ALLOWED_ORIGINS|fn origin_may_mutate' crates/senseid/src` → exactly one definition each, in `api/origin_guard.rs`.
 
 Human (after both prerequisites; needs the user's tenant):
-6. Connect via CLI → `GET …/trackers` shows `connected`; sprint and issue counts equal the Jira board UI.
+6. Connect via CLI → `GET …/trackers` shows `connected`; sprint and issue counts equal the Jira board UI. Connecting a second sensei project to the same board binds without a token prompt, and a ticket worked on in both projects shows both in `by_project`.
 7. For one ticket, `active_secs` and `tokens_fresh` from the API equal a hand-written `select sum(...)` over its linked session ids (recorded in Evidence).
 8. A real session on a branch carrying a real key appears under that ticket.
 9. Precision sample: ≥10 real linked sessions reviewed; 0 links to non-existent keys; precision per source recorded in Evidence.
@@ -334,11 +392,14 @@ Human (after both prerequisites; needs the user's tenant):
 - Links to a removed issue disappear on the next sync.
 - `tokens_in` shown as "tokens"; a NULL field summed as `0`; a field without its `_n`.
 - Ticket sums added to make a sprint total (double-counts shared sessions).
+- The same Jira board connected twice (two trackers, two syncs, two tokens), or a ticket's usage limited to the one project it was asked from.
+- `by_project` entries summed and shown as the total.
+- A sensei project bound to two trackers (two sprint calendars).
 - A failed/partial sync changes data rows, or a never-successful tracker shows `connected`.
 - Any non-GET request to Jira, or a request to a host not under `.atlassian.net`, or a followed redirect.
 - The token in a DB row, log line, API response, `last_error`, or argv.
 - A tracker route answering a foreign `Origin` or a non-loopback `Host`; a second copy of `ALLOWED_ORIGINS`.
-- A session from a repo outside the project counted in any partition.
+- A session from a repo outside **every** project bound to the tracker counted in any partition.
 - Assignee, author, or any person attribute in usage output.
 - "hours" / "time spent" without the "active AI time" label.
 - A future sprint showing `0` usage; an overrunning active sprint dropping sessions after `end_at`.
