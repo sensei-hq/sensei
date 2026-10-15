@@ -83,6 +83,30 @@ pub fn hook_event_fields(payload: &serde_json::Value) -> HookEventFields<'_> {
     }
 }
 
+/// The session's list-price cost from a usage-mod `SessionMeasure` (#238): the
+/// engine's /cost total, `cost.usd`. `None` for any other event, for a measure
+/// with no cost ledger, and for a value that is not a non-negative number —
+/// never a fabricated 0.
+pub fn measured_list_cost(payload: &serde_json::Value) -> Option<f64> {
+    if payload["hook_event_name"].as_str() != Some("SessionMeasure") {
+        return None;
+    }
+    payload["cost"]["usd"].as_f64().filter(|usd| usd.is_finite() && *usd >= 0.0)
+}
+
+/// Fold what one captured event says about its session into `activity.sessions`,
+/// beyond the event row itself. Shared by the live handler and the drain, so a
+/// dead-lettered event lands the same as a delivered one.
+pub async fn apply_to_session(pg: &PgStore, payload: &serde_json::Value) {
+    let Some(usd) = measured_list_cost(payload) else { return };
+    let session_id = hook_event_fields(payload).session_id;
+    match pg.raise_session_list_cost(session_id, usd).await {
+        Ok(true) => {}
+        Ok(false) => tracing::debug!(session_id, "SessionMeasure for a session with no row"),
+        Err(e) => tracing::warn!(error = %e, session_id, "raise_session_list_cost failed"),
+    }
+}
+
 /// Recursively strip NUL (U+0000) from every string in a JSON value. Postgres
 /// jsonb (and `text`) cannot store a NUL, so an unsanitised hook payload — e.g.
 /// captured tool output with a stray NUL byte — is rejected outright and the
@@ -271,7 +295,10 @@ async fn import_file(pg: &PgStore, path: &Path) -> Result<DrainStats, String> {
             })
             .await
         {
-            Ok(Some(_)) => stats.imported += 1,
+            Ok(Some(_)) => {
+                stats.imported += 1;
+                apply_to_session(pg, payload).await;
+            }
             Ok(None) => stats.duplicate += 1,
             Err(e) => {
                 last_err = e;
@@ -328,7 +355,8 @@ mod tests {
     /// total; that figure, and only that, is the session's list cost.
     #[test]
     fn a_session_measure_yields_its_cost_total() {
-        let p = json!({"hook_event_name": "SessionMeasure", "session_id": "s", "cost": {"usd": 4.27}});
+        let p =
+            json!({"hook_event_name": "SessionMeasure", "session_id": "s", "cost": {"usd": 4.27}});
         assert_eq!(measured_list_cost(&p), Some(4.27));
     }
 
@@ -486,6 +514,44 @@ not json
         assert_eq!(skipped, 1, "the unreadable line is skipped, not fatal");
         assert_eq!(events[0]["session_id"], "before");
         assert_eq!(events[1]["session_id"], "after", "the file did not stop at the bad byte");
+    }
+
+    /// A usage-mod measure that missed the daemon is dead-lettered (#238); the
+    /// drain must fold its cost into the session exactly as the live handler
+    /// does, or a session whose last measure was spooled keeps a stale cost.
+    ///
+    /// MUTATION: drop `apply_to_session` from `import_file` — the column stays NULL.
+    #[tokio::test]
+    async fn a_drained_session_measure_raises_the_session_list_cost() {
+        let pg = PgStore::connect_test().await.unwrap();
+        let fid = crate::db::pg_store::tests::create_test_folder(&pg, "drain-list-cost").await;
+        let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+        let id = pg.record_session_event(&sid, &fid, None, "claude", false).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let line = json!({
+            "session_id": sid, "assistant_family": "claude", "hook_event_name": "SessionMeasure",
+            "ts": 1_760_000_000_000_i64, "cost": {"usd": 3.75}, "changed": ["cost"]
+        });
+        std::fs::write(dir.path().join("events.jsonl"), format!("{line}\n")).unwrap();
+
+        let stats = drain_once(&pg, dir.path()).await.unwrap();
+
+        assert_eq!(stats.imported, 1);
+        let (cost,): (Option<f64>,) = sqlx_core::query_as::query_as(
+            "SELECT list_cost_usd::float8 FROM activity.sessions WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(cost, Some(3.75));
+
+        for sql in [
+            "DELETE FROM activity.assistant_events WHERE session_id = $1",
+            "DELETE FROM activity.sessions WHERE client_session_id = $1",
+        ] {
+            sqlx_core::query::query(sql).bind(&sid).execute(pg.pool()).await.unwrap();
+        }
     }
 
     #[test]
