@@ -20,6 +20,14 @@
       "command": "${CLAUDE_PLUGIN_ROOT}/bin/sensei-mcp.sh"
     }
   },
+  "userConfig": {
+    "relayGate": {
+      "type": "boolean",
+      "title": "Relay tool gate",
+      "description": "Ask the sensei daemon before each tool call; a dōjō member can decline it from their phone. It only ever tightens a decision, and an unreachable daemon allows.",
+      "default": false
+    }
+  },
   "hooks": {
     "SessionStart": [
       {

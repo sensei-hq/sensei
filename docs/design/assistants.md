@@ -66,19 +66,21 @@ docs say what the user sees; this says how connect + observe actually work.
   only if the sensei MCP server is registered (no-ops on un-init'd repos).
 - `hooks/nudge` — relay-engine phone-nudge path, fired on `PreToolUse` alongside
   `forward`.
-- `hooks/gate` — the relay-engine **control channel** (feature B, `docs/plan/relay-engine.md`
-  §5): POSTs the `PreToolUse` payload to daemon `/hook/gate`; the daemon's JSON
-  response IS Claude's `permissionDecision` (allow/deny), raised to the phone
-  as a gate-card and blocking for a human answer. **Fail-open** — daemon
-  down/slow/error → prints `allow`, exit 0; only an explicit human `deny`
-  blocks. **Not registered in `plugin.json` by default** — opt-in via a
-  `PreToolUse` matcher + `SENSEI_RELAY_GATE_TOOLS` env allowlist (activation is
-  a deferred product decision, see MEMORY `project_beta_relay_plan`).
-- Claude Code hook limits that shape this design: `PostToolUse` has no
-  duration/token counts (→ OTLP for cost, owned by the daemon not per-session
-  MCP servers, see `../architecture/mcp.md`); hooks can't call MCP tools, only
-  inject text via stdout; ~100ms budget → fire-and-forget except `gate`, which
-  is explicitly allowed to block up to `--max-time 55` under Claude's 60s cap.
+- `hooks/gate.ts` (mods module, #238) — the relay-engine **control channel**
+  (feature B, `docs/plan/relay-engine.md` §5): a `tool.check` hook that POSTs the
+  call to daemon `/hook/gate`, which may raise it to the phone as a gate-card and
+  hold it (bounded by the daemon, ~50 s) for a human answer. **Opt-in** through
+  the plugin's `relayGate` option, off by default; `SENSEI_RELAY_GATE_TOOLS`
+  still selects what the daemon gates. **Only tightens** — a human decline denies
+  the call; anything else keeps the engine's own verdict, so it never skips a
+  permission prompt. **Fail-open** — daemon down/error leaves the engine's
+  verdict. Replaces the shell `hooks/gate`, which was never registered.
+- Claude Code hook limits that shape this design: hook payloads carry no token
+  or cost counts (`PostToolUse` does carry `duration_ms`), so usage comes from
+  the mods module `hooks/usage.ts` — `SessionMeasure` / `TurnComplete`, see
+  `../prd/modules/01-foundation/03-capture-sessions/README.md` §Usage & cost
+  capture; hooks can't call MCP tools, only inject text via stdout; shell hooks
+  are fire-and-forget, and the blocking relay gate lives in the mods module.
 
 ## ACP adapters (Zed and future non-Claude agents)
 
