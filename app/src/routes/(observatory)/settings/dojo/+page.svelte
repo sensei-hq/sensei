@@ -2,7 +2,13 @@
   import { invalidateAll } from '$app/navigation';
   import { PageHeader, ScreenState } from '$lib/components';
   import { personaList } from '$lib/personas.svelte.js';
-  import { agreementLine, entityLabel, summarise, syncTone } from './dojo-status-state.svelte.js';
+  import {
+    agreementLine,
+    detailLine,
+    entityLabel,
+    summarise,
+    syncTone,
+  } from './dojo-status-state.svelte.js';
 
   let { data } = $props();
 
@@ -117,6 +123,7 @@
       <p class="text-xs text-ink-mute mt-0 mb-3" data-summary>{summarise(data.sync.counts)}</p>
       <div class="border border-paper-edge rounded-lg overflow-hidden" data-sync-rows>
         {#each data.sync.entities as row (`${row.entity}:${row.entity_key}:${row.direction}`)}
+          {@const detail = detailLine(row)}
           <div
             class="px-4 py-3 border-b border-paper-edge last:border-b-0"
             data-entity={row.entity}
@@ -131,10 +138,10 @@
             <div class="text-xs text-ink-faint mt-0.5">
               {entityLabel(row.entity)} · {row.direction}
             </div>
-            {#if row.last_error}
-              <!-- Shown for `skipped` too, where it is the REASON rather than a
-                   failure — the tone above is what distinguishes them. -->
-              <div class="text-xs text-ink-soft mt-1" data-detail>{row.last_error}</div>
+            {#if detail}
+              <!-- Shown for `skipped` too, where it is the REASON (in words) rather
+                   than a failure — the tone above is what distinguishes them. -->
+              <div class="text-xs text-ink-soft mt-1" data-detail>{detail}</div>
             {/if}
           </div>
         {/each}

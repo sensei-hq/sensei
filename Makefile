@@ -386,7 +386,7 @@ website-build:
 # test — full suite; requires sensei_test PostgreSQL database with full schema
 #   Set TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test (default)
 
-test-fast: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens test-crates-fast test-app-unit
+test-fast: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens test-crates-fast test-app-unit test-plugin
 
 test-crates-fast:
 	cargo test -p sensei-bootstrap
@@ -426,7 +426,7 @@ check-ddl-comments:
 check-brew-tokens:
 	@python3 scripts/check-brew-tokens.py
 
-test: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens test-crates app-check test-app-unit test-dojo test-db-if-reachable
+test: check-sql-in-layer check-ddl-grants check-ddl-comments check-brew-tokens test-crates app-check test-app-unit test-dojo test-plugin test-db-if-reachable
 
 test-crates:
 	cargo test --workspace
@@ -441,6 +441,18 @@ test-app-unit:
 # green suite (spec dojo-auth-provisioning §VIII.4). Needs no database.
 test-dojo:
 	cd dojo && bun run test
+
+# The sensei plugin's mods module (hooks/usage.ts, #238): validated the way the
+# engine reads it, then its *.test.ts run against the engine's own test kit.
+# Both need the `claude` CLI, so without one it SKIPS, loudly — the same shape as
+# test-db-if-reachable. A validation or test failure still fails the build.
+SENSEI_PLUGIN := marketplace/plugins/sensei
+test-plugin:
+	@if ! command -v claude >/dev/null 2>&1; then \
+		echo "  SKIPPED plugin tests — no claude CLI on PATH"; \
+	else \
+		claude plugin validate $(SENSEI_PLUGIN) && claude plugin test $(SENSEI_PLUGIN); \
+	fi
 
 # SQL assertions against a REAL Postgres — RLS, constraints, policy grants: the
 # things a mocked supabase-js client cannot check and therefore cannot fail on.

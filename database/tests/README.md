@@ -28,9 +28,14 @@ harness needs a running Postgres and is correspondingly slower to reach for.
 ## Running
 
 ```bash
-database/tests/run.sh                      # local Supabase, the default
-DATABASE_URL=postgres://… database/tests/run.sh
+database/tests/run.sh                      # dojo/ → local Supabase, the rest → local `sensei`
+DATABASE_URL=postgres://… database/tests/run.sh          # another dōjō target
+SENSEI_DATABASE_URL=postgres://… database/tests/run.sh   # another daemon database
 ```
+
+Each directory is a dbd scope and runs against the database that scope deploys
+to: `dojo/` against the dōjō, everything else (`gateway/`, …) against the
+daemon's `sensei` database.
 
 Exits non-zero on the first failing assertion in any file, and names the file.
 `make test-db` runs the same thing.

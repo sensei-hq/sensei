@@ -7966,6 +7966,53 @@ async fn record_session_event_folds_into_one_row_and_completes() {
         .unwrap();
 }
 
+/// #238 step 2: a session's list cost is the largest /cost total any
+/// SessionMeasure reported. The total only grows within a session, and a
+/// dead-lettered measure can be drained after a later live one — so a smaller
+/// figure arriving late must not regress the column.
+#[tokio::test]
+async fn raise_session_list_cost_keeps_the_largest_total() {
+    let s = pg_store().await;
+    let fid = create_test_folder(&s, "sess-list-cost").await;
+    let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+    let id = s.record_session_event(&sid, &fid, None, "claude", false).await.unwrap();
+    let read = |s: &PgStore| {
+        let s = s.clone();
+        async move {
+            let row: (Option<f64>,) = sqlx_core::query_as::query_as(
+                "SELECT list_cost_usd::float8 FROM activity.sessions WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(s.pool())
+            .await
+            .unwrap();
+            row.0
+        }
+    };
+
+    assert_eq!(read(&s).await, None, "no measure yet: NULL, not 0");
+    assert!(s.raise_session_list_cost(&sid, 1.25).await.unwrap());
+    assert_eq!(read(&s).await, Some(1.25));
+    assert!(s.raise_session_list_cost(&sid, 4.5).await.unwrap());
+    assert_eq!(read(&s).await, Some(4.5));
+    assert!(s.raise_session_list_cost(&sid, 2.0).await.unwrap());
+    assert_eq!(read(&s).await, Some(4.5), "a late, smaller total must not regress it");
+
+    sqlx_core::query::query("DELETE FROM activity.sessions WHERE id = $1")
+        .bind(id)
+        .execute(s.pool())
+        .await
+        .unwrap();
+}
+
+/// A measure for a session with no row is reported as a miss, never ok.
+#[tokio::test]
+async fn raise_session_list_cost_reports_a_missing_session() {
+    let s = pg_store().await;
+    let sid = format!("_test-sid-{}", uuid::Uuid::new_v4());
+    assert!(!s.raise_session_list_cost(&sid, 1.0).await.unwrap());
+}
+
 #[tokio::test]
 async fn list_all_sessions_joins_project_and_uses_camelcase_times() {
     // #61: the observatory reads project name + startedAt/completedAt. The
