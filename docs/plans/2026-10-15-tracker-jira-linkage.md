@@ -36,7 +36,7 @@ CLI are the v1 contract.
 ### Feature 1: Connect + read-only sync
 
 - **Issue:** TBD
-- **Layers:** DDL (`trackers` — one per project, `sprints`, `tracker_tasks`, `tracker_task_sprints`; enums `tracker_kind`, `tracker_error`) → daemon (`http::bounded_builder()` extracted from `federation::http_client()`; `tracker::jira` transport + URL validation + `sync`; credential via `gateway_keys`; R9 status fn; `api/origin_guard.rs` extracted from `repositories.rs` plus the Host check) → API (`GET …/trackers`, `POST …/jira/connect`, `DELETE …/jira`, `POST …/jira/sync`) → CLI (`sensei tracker connect|sync|disconnect`)
+- **Layers:** DDL (`trackers` — one per project, `sprints`, `tracker_tasks`, `tracker_task_sprints`; enums `tracker_kind`, `tracker_error`) → daemon (`http::bounded_builder()` extracted from `federation::http_client()`; `tracker/` seam — `TrackerAdapter` trait + registry, shared `GetTransport` + URL policy, provider-neutral sync coordinator; `tracker/jira.rs` = the Jira adapter; credential via `gateway_keys`; R9 status fn; `api/origin_guard.rs` extracted from `repositories.rs` plus the Host check) → API (`GET …/trackers`, `POST …/trackers/{kind}/connect`, `DELETE …/trackers`, `POST …/trackers/sync`) → CLI (`sensei tracker connect|sync|disconnect`)
 - **Depends on:** — (task F1.1 needs the tenant)
 - **Tasks (in order):**
   1. **F1.1 (human-gated):** record one scrubbed response per R4 endpoint into `crates/senseid/tests/fixtures/jira/` and confirm the C11 field names. Update the spec's C11 row.
@@ -45,7 +45,7 @@ CLI are the v1 contract.
   4. `origin_guard.rs` extraction; `repositories.rs` switches to it; Host check added.
   5. Transport, URL validation, sync, status, and credential, all TDD against the fake transport.
   6. Routes + `local_caller_guard`; CLI.
-- **Acceptance criteria:** Done gates 1b, 1c, 1d, 1e, 1f, 1g, 1h, 1i, 2, 3 and 5 pass, plus the connection parts of 1k (`board_already_connected` incl. an un-normalised URL; re-connect to a different board drops the old board's data; project delete removes the tracker and the next tick its secret).
+- **Acceptance criteria:** Done gates 1l (seam test with a fake non-Jira adapter) and 2b (no Jira knowledge outside `tracker/jira.rs`), plus 1b, 1c, 1d, 1e, 1f, 1g, 1h, 1i, 2, 3 and 5 pass, plus the connection parts of 1k (`board_already_connected` incl. an un-normalised URL; re-connect to a different board drops the old board's data; project delete removes the tracker and the next tick its secret).
 - **Test scenarios:**
   - Given a fake transport with 2 issue pages and 2 sprints, When sync runs twice, Then the second run changes nothing but `last_seen_at`.
   - Given page 2 returns 500, When sync runs, Then no data row changes and `status` = `error`.
@@ -65,7 +65,7 @@ CLI are the v1 contract.
 ### Feature 3: Session ↔ ticket linking
 
 - **Issue:** TBD
-- **Layers:** DDL (`session_task_links`, enum `link_source`) → daemon (pure `extract_links`; candidate query via `folder_projects` on `repo_folder_id`; relink inside the sync transaction) → API (`GET …/tracker-tasks/{key}` with its sessions)
+- **Layers:** DDL (`session_task_links`, enum `link_source`) → daemon (pure `match_links` (Jira adapter); candidate query via `folder_projects` on `repo_folder_id`; relink inside the sync transaction) → API (`GET …/tracker-tasks/{key}` with its sessions)
 - **Depends on:** F1
 - **Acceptance criteria:** Done gate 1a passes. Relink is idempotent: syncing twice gives identical link rows. A link to a removed task survives the next sync. A session from a repo outside the project gets no link (seeded-DB test).
 - **Test scenarios:**

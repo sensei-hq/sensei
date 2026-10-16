@@ -100,6 +100,12 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
   says only the repo-root folder carries `repository_id` (I16); `folders.ddl`
   records that D-REPO-ANCHOR (2026-10-01) superseded it — every folder carries it.
 
+- **GitLab tracker adapter** (next after Jira; seam in
+  [`spec/daemon/tracker-jira-linkage.md`](spec/daemon/tracker-jira-linkage.md) "Future
+  adapters") — decide: iterations (Premium) vs milestones as sprints; `#12` key
+  resolution scoped by the session's repo; self-managed host allow-rule (SSRF
+  review); PAT vs OAuth.
+
 ## Where open work is described
 
 | Concern | Source |

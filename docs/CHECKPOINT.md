@@ -23,8 +23,16 @@
 A sensei project holds many repos (README front matter `project:`) and exactly one
 Jira board; the board holds many sprints; a sprint holds many tickets; tickets link
 to sessions from any of the project's repos. The 2026-10-15 "one board, many
-projects" binding was reverted: `trackers.project_id` and `(base_url, board_id)` are
+projects" binding was reverted: `trackers.project_id` and `(kind, base_url, board_ref)` are
 both unique; usage breaks down `by_repo` (parts sum to the total).
+
+## Integration seam (user, 2026-10-16)
+
+Jira is the first adapter behind a `TrackerAdapter` trait (house adapter pattern, like
+`TranscriptAdapter`). Tables, credentials, GET transport, sync coordinator, relink,
+usage, routes (`/trackers/{kind}/…`) are provider-neutral; GitLab is the next adapter
+(spec "Future adapters": iterations vs milestones, `#12` keys scoped by repo,
+self-managed hosts).
 
 ## Gate for `/sensei:build`
 
