@@ -124,7 +124,7 @@ pub(crate) async fn set_router_key(
         })?;
     // Pre-fetch every router's current key in one spawn_blocking, then
     // hand the gateway a resolver over the snapshot. Avoids N blocking
-    // /usr/bin/security spawns on the async runtime thread.
+    // blocking credential-store reads on the async runtime thread.
     let all_keys: std::collections::HashMap<String, Option<String>> =
         tokio::task::spawn_blocking(|| {
             REGISTRY.iter().map(|r| (r.id.to_string(), gateway_keys::get_key(r.id).ok())).collect()
@@ -172,7 +172,7 @@ pub(crate) async fn clear_router_key(
         })?;
     // Pre-fetch every router's current key in one spawn_blocking, then
     // hand the gateway a resolver over the snapshot. Avoids N blocking
-    // /usr/bin/security spawns on the async runtime thread.
+    // blocking credential-store reads on the async runtime thread.
     let all_keys: std::collections::HashMap<String, Option<String>> =
         tokio::task::spawn_blocking(|| {
             REGISTRY.iter().map(|r| (r.id.to_string(), gateway_keys::get_key(r.id).ok())).collect()

@@ -40,3 +40,7 @@ tools/session-report/target/
 
 # The TypeScript driver package: its dependencies give the driver its types.
 crates/senseid/ts-driver/node_modules/
+
+# Nix / direnv
+.direnv/
+result

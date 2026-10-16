@@ -26,8 +26,7 @@ const MAX_VERIFIER_LEN: usize = 128;
 ///
 /// Randomness comes from `Uuid::new_v4`, which draws from the OS CSPRNG. Three
 /// uuids give 48 bytes — deliberately reusing a dependency already present
-/// rather than adding a crate for 48 bytes, the same reasoning the Keychain
-/// helper uses in shelling to `/usr/bin/security`.
+/// rather than adding a crate for 48 bytes.
 pub fn generate_verifier() -> String {
     let mut bytes = Vec::with_capacity(48);
     for _ in 0..3 {

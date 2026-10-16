@@ -1,13 +1,31 @@
-//! macOS Keychain access for gateway router API keys.
+//! OS credential store for every secret the daemon keeps — gateway router API
+//! keys, dōjō device tokens, Supabase / GitHub session tokens.
 //!
-//! Wraps `/usr/bin/security` so we don't add a new crate dependency.
-//! Service name namespace: `com.sensei.gateway.router.<router_id>`.
-//! Account name: `"default"` (one key per router for now; per-project
-//! overrides would use `account = project_id` later).
+//! Secrets live in the platform store, never Postgres; the database holds only a
+//! handle (`credential_ref`). The backend is the `keyring` crate on every OS (see
+//! [`keyring_store`]). On macOS the original `/usr/bin/security` backend
+//! ([`macos_security`]) remains selectable as a rollback with
+//! `SENSEI_CREDENTIAL_BACKEND=security`.
+//!
+//! Router keys use service `com.sensei.gateway.router.<router_id>`, account
+//! `"default"` (one key per router for now; per-project overrides would use
+//! `account = project_id` later).
+//!
+//! # Blocking
+//! Every call talks to the OS store synchronously (a D-Bus round trip, a
+//! Keychain call, or a spawned process). Callers in an async context must wrap
+//! them in `tokio::task::spawn_blocking`.
 
-use std::process::Command;
+mod keyring_store;
+#[cfg(target_os = "macos")]
+mod macos_security;
+
+use std::sync::OnceLock;
 
 const ACCOUNT: &str = "default";
+
+/// Environment variable that picks the backend. Unset means `keyring`.
+const BACKEND_ENV: &str = "SENSEI_CREDENTIAL_BACKEND";
 
 fn service_name(router_id: &str) -> String {
     format!("com.sensei.gateway.router.{router_id}")
@@ -17,114 +35,91 @@ fn service_name(router_id: &str) -> String {
 pub enum KeychainError {
     #[error("key not found in keychain")]
     NotFound,
+    /// The store exists but cannot be used right now — no Secret Service
+    /// running, a locked collection, access denied. Distinct from `NotFound` so a
+    /// caller never reads "could not look" as "nothing stored".
+    #[error("credential store unavailable: {0}")]
+    Unavailable(String),
+    #[error("credential store error: {0}")]
+    Store(String),
     #[error("keychain command failed: {0}")]
     CommandFailed(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
 
-/// The argument vector for a Keychain write — a pure value so the invariant
-/// "the secret is not in here" is a deterministic assertion rather than a race.
-///
-/// `-w` is LAST and VALUELESS: that is what makes `security` read the secret from
-/// stdin instead of from its arguments.
-fn add_password_args<'a>(service: &'a str, account: &'a str) -> [&'a str; 6] {
-    ["add-generic-password", "-U", "-s", service, "-a", account]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Backend {
+    Keyring,
+    #[cfg(target_os = "macos")]
+    MacosSecurity,
 }
 
-/// Store a secret in the login Keychain **without putting it in `argv`**.
+/// Resolve the backend from the env value. Pure, so the choice is testable.
 ///
-/// `security add-generic-password -w <secret>` puts the secret in the spawned
-/// process's argument vector, where any local process can read it via `ps` /
-/// `KERN_PROCARGS2` — and anything that records process launches (EDR, audit,
-/// process accounting) captures it too. `security`'s own usage text says so:
-/// *"Use of the -p or -w options is insecure. Specify -w as the last option to be
-/// prompted."*
-///
-/// That was not theoretical. An unattended `dojo_sync` pass re-stores a rotated
-/// Supabase refresh token on every cadence, and an unprivileged `ps -axww` on this
-/// machine captured a live token straight out of this call's arguments.
-///
-/// So `-w` is passed with NO value and the secret goes over stdin. The prompt asks
-/// twice ("retype password"), so it is written twice — verified against
-/// `/usr/bin/security` rather than assumed.
-///
-/// # Blocking
-/// Spawns a process (~50ms). Async callers must use `spawn_blocking`.
+/// An unrecognised value is not silently ignored: it is warned about and the
+/// default is used, because refusing to start over a rollback switch would turn
+/// a typo into a daemon that cannot read any credential.
+fn parse_backend(value: Option<&str>) -> Backend {
+    match value.map(str::trim) {
+        None | Some("") | Some("keyring") => Backend::Keyring,
+        #[cfg(target_os = "macos")]
+        Some("security") => Backend::MacosSecurity,
+        Some(other) => {
+            tracing::warn!(
+                value = other,
+                "{BACKEND_ENV} is not a backend available on this platform; using keyring"
+            );
+            Backend::Keyring
+        }
+    }
+}
+
+fn backend() -> Backend {
+    static BACKEND: OnceLock<Backend> = OnceLock::new();
+    *BACKEND.get_or_init(|| parse_backend(std::env::var(BACKEND_ENV).ok().as_deref()))
+}
+
+/// Store a secret, replacing any existing value for `(service, account)`.
 pub fn keychain_set(service: &str, account: &str, secret: &str) -> Result<(), KeychainError> {
-    use std::io::Write;
-    let mut child = Command::new("/usr/bin/security")
-        .args(add_password_args(service, account))
-        // Appended here, valueless, so `add_password_args` can be asserted to hold
-        // no secret while the flag that triggers the stdin prompt is still sent.
-        .arg("-w")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    {
-        let stdin = child.stdin.as_mut().ok_or(KeychainError::NotFound)?;
-        // Twice: `security` prompts for the value and then for a confirmation.
-        writeln!(stdin, "{secret}")?;
-        writeln!(stdin, "{secret}")?;
+    match backend() {
+        Backend::Keyring => keyring_store::set(service, account, secret),
+        #[cfg(target_os = "macos")]
+        Backend::MacosSecurity => macos_security::set(service, account, secret),
     }
-    let out = child.wait_with_output()?;
-    if !out.status.success() {
-        return Err(KeychainError::CommandFailed(
-            String::from_utf8_lossy(&out.stderr).trim().to_string(),
-        ));
-    }
-    Ok(())
 }
 
-/// Shells out to `/usr/bin/security` which spawns a process (~50ms).
-/// Callers in an async context must wrap this in
-/// `tokio::task::spawn_blocking`.
+/// Read a secret. `NotFound` only when nothing is stored; a store that cannot be
+/// reached is an error of its own.
+pub fn keychain_get(service: &str, account: &str) -> Result<String, KeychainError> {
+    match backend() {
+        Backend::Keyring => keyring_store::get(service, account),
+        #[cfg(target_os = "macos")]
+        Backend::MacosSecurity => macos_security::get(service, account),
+    }
+}
+
+/// Remove a secret. A missing entry is success.
+pub fn keychain_delete(service: &str, account: &str) -> Result<(), KeychainError> {
+    match backend() {
+        Backend::Keyring => keyring_store::delete(service, account),
+        #[cfg(target_os = "macos")]
+        Backend::MacosSecurity => macos_security::delete(service, account),
+    }
+}
+
 pub fn set_key(router_id: &str, key: &str) -> Result<(), KeychainError> {
-    // Via `keychain_set` so the key never reaches argv — see its docs.
     keychain_set(&service_name(router_id), ACCOUNT, key)
 }
 
-/// Read a key from the Keychain. Returns NotFound if absent.
-///
-/// # Blocking
-/// Shells out to `/usr/bin/security` which spawns a process (~50ms).
-/// Callers in an async context must wrap this in
-/// `tokio::task::spawn_blocking`.
+/// Read a router key. Returns NotFound if absent.
 pub fn get_key(router_id: &str) -> Result<String, KeychainError> {
-    let service = service_name(router_id);
-    let output = Command::new("/usr/bin/security")
-        .args(["find-generic-password", "-s", &service, "-a", ACCOUNT, "-w"])
-        .output()?;
-    if !output.status.success() {
-        if output.status.code() == Some(44) {
-            return Err(KeychainError::NotFound);
-        }
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(KeychainError::CommandFailed(stderr.trim().to_string()));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    keychain_get(&service_name(router_id), ACCOUNT)
 }
 
-/// Delete a key. Returns Ok(()) whether or not it existed.
-///
-/// # Blocking
-/// Shells out to `/usr/bin/security` which spawns a process (~50ms).
-/// Callers in an async context must wrap this in
-/// `tokio::task::spawn_blocking`.
+/// Delete a router key. Returns Ok(()) whether or not it existed.
 pub fn delete_key(router_id: &str) -> Result<(), KeychainError> {
-    let service = service_name(router_id);
-    let output = Command::new("/usr/bin/security")
-        .args(["delete-generic-password", "-s", &service, "-a", ACCOUNT])
-        .output()?;
-    if !output.status.success() {
-        if output.status.code() == Some(44) {
-            return Ok(());
-        }
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(KeychainError::CommandFailed(stderr.trim().to_string()));
-    }
-    Ok(())
+    keychain_delete(&service_name(router_id), ACCOUNT)
 }
 
 /// True when a key exists for this router. Cheap check used by the
@@ -149,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "macos"), ignore = "needs the macOS Keychain")]
+    #[cfg_attr(target_os = "linux", ignore = "needs a running Secret Service (desktop session)")]
     fn roundtrip_set_get_delete() {
         let id = unique_id();
         assert!(!has_key(&id), "fresh id should not have a key");
@@ -165,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "macos"), ignore = "needs the macOS Keychain")]
+    #[cfg_attr(target_os = "linux", ignore = "needs a running Secret Service (desktop session)")]
     fn set_replaces_existing_value() {
         let id = unique_id();
         set_key(&id, "first").unwrap();
@@ -175,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(target_os = "macos"), ignore = "needs the macOS Keychain")]
+    #[cfg_attr(target_os = "linux", ignore = "needs a running Secret Service (desktop session)")]
     fn delete_missing_is_noop() {
         let id = unique_id();
         delete_key(&id).expect("delete on missing should not error");
@@ -185,57 +180,28 @@ mod tests {
     fn service_name_uses_router_id() {
         assert_eq!(service_name("openai"), "com.sensei.gateway.router.openai");
     }
-}
 
-#[cfg(test)]
-mod argv_tests {
-    use super::*;
-
-    /// The secret must never reach the spawned process's argument vector.
-    ///
-    /// `security add-generic-password -w <secret>` put a live Supabase refresh
-    /// token in `argv`, where an unprivileged `ps -axww` on this machine captured
-    /// it — once per `dojo_sync` cadence, unattended. Any local process can read
-    /// another's arguments, and anything recording process launches records them.
-    ///
-    /// Asserted on the argv VALUE, not by sampling `ps`: the first version of this
-    /// test raced a ~50ms process and passed against the argv form it was written
-    /// to catch. A pure function cannot be raced.
     #[test]
-    fn the_argument_vector_carries_no_secret() {
-        let secret = "ztest-sentinel-do-not-leak";
-        let args = add_password_args("com.sensei.probe", "acct");
-        assert!(!args.iter().any(|a| a.contains(secret)), "the secret is in argv: {args:?}");
-        // And the flag that triggers the stdin prompt must be valueless — a `-w`
-        // followed by the secret is exactly the leak.
-        assert!(!args.contains(&"-w"), "`-w` is appended at the spawn, never with a value");
+    fn keyring_is_the_default_backend() {
+        assert_eq!(parse_backend(None), Backend::Keyring);
+        assert_eq!(parse_backend(Some("")), Backend::Keyring);
+        assert_eq!(parse_backend(Some("keyring")), Backend::Keyring);
     }
 
-    /// The secret still round-trips, so the stdin path actually works — a write
-    /// that leaks nothing but stores nothing would pass the test above.
-    ///
-    /// macOS ONLY, and the gate marks a PRODUCT gap rather than a test that does
-    /// not apply. This module shells out to `/usr/bin/security` with no
-    /// `cfg(target_os)` anywhere, so on Linux every credential read and write in
-    /// here fails with `NotFound` — and the release publishes
-    /// `sensei-linux-x86_64` and `sensei-linux-arm64` regardless. The gate keeps
-    /// the Linux CI suite honest (a Keychain assertion cannot mean anything
-    /// without a Keychain); it does not make the Linux daemon able to store a
-    /// key. Tracked separately — do not read this attribute as "handled".
-    #[cfg_attr(not(target_os = "macos"), ignore = "needs the macOS Keychain")]
     #[test]
-    fn a_secret_written_over_stdin_reads_back_intact() {
-        let secret = format!("ztest-{}", uuid::Uuid::new_v4().simple());
-        let (service, account) = ("ztest.sensei.roundtrip", "probe");
-        keychain_set(service, account, &secret).expect("the write succeeds");
-        let out = Command::new("/usr/bin/security")
-            .args(["find-generic-password", "-s", service, "-a", account, "-w"])
-            .output()
-            .expect("read back");
-        let got = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        let _ = Command::new("/usr/bin/security")
-            .args(["delete-generic-password", "-s", service, "-a", account])
-            .output();
-        assert_eq!(got, secret, "the stdin-fed secret must store verbatim");
+    fn an_unknown_backend_falls_back_to_keyring() {
+        assert_eq!(parse_backend(Some("bogus")), Backend::Keyring);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn security_selects_the_legacy_macos_backend() {
+        assert_eq!(parse_backend(Some("security")), Backend::MacosSecurity);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn security_is_not_a_backend_off_macos() {
+        assert_eq!(parse_backend(Some("security")), Backend::Keyring);
     }
 }

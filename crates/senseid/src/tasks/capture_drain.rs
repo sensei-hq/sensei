@@ -115,10 +115,8 @@ pub async fn apply_to_session(pg: &PgStore, payload: &serde_json::Value) {
 /// keys too (rebuilding the map only when a key actually contains one).
 pub fn sanitize_nul(v: &mut serde_json::Value) {
     match v {
-        serde_json::Value::String(s) => {
-            if s.contains('\u{0}') {
-                s.retain(|c| c != '\u{0}');
-            }
+        serde_json::Value::String(s) if s.contains('\u{0}') => {
+            s.retain(|c| c != '\u{0}');
         }
         serde_json::Value::Array(items) => items.iter_mut().for_each(sanitize_nul),
         serde_json::Value::Object(map) => {

@@ -629,7 +629,6 @@ mod tests {
         assert_eq!(f.effort, None);
         // Unpromoted attributes survive for later querying…
         assert_eq!(turns[0].attrs["version"], "0.3.0");
-        assert!(turns[0].attrs.get("summary").is_some() || true);
         // …but prose is not duplicated into attrs.
         assert!(turns[0].attrs.get("messages").is_none(), "messages stay out of attrs");
     }

@@ -1173,18 +1173,22 @@ mod tests {
     /// the real drive path a "you've hit your limit" message WITHOUT ever
     /// spawning `claude`. Returns the stub's path (used as `agent_cmd`).
     fn limit_stub_script(line: &str) -> std::path::PathBuf {
-        use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
         let uniq = uuid::Uuid::new_v4();
         let path = std::env::temp_dir().join(format!("sensei_limit_stub_{uniq}.sh"));
-        let mut f = std::fs::File::create(&path).unwrap();
         // `printf '%s\n'` avoids any echo-flag portability issues with the em
         // dash / interpunct in the limit copy.
-        writeln!(f, "#!/bin/sh\nprintf '%s\\n' \"{line}\"\nexit 0").unwrap();
-        f.flush().unwrap();
-        let mut perms = std::fs::metadata(&path).unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&path, perms).unwrap();
+        let script = format!("#!/bin/sh\nprintf '%s\\n' \"{line}\"\nexit 0\n");
+        // A child `sh` writes the stub, so this process never holds a writable
+        // fd to it. Written in-process, a fork by any parallel test (between its
+        // fork and exec) inherits that fd, and exec'ing the stub then fails with
+        // ETXTBSY — "agent could not be started" under the full suite only.
+        let status = std::process::Command::new("sh")
+            .args(["-c", r#"printf '%s' "$1" > "$2" && chmod 755 "$2""#, "sh"])
+            .arg(&script)
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(status.success(), "writing the limit stub failed: {status}");
         path
     }
 

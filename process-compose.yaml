@@ -1,0 +1,37 @@
+version: '0.5'
+
+# Long-running dev processes — `process-compose up`.
+# The dōjō needs the local Supabase stack (`task dojo:up`).
+
+processes:
+  daemon:
+    description: senseid daemon on :7744 (debug build)
+    command: cargo run -p senseid
+    readiness_probe:
+      http_get:
+        host: 127.0.0.1
+        port: 7744
+        path: /health
+      period_seconds: 2
+      # The first run compiles the daemon — allow up to ~10 minutes.
+      failure_threshold: 300
+
+  desktop:
+    description: Desktop app (tauri dev + Vite HMR on :5173)
+    working_dir: ./app
+    command: bun install && make -C .. app-dev
+    depends_on:
+      daemon:
+        condition: process_healthy
+
+  dojo-env:
+    description: Write dojo/.env from the running local Supabase (skipped if it exists)
+    command: task dojo:env
+
+  dojo:
+    description: Dōjō web app against the local Supabase on http://localhost:5175 (5173 is the desktop app)
+    working_dir: ./dojo
+    command: bun install && bun run dev --port 5175 --strictPort
+    depends_on:
+      dojo-env:
+        condition: process_completed_successfully

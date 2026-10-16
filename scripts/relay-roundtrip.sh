@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # P1 relay round-trip harness — proves the daemon↔Worker↔phone loop end-to-end
-# against LOCAL supabase + a running dojo Worker (default :5173).
+# against LOCAL supabase + a running dojo Worker (default :5175).
 #
 # Seeds a personal-Dōjō tenant + membership + Supabase auth user (LOCAL ONLY,
 # D4 tracked-temporary — never run against prod), then curls the full loop:
@@ -17,7 +17,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit
 
-WORKER=${WORKER:-http://localhost:5173}
+WORKER=${WORKER:-http://localhost:5175}
 EMAIL=${EMAIL:-relay-dev@local.test}
 PASS=${PASS:-relaytest123}
 fail() { echo "FAIL: $*" >&2; exit 1; }
