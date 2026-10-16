@@ -31,6 +31,9 @@ pub struct SharedState {
     /// times a handful of edge-kind combinations across the projects anyone has
     /// open at once, and a large one is hundreds of kilobytes of JSON.
     pub diagrams: Arc<crate::api::diagram_cache::DiagramCache>,
+    /// Tracker integrations: per-tracker locks, the secret store, the transport
+    /// factory. Production pieces by default (`TrackerRuntime::default`).
+    pub trackers: Arc<crate::tracker::runtime::TrackerRuntime>,
 }
 
 pub type AppState = Arc<SharedState>;

@@ -5,10 +5,198 @@
 //! the adapter modules (`jira`); everything else here is provider-neutral, and
 //! every SQL statement lives in `db::pg_store::trackers`.
 
+pub mod connect;
 pub mod http;
 pub mod jira;
+pub mod runtime;
+pub mod secret;
 pub mod sprint;
 pub mod status;
+pub mod sync;
+pub mod transport;
+
+use std::collections::HashMap;
+
+/// Which tracker a connection speaks to — the `sensei.tracker_kind` enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TrackerKind {
+    Jira,
+}
+
+impl TrackerKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TrackerKind::Jira => "jira",
+        }
+    }
+    pub fn parse(s: &str) -> Option<TrackerKind> {
+        match s {
+            "jira" => Some(TrackerKind::Jira),
+            _ => None,
+        }
+    }
+}
+
+/// An API token. Its `Debug` never prints the value, so a token cannot reach a
+/// log line through `{:?}` on any struct that carries it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ApiToken(pub String);
+
+impl std::fmt::Debug for ApiToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ApiToken(***)")
+    }
+}
+
+/// How the shared transport authenticates, chosen by the adapter.
+#[derive(Clone, PartialEq, Eq)]
+pub enum AuthScheme {
+    Basic { user: String, token: ApiToken },
+}
+
+impl std::fmt::Debug for AuthScheme {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthScheme::Basic { user, .. } => write!(f, "Basic({user}, ***)"),
+        }
+    }
+}
+
+/// GET-only access to a tracker's API. One method, so no other verb can be sent.
+#[async_trait::async_trait]
+pub trait GetTransport: Send + Sync {
+    async fn get_json(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<serde_json::Value, TrackerError>;
+}
+
+/// Validated connect input, in canonical form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectParams {
+    pub base_url: String,
+    pub board_ref: String,
+    pub account: String,
+    pub token: ApiToken,
+    pub project_key: Option<String>,
+}
+
+/// Why connect input was refused before any network call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamError {
+    InvalidBaseUrl,
+    EmailRequired,
+    TokenRequired,
+}
+
+impl ParamError {
+    pub fn code(self) -> &'static str {
+        match self {
+            ParamError::InvalidBaseUrl => "invalid_base_url",
+            ParamError::EmailRequired => "email_required",
+            ParamError::TokenRequired => "token_required",
+        }
+    }
+}
+
+/// What `validate` learns about the board.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Validated {
+    pub external_scope: String,
+    pub board_name: String,
+}
+
+/// Why `validate` refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidateError {
+    Tracker(TrackerError),
+    BoardNotFound,
+    BoardProjectMismatch,
+}
+
+/// The board a sync fetches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoardScope {
+    pub base_url: String,
+    pub board_ref: String,
+}
+
+/// One sprint as the provider reports it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SprintRow {
+    pub external_id: String,
+    pub seq: i64,
+    pub name: String,
+    pub state: sprint::SprintState,
+    pub start_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub end_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub complete_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// One ticket as the provider reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskRow {
+    pub external_id: String,
+    pub key: String,
+    pub scope: Option<String>,
+    pub summary: Option<String>,
+    pub issue_type: Option<String>,
+    pub status: Option<String>,
+}
+
+/// A complete, all-or-nothing read of a board.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Snapshot {
+    /// The board's display name, refreshed on every sync.
+    pub board_name: Option<String>,
+    pub sprints: Vec<SprintRow>,
+    pub tasks: Vec<TaskRow>,
+    /// Per sprint `external_id`: its members' `external_id`s, or `None` when the
+    /// adapter skipped an immutable (already-fetched closed) sprint.
+    pub members: Vec<(String, Option<Vec<String>>)>,
+}
+
+/// What the previous sync stored, so an adapter can skip immutable data.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PrevState {
+    /// Sprint `external_id` → the state it had when its members were last fetched.
+    pub members_fetched_state: HashMap<String, Option<sprint::SprintState>>,
+}
+
+/// One tracker provider. All provider knowledge lives behind this trait; the
+/// coordinator (`sync`, `connect`) is provider-neutral.
+#[async_trait::async_trait]
+pub trait TrackerAdapter: Send + Sync {
+    fn kind(&self) -> TrackerKind;
+    /// Parse and canonicalise the connect body.
+    fn connect_params(&self, body: &serde_json::Value) -> Result<ConnectParams, ParamError>;
+    /// The auth scheme the transport uses for this account.
+    fn auth(&self, account: &str, token: &ApiToken) -> AuthScheme;
+    /// Prove the credential and the board.
+    async fn validate(
+        &self,
+        t: &dyn GetTransport,
+        p: &ConnectParams,
+    ) -> Result<Validated, ValidateError>;
+    /// Read the whole board. Any failed request fails the whole snapshot.
+    async fn fetch_snapshot(
+        &self,
+        t: &dyn GetTransport,
+        board: &BoardScope,
+        prev: &PrevState,
+    ) -> Result<Snapshot, TrackerError>;
+}
+
+/// The registered adapters — the only place a new tracker is added.
+pub fn adapters() -> Vec<Box<dyn TrackerAdapter>> {
+    vec![Box::new(jira::JiraAdapter)]
+}
+
+/// The adapter for a kind, if one is registered.
+pub fn adapter_for_kind(kind: TrackerKind) -> Option<Box<dyn TrackerAdapter>> {
+    adapters().into_iter().find(|a| a.kind() == kind)
+}
 
 /// Why a tracker call failed — the fixed vocabulary persisted in
 /// `sensei.trackers.last_error` (enum `sensei.tracker_error`) and returned by the
@@ -31,6 +219,7 @@ pub enum TrackerError {
 
 impl TrackerError {
     /// Every variant, for exhaustiveness checks against the DDL enum.
+    #[cfg(test)]
     pub const ALL: [TrackerError; 11] = [
         TrackerError::Unauthorized,
         TrackerError::Forbidden,
@@ -100,5 +289,160 @@ mod tests {
         codes.sort_unstable();
         codes.dedup();
         assert_eq!(codes.len(), TrackerError::ALL.len());
+    }
+}
+
+#[cfg(test)]
+pub mod test_support {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// A scripted Jira board served over [`GetTransport`]: responses keyed by
+    /// `(path, startAt)`, with failure injection and a call log. Shapes follow the
+    /// spec's assumed Agile REST format (claim C11 — reconciled by the F1.1 fixture).
+    pub struct FakeBoard {
+        pages: HashMap<(String, u32), serde_json::Value>,
+        failures: HashMap<(String, Option<u32>), TrackerError>,
+        calls: Mutex<Vec<String>>,
+        on_call: Option<Hook>,
+        delay: Option<std::time::Duration>,
+    }
+
+    /// Runs on every call, before the response — e.g. to delete the tracker
+    /// mid-fetch, or to inspect the pool while a fetch is in flight.
+    pub type Hook = Box<
+        dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+            + Send
+            + Sync,
+    >;
+
+    impl FakeBoard {
+        pub fn empty() -> Self {
+            FakeBoard {
+                pages: HashMap::new(),
+                failures: HashMap::new(),
+                calls: Mutex::new(vec![]),
+                on_call: None,
+                delay: None,
+            }
+        }
+        pub fn with(mut self, path: &str, start_at: u32, body: serde_json::Value) -> Self {
+            self.pages.insert((path.into(), start_at), body);
+            self
+        }
+        pub fn fail(mut self, path: &str, e: TrackerError) -> Self {
+            self.failures.insert((path.into(), None), e);
+            self
+        }
+        /// Fail the `n`th page (1-based, in startAt order) of a listing.
+        pub fn fail_page(mut self, path: &str, n: u32, e: TrackerError) -> Self {
+            let mut starts: Vec<u32> =
+                self.pages.keys().filter(|(p, _)| p == path).map(|(_, s)| *s).collect();
+            starts.sort_unstable();
+            self.failures.insert((path.into(), Some(starts[(n - 1) as usize])), e);
+            self
+        }
+        pub fn on_call(mut self, hook: Hook) -> Self {
+            self.on_call = Some(hook);
+            self
+        }
+        pub fn delay(mut self, d: std::time::Duration) -> Self {
+            self.delay = Some(d);
+            self
+        }
+        pub fn was_called(&self, path: &str) -> bool {
+            self.calls.lock().unwrap().iter().any(|c| c == path)
+        }
+
+        /// Board 42 of project AUTH: sprints 100 (closed) and 101 (active), three
+        /// issues over two pages; 10001 in sprint 100, 10002 + 10003 in sprint 101.
+        pub fn standard() -> Self {
+            use serde_json::json;
+            let issue = |id: &str, key: &str| {
+                json!({"id": id, "key": key, "fields": {
+                    "summary": format!("summary {key}"),
+                    "issuetype": {"name": "Story"}, "status": {"name": "To Do"}}})
+            };
+            FakeBoard::empty()
+                .with("/rest/api/3/myself", 0, json!({"accountId": "a1", "emailAddress": "dev@example.com"}))
+                .with("/rest/agile/1.0/board/42", 0, json!({"id": 42, "name": "AUTH Scrum", "location": {"projectKey": "AUTH"}}))
+                .with("/rest/agile/1.0/board/42/sprint", 0, json!({"startAt": 0, "isLast": true, "values": [
+                    {"id": 100, "name": "Sprint 1", "state": "closed",
+                     "startDate": "2026-09-01T00:00:00.000Z", "endDate": "2026-09-15T00:00:00.000Z",
+                     "completeDate": "2026-09-15T10:00:00.000Z"},
+                    {"id": 101, "name": "Sprint 2", "state": "active",
+                     "startDate": "2026-10-01T00:00:00.000Z", "endDate": "2026-10-15T00:00:00.000Z"}]}))
+                .with("/rest/agile/1.0/board/42/issue", 0, json!({"startAt": 0, "maxResults": 2, "total": 3,
+                    "issues": [issue("10001", "auth-1"), issue("10002", "AUTH-2")]}))
+                .with("/rest/agile/1.0/board/42/issue", 2, json!({"startAt": 2, "maxResults": 2, "total": 3,
+                    "issues": [issue("10003", "AUTH-3")]}))
+                .with("/rest/agile/1.0/board/42/sprint/100/issue", 0, json!({"startAt": 0, "total": 1,
+                    "issues": [issue("10001", "AUTH-1")]}))
+                .with("/rest/agile/1.0/board/42/sprint/101/issue", 0, json!({"startAt": 0, "total": 2,
+                    "issues": [issue("10002", "AUTH-2"), issue("10003", "AUTH-3")]}))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl GetTransport for FakeBoard {
+        async fn get_json(
+            &self,
+            path: &str,
+            query: &[(&str, String)],
+        ) -> Result<serde_json::Value, TrackerError> {
+            self.calls.lock().unwrap().push(path.to_string());
+            if let Some(hook) = &self.on_call {
+                hook(path.to_string()).await;
+            }
+            if let Some(d) = self.delay {
+                tokio::time::sleep(d).await;
+            }
+            let start: u32 = query
+                .iter()
+                .find(|(k, _)| *k == "startAt")
+                .and_then(|(_, v)| v.parse().ok())
+                .unwrap_or(0);
+            if let Some(e) = self
+                .failures
+                .get(&(path.to_string(), None))
+                .or(self.failures.get(&(path.to_string(), Some(start))))
+            {
+                return Err(*e);
+            }
+            self.pages.get(&(path.to_string(), start)).cloned().ok_or(TrackerError::NotFound)
+        }
+    }
+}
+
+#[cfg(test)]
+mod seam_tests {
+    use super::*;
+
+    #[test]
+    fn jira_is_registered_and_kinds_round_trip() {
+        assert_eq!(adapter_for_kind(TrackerKind::Jira).map(|a| a.kind()), Some(TrackerKind::Jira));
+        assert_eq!(TrackerKind::parse(TrackerKind::Jira.as_str()), Some(TrackerKind::Jira));
+        assert_eq!(TrackerKind::parse("gitlab"), None, "no adapter, no kind");
+    }
+
+    #[test]
+    fn every_registered_kind_is_a_label_of_the_ddl_enum() {
+        let ddl = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../database/ddl/enum/sensei/tracker_kind.ddl"
+        ))
+        .unwrap();
+        for a in adapters() {
+            assert!(
+                ddl.contains(&format!("'{}'", a.kind().as_str())),
+                "{:?} missing from tracker_kind",
+                a.kind()
+            );
+        }
+    }
+
+    #[test]
+    fn api_token_debug_is_redacted() {
+        assert_eq!(format!("{:?}", ApiToken("SENTINEL-TOKEN-XYZ".into())), "ApiToken(***)");
     }
 }

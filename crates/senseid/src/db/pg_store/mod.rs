@@ -576,7 +576,7 @@ mod runs;
 mod schedules;
 mod sessions;
 pub(crate) mod sync;
-mod trackers;
+pub(crate) mod trackers;
 mod transcript;
 pub(crate) use repo_key::normalize_repo_key;
 pub(crate) use schedules::{SchedulePatch, StoredSchedule};

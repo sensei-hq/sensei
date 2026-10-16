@@ -4,6 +4,7 @@ pub mod gateway_config_loader;
 pub mod gateway_embedded;
 pub(crate) mod gateway_init;
 pub(crate) mod handlers;
+pub(crate) mod origin_guard;
 pub(crate) mod resilience;
 pub mod routes;
 pub mod server;

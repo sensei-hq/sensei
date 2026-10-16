@@ -8,6 +8,24 @@ pub enum SprintState {
     Closed,
 }
 
+impl SprintState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SprintState::Future => "future",
+            SprintState::Active => "active",
+            SprintState::Closed => "closed",
+        }
+    }
+    pub fn parse(s: &str) -> Option<SprintState> {
+        match s {
+            "future" => Some(SprintState::Future),
+            "active" => Some(SprintState::Active),
+            "closed" => Some(SprintState::Closed),
+            _ => None,
+        }
+    }
+}
+
 /// One sprint that lists the ticket, as the ranking needs it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SprintRank {

@@ -3,6 +3,631 @@
 //! tracker integration runs lives here; `crate::tracker` holds the provider
 //! logic and calls these methods.
 
+use crate::db::pg_store::PgStore;
+use crate::tracker::sprint::{SprintRank, SprintState, pick_current_sprint};
+use crate::tracker::{PrevState, Snapshot};
+
+/// One `sensei.trackers` row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackerRow {
+    pub id: uuid::Uuid,
+    pub project_id: uuid::Uuid,
+    pub kind: String,
+    pub base_url: String,
+    pub account: String,
+    pub external_scope: String,
+    pub board_ref: String,
+    pub params: serde_json::Value,
+    pub secret_service: String,
+    pub last_attempt_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_success_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_error: Option<String>,
+}
+
+/// The project that already owns a board.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoardOwner {
+    pub tracker_id: uuid::Uuid,
+    pub project_id: uuid::Uuid,
+    pub project_name: String,
+}
+
+/// A connect (or re-connect) to persist in one transaction.
+#[derive(Debug, Clone)]
+pub struct NewTracker {
+    pub project_id: uuid::Uuid,
+    pub kind: String,
+    pub base_url: String,
+    pub account: String,
+    pub external_scope: String,
+    pub board_ref: String,
+    pub params: serde_json::Value,
+    pub secret_service: String,
+}
+
+/// Why persisting a connect failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectDbError {
+    /// Another project took the board meanwhile.
+    BoardTaken,
+    /// The new secret's pending tombstone was already drained: the secret may be
+    /// gone, so the row must not point at it.
+    PendingTombstoneGone,
+    Db(String),
+}
+
+/// What an applied snapshot changed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ApplyCounts {
+    pub sprints: u32,
+    pub tasks: u32,
+    pub removed: u32,
+    pub links: u32,
+    pub skipped_members: u32,
+}
+
+/// Why an apply did not commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApplyError {
+    /// The tracker row no longer exists (disconnected or re-boarded mid-sync).
+    Gone,
+    Db(String),
+}
+
+const TRACKER_SELECT: &str =
+    "SELECT id, project_id, kind::text, base_url, account, external_scope, board_ref,
+        params, secret_service, last_attempt_at, last_success_at, last_error::text
+   FROM sensei.trackers";
+
+type TrackerTuple = (
+    uuid::Uuid,
+    uuid::Uuid,
+    String,
+    String,
+    String,
+    String,
+    String,
+    serde_json::Value,
+    String,
+    Option<chrono::DateTime<chrono::Utc>>,
+    Option<chrono::DateTime<chrono::Utc>>,
+    Option<String>,
+);
+
+fn tracker_row(t: TrackerTuple) -> TrackerRow {
+    TrackerRow {
+        id: t.0,
+        project_id: t.1,
+        kind: t.2,
+        base_url: t.3,
+        account: t.4,
+        external_scope: t.5,
+        board_ref: t.6,
+        params: t.7,
+        secret_service: t.8,
+        last_attempt_at: t.9,
+        last_success_at: t.10,
+        last_error: t.11,
+    }
+}
+
+/// Last occurrence wins, so overlapping provider pages never make one upsert touch a row twice.
+fn dedupe_by<T: Clone, K: std::hash::Hash + Eq>(items: &[T], key: impl Fn(&T) -> K) -> Vec<T> {
+    let mut seen = std::collections::HashMap::new();
+    for (i, item) in items.iter().enumerate() {
+        seen.insert(key(item), i);
+    }
+    let mut keep: Vec<usize> = seen.into_values().collect();
+    keep.sort_unstable();
+    keep.into_iter().map(|i| items[i].clone()).collect()
+}
+
+fn is_unique_violation(e: &sqlx_core::Error) -> bool {
+    e.as_database_error().and_then(|d| d.code()).as_deref() == Some("23505")
+}
+
+impl PgStore {
+    pub async fn tracker_by_id(&self, id: uuid::Uuid) -> Result<Option<TrackerRow>, String> {
+        sqlx_core::query_as::query_as::<_, TrackerTuple>(&format!("{TRACKER_SELECT} WHERE id = $1"))
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map(|r| r.map(tracker_row))
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn tracker_for_project(
+        &self,
+        project_id: uuid::Uuid,
+    ) -> Result<Option<TrackerRow>, String> {
+        sqlx_core::query_as::query_as::<_, TrackerTuple>(&format!(
+            "{TRACKER_SELECT} WHERE project_id = $1"
+        ))
+        .bind(project_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map(|r| r.map(tracker_row))
+        .map_err(|e| e.to_string())
+    }
+
+    pub async fn tracker_board_owner(
+        &self,
+        kind: &str,
+        base_url: &str,
+        board_ref: &str,
+    ) -> Result<Option<BoardOwner>, String> {
+        sqlx_core::query_as::query_as::<_, (uuid::Uuid, uuid::Uuid, String)>(
+            "SELECT t.id, t.project_id, p.name
+               FROM sensei.trackers t JOIN sensei.projects p ON p.id = t.project_id
+              WHERE t.kind = $1::sensei.tracker_kind AND t.base_url = $2 AND t.board_ref = $3",
+        )
+        .bind(kind)
+        .bind(base_url)
+        .bind(board_ref)
+        .fetch_optional(&self.pool)
+        .await
+        .map(|r| {
+            r.map(|(tracker_id, project_id, project_name)| BoardOwner {
+                tracker_id,
+                project_id,
+                project_name,
+            })
+        })
+        .map_err(|e| e.to_string())
+    }
+
+    pub async fn mark_tracker_attempt(&self, id: uuid::Uuid) -> Result<(), String> {
+        sqlx_core::query::query("UPDATE sensei.trackers SET last_attempt_at = now() WHERE id = $1")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn mark_tracker_error(&self, id: uuid::Uuid, code: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.trackers SET last_error = $2::sensei.tracker_error WHERE id = $1",
+        )
+        .bind(id)
+        .bind(code)
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+    }
+
+    pub async fn tracker_prev_state(&self, id: uuid::Uuid) -> Result<PrevState, String> {
+        let rows = sqlx_core::query_as::query_as::<_, (String, Option<String>)>(
+            "SELECT external_id, members_fetched_state FROM sensei.sprints WHERE tracker_id = $1",
+        )
+        .bind(id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(PrevState {
+            members_fetched_state: rows
+                .into_iter()
+                .map(|(ext, state)| (ext, state.as_deref().and_then(SprintState::parse)))
+                .collect(),
+        })
+    }
+
+    pub async fn apply_tracker_snapshot(
+        &self,
+        id: uuid::Uuid,
+        snapshot: &Snapshot,
+        params_patch: &serde_json::Value,
+    ) -> Result<ApplyCounts, ApplyError> {
+        let db = |e: sqlx_core::Error| ApplyError::Db(e.to_string());
+        let sprints = dedupe_by(&snapshot.sprints, |s| s.external_id.clone());
+        let tasks = dedupe_by(&snapshot.tasks, |t| t.external_id.clone());
+        let mut tx = self.pool.begin().await.map_err(db)?;
+
+        let locked = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
+            "SELECT id FROM sensei.trackers WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?;
+        if locked.is_none() {
+            return Err(ApplyError::Gone);
+        }
+
+        // Sprints.
+        let s_ext: Vec<String> = sprints.iter().map(|s| s.external_id.clone()).collect();
+        let s_seq: Vec<i64> = sprints.iter().map(|s| s.seq).collect();
+        let s_name: Vec<String> = sprints.iter().map(|s| s.name.clone()).collect();
+        let s_state: Vec<String> = sprints.iter().map(|s| s.state.as_str().to_string()).collect();
+        let s_start: Vec<Option<chrono::DateTime<chrono::Utc>>> =
+            sprints.iter().map(|s| s.start_at).collect();
+        let s_end: Vec<Option<chrono::DateTime<chrono::Utc>>> =
+            sprints.iter().map(|s| s.end_at).collect();
+        let s_done: Vec<Option<chrono::DateTime<chrono::Utc>>> =
+            sprints.iter().map(|s| s.complete_at).collect();
+        let sprint_ids: Vec<(String, uuid::Uuid)> = sqlx_core::query_as::query_as(
+            "INSERT INTO sensei.sprints
+                    (tracker_id, external_id, seq, name, state, start_at, end_at, complete_at, removed_at, last_seen_at)
+             SELECT $1, x.e, x.q, x.n, x.s, x.a, x.b, x.c, NULL, now()
+               FROM unnest($2::text[], $3::bigint[], $4::text[], $5::text[],
+                           $6::timestamptz[], $7::timestamptz[], $8::timestamptz[]) AS x(e, q, n, s, a, b, c)
+             ON CONFLICT (tracker_id, external_id) DO UPDATE
+                SET seq = excluded.seq, name = excluded.name, state = excluded.state,
+                    start_at = excluded.start_at, end_at = excluded.end_at, complete_at = excluded.complete_at,
+                    removed_at = NULL, last_seen_at = now()
+             RETURNING external_id, id",
+        )
+        .bind(id)
+        .bind(&s_ext)
+        .bind(&s_seq)
+        .bind(&s_name)
+        .bind(&s_state)
+        .bind(&s_start)
+        .bind(&s_end)
+        .bind(&s_done)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db)?;
+        let removed_sprints = sqlx_core::query::query(
+            "UPDATE sensei.sprints SET removed_at = now()
+              WHERE tracker_id = $1 AND removed_at IS NULL AND external_id <> ALL($2::text[])",
+        )
+        .bind(id)
+        .bind(&s_ext)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?
+        .rows_affected();
+        sqlx_core::query::query(
+            "DELETE FROM sensei.tracker_task_sprints
+              WHERE sprint_id IN (SELECT id FROM sensei.sprints WHERE tracker_id = $1 AND removed_at IS NOT NULL)",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+
+        // Tickets.
+        let t_ext: Vec<String> = tasks.iter().map(|t| t.external_id.clone()).collect();
+        let t_key: Vec<String> = tasks.iter().map(|t| t.key.to_uppercase()).collect();
+        let t_scope: Vec<Option<String>> = tasks.iter().map(|t| t.scope.clone()).collect();
+        let t_summary: Vec<Option<String>> = tasks.iter().map(|t| t.summary.clone()).collect();
+        let t_type: Vec<Option<String>> = tasks.iter().map(|t| t.issue_type.clone()).collect();
+        let t_status: Vec<Option<String>> = tasks.iter().map(|t| t.status.clone()).collect();
+        sqlx_core::query::query(
+            "INSERT INTO sensei.tracker_tasks
+                    (tracker_id, external_id, key, scope, summary, issue_type, status, removed_at, last_seen_at)
+             SELECT $1, x.e, x.k, x.sc, x.su, x.ty, x.st, NULL, now()
+               FROM unnest($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
+                    AS x(e, k, sc, su, ty, st)
+             ON CONFLICT (tracker_id, external_id) DO UPDATE
+                SET key = excluded.key, scope = excluded.scope, summary = excluded.summary,
+                    issue_type = excluded.issue_type, status = excluded.status,
+                    removed_at = NULL, last_seen_at = now()",
+        )
+        .bind(id)
+        .bind(&t_ext)
+        .bind(&t_key)
+        .bind(&t_scope)
+        .bind(&t_summary)
+        .bind(&t_type)
+        .bind(&t_status)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+        let removed_tasks = sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks SET removed_at = now()
+              WHERE tracker_id = $1 AND removed_at IS NULL AND external_id <> ALL($2::text[])",
+        )
+        .bind(id)
+        .bind(&t_ext)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?
+        .rows_affected();
+
+        // Memberships of every sprint fetched this time.
+        let sprint_id: std::collections::HashMap<&str, uuid::Uuid> =
+            sprint_ids.iter().map(|(e, i)| (e.as_str(), *i)).collect();
+        let state_of: std::collections::HashMap<&str, &str> =
+            sprints.iter().map(|s| (s.external_id.as_str(), s.state.as_str())).collect();
+        let mut skipped: u32 = 0;
+        for (sprint_ext, members) in &snapshot.members {
+            let (Some(members), Some(sid)) = (members, sprint_id.get(sprint_ext.as_str())) else {
+                continue;
+            };
+            let mut distinct: Vec<String> = members.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            sqlx_core::query::query("DELETE FROM sensei.tracker_task_sprints WHERE sprint_id = $1")
+                .bind(sid)
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+            let inserted = sqlx_core::query::query(
+                "INSERT INTO sensei.tracker_task_sprints (task_id, sprint_id)
+                 SELECT t.id, $2 FROM sensei.tracker_tasks t
+                  WHERE t.tracker_id = $1 AND t.external_id = ANY($3::text[])",
+            )
+            .bind(id)
+            .bind(sid)
+            .bind(&distinct)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?
+            .rows_affected();
+            skipped += (distinct.len() as u64).saturating_sub(inserted) as u32;
+            sqlx_core::query::query(
+                "UPDATE sensei.sprints SET members_fetched_state = $2 WHERE id = $1",
+            )
+            .bind(sid)
+            .bind(state_of.get(sprint_ext.as_str()).copied())
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        }
+
+        // Current sprint per ticket, ranked by the shared pure function.
+        let listing = sqlx_core::query_as::query_as::<
+            _,
+            (uuid::Uuid, uuid::Uuid, String, Option<chrono::DateTime<chrono::Utc>>, i64, bool),
+        >(
+            "SELECT m.task_id, s.id, s.state, s.start_at, s.seq, s.removed_at IS NOT NULL
+               FROM sensei.tracker_task_sprints m JOIN sensei.sprints s ON s.id = m.sprint_id
+              WHERE s.tracker_id = $1",
+        )
+        .bind(id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db)?;
+        let mut by_task: std::collections::HashMap<uuid::Uuid, Vec<SprintRank>> =
+            std::collections::HashMap::new();
+        for (task, sprint, state, start_at, seq, removed) in listing {
+            let Some(state) = SprintState::parse(&state) else { continue };
+            by_task.entry(task).or_default().push(SprintRank {
+                id: sprint,
+                state,
+                start_at,
+                seq,
+                removed,
+            });
+        }
+        let (cur_task, cur_sprint): (Vec<uuid::Uuid>, Vec<uuid::Uuid>) = by_task
+            .iter()
+            .filter_map(|(task, ranks)| pick_current_sprint(ranks).map(|s| (*task, s)))
+            .unzip();
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks t SET current_sprint_id = v.s
+               FROM unnest($2::uuid[], $3::uuid[]) AS v(t, s)
+              WHERE t.tracker_id = $1 AND t.id = v.t AND t.current_sprint_id IS DISTINCT FROM v.s",
+        )
+        .bind(id)
+        .bind(&cur_task)
+        .bind(&cur_sprint)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_tasks SET current_sprint_id = NULL
+              WHERE tracker_id = $1 AND current_sprint_id IS NOT NULL AND id <> ALL($2::uuid[])",
+        )
+        .bind(id)
+        .bind(&cur_task)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+
+        sqlx_core::query::query(
+            "UPDATE sensei.trackers SET params = params || $2, last_success_at = now(), last_error = NULL
+              WHERE id = $1",
+        )
+        .bind(id)
+        .bind(params_patch)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+        tx.commit().await.map_err(db)?;
+
+        Ok(ApplyCounts {
+            sprints: sprints.len() as u32,
+            tasks: tasks.len() as u32,
+            removed: (removed_sprints + removed_tasks) as u32,
+            links: 0,
+            skipped_members: skipped,
+        })
+    }
+
+    pub async fn write_pending_tombstone(
+        &self,
+        secret_service: &str,
+        account: &str,
+        not_before: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "INSERT INTO sensei.tracker_secret_tombstones (secret_service, account, not_before)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (secret_service) DO UPDATE SET account = excluded.account, not_before = excluded.not_before",
+        )
+        .bind(secret_service)
+        .bind(account)
+        .bind(not_before)
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+    }
+
+    pub async fn connect_tracker(
+        &self,
+        t: &NewTracker,
+    ) -> Result<(uuid::Uuid, bool), ConnectDbError> {
+        let db = |e: sqlx_core::Error| {
+            if is_unique_violation(&e) {
+                ConnectDbError::BoardTaken
+            } else {
+                ConnectDbError::Db(e.to_string())
+            }
+        };
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        // Serialise connects for the project.
+        let project = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
+            "SELECT id FROM sensei.projects WHERE id = $1 FOR UPDATE",
+        )
+        .bind(t.project_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?;
+        if project.is_none() {
+            return Err(ConnectDbError::Db("project not found".into()));
+        }
+        let existing = sqlx_core::query_as::query_as::<_, (uuid::Uuid, String, String, String)>(
+            "SELECT id, kind::text, base_url, board_ref FROM sensei.trackers WHERE project_id = $1",
+        )
+        .bind(t.project_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?;
+
+        let same_board = |(_, kind, base, board): &(uuid::Uuid, String, String, String)| {
+            *kind == t.kind && *base == t.base_url && *board == t.board_ref
+        };
+        let outcome = match existing {
+            Some(row) if same_board(&row) => {
+                // The secret_service update fires the swap trigger, tombstoning the old secret.
+                sqlx_core::query::query(
+                    "UPDATE sensei.trackers
+                        SET account = $2, external_scope = $3, params = params || $4, secret_service = $5,
+                            last_success_at = NULL, last_error = NULL
+                      WHERE id = $1",
+                )
+                .bind(row.0)
+                .bind(&t.account)
+                .bind(&t.external_scope)
+                .bind(&t.params)
+                .bind(&t.secret_service)
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+                (row.0, false)
+            }
+            other => {
+                if let Some(old) = other {
+                    // Another board: the delete trigger tombstones the old secret.
+                    sqlx_core::query::query("DELETE FROM sensei.trackers WHERE id = $1")
+                        .bind(old.0)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(db)?;
+                }
+                let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+                    "INSERT INTO sensei.trackers
+                            (project_id, kind, base_url, account, external_scope, board_ref, params, secret_service)
+                     VALUES ($1, $2::sensei.tracker_kind, $3, $4, $5, $6, $7, $8)
+                     RETURNING id",
+                )
+                .bind(t.project_id)
+                .bind(&t.kind)
+                .bind(&t.base_url)
+                .bind(&t.account)
+                .bind(&t.external_scope)
+                .bind(&t.board_ref)
+                .bind(&t.params)
+                .bind(&t.secret_service)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(db)?;
+                (id, true)
+            }
+        };
+
+        let cleared = sqlx_core::query::query(
+            "DELETE FROM sensei.tracker_secret_tombstones WHERE secret_service = $1",
+        )
+        .bind(&t.secret_service)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?
+        .rows_affected();
+        if cleared != 1 {
+            return Err(ConnectDbError::PendingTombstoneGone);
+        }
+        tx.commit().await.map_err(db)?;
+        Ok(outcome)
+    }
+
+    /// Every tracker, for the scheduled sync.
+    pub async fn list_trackers(&self) -> Result<Vec<TrackerRow>, String> {
+        sqlx_core::query_as::query_as::<_, TrackerTuple>(&format!(
+            "{TRACKER_SELECT} ORDER BY created_at"
+        ))
+        .fetch_all(&self.pool)
+        .await
+        .map(|rows| rows.into_iter().map(tracker_row).collect())
+        .map_err(|e| e.to_string())
+    }
+
+    /// `(tasks, sprints)` currently on the board (not removed).
+    pub async fn tracker_counts(&self, id: uuid::Uuid) -> Result<(i64, i64), String> {
+        sqlx_core::query_as::query_as::<_, (i64, i64)>(
+            "SELECT (SELECT count(*) FROM sensei.tracker_tasks WHERE tracker_id = $1 AND removed_at IS NULL),
+                    (SELECT count(*) FROM sensei.sprints WHERE tracker_id = $1 AND removed_at IS NULL)",
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    pub async fn delete_tracker_for_project(&self, project_id: uuid::Uuid) -> Result<bool, String> {
+        sqlx_core::query::query("DELETE FROM sensei.trackers WHERE project_id = $1")
+            .bind(project_id)
+            .execute(&self.pool)
+            .await
+            .map(|r| r.rows_affected() > 0)
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn due_tombstones(
+        &self,
+        prefix: &str,
+        limit: i64,
+    ) -> Result<Vec<(String, String)>, String> {
+        sqlx_core::query_as::query_as(
+            "SELECT secret_service, account FROM sensei.tracker_secret_tombstones
+              WHERE not_before <= now() AND starts_with(secret_service, $1)
+              ORDER BY not_before LIMIT $2",
+        )
+        .bind(prefix)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    pub async fn secret_service_referenced(&self, secret_service: &str) -> Result<bool, String> {
+        sqlx_core::query_as::query_as::<_, (bool,)>(
+            "SELECT EXISTS (SELECT 1 FROM sensei.trackers WHERE secret_service = $1)",
+        )
+        .bind(secret_service)
+        .fetch_one(&self.pool)
+        .await
+        .map(|(b,)| b)
+        .map_err(|e| e.to_string())
+    }
+
+    pub async fn delete_tombstone(&self, secret_service: &str) -> Result<(), String> {
+        sqlx_core::query::query(
+            "DELETE FROM sensei.tracker_secret_tombstones WHERE secret_service = $1",
+        )
+        .bind(secret_service)
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+    }
+}
+
 #[cfg(test)]
 mod schema_tests {
     use crate::db::pg_store::PgStore;
@@ -45,6 +670,40 @@ mod schema_tests {
         .fetch_optional(pg.pool())
         .await
         .unwrap()
+    }
+
+    /// Run `sql` (one uuid bind, plus an optional text bind) and read the
+    /// tombstones of `services` inside one transaction, then roll back. The
+    /// trigger's tombstone is visible here but never to a concurrent drain.
+    async fn within_rollback(
+        pg: &PgStore,
+        sql: &str,
+        id: uuid::Uuid,
+        text: Option<&str>,
+        services: &[&str],
+    ) -> Vec<Option<(String, bool)>> {
+        let mut tx = pg.pool().begin().await.unwrap();
+        let q = sqlx_core::query::query(sql).bind(id);
+        let q = match text {
+            Some(t) => q.bind(t.to_string()),
+            None => q,
+        };
+        q.execute(&mut *tx).await.unwrap();
+        let mut out = Vec::new();
+        for s in services {
+            out.push(
+                sqlx_core::query_as::query_as::<_, (String, bool)>(
+                    "SELECT account, not_before <= now()
+                       FROM sensei.tracker_secret_tombstones WHERE secret_service = $1",
+                )
+                .bind(*s)
+                .fetch_optional(&mut *tx)
+                .await
+                .unwrap(),
+            );
+        }
+        tx.rollback().await.unwrap();
+        out
     }
 
     async fn cleanup(pg: &PgStore, project_id: uuid::Uuid, services: &[&str]) {
@@ -101,12 +760,9 @@ mod schema_tests {
         let p = project(&pg, "delete").await;
         let s = unique("del");
         let t = insert_tracker(&pg, p, "https://d.atlassian.net", "7", &s).await.unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.trackers WHERE id = $1")
-            .bind(t)
-            .execute(pg.pool())
-            .await
-            .unwrap();
-        assert_eq!(tombstone(&pg, &s).await, Some(("dev@example.com".into(), true)));
+        let seen =
+            within_rollback(&pg, "DELETE FROM sensei.trackers WHERE id = $1", t, None, &[&s]).await;
+        assert_eq!(seen, [Some(("dev@example.com".into(), true))]);
         cleanup(&pg, p, &[&s]).await;
     }
 
@@ -116,12 +772,9 @@ mod schema_tests {
         let p = project(&pg, "cascade").await;
         let s = unique("cascade");
         insert_tracker(&pg, p, "https://c.atlassian.net", "8", &s).await.unwrap();
-        sqlx_core::query::query("DELETE FROM sensei.projects WHERE id = $1")
-            .bind(p)
-            .execute(pg.pool())
-            .await
-            .unwrap();
-        assert_eq!(tombstone(&pg, &s).await, Some(("dev@example.com".into(), true)));
+        let seen =
+            within_rollback(&pg, "DELETE FROM sensei.projects WHERE id = $1", p, None, &[&s]).await;
+        assert_eq!(seen, [Some(("dev@example.com".into(), true))]);
         cleanup(&pg, p, &[&s]).await;
     }
 
@@ -131,14 +784,16 @@ mod schema_tests {
         let p = project(&pg, "swap").await;
         let (old, new) = (unique("old"), unique("new"));
         let t = insert_tracker(&pg, p, "https://s.atlassian.net", "9", &old).await.unwrap();
-        sqlx_core::query::query("UPDATE sensei.trackers SET secret_service = $2 WHERE id = $1")
-            .bind(t)
-            .bind(&new)
-            .execute(pg.pool())
-            .await
-            .unwrap();
-        assert_eq!(tombstone(&pg, &old).await, Some(("dev@example.com".into(), true)));
-        assert_eq!(tombstone(&pg, &new).await, None, "the live secret must never be tombstoned");
+        let seen = within_rollback(
+            &pg,
+            "UPDATE sensei.trackers SET secret_service = $2 WHERE id = $1",
+            t,
+            Some(&new),
+            &[&old, &new],
+        )
+        .await;
+        assert_eq!(seen[0], Some(("dev@example.com".into(), true)), "the old secret is tombstoned");
+        assert_eq!(seen[1], None, "the live secret must never be tombstoned");
         cleanup(&pg, p, &[&old, &new]).await;
     }
 

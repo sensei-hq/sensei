@@ -401,6 +401,7 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
         diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
             crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
         )),
+        trackers: Default::default(),
     });
 
     let task_logger = sensei_logger::Logger::new(
@@ -553,6 +554,8 @@ async fn build_full_app(pg: crate::db::pg_store::PgStore) -> (axum::Router, Arc<
     // the decision says asking is worth it) and the only thing that turns a
     // silently-dead token into a fact the UI can act on.
     crate::tasks::forge_token_check::spawn(Arc::new(state.pg.clone()));
+    // Tracker integrations: mirror connected boards, drain removed credentials.
+    crate::tasks::tracker_sync::spawn(Arc::new(state.pg.clone()), state.trackers.clone());
 
     // Watcher safety net: frequently (boot + the `reconcile` schedule,
     // default 300s) re-scan every watch root so the index converges even when

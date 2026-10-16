@@ -197,6 +197,14 @@ pub(crate) async fn restore_seeded_schedule(pg: &PgStore, name: &str) {
 /// `TaskQueue`, the test `PgStore`, and a noop gateway — the standard fixture for
 /// task-handler unit tests.
 pub(crate) async fn make_ctx() -> Arc<crate::tasks::executor::TaskContext> {
+    make_ctx_with_trackers(Default::default()).await
+}
+
+/// [`make_ctx`] with a chosen tracker runtime (e.g. an in-memory secret store and
+/// fake transports from `tracker::runtime::test_support::fake_runtime`).
+pub(crate) async fn make_ctx_with_trackers(
+    trackers: Arc<crate::tracker::runtime::TrackerRuntime>,
+) -> Arc<crate::tasks::executor::TaskContext> {
     let queue = Arc::new(crate::tasks::queue::TaskQueue::new());
     let gateway = crate::api::gateway_init::init_gateway_test().await;
     let app_state = Arc::new(crate::api::state::SharedState {
@@ -212,6 +220,7 @@ pub(crate) async fn make_ctx() -> Arc<crate::tasks::executor::TaskContext> {
         diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
             crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
         )),
+        trackers,
     });
     Arc::new(crate::tasks::executor::TaskContext {
         queue,

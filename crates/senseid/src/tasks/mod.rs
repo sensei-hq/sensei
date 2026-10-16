@@ -48,6 +48,7 @@ pub mod schema_deploy;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod ticker;
+pub mod tracker_sync;
 pub mod transcript_scheduler;
 pub mod verdict_classifier;
 pub mod version_rescan;

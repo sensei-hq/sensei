@@ -16,10 +16,12 @@
     "F6 app screen",
     "F5 live verification"
   ],
-  "current_phase": "F1.4 jira adapter + sync coordinator",
+  "current_phase": "F3 linking",
   "completed": [
     "F1.2 schema (7 DB tests green; deployed to sensei_test)",
-    "F1.3 pure core (21 tests green; http::bounded_builder extracted, federation uses it)"
+    "F1.3 pure core (21 tests green; http::bounded_builder extracted, federation uses it)",
+    "F1.4 jira adapter + transport + secret + sync coordinator + connect/drain (39 tests green; 70 tracker tests total, 5/5 repeat runs)",
+    "F1.5 api + guards + cli (24 senseid + 7 cli tests) and F2 scheduled sync (folded in: status needs the tracker_sync interval)"
   ],
   "decomposition_approved": "2026-10-16 (user)",
   "gate_status": "pass",
@@ -32,10 +34,10 @@
     "7 baseline test failures (6\u00d7 rustup missing for rust-analyzer on nix, 1 flaky) \u2014 pre-existing, not this slice"
   ],
   "blocked": [
-    "F1.1 fixture capture needs user's Jira tenant",
-    "F5 needs P0 (transcript turns with git_branch = 0)"
+    "F1.1 fixture capture needs user's Jira tenant (C11 still UNCHECKABLE)",
+    "F5 needs P0 (transcript turns with git_branch)"
   ],
-  "next_command": "write F1.4 tests red-first (JiraAdapter fake transport, sync coordinator, SecretStore/connect lifecycle), present for approval",
+  "next_command": "F3 linking: Step 4.5 swarm on R6/R7-candidates, then tests red-first (match_links Jira, load_link_inputs, relink in apply tx), present for approval",
   "spec_audit_4_5": "2026-10-16: 3 reviewers (conformance, failure-mode, data-correctness) \u2192 14 findings; spec corrected (3-phase\u21925-step sync, no tx across I/O, atomic relink in apply tx, async first sync, keyring spawn_blocking+timeout, board-id canonicalisation, URL policy on require_secure_url). Re-audit \u2192 7 contradictions fixed. Awaiting user confirmation of corrections.",
   "baseline": {
     "date": "2026-10-16",
@@ -55,9 +57,27 @@
       "flaky_passes_in_isolation": [
         "tasks::index_audit::tests::audit_repairs_nested_standalone"
       ]
-    }
+    },
+    "load_flaky_preexisting": [
+      "db::pg_store::tool_calls_tests::* (rotating case; fails with tracker tests SKIPPED too \u2014 verified 2026-10-16)",
+      "indexer::pipeline::corpus::a_scanned_repository_records_its_project_in_the_junction",
+      "tasks::index_audit::tests::audit_repairs_nested_standalone"
+    ]
   },
-  "last_verify": "2026-10-16: full suite 3539 pass / 6 fail (= baseline rustup set), sql-in-layer clean, 2a clean, ddl lints clean",
+  "last_verify": "2026-10-16 F1.5: full senseid 3598 pass / 7 fail (6 rustup baseline + 1 load-flaky corpus test); cli 66/66; clippy 0 warnings; fmt clean; sql-in-layer + ddl lints + gate 2a clean",
   "checkpoint_path": "docs/checkpoints/tracker-jira-linkage.md",
-  "committed": "F1.2+F1.3 committed by user in 403b303a (2026-10-16 19:52)"
+  "committed": "F1.2+F1.3 committed by user in 403b303a (2026-10-16 19:52)",
+  "workarounds": [
+    "tracker/transport.rs tests: impl RawGet for Ref<'_> instead of &Scripted \u2014 Rust indexer miscounts impl-for-&T (backlog)"
+  ],
+  "spec_amendments_during_build": [
+    "gate 2a scoped to non-test code",
+    "Snapshot.board_name added (spec R5 refreshes board_name each sync)",
+    "connect param codes email_required/token_required added; screen error table updated",
+    "due_tombstones takes a service prefix (test isolation; production prefix com.sensei.tracker.)",
+    "guard 403 body code `forbidden_caller` (distinct from Jira `forbidden`)",
+    "tick_scoped(only) for test isolation; production tick = all trackers",
+    "F2 folded into F1.5",
+    "known_project() 404s unknown uuids (resolve_project_uuid accepts any uuid)"
+  ]
 }

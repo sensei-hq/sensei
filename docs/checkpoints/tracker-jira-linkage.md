@@ -2,7 +2,7 @@
 
 **Slice:** Jira tracker linkage, local daemon (T-1a + T-1d local slice)
 **Branch:** `feature/jira_ticket_linkage` (off `feature/linux_support`)
-**Stage:** design ✅ → build in progress (F1.2 + F1.3 done, committed in 403b303a)
+**Stage:** design ✅ → build in progress (F1.2–F1.5 + F2 done; F1.1 needs the Jira tenant)
 
 | Artifact | Path |
 |---|---|
@@ -55,8 +55,17 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   sprint, status, error codes) and `crate::http::bounded_builder()`.
 - Full suite after: 3539 pass / 6 fail (the baseline set). 17 `dead_code` warnings
   remain until F1.4/F1.5 wire the code.
-- **Next:** F1.4 (Jira adapter, sync coordinator, credential/connect lifecycle),
-  tests red-first.
+- **F1.4** ✅ Jira adapter, GET-only transport (429 policy, redirects off),
+  bounded keyring, sync coordinator (no DB connection across fetches, mutation-checked),
+  connect/re-connect/disconnect + tombstone drain. 39 tests.
+- **F1.5 + F2** ✅ origin guard extracted to `api/origin_guard.rs` (+ loopback Host
+  check), routes `/api/projects/{id}/trackers[/sync|/{kind}/connect]`, CLI
+  `sensei tracker connect|sync|disconnect`, scheduled `tracker_sync` (1800 s). 31 tests.
+- Full suite 3598 pass / 7 fail (baseline set + 1 pre-existing load flake);
+  clippy 0 warnings; fmt clean.
+- Found on the way: the Rust indexer miscounts `impl Trait for &Type` (backlog;
+  test uses a named wrapper as the recorded workaround).
+- **Next:** F3 (session to ticket linking).
 
 ## Gate for `/sensei:build`
 
@@ -65,4 +74,4 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
 
 ## Next command
 
-`/sensei:build docs/plans/2026-10-15-tracker-jira-linkage.md`, continuing at F1.4. F1.1 still needs the Jira tenant.
+`/sensei:build docs/plans/2026-10-15-tracker-jira-linkage.md`, continuing at F3. F1.1 still needs the Jira tenant.

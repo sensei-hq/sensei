@@ -96,6 +96,7 @@ failure, focus moves to the alert.
 | `unauthorized` | "Jira rejected the email and token." | "Check both, or **create a new token**" (link) |
 | `forbidden` | "This account can't read that board." | "Ask the board admin for access, or use another account." |
 | `board_not_found` | "No board #<board_id> on <base_url>." (values from the 404 body) | focus Board URL |
+| `email_required` / `token_required` | "Enter your Atlassian account email and an API token." (normally unreachable: Connect is disabled until both are filled) | focus the empty field |
 | `board_project_mismatch` | "That board belongs to a different Jira project than the one given." | edit Advanced fields |
 | `board_already_connected` | "This board is already connected to project <name>." | link to that project's Integrations |
 | `not_found` | "Jira no longer has this board (it may have been deleted)." | **Disconnect** or **Replace token** |

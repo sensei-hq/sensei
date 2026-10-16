@@ -106,6 +106,14 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
   resolution scoped by the session's repo; self-managed host allow-rule (SSRF
   review); PAT vs OAuth.
 
+- **Rust indexer miscounts `impl Trait for &Type`** (found 2026-10-16 by the
+  tracker slice) — `indexer::lang::rust::tests::the_symbol_count_equals_an_independent_count_of_declaration_nodes`
+  scans this repo as its corpus; a test-module `impl RawGet for &Scripted` made the
+  walk produce one more symbol than the independent count (33 vs 32). Confirmed by
+  bisection: the same code behind a named wrapper (`impl RawGet for Ref<'_>`)
+  agrees. `tracker/transport.rs` tests use that wrapper as a **workaround**;
+  decide which side is wrong (walk or counter) and fix it, then the wrapper can go.
+
 ## Where open work is described
 
 | Concern | Source |

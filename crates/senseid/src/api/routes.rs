@@ -43,6 +43,19 @@ use crate::api::handlers::upgrades;
 use crate::api::handlers::verdicts;
 use crate::api::handlers::workspace;
 
+/// Tracker connection routes, guarded as one group.
+fn tracker_routes() -> Router<AppState> {
+    use crate::api::handlers::trackers;
+    Router::new()
+        .route(
+            "/api/projects/{id}/trackers",
+            get(trackers::list_trackers).delete(trackers::disconnect_tracker),
+        )
+        .route("/api/projects/{id}/trackers/sync", post(trackers::sync_tracker))
+        .route("/api/projects/{id}/trackers/{kind}/connect", post(trackers::connect_tracker))
+        .route_layer(axum::middleware::from_fn(crate::api::origin_guard::local_caller_guard))
+}
+
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         // Health
@@ -497,6 +510,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/upgrades/{id}/pin", post(upgrades::pin))
         // Stop
         .route("/stop", post(workspace::stop))
+        // Tracker integrations (spec docs/spec/daemon/tracker-jira-linkage.md R8):
+        // a route group behind the local-caller guard (foreign Origin / rebound Host → 403).
+        .merge(tracker_routes())
         .with_state(state)
 }
 
@@ -571,6 +587,7 @@ mod tests {
             diagrams: std::sync::Arc::new(crate::api::diagram_cache::DiagramCache::new(
                 crate::api::diagram_cache::DIAGRAM_CACHE_ENTRIES,
             )),
+            trackers: Default::default(),
         });
         let router = create_router(state.clone());
         (router, state)
