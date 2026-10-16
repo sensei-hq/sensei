@@ -1431,6 +1431,28 @@ impl PgStore {
         Ok(())
     }
 
+    /// Raise a session's list-price cost to `usd` (#238): the largest /cost total
+    /// any SessionMeasure reported, so a late-drained smaller figure cannot
+    /// regress it (`GREATEST` ignores the NULL of a first reading). `false` when
+    /// no session row has that client id — a miss, never reported as written.
+    pub async fn raise_session_list_cost(
+        &self,
+        client_session_id: &str,
+        usd: f64,
+    ) -> Result<bool, String> {
+        let done = sqlx_core::query::query(
+            "UPDATE activity.sessions
+                SET list_cost_usd = GREATEST(list_cost_usd, $2::numeric)
+              WHERE client_session_id = $1",
+        )
+        .bind(client_session_id)
+        .bind(usd)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(done.rows_affected() > 0)
+    }
+
     /// Write enrichment metrics onto a session (#66). Sets the derived fields
     /// and merges `tool_usage` into `props` — deliberately does NOT touch
     /// `completed_at` (owned by the hook-stream session derivation, #31).

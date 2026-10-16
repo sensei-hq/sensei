@@ -152,7 +152,9 @@ begin
                         jsonb_build_object('ordinal', 1, 'name', 'id', 'sql_type', 'uuid', 'primary_key', true, 'not_null', true),
                         jsonb_build_object('ordinal', 2, 'name', 'customer_id', 'sql_type', 'uuid', 'foreign_key', true)),
                     'indexes', jsonb_build_array(
-                        jsonb_build_object('name', 'orders_customer', 'definition', 'create index …', 'unique_index', false)),
+                        jsonb_build_object('name', 'orders_customer', 'definition', 'create index …', 'unique_index', false),
+                        -- An inline UNIQUE (…) has no name; dbd reports it unnamed, and so does the slice.
+                        jsonb_build_object('name', null, 'definition', '(customer_id, placed_at)', 'unique_index', true)),
                     'refs', jsonb_build_array(
                         jsonb_build_object('from_column', 'customer_id', 'to_folder', '', 'to_fqn', 'app.customers',
                                            'to_column', 'id', 'on_delete', 'cascade')))),
@@ -171,7 +173,12 @@ begin
     end if;
     select count(*) into n from dojo.graph_schema_indexes i join dojo.graph_nodes g on g.id = i.node_id
      where g.repository_id = repo and g.fqn = 'app.orders';
-    if n <> 1 then raise exception 'schema: orders should carry 1 index, carries %', n; end if;
+    if n <> 2 then raise exception 'schema: orders should carry 2 indexes, carries %', n; end if;
+    if not exists (select 1 from dojo.graph_schema_indexes i join dojo.graph_nodes g on g.id = i.node_id
+                    where g.repository_id = repo and g.fqn = 'app.orders' and i.name is null
+                      and i.definition = '(customer_id, placed_at)') then
+        raise exception 'schema: an unnamed index should land with no name, not be refused or renamed';
+    end if;
     -- Re-filed without a schema: the old rows go with the old nodes.
     select to_jsonb(g) into r from dojo.file_graph_slices(repo, c2, jsonb_build_array(jsonb_build_object(
         'path', 'db/t.sql', 'content_hash', 'ht2',

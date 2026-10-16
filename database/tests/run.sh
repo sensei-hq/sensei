@@ -10,7 +10,20 @@ set -uo pipefail
 
 cd "$(dirname "$0")"
 
-DATABASE_URL="${DATABASE_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}"
+# Each directory is a dbd scope, and runs against the database that scope
+# deploys to: `dojo/` the dōjō (local Supabase), everything else the daemon's
+# own `sensei` database. One target for all of them ran `gateway/` against the
+# dōjō, which has no `sensei.model_capability` — a failure no fix could clear.
+# DATABASE_URL keeps naming the dōjō target, as it always has.
+DOJO_DATABASE_URL="${DATABASE_URL:-postgresql://postgres:postgres@127.0.0.1:54322/postgres}"
+SENSEI_DATABASE_URL="${SENSEI_DATABASE_URL:-postgresql://localhost:5432/sensei}"
+
+database_for() { # FILE
+    case "$1" in
+        ./dojo/*) printf '%s' "$DOJO_DATABASE_URL" ;;
+        *) printf '%s' "$SENSEI_DATABASE_URL" ;;
+    esac
+}
 
 if ! command -v psql >/dev/null 2>&1; then
     echo "psql not found on PATH." >&2
@@ -21,11 +34,13 @@ fi
 # Prove the target is reachable before reporting any file as passing — an
 # unreachable database would otherwise fail every file identically and read as
 # "the schema is broken" rather than "nothing was tested".
-if ! psql "$DATABASE_URL" -X -q -c 'select 1' >/dev/null 2>&1; then
-    echo "cannot reach $DATABASE_URL" >&2
-    echo "  is the local Supabase up?  supabase start" >&2
-    exit 69
-fi
+for url in "$DOJO_DATABASE_URL" "$SENSEI_DATABASE_URL"; do
+    if ! psql "$url" -X -q -c 'select 1' >/dev/null 2>&1; then
+        echo "cannot reach $url" >&2
+        echo "  the dōjō tests need the local Supabase (supabase start); the rest, the daemon's database" >&2
+        exit 69
+    fi
+done
 
 # `find`, not a `**` glob: macOS ships bash 3.2, which has no `globstar` and
 # quietly treats `**` as `*` — a test one directory deeper would have been
@@ -34,7 +49,7 @@ failed=0
 ran=0
 while IFS= read -r file; do
     ran=$((ran + 1))
-    if psql "$DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -f "$file"; then
+    if psql "$(database_for "$file")" -X -q -v ON_ERROR_STOP=1 -f "$file"; then
         echo "  ok    $file"
     else
         echo "  FAIL  $file" >&2

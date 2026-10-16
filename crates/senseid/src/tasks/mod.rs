@@ -740,15 +740,6 @@ impl Scope {
         matches!(self, Scope::Full)
     }
 
-    /// The changed paths, empty for a full walk (which has no shortlist — it
-    /// looks at everything).
-    pub fn changed(&self) -> &[std::path::PathBuf] {
-        match self {
-            Scope::Full => &[],
-            Scope::Events { changed, .. } => changed,
-        }
-    }
-
     pub fn deleted(&self) -> &[std::path::PathBuf] {
         match self {
             Scope::Full => &[],

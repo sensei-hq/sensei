@@ -73,6 +73,40 @@ Feature: Capture & Sessions — the four ingest paths that turn folders and assi
     And added files are enqueued as new scan work
     And the historical main rows stay tagged main
 
+  # pinned: session.measure posts the engine figures as a SessionMeasure event (hooks/usage.test.ts)
+  Scenario: Claude Code's usage is captured at the source by the plugin's usage mod
+    Given a Claude Code session with the sensei plugin's usage mod loaded
+    When a turn ends
+    Then a SessionMeasure event carries the context fill, rate-limit windows and /cost total
+    And a TurnComplete event carries the turn's four token counts and its model
+
+  # pinned: a_measure_without_a_cost_ledger_yields_none_never_zero
+  Scenario: an absent cost is recorded as absent, never as zero
+    Given a SessionMeasure with no cost ledger
+    When it is ingested
+    Then no cost is written for the session
+
+  # pinned: raise_session_list_cost_keeps_the_largest_total
+  Scenario: list-price cost is kept apart from billed cost and never regresses
+    Given a session whose measures report /cost totals 1.25, then 4.5, then a late 2.0
+    When they are ingested
+    Then activity.sessions.list_cost_usd is 4.5
+    And activity.sessions.metered_cost is not written
+
+  # pinned: a_drained_session_measure_raises_the_session_list_cost
+  # pinned: an unreachable daemon dead-letters the event to the capture spool (hooks/usage.test.ts)
+  Scenario: a usage event that missed the daemon lands the same once drained
+    Given the daemon was unreachable when a SessionMeasure was posted
+    When the capture spool is drained
+    Then the session's list cost reflects that measure
+
+  # gap: C-25
+  Scenario: every assistant adapter meets the usage & cost contract
+    Given an assistant adapter other than Claude Code
+    When its sessions are captured
+    Then tokens are split fresh / cache read / cache write / output with the model
+    And billed cost and list-price cost land in their own columns, or stay NULL
+
   # gap: C-11
   Scenario: transcript scanning is scoped and reviewed as a task
     Given the transcript-scanning path

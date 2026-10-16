@@ -1,6 +1,6 @@
 ---
 name: Decisions log — sensei
-updated: 2026-10-14
+updated: 2026-10-15
 ---
 
 # Decisions
@@ -9,6 +9,21 @@ updated: 2026-10-14
 > The anti-rework memory — never re-derive a settled choice.
 > The **design journey** (approaches tried, what worked, what didn't) lives in
 > [`history/analysis/2026-07-24-design-journey.md`](history/analysis/2026-07-24-design-journey.md).
+
+---
+
+## 2026-10-15 — Claude Code mods: usage, model routing, drive, gating (#238)
+
+Claude Code 2.1.300's mods API reaches what shell hooks cannot. Four policy calls
+taken while building on it; the PRD carries the result
+([`prd/…/03-capture-sessions`](prd/modules/01-foundation/03-capture-sessions/README.md) §Usage & cost capture).
+
+| Decision | Locked answer | Why / rejected |
+|---|---|---|
+| **List cost is not billed cost** | Claude Code's `/cost` total lands in a new `activity.sessions.list_cost_usd`, never in `metered_cost`. | On a subscription it is an API-equivalent estimate, not spend; `metered_cost` keeps a source's billed figure (`0.0` on a plan is a reading). Rejected: writing it into `metered_cost` as #176 first suggested. |
+| **Subagent model by risk class, configured** | The mod's `agent.spawn` hook asks `POST /api/review/subagent-model` with the working tree's changed paths and the task; the daemon classifies (`auto`/`review`/`approve`) and answers the model the user's `routing.risk_models` config maps that class to. **No map, an unmapped class, or a caller-named model overrides nothing.** The main loop is untouched. | Policy stays in the daemon (governance owns it), off until a user opts in. Rejected: a built-in default map active for everyone; main-loop `turn.step` effort changes. |
+| **Run drive is opt-in — supersedes AR-3's "drive stays OFF" for that case** | A plugin option, **off by default**. When on, the mod submits a run's dōjō nudges into the session as prompts (`$.prompt.submit`), only for a run this session started, only while idle, each nudge id once. With the option off, AR-3 holds unchanged: nudges are pull-only (`get_pending_nudges`). | `$.prompt.submit` is the one capability with no equivalent before mods; an opt-in keeps the steer-not-drive default for everyone who did not ask. Rejected: keep steer-only; notify-without-submit. |
+| **Tool gating is opt-in and fail-open** | A plugin option, **off by default**. When on, `tool.check` asks `/hook/gate` and returns its decision; an unreachable or slow daemon **allows** (the gate's existing rule: infrastructure never blocks a tool call). It retires the never-registered shell `hooks/gate`. | `/hook/gate` raises a phone gate even without an allow-list and can hold a call ~50 s, so always-on would change every session. Rejected: always-on; fail-closed. |
 
 ---
 
