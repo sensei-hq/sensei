@@ -163,6 +163,12 @@ scope `excludes: [dojo, …]`. None of these tables reach the Dōjō DB.
 - `keychain_get` mapping (all five `KeychainError` variants): `NotFound` →
   `token_missing`; `Unavailable`, `Store`, `CommandFailed`, `Io` →
   `credential_store`. No fallback value.
+- **Every keyring call is blocking** (`gateway_keys` docs: "callers in an async
+  context must wrap them in `tokio::task::spawn_blocking`"). The production
+  `SecretStore` runs each call in `spawn_blocking` under `tokio::time::timeout(5 s)`.
+  A timeout (e.g. a locked Secret Service waiting on an unlock prompt) →
+  `credential_store`. **No keyring call is ever made while a DB transaction is
+  open.**
 - The request type holds the token in a newtype `ApiToken(String)` whose `Debug`
   prints `ApiToken(***)`; request structs are never logged.
 - **Every keyring entry that no tracker row references has a tombstone** in
@@ -172,23 +178,31 @@ scope `excludes: [dojo, …]`. None of these tables reach the Dōjō DB.
   `not_before = now()`: `after delete`, which covers disconnect and the project
   cascade, and `after update of secret_service`, which covers every re-connect,
   including concurrent ones. No code path writes the old-value tombstone by hand.
-- **Draining** (each `tracker_sync` tick, and best-effort right after a commit) runs
-  per tombstone in its **own transaction**:
-  `select … where not_before <= now() for update skip locked limit 1` →
-  `keychain_delete` → delete the row → commit. A keyring failure rolls back and
-  leaves the row for the next tick.
+- **Draining** (each `tracker_sync` tick, and best-effort right after a commit),
+  per due tombstone (`not_before <= now()`), with **no transaction open across the
+  keyring call**:
+  1. Skip the tombstone if any `trackers` row references its `secret_service`
+     (defence in depth); otherwise
+  2. `keychain_delete` (idempotent: a missing entry counts as success; a bounded
+     call, see above);
+  3. `delete from tracker_secret_tombstones where secret_service = $1` (autocommit).
+  A keyring failure leaves the row for the next tick. Two drains racing on one
+  tombstone are harmless, because both steps are idempotent.
 - **Connect / re-connect** (new tracker, same board, new account or new board):
   1. Commit a **pending** tombstone for the new `(service, account)` with
      `not_before = now() + 10 min`. It's a grace period far longer than steps 2–3
-     take (they're bounded by the 30 s client timeout), so a tick can't drain an
-     entry that's still being connected.
+     take (the keyring call is bounded at 5 s; the step-3 transaction makes no
+     network or keyring calls), so a drain can't remove an entry that's still being
+     connected.
   2. `keychain_set(new service, account, token)`. On failure → 500
      `{error:"credential_store"}`. The pending tombstone is drained once its grace
      period ends.
   3. One transaction: `select … from sensei.projects where id = $1 for update`
      (serialises connects for the project). Then:
      - **Same board / new tracker:** upsert the row with the new `secret_service`
-       and `account`; the update trigger tombstones the previous secret.
+       and `account`, and **reset `last_success_at` and `last_error` to NULL**, so
+       the status is `pending` until the new credential's first sync. The update
+       trigger tombstones the previous secret.
      - **Different board:** delete the old row (the delete trigger tombstones its
        secret; the cascade drops the old board's sprints/tickets/links), then insert
        a new row with a new `id`.
@@ -206,10 +220,21 @@ scope `excludes: [dojo, …]`. None of these tables reach the Dōjō DB.
 
 **Shared, provider-neutral (`tracker/http.rs`):**
 
-- Base-URL policy common to every adapter: parse as URL; scheme `https`; no
-  userinfo, no query/fragment; host not an IP literal; path discarded. Each
-  adapter then applies its **host allow-rule** (Jira: host ends in
-  `.atlassian.net`, no port). Anything else → 422 `{error:"invalid_base_url"}`.
+- Base-URL policy common to every adapter, `tracker::http::normalize_base_url(raw,
+  host_rule)`. It **builds on the existing `api::util::require_secure_url`** (parse +
+  https), which it calls, rather than parsing again. On top of that:
+  - Refuse that helper's loopback-`http` exemption: trackers are https-only.
+  - Reject userinfo, IP-literal hosts, and an explicit port other than 443.
+  - Discard the path, query and fragment. This rule is for an explicit `base_url`
+    only; a `board_url` keeps its query until the adapter has read the board id
+    from it.
+  - **Canonical output:** `"https://" + host` (lowercased; IDN in punycode, as
+    `reqwest::Url` yields it), with no trailing slash, port or path.
+  - The adapter's **host allow-rule** comes last. Jira: the host has the form
+    `<label>.atlassian.net`, with at least one label before `.atlassian.net`. So
+    bare `atlassian.net`, `x.atlassian.net.evil.com` and the trailing-dot form
+    `acme.atlassian.net.` are all rejected.
+  - Anything else → 422 `{error:"invalid_base_url"}`.
 - Transport:
 
   ```rust
@@ -226,8 +251,11 @@ scope `excludes: [dojo, …]`. None of these tables reach the Dōjō DB.
 - `TrackerError` → `tracker_error`: 401 `unauthorized`, 403 `forbidden`, 404
   `not_found`, 429-exhausted `rate_limited`, other non-2xx `http_error`, network
   `transport`, JSON shape `decode`, 3xx `redirect`.
-- **429:** wait `Retry-After` seconds if it parses as an integer, else 5 s; cap 60 s;
-  at most 3 retries per request.
+- **429:** wait time from `Retry-After`. A decimal integer (as `u64`) means
+  seconds. An HTTP-date means `max(0, date − now)`. Anything else, including a
+  negative number or overflow, means 5 s. The result is clamped to [0, 60] s. At most
+  3 retries per request during sync; **none during connect's `validate`** (fail fast
+  with `rate_limited`, so connect stays interactive).
 - The coordinator and adapters are written against `&dyn GetTransport`; tests use an
   in-memory fake.
 
@@ -236,9 +264,15 @@ connect params `{board_url?, base_url?, board_id?, email, api_token, project_key
 - `board_url` (what the desktop app sends) is the board's address, e.g.
   `https://acme.atlassian.net/jira/software/projects/AUTH/boards/42` or
   `…/secure/RapidBoard.jspa?rapidView=42`. The adapter derives `base_url` (common URL
-  policy) and `board_id` (the number after `/boards/`, or `rapidView=`). It is an
-  alternative to `base_url` + `board_id`. Neither form present, or no id found → 422
-  `invalid_base_url`.
+  policy) and `board_id` (the path segment after `/boards/`, or the `rapidView`
+  query parameter in any position; trailing segments like `/backlog` and other query
+  params are ignored). It is an alternative to `base_url` + `board_id`.
+  - Neither form present, no id found, or both forms present → 422
+    `invalid_base_url`.
+  - **Board id canonicalisation** (every source: `/boards/`, `rapidView`, the
+    `board_id` field): parse as `u64` and reject `0` or a non-number (422). Store
+    the decimal form, so `042` and `42` are the same `board_ref` and the unique key
+    holds.
 - `email` is **required**: Jira Cloud API tokens authenticate only as Basic
   `email:token`.
 - `project_key` is **optional**. If absent, `external_scope` = the board's
@@ -260,30 +294,58 @@ Pagination: advance `startAt` by the number of items returned; stop when
 
 ### R5 · Sync coordinator — `tracker::sync(&TrackerRow, &dyn TrackerAdapter, &dyn GetTransport, &PgStore)`
 
-The coordinator is provider-neutral; steps 2–3 are the adapter's `fetch_snapshot`
+The coordinator is provider-neutral; step 2 is the adapter's `fetch_snapshot`
 (for Jira as described; another adapter decides its own fetches but must return the
 same `Snapshot` and honour "all-or-nothing").
 
-1. Take `pg_try_advisory_xact_lock(hashtext('tracker_sync:' || tracker_id))` in the
-   sync transaction; if not acquired → return `Busy` (manual sync → 409; scheduled
-   sync → skip this tracker this tick). Set `last_attempt_at = now()` (own statement).
-2. Fetch all sprints and all board issues (all pages).
-3. Fetch the member list of every sprint that **needs it**: state ≠ `closed`, or
-   closed and (`members_fetched_state` is NULL or ≠ `closed`). A closed sprint whose
-   members were fetched after it closed is never re-fetched (closed sprints don't
-   change).
-4. **Only if every request in 2–3 succeeded**, in the transaction:
-   - upsert sprints and tasks by `(tracker_id, external_id)`; a changed key
-     overwrites `key`; set `last_seen_at = now()`; clear `removed_at` on seen rows;
-   - `removed_at = now()` on rows not seen **and `removed_at IS NULL`**;
-   - for each fetched sprint, replace its `tracker_task_sprints` rows; set its
-     `members_fetched_state = state`;
-   - `current_sprint_id` per task = among sprints listing it: `active` > `future` >
-     `closed`; tie → later `start_at` (NULL last), then higher `seq`; none → NULL;
-   - **relink** (R6);
-   - `last_success_at = now()`, `last_error = NULL`.
-5. Any failure → transaction rolled back (no data rows change); `last_error = <code>`
-   written in its own statement; error returned. A partial fetch is never committed.
+**No DB transaction or connection is held across network or keyring calls.** The
+sync runs in five steps (guard → fetch → compute links → apply → outcome):
+
+1. **Guard.** Try the per-tracker in-process lock (`TrackerLocks`, a map of
+   `tokio::sync::Mutex` keyed by tracker id, in `AppState` and shared with the
+   scheduled tick; the daemon is the only writer). If it's held → `Busy` (manual
+   sync → 409; a tick skips this tracker without recording an error). Then write
+   `last_attempt_at = now()` (autocommit).
+2. **Fetch, with no DB connection checked out.** Run `adapter.fetch_snapshot` under
+   a whole-sync deadline of `tokio::time::timeout(10 min)`; overrunning maps to
+   `transport`. For Jira: all sprints and all board issues (every page), then the
+   member list of every sprint that **needs it**: state ≠ `closed`, or closed and
+   (`members_fetched_state` is NULL or ≠ `closed`). A closed sprint whose members
+   were fetched after it closed is never fetched again.
+3. **Compute links, with no transaction open.**
+   - `load_link_inputs(tracker_id)` (a read) returns the candidate sessions' text
+     (R6) and the tracker's existing tasks, removed ones included.
+   - `known` = the snapshot's tasks plus the existing tasks the snapshot doesn't
+     contain (so links to removed issues survive), keyed by **`external_id`**. The
+     snapshot's key wins on a rename.
+   - `adapter.match_links` returns links that name tasks by `external_id`. Newly
+     synced tickets have no row id yet, and don't need one.
+4. **Apply: one short transaction** in `db/pg_store/trackers.rs`
+   (`apply_tracker_snapshot(tracker_id, snapshot, links)`), only if steps 2–3 fully
+   succeeded. It makes no network or keyring calls:
+   - `select … from sensei.trackers where id = $1 for update`. If the row is gone
+     (disconnected, or re-connected to another board, mid-sync) → `Gone` (manual
+     sync → 404), with no `last_error` write.
+   - Upsert sprints and tasks by `(tracker_id, external_id)`. A changed key
+     overwrites `key`. Set `last_seen_at = now()` and clear `removed_at` on seen
+     rows.
+   - Set `removed_at = now()` on rows not seen **and `removed_at IS NULL`**.
+     **Delete the `tracker_task_sprints` rows of every removed sprint.**
+   - For each fetched sprint, replace its `tracker_task_sprints` rows and set
+     `members_fetched_state = state`. A member whose `external_id` has no task row
+     (not among the board's issues) is **skipped and counted** (`skipped_members`),
+     never inserted, and never an FK error.
+   - `current_sprint_id` per task = among **non-removed** sprints listing it,
+     `active` > `future` > `closed`. Ties go to the later `start_at` (NULL sorts
+     last), then the higher `seq`. No such sprint → NULL.
+   - **Relink** (R6): delete this tracker's `session_task_links`, then insert the
+     step-3 links, resolving `external_id → id` inside the transaction. A link
+     whose session no longer exists (deleted since step 3) is dropped.
+   - Store `params.board_name`, set `last_success_at = now()` and
+     `last_error = NULL`, then commit.
+   Sprints, tasks, memberships and links commit **together or not at all**.
+5. **Outcome.** Success is recorded inside step 4. Any failure in steps 2–4 →
+   `last_error = <code>` (autocommit), and no data rows change.
 
 Scheduling: new task **`tracker_sync`** — entry in `tasks::schedule::SCHEDULABLE`,
 in `DESCRIPTIONS` (`api/handlers/scheduled_tasks.rs`), a line in
@@ -294,7 +356,10 @@ in `DESCRIPTIONS` (`api/handlers/scheduled_tasks.rs`), a line in
 `api/server.rs` next to `forge_token_check::spawn`. `SCHEDULABLE` stays sorted
 (test `schedulable_names_are_unique_and_sorted`). A tick drains secret tombstones
 (R3), then syncs every tracker in turn. One tracker's failure is recorded on its
-row and does not stop the others.
+row and does not stop the others. The tick returns `Err("<n>/<m> trackers failed")`
+when any tracker failed, so `ticker` records a failed run instead of a clean one.
+Module wiring: `mod tracker;` in `main.rs`, `pub mod tracker_sync;` in
+`tasks/mod.rs`.
 
 ### R6 · Linking (adapter-owned matching + coordinator-owned relink)
 
@@ -326,9 +391,10 @@ meaning) and "link only to a known task" are **common to all adapters**.
 Inputs per candidate session: `activity.transcript_turns WHERE session_id =
 sessions.client_session_id`. No `client_session_id` or no turns → no links.
 
-**Relink** (inside the sync transaction): delete every `session_task_links` row whose
-task belongs to this tracker, then insert `match_links` output for all candidate
-sessions. Full recompute — deterministic and idempotent.
+**Relink** (computed in R5 step 3 with no transaction open, written in the R5 step-4
+apply transaction): delete every `session_task_links` row whose task belongs to this
+tracker, then insert the `match_links` output for all candidate sessions. It's a
+full recompute, deterministic and idempotent.
 
 ### R7 · Metrics (computed at read; nothing materialised)
 
@@ -382,9 +448,9 @@ sit behind one guard layer built from **existing** code:
 | Route | Behaviour |
 |---|---|
 | `GET /api/projects/{id}/trackers` | `[{id, kind, base_url, account, external_scope, board_ref, board_name, status, last_success_at, last_error, counts:{tasks, sprints}}]`; `[]` when none. Unknown project → 404. |
-| `POST /api/projects/{id}/trackers/{kind}/connect` | `kind` resolved by `adapter_for_kind`; unknown or unregistered → 422 `{error:"unsupported_tracker"}`. Body = the adapter's connect params (Jira: R4, e.g. `{board_url, email, api_token}`). Validate and normalise the URL (R4) → 422. The normalised `(kind, base_url, board_ref)` already connected to **another** project → 409 `{error:"board_already_connected", project:{id, name}}`. The project already connected (same or different board) → **re-connect**: fields and token replaced after validation; a different board drops the old board's sprints/tickets/links (old tracker row replaced). Then `adapter.validate`: credential rejected → 401 `{error:"unauthorized"}`; board/scope missing → 404 `{error:"board_not_found", base_url, board_ref}` (the normalised values, so a UI that sent only `board_url` can name them); adapter-specific mismatches → 422 with the adapter's code (Jira: `board_project_mismatch`). Then persist (R3), run the first sync, return **201** `{tracker, first_sync:{ok:true, counts} \| {ok:false, error:<code>}}`. A failed first sync keeps the connection (credential was valid); `status` shows `error`. |
+| `POST /api/projects/{id}/trackers/{kind}/connect` | `kind` resolved by `adapter_for_kind`; unknown or unregistered → 422 `{error:"unsupported_tracker"}`. Body = the adapter's connect params (Jira: R4, e.g. `{board_url, email, api_token}`). Validate and normalise the URL (R4) → 422. The normalised `(kind, base_url, board_ref)` already connected to **another** project → 409 `{error:"board_already_connected", project:{id, name}}`. The project already connected (same or different board) → **re-connect**: fields and token replaced after validation; a different board drops the old board's sprints/tickets/links (old tracker row replaced). Then `adapter.validate`: credential rejected → 401 `{error:"unauthorized"}`; board/scope missing → 404 `{error:"board_not_found", base_url, board_ref}` (the normalised values, so a UI that sent only `board_url` can name them); adapter-specific mismatches → 422 with the adapter's code (Jira: `board_project_mismatch`). Then persist (R3). Return **201** `{tracker, first_sync:{pending:true}}` straight away, and start the first sync in the background (`tokio::spawn`, under the R5 guard). Connect never waits on a sync, so it finishes in the time of `validate` (2 requests with no 429 retries) plus one keyring call. Clients poll `GET …/trackers` until `status` leaves `pending`. A failed first sync keeps the connection (the credential was valid), and `status` shows `error`. |
 | `DELETE /api/projects/{id}/trackers` | R3 disconnect; 204; 404 if the project has no tracker. |
-| `POST /api/projects/{id}/trackers/sync` | R5 now. 200 `{counts:{sprints, tasks, removed, links}}`; 409 `{error:"busy"}`; 502 `{error:<code>}`; 404 if no tracker. |
+| `POST /api/projects/{id}/trackers/sync` | R5 now. 200 `{counts:{sprints, tasks, removed, links, skipped_members}}`; 409 `{error:"busy"}`; 502 `{error:<code>}`; 404 if no tracker. |
 | `GET /api/projects/{id}/sprints` | the project's sprints, newest first: `[{id, name, state, start_at, end_at, complete_at, candidates_in_window, linked_sprint, linked_other, unlinked}]` (each part a usage object; `null` + `reason` for future). Removed sprints excluded. |
 | `GET /api/projects/{id}/tracker-tasks?sprint={uuid}&include_removed=bool` | the sprint's tickets (or all the project's tickets without `sprint`): `[{key, summary, issue_type, status, current_sprint, sprints:[{id, name}], removed, usage}]`. `sprint` filters to its members; unknown sprint → 404. |
 | `GET /api/projects/{id}/tracker-tasks/{key}` | `{task, usage, sessions:[{id, started_at, sources, matched_key}]}`; case-insensitive key; 404 if absent. |
@@ -407,7 +473,11 @@ enabled; a missing row is a 500 (the row is seeded and test-enforced).
   — token from `SENSEI_JIRA_TOKEN` if set, else one line read from stdin (the help
   text notes env vars are visible to same-user processes). Never an argv flag. The
   CLI sends the URL as typed; the server normalises it (R4). On 409
-  `board_already_connected` it prints which project owns the board.
+  `board_already_connected` it prints which project owns the board. Connect uses
+  `client_with_timeout(90)` (two validation requests at up to 30 s each, plus the
+  keyring call). After a 201 it polls `GET …/trackers` every 2 s for up to 120 s,
+  printing the first-sync result. On a polling timeout it says the sync is still
+  running in the daemon; it never reports a connect failure.
 - `sensei tracker sync --project <p>` · `sensei tracker disconnect --project <p>`
 - `sensei tracker sprints --project <p>` — the project's sprints with ticket counts.
 - `sensei tracker usage --project <p> [--sprint <s> | <KEY>]` — giving both is an
@@ -459,17 +529,19 @@ Unattended (CI):
    a. `match_links` with `known = {AUTH-420, AUTH-421, MY_PROJ-12}`: `UTF-8`, `AES-256`, `CVE-2026` → none; `fix/auth-420-store` → AUTH-420/branch; `AUTH-420_fix`, `feature_AUTH-420` → AUTH-420; `xAUTH-420`, `AUTH-4201`, `AUTH-0420` → none; `MY_PROJ-12` → MY_PROJ-12; a prompt with AUTH-420 twice → `mentions = 2`; AUTH-420 and AUTH-421 → two links; empty `known` → none.
    b. Sync on the fake transport (fixture-shaped): 2 issue pages + 2 sprints → all rows; a second identical sync changes nothing but `last_seen_at`; an issue missing on the third sync → `removed_at` set once (unchanged on a fourth sync) **and its links still present**; a renamed key → same row, new key.
    c. Page 2 errors → zero data rows changed, `last_error` set, `last_success_at` unchanged.
-   d. Issue listed by a closed and an active sprint → `current_sprint_id` = active; both rows in `tracker_task_sprints`; a closed sprint fetched after closing is not re-fetched.
-   e. R9 status: never synced → `pending`; failed first sync → `error`; success then 2×interval+1s → `stale`; just inside → `connected`.
-   f. 429 + `Retry-After: 1` then 200 → ok; 429 with no header → 5 s wait (clock injected); 4× 429 → `rate_limited`; 302 → `redirect`.
-   g2. Board-URL parsing: `https://acme.atlassian.net/jira/software/projects/AUTH/boards/42` → (`https://acme.atlassian.net`, 42); `…/secure/RapidBoard.jspa?rapidView=7` → 7; `https://acme.atlassian.net/jira/software/projects/AUTH` (no board) → 422; `https://evil.com/…/boards/42` → 422. No `project_key` → `external_scope` from board `location.projectKey`.
-   g. URL validation: `http://x.atlassian.net`, `https://evil.com`, `https://1.2.3.4`, `https://u:p@x.atlassian.net`, `https://x.atlassian.net:8443` → rejected; `https://acme.atlassian.net/jira/` → `https://acme.atlassian.net`.
+   d. Issue listed by a closed and an active sprint → `current_sprint_id` = active; both rows in `tracker_task_sprints`; a closed sprint fetched after closing is not re-fetched. A task in closed S1 and future S2, then S2 is deleted in Jira → S2 gets `removed_at`, its membership rows are deleted, and `current_sprint_id` = S1. A sprint member that isn't among the board issues → skipped, `skipped_members = 1`, no error.
+   d2. Failure modes: a fake transport sleeping 5 s per page → no `pg_stat_activity` row for this test's connection is `idle in transaction` during the fetch. The tracker row is deleted between fetch and apply → `Gone`, no `last_error` write, no FK error. A fake `SecretStore` that blocks → `credential_store` after 5 s (timeout injected), and the connect handler returns. A tick with one failing and one healthy tracker → the healthy one syncs and the tick returns `Err("1/2 trackers failed")`. Connect returns 201 with `first_sync.pending` before the (slow, fake) first sync finishes. A concurrent manual sync → 409 `busy`.
+   e. R9 status: never synced → `pending`; failed first sync → `error`; `last_error` set together with an old success → `error`; success exactly `2×1800` s ago → `connected`; `2×1800+1` s → `stale`.
+   f. 429 + `Retry-After: 1` then 200 → ok; `Retry-After` absent → 5 s, `-5` → 5 s, `120` → 60 s, `0` → 0 s, an HTTP-date 30 s ahead → 30 s, `99999999999999999999` → 5 s (clock injected); 4× 429 during sync → `rate_limited`; one 429 during connect `validate` → `rate_limited` with no retry; 302 → `redirect`.
+   g2. Board-URL parsing: `https://acme.atlassian.net/jira/software/projects/AUTH/boards/42` → (`https://acme.atlassian.net`, `"42"`); `…/boards/042` → `"42"`; `…/boards/0` → 422; `…/boards/42/backlog?selectedIssue=AUTH-1` → `"42"`; `…/secure/RapidBoard.jspa?rapidView=7` → `"7"`; `…/RapidBoard.jspa?view=planning&rapidView=7` → `"7"`; both `board_url` and `base_url`+`board_id` sent → 422; `https://acme.atlassian.net/jira/software/projects/AUTH` (no board) → 422; `https://evil.com/…/boards/42` → 422. No `project_key` → `external_scope` from board `location.projectKey`.
+   g. URL validation: `http://x.atlassian.net`, `http://localhost`, `https://evil.com`, `https://1.2.3.4`, `https://u:p@x.atlassian.net`, `https://x.atlassian.net:8443`, `https://atlassian.net`, `https://x.atlassian.net.evil.com`, `https://acme.atlassian.net.` → rejected; `https://acme.atlassian.net/jira/` and `https://ACME.atlassian.net:443/jira/?x=1#y` → `https://acme.atlassian.net`. `normalize_base_url` calls `require_secure_url` (no second parser).
    h. `local_caller_guard`: `Origin: https://evil.com` → 403; `Origin: tauri://localhost` → passes; `Host: evil.com` → 403; no Origin + `Host: 127.0.0.1:7744` → passes. The existing `repositories.rs` origin tests still pass after the extraction.
    i. Sentinel-token test: run connect (fake), failed sync and status with token `SENTINEL-TOKEN-XYZ`; captured logs, `last_error`, and every response body do not contain it.
    j. Sprint usage against seeded DB rows: `candidates_in_window` equals an independent `count(*)` written in the test; a session linked only to another tracker's task lands in `unlinked`; a future sprint → `not_started`; an active sprint past `end_at` includes a session started after `end_at`.
    k. Project hierarchy (seeded DB, fake transport, fake `SecretStore`): a project with 3 repos; sessions in each repo on `fix/AUTH-420-x` → AUTH-420 usage `sessions = 3`, `by_repo` has 3 entries summing to the total. Removing one repo from the project → AUTH-420 drops to 2 immediately (no resync). `GET …/sprints` returns the board's sprints; `GET …/tracker-tasks?sprint=S` returns exactly S's tickets; a ticket carried from S1 to S2 appears under both, with `current_sprint` = S2. Connecting the same board from a second project → 409 `board_already_connected`, including when typed as `https://ACME.atlassian.net/jira/software`. Re-connecting the first project to a different board removes the old board's sprints and tickets, creates a new tracker id, and tombstones only the old secret (after one tick the new one is still readable). A tick run while a connect is paused between `keychain_set` and step 3 does not delete the new secret (grace period). Two interleaved re-connects of one project leave exactly one live secret, and every other keyring entry they wrote has a tombstone. Re-connecting to the same board with the same email: the live token is never deleted, even when the commit is made to fail (fake store returns the old token). Re-connect from `e1` to `e2` with a fake store whose delete fails → a tombstone for `(old service, e1)` remains for the tick. Deleting the project removes its tracker and writes a tombstone; the next tick deletes the secret and the tombstone. A keyring delete that fails leaves the tombstone in place.
    l. **Seam test:** a test-only `FakeAdapter` (non-Jira key format `#12` scoped by `repo_key`, its own sprint shape) runs through the coordinator (sync, relink, usage) with no change to coordinator code. `repositories.repo_key` is seeded through the production `normalize_repo_key` from remotes like `git@gitlab.com:Group/Sub/Repo.git`, and the fake's `scope` comes from `https://gitlab.com/Group/Sub/Repo`. Two sessions in different repos both saying `#12` link to different tasks. A third repo with no matching scope gives 0 links, and a session with NULL `repo_key` gives 0 links.
 2. `rg -n '\.(post|put|patch|delete)\(' crates/senseid/src/tracker/` → no output.
+2a. `rg -n -i '\b(select|insert|update|delete)\b.*\b(from|into|set|where)\b' crates/senseid/src/tracker` → no output (`make check-sql-in-layer` only matches `sqlx_core::query*` call sites, so SQL text in a `const` would slip past it).
 2b. `rg -n -i 'jira|atlassian' crates/senseid/src/tracker/{http,sync,link,usage,status}.rs` → no output; in `tracker/mod.rs` the only hits are `mod jira;` and the `JiraAdapter` entry in `adapters()`. Naming the adapter in the registry, the CLI's `jira` subcommand and `SENSEI_JIRA_TOKEN` is expected; Jira **logic** (key shape, endpoints, auth, host rule) lives only in `tracker/jira.rs`.
 3. `rg -n 'api_token|SENSEI_JIRA_TOKEN' crates/senseid/src crates/cli/src` hits only the connect request type, its keyring call, and the CLI token reader; no DDL column holds a token.
 4. `tracker_sync` is in `SCHEDULABLE`, `DESCRIPTIONS` and `schedules.jsonl`; `every_schedulable_worker_has_a_description`, `every_schedulable_worker_has_a_schedule_row`, `every_schedule_row_names_a_real_worker` and `schedulable_names_are_unique_and_sorted` pass; `rg -n 'tracker_sync::spawn' crates/senseid/src/api/server.rs` → 1 hit (the tests above can't see a missing spawn).
@@ -490,10 +562,12 @@ Human (after both prerequisites; needs the user's tenant):
 - Ticket sums added to make a sprint total (double-counts shared sessions).
 - The same tracker board connected to two projects, or a project with two boards (two sprint calendars).
 - A ticket's usage missing sessions from one of the project's repos.
-- A failed/partial sync changes data rows, or a never-successful tracker shows `connected`.
+- A failed/partial sync changes data rows (including committing sprints/tasks without their links), or a never-successful tracker shows `connected`; a re-connect showing the previous credential's status before its own first sync.
 - Any non-GET request to a tracker, a request to a host outside the adapter's allow-rule, or a followed redirect.
 - Jira logic (key shape, endpoints, auth scheme, host rule) outside `tracker/jira.rs`; a coordinator change needed to add an adapter.
 - A drain deleting a secret whose tombstone is still within its grace period; a tracker row pointing at a secret with no keyring entry.
+- A DB transaction open across a network or keyring call; a keyring call outside `spawn_blocking` plus timeout; connect blocking on a sync; a tick reporting success when any tracker failed.
+- `042` and `42` stored as different boards; a removed sprint chosen as a ticket's current sprint.
 - The token in a DB row, log line, API response, `last_error`, or argv.
 - A tracker route answering a foreign `Origin` or a non-loopback `Host`; a second copy of `ALLOWED_ORIGINS`.
 - A session from a repo outside the tracker's project counted in any partition.
@@ -539,6 +613,10 @@ Human (after both prerequisites; needs the user's tenant):
 | C26 | No GitLab API client exists in senseid (GitLab appears only in remote-URL normalisation and a SwiftPM manifest adapter) | `rg -li gitlab crates/senseid/src` | no client | `repo_key.rs`, `tests.rs`, `adapters/manifest/swiftpm.rs` | CONFIRMED |
 | C27 | `normalize_repo_key(remote) -> Option<String>` exists in `db/pg_store/repo_key.rs` and yields the lowercased `host/path` form stored in `repositories.repo_key` | read `repo_key.rs:14-80`; `repositories.ddl` repo_key comment | as stated | as stated | CONFIRMED |
 | C28 | Project-window sections are registered in `project-sidebar-view.ts` (intake…about); app secret entry precedent is `ProvidersSection.svelte` (`type="password"`); screen specs live in `docs/spec/screen/project-*.md` | read those files | as stated | as stated | CONFIRMED |
+| C29 | `api::util::require_secure_url(raw, resource) -> Result<reqwest::Url, String>` exists (https or exact loopback) and is shared | read `api/util.rs:9-17` | as stated | as stated | CONFIRMED |
+| C30 | `gateway_keys` calls are blocking and must be wrapped in `spawn_blocking` | `gateway_keys/mod.rs:14-17` | as stated | as stated | CONFIRMED |
+| C31 | CLI blocking client default timeout is 30 s (`client()` → `client_with_timeout(30)`); DB pool max 24, acquire timeout 10 s | `crates/cli/src/main.rs:291-297`; `crates/bootstrap/src/config.rs:93,109` | as stated | as stated | CONFIRMED |
+| C32 | `scripts/check-sql-in-layer.py` matches only `sqlx_core::query*` call sites and exempts test modules | read the script | as stated | `CALL` regex line 38; test exemptions lines 21–37 | CONFIRMED |
 | C24 | `activity.sessions.folder_id` and `repo_folder_id` are both nullable `→ folders on delete set null`; the DDL designates `repo_folder_id` for attribution | `sessions.ddl:4-5` + column comment; `pg_constraint` | as stated | as stated | CONFIRMED *(was MISLEADING: implied only `folder_id` could be nulled — fixed)* |
 
 **Contested ground:** C19 and C20 were FALSE in the second draft and reversed two

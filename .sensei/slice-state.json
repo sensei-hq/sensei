@@ -1,0 +1,62 @@
+{
+  "slice_id": "tracker-jira-linkage",
+  "branch": "feature/jira_ticket_linkage",
+  "spec_path": "docs/spec/daemon/tracker-jira-linkage.md",
+  "screen_spec_path": "docs/spec/screen/project-integrations.md",
+  "plan_path": "docs/plans/2026-10-15-tracker-jira-linkage.md",
+  "mode": "attended",
+  "phases": [
+    "F1.2 schema",
+    "F1.3 pure core",
+    "F1.4 jira adapter + sync coordinator",
+    "F1.5 api + guards + cli",
+    "F2 scheduled sync",
+    "F3 linking",
+    "F4 usage",
+    "F6 app screen",
+    "F5 live verification"
+  ],
+  "current_phase": "F1.4 jira adapter + sync coordinator",
+  "completed": [
+    "F1.2 schema (7 DB tests green; deployed to sensei_test)",
+    "F1.3 pure core (21 tests green; http::bounded_builder extracted, federation uses it)"
+  ],
+  "decomposition_approved": "2026-10-16 (user)",
+  "gate_status": "pass",
+  "preflight": "GO 2026-10-16 after disk cleanup (430G free); WARN: daemon /api/health 404, app e2e globalSetup macOS-only, website node_modules missing",
+  "test_db": "sensei_test created 2026-10-16 (user approved); TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test",
+  "open_questions": [],
+  "known_broken": [
+    "sensei MCP index: 'folder not indexed' for this repo \u2014 grep fallback",
+    "update_phase MCP returns 404",
+    "7 baseline test failures (6\u00d7 rustup missing for rust-analyzer on nix, 1 flaky) \u2014 pre-existing, not this slice"
+  ],
+  "blocked": [
+    "F1.1 fixture capture needs user's Jira tenant",
+    "F5 needs P0 (transcript turns with git_branch = 0)"
+  ],
+  "next_command": "write F1.4 tests red-first (JiraAdapter fake transport, sync coordinator, SecretStore/connect lifecycle), present for approval",
+  "spec_audit_4_5": "2026-10-16: 3 reviewers (conformance, failure-mode, data-correctness) \u2192 14 findings; spec corrected (3-phase\u21925-step sync, no tx across I/O, atomic relink in apply tx, async first sync, keyring spawn_blocking+timeout, board-id canonicalisation, URL policy on require_secure_url). Re-audit \u2192 7 contradictions fixed. Awaiting user confirmation of corrections.",
+  "baseline": {
+    "date": "2026-10-16",
+    "cmd": "TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test cargo test -p senseid --bin senseid",
+    "passed": 3511,
+    "failed": 7,
+    "ignored": 57,
+    "failures_preexisting": {
+      "rustup_missing_on_nix (rust-analyzer session shells to rustup)": [
+        "indexer::compiler_session::tests::rust_references_are_placed_by_rust_analyzer",
+        "indexer::pipeline::parse_task::a_parsed_file_reaches_the_database",
+        "tasks::handlers::process::tests::a_file_edited_after_its_compile_waits_for_a_fresh_one",
+        "tasks::handlers::process::tests::every_call_emit_arm_fires",
+        "tasks::handlers::process::tests::external_calls_link_to_lib_nodes",
+        "tasks::handlers::process::tests::graph_scan_end_to_end"
+      ],
+      "flaky_passes_in_isolation": [
+        "tasks::index_audit::tests::audit_repairs_nested_standalone"
+      ]
+    }
+  },
+  "uncommitted": "F1.2+F1.3 left uncommitted on purpose: 17 dead_code warnings until F1.4/F1.5 wire the code (baseline 0 warnings); commit once warnings clear",
+  "last_verify": "2026-10-16: full suite 3539 pass / 6 fail (= baseline rustup set), sql-in-layer clean, 2a clean, ddl lints clean"
+}

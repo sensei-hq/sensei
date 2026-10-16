@@ -45,7 +45,7 @@ CLI are the v1 contract.
   4. `origin_guard.rs` extraction; `repositories.rs` switches to it; Host check added.
   5. Transport, URL validation, sync, status, and credential, all TDD against the fake transport.
   6. Routes + `local_caller_guard`; CLI.
-- **Acceptance criteria:** Done gate 1g2 (Jira `board_url` parsing, optional `project_key`, `board_name`; used by both CLI and app), 1l (seam test with a fake non-Jira adapter) and 2b (no Jira knowledge outside `tracker/jira.rs`), plus 1b, 1c, 1d, 1e, 1f, 1g, 1h, 1i, 2, 3 and 5 pass, plus the connection parts of 1k (`board_already_connected` incl. an un-normalised URL; re-connect to a different board drops the old board's data; project delete removes the tracker and the next tick its secret).
+- **Acceptance criteria:** Done gates 1d2 (failure modes) and 2a (no SQL text in `tracker/`), 1g2 (Jira `board_url` parsing, optional `project_key`, `board_name`; used by both CLI and app), 1l (seam test with a fake non-Jira adapter) and 2b (no Jira knowledge outside `tracker/jira.rs`), plus 1b, 1c, 1d, 1e, 1f, 1g, 1h, 1i, 2, 3 and 5 pass, plus the connection parts of 1k (`board_already_connected` incl. an un-normalised URL; re-connect to a different board drops the old board's data; project delete removes the tracker and the next tick its secret).
 - **Test scenarios:**
   - Given a fake transport with 2 issue pages and 2 sprints, When sync runs twice, Then the second run changes nothing but `last_seen_at`.
   - Given page 2 returns 500, When sync runs, Then no data row changes and `status` = `error`.
@@ -60,12 +60,12 @@ CLI are the v1 contract.
 - **Acceptance criteria:** Done gate 4 passes. One tracker's failure in a tick leaves the others synced (unit test with two fake trackers, one failing).
 - **Test scenarios:**
   - Given two trackers where A's transport fails, When a tick runs, Then B has `last_success_at` set and A has `last_error` set.
-  - Given a manual sync holds the advisory lock, When a tick runs, Then that tracker is skipped and not marked as an error.
+  - Given a manual sync holds the tracker's in-process `TrackerLocks` guard, When a tick runs, Then that tracker is skipped and not marked as an error.
 
 ### Feature 3: Session ↔ ticket linking
 
 - **Issue:** TBD
-- **Layers:** DDL (`session_task_links`, enum `link_source`) → daemon (pure `match_links` (Jira adapter); candidate query via `folder_projects` on `repo_folder_id`; relink inside the sync transaction) → API (`GET …/tracker-tasks/{key}` with its sessions)
+- **Layers:** DDL (`session_task_links`, enum `link_source`) → daemon (pure `match_links` (Jira adapter); candidate query via `folder_projects` on `repo_folder_id`; relink computed with no transaction open and written in the sync's apply transaction) → API (`GET …/tracker-tasks/{key}` with its sessions)
 - **Depends on:** F1
 - **Acceptance criteria:** Done gate 1a passes. Relink is idempotent: syncing twice gives identical link rows. A link to a removed task survives the next sync. A session from a repo outside the project gets no link (seeded-DB test).
 - **Test scenarios:**

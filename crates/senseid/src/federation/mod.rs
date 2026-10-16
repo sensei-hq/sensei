@@ -21,9 +21,7 @@ use dojo_protocol::{PublishedRule, PullResponse, content_hash};
 /// hung/unreachable dojo can never wedge the (sequential) pull loop or pile up
 /// push tasks — same liveness discipline as the daemon's other outbound clients.
 pub fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(5))
-        .timeout(std::time::Duration::from_secs(30))
+    crate::http::bounded_builder()
         .build()
         .unwrap_or_else(|e| { tracing::warn!(error = %e, "federation: http client build failed, using default client without timeouts"); reqwest::Client::new() })
 }

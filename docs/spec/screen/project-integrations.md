@@ -50,10 +50,14 @@ all non-empty. Enter in any field submits. While the request runs, the button sh
 "Checking credentials and board…" and the same text is announced in a
 `role="status"` region.
 
-**2 · First sync result** (after the 201, in the same `role="status"` region):
-- On success: "Connected · 6 sprints · 142 tickets".
-- On failure (the connection is kept): "Connected, but the first sync failed: <mapped
-  message>", with a **Retry sync** button.
+**2 · First sync** (after the 201, in the same `role="status"` region). Connect
+returns as soon as the connection is saved (`first_sync.pending`), and the first
+sync runs in the daemon:
+- While `status = pending`: "Connected · first sync running…". The screen polls
+  `GET …/trackers` every 2 s while it is open, and stops polling when it closes.
+- When the status reaches `connected`: "Connected · 6 sprints · 142 tickets".
+- When it reaches `error` (the connection is kept): "Connected, but the first sync
+  failed: <mapped message>", with a **Retry sync** button.
 
 **3 · Connected:** a status card:
 
@@ -67,7 +71,7 @@ Jira · acme.atlassian.net · project AUTH · board "AUTH Scrum" (#42)
   `board_ref`, `status`, `last_success_at`, `counts`.
 - The status is always shown as **text**; the dot is decorative. The wording follows
   R9: `connected`; `stale` ("last synced 3 h ago"); `error` (mapped message below);
-  `pending` ("waiting for first sync").
+  `pending` ("first sync running…", also shown after **Replace token** until the new credential syncs).
 - **Sync now** calls `POST …/trackers/sync`. A 409 shows "A sync is already running".
 - **Replace token** opens the form with Board URL and email pre-filled from the
   connection and the token field empty, then re-connects through R3.
