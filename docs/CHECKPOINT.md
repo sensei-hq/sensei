@@ -34,6 +34,15 @@ usage, routes (`/trackers/{kind}/…`) are provider-neutral; GitLab is the next 
 (spec "Future adapters": iterations vs milestones, `#12` keys scoped by repo,
 self-managed hosts).
 
+## Desktop app connect screen (user, 2026-10-16)
+
+Project window section 繋 Integrations: `docs/spec/screen/project-integrations.md`
+(plan F6). Form: Board URL, Atlassian account email (required: Jira Cloud tokens are
+`email:token`), API token. The project key is derived from the board. Reviewed for UX
+(a11y, dialog, recovery actions) and conformance (every daemon code mapped;
+`board_name` and the `board_not_found` body added to the daemon contract;
+board-URL parsing moved to F1).
+
 ## Gate for `/sensei:build`
 
 - **P0** (Linux session synthesis) must make the spec's P0 SQL return `t`. Today `f`. Separate slice. Blocks F5 only.

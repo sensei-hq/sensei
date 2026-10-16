@@ -232,9 +232,19 @@ scope `excludes: [dojo, …]`. None of these tables reach the Dōjō DB.
   in-memory fake.
 
 **Jira adapter (`tracker/jira.rs`):** auth = HTTP Basic `account(email):token`;
-connect params `{base_url, email, api_token, project_key, board_id}`
-(`external_scope = project_key`, `board_ref = board_id`); `validate` also checks the
-board's project key equals `project_key` (422 `board_project_mismatch`). Endpoints (Jira Cloud; paths from Atlassian's Agile REST board-API operations index,
+connect params `{board_url?, base_url?, board_id?, email, api_token, project_key?}`:
+- `board_url` (what the desktop app sends) is the board's address, e.g.
+  `https://acme.atlassian.net/jira/software/projects/AUTH/boards/42` or
+  `…/secure/RapidBoard.jspa?rapidView=42`. The adapter derives `base_url` (common URL
+  policy) and `board_id` (the number after `/boards/`, or `rapidView=`). It is an
+  alternative to `base_url` + `board_id`. Neither form present, or no id found → 422
+  `invalid_base_url`.
+- `email` is **required**: Jira Cloud API tokens authenticate only as Basic
+  `email:token`.
+- `project_key` is **optional**. If absent, `external_scope` = the board's
+  `location.projectKey` from `GET …/board/{id}`, or the board name when the board
+  has no single project. If present, it must match (422 `board_project_mismatch`).
+- `board_ref = board_id`; the board's name from `GET …/board/{id}` is stored as `params.board_name` and returned as `board_name` (refreshed on each sync). Endpoints (Jira Cloud; paths from Atlassian's Agile REST board-API operations index,
 2026-10-15; response field names confirmed by the build-start fixture, C11):
 
 | Purpose | Call |
@@ -371,8 +381,8 @@ sit behind one guard layer built from **existing** code:
 
 | Route | Behaviour |
 |---|---|
-| `GET /api/projects/{id}/trackers` | `[{id, kind, base_url, account, external_scope, board_ref, status, last_success_at, last_error, counts:{tasks, sprints}}]`; `[]` when none. Unknown project → 404. |
-| `POST /api/projects/{id}/trackers/{kind}/connect` | `kind` resolved by `adapter_for_kind`; unknown or unregistered → 422 `{error:"unsupported_tracker"}`. Body = the adapter's connect params (Jira: `{base_url, email, api_token, project_key, board_id}`). Validate and normalise the URL (R4) → 422. The normalised `(kind, base_url, board_ref)` already connected to **another** project → 409 `{error:"board_already_connected", project:{id, name}}`. The project already connected (same or different board) → **re-connect**: fields and token replaced after validation; a different board drops the old board's sprints/tickets/links (old tracker row replaced). Then `adapter.validate`: credential rejected → 401 `{error:"unauthorized"}`; board/scope missing → 404 `{error:"board_not_found"}`; adapter-specific mismatches → 422 with the adapter's code (Jira: `board_project_mismatch`). Then persist (R3), run the first sync, return **201** `{tracker, first_sync:{ok:true, counts} \| {ok:false, error:<code>}}`. A failed first sync keeps the connection (credential was valid); `status` shows `error`. |
+| `GET /api/projects/{id}/trackers` | `[{id, kind, base_url, account, external_scope, board_ref, board_name, status, last_success_at, last_error, counts:{tasks, sprints}}]`; `[]` when none. Unknown project → 404. |
+| `POST /api/projects/{id}/trackers/{kind}/connect` | `kind` resolved by `adapter_for_kind`; unknown or unregistered → 422 `{error:"unsupported_tracker"}`. Body = the adapter's connect params (Jira: R4, e.g. `{board_url, email, api_token}`). Validate and normalise the URL (R4) → 422. The normalised `(kind, base_url, board_ref)` already connected to **another** project → 409 `{error:"board_already_connected", project:{id, name}}`. The project already connected (same or different board) → **re-connect**: fields and token replaced after validation; a different board drops the old board's sprints/tickets/links (old tracker row replaced). Then `adapter.validate`: credential rejected → 401 `{error:"unauthorized"}`; board/scope missing → 404 `{error:"board_not_found", base_url, board_ref}` (the normalised values, so a UI that sent only `board_url` can name them); adapter-specific mismatches → 422 with the adapter's code (Jira: `board_project_mismatch`). Then persist (R3), run the first sync, return **201** `{tracker, first_sync:{ok:true, counts} \| {ok:false, error:<code>}}`. A failed first sync keeps the connection (credential was valid); `status` shows `error`. |
 | `DELETE /api/projects/{id}/trackers` | R3 disconnect; 204; 404 if the project has no tracker. |
 | `POST /api/projects/{id}/trackers/sync` | R5 now. 200 `{counts:{sprints, tasks, removed, links}}`; 409 `{error:"busy"}`; 502 `{error:<code>}`; 404 if no tracker. |
 | `GET /api/projects/{id}/sprints` | the project's sprints, newest first: `[{id, name, state, start_at, end_at, complete_at, candidates_in_window, linked_sprint, linked_other, unlinked}]` (each part a usage object; `null` + `reason` for future). Removed sprints excluded. |
@@ -393,7 +403,7 @@ enabled; a missing row is a 500 (the row is seeded and test-enforced).
 ### R10 · CLI (`crates/cli`, via `daemon_url()` + the blocking client)
 
 - `sensei tracker connect <kind> …` — one subcommand per registered adapter; v1: `jira`.
-  `sensei tracker connect jira --project <p> --url <site> --email <e> --project-key <K> --board <id>`
+  `sensei tracker connect jira --project <p> (--board-url <url> | --url <site> --board <id>) --email <e> [--project-key <K>]`
   — token from `SENSEI_JIRA_TOKEN` if set, else one line read from stdin (the help
   text notes env vars are visible to same-user processes). Never an argv flag. The
   CLI sends the URL as typed; the server normalises it (R4). On 409
@@ -411,7 +421,9 @@ enabled; a missing row is a 500 (the row is seeded and test-enforced).
 
 Any adapter other than Jira (GitLab is next — below); write-back to any tracker; Dōjō UI / rollup / upload (F-3); ADO / GitHub Issues; task-type
 mapping; per-repo key patterns and source toggles (T-1c); commit linkage; OAuth;
-Jira Server/DC; assignee or any per-person figure; desktop-app screen; daemon-wide
+Jira Server/DC; assignee or any per-person figure; desktop-app **usage** screens
+(sprints/tickets/hours; the **connection** screen is in scope, see
+[`screen/project-integrations.md`](../screen/project-integrations.md)); daemon-wide
 route auth/CORS (backlog).
 
 ## Future adapters (not built in this slice)
@@ -450,6 +462,7 @@ Unattended (CI):
    d. Issue listed by a closed and an active sprint → `current_sprint_id` = active; both rows in `tracker_task_sprints`; a closed sprint fetched after closing is not re-fetched.
    e. R9 status: never synced → `pending`; failed first sync → `error`; success then 2×interval+1s → `stale`; just inside → `connected`.
    f. 429 + `Retry-After: 1` then 200 → ok; 429 with no header → 5 s wait (clock injected); 4× 429 → `rate_limited`; 302 → `redirect`.
+   g2. Board-URL parsing: `https://acme.atlassian.net/jira/software/projects/AUTH/boards/42` → (`https://acme.atlassian.net`, 42); `…/secure/RapidBoard.jspa?rapidView=7` → 7; `https://acme.atlassian.net/jira/software/projects/AUTH` (no board) → 422; `https://evil.com/…/boards/42` → 422. No `project_key` → `external_scope` from board `location.projectKey`.
    g. URL validation: `http://x.atlassian.net`, `https://evil.com`, `https://1.2.3.4`, `https://u:p@x.atlassian.net`, `https://x.atlassian.net:8443` → rejected; `https://acme.atlassian.net/jira/` → `https://acme.atlassian.net`.
    h. `local_caller_guard`: `Origin: https://evil.com` → 403; `Origin: tauri://localhost` → passes; `Host: evil.com` → 403; no Origin + `Host: 127.0.0.1:7744` → passes. The existing `repositories.rs` origin tests still pass after the extraction.
    i. Sentinel-token test: run connect (fake), failed sync and status with token `SENTINEL-TOKEN-XYZ`; captured logs, `last_error`, and every response body do not contain it.
@@ -525,6 +538,7 @@ Human (after both prerequisites; needs the user's tenant):
 | C25 | The repo's adapter pattern = trait carrying provider knowledge + common struct + registry fns: `TranscriptAdapter` (`transcript/mod.rs:330`, `adapters()` :418, `adapter_for_source` :439); also `ManifestAdapter`, `ConfigAdapter`, `LanguageAdapter` | `rg -n 'pub trait [A-Za-z]*Adapter' crates/senseid/src`; read `transcript/mod.rs:320-440` | 4 traits; registry fns | 4 traits; `adapters()`, `adapter_for_source()` | CONFIRMED |
 | C26 | No GitLab API client exists in senseid (GitLab appears only in remote-URL normalisation and a SwiftPM manifest adapter) | `rg -li gitlab crates/senseid/src` | no client | `repo_key.rs`, `tests.rs`, `adapters/manifest/swiftpm.rs` | CONFIRMED |
 | C27 | `normalize_repo_key(remote) -> Option<String>` exists in `db/pg_store/repo_key.rs` and yields the lowercased `host/path` form stored in `repositories.repo_key` | read `repo_key.rs:14-80`; `repositories.ddl` repo_key comment | as stated | as stated | CONFIRMED |
+| C28 | Project-window sections are registered in `project-sidebar-view.ts` (intake…about); app secret entry precedent is `ProvidersSection.svelte` (`type="password"`); screen specs live in `docs/spec/screen/project-*.md` | read those files | as stated | as stated | CONFIRMED |
 | C24 | `activity.sessions.folder_id` and `repo_folder_id` are both nullable `→ folders on delete set null`; the DDL designates `repo_folder_id` for attribution | `sessions.ddl:4-5` + column comment; `pg_constraint` | as stated | as stated | CONFIRMED *(was MISLEADING: implied only `folder_id` could be nulled — fixed)* |
 
 **Contested ground:** C19 and C20 were FALSE in the second draft and reversed two

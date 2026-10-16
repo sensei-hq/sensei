@@ -45,7 +45,7 @@ CLI are the v1 contract.
   4. `origin_guard.rs` extraction; `repositories.rs` switches to it; Host check added.
   5. Transport, URL validation, sync, status, and credential, all TDD against the fake transport.
   6. Routes + `local_caller_guard`; CLI.
-- **Acceptance criteria:** Done gates 1l (seam test with a fake non-Jira adapter) and 2b (no Jira knowledge outside `tracker/jira.rs`), plus 1b, 1c, 1d, 1e, 1f, 1g, 1h, 1i, 2, 3 and 5 pass, plus the connection parts of 1k (`board_already_connected` incl. an un-normalised URL; re-connect to a different board drops the old board's data; project delete removes the tracker and the next tick its secret).
+- **Acceptance criteria:** Done gate 1g2 (Jira `board_url` parsing, optional `project_key`, `board_name`; used by both CLI and app), 1l (seam test with a fake non-Jira adapter) and 2b (no Jira knowledge outside `tracker/jira.rs`), plus 1b, 1c, 1d, 1e, 1f, 1g, 1h, 1i, 2, 3 and 5 pass, plus the connection parts of 1k (`board_already_connected` incl. an un-normalised URL; re-connect to a different board drops the old board's data; project delete removes the tracker and the next tick its secret).
 - **Test scenarios:**
   - Given a fake transport with 2 issue pages and 2 sprints, When sync runs twice, Then the second run changes nothing but `last_seen_at`.
   - Given page 2 returns 500, When sync runs, Then no data row changes and `status` = `error`.
@@ -83,11 +83,22 @@ CLI are the v1 contract.
   - Given a session linked to AUTH-420 and AUTH-421 (both in sprint S), When S's usage is read, Then the session counts once in `linked_sprint` and `shared = 1`.
   - Given a future sprint, When `/sprints` is read, Then its usage is `null` with reason `not_started`.
 
+### Feature 6: Desktop app — project Integrations screen
+
+- **Issue:** TBD
+- **Layers:** app (`project-sidebar-view.ts` section 繋 Integrations; `integrations/+page.svelte`; `api.ts` wrappers for list/connect/sync/disconnect)
+- **Depends on:** F1 (routes, status, sync, `board_url` parsing). F2 is not required.
+- **Acceptance criteria:** [`spec/screen/project-integrations.md`](../spec/screen/project-integrations.md) done gate 1–6.
+- **Test scenarios:**
+  - Given only a pasted board URL, When Connect, Then the connected card shows the daemon-derived site and board id.
+  - Given a wrong token, When Connect, Then "Jira rejected the email and token…" and the token field is empty.
+  - Given the daemon is stopped, When the screen loads, Then the error state is shown, not the connect form.
+
 ### Feature 5: Live verification (human)
 
 - **Issue:** TBD
 - **Layers:** none (verification only)
-- **Depends on:** F1–F4, P0, Jira tenant
+- **Depends on:** F1–F4, F6, P0, Jira tenant
 - **Acceptance criteria:** Done gates 6–10 pass, and the spec's Evidence table is filled in (hand-SQL equality and per-source precision over ≥10 real sessions).
 
 ## Dependency graph
@@ -100,6 +111,8 @@ graph LR
   P0[P0 Linux sessions - separate slice] --> F5
   F2 --> F5
   F4 --> F5
+  F1 --> F6
+  F6 --> F5
 ```
 
 First task: **F1.1** — needs the user's Jira Cloud site, board id and API token.
