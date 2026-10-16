@@ -13,8 +13,9 @@ next: /sensei:design
 > `repositories_in_projects` (no `tracker_links`); D10 window → by sprint state;
 > D11 issue source → Agile board endpoints, statuses gain `pending` and errors are stored
 > as fixed codes (no raw message); §3.2 routes and field names → spec R7/R8;
-> §4 sprint field → membership set; one Jira connection may bind several sensei
-> projects (user, 2026-10-15) — per-ticket figures sum across them. The spec is authoritative where they differ.
+> §4 sprint field → membership set. Model (user, 2026-10-16): a sensei project holds
+> many repos (README `project:` front matter) and one Jira board; the board holds many
+> sprints; a sprint holds many tickets. The spec is authoritative where they differ.
 
 **Ask (verbatim):** *"Connect Jira and get sprints and tickets; local sessions need
 to detect the ticket id and link it; then get metrics like hours spent on a ticket

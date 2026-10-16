@@ -36,7 +36,7 @@ CLI are the v1 contract.
 ### Feature 1: Connect + read-only sync
 
 - **Issue:** TBD
-- **Layers:** DDL (`trackers`, `tracker_projects`, `sprints`, `tracker_tasks`, `tracker_task_sprints`; enums `tracker_kind`, `tracker_error`) → daemon (`http::bounded_builder()` extracted from `federation::http_client()`; `tracker::jira` transport + URL validation + `sync`; credential via `gateway_keys`; R9 status fn; `api/origin_guard.rs` extracted from `repositories.rs` plus the Host check) → API (`GET …/trackers`, `POST …/jira/connect`, `DELETE …/jira`, `POST …/jira/sync`) → CLI (`sensei tracker connect|sync|disconnect`)
+- **Layers:** DDL (`trackers` — one per project, `sprints`, `tracker_tasks`, `tracker_task_sprints`; enums `tracker_kind`, `tracker_error`) → daemon (`http::bounded_builder()` extracted from `federation::http_client()`; `tracker::jira` transport + URL validation + `sync`; credential via `gateway_keys`; R9 status fn; `api/origin_guard.rs` extracted from `repositories.rs` plus the Host check) → API (`GET …/trackers`, `POST …/jira/connect`, `DELETE …/jira`, `POST …/jira/sync`) → CLI (`sensei tracker connect|sync|disconnect`)
 - **Depends on:** — (task F1.1 needs the tenant)
 - **Tasks (in order):**
   1. **F1.1 (human-gated):** record one scrubbed response per R4 endpoint into `crates/senseid/tests/fixtures/jira/` and confirm the C11 field names. Update the spec's C11 row.
@@ -45,7 +45,7 @@ CLI are the v1 contract.
   4. `origin_guard.rs` extraction; `repositories.rs` switches to it; Host check added.
   5. Transport, URL validation, sync, status, and credential, all TDD against the fake transport.
   6. Routes + `local_caller_guard`; CLI.
-- **Acceptance criteria:** Done gates 1b, 1c, 1d, 1e, 1f, 1g, 1h, 1i, 2, 3 and 5 pass, plus the binding parts of 1k (same board → same tracker, `project_already_bound`, unbind/last-unbind, orphan cleanup).
+- **Acceptance criteria:** Done gates 1b, 1c, 1d, 1e, 1f, 1g, 1h, 1i, 2, 3 and 5 pass, plus the connection parts of 1k (`board_already_connected` incl. an un-normalised URL; re-connect to a different board drops the old board's data; project delete removes the tracker and the next tick its secret).
 - **Test scenarios:**
   - Given a fake transport with 2 issue pages and 2 sprints, When sync runs twice, Then the second run changes nothing but `last_seen_at`.
   - Given page 2 returns 500, When sync runs, Then no data row changes and `status` = `error`.
@@ -75,9 +75,9 @@ CLI are the v1 contract.
 ### Feature 4: Usage metrics + read routes + CLI usage
 
 - **Issue:** TBD
-- **Layers:** daemon (R7 usage reads in `pg_store`) → API (`GET …/sprints`, `GET …/tracker-tasks`, `GET …/sessions/unlinked`, usage on `…/tracker-tasks/{key}`) → CLI (`sensei tracker usage`)
+- **Layers:** daemon (R7 usage reads in `pg_store`) → API (`GET …/sprints`, `GET …/tracker-tasks`, `GET …/sessions/unlinked`, usage on `…/tracker-tasks/{key}`) → CLI (`sensei tracker usage`, `sensei tracker sprints`)
 - **Depends on:** F3
-- **Acceptance criteria:** Done gates 1j and the usage parts of 1k pass (a ticket worked on across two bound projects sums both, with a `by_project` breakdown; a repo in two bound projects is counted once in the total). Every usage field carries its `_n`. A sum over zero non-NULL values is `null`. `tokens_in` appears in no response (`rg tokens_in crates/senseid/src/api/handlers/trackers.rs` → 0). CLI output labels time as "active AI time".
+- **Acceptance criteria:** Done gates 1j and the hierarchy/usage parts of 1k pass (sessions from all the project's repos count toward a ticket, with a `by_repo` breakdown summing to the total; removing a repo drops its sessions immediately; `?sprint=` returns exactly that sprint's tickets; a carried-over ticket lists both sprints).
 - **Test scenarios:**
   - Given 3 sessions linked to AUTH-420, one with NULL `duration`, When ticket usage is read, Then `active_n = 2` and `sessions = 3`.
   - Given a session linked to AUTH-420 and AUTH-421 (both in sprint S), When S's usage is read, Then the session counts once in `linked_sprint` and `shared = 1`.

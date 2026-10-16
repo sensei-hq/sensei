@@ -85,10 +85,8 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
   `sensei.repositories_in_projects` junction, sync status lives on
   `sensei.trackers`; (5) per-repo key pattern and per-source toggles deferred to
   T-1c — keys match against synced issue keys instead; (6) API-token auth only —
-  OAuth (integrations §2.3) deferred; (7) a connection (one Jira board) binds to
-  **one or more** sensei projects via `sensei.tracker_projects` (T3: per project),
-  each project to at most one — a ticket's cost sums across projects; (8) one
-  tracker per project in v1 — T3 §2.2's secondary issue-only trackers deferred. Blocked on **P0**: session
+  OAuth (integrations §2.3) deferred; (7) one tracker per project in v1 — T3
+  §2.2's secondary issue-only trackers deferred. Blocked on **P0**: session
   synthesis + transcript ingest on Linux (0 sessions today).
 - **Daemon routes reachable from any web page** (found by the Jira-spec security
   review 2026-10-15) — `api/server.rs` sets `CorsLayer::allow_origin(Any)` with all

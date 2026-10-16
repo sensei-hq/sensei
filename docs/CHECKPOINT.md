@@ -9,7 +9,7 @@
 | Analysis | `docs/analysis/2026-10-15-jira-ticket-linkage.md` |
 | Spec | `docs/spec/daemon/tracker-jira-linkage.md` (status: reviewed) |
 | Plan | `docs/plans/2026-10-15-tracker-jira-linkage.md` (issues TBD — no `gh` here) |
-| Deviations | `docs/backlog.md` → "Jira ticket linkage" entry (6 T3 overrides) |
+| Deviations | `docs/backlog.md` → "Jira ticket linkage" entry (7 T3 overrides) |
 
 ## Claims found false, and what changed
 
@@ -18,16 +18,13 @@
 - **C20** (draft 2): "no session read uses the project junction". The `folder_projects` view already does this, so R1 now reuses it on `repo_folder_id`.
 - MISLEADING, all fixed: C7 (5 `KeychainError` variants, not 2), C9 (`DESCRIPTIONS` + `tick()` + the `server.rs` spawn), C18 (loopback is the default, not the only bind), C24 (`repo_folder_id` is also set-null).
 
-## Change after design (2026-10-15, user)
+## Model (user, 2026-10-16)
 
-One Jira board can serve several sensei projects. The connection is now its own row
-(`sensei.trackers`, unique by site + board), bound to projects via
-`sensei.tracker_projects` (a project binds at most one). Per-ticket usage is
-tracker-wide with a `by_project` breakdown. Re-reviewed by the data-correctness and
-conformance reviewers. Fixed as a result: a bind/last-unbind race (`for update` lock
-order), read-time candidate intersection so an unbind takes effect immediately, the
-CLI deferring URL matching to the server, DELETE returning 200 + body, and the
-Wrong-gate scope. Backlog deviations (7) and (8).
+A sensei project holds many repos (README front matter `project:`) and exactly one
+Jira board; the board holds many sprints; a sprint holds many tickets; tickets link
+to sessions from any of the project's repos. The 2026-10-15 "one board, many
+projects" binding was reverted: `trackers.project_id` and `(base_url, board_id)` are
+both unique; usage breaks down `by_repo` (parts sum to the total).
 
 ## Gate for `/sensei:build`
 
