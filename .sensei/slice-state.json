@@ -57,6 +57,7 @@
       ]
     }
   },
-  "uncommitted": "F1.2+F1.3 left uncommitted on purpose: 17 dead_code warnings until F1.4/F1.5 wire the code (baseline 0 warnings); commit once warnings clear",
-  "last_verify": "2026-10-16: full suite 3539 pass / 6 fail (= baseline rustup set), sql-in-layer clean, 2a clean, ddl lints clean"
+  "last_verify": "2026-10-16: full suite 3539 pass / 6 fail (= baseline rustup set), sql-in-layer clean, 2a clean, ddl lints clean",
+  "checkpoint_path": "docs/checkpoints/tracker-jira-linkage.md",
+  "committed": "F1.2+F1.3 committed by user in 403b303a (2026-10-16 19:52)"
 }
