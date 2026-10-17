@@ -152,7 +152,8 @@ pub fn describe_error(status: u16, body: &Value) -> String {
         "board_project_mismatch" => "That board belongs to a different Jira project than --project-key.".into(),
         "invalid_base_url" => {
             "That isn't a Jira Cloud board address. It should look like \
-             https://<your-site>.atlassian.net/jira/software/projects/<KEY>/boards/<number>."
+             https://<your-site>.atlassian.net/jira/software/projects/<KEY>/boards/<number> \
+             (older sites: https://<your-site>.jira.com/…)."
                 .into()
         }
         "email_required" => "Pass --email: the Atlassian account the token belongs to.".into(),

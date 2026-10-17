@@ -92,7 +92,7 @@ failure, focus moves to the alert.
 
 | Code | Shown as | Recovery offered |
 |---|---|---|
-| `invalid_base_url` | "That isn't a Jira Cloud board address. It should look like https://<your-site>.atlassian.net/…/boards/<number>." | focus Board URL |
+| `invalid_base_url` | "That isn't a Jira Cloud board address. It should look like https://<your-site>.atlassian.net/…/boards/<number> (older sites: <your-site>.jira.com)." | focus Board URL |
 | `unauthorized` | "Jira rejected the email and token." | "Check both, or **create a new token**" (link) |
 | `forbidden` | "This account can't read that board." | "Ask the board admin for access, or use another account." |
 | `board_not_found` | "No board #<board_id> on <base_url>." (values from the 404 body) | focus Board URL |

@@ -247,9 +247,11 @@ scope `excludes: [dojo, …]`. None of these tables reach the Dōjō DB.
   - **Canonical output:** `"https://" + host` (lowercased; IDN in punycode, as
     `reqwest::Url` yields it), with no trailing slash, port or path.
   - The adapter's **host allow-rule** comes last. Jira: the host has the form
-    `<label>.atlassian.net`, with at least one label before `.atlassian.net`. So
-    bare `atlassian.net`, `x.atlassian.net.evil.com` and the trailing-dot form
-    `acme.atlassian.net.` are all rejected.
+    `<label>.atlassian.net` or `<label>.jira.com` (older Jira Cloud sites, e.g.
+    `senecaglobal.jira.com`), with at least one label before the domain. So bare
+    `atlassian.net`/`jira.com`, `x.atlassian.net.evil.com` and the trailing-dot form
+    `acme.atlassian.net.` are all rejected. (Amended 2026-10-17: the user's own site
+    is on `jira.com`, which the first rule refused.)
   - Anything else → 422 `{error:"invalid_base_url"}`.
 - Transport:
 

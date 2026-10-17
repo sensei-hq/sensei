@@ -9,10 +9,16 @@ use crate::tracker::{
     TrackerKind, ValidateError, Validated,
 };
 
-/// Jira Cloud's host rule: `<label>.atlassian.net`, at least one label before it.
+/// Jira Cloud's site domains: `atlassian.net`, and `jira.com` for older sites.
+const JIRA_CLOUD_DOMAINS: [&str; 2] = [".atlassian.net", ".jira.com"];
+
+/// Jira Cloud's host rule: `<label>.atlassian.net` or `<label>.jira.com`, at
+/// least one label before the domain.
 pub fn is_jira_cloud_host(host: &str) -> bool {
-    host.strip_suffix(".atlassian.net")
-        .is_some_and(|labels| !labels.is_empty() && labels.split('.').all(|l| !l.is_empty()))
+    JIRA_CLOUD_DOMAINS.iter().any(|domain| {
+        host.strip_suffix(domain)
+            .is_some_and(|labels| !labels.is_empty() && labels.split('.').all(|l| !l.is_empty()))
+    })
 }
 
 /// A board id in canonical decimal form (`"042"` → `"42"`); `None` for zero or
@@ -395,7 +401,14 @@ mod tests {
     fn jira_cloud_hosts() {
         assert!(is_jira_cloud_host("acme.atlassian.net"));
         assert!(is_jira_cloud_host("my-team.atlassian.net"));
+        assert!(is_jira_cloud_host("senecaglobal.jira.com"), "older Cloud sites live on jira.com");
         for h in [
+            "jira.com",
+            ".jira.com",
+            "acme.jira.com.evil.com",
+            "acme.jira.com.",
+            "eviljira.com",
+            "acme.jira.net",
             "atlassian.net",
             ".atlassian.net",
             "acme.atlassian.net.evil.com",
@@ -431,6 +444,12 @@ mod tests {
         ] {
             assert_eq!(parse_board_url(raw), Ok((SITE.into(), id.into())), "{raw}");
         }
+        assert_eq!(
+            parse_board_url(
+                "https://senecaglobal.jira.com/jira/software/c/projects/P057542601/boards/333"
+            ),
+            Ok(("https://senecaglobal.jira.com".into(), "333".into()))
+        );
     }
 
     #[test]
