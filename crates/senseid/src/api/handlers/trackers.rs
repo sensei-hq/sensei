@@ -17,6 +17,9 @@ use crate::tracker::status::status;
 use crate::tracker::sync::SyncError;
 use crate::tracker::{TrackerKind, ValidateError, adapter_for_kind};
 
+/// One-second waits a first sync spends on a running sync before leaving it to the tick.
+const FIRST_SYNC_BUSY_RETRIES: u32 = 15 * 60;
+
 fn fail(status: StatusCode, code: &str) -> Response {
     err(status, code).into_response()
 }
@@ -135,9 +138,19 @@ pub(crate) async fn connect_tracker(
     // The first sync runs in the background: connect never waits on a sync.
     let (pg, first) = (state.pg.clone(), row.clone());
     tokio::spawn(async move {
-        if let Err(e) = sync_stored(&pg, &rt, &first).await {
-            tracing::warn!(tracker_id = %first.id, "tracker first sync: {e:?}");
+        // A sync already running (e.g. on the old credential of a re-connect) is
+        // waited out, bounded, rather than dropping the first sync.
+        for _ in 0..FIRST_SYNC_BUSY_RETRIES {
+            match sync_stored(&pg, &rt, &first).await {
+                Err(SyncError::Busy) => tokio::time::sleep(std::time::Duration::from_secs(1)).await,
+                Err(e) => {
+                    tracing::warn!(tracker_id = %first.id, "tracker first sync: {e:?}");
+                    return;
+                }
+                Ok(_) => return,
+            }
         }
+        tracing::warn!(tracker_id = %first.id, "tracker first sync: still busy; the scheduled sync will run it");
     });
     match view(&state, &row).await {
         Ok(v) => (
@@ -560,5 +573,49 @@ mod tests {
         }
         let row = h.state.pg.tracker_for_project(p).await.unwrap().unwrap();
         assert!(!format!("{row:?}").contains(SENTINEL));
+    }
+
+    #[tokio::test]
+    async fn the_same_board_typed_differently_is_still_409() {
+        let h = harness().await;
+        let (p1, p2) = (project(&h).await, project(&h).await);
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        assert_eq!(connect(&h, p1, &s).await.0, StatusCode::CREATED);
+        let shouted = json!({
+            "board_url": format!("https://{}/jira/software/projects/AUTH/boards/042?selectedIssue=AUTH-1", s.to_uppercase()),
+            "email": "dev@example.com",
+            "api_token": SENTINEL,
+        });
+        let (st, b) = call(
+            &h,
+            "POST",
+            &format!("/api/projects/{p2}/trackers/jira/connect"),
+            Some(shouted),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::CONFLICT, json!("board_already_connected"))
+        );
+    }
+
+    #[tokio::test]
+    async fn the_first_sync_waits_out_a_running_sync_instead_of_being_dropped() {
+        let h = harness().await;
+        let p = project(&h).await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+        // A sync is running when the user re-connects.
+        let id = h.state.pg.tracker_for_project(p).await.unwrap().unwrap().id;
+        let held = h.rt.locks.try_lock(id).unwrap();
+        assert_eq!(connect(&h, p, &s).await.0, StatusCode::CREATED);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        drop(held);
+        let listed = settled(&h, p).await;
+        assert_eq!(listed[0]["status"], json!("connected"), "{listed}");
     }
 }

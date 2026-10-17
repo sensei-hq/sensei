@@ -95,10 +95,8 @@ pub async fn connect(
         Err(ConnectDbError::Db(e)) => return Err(ConnectError::Db(e)),
     };
 
-    // Best effort: remove the old secret now; the tick retries anything left.
-    if let Err(e) = drain_tombstones(pg, store).await {
-        tracing::warn!("tracker connect: tombstone drain failed: {e}");
-    }
+    // Best effort, off the request path: the tick retries anything left.
+    spawn_drain(pg, store);
     Ok(Connected { tracker_id, created })
 }
 
@@ -111,9 +109,25 @@ pub async fn disconnect(
     if !pg.delete_tracker_for_project(project_id).await? {
         return Ok(false);
     }
-    drain_tombstones(pg, store).await?;
+    // The row is gone either way; a drain failure is the tick's to retry, not a
+    // disconnect failure.
+    spawn_drain(pg, store);
     Ok(true)
 }
+
+/// Drain in the background, so a slow or prompting keyring never holds a request.
+fn spawn_drain(pg: &PgStore, store: Arc<dyn SecretStore>) {
+    let pg = pg.clone();
+    tokio::spawn(async move {
+        if let Err(e) = drain_tombstones(&pg, store).await {
+            tracing::warn!("tracker: tombstone drain failed: {e}");
+        }
+    });
+}
+
+/// How long a tombstone whose keyring delete failed waits before the next try,
+/// so a permanently failing entry cannot hold the head of the queue.
+pub const DELETE_RETRY: Duration = Duration::from_secs(15 * 60);
 
 /// What a drain did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -154,7 +168,14 @@ pub async fn drain_matching(
                 pg.delete_tombstone(&service).await?;
                 report.deleted += 1;
             }
-            Err(_) => report.failed += 1,
+            Err(e) => {
+                tracing::warn!(secret_service = %service, code = e.code(), "tracker: keyring delete failed; retrying later");
+                let later = chrono::Utc::now()
+                    + chrono::Duration::from_std(DELETE_RETRY)
+                        .unwrap_or_else(|_| chrono::Duration::minutes(15));
+                pg.defer_tombstone(&service, later).await?;
+                report.failed += 1;
+            }
         }
     }
     Ok(report)
@@ -321,7 +342,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
         let old = pg.tracker_by_id(first.tracker_id).await.unwrap().unwrap();
-        pg.mark_tracker_error(first.tracker_id, "unauthorized").await.unwrap();
+        pg.mark_tracker_error(first.tracker_id, &old.secret_service, "unauthorized").await.unwrap();
         let again =
             connect(&pg, store.clone(), &JiraAdapter, &FakeBoard::standard(), p, params(&s, "42"))
                 .await
@@ -417,6 +438,13 @@ pub(crate) mod tests {
         let service = pg.tracker_by_id(c.tracker_id).await.unwrap().unwrap().secret_service;
         assert_eq!(disconnect(&pg, store.clone(), p).await, Ok(true));
         assert!(pg.tracker_for_project(p).await.unwrap().is_none());
+        // The post-commit drain runs in the background.
+        for _ in 0..200 {
+            if !store.has(&service) && tombstone_due(&pg, &service).await.is_none() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
         assert!(!store.has(&service), "keyring entry deleted after commit");
         assert_eq!(tombstone_due(&pg, &service).await, None, "and its tombstone drained");
         assert_eq!(disconnect(&pg, store, p).await, Ok(false));
@@ -440,9 +468,11 @@ pub(crate) mod tests {
         assert_eq!(report.failed, 1, "only the due tombstone is attempted");
         assert_eq!(
             tombstone_due(&pg, &due).await,
-            Some(true),
-            "a keyring failure keeps the tombstone"
+            Some(false),
+            "a keyring failure keeps the tombstone, deferred (not retried at once)"
         );
+        // Once its retry time comes round, a working keyring deletes it.
+        pg.defer_tombstone(&due, now - chrono::Duration::seconds(1)).await.unwrap();
 
         *store.fail_delete.lock().unwrap() = false;
         let report = drain_matching(&pg, store.clone(), &prefix).await.unwrap();
@@ -465,5 +495,88 @@ pub(crate) mod tests {
         );
 
         pg.delete_tombstone(&pending).await.ok();
+    }
+
+    /// Seed `n` due tombstones that a slow keyring will take ages to delete.
+    async fn slow_backlog(pg: &PgStore, store: &MemoryStore, n: usize) {
+        for _ in 0..n {
+            let service = format!("com.sensei.tracker.jira.backlog-{}", uuid::Uuid::new_v4());
+            pg.write_pending_tombstone(
+                &service,
+                "a",
+                chrono::Utc::now() - chrono::Duration::seconds(1),
+            )
+            .await
+            .unwrap();
+        }
+        *store.delete_delay.lock().unwrap() = Some(std::time::Duration::from_secs(2));
+    }
+
+    #[tokio::test]
+    async fn connect_does_not_wait_for_the_tombstone_drain() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let p = project(&pg).await;
+        let store = Arc::new(MemoryStore::default());
+        slow_backlog(&pg, &store, 3).await;
+        let started = std::time::Instant::now();
+        connect(&pg, store, &JiraAdapter, &FakeBoard::standard(), p, params(&site(), "42"))
+            .await
+            .unwrap();
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(1500),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnect_does_not_wait_for_the_drain_and_succeeds_when_it_fails() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let p = project(&pg).await;
+        let store = Arc::new(MemoryStore::default());
+        connect(&pg, store.clone(), &JiraAdapter, &FakeBoard::standard(), p, params(&site(), "42"))
+            .await
+            .unwrap();
+        slow_backlog(&pg, &store, 3).await;
+        *store.fail_delete.lock().unwrap() = true;
+        let started = std::time::Instant::now();
+        assert_eq!(
+            disconnect(&pg, store, p).await,
+            Ok(true),
+            "the row is gone; a drain failure is not a disconnect failure"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(1500),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_delete_backs_off_so_it_cannot_block_the_queue() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let store = Arc::new(MemoryStore::default());
+        let prefix = format!("test.backoff.{}.", uuid::Uuid::new_v4());
+        let service = format!("{prefix}stuck");
+        pg.write_pending_tombstone(
+            &service,
+            "a",
+            chrono::Utc::now() - chrono::Duration::seconds(1),
+        )
+        .await
+        .unwrap();
+        *store.fail_delete.lock().unwrap() = true;
+        let report = drain_matching(&pg, store, &prefix).await.unwrap();
+        assert_eq!(report.failed, 1);
+        let (later,): (bool,) = sqlx_core::query_as::query_as(
+            "SELECT not_before > now() + interval '5 minutes'
+               FROM sensei.tracker_secret_tombstones WHERE secret_service = $1",
+        )
+        .bind(&service)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        assert!(later, "a failed tombstone is pushed back, not retried at the head every tick");
+        pg.delete_tombstone(&service).await.ok();
     }
 }

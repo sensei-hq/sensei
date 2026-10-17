@@ -185,11 +185,20 @@ impl PgStore {
             .map_err(|e| e.to_string())
     }
 
-    pub async fn mark_tracker_error(&self, id: uuid::Uuid, code: &str) -> Result<(), String> {
+    /// Record a failure code, only if the tracker still uses the credential the
+    /// failing sync started with: a re-connect meanwhile supersedes the result.
+    pub async fn mark_tracker_error(
+        &self,
+        id: uuid::Uuid,
+        secret_service: &str,
+        code: &str,
+    ) -> Result<(), String> {
         sqlx_core::query::query(
-            "UPDATE sensei.trackers SET last_error = $2::sensei.tracker_error WHERE id = $1",
+            "UPDATE sensei.trackers SET last_error = $3::sensei.tracker_error
+              WHERE id = $1 AND secret_service = $2",
         )
         .bind(id)
+        .bind(secret_service)
         .bind(code)
         .execute(&self.pool)
         .await
@@ -216,6 +225,7 @@ impl PgStore {
     pub async fn apply_tracker_snapshot(
         &self,
         id: uuid::Uuid,
+        secret_service: &str,
         snapshot: &Snapshot,
         params_patch: &serde_json::Value,
     ) -> Result<ApplyCounts, ApplyError> {
@@ -224,10 +234,12 @@ impl PgStore {
         let tasks = dedupe_by(&snapshot.tasks, |t| t.external_id.clone());
         let mut tx = self.pool.begin().await.map_err(db)?;
 
+        // Gone, or re-connected since the sync started: the result is superseded.
         let locked = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
-            "SELECT id FROM sensei.trackers WHERE id = $1 FOR UPDATE",
+            "SELECT id FROM sensei.trackers WHERE id = $1 AND secret_service = $2 FOR UPDATE",
         )
         .bind(id)
+        .bind(secret_service)
         .fetch_optional(&mut *tx)
         .await
         .map_err(db)?;
@@ -270,7 +282,7 @@ impl PgStore {
         .await
         .map_err(db)?;
         let removed_sprints = sqlx_core::query::query(
-            "UPDATE sensei.sprints SET removed_at = now()
+            "UPDATE sensei.sprints SET removed_at = now(), members_fetched_state = NULL
               WHERE tracker_id = $1 AND removed_at IS NULL AND external_id <> ALL($2::text[])",
         )
         .bind(id)
@@ -290,7 +302,7 @@ impl PgStore {
 
         // Tickets.
         let t_ext: Vec<String> = tasks.iter().map(|t| t.external_id.clone()).collect();
-        let t_key: Vec<String> = tasks.iter().map(|t| t.key.to_uppercase()).collect();
+        let t_key: Vec<String> = tasks.iter().map(|t| t.key.clone()).collect();
         let t_scope: Vec<Option<String>> = tasks.iter().map(|t| t.scope.clone()).collect();
         let t_summary: Vec<Option<String>> = tasks.iter().map(|t| t.summary.clone()).collect();
         let t_type: Vec<Option<String>> = tasks.iter().map(|t| t.issue_type.clone()).collect();
@@ -613,6 +625,23 @@ impl PgStore {
         .fetch_one(&self.pool)
         .await
         .map(|(b,)| b)
+        .map_err(|e| e.to_string())
+    }
+
+    /// Push a tombstone's next attempt back (its keyring delete failed).
+    pub async fn defer_tombstone(
+        &self,
+        secret_service: &str,
+        not_before: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), String> {
+        sqlx_core::query::query(
+            "UPDATE sensei.tracker_secret_tombstones SET not_before = $2 WHERE secret_service = $1",
+        )
+        .bind(secret_service)
+        .bind(not_before)
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
         .map_err(|e| e.to_string())
     }
 

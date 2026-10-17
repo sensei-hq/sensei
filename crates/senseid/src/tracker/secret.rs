@@ -81,6 +81,8 @@ pub mod test_support {
         pub fail_set: Mutex<bool>,
         pub fail_delete: Mutex<bool>,
         pub deletes: Mutex<Vec<String>>,
+        /// Each delete blocks this long first (a slow or prompting keyring).
+        pub delete_delay: Mutex<Option<Duration>>,
     }
     impl MemoryStore {
         pub fn has(&self, service: &str) -> bool {
@@ -105,6 +107,10 @@ pub mod test_support {
                 .ok_or(TrackerError::TokenMissing)
         }
         fn delete(&self, service: &str, account: &str) -> Result<(), TrackerError> {
+            let delay = *self.delete_delay.lock().unwrap();
+            if let Some(d) = delay {
+                std::thread::sleep(d);
+            }
             if *self.fail_delete.lock().unwrap() {
                 return Err(TrackerError::CredentialStore);
             }

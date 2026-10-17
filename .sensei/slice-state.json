@@ -21,7 +21,8 @@
     "F1.2 schema (7 DB tests green; deployed to sensei_test)",
     "F1.3 pure core (21 tests green; http::bounded_builder extracted, federation uses it)",
     "F1.4 jira adapter + transport + secret + sync coordinator + connect/drain (39 tests green; 70 tracker tests total, 5/5 repeat runs)",
-    "F1.5 api + guards + cli (24 senseid + 7 cli tests) and F2 scheduled sync (folded in: status needs the tracker_sync interval)"
+    "F1.5 api + guards + cli (24 senseid + 7 cli tests) and F2 scheduled sync (folded in: status needs the tracker_sync interval)",
+    "Review (approve depth) of 403b303a^..6bd154ca: 5 reviewers; fixes G1 sync data, G2 credential lifecycle, G3 transport tests, G4 guard tests, G5 docs \u2014 uncommitted pending user"
   ],
   "decomposition_approved": "2026-10-16 (user)",
   "gate_status": "pass",
@@ -37,7 +38,7 @@
     "F1.1 fixture capture needs user's Jira tenant (C11 still UNCHECKABLE)",
     "F5 needs P0 (transcript turns with git_branch)"
   ],
-  "next_command": "F3 linking: Step 4.5 swarm on R6/R7-candidates, then tests red-first (match_links Jira, load_link_inputs, relink in apply tx), present for approval",
+  "next_command": "finish /sensei:review gate (mutation batch results, full suite, clippy -D warnings, fmt, lints); user decides commit; then F3",
   "spec_audit_4_5": "2026-10-16: 3 reviewers (conformance, failure-mode, data-correctness) \u2192 14 findings; spec corrected (3-phase\u21925-step sync, no tx across I/O, atomic relink in apply tx, async first sync, keyring spawn_blocking+timeout, board-id canonicalisation, URL policy on require_secure_url). Re-audit \u2192 7 contradictions fixed. Awaiting user confirmation of corrections.",
   "baseline": {
     "date": "2026-10-16",
@@ -79,5 +80,15 @@
     "tick_scoped(only) for test isolation; production tick = all trackers",
     "F2 folded into F1.5",
     "known_project() 404s unknown uuids (resolve_project_uuid accepts any uuid)"
+  ],
+  "gate_1l": "sync part done (FakeAdapter seam test); link + usage parts land with F3/F4",
+  "corrections": [
+    "F1 was marked complete without the 1l seam test and two 1k tests \u2014 corrected in review (added); 1l link/usage parts belong to F3/F4",
+    "coordinator no longer upper-cases keys (Jira logic had leaked into pg_store; found by the seam test)"
+  ],
+  "review_low_findings": [
+    "keyring set that times out can complete after the 10 min grace \u2192 orphaned entry; abandoned spawn_blocking threads uncapped",
+    "DB tests skip silently without a DB (`let Ok(pg) = connect_test() else return`) \u2014 CI must set TEST_DATABASE_URL",
+    "CLI connect help lacks the env-var visibility caveat"
   ]
 }

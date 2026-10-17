@@ -65,6 +65,17 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   clippy 0 warnings; fmt clean.
 - Found on the way: the Rust indexer miscounts `impl Trait for &Type` (backlog;
   test uses a named wrapper as the recorded workaround).
+- **Review (approve depth)** of the F1.2–F2 slice found and fixed:
+  - a closed sprint that returns never regained its members;
+  - connect/disconnect blocked on a 500-tombstone drain;
+  - silent drain failures that could starve the queue;
+  - a sync on an old credential overwriting a re-connect;
+  - `ReqwestRaw` untested (redirects, `Retry-After`, auth);
+  - missing seam/1k/guard tests;
+  - Jira key upper-casing leaking into `pg_store`;
+  - spec drift.
+  F1 had been marked complete without gate 1l. Its sync part is now tested; the
+  link and usage parts land with F3/F4.
 - **Next:** F3 (session to ticket linking).
 
 ## Gate for `/sensei:build`

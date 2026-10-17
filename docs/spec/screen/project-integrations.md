@@ -103,6 +103,10 @@ failure, focus moves to the alert.
 | `rate_limited` | "Jira is rate-limiting requests. Try again in a minute." | **Retry sync** |
 | `transport` / `http_error` / `redirect` / `decode` | "Couldn't reach Jira (<code>). Check the site address and your connection." | **Retry sync** |
 | `token_missing` / `credential_store` | "The saved token can't be read from the system keychain." | the **Replace token** button, named in the message |
+| `forbidden_caller` | "The sensei daemon refused this window's request." (the app's origin is allowed, so this signals a misconfigured dev origin) | none |
+| `not_connected` | "This project has no tracker connected." Reload to the not-connected form. | none |
+| `project_not_found` | "This project no longer exists in sensei." | none |
+| `internal` | "The sensei daemon hit a database error." | **Retry** |
 | `unsupported_tracker` | "This tracker type isn't available in this version of sensei." | none |
 | `busy` | "A sync is already running." | none |
 | any other code | "Unexpected error from sensei (<code>)." | **Retry** |

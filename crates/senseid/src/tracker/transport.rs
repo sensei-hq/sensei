@@ -209,4 +209,97 @@ mod tests {
         assert_eq!(t.get_json("/x", &[]).await, Err(TrackerError::Transport));
         assert_eq!(raw.calls(), 1);
     }
+
+    // ── The production backend, against real local servers ──────────────────
+
+    async fn serve(app: axum::Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    fn basic(user: &str, token: &str) -> crate::tracker::AuthScheme {
+        crate::tracker::AuthScheme::Basic {
+            user: user.into(),
+            token: crate::tracker::ApiToken(token.into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn redirects_are_reported_never_followed() {
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let h = hits.clone();
+        let target = serve(axum::Router::new().route(
+            "/stolen",
+            axum::routing::get(move || {
+                h.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { "{}" }
+            }),
+        ))
+        .await;
+        let location = format!("{target}/stolen");
+        let origin = serve(axum::Router::new().route(
+            "/x",
+            axum::routing::get(move || {
+                let location = location.clone();
+                async move {
+                    (axum::http::StatusCode::FOUND, [(axum::http::header::LOCATION, location)])
+                }
+            }),
+        ))
+        .await;
+        let raw = ReqwestRaw::new(&origin, basic("u", "t")).unwrap();
+        assert_eq!(raw.get("/x", &[]).await.unwrap().status, 302);
+        let policy = PolicyTransport::new(ReqwestRaw::new(&origin, basic("u", "t")).unwrap(), 0);
+        assert_eq!(policy.get_json("/x", &[]).await, Err(TrackerError::Redirect));
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the credential never reached the redirect target"
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_after_auth_and_query_reach_the_wire() {
+        let base = serve(
+            axum::Router::new()
+                .route(
+                    "/limited",
+                    axum::routing::get(|| async {
+                        (
+                            axum::http::StatusCode::TOO_MANY_REQUESTS,
+                            [(axum::http::header::RETRY_AFTER, "7")],
+                            "",
+                        )
+                    }),
+                )
+                .route(
+                    "/echo",
+                    axum::routing::get(
+                        |headers: axum::http::HeaderMap, q: axum::extract::RawQuery| async move {
+                            axum::Json(serde_json::json!({
+                                "auth": headers.get("authorization").and_then(|v| v.to_str().ok()),
+                                "query": q.0,
+                            }))
+                        },
+                    ),
+                ),
+        )
+        .await;
+        let raw = ReqwestRaw::new(&base, basic("dev@example.com", "tok")).unwrap();
+        let limited = raw.get("/limited", &[]).await.unwrap();
+        assert_eq!((limited.status, limited.retry_after.as_deref()), (429, Some("7")));
+        let echo =
+            map_response(&raw.get("/echo", &[("startAt", "100".into())]).await.unwrap()).unwrap();
+        use base64::Engine;
+        let expected = format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode("dev@example.com:tok")
+        );
+        assert_eq!(echo["auth"], serde_json::json!(expected));
+        assert_eq!(echo["query"], serde_json::json!("startAt=100"));
+    }
 }

@@ -83,7 +83,7 @@ pub async fn sync_stored(
     let transport = match transport_for(rt, adapter.as_ref(), row, SYNC_RETRIES).await {
         Ok(t) => t,
         Err(e) => {
-            if let Err(db) = pg.mark_tracker_error(row.id, e.code()).await {
+            if let Err(db) = pg.mark_tracker_error(row.id, &row.secret_service, e.code()).await {
                 tracing::warn!(tracker_id = %row.id, "tracker sync: could not record failure: {db}");
             }
             return Err(SyncError::Failed(e));

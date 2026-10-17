@@ -117,6 +117,11 @@ mod tests {
             "0.0.0.0:7744",
             "[::2]:7744",
             "127.0.0.2",
+            "evil-localhost",
+            "notlocalhost:7744",
+            "x.localhost",
+            "my127.0.0.1",
+            "127.0.0.1x:7744",
         ] {
             assert!(!host_is_loopback(&host(v)), "{v}");
         }

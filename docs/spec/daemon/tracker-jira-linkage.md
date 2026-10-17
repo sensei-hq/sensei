@@ -28,29 +28,33 @@ provider-specific knowledge and return **common structs**, a coordinator that ow
 every DB write, and a registry.
 
 ```rust
-// crates/senseid/src/tracker/mod.rs
+// crates/senseid/src/tracker/mod.rs (as built; `match_links` lands with F3)
 #[async_trait] pub trait TrackerAdapter: Send + Sync {
     fn kind(&self) -> TrackerKind;                       // `tracker_kind` enum value
-    /// Parse + validate provider connect params (JSON body) and normalise base_url.
-    fn connect_params(&self, body: &serde_json::Value) -> Result<ConnectParams, TrackerError>;
-    /// Auth scheme for the shared GET transport (Basic, Bearer, or a named header).
+    /// Parse + canonicalise the provider's connect body (URL policy, board id).
+    fn connect_params(&self, body: &serde_json::Value) -> Result<ConnectParams, ParamError>;
+    /// Auth scheme for the shared GET transport.
     fn auth(&self, account: &str, token: &ApiToken) -> AuthScheme;
-    /// Prove the credential and the board/scope exist; returns the canonical `account`.
-    async fn validate(&self, t: &dyn GetTransport, p: &ConnectParams) -> Result<String, TrackerError>;
+    /// Prove the credential and the board; learn the scope and board name.
+    async fn validate(&self, t: &dyn GetTransport, p: &ConnectParams) -> Result<Validated, ValidateError>;
     /// Everything the coordinator needs, in common shapes. `prev` lets the adapter skip
     /// immutable data (e.g. closed sprints' members).
-    async fn fetch_snapshot(&self, t: &dyn GetTransport, p: &ConnectParams, prev: &PrevState)
+    async fn fetch_snapshot(&self, t: &dyn GetTransport, board: &BoardScope, prev: &PrevState)
         -> Result<Snapshot, TrackerError>;
-    /// Pure: which known tickets this session's text refers to.
+    /// F3: pure — which known tickets this session's text refers to.
     fn match_links(&self, session: &SessionText, known: &KnownTasks) -> Vec<Link>;
 }
-pub struct Snapshot { pub sprints: Vec<SprintRow>, pub tasks: Vec<TaskRow>,
+pub struct Snapshot { pub board_name: Option<String>, pub sprints: Vec<SprintRow>,
+                      pub tasks: Vec<TaskRow>,
                       pub members: Vec<(SprintExtId, Option<Vec<TaskExtId>>)> } // None = unchanged
 pub struct SessionText { pub branches: Vec<String>, pub prompts: Vec<String>,
-                         pub repo_key: Option<String> }    // GitLab scopes `#12` by repo
+                         pub repo_key: Option<String> }    // F3; GitLab scopes `#12` by repo
 fn adapters() -> Vec<Box<dyn TrackerAdapter>>;               // registry, like transcript/mod.rs
 fn adapter_for_kind(kind: TrackerKind) -> Option<Box<dyn TrackerAdapter>>;
 ```
+
+The coordinator stores each `TaskRow.key` **exactly as the adapter gives it**; key
+form is the adapter's (Jira upper-cases; GitLab keeps `group/proj#12`).
 
 - **Provider-neutral (written once):** tables (R2), credentials (R3), the GET-only
   transport + error mapping + 429 policy (R4), sync coordinator (R5), relink
@@ -181,12 +185,18 @@ scope `excludes: [dojo, …]`. None of these tables reach the Dōjō DB.
 - **Draining** (each `tracker_sync` tick, and best-effort right after a commit),
   per due tombstone (`not_before <= now()`), with **no transaction open across the
   keyring call**:
-  1. Skip the tombstone if any `trackers` row references its `secret_service`
-     (defence in depth); otherwise
+  1. If a `trackers` row still references its `secret_service`, **delete the
+     tombstone row** without touching the keyring (defence in depth: any later
+     change of that secret re-tombstones it through the triggers); otherwise
   2. `keychain_delete` (idempotent: a missing entry counts as success; a bounded
      call, see above);
   3. `delete from tracker_secret_tombstones where secret_service = $1` (autocommit).
-  A keyring failure leaves the row for the next tick. Two drains racing on one
+  A keyring failure is logged with the service name and **pushes `not_before` back
+  15 min** (`DELETE_RETRY`), so a permanently failing entry can't hold the head of
+  the queue; the tick then reports failure (`"<n> secret deletions failed"`). A
+  drain takes at most 500 due rows, oldest `not_before` first, over services with
+  the `com.sensei.tracker.` prefix. The best-effort drain after connect/disconnect
+  runs **in the background**, never on the request path. Two drains racing on one
   tombstone are harmless, because both steps are idempotent.
 - **Connect / re-connect** (new tracker, same board, new account or new board):
   1. Commit a **pending** tombstone for the new `(service, account)` with
@@ -279,7 +289,7 @@ connect params `{board_url?, base_url?, board_id?, email, api_token, project_key
   `location.projectKey` from `GET …/board/{id}`, or the board name when the board
   has no single project. If present, it must match (422 `board_project_mismatch`).
 - `board_ref = board_id`; the board's name from `GET …/board/{id}` is stored as `params.board_name` and returned as `board_name` (refreshed on each sync). Endpoints (Jira Cloud; paths from Atlassian's Agile REST board-API operations index,
-2026-10-15; response field names confirmed by the build-start fixture, C11):
+2026-10-15; response field names are the spec's **assumption until the F1.1 fixture** from a real tenant confirms them — C11, still UNCHECKABLE):
 
 | Purpose | Call |
 |---|---|
@@ -312,7 +322,7 @@ sync runs in five steps (guard → fetch → compute links → apply → outcome
    member list of every sprint that **needs it**: state ≠ `closed`, or closed and
    (`members_fetched_state` is NULL or ≠ `closed`). A closed sprint whose members
    were fetched after it closed is never fetched again.
-3. **Compute links, with no transaction open.**
+3. **Compute links, with no transaction open.** *(Lands with F3; until then the apply writes no links.)*
    - `load_link_inputs(tracker_id)` (a read) returns the candidate sessions' text
      (R6) and the tracker's existing tasks, removed ones included.
    - `known` = the snapshot's tasks plus the existing tasks the snapshot doesn't
@@ -323,9 +333,12 @@ sync runs in five steps (guard → fetch → compute links → apply → outcome
 4. **Apply: one short transaction** in `db/pg_store/trackers.rs`
    (`apply_tracker_snapshot(tracker_id, snapshot, links)`), only if steps 2–3 fully
    succeeded. It makes no network or keyring calls:
-   - `select … from sensei.trackers where id = $1 for update`. If the row is gone
-     (disconnected, or re-connected to another board, mid-sync) → `Gone` (manual
-     sync → 404), with no `last_error` write.
+   - `select … from sensei.trackers where id = $1 and secret_service = $2 for
+     update`, `$2` being the credential the sync started with. If the row is gone
+     (disconnected, or re-connected to another board, mid-sync) **or re-connected
+     with a new credential** → `Gone` (manual sync → 404), and nothing is written:
+     a superseded sync never records its success or failure on the new connection.
+     `last_error` writes are conditional on the same `secret_service`.
    - Upsert sprints and tasks by `(tracker_id, external_id)`. A changed key
      overwrites `key`. Set `last_seen_at = now()` and clear `removed_at` on seen
      rows.
@@ -448,7 +461,7 @@ sit behind one guard layer built from **existing** code:
 | Route | Behaviour |
 |---|---|
 | `GET /api/projects/{id}/trackers` | `[{id, kind, base_url, account, external_scope, board_ref, board_name, status, last_success_at, last_error, counts:{tasks, sprints}}]`; `[]` when none. Unknown project → 404. |
-| `POST /api/projects/{id}/trackers/{kind}/connect` | `kind` resolved by `adapter_for_kind`; unknown or unregistered → 422 `{error:"unsupported_tracker"}`. Body = the adapter's connect params (Jira: R4, e.g. `{board_url, email, api_token}`). Validate and normalise the URL (R4) → 422. The normalised `(kind, base_url, board_ref)` already connected to **another** project → 409 `{error:"board_already_connected", project:{id, name}}`. The project already connected (same or different board) → **re-connect**: fields and token replaced after validation; a different board drops the old board's sprints/tickets/links (old tracker row replaced). Then `adapter.validate`: credential rejected → 401 `{error:"unauthorized"}`; board/scope missing → 404 `{error:"board_not_found", base_url, board_ref}` (the normalised values, so a UI that sent only `board_url` can name them); adapter-specific mismatches → 422 with the adapter's code (Jira: `board_project_mismatch`). Then persist (R3). Return **201** `{tracker, first_sync:{pending:true}}` straight away, and start the first sync in the background (`tokio::spawn`, under the R5 guard). Connect never waits on a sync, so it finishes in the time of `validate` (2 requests with no 429 retries) plus one keyring call. Clients poll `GET …/trackers` until `status` leaves `pending`. A failed first sync keeps the connection (the credential was valid), and `status` shows `error`. |
+| `POST /api/projects/{id}/trackers/{kind}/connect` | `kind` resolved by `adapter_for_kind`; unknown or unregistered → 422 `{error:"unsupported_tracker"}`. Body = the adapter's connect params (Jira: R4, e.g. `{board_url, email, api_token}`). Validate and normalise the URL (R4) → 422. The normalised `(kind, base_url, board_ref)` already connected to **another** project → 409 `{error:"board_already_connected", project:{id, name}}`. The project already connected (same or different board) → **re-connect**: fields and token replaced after validation; a different board drops the old board's sprints/tickets/links (old tracker row replaced). Then `adapter.validate`: credential rejected → 401 `{error:"unauthorized"}`; board/scope missing → 404 `{error:"board_not_found", base_url, board_ref}` (the normalised values, so a UI that sent only `board_url` can name them); adapter-specific mismatches → 422 with the adapter's code (Jira: `board_project_mismatch`). Then persist (R3). Return **201** `{tracker, first_sync:{pending:true}}` straight away, and start the first sync in the background (`tokio::spawn`, under the R5 guard; if a sync is already running it waits it out, polling once a second for up to 15 min, then leaves it to the tick). Connect never waits on a sync, so it finishes in the time of `validate` (2 requests with no 429 retries) plus one keyring call. Clients poll `GET …/trackers` until `status` leaves `pending`. A failed first sync keeps the connection (the credential was valid), and `status` shows `error`. |
 | `DELETE /api/projects/{id}/trackers` | R3 disconnect; 204; 404 if the project has no tracker. |
 | `POST /api/projects/{id}/trackers/sync` | R5 now. 200 `{counts:{sprints, tasks, removed, links, skipped_members}}`; 409 `{error:"busy"}`; 502 `{error:<code>}`; 404 if no tracker. |
 | `GET /api/projects/{id}/sprints` | the project's sprints, newest first: `[{id, name, state, start_at, end_at, complete_at, candidates_in_window, linked_sprint, linked_other, unlinked}]` (each part a usage object; `null` + `reason` for future). Removed sprints excluded. |
@@ -456,8 +469,20 @@ sit behind one guard layer built from **existing** code:
 | `GET /api/projects/{id}/tracker-tasks/{key}` | `{task, usage, sessions:[{id, started_at, sources, matched_key}]}`; case-insensitive key; 404 if absent. |
 | `GET /api/projects/{id}/sessions/unlinked?sprint={uuid}` | the sprint's `unlinked` sessions `[{id, started_at, task}]`; sprint required; unknown → 404. |
 
-DB errors → 500 via `.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?`. No list
-pagination in v1 (bounded by one board). Errors are logged with the code only.
+Error codes the routes return (body `{error: <code>}`, extra fields where noted):
+
+| Status | Codes |
+|---|---|
+| 401 | `unauthorized` (Jira rejected the credential at connect) |
+| 403 | `forbidden` (the account can't read the board, at connect); `forbidden_caller` (the local-caller guard: foreign `Origin` or non-loopback `Host`) |
+| 404 | `project_not_found`; `not_connected` (sync/disconnect with no tracker); `board_not_found` (+ `base_url`, `board_ref`) |
+| 409 | `board_already_connected` (+ `project {id, name}`); `busy` |
+| 422 | `unsupported_tracker`; `invalid_base_url`; `email_required`; `token_required`; `board_project_mismatch` |
+| 500 | `credential_store`; `internal` (database error) |
+| 502 | a `tracker_error` code from the provider (connect validation or sync): `rate_limited`, `transport`, `http_error`, `redirect`, `decode`, `not_found`, `token_missing`, … |
+
+DB errors → 500 `internal`. No list pagination in v1 (bounded by one board). Errors
+are logged with the code only.
 
 ### R9 · Status (pure fn of row + `interval_secs`, unit-tested)
 
@@ -540,9 +565,9 @@ Unattended (CI):
    j. Sprint usage against seeded DB rows: `candidates_in_window` equals an independent `count(*)` written in the test; a session linked only to another tracker's task lands in `unlinked`; a future sprint → `not_started`; an active sprint past `end_at` includes a session started after `end_at`.
    k. Project hierarchy (seeded DB, fake transport, fake `SecretStore`): a project with 3 repos; sessions in each repo on `fix/AUTH-420-x` → AUTH-420 usage `sessions = 3`, `by_repo` has 3 entries summing to the total. Removing one repo from the project → AUTH-420 drops to 2 immediately (no resync). `GET …/sprints` returns the board's sprints; `GET …/tracker-tasks?sprint=S` returns exactly S's tickets; a ticket carried from S1 to S2 appears under both, with `current_sprint` = S2. Connecting the same board from a second project → 409 `board_already_connected`, including when typed as `https://ACME.atlassian.net/jira/software`. Re-connecting the first project to a different board removes the old board's sprints and tickets, creates a new tracker id, and tombstones only the old secret (after one tick the new one is still readable). A tick run while a connect is paused between `keychain_set` and step 3 does not delete the new secret (grace period). Two interleaved re-connects of one project leave exactly one live secret, and every other keyring entry they wrote has a tombstone. Re-connecting to the same board with the same email: the live token is never deleted, even when the commit is made to fail (fake store returns the old token). Re-connect from `e1` to `e2` with a fake store whose delete fails → a tombstone for `(old service, e1)` remains for the tick. Deleting the project removes its tracker and writes a tombstone; the next tick deletes the secret and the tombstone. A keyring delete that fails leaves the tombstone in place.
    l. **Seam test:** a test-only `FakeAdapter` (non-Jira key format `#12` scoped by `repo_key`, its own sprint shape) runs through the coordinator (sync, relink, usage) with no change to coordinator code. `repositories.repo_key` is seeded through the production `normalize_repo_key` from remotes like `git@gitlab.com:Group/Sub/Repo.git`, and the fake's `scope` comes from `https://gitlab.com/Group/Sub/Repo`. Two sessions in different repos both saying `#12` link to different tasks. A third repo with no matching scope gives 0 links, and a session with NULL `repo_key` gives 0 links.
-2. `rg -n '\.(post|put|patch|delete)\(' crates/senseid/src/tracker/` → no output.
+2. `rg -n 'Method::|\.request\(|client\.(post|put|patch|delete)\(' crates/senseid/src/tracker/` → no output (the HTTP client is GET-only; `SecretStore::delete` is a keyring call, not an HTTP verb).
 2a. `rg -n -i '\b(select|insert|update|delete)\b.*\b(from|into|set|where)\b' crates/senseid/src/tracker` → no hits **outside `#[cfg(test)]` modules** (test fixtures may seed rows, as `check-sql-in-layer` allows; `make check-sql-in-layer` only matches `sqlx_core::query*` call sites, so SQL text in a `const` would slip past it).
-2b. `rg -n -i 'jira|atlassian' crates/senseid/src/tracker/{http,sync,link,usage,status}.rs` → no output; in `tracker/mod.rs` the only hits are `mod jira;` and the `JiraAdapter` entry in `adapters()`. Naming the adapter in the registry, the CLI's `jira` subcommand and `SENSEI_JIRA_TOKEN` is expected; Jira **logic** (key shape, endpoints, auth, host rule) lives only in `tracker/jira.rs`.
+2b. Outside `#[cfg(test)]` modules: `rg -n -i 'jira|atlassian'` over `crates/senseid/src/tracker/{http,sync,status,sprint,transport,runtime,secret,connect}.rs` (and `link.rs`/`usage.rs` once F3/F4 add them) → no output; in `tracker/mod.rs` the only hits are `mod jira;`, the `JiraAdapter` entry in `adapters()`, the `TrackerKind::Jira` variant with its `"jira"` label (the `tracker_kind` enum), and doc comments. Naming the adapter in the registry, the CLI's `jira` subcommand and `SENSEI_JIRA_TOKEN` is expected; Jira **logic** (key shape, endpoints, auth, host rule) lives only in `tracker/jira.rs`.
 3. `rg -n 'api_token|SENSEI_JIRA_TOKEN' crates/senseid/src crates/cli/src` hits only the connect request type, its keyring call, and the CLI token reader; no DDL column holds a token.
 4. `tracker_sync` is in `SCHEDULABLE`, `DESCRIPTIONS` and `schedules.jsonl`; `every_schedulable_worker_has_a_description`, `every_schedulable_worker_has_a_schedule_row`, `every_schedule_row_names_a_real_worker` and `schedulable_names_are_unique_and_sorted` pass; `rg -n 'tracker_sync::spawn' crates/senseid/src/api/server.rs` → 1 hit (the tests above can't see a missing spawn).
 5. `rg -n 'const ALLOWED_ORIGINS|fn origin_may_mutate' crates/senseid/src` → exactly one definition each, in `api/origin_guard.rs`.

@@ -65,6 +65,8 @@ pub async fn sync_tracker(
     let prev = pg.tracker_prev_state(tracker_id).await.map_err(SyncError::Db)?;
 
     // 2. Fetch, with no connection checked out, under the whole-sync deadline.
+    // Every write below is conditional on this credential still being current.
+    let secret_service = row.secret_service;
     let board = BoardScope { base_url: row.base_url, board_ref: row.board_ref };
     let snapshot = match tokio::time::timeout(
         deadline,
@@ -73,8 +75,12 @@ pub async fn sync_tracker(
     .await
     {
         Ok(Ok(s)) => s,
-        Ok(Err(e)) => return Err(record_failure(pg, tracker_id, e).await),
-        Err(_) => return Err(record_failure(pg, tracker_id, TrackerError::Transport).await),
+        Ok(Err(e)) => return Err(record_failure(pg, tracker_id, &secret_service, e).await),
+        Err(_) => {
+            return Err(
+                record_failure(pg, tracker_id, &secret_service, TrackerError::Transport).await
+            );
+        }
     };
 
     // 3. Links are computed here once linking lands (F3).
@@ -83,16 +89,23 @@ pub async fn sync_tracker(
         Some(name) => serde_json::json!({ "board_name": name }),
         None => serde_json::json!({}),
     };
-    pg.apply_tracker_snapshot(tracker_id, &snapshot, &patch).await.map_err(|e| match e {
-        ApplyError::Gone => SyncError::Gone,
-        ApplyError::Db(e) => SyncError::Db(e),
+    pg.apply_tracker_snapshot(tracker_id, &secret_service, &snapshot, &patch).await.map_err(|e| {
+        match e {
+            ApplyError::Gone => SyncError::Gone,
+            ApplyError::Db(e) => SyncError::Db(e),
+        }
     })
 }
 
 /// Step 5: record a provider/credential failure. A row deleted meanwhile makes the
 /// update a no-op, which is what a gone tracker should get.
-async fn record_failure(pg: &PgStore, tracker_id: uuid::Uuid, e: TrackerError) -> SyncError {
-    if let Err(db) = pg.mark_tracker_error(tracker_id, e.code()).await {
+async fn record_failure(
+    pg: &PgStore,
+    tracker_id: uuid::Uuid,
+    secret_service: &str,
+    e: TrackerError,
+) -> SyncError {
+    if let Err(db) = pg.mark_tracker_error(tracker_id, secret_service, e.code()).await {
         tracing::warn!(tracker_id = %tracker_id, code = e.code(), "tracker sync: could not record failure: {db}");
     }
     SyncError::Failed(e)
@@ -360,5 +373,214 @@ mod tests {
             pg.tracker_by_id(t).await.unwrap().unwrap().last_error.as_deref(),
             Some("transport")
         );
+    }
+
+    /// The standard board without sprint 100 (10001 then sits in no sprint).
+    fn without_sprint_100() -> FakeBoard {
+        FakeBoard::standard().with(
+            "/rest/agile/1.0/board/42/sprint",
+            0,
+            json!({"isLast": true, "values": [
+                {"id": 101, "name": "Sprint 2", "state": "active", "startDate": "2026-10-01T00:00:00.000Z"}]}),
+        )
+    }
+
+    async fn members_of(pg: &PgStore, tracker: uuid::Uuid, sprint: &str) -> i64 {
+        sqlx_core::query_as::query_as::<_, (i64,)>(
+            "SELECT count(*) FROM sensei.tracker_task_sprints m JOIN sensei.sprints s ON s.id = m.sprint_id
+              WHERE s.tracker_id = $1 AND s.external_id = $2",
+        )
+        .bind(tracker)
+        .bind(sprint)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap()
+        .0
+    }
+
+    #[tokio::test]
+    async fn a_closed_sprint_that_returns_regains_its_members() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, _p) = connected_tracker(&pg).await;
+        // Two syncs: sprint 100 is closed and its members were fetched while closed.
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        // It disappears (removed, memberships deleted), then comes back closed.
+        sync(&pg, t, &without_sprint_100()).await.unwrap();
+        assert_eq!(members_of(&pg, t, "100").await, 0);
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        assert_eq!(
+            members_of(&pg, t, "100").await,
+            1,
+            "a returning closed sprint is fetched again"
+        );
+        assert_eq!(current_sprint_of(&pg, t, "10001").await.as_deref(), Some("100"));
+    }
+
+    #[tokio::test]
+    async fn a_missing_sprint_is_marked_removed_once() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, _p) = connected_tracker(&pg).await;
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        sync(&pg, t, &without_sprint_100()).await.unwrap();
+        let removed_at = || async {
+            sqlx_core::query_as::query_as::<_, (Option<chrono::DateTime<chrono::Utc>>,)>(
+                "SELECT removed_at FROM sensei.sprints WHERE tracker_id = $1 AND external_id = '100'",
+            )
+            .bind(t)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap()
+            .0
+        };
+        let first = removed_at().await.expect("removed_at set");
+        sync(&pg, t, &without_sprint_100()).await.unwrap();
+        assert_eq!(removed_at().await, Some(first), "a sprint's removed_at is never advanced");
+    }
+
+    /// A second, non-Jira adapter: GitLab-like `group/proj#12` keys with a scope and
+    /// iteration-named sprints. The coordinator must handle it unchanged (gate 1l, sync part).
+    struct FakeAdapter;
+
+    #[async_trait::async_trait]
+    impl crate::tracker::TrackerAdapter for FakeAdapter {
+        fn kind(&self) -> crate::tracker::TrackerKind {
+            crate::tracker::TrackerKind::Jira
+        }
+        fn connect_params(
+            &self,
+            _body: &serde_json::Value,
+        ) -> Result<crate::tracker::ConnectParams, crate::tracker::ParamError> {
+            Err(crate::tracker::ParamError::InvalidBaseUrl)
+        }
+        fn auth(
+            &self,
+            account: &str,
+            token: &crate::tracker::ApiToken,
+        ) -> crate::tracker::AuthScheme {
+            crate::tracker::AuthScheme::Basic { user: account.into(), token: token.clone() }
+        }
+        async fn validate(
+            &self,
+            _t: &dyn GetTransport,
+            _p: &crate::tracker::ConnectParams,
+        ) -> Result<crate::tracker::Validated, crate::tracker::ValidateError> {
+            Err(crate::tracker::ValidateError::BoardNotFound)
+        }
+        async fn fetch_snapshot(
+            &self,
+            _t: &dyn GetTransport,
+            _board: &BoardScope,
+            _prev: &crate::tracker::PrevState,
+        ) -> Result<crate::tracker::Snapshot, TrackerError> {
+            use crate::tracker::sprint::SprintState;
+            use crate::tracker::{Snapshot, SprintRow, TaskRow};
+            let task = |id: &str, key: &str| TaskRow {
+                external_id: id.into(),
+                key: key.into(),
+                scope: Some("gitlab.com/group/proj".into()),
+                summary: None,
+                issue_type: None,
+                status: Some("opened".into()),
+            };
+            let iteration = |id: &str, seq: i64, state| SprintRow {
+                external_id: id.into(),
+                seq,
+                name: format!("Iteration {seq}"),
+                state,
+                start_at: None,
+                end_at: None,
+                complete_at: None,
+            };
+            Ok(Snapshot {
+                board_name: Some("Group board".into()),
+                sprints: vec![iteration("gid://iteration/7", 7, SprintState::Active)],
+                tasks: vec![
+                    task("gid://issue/1", "group/proj#12"),
+                    task("gid://issue/2", "group/proj#13"),
+                ],
+                members: vec![("gid://iteration/7".into(), Some(vec!["gid://issue/1".into()]))],
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn the_coordinator_handles_a_non_jira_adapter_unchanged() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, _p) = connected_tracker(&pg).await;
+        let counts = sync_tracker(
+            &pg,
+            &TrackerLocks::default(),
+            t,
+            &FakeAdapter,
+            &FakeBoard::empty(),
+            SYNC_DEADLINE,
+        )
+        .await
+        .unwrap();
+        assert_eq!((counts.sprints, counts.tasks, counts.skipped_members), (1, 2, 0));
+        let (key, scope, sprint): (String, Option<String>, Option<String>) =
+            sqlx_core::query_as::query_as(
+                "SELECT t.key, t.scope, s.external_id FROM sensei.tracker_tasks t
+               LEFT JOIN sensei.sprints s ON s.id = t.current_sprint_id
+              WHERE t.tracker_id = $1 AND t.external_id = 'gid://issue/1'",
+            )
+            .bind(t)
+            .fetch_one(pg.pool())
+            .await
+            .unwrap();
+        assert_eq!(
+            key, "group/proj#12",
+            "the adapter owns key form; the coordinator stores it as given"
+        );
+        assert_eq!(scope.as_deref(), Some("gitlab.com/group/proj"));
+        assert_eq!(sprint.as_deref(), Some("gid://iteration/7"));
+        let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+        assert_eq!(row.params["board_name"], json!("Group board"));
+    }
+
+    /// Simulate a re-connect landing mid-sync: swap the secret and reset status.
+    fn reconnect_mid_sync(pg: &PgStore, t: uuid::Uuid) -> crate::tracker::test_support::Hook {
+        let pg = pg.clone();
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        Box::new(move |_path| {
+            let (pg, done) = (pg.clone(), done.clone());
+            Box::pin(async move {
+                if done.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                sqlx_core::query::query(
+                    "UPDATE sensei.trackers SET secret_service = secret_service || '.new',
+                            last_success_at = NULL, last_error = NULL WHERE id = $1",
+                )
+                .bind(t)
+                .execute(pg.pool())
+                .await
+                .unwrap();
+            })
+        })
+    }
+
+    #[tokio::test]
+    async fn a_sync_on_the_old_credential_does_not_record_success_after_a_reconnect() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, _p) = connected_tracker(&pg).await;
+        let board = FakeBoard::standard().on_call(reconnect_mid_sync(&pg, t));
+        let r = sync(&pg, t, &board).await;
+        assert_eq!(r, Err(SyncError::Gone), "a superseded sync is discarded");
+        let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+        assert!(row.last_success_at.is_none(), "the new credential has not synced yet");
+    }
+
+    #[tokio::test]
+    async fn a_sync_on_the_old_credential_does_not_record_its_failure_after_a_reconnect() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, _p) = connected_tracker(&pg).await;
+        let board = FakeBoard::standard()
+            .fail_page("/rest/agile/1.0/board/42/issue", 2, TrackerError::Unauthorized)
+            .on_call(reconnect_mid_sync(&pg, t));
+        let _ = sync(&pg, t, &board).await;
+        let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+        assert_eq!(row.last_error, None, "the old token's 401 must not land on the new connection");
     }
 }
