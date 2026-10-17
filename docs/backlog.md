@@ -114,6 +114,13 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
   agrees. `tracker/transport.rs` tests use that wrapper as a **workaround**;
   decide which side is wrong (walk or counter) and fix it, then the wrapper can go.
 
+- **Indexer corpus tests flake under full-suite load** (found 2026-10-17) —
+  `indexer::pipeline::corpus::{a_scanned_repository_records_its_project_in_the_junction,
+  every_stage_reaches_the_progress_stream}` pass alone and with every tracker test,
+  fail ~1 in 2 full runs (scan finds no repo in a fresh tempdir; or a written repo is
+  not linked). Ruled out: env mutation, scan config, fd limit, Postgres connection
+  exhaustion. Next: make the assertions print the scan's `unreadable`/`errors`.
+
 ## Where open work is described
 
 | Concern | Source |

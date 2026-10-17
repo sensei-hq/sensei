@@ -541,7 +541,13 @@ in its own slice (recorded in `docs/backlog.md`):
    select (select count(*) from activity.sessions) > 0
       and (select count(*) from activity.transcript_turns where git_branch is not null) > 0;
    ```
-   Must return `t`. Today `f` (0 / 0).
+   Must return `t`. On 2026-10-17 it was `f` for **setup** reasons, not code:
+   - sessions are synthesised only for watched folders (4 of 28 hook sessions);
+   - transcripts are read only with consent (`transcripts.consent.claude_code`
+     unset, so 0 turns).
+
+   Fix: consent to Claude Code transcripts (Settings → Transcripts) and watch the
+   repos to be linked.
 2. **Jira tenant (human):** the user supplies a Jira Cloud site, board id and API
    token for the live gates and the C11 fixture. Build task 1 records one response
    per R4 endpoint (secrets and issue text scrubbed) under
