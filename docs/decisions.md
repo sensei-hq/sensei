@@ -1,6 +1,6 @@
 ---
 name: Decisions log — sensei
-updated: 2026-10-15
+updated: 2026-10-17
 ---
 
 # Decisions
@@ -11,6 +11,12 @@ updated: 2026-10-15
 > [`history/analysis/2026-07-24-design-journey.md`](history/analysis/2026-07-24-design-journey.md).
 
 ---
+
+## 2026-10-17 — Rust compiler located without rustup (nix / distro toolchains)
+
+| Decision | Locked answer | Why / rejected |
+|---|---|---|
+| **`PATH` fallback for the compiler binary** | `CompilerEngine::compiler_on_path()` (default `None`). The Rust engine names `rust-analyzer`. The session runs `rustup which rust-analyzer` **first**. Only if that fails does it take the first **executable** `rust-analyzer` on `PATH`, resolved to an **absolute path** (`compiler_session::resolve_compiler`). | A nix toolchain ships `rust-analyzer` with no `rustup`, so every rust-analyzer compile failed on Linux/nix (6 tests, and the indexer's Rust references). The rule "located, never assumed on PATH" stands where a manager exists. The fallback is still a *located* absolute path, never a bare name. Rejected: `sh -c 'rustup which … \|\| command -v …'`, because there's no `sh` on Windows (planned). Rejected: dropping rustup, because rustup's pinned-toolchain answer is the right one when it's present. |
 
 ## 2026-10-15 — Claude Code mods: usage, model routing, drive, gating (#238)
 

@@ -235,6 +235,12 @@ pub trait CompilerEngine: Sync {
     /// The command that names the compiler's binary for a project — located,
     /// never assumed to be on `PATH` (toolchains install it in different places).
     fn locate_compiler(&self, project_root: &str) -> Invocation;
+    /// The binary to look up on `PATH`, by absolute path, when `locate_compiler`
+    /// cannot answer — e.g. a toolchain installed without its manager (nix ships
+    /// `rust-analyzer` with no `rustup`). `None`: no fallback.
+    fn compiler_on_path(&self) -> Option<&'static str> {
+        None
+    }
     /// What the compiler reads: the extensions of the source files whose change
     /// makes a compile stale (a note or an image beside the code does not).
     fn sources(&self) -> &'static [&'static str];
