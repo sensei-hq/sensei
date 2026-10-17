@@ -4,8 +4,9 @@
 use crate::tracker::http::{InvalidBaseUrl, normalize_base_url};
 use crate::tracker::sprint::SprintState;
 use crate::tracker::{
-    ApiToken, AuthScheme, BoardScope, ConnectParams, GetTransport, ParamError, PrevState, Snapshot,
-    SprintRow, TaskRow, TrackerAdapter, TrackerError, TrackerKind, ValidateError, Validated,
+    ApiToken, AuthScheme, BoardScope, ConnectParams, GetTransport, KnownTask, Link, LinkSource,
+    ParamError, PrevState, SessionText, Snapshot, SprintRow, TaskRow, TrackerAdapter, TrackerError,
+    TrackerKind, ValidateError, Validated,
 };
 
 /// Jira Cloud's host rule: `<label>.atlassian.net`, at least one label before it.
@@ -176,6 +177,128 @@ impl TrackerAdapter for JiraAdapter {
         }
         Ok(Snapshot { board_name, sprints, tasks, members })
     }
+
+    fn match_links(&self, session: &SessionText, known: &[KnownTask]) -> Vec<Link> {
+        match_keys(session, known)
+    }
+}
+
+/// Jira's `match_links` (spec R6): keys of `known` found in the session's branches
+/// and prompts, matched on the original bytes, ASCII case-insensitively.
+pub fn match_keys(session: &SessionText, known: &[KnownTask]) -> Vec<Link> {
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    let mut by_key: HashMap<&str, Vec<&KnownTask>> = HashMap::new();
+    for k in known {
+        by_key.entry(k.key.as_str()).or_default().push(k);
+    }
+    let mut prefixes: Vec<String> = known
+        .iter()
+        .filter_map(|k| k.key.rsplit_once('-').map(|(p, _)| p.to_ascii_uppercase()))
+        .filter(|p| !p.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    prefixes.sort_by_key(|p| std::cmp::Reverse(p.len()));
+    // The (task, alias) pairs a text carries, one per occurrence.
+    let tasks_in = |text: &str| -> Vec<(&str, String)> {
+        keys_in(text.as_bytes(), &prefixes)
+            .into_iter()
+            .flat_map(|key| {
+                by_key
+                    .get(key.as_str())
+                    .into_iter()
+                    .flatten()
+                    .map(move |t| (t.external_id.as_str(), key.clone()))
+            })
+            .collect()
+    };
+
+    // (task, source) → alias → mentions.
+    let mut tally: BTreeMap<(&str, LinkSource), BTreeMap<String, u32>> = BTreeMap::new();
+    let mut branch_hits: HashMap<&str, u32> = HashMap::new();
+    let branches: BTreeSet<&str> = session.branches.iter().map(String::as_str).collect();
+    for branch in branches {
+        // A branch counts once per task, and once per alias it carries.
+        let found: BTreeSet<(&str, String)> = tasks_in(branch).into_iter().collect();
+        let tasks: BTreeSet<&str> = found.iter().map(|(t, _)| *t).collect();
+        for t in tasks {
+            *branch_hits.entry(t).or_default() += 1;
+        }
+        for (t, k) in found {
+            *tally.entry((t, LinkSource::Branch)).or_default().entry(k).or_default() += 1;
+        }
+    }
+    for prompt in &session.prompts {
+        for (t, k) in tasks_in(prompt) {
+            *tally.entry((t, LinkSource::Prompt)).or_default().entry(k).or_default() += 1;
+        }
+    }
+    let current: HashMap<&str, &str> = known
+        .iter()
+        .filter(|k| k.current)
+        .map(|k| (k.external_id.as_str(), k.key.as_str()))
+        .collect();
+
+    tally
+        .into_iter()
+        .map(|((task, source), aliases)| {
+            let cur = current.get(task).copied();
+            let (matched_key, _) = aliases
+                .iter()
+                .max_by(|(ka, na), (kb, nb)| {
+                    na.cmp(nb)
+                        .then_with(|| (Some(ka.as_str()) == cur).cmp(&(Some(kb.as_str()) == cur)))
+                        .then_with(|| kb.cmp(ka))
+                })
+                .expect("a tallied task has an alias");
+            let mentions = match source {
+                LinkSource::Branch => branch_hits.get(task).copied().unwrap_or(0),
+                LinkSource::Prompt => aliases.values().sum(),
+            };
+            Link {
+                session_id: session.session_id,
+                task_external_id: task.to_string(),
+                source,
+                matched_key: matched_key.clone(),
+                mentions,
+            }
+        })
+        .collect()
+}
+
+/// Every key shape `PREFIX-digits` in `text`, scanned left to right with prefixes
+/// longest first; a key must not follow an ASCII letter or digit, and a matched
+/// span is consumed. Comparison is ASCII-only, on the original bytes.
+fn keys_in(text: &[u8], prefixes: &[String]) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut i = 0;
+    while i < text.len() {
+        if i > 0 && text[i - 1].is_ascii_alphanumeric() {
+            i += 1;
+            continue;
+        }
+        let hit = prefixes.iter().find_map(|p| {
+            let p_end = i + p.len();
+            let rest = text.get(i..p_end)?;
+            if !rest.eq_ignore_ascii_case(p.as_bytes()) || text.get(p_end) != Some(&b'-') {
+                return None;
+            }
+            let digits_start = p_end + 1;
+            let digits = text[digits_start..].iter().take_while(|b| b.is_ascii_digit()).count();
+            (digits > 0).then(|| {
+                let end = digits_start + digits;
+                (format!("{p}-{}", String::from_utf8_lossy(&text[digits_start..end])), end)
+            })
+        });
+        match hit {
+            Some((key, end)) => {
+                keys.push(key);
+                i = end;
+            }
+            None => i += 1,
+        }
+    }
+    keys
 }
 
 const ISSUE_FIELDS: [(&str, &str); 1] = [("fields", "summary,issuetype,status")];
@@ -543,5 +666,151 @@ mod adapter_tests {
         );
         let r = JiraAdapter.fetch_snapshot(&board, &scope(), &PrevState::default()).await;
         assert_eq!(r, Err(TrackerError::Decode));
+    }
+}
+
+#[cfg(test)]
+mod match_tests {
+    use super::*;
+
+    const S: uuid::Uuid = uuid::Uuid::from_u128(7);
+
+    fn known(keys: &[(&str, &str)]) -> Vec<KnownTask> {
+        // A task's first listed key is its current one.
+        let mut seen = std::collections::HashSet::new();
+        keys.iter()
+            .map(|(id, key)| KnownTask {
+                external_id: id.to_string(),
+                key: key.to_string(),
+                scope: None,
+                current: seen.insert(*id),
+            })
+            .collect()
+    }
+
+    /// AUTH-420 = 1, AUTH-421 = 2, MY_PROJ-12 = 3.
+    fn standard() -> Vec<KnownTask> {
+        known(&[("1", "AUTH-420"), ("2", "AUTH-421"), ("3", "MY_PROJ-12")])
+    }
+
+    fn session(branches: &[&str], prompts: &[&str]) -> SessionText {
+        SessionText {
+            session_id: S,
+            branches: branches.iter().map(|b| b.to_string()).collect(),
+            prompts: prompts.iter().map(|p| p.to_string()).collect(),
+            repo_key: None,
+        }
+    }
+
+    /// (task, source, matched_key, mentions), sorted.
+    fn found(s: &SessionText, k: &[KnownTask]) -> Vec<(String, LinkSource, String, u32)> {
+        let mut v: Vec<_> = match_keys(s, k)
+            .into_iter()
+            .inspect(|l| assert_eq!(l.session_id, S))
+            .map(|l| (l.task_external_id, l.source, l.matched_key, l.mentions))
+            .collect();
+        v.sort();
+        v
+    }
+
+    fn prompt_keys(text: &str, k: &[KnownTask]) -> Vec<String> {
+        found(&session(&[], &[text]), k).into_iter().map(|(_, _, key, _)| key).collect()
+    }
+
+    const NONE: Vec<String> = Vec::new();
+
+    #[test]
+    fn only_known_keys_link() {
+        let k = standard();
+        for text in ["UTF-8", "AES-256", "CVE-2026", "AUTH-999", "auth", ""] {
+            assert_eq!(prompt_keys(text, &k), NONE, "{text:?}");
+        }
+        assert!(found(&session(&["fix/auth-420"], &["AUTH-420"]), &[]).is_empty(), "empty known");
+    }
+
+    #[test]
+    fn a_branch_links_case_insensitively() {
+        assert_eq!(
+            found(&session(&["fix/auth-420-store"], &[]), &standard()),
+            vec![("1".into(), LinkSource::Branch, "AUTH-420".into(), 1)]
+        );
+    }
+
+    #[test]
+    fn boundaries() {
+        let k = standard();
+        for text in ["AUTH-420_fix", "feature_AUTH-420", "(AUTH-420)", "AUTH-420.", "x/AUTH-420"] {
+            assert_eq!(prompt_keys(text, &k), vec!["AUTH-420".to_string()], "{text:?}");
+        }
+        for text in ["xAUTH-420", "9AUTH-420", "AUTH-4201", "AUTH-0420", "AUTH-", "AUTH 420"] {
+            assert_eq!(prompt_keys(text, &k), NONE, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn underscore_prefixes_and_consumed_spans() {
+        let k = standard();
+        assert_eq!(prompt_keys("MY_PROJ-12", &k), vec!["MY_PROJ-12".to_string()]);
+        let mut with_proj = k.clone();
+        with_proj.extend(known(&[("4", "PROJ-12")]));
+        assert_eq!(
+            prompt_keys("see MY_PROJ-12", &with_proj),
+            vec!["MY_PROJ-12".to_string()],
+            "the consumed span never also yields PROJ-12"
+        );
+        assert_eq!(prompt_keys("see PROJ-12", &with_proj), vec!["PROJ-12".to_string()]);
+    }
+
+    #[test]
+    fn no_unicode_folding_and_no_panics() {
+        let k = known(&[("1", "KEY-1"), ("2", "AUTH-420")]);
+        assert_eq!(prompt_keys("\u{212A}EY-1", &k), NONE, "the Kelvin sign is not K");
+        assert_eq!(prompt_keys("ßİ AUTH-420", &k), vec!["AUTH-420".to_string()]);
+        assert_eq!(
+            prompt_keys("İAUTH-420ß", &k),
+            vec!["AUTH-420".to_string()],
+            "non-ASCII separates"
+        );
+        assert_eq!(prompt_keys("🙂🙂🙂 auth-", &k), NONE);
+    }
+
+    #[test]
+    fn prompt_mentions_count_occurrences_and_branch_mentions_count_branches() {
+        let k = standard();
+        let s = session(
+            &["fix/AUTH-420", "AUTH-420-retry", "main"],
+            &["AUTH-420 then auth-420", "and AUTH-421"],
+        );
+        assert_eq!(
+            found(&s, &k),
+            vec![
+                ("1".into(), LinkSource::Branch, "AUTH-420".into(), 2),
+                ("1".into(), LinkSource::Prompt, "AUTH-420".into(), 2),
+                ("2".into(), LinkSource::Prompt, "AUTH-421".into(), 1),
+            ]
+        );
+        let twice_in_one_branch = session(&["AUTH-420-AUTH-420"], &[]);
+        assert_eq!(found(&twice_in_one_branch, &k)[0].3, 1, "a branch counts once");
+    }
+
+    #[test]
+    fn aliases_of_one_task_merge_into_one_link() {
+        // Task 1 was AUTH-420 and is now IAM-5 (the current key is listed first).
+        let k = known(&[("1", "IAM-5"), ("1", "AUTH-420")]);
+        assert_eq!(
+            found(&session(&["fix/auth-420"], &[]), &k),
+            vec![("1".into(), LinkSource::Branch, "AUTH-420".into(), 1)],
+            "the old key still links"
+        );
+        assert_eq!(
+            found(&session(&[], &["AUTH-420 AUTH-420 IAM-5"]), &k),
+            vec![("1".into(), LinkSource::Prompt, "AUTH-420".into(), 3)],
+            "one link; the most-mentioned alias names it; mentions summed"
+        );
+        assert_eq!(
+            found(&session(&[], &["AUTH-420 IAM-5"]), &k),
+            vec![("1".into(), LinkSource::Prompt, "IAM-5".into(), 2)],
+            "a tie goes to the current key"
+        );
     }
 }

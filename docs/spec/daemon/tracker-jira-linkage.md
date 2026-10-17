@@ -50,7 +50,7 @@ pub struct Snapshot { pub board_name: Option<String>, pub sprints: Vec<SprintRow
 pub struct SessionText { pub session_id: Uuid, pub branches: Vec<String>, pub prompts: Vec<String>,
                          pub repo_key: Option<String> }    // F3; GitLab scopes `#12` by repo
 pub struct KnownTask { pub external_id: String, pub key: String,       // one row per KEY ALIAS
-                       pub scope: Option<String> }
+                       pub scope: Option<String>, pub current: bool }  // current: the task's key now
 pub struct Link { pub session_id: Uuid, pub task_external_id: String, pub source: LinkSource,
                   pub matched_key: String, pub mentions: u32 }
 fn adapters() -> Vec<Box<dyn TrackerAdapter>>;               // registry, like transcript/mod.rs
@@ -331,7 +331,7 @@ sync runs in five steps (guard → fetch → compute links → apply → outcome
 3. **Compute links, with no transaction open** (F3), under the same deadline:
    - `known` = every **key alias** of the tracker's stored tasks
      (`tracker_task_keys`, removed tasks included) **plus** the snapshot's tasks'
-     current keys, as `KnownTask { external_id, key, scope }`. Two tasks claiming
+     current keys, as `KnownTask { external_id, key, scope, current }`. Two tasks claiming
      one key: the snapshot's task wins, then the non-removed one, then the later
      `last_seen_at`.
    - Candidate sessions are read in **chunks of 200** (`load_link_inputs(tracker_id,
@@ -408,8 +408,10 @@ semantics (`branch`, `prompt`, `mentions`) and "link only to a known key" are
   Kelvin sign `K` is not `K`) and no byte-offset shift (`ß`, `İ` cannot panic).
 - At each position, try prefixes **longest first**. A match is `p` + `-` +
   `[0-9]+` (digits greedy), accepted only if the byte before it is not an ASCII
-  letter, digit **or `_`** (or it is the start). `/`, `-`, space and punctuation
-  separate. A matched span is consumed, so `MY_PROJ-12` never also yields `PROJ-12`.
+  letter or digit (or it is the start). `_`, `/`, `-`, space, punctuation and
+  non-ASCII bytes separate, so `feature_AUTH-420` links. Positions are scanned left
+  to right and a matched span is consumed, so with `MY_PROJ` known `MY_PROJ-12`
+  never also yields `PROJ-12` (with only `PROJ` known it yields `PROJ-12`).
 - The key is `UPPER(p)-digits` with the digits **as written** (`AUTH-0420` is not
   `AUTH-420` and does not link). That string is `matched_key`.
 - Link iff the key ∈ `known`. With no `known` keys nothing links (`UTF-8`, `AES-256`
@@ -486,7 +488,7 @@ sit behind one guard layer built from **existing** code:
 | `POST /api/projects/{id}/trackers/sync` | R5 now. 200 `{counts:{sprints, tasks, removed, links, skipped_members}}`; 409 `{error:"busy"}`; 502 `{error:<code>}`; 404 if no tracker. |
 | `GET /api/projects/{id}/sprints` | the project's sprints, newest first: `[{id, name, state, start_at, end_at, complete_at, candidates_in_window, linked_sprint, linked_other, unlinked}]` (each part a usage object; `null` + `reason` for future). Removed sprints excluded. |
 | `GET /api/projects/{id}/tracker-tasks?sprint={uuid}&include_removed=bool` | the sprint's tickets (or all the project's tickets without `sprint`): `[{key, summary, issue_type, status, current_sprint, sprints:[{id, name}], removed, usage}]`. `sprint` filters to its members; unknown sprint → 404. |
-| `GET /api/projects/{id}/tracker-tasks/{key}` | `{task, usage, sessions:[{id, started_at, links:[{source, matched_key, mentions}]}]}` (usage from F4); `key` matched case-insensitively against current keys **and aliases**; 404 if absent. |
+| `GET /api/projects/{id}/tracker-tasks/{key}` | `{task, usage, sessions:[{id, started_at, links:[{source, matched_key, mentions}]}]}` (usage from F4); `key` matched case-insensitively against current keys **and aliases**; sessions are the ticket's current candidates (R1), as for usage; 404 `task_not_found` if absent or the project has no tracker. |
 | `GET /api/projects/{id}/sessions/unlinked?sprint={uuid}` | the sprint's `unlinked` sessions `[{id, started_at, task}]`; sprint required; unknown → 404. |
 
 Error codes the routes return (body `{error: <code>}`, extra fields where noted):
@@ -495,7 +497,7 @@ Error codes the routes return (body `{error: <code>}`, extra fields where noted)
 |---|---|
 | 401 | `unauthorized` (Jira rejected the credential at connect) |
 | 403 | `forbidden` (the account can't read the board, at connect); `forbidden_caller` (the local-caller guard: foreign `Origin` or non-loopback `Host`) |
-| 404 | `project_not_found`; `not_connected` (sync/disconnect with no tracker); `board_not_found` (+ `base_url`, `board_ref`) |
+| 404 | `project_not_found`; `not_connected` (sync/disconnect with no tracker); `board_not_found` (+ `base_url`, `board_ref`); `task_not_found` (no ticket with that key or alias) |
 | 409 | `board_already_connected` (+ `project {id, name}`); `busy` |
 | 422 | `unsupported_tracker`; `invalid_base_url`; `email_required`; `token_required`; `board_project_mismatch` |
 | 500 | `credential_store`; `internal` (database error) |

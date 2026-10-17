@@ -53,6 +53,7 @@ fn tracker_routes() -> Router<AppState> {
         )
         .route("/api/projects/{id}/trackers/sync", post(trackers::sync_tracker))
         .route("/api/projects/{id}/trackers/{kind}/connect", post(trackers::connect_tracker))
+        .route("/api/projects/{id}/tracker-tasks/{key}", get(trackers::get_tracker_task))
         .route_layer(axum::middleware::from_fn(crate::api::origin_guard::local_caller_guard))
 }
 

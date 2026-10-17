@@ -4,8 +4,9 @@
 //! logic and calls these methods.
 
 use crate::db::pg_store::PgStore;
+use crate::tracker::link::StoredAlias;
 use crate::tracker::sprint::{SprintRank, SprintState, pick_current_sprint};
-use crate::tracker::{PrevState, Snapshot};
+use crate::tracker::{Link, PrevState, SessionText, Snapshot};
 
 /// One `sensei.trackers` row.
 #[derive(Debug, Clone, PartialEq)]
@@ -64,6 +65,33 @@ pub struct ApplyCounts {
     pub removed: u32,
     pub links: u32,
     pub skipped_members: u32,
+}
+
+/// One link of a session to a ticket, as the task read shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionLinkRow {
+    pub source: String,
+    pub matched_key: String,
+    pub mentions: i32,
+}
+
+/// A candidate session linked to a ticket, with its links.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkedSession {
+    pub id: uuid::Uuid,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub links: Vec<SessionLinkRow>,
+}
+
+/// One ticket of a project's tracker and the candidate sessions linked to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskDetail {
+    pub key: String,
+    pub summary: Option<String>,
+    pub issue_type: Option<String>,
+    pub status: Option<String>,
+    pub removed: bool,
+    pub sessions: Vec<LinkedSession>,
 }
 
 /// Why an apply did not commit.
@@ -228,11 +256,16 @@ impl PgStore {
         secret_service: &str,
         snapshot: &Snapshot,
         params_patch: &serde_json::Value,
+        links: &[Link],
     ) -> Result<ApplyCounts, ApplyError> {
         let db = |e: sqlx_core::Error| ApplyError::Db(e.to_string());
         let sprints = dedupe_by(&snapshot.sprints, |s| s.external_id.clone());
         let tasks = dedupe_by(&snapshot.tasks, |t| t.external_id.clone());
         let mut tx = self.pool.begin().await.map_err(db)?;
+        sqlx_core::query::query("SET LOCAL statement_timeout = '60s'")
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
 
         // Gone, or re-connected since the sync started: the result is superseded.
         let locked = sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
@@ -430,6 +463,65 @@ impl PgStore {
         .await
         .map_err(db)?;
 
+        // Every current key becomes an alias; former keys stay.
+        sqlx_core::query::query(
+            "INSERT INTO sensei.tracker_task_keys (task_id, key)
+             SELECT id, key FROM sensei.tracker_tasks WHERE tracker_id = $1
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+
+        // Relink: a full replacement, for the sessions still present (locked
+        // against a concurrent prune), resolving external ids in SQL.
+        let mut wanted: Vec<uuid::Uuid> = links.iter().map(|l| l.session_id).collect();
+        wanted.sort_unstable();
+        wanted.dedup();
+        let present: std::collections::HashSet<uuid::Uuid> =
+            sqlx_core::query_as::query_as::<_, (uuid::Uuid,)>(
+                "SELECT id FROM activity.sessions WHERE id = ANY($1::uuid[]) FOR KEY SHARE",
+            )
+            .bind(&wanted)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db)?
+            .into_iter()
+            .map(|(s,)| s)
+            .collect();
+        sqlx_core::query::query(
+            "DELETE FROM sensei.session_task_links
+              WHERE task_id IN (SELECT id FROM sensei.tracker_tasks WHERE tracker_id = $1)",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+        let kept: Vec<&Link> = links.iter().filter(|l| present.contains(&l.session_id)).collect();
+        let l_session: Vec<uuid::Uuid> = kept.iter().map(|l| l.session_id).collect();
+        let l_task: Vec<String> = kept.iter().map(|l| l.task_external_id.clone()).collect();
+        let l_source: Vec<String> = kept.iter().map(|l| l.source.as_str().to_string()).collect();
+        let l_key: Vec<String> = kept.iter().map(|l| l.matched_key.clone()).collect();
+        let l_mentions: Vec<i32> =
+            kept.iter().map(|l| i32::try_from(l.mentions).unwrap_or(i32::MAX)).collect();
+        let linked = sqlx_core::query::query(
+            "INSERT INTO sensei.session_task_links (session_id, task_id, source, matched_key, mentions)
+             SELECT x.s, t.id, x.src::sensei.link_source, x.k, x.m
+               FROM unnest($2::uuid[], $3::text[], $4::text[], $5::text[], $6::int[]) AS x(s, e, src, k, m)
+               JOIN sensei.tracker_tasks t ON t.tracker_id = $1 AND t.external_id = x.e",
+        )
+        .bind(id)
+        .bind(&l_session)
+        .bind(&l_task)
+        .bind(&l_source)
+        .bind(&l_key)
+        .bind(&l_mentions)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?
+        .rows_affected();
+
         sqlx_core::query::query(
             "UPDATE sensei.trackers SET params = params || $2, last_success_at = now(), last_error = NULL
               WHERE id = $1",
@@ -445,9 +537,148 @@ impl PgStore {
             sprints: sprints.len() as u32,
             tasks: tasks.len() as u32,
             removed: (removed_sprints + removed_tasks) as u32,
-            links: 0,
+            links: linked as u32,
             skipped_members: skipped,
         })
+    }
+
+    /// Every stored key alias of the tracker's tasks, removed tasks included.
+    pub async fn tracker_key_aliases(
+        &self,
+        tracker_id: uuid::Uuid,
+    ) -> Result<Vec<StoredAlias>, String> {
+        let rows = sqlx_core::query_as::query_as::<
+            _,
+            (String, String, Option<String>, bool, bool, Option<chrono::DateTime<chrono::Utc>>),
+        >(
+            "SELECT t.external_id, k.key, t.scope, k.key = t.key, t.removed_at IS NOT NULL, t.last_seen_at
+               FROM sensei.tracker_task_keys k JOIN sensei.tracker_tasks t ON t.id = k.task_id
+              WHERE t.tracker_id = $1
+             UNION
+             SELECT external_id, key, scope, true, removed_at IS NOT NULL, last_seen_at
+               FROM sensei.tracker_tasks WHERE tracker_id = $1",
+        )
+        .bind(tracker_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(external_id, key, scope, current, removed, last_seen_at)| StoredAlias {
+                external_id,
+                key,
+                scope,
+                current,
+                removed,
+                last_seen_at,
+            })
+            .collect())
+    }
+
+    /// One chunk of the tracker's candidate sessions (R1), keyset-paged by id:
+    /// distinct branches and each turn's prompt (first 4 KB). Never `assistant_text`.
+    pub async fn load_link_inputs(
+        &self,
+        tracker_id: uuid::Uuid,
+        after: Option<uuid::Uuid>,
+        limit: i64,
+    ) -> Result<Vec<SessionText>, String> {
+        let rows = sqlx_core::query_as::query_as::<_, (uuid::Uuid, Option<String>, Vec<String>, Vec<String>)>(
+            "WITH c AS (
+                SELECT s.id, s.client_session_id, r.repo_key
+                  FROM sensei.trackers tr
+                  JOIN sensei.folder_projects fp ON fp.project_id = tr.project_id
+                  JOIN activity.sessions s ON s.repo_folder_id = fp.folder_id
+                  JOIN sensei.repositories r ON r.id = fp.repository_id
+                 WHERE tr.id = $1 AND ($2::uuid IS NULL OR s.id > $2)
+                 ORDER BY s.id
+                 LIMIT $3)
+             SELECT c.id, c.repo_key,
+                    coalesce((SELECT array_agg(DISTINCT t.git_branch)
+                                FROM activity.transcript_turns t
+                               WHERE t.session_id = c.client_session_id AND t.git_branch IS NOT NULL),
+                             '{}'),
+                    coalesce((SELECT array_agg(left(t.user_text, 4096) ORDER BY t.turn_index)
+                                FROM activity.transcript_turns t
+                               WHERE t.session_id = c.client_session_id AND t.user_text IS NOT NULL),
+                             '{}')
+               FROM c ORDER BY c.id",
+        )
+        .bind(tracker_id)
+        .bind(after)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|(session_id, repo_key, branches, prompts)| SessionText {
+                session_id,
+                branches,
+                prompts,
+                repo_key,
+            })
+            .collect())
+    }
+
+    /// The project's ticket with this key (current or former, case-insensitive)
+    /// and its linked candidate sessions; `None` when there is no such ticket.
+    pub async fn tracker_task_detail(
+        &self,
+        project_id: uuid::Uuid,
+        key: &str,
+    ) -> Result<Option<TaskDetail>, String> {
+        let err = |e: sqlx_core::Error| e.to_string();
+        let Some((task_id, key, summary, issue_type, status, removed)) =
+            sqlx_core::query_as::query_as::<
+                _,
+                (uuid::Uuid, String, Option<String>, Option<String>, Option<String>, bool),
+            >(
+                "SELECT t.id, t.key, t.summary, t.issue_type, t.status, t.removed_at IS NOT NULL
+                   FROM sensei.tracker_tasks t JOIN sensei.trackers tr ON tr.id = t.tracker_id
+                  WHERE tr.project_id = $1
+                    AND (upper(t.key) = upper($2)
+                         OR EXISTS (SELECT 1 FROM sensei.tracker_task_keys k
+                                     WHERE k.task_id = t.id AND upper(k.key) = upper($2)))
+                  ORDER BY upper(t.key) = upper($2) DESC, t.removed_at IS NULL DESC,
+                           t.last_seen_at DESC NULLS LAST
+                  LIMIT 1",
+            )
+            .bind(project_id)
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(err)?
+        else {
+            return Ok(None);
+        };
+        // Only the project's current candidates (R1), as usage counts them.
+        let rows = sqlx_core::query_as::query_as::<
+            _,
+            (uuid::Uuid, Option<chrono::DateTime<chrono::Utc>>, String, String, i32),
+        >(
+            "SELECT s.id, s.started_at, l.source::text, l.matched_key, l.mentions
+               FROM sensei.session_task_links l
+               JOIN activity.sessions s ON s.id = l.session_id
+              WHERE l.task_id = $1
+                AND EXISTS (SELECT 1 FROM sensei.folder_projects fp
+                             WHERE fp.folder_id = s.repo_folder_id AND fp.project_id = $2)
+              ORDER BY s.started_at DESC NULLS LAST, s.id, l.source",
+        )
+        .bind(task_id)
+        .bind(project_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(err)?;
+        let mut sessions: Vec<LinkedSession> = Vec::new();
+        for (id, started_at, source, matched_key, mentions) in rows {
+            let link = SessionLinkRow { source, matched_key, mentions };
+            match sessions.last_mut() {
+                Some(last) if last.id == id => last.links.push(link),
+                _ => sessions.push(LinkedSession { id, started_at, links: vec![link] }),
+            }
+        }
+        Ok(Some(TaskDetail { key, summary, issue_type, status, removed, sessions }))
     }
 
     pub async fn write_pending_tombstone(

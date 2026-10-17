@@ -76,7 +76,16 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   - spec drift.
   F1 had been marked complete without gate 1l. Its sync part is now tested; the
   link and usage parts land with F3/F4.
-- **Next:** F3 (session to ticket linking).
+- **F3 linking** ✅ `session_task_links` + `tracker_task_keys` (aliases, so a renamed
+  ticket keeps linking by its old key); `tracker_error` gains `db`. Jira `match_links`
+  (ASCII-only, longest prefix, consumed spans), provider-neutral `link::known_tasks`
+  (tie-break), sync step 3 (candidates in chunks of 200 from every project repo,
+  `user_text` only, matching in `spawn_blocking` under the sync deadline), relink in the
+  apply transaction (`FOR KEY SHARE`, `unnest`), `db` failures recorded,
+  `GET /api/projects/{id}/tracker-tasks/{key}`. 19 tests written red first; mutation-checked.
+  Spec fixes: `_` separates again (3db9cee9 contradicted gate 1a); `KnownTask.current`;
+  404 `task_not_found`. Adapter registry is now `&'static [&'static dyn TrackerAdapter]`.
+- **Next:** F4 (usage metrics, sprint and ticket lists, unlinked sessions, CLI).
 
 ## Gate for `/sensei:build`
 
@@ -85,4 +94,4 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
 
 ## Next command
 
-`/sensei:build docs/plans/2026-10-15-tracker-jira-linkage.md`, continuing at F3. F1.1 still needs the Jira tenant.
+`/sensei:build docs/plans/2026-10-15-tracker-jira-linkage.md`, continuing at F4. F1.1 still needs the Jira tenant.

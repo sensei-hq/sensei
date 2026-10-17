@@ -8,6 +8,7 @@
 pub mod connect;
 pub mod http;
 pub mod jira;
+pub mod link;
 pub mod runtime;
 pub mod secret;
 pub mod sprint;
@@ -164,6 +165,53 @@ pub struct PrevState {
     pub members_fetched_state: HashMap<String, Option<sprint::SprintState>>,
 }
 
+/// Where a session's reference to a ticket was found (`sensei.link_source`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum LinkSource {
+    Branch,
+    Prompt,
+}
+
+impl LinkSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LinkSource::Branch => "branch",
+            LinkSource::Prompt => "prompt",
+        }
+    }
+}
+
+/// One candidate session's text, as matching needs it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionText {
+    pub session_id: uuid::Uuid,
+    /// Distinct branches the session's turns ran on.
+    pub branches: Vec<String>,
+    /// Each turn's typed prompt (capped at 4 KB on read).
+    pub prompts: Vec<String>,
+    pub repo_key: Option<String>,
+}
+
+/// One key a ticket answers to (its current key, or a former one).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnownTask {
+    pub external_id: String,
+    pub key: String,
+    pub scope: Option<String>,
+    /// This is the task's current key (not a former one).
+    pub current: bool,
+}
+
+/// A session linked to a ticket, named by the ticket's provider id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Link {
+    pub session_id: uuid::Uuid,
+    pub task_external_id: String,
+    pub source: LinkSource,
+    pub matched_key: String,
+    pub mentions: u32,
+}
+
 /// One tracker provider. All provider knowledge lives behind this trait; the
 /// coordinator (`sync`, `connect`) is provider-neutral.
 #[async_trait::async_trait]
@@ -186,16 +234,18 @@ pub trait TrackerAdapter: Send + Sync {
         board: &BoardScope,
         prev: &PrevState,
     ) -> Result<Snapshot, TrackerError>;
+    /// Pure: which known tickets this session's text refers to.
+    fn match_links(&self, session: &SessionText, known: &[KnownTask]) -> Vec<Link>;
 }
 
 /// The registered adapters — the only place a new tracker is added.
-pub fn adapters() -> Vec<Box<dyn TrackerAdapter>> {
-    vec![Box::new(jira::JiraAdapter)]
+pub fn adapters() -> &'static [&'static dyn TrackerAdapter] {
+    &[&jira::JiraAdapter]
 }
 
 /// The adapter for a kind, if one is registered.
-pub fn adapter_for_kind(kind: TrackerKind) -> Option<Box<dyn TrackerAdapter>> {
-    adapters().into_iter().find(|a| a.kind() == kind)
+pub fn adapter_for_kind(kind: TrackerKind) -> Option<&'static dyn TrackerAdapter> {
+    adapters().iter().copied().find(|a| a.kind() == kind)
 }
 
 /// Why a tracker call failed — the fixed vocabulary persisted in
@@ -215,12 +265,13 @@ pub enum TrackerError {
     TokenMissing,
     CredentialStore,
     UnsupportedTracker,
+    Db,
 }
 
 impl TrackerError {
     /// Every variant, for exhaustiveness checks against the DDL enum.
     #[cfg(test)]
-    pub const ALL: [TrackerError; 11] = [
+    pub const ALL: [TrackerError; 12] = [
         TrackerError::Unauthorized,
         TrackerError::Forbidden,
         TrackerError::NotFound,
@@ -232,6 +283,7 @@ impl TrackerError {
         TrackerError::TokenMissing,
         TrackerError::CredentialStore,
         TrackerError::UnsupportedTracker,
+        TrackerError::Db,
     ];
 
     /// The `sensei.tracker_error` enum label for this error.
@@ -248,6 +300,7 @@ impl TrackerError {
             TrackerError::TokenMissing => "token_missing",
             TrackerError::CredentialStore => "credential_store",
             TrackerError::UnsupportedTracker => "unsupported_tracker",
+            TrackerError::Db => "db",
         }
     }
 }
@@ -411,6 +464,53 @@ pub mod test_support {
             }
             self.pages.get(&(path.to_string(), start)).cloned().ok_or(TrackerError::NotFound)
         }
+    }
+
+    /// A repository folder that belongs to project `p` (a fresh repository each call).
+    pub async fn repo_in(pg: &crate::db::pg_store::PgStore, p: uuid::Uuid) -> uuid::Uuid {
+        let suffix = format!("trk-{}", uuid::Uuid::new_v4().simple());
+        let folder = crate::db::pg_store::tests::create_test_folder(pg, &suffix).await;
+        pg.set_folder_project(&folder, &p, "root", None).await.unwrap();
+        folder
+    }
+
+    /// A session anchored at `repo_folder` with one transcript turn per branch and
+    /// per prompt (the shape the ingest writes: turns keyed by `client_session_id`).
+    pub async fn session_with(
+        pg: &crate::db::pg_store::PgStore,
+        repo_folder: Option<uuid::Uuid>,
+        branches: &[&str],
+        prompts: &[&str],
+    ) -> uuid::Uuid {
+        let client = format!("trk-{}", uuid::Uuid::new_v4());
+        let (id,): (uuid::Uuid,) = sqlx_core::query_as::query_as(
+            "INSERT INTO activity.sessions (repo_folder_id, client_session_id, started_at)
+             VALUES ($1, $2, now()) RETURNING id",
+        )
+        .bind(repo_folder)
+        .bind(&client)
+        .fetch_one(pg.pool())
+        .await
+        .unwrap();
+        let turns = branches
+            .iter()
+            .map(|b| (Some(*b), None))
+            .chain(prompts.iter().map(|p| (None, Some(*p))));
+        for (i, (branch, prompt)) in turns.enumerate() {
+            sqlx_core::query::query(
+                "INSERT INTO activity.transcript_turns
+                        (source, session_id, family, turn_index, git_branch, user_text, assistant_text)
+                 VALUES ('claude_code', $1, 'claude', $2, $3, $4, 'AUTH-1 AUTH-2 AUTH-3')",
+            )
+            .bind(&client)
+            .bind(i as i32)
+            .bind(branch)
+            .bind(prompt)
+            .execute(pg.pool())
+            .await
+            .unwrap();
+        }
+        id
     }
 }
 

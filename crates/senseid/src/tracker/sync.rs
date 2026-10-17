@@ -7,9 +7,13 @@ use std::time::Duration;
 
 use crate::db::pg_store::PgStore;
 use crate::db::pg_store::trackers::{ApplyCounts, ApplyError};
-use crate::tracker::{BoardScope, GetTransport, TrackerAdapter, TrackerError};
+use crate::tracker::link::known_tasks;
+use crate::tracker::{BoardScope, GetTransport, Link, Snapshot, TrackerAdapter, TrackerError};
 
-/// Whole-sync deadline for the fetch phase.
+/// Candidate sessions read per chunk when computing links.
+pub const LINK_CHUNK: i64 = 200;
+
+/// Whole-sync deadline for the fetch and link phases.
 pub const SYNC_DEADLINE: Duration = Duration::from_secs(10 * 60);
 
 /// One in-process lock per tracker, shared by the API and the scheduled tick.
@@ -43,7 +47,7 @@ pub enum SyncError {
     Gone,
     /// The provider or credential failed; recorded as `last_error`.
     Failed(TrackerError),
-    /// The database failed; nothing recorded.
+    /// The database failed; recorded as `db` when the row is still reachable.
     Db(String),
 }
 
@@ -52,7 +56,7 @@ pub async fn sync_tracker(
     pg: &PgStore,
     locks: &TrackerLocks,
     tracker_id: uuid::Uuid,
-    adapter: &dyn TrackerAdapter,
+    adapter: &'static dyn TrackerAdapter,
     transport: &dyn GetTransport,
     deadline: Duration,
 ) -> Result<ApplyCounts, SyncError> {
@@ -64,12 +68,14 @@ pub async fn sync_tracker(
     pg.mark_tracker_attempt(tracker_id).await.map_err(SyncError::Db)?;
     let prev = pg.tracker_prev_state(tracker_id).await.map_err(SyncError::Db)?;
 
-    // 2. Fetch, with no connection checked out, under the whole-sync deadline.
-    // Every write below is conditional on this credential still being current.
+    // 2. Fetch, with no connection checked out, under the whole-sync deadline
+    // (shared with step 3). Every write below is conditional on this credential
+    // still being current.
     let secret_service = row.secret_service;
     let board = BoardScope { base_url: row.base_url, board_ref: row.board_ref };
-    let snapshot = match tokio::time::timeout(
-        deadline,
+    let until = tokio::time::Instant::now() + deadline;
+    let snapshot = match tokio::time::timeout_at(
+        until,
         adapter.fetch_snapshot(transport, &board, &prev),
     )
     .await
@@ -83,18 +89,82 @@ pub async fn sync_tracker(
         }
     };
 
-    // 3. Links are computed here once linking lands (F3).
+    // 3. Compute links, with no transaction open, under the same deadline.
+    let links =
+        match tokio::time::timeout_at(until, compute_links(pg, tracker_id, adapter, &snapshot))
+            .await
+        {
+            Ok(Ok(links)) => links,
+            Ok(Err(e)) => return Err(record_db(pg, tracker_id, &secret_service, e).await),
+            Err(_) => {
+                return Err(record_failure(
+                    pg,
+                    tracker_id,
+                    &secret_service,
+                    TrackerError::Transport,
+                )
+                .await);
+            }
+        };
     // 4. Apply in one short transaction; success is recorded inside it.
     let patch = match &snapshot.board_name {
         Some(name) => serde_json::json!({ "board_name": name }),
         None => serde_json::json!({}),
     };
-    pg.apply_tracker_snapshot(tracker_id, &secret_service, &snapshot, &patch).await.map_err(|e| {
-        match e {
-            ApplyError::Gone => SyncError::Gone,
-            ApplyError::Db(e) => SyncError::Db(e),
+    match pg.apply_tracker_snapshot(tracker_id, &secret_service, &snapshot, &patch, &links).await {
+        Ok(counts) => Ok(counts),
+        Err(ApplyError::Gone) => Err(SyncError::Gone),
+        Err(ApplyError::Db(e)) => Err(record_db(pg, tracker_id, &secret_service, e).await),
+    }
+}
+
+/// Step 3: every candidate session's links to the known keys, read in chunks and
+/// matched by the adapter on a blocking thread.
+async fn compute_links(
+    pg: &PgStore,
+    tracker_id: uuid::Uuid,
+    adapter: &'static dyn TrackerAdapter,
+    snapshot: &Snapshot,
+) -> Result<Vec<Link>, String> {
+    let aliases = pg.tracker_key_aliases(tracker_id).await?;
+    let known = Arc::new(known_tasks(&aliases, &snapshot.tasks));
+    let mut links = Vec::new();
+    if known.is_empty() {
+        return Ok(links);
+    }
+    let mut after = None;
+    loop {
+        let chunk = pg.load_link_inputs(tracker_id, after, LINK_CHUNK).await?;
+        let Some(last) = chunk.last() else { break };
+        after = Some(last.session_id);
+        let full = chunk.len() as i64 == LINK_CHUNK;
+        let known = known.clone();
+        let found = tokio::task::spawn_blocking(move || {
+            chunk.iter().flat_map(|s| adapter.match_links(s, &known)).collect::<Vec<_>>()
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        links.extend(found);
+        if !full {
+            break;
         }
-    })
+    }
+    Ok(links)
+}
+
+/// Step 5 for a database failure: recorded as `db`, conditional like the others.
+async fn record_db(
+    pg: &PgStore,
+    tracker_id: uuid::Uuid,
+    secret_service: &str,
+    e: String,
+) -> SyncError {
+    if let Err(db) =
+        pg.mark_tracker_error(tracker_id, secret_service, TrackerError::Db.code()).await
+    {
+        tracing::warn!(tracker_id = %tracker_id, "tracker sync: could not record db failure: {db}");
+    }
+    SyncError::Db(e)
 }
 
 /// Step 5: record a provider/credential failure. A row deleted meanwhile makes the
@@ -438,9 +508,16 @@ mod tests {
         assert_eq!(removed_at().await, Some(first), "a sprint's removed_at is never advanced");
     }
 
-    /// A second, non-Jira adapter: GitLab-like `group/proj#12` keys with a scope and
-    /// iteration-named sprints. The coordinator must handle it unchanged (gate 1l, sync part).
-    struct FakeAdapter;
+    /// A second, non-Jira adapter: GitLab-like `#12` keys relative to a project
+    /// scope, and iteration-named sprints. The coordinator must handle it unchanged
+    /// (gate 1l). Leaked so it is `'static`, like a registered adapter.
+    struct FakeAdapter {
+        scopes: [String; 2],
+    }
+
+    fn fake_adapter(scopes: [String; 2]) -> &'static FakeAdapter {
+        Box::leak(Box::new(FakeAdapter { scopes }))
+    }
 
     #[async_trait::async_trait]
     impl crate::tracker::TrackerAdapter for FakeAdapter {
@@ -475,10 +552,10 @@ mod tests {
         ) -> Result<crate::tracker::Snapshot, TrackerError> {
             use crate::tracker::sprint::SprintState;
             use crate::tracker::{Snapshot, SprintRow, TaskRow};
-            let task = |id: &str, key: &str| TaskRow {
+            let task = |id: &str, key: &str, scope: &str| TaskRow {
                 external_id: id.into(),
                 key: key.into(),
-                scope: Some("gitlab.com/group/proj".into()),
+                scope: Some(scope.into()),
                 summary: None,
                 issue_type: None,
                 status: Some("opened".into()),
@@ -496,11 +573,32 @@ mod tests {
                 board_name: Some("Group board".into()),
                 sprints: vec![iteration("gid://iteration/7", 7, SprintState::Active)],
                 tasks: vec![
-                    task("gid://issue/1", "group/proj#12"),
-                    task("gid://issue/2", "group/proj#13"),
+                    task("gid://issue/1", "#12", &self.scopes[0]),
+                    task("gid://issue/2", "#12", &self.scopes[1]),
                 ],
                 members: vec![("gid://iteration/7".into(), Some(vec!["gid://issue/1".into()]))],
             })
+        }
+        /// `#N` in a prompt, for the task of that key whose scope is the session's repo.
+        fn match_links(
+            &self,
+            session: &crate::tracker::SessionText,
+            known: &[crate::tracker::KnownTask],
+        ) -> Vec<crate::tracker::Link> {
+            known
+                .iter()
+                .filter(|k| k.scope.is_some() && k.scope == session.repo_key)
+                .filter_map(|k| {
+                    let n: usize = session.prompts.iter().map(|p| p.matches(&k.key).count()).sum();
+                    (n > 0).then(|| crate::tracker::Link {
+                        session_id: session.session_id,
+                        task_external_id: k.external_id.clone(),
+                        source: crate::tracker::LinkSource::Prompt,
+                        matched_key: k.key.clone(),
+                        mentions: n as u32,
+                    })
+                })
+                .collect()
         }
     }
 
@@ -512,7 +610,7 @@ mod tests {
             &pg,
             &TrackerLocks::default(),
             t,
-            &FakeAdapter,
+            fake_adapter(["gitlab.com/group/a".into(), "gitlab.com/group/b".into()]),
             &FakeBoard::empty(),
             SYNC_DEADLINE,
         )
@@ -529,11 +627,8 @@ mod tests {
             .fetch_one(pg.pool())
             .await
             .unwrap();
-        assert_eq!(
-            key, "group/proj#12",
-            "the adapter owns key form; the coordinator stores it as given"
-        );
-        assert_eq!(scope.as_deref(), Some("gitlab.com/group/proj"));
+        assert_eq!(key, "#12", "the adapter owns key form; the coordinator stores it as given");
+        assert_eq!(scope.as_deref(), Some("gitlab.com/group/a"));
         assert_eq!(sprint.as_deref(), Some("gid://iteration/7"));
         let row = pg.tracker_by_id(t).await.unwrap().unwrap();
         assert_eq!(row.params["board_name"], json!("Group board"));
@@ -582,5 +677,318 @@ mod tests {
         let _ = sync(&pg, t, &board).await;
         let row = pg.tracker_by_id(t).await.unwrap().unwrap();
         assert_eq!(row.last_error, None, "the old token's 401 must not land on the new connection");
+    }
+
+    // ── Linking (F3, spec R5 step 3 + R6) ───────────────────────────────────
+
+    use crate::tracker::test_support::{repo_in, session_with};
+
+    /// (session, issue external id, source, matched_key, mentions), sorted.
+    async fn links(
+        pg: &PgStore,
+        tracker: uuid::Uuid,
+    ) -> Vec<(uuid::Uuid, String, String, String, i32)> {
+        sqlx_core::query_as::query_as(
+            "SELECT l.session_id, t.external_id, l.source::text, l.matched_key, l.mentions
+               FROM sensei.session_task_links l JOIN sensei.tracker_tasks t ON t.id = l.task_id
+              WHERE t.tracker_id = $1 ORDER BY 1, 2, 3",
+        )
+        .bind(tracker)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap()
+    }
+
+    fn link(
+        s: uuid::Uuid,
+        issue: &str,
+        source: &str,
+        key: &str,
+        n: i32,
+    ) -> (uuid::Uuid, String, String, String, i32) {
+        (s, issue.into(), source.into(), key.into(), n)
+    }
+
+    fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
+        v.sort();
+        v
+    }
+
+    #[tokio::test]
+    async fn sessions_from_every_project_repo_link_by_branch_and_prompt() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let (r1, r2) = (repo_in(&pg, p).await, repo_in(&pg, p).await);
+        let elsewhere = repo_in(&pg, crate::tracker::connect::tests::project(&pg).await).await;
+        let on_branch = session_with(&pg, Some(r1), &["fix/auth-2-login"], &[]).await;
+        let in_prompts =
+            session_with(&pg, Some(r2), &["main"], &["look at AUTH-3", "AUTH-3 again"]).await;
+        let other_project = session_with(&pg, Some(elsewhere), &["fix/AUTH-2"], &[]).await;
+        let no_anchor = session_with(&pg, None, &["fix/AUTH-2"], &[]).await;
+        let unknown_key = session_with(&pg, Some(r1), &[], &["UTF-8 and AUTH-99"]).await;
+        let counts = sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        assert_eq!(counts.links, 2);
+        assert_eq!(
+            links(&pg, t).await,
+            sorted(vec![
+                link(on_branch, "10002", "branch", "AUTH-2", 1),
+                link(in_prompts, "10003", "prompt", "AUTH-3", 2),
+            ]),
+            "assistant text never links; {other_project} {no_anchor} {unknown_key} are not candidates or match nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn relinking_is_a_full_idempotent_recompute() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        let s = session_with(&pg, Some(r), &["fix/AUTH-2"], &[]).await;
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        let first = links(&pg, t).await;
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        assert_eq!(links(&pg, t).await, first, "a second sync relinks the same");
+        sqlx_core::query::query(
+            "UPDATE activity.transcript_turns SET git_branch = 'main'
+              WHERE session_id = (SELECT client_session_id FROM activity.sessions WHERE id = $1)",
+        )
+        .bind(s)
+        .execute(pg.pool())
+        .await
+        .unwrap();
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        assert_eq!(links(&pg, t).await, vec![], "a link the text no longer supports is dropped");
+    }
+
+    #[tokio::test]
+    async fn a_removed_issue_keeps_its_links() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let s = session_with(&pg, Some(repo_in(&pg, p).await), &["fix/AUTH-3"], &[]).await;
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        let without_3 = FakeBoard::standard().with(
+            "/rest/agile/1.0/board/42/issue",
+            2,
+            json!({"startAt": 2, "total": 2, "issues": []}),
+        );
+        assert_eq!(sync(&pg, t, &without_3).await.unwrap().removed, 1);
+        assert_eq!(links(&pg, t).await, vec![link(s, "10003", "branch", "AUTH-3", 1)]);
+    }
+
+    #[tokio::test]
+    async fn a_renamed_issue_links_by_its_old_and_new_keys() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        let old = session_with(&pg, Some(r), &["fix/auth-3"], &[]).await;
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        let renamed = FakeBoard::standard().with(
+            "/rest/agile/1.0/board/42/issue",
+            2,
+            json!({"startAt": 2, "total": 3, "issues": [{"id": "10003", "key": "PLAT-9", "fields": {}}]}),
+        );
+        let new = session_with(&pg, Some(r), &[], &["PLAT-9"]).await;
+        sync(&pg, t, &renamed).await.unwrap();
+        assert_eq!(
+            links(&pg, t).await,
+            sorted(vec![
+                link(old, "10003", "branch", "AUTH-3", 1),
+                link(new, "10003", "prompt", "PLAT-9", 1),
+            ])
+        );
+        let keys: Vec<(String,)> = sqlx_core::query_as::query_as(
+            "SELECT k.key FROM sensei.tracker_task_keys k JOIN sensei.tracker_tasks t ON t.id = k.task_id
+              WHERE t.tracker_id = $1 AND t.external_id = '10003' ORDER BY 1",
+        )
+        .bind(t)
+        .fetch_all(pg.pool())
+        .await
+        .unwrap();
+        assert_eq!(keys, vec![("AUTH-3".into(),), ("PLAT-9".into(),)]);
+    }
+
+    #[tokio::test]
+    async fn candidates_are_read_in_chunks() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let r = repo_in(&pg, p).await;
+        for _ in 0..205 {
+            session_with(&pg, Some(r), &["AUTH-2"], &[]).await;
+        }
+        assert_eq!(sync(&pg, t, &FakeBoard::standard()).await.unwrap().links, 205);
+    }
+
+    #[tokio::test]
+    async fn a_session_pruned_before_apply_is_skipped() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let live = session_with(&pg, Some(repo_in(&pg, p).await), &[], &[]).await;
+        let row = pg.tracker_by_id(t).await.unwrap().unwrap();
+        let snapshot = JiraAdapter
+            .fetch_snapshot(
+                &FakeBoard::standard(),
+                &BoardScope { base_url: row.base_url, board_ref: row.board_ref },
+                &Default::default(),
+            )
+            .await
+            .unwrap();
+        let to = |s| crate::tracker::Link {
+            session_id: s,
+            task_external_id: "10002".into(),
+            source: crate::tracker::LinkSource::Prompt,
+            matched_key: "AUTH-2".into(),
+            mentions: 1,
+        };
+        let counts = pg
+            .apply_tracker_snapshot(
+                t,
+                &row.secret_service,
+                &snapshot,
+                &json!({}),
+                &[to(live), to(uuid::Uuid::new_v4())],
+            )
+            .await
+            .expect("no FK error");
+        assert_eq!(counts.links, 1);
+        assert_eq!(links(&pg, t).await, vec![link(live, "10002", "prompt", "AUTH-2", 1)]);
+    }
+
+    /// Jira, but every link it produces breaks the `mentions > 0` check.
+    struct BrokenLinks;
+
+    #[async_trait::async_trait]
+    impl crate::tracker::TrackerAdapter for BrokenLinks {
+        fn kind(&self) -> crate::tracker::TrackerKind {
+            JiraAdapter.kind()
+        }
+        fn connect_params(
+            &self,
+            body: &serde_json::Value,
+        ) -> Result<crate::tracker::ConnectParams, crate::tracker::ParamError> {
+            JiraAdapter.connect_params(body)
+        }
+        fn auth(
+            &self,
+            account: &str,
+            token: &crate::tracker::ApiToken,
+        ) -> crate::tracker::AuthScheme {
+            JiraAdapter.auth(account, token)
+        }
+        async fn validate(
+            &self,
+            t: &dyn GetTransport,
+            p: &crate::tracker::ConnectParams,
+        ) -> Result<crate::tracker::Validated, crate::tracker::ValidateError> {
+            JiraAdapter.validate(t, p).await
+        }
+        async fn fetch_snapshot(
+            &self,
+            t: &dyn GetTransport,
+            board: &BoardScope,
+            prev: &crate::tracker::PrevState,
+        ) -> Result<crate::tracker::Snapshot, TrackerError> {
+            JiraAdapter.fetch_snapshot(t, board, prev).await
+        }
+        fn match_links(
+            &self,
+            session: &crate::tracker::SessionText,
+            known: &[crate::tracker::KnownTask],
+        ) -> Vec<crate::tracker::Link> {
+            JiraAdapter
+                .match_links(session, known)
+                .into_iter()
+                .map(|l| crate::tracker::Link { mentions: 0, ..l })
+                .collect()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_database_failure_changes_no_rows_and_is_recorded_as_db() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        session_with(&pg, Some(repo_in(&pg, p).await), &["fix/AUTH-2"], &[]).await;
+        sync(&pg, t, &FakeBoard::standard()).await.unwrap();
+        let (before, before_links) = (rows(&pg, t).await, links(&pg, t).await);
+        let r = sync_tracker(
+            &pg,
+            &TrackerLocks::default(),
+            t,
+            &BrokenLinks,
+            &FakeBoard::standard(),
+            SYNC_DEADLINE,
+        )
+        .await;
+        assert!(matches!(r, Err(SyncError::Db(_))), "{r:?}");
+        assert_eq!((rows(&pg, t).await, links(&pg, t).await), (before, before_links));
+        assert_eq!(pg.tracker_by_id(t).await.unwrap().unwrap().last_error.as_deref(), Some("db"));
+    }
+
+    #[tokio::test]
+    async fn a_non_jira_adapter_links_by_repo_scope() {
+        let Ok(pg) = PgStore::connect_test().await else { return };
+        let (t, p) = connected_tracker(&pg).await;
+        let n = uuid::Uuid::new_v4().simple().to_string();
+        // repo_key goes through the production normaliser, from an SSH remote; the
+        // adapter's scope comes from the HTTPS form of the same project.
+        let key = |remote: String| crate::db::pg_store::normalize_repo_key(&remote).unwrap();
+        let scope_a = key(format!("https://gitlab.com/Group/Sub/A{n}"));
+        let scope_b = key(format!("https://gitlab.com/Group/Sub/B{n}"));
+        let with_remote = |remote: Option<String>| {
+            let pg = pg.clone();
+            async move {
+                let folder = repo_in(&pg, p).await;
+                sqlx_core::query::query(
+                    "UPDATE sensei.repositories SET repo_key = $2
+                      WHERE id = (SELECT repository_id FROM sensei.folders WHERE id = $1)",
+                )
+                .bind(folder)
+                .bind(remote.map(key))
+                .execute(pg.pool())
+                .await
+                .unwrap();
+                folder
+            }
+        };
+        let in_a = session_with(
+            &pg,
+            Some(with_remote(Some(format!("git@gitlab.com:Group/Sub/A{n}.git"))).await),
+            &[],
+            &["#12"],
+        )
+        .await;
+        let in_b = session_with(
+            &pg,
+            Some(with_remote(Some(format!("git@gitlab.com:Group/Sub/B{n}.git"))).await),
+            &[],
+            &["#12 #12"],
+        )
+        .await;
+        session_with(
+            &pg,
+            Some(with_remote(Some(format!("git@gitlab.com:Group/Sub/C{n}.git"))).await),
+            &[],
+            &["#12"],
+        )
+        .await;
+        session_with(&pg, Some(with_remote(None).await), &[], &["#12"]).await;
+        let counts = sync_tracker(
+            &pg,
+            &TrackerLocks::default(),
+            t,
+            fake_adapter([scope_a, scope_b]),
+            &FakeBoard::empty(),
+            SYNC_DEADLINE,
+        )
+        .await
+        .unwrap();
+        assert_eq!(counts.links, 2);
+        assert_eq!(
+            links(&pg, t).await,
+            sorted(vec![
+                link(in_a, "gid://issue/1", "prompt", "#12", 1),
+                link(in_b, "gid://issue/2", "prompt", "#12", 2),
+            ]),
+            "one key, two repos, two tasks; no matching scope or no repo_key links nothing"
+        );
     }
 }

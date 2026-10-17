@@ -80,7 +80,7 @@ pub async fn sync_stored(
     let adapter = crate::tracker::TrackerKind::parse(&row.kind)
         .and_then(crate::tracker::adapter_for_kind)
         .ok_or(SyncError::Failed(TrackerError::UnsupportedTracker))?;
-    let transport = match transport_for(rt, adapter.as_ref(), row, SYNC_RETRIES).await {
+    let transport = match transport_for(rt, adapter, row, SYNC_RETRIES).await {
         Ok(t) => t,
         Err(e) => {
             if let Err(db) = pg.mark_tracker_error(row.id, &row.secret_service, e.code()).await {
@@ -89,7 +89,7 @@ pub async fn sync_stored(
             return Err(SyncError::Failed(e));
         }
     };
-    sync_tracker(pg, &rt.locks, row.id, adapter.as_ref(), transport.as_ref(), SYNC_DEADLINE).await
+    sync_tracker(pg, &rt.locks, row.id, adapter, transport.as_ref(), SYNC_DEADLINE).await
 }
 
 #[cfg(test)]

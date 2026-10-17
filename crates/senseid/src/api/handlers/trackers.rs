@@ -118,19 +118,13 @@ pub(crate) async fn connect_tracker(
     };
     let (base_url, board_ref) = (params.base_url.clone(), params.board_ref.clone());
     let rt = state.trackers.clone();
-    let connected = match connect(
-        &state.pg,
-        rt.secrets.clone(),
-        adapter.as_ref(),
-        transport.as_ref(),
-        project,
-        params,
-    )
-    .await
-    {
-        Ok(c) => c,
-        Err(e) => return connect_failure(e, &base_url, &board_ref),
-    };
+    let connected =
+        match connect(&state.pg, rt.secrets.clone(), adapter, transport.as_ref(), project, params)
+            .await
+        {
+            Ok(c) => c,
+            Err(e) => return connect_failure(e, &base_url, &board_ref),
+        };
     let row = match state.pg.tracker_by_id(connected.tracker_id).await {
         Ok(Some(row)) => row,
         _ => return internal(),
@@ -234,6 +228,46 @@ pub(crate) async fn sync_tracker(
         Err(SyncError::Failed(e)) => fail(StatusCode::BAD_GATEWAY, e.code()),
         Err(SyncError::Db(_)) => internal(),
     }
+}
+
+/// `GET /api/projects/{id}/tracker-tasks/{key}`
+pub(crate) async fn get_tracker_task(
+    State(state): State<AppState>,
+    Path((id, key)): Path<(String, String)>,
+) -> Response {
+    let project = match known_project(&state, &id).await {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let task = match state.pg.tracker_task_detail(project, &key).await {
+        Ok(Some(task)) => task,
+        Ok(None) => return fail(StatusCode::NOT_FOUND, "task_not_found"),
+        Err(_) => return internal(),
+    };
+    let sessions: Vec<serde_json::Value> = task
+        .sessions
+        .iter()
+        .map(|s| {
+            let links: Vec<serde_json::Value> = s
+                .links
+                .iter()
+                .map(|l| {
+                    serde_json::json!({
+                        "source": l.source, "matched_key": l.matched_key, "mentions": l.mentions,
+                    })
+                })
+                .collect();
+            serde_json::json!({"id": s.id, "started_at": s.started_at, "links": links})
+        })
+        .collect();
+    Json(serde_json::json!({
+        "task": {
+            "key": task.key, "summary": task.summary, "issue_type": task.issue_type,
+            "status": task.status, "removed": task.removed,
+        },
+        "sessions": sessions,
+    }))
+    .into_response()
 }
 
 #[cfg(test)]
@@ -617,5 +651,73 @@ mod tests {
         drop(held);
         let listed = settled(&h, p).await;
         assert_eq!(listed[0]["status"], json!("connected"), "{listed}");
+    }
+
+    #[tokio::test]
+    async fn a_ticket_lists_its_linked_sessions_by_current_or_former_key() {
+        use crate::tracker::test_support::{repo_in, session_with};
+        let h = harness().await;
+        let p = project(&h).await;
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let repo = repo_in(&h.state.pg, p).await;
+        let sess = session_with(&h.state.pg, Some(repo), &["fix/auth-3"], &["AUTH-3 please"]).await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+
+        let (st, b) =
+            call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/auth-3"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let v = json(&b);
+        assert_eq!(v["task"]["key"], json!("AUTH-3"));
+        assert_eq!(v["task"]["summary"], json!("summary AUTH-3"));
+        assert_eq!(v["task"]["removed"], json!(false));
+        assert_eq!(v["sessions"].as_array().map(Vec::len), Some(1), "{b}");
+        assert_eq!(v["sessions"][0]["id"], json!(sess));
+        assert!(v["sessions"][0]["started_at"].is_string());
+        assert_eq!(
+            v["sessions"][0]["links"],
+            json!([
+                {"source": "branch", "matched_key": "AUTH-3", "mentions": 1},
+                {"source": "prompt", "matched_key": "AUTH-3", "mentions": 1},
+            ])
+        );
+
+        // Renamed in Jira: the old key still finds the ticket.
+        h.factory.serve(
+            &format!("https://{s}"),
+            FakeBoard::standard().with(
+                "/rest/agile/1.0/board/42/issue",
+                2,
+                json!({"startAt": 2, "total": 3, "issues": [{"id": "10003", "key": "PLAT-9", "fields": {}}]}),
+            ),
+        );
+        let (st, b) =
+            call(&h, "POST", &format!("/api/projects/{p}/trackers/sync"), None, None).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let (st, b) =
+            call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/AUTH-3"), None, None).await;
+        assert_eq!((st, json(&b)["task"]["key"].clone()), (StatusCode::OK, json!("PLAT-9")), "{b}");
+
+        let missing =
+            call(&h, "GET", &format!("/api/projects/{p}/tracker-tasks/AUTH-404"), None, None).await;
+        assert_eq!(
+            (missing.0, json(&missing.1)["error"].clone()),
+            (StatusCode::NOT_FOUND, json!("task_not_found"))
+        );
+        let foreign = call(
+            &h,
+            "GET",
+            &format!("/api/projects/{p}/tracker-tasks/AUTH-3"),
+            None,
+            Some("https://evil.com"),
+        )
+        .await;
+        assert_eq!(foreign.0, StatusCode::FORBIDDEN, "reads are guarded too");
+        let unknown = uuid::Uuid::new_v4();
+        let gone =
+            call(&h, "GET", &format!("/api/projects/{unknown}/tracker-tasks/AUTH-3"), None, None)
+                .await;
+        assert_eq!(json(&gone.1)["error"], json!("project_not_found"));
     }
 }

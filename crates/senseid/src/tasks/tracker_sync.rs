@@ -177,7 +177,8 @@ mod tests {
             .execute(pg.pool())
             .await
             .unwrap();
-        let _ = tick_scoped(&pg, &rt, Some(&[])).await;
+        // Drain only this secret: a parallel test's tick would drain it with its own store.
+        let _ = tick_with(&pg, &rt, Some(&[]), &row.secret_service).await;
         assert!(!store.has(&row.secret_service), "the cascade's tombstone is drained by the tick");
     }
 

@@ -16,14 +16,15 @@
     "F6 app screen",
     "F5 live verification"
   ],
-  "current_phase": "F3 linking",
+  "current_phase": "F4 usage",
   "completed": [
     "F1.2 schema (7 DB tests green; deployed to sensei_test)",
     "F1.3 pure core (21 tests green; http::bounded_builder extracted, federation uses it)",
     "F1.4 jira adapter + transport + secret + sync coordinator + connect/drain (39 tests green; 70 tracker tests total, 5/5 repeat runs)",
     "F1.5 api + guards + cli (24 senseid + 7 cli tests) and F2 scheduled sync (folded in: status needs the tracker_sync interval)",
-    "Review (approve depth) of 403b303a^..6bd154ca: 5 reviewers; fixes G1 sync data, G2 credential lifecycle, G3 transport tests, G4 guard tests, G5 docs \u2014 uncommitted pending user",
-    "develop (incl. linux_support #270) merged in 5ddb6df0; rustup-less rust-analyzer fallback 2b0edf95 fixes the 6 baseline failures"
+    "Review (approve depth) of 403b303a^..6bd154ca: 5 reviewers; fixes G1 sync data, G2 credential lifecycle, G3 transport tests, G4 guard tests, G5 docs — uncommitted pending user",
+    "develop (incl. linux_support #270) merged in 5ddb6df0; rustup-less rust-analyzer fallback 2b0edf95 fixes the 6 baseline failures",
+    "F3 linking (20 tests red-first incl. owner-rank gap found by mutation; 120 tracker tests green; full suite 3643 pass / 1 known load flake; mutations M1,M3-M8 caught, M2 equivalent: prefixes are '-'-terminated so order cannot change a match)"
   ],
   "decomposition_approved": "2026-10-16 (user)",
   "gate_status": "pass",
@@ -31,16 +32,17 @@
   "test_db": "sensei_test created 2026-10-16 (user approved); TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test",
   "open_questions": [],
   "known_broken": [
-    "sensei MCP index: 'folder not indexed' for this repo \u2014 grep fallback",
+    "sensei MCP index: 'folder not indexed' for this repo — grep fallback",
     "update_phase MCP returns 404",
-    "2 indexer corpus tests flake only under full-suite load (a_scanned_repository_records_its_project_in_the_junction, every_stage_reaches_the_progress_stream); pass in isolation and with tracker tests; ruled out: env mutation, scan config, fd limit (524288), Postgres connections (no 'too many clients'). Root cause open."
+    "2 indexer corpus tests flake only under full-suite load (a_scanned_repository_records_its_project_in_the_junction, every_stage_reaches_the_progress_stream); pass in isolation and with tracker tests; ruled out: env mutation, scan config, fd limit (524288), Postgres connections (no 'too many clients'). Root cause open.",
+    "tracker tests: drains spawned by connect/disconnect use the global prefix with each test's own MemoryStore, so a parallel test can drain another's due tombstone (seen once: deleting_a_project_lets_the_next_tick_delete_its_secret). Tick-vs-tick theft fixed by tick_with(own secret); full fix = per-runtime secret prefix. Also seen once, not reproduced in 4 runs: no_db_connection_is_held_while_fetching."
   ],
   "blocked": [
     "F1.1 fixture capture needs user's Jira tenant (C11 still UNCHECKABLE)",
     "F5 needs P0 = setup, not code: consent to Claude Code transcripts + watch the repos (2026-10-17 diagnosis)"
   ],
-  "next_command": "F3: Step 4.5 pre-implementation swarm on R6/R7 linking, then tests red-first",
-  "spec_audit_4_5": "2026-10-16: 3 reviewers (conformance, failure-mode, data-correctness) \u2192 14 findings; spec corrected (3-phase\u21925-step sync, no tx across I/O, atomic relink in apply tx, async first sync, keyring spawn_blocking+timeout, board-id canonicalisation, URL policy on require_secure_url). Re-audit \u2192 7 contradictions fixed. Awaiting user confirmation of corrections.",
+  "next_command": "F4: usage metrics (R7) + sprints/tracker-tasks/unlinked routes + CLI usage/sprints, tests red-first",
+  "spec_audit_4_5": "2026-10-16: 3 reviewers (conformance, failure-mode, data-correctness) → 14 findings; spec corrected (3-phase→5-step sync, no tx across I/O, atomic relink in apply tx, async first sync, keyring spawn_blocking+timeout, board-id canonicalisation, URL policy on require_secure_url). Re-audit → 7 contradictions fixed. Awaiting user confirmation of corrections.",
   "baseline": {
     "date": "2026-10-16",
     "cmd": "TEST_DATABASE_URL=postgresql://localhost:5432/sensei_test cargo test -p senseid --bin senseid",
@@ -61,16 +63,16 @@
       ]
     },
     "load_flaky_preexisting": [
-      "db::pg_store::tool_calls_tests::* (rotating case; fails with tracker tests SKIPPED too \u2014 verified 2026-10-16)",
+      "db::pg_store::tool_calls_tests::* (rotating case; fails with tracker tests SKIPPED too — verified 2026-10-16)",
       "indexer::pipeline::corpus::a_scanned_repository_records_its_project_in_the_junction",
       "tasks::index_audit::tests::audit_repairs_nested_standalone"
     ]
   },
-  "last_verify": "2026-10-17: full senseid 3621 pass / 2 fail (both load-only corpus flakes); cli 66/66; clippy -D warnings 0; fmt 0; lints 0",
+  "last_verify": "2026-10-17 F3: full senseid 3643 pass / 1 fail (tool_calls_tests load flake, passes alone); tracker 120/120; clippy 0; fmt 0; lints 0",
   "checkpoint_path": "docs/checkpoints/tracker-jira-linkage.md",
   "committed": "F1.2+F1.3 committed by user in 403b303a (2026-10-16 19:52)",
   "workarounds": [
-    "tracker/transport.rs tests: impl RawGet for Ref<'_> instead of &Scripted \u2014 Rust indexer miscounts impl-for-&T (backlog)"
+    "tracker/transport.rs tests: impl RawGet for Ref<'_> instead of &Scripted — Rust indexer miscounts impl-for-&T (backlog)"
   ],
   "spec_amendments_during_build": [
     "gate 2a scoped to non-test code",
@@ -80,16 +82,20 @@
     "guard 403 body code `forbidden_caller` (distinct from Jira `forbidden`)",
     "tick_scoped(only) for test isolation; production tick = all trackers",
     "F2 folded into F1.5",
-    "known_project() 404s unknown uuids (resolve_project_uuid accepts any uuid)"
+    "known_project() 404s unknown uuids (resolve_project_uuid accepts any uuid)",
+    "R6 boundary: `_` separates again (3db9cee9 had made it part of a word, contradicting gate 1a `feature_AUTH-420`); consumed spans still stop MY_PROJ-12 -> PROJ-12 when MY_PROJ is known",
+    "KnownTask gains `current: bool` (the alias tie-break needs the task's current key)",
+    "GET tracker-tasks/{key}: 404 code `task_not_found`; sessions limited to current candidates (R1)",
+    "tracker adapter registry is `&'static [&'static dyn TrackerAdapter]` (house shape of registered_adapters) so match_links can run in spawn_blocking"
   ],
   "gate_1l": "sync part done (FakeAdapter seam test); link + usage parts land with F3/F4",
   "corrections": [
-    "F1 was marked complete without the 1l seam test and two 1k tests \u2014 corrected in review (added); 1l link/usage parts belong to F3/F4",
+    "F1 was marked complete without the 1l seam test and two 1k tests — corrected in review (added); 1l link/usage parts belong to F3/F4",
     "coordinator no longer upper-cases keys (Jira logic had leaked into pg_store; found by the seam test)"
   ],
   "review_low_findings": [
-    "keyring set that times out can complete after the 10 min grace \u2192 orphaned entry; abandoned spawn_blocking threads uncapped",
-    "DB tests skip silently without a DB (`let Ok(pg) = connect_test() else return`) \u2014 CI must set TEST_DATABASE_URL",
+    "keyring set that times out can complete after the 10 min grace → orphaned entry; abandoned spawn_blocking threads uncapped",
+    "DB tests skip silently without a DB (`let Ok(pg) = connect_test() else return`) — CI must set TEST_DATABASE_URL",
     "CLI connect help lacks the env-var visibility caveat"
   ]
 }

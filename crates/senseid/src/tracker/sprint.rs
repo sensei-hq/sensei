@@ -32,7 +32,7 @@ pub struct SprintRank {
     pub id: uuid::Uuid,
     pub state: SprintState,
     pub start_at: Option<chrono::DateTime<chrono::Utc>>,
-    /// Adapter-supplied creation order (Jira: the numeric sprint id).
+    /// Adapter-supplied creation order (e.g. a numeric sprint id).
     pub seq: i64,
     pub removed: bool,
 }

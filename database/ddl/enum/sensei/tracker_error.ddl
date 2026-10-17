@@ -16,6 +16,7 @@ create type tracker_error as enum (
 , 'token_missing'         -- no keyring entry for the connection
 , 'credential_store'      -- the keyring could not be used (or timed out)
 , 'unsupported_tracker'   -- no adapter registered for the kind
+, 'db'                    -- a database failure during a sync
 );
 
 comment on type tracker_error is
