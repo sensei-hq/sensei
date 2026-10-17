@@ -121,6 +121,12 @@ Full one-liners and prior context: [`history/backlog/writeups.md`](history/backl
   not linked). Ruled out: env mutation, scan config, fd limit, Postgres connection
   exhaustion. Next: make the assertions print the scan's `unreadable`/`errors`.
 
+- **Incremental tracker relink** (deferred from F3, 2026-10-17) — v1 recomputes
+  every candidate session's links on each sync (chunked, prompts capped at 4 KB).
+  Next: a per-tracker watermark (sessions with turns newer than the last relink),
+  with a full recompute only when the known-key prefix set changes. Measure
+  `sum(length(user_text))` per project once transcripts are ingested.
+
 ## Where open work is described
 
 | Concern | Source |

@@ -42,13 +42,17 @@ every DB write, and a registry.
     async fn fetch_snapshot(&self, t: &dyn GetTransport, board: &BoardScope, prev: &PrevState)
         -> Result<Snapshot, TrackerError>;
     /// F3: pure — which known tickets this session's text refers to.
-    fn match_links(&self, session: &SessionText, known: &KnownTasks) -> Vec<Link>;
+    fn match_links(&self, session: &SessionText, known: &[KnownTask]) -> Vec<Link>;
 }
 pub struct Snapshot { pub board_name: Option<String>, pub sprints: Vec<SprintRow>,
                       pub tasks: Vec<TaskRow>,
-                      pub members: Vec<(SprintExtId, Option<Vec<TaskExtId>>)> } // None = unchanged
-pub struct SessionText { pub branches: Vec<String>, pub prompts: Vec<String>,
+                      pub members: Vec<(String, Option<Vec<String>>)> } // sprint ext id → member ext ids; None = unchanged
+pub struct SessionText { pub session_id: Uuid, pub branches: Vec<String>, pub prompts: Vec<String>,
                          pub repo_key: Option<String> }    // F3; GitLab scopes `#12` by repo
+pub struct KnownTask { pub external_id: String, pub key: String,       // one row per KEY ALIAS
+                       pub scope: Option<String> }
+pub struct Link { pub session_id: Uuid, pub task_external_id: String, pub source: LinkSource,
+                  pub matched_key: String, pub mentions: u32 }
 fn adapters() -> Vec<Box<dyn TrackerAdapter>>;               // registry, like transcript/mod.rs
 fn adapter_for_kind(kind: TrackerKind) -> Option<Box<dyn TrackerAdapter>>;
 ```
@@ -143,11 +147,13 @@ sensei project ──< repositories        (existing: repositories_in_projects; 
 | `sensei.sprints` | `id uuid pk`, `tracker_id → trackers cascade`, `external_id text not null`, `seq bigint not null` (adapter-supplied creation order — Jira: the numeric sprint id; never compare `external_id` text), `name text not null`, `state text not null` (common states `future`/`active`/`closed`; adapters map theirs onto these), `start_at`, `end_at`, `complete_at` (nullable), `members_fetched_state text` (state at last membership fetch), `removed_at`, `last_seen_at` | `unique(tracker_id, external_id)` |
 | `sensei.tracker_tasks` | `id uuid pk`, `tracker_id → trackers cascade`, `external_id text not null` (provider issue id), `key text not null` (provider's canonical display key — Jira `AUTH-420` upper-cased; GitLab `group/project#12`), `scope text` (nullable; GitLab project path the key is relative to), `summary text`, `issue_type text`, `status text`, `current_sprint_id uuid → sprints on delete set null`, `removed_at`, `last_seen_at` | `unique(tracker_id, external_id)`; index `(tracker_id, key)` |
 | `sensei.tracker_task_sprints` | `task_id → tracker_tasks cascade`, `sprint_id → sprints cascade` | `pk(task_id, sprint_id)`; index `(sprint_id)` — which sprints list the issue |
-| `sensei.session_task_links` | `session_id → activity.sessions cascade`, `task_id → tracker_tasks cascade`, `source link_source not null` (enum: `branch`, `prompt`, `commit` — `commit` never written in v1), `matched_key text not null`, `mentions integer not null check (mentions > 0)`, `linked_at` | `pk(session_id, task_id, source)`; index `(task_id)` |
+| `sensei.session_task_links` | `session_id → activity.sessions cascade`, `task_id → tracker_tasks cascade`, `source link_source not null` (enum: `branch`, `prompt`, `commit` — `commit` never written in v1), `matched_key text not null`, `mentions integer not null check (mentions > 0)`, `linked_at timestamptz not null default now()` | `pk(session_id, task_id, source)`; index `(task_id)` |
+| `sensei.tracker_task_keys` | `task_id → tracker_tasks cascade`, `key text not null`, `first_seen_at timestamptz not null default now()` | `pk(task_id, key)`; index `(key)` — **every key a ticket has ever had** (its current key included), so a renamed or moved issue still matches text written with its old key |
 
 `tracker_error` enum: `unauthorized`, `forbidden`, `not_found`, `rate_limited`,
 `http_error`, `transport`, `decode`, `redirect`, `token_missing`,
-`credential_store`, `unsupported_tracker`. `last_error` and sync/connect failures caused by the provider or the
+`credential_store`, `unsupported_tracker`, `db` (a database failure during a sync,
+recorded like the others so status can't read `connected` while every sync fails). `last_error` and sync/connect failures caused by the provider or the
 credential store carry only these codes — never a raw error string (a reqwest error
 carries the URL; a body may carry issue text). R8 adds request-validation codes of
 its own (`invalid_base_url`, `board_not_found`, adapter mismatch codes such as Jira's `board_project_mismatch`,
@@ -302,7 +308,7 @@ connect params `{board_url?, base_url?, board_id?, email, api_token, project_key
 Pagination: advance `startAt` by the number of items returned; stop when
 `isLast == true`, or `startAt >= total`, or a page returns 0 items.
 
-### R5 · Sync coordinator — `tracker::sync(&TrackerRow, &dyn TrackerAdapter, &dyn GetTransport, &PgStore)`
+### R5 · Sync coordinator — `tracker::sync::sync_tracker(pg, locks, tracker_id, adapter, transport, deadline)`
 
 The coordinator is provider-neutral; step 2 is the adapter's `fetch_snapshot`
 (for Jira as described; another adapter decides its own fetches but must return the
@@ -316,23 +322,28 @@ sync runs in five steps (guard → fetch → compute links → apply → outcome
    scheduled tick; the daemon is the only writer). If it's held → `Busy` (manual
    sync → 409; a tick skips this tracker without recording an error). Then write
    `last_attempt_at = now()` (autocommit).
-2. **Fetch, with no DB connection checked out.** Run `adapter.fetch_snapshot` under
-   a whole-sync deadline of `tokio::time::timeout(10 min)`; overrunning maps to
+2. **Fetch, with no DB connection checked out.** Steps 2 **and 3** run under one
+   whole-sync deadline (`tokio::time::timeout(10 min)`); overrunning maps to
    `transport`. For Jira: all sprints and all board issues (every page), then the
    member list of every sprint that **needs it**: state ≠ `closed`, or closed and
    (`members_fetched_state` is NULL or ≠ `closed`). A closed sprint whose members
    were fetched after it closed is never fetched again.
-3. **Compute links, with no transaction open.** *(Lands with F3; until then the apply writes no links.)*
-   - `load_link_inputs(tracker_id)` (a read) returns the candidate sessions' text
-     (R6) and the tracker's existing tasks, removed ones included.
-   - `known` = the snapshot's tasks plus the existing tasks the snapshot doesn't
-     contain (so links to removed issues survive), keyed by **`external_id`**. The
-     snapshot's key wins on a rename.
-   - `adapter.match_links` returns links that name tasks by `external_id`. Newly
-     synced tickets have no row id yet, and don't need one.
+3. **Compute links, with no transaction open** (F3), under the same deadline:
+   - `known` = every **key alias** of the tracker's stored tasks
+     (`tracker_task_keys`, removed tasks included) **plus** the snapshot's tasks'
+     current keys, as `KnownTask { external_id, key, scope }`. Two tasks claiming
+     one key: the snapshot's task wins, then the non-removed one, then the later
+     `last_seen_at`.
+   - Candidate sessions are read in **chunks of 200** (`load_link_inputs(tracker_id,
+     after, limit)`, keyset-paged by session id). Per session: `SELECT DISTINCT
+     git_branch` and each turn's `left(user_text, 4096)` — never `assistant_text`.
+   - `adapter.match_links` runs on a blocking thread (`spawn_blocking`) and returns
+     links that name tasks by `external_id`. Newly synced tickets have no row id
+     yet, and don't need one.
 4. **Apply: one short transaction** in `db/pg_store/trackers.rs`
-   (`apply_tracker_snapshot(tracker_id, snapshot, links)`), only if steps 2–3 fully
-   succeeded. It makes no network or keyring calls:
+   (`apply_tracker_snapshot(id, secret_service, snapshot, params_patch, links)`),
+   only if steps 2–3 fully succeeded. It sets `SET LOCAL statement_timeout =
+   '60s'` and makes no network or keyring calls:
    - `select … from sensei.trackers where id = $1 and secret_service = $2 for
      update`, `$2` being the credential the sync started with. If the row is gone
      (disconnected, or re-connected to another board, mid-sync) **or re-connected
@@ -340,8 +351,9 @@ sync runs in five steps (guard → fetch → compute links → apply → outcome
      a superseded sync never records its success or failure on the new connection.
      `last_error` writes are conditional on the same `secret_service`.
    - Upsert sprints and tasks by `(tracker_id, external_id)`. A changed key
-     overwrites `key`. Set `last_seen_at = now()` and clear `removed_at` on seen
-     rows.
+     overwrites `key`, and **every current key is added to `tracker_task_keys`**
+     (`on conflict do nothing`), so old keys are kept as aliases. Set
+     `last_seen_at = now()` and clear `removed_at` on seen rows.
    - Set `removed_at = now()` on rows not seen **and `removed_at IS NULL`**.
      **Delete the `tracker_task_sprints` rows of every removed sprint.**
    - For each fetched sprint, replace its `tracker_task_sprints` rows and set
@@ -351,14 +363,19 @@ sync runs in five steps (guard → fetch → compute links → apply → outcome
    - `current_sprint_id` per task = among **non-removed** sprints listing it,
      `active` > `future` > `closed`. Ties go to the later `start_at` (NULL sorts
      last), then the higher `seq`. No such sprint → NULL.
-   - **Relink** (R6): delete this tracker's `session_task_links`, then insert the
-     step-3 links, resolving `external_id → id` inside the transaction. A link
-     whose session no longer exists (deleted since step 3) is dropped.
+   - **Relink** (R6): `SELECT id FROM activity.sessions WHERE id = ANY($links'
+     sessions) FOR KEY SHARE` — the sessions still present, locked against a
+     concurrent prune — then delete this tracker's `session_task_links` and insert
+     the step-3 links for those sessions only, in one `INSERT … SELECT FROM
+     unnest(…)` that resolves `external_id → id` in SQL. A session pruned since
+     step 3 is skipped, never an FK error.
    - Store `params.board_name`, set `last_success_at = now()` and
      `last_error = NULL`, then commit.
    Sprints, tasks, memberships and links commit **together or not at all**.
 5. **Outcome.** Success is recorded inside step 4. Any failure in steps 2–4 →
-   `last_error = <code>` (autocommit), and no data rows change.
+   `last_error = <code>` (autocommit, conditional on the starting `secret_service`):
+   the provider's or credential's code, or `db` for a database failure. No data
+   rows change.
 
 Scheduling: new task **`tracker_sync`** — entry in `tasks::schedule::SCHEDULABLE`,
 in `DESCRIPTIONS` (`api/handlers/scheduled_tasks.rs`), a line in
@@ -376,38 +393,41 @@ Module wiring: `mod tracker;` in `main.rs`, `pub mod tracker_sync;` in
 
 ### R6 · Linking (adapter-owned matching + coordinator-owned relink)
 
-The coordinator gathers `SessionText` (branches, prompts, the session's `repo_key`)
-and `KnownTasks` (all of the tracker's tasks incl. removed, with `key`/`scope`), calls
-`adapter.match_links`, and writes the result. The rules **below are the Jira
-adapter's** `match_links`; the source semantics (`branch`, `prompt`, `mentions`
-meaning) and "link only to a known task" are **common to all adapters**.
+The coordinator gathers `SessionText` (session id, branches, prompts, `repo_key`) and
+`known: &[KnownTask]` (R5 step 3), calls `adapter.match_links`, and writes the
+result. The rules **below are the Jira adapter's** `match_links`; the source
+semantics (`branch`, `prompt`, `mentions`) and "link only to a known key" are
+**common to all adapters**.
 
-- `known` = **every** task of this tracker, **including removed ones** (links to a
-  removed issue survive and stay attributable; reads flag them).
-- Prefixes `P` = distinct prefixes (text before the last `-`) of the keys in `known`
-  (a board can span projects; Jira keys may contain `_`).
-- For each prefix `p`: find case-insensitive occurrences of `p` + `-` + `[0-9]+`
-  (digits greedy). Accept an occurrence only if the character before it is not an
-  ASCII letter or digit (or it is at the start). `_`, `/`, `-`, space and
-  punctuation are all valid separators. Key = `UPPER(p)-digits`, exactly as
-  written (so `AUTH-0420` is a different string from `AUTH-420` and does not
-  link).
-- Link iff key ∈ `known`. With no `known` keys, nothing links — `UTF-8` and
-  `AES-256` cannot match unless `UTF`/`AES` is a synced prefix *and* that issue
-  exists.
-- `branch`: each **distinct** `git_branch` across the session's transcript turns;
-  `mentions` = number of distinct branches containing the key.
-- `prompt`: each turn's `user_text`; `mentions` = total accepted occurrences.
-- Matching is case-insensitive because branch names are free-form
-  (`fix/auth-420-store`).
+- `known` holds **every key alias** of every task, removed ones included (links to
+  a removed or renamed issue survive and stay attributable; reads flag removed).
+- Prefixes `P` = distinct prefixes (text before the last `-`) of the keys in
+  `known`. Jira project keys never contain `-` but may contain `_`.
+- **Matching is on the original bytes, ASCII-only case-insensitive**
+  (`eq_ignore_ascii_case`): no Unicode case folding, so no lookalike match (the
+  Kelvin sign `K` is not `K`) and no byte-offset shift (`ß`, `İ` cannot panic).
+- At each position, try prefixes **longest first**. A match is `p` + `-` +
+  `[0-9]+` (digits greedy), accepted only if the byte before it is not an ASCII
+  letter, digit **or `_`** (or it is the start). `/`, `-`, space and punctuation
+  separate. A matched span is consumed, so `MY_PROJ-12` never also yields `PROJ-12`.
+- The key is `UPPER(p)-digits` with the digits **as written** (`AUTH-0420` is not
+  `AUTH-420` and does not link). That string is `matched_key`.
+- Link iff the key ∈ `known`. With no `known` keys nothing links (`UTF-8`, `AES-256`
+  can't match unless `UTF`/`AES` is a synced prefix *and* that issue exists).
+- `branch`: each **distinct** `git_branch` of the session; `mentions` = number of
+  distinct branches containing a key of that task.
+- `prompt`: each turn's `user_text` (first 4 KB); `mentions` = total accepted
+  occurrences.
+- One `Link` per (session, task, source). If several aliases of one task match
+  under one source, `matched_key` is the alias with the most mentions (ties: the
+  task's current key, then lexical order), and `mentions` is their sum.
 
-Inputs per candidate session: `activity.transcript_turns WHERE session_id =
-sessions.client_session_id`. No `client_session_id` or no turns → no links.
+No `client_session_id` or no turns → no links.
 
-**Relink** (computed in R5 step 3 with no transaction open, written in the R5 step-4
-apply transaction): delete every `session_task_links` row whose task belongs to this
-tracker, then insert the `match_links` output for all candidate sessions. It's a
-full recompute, deterministic and idempotent.
+**Relink** (computed in R5 step 3, written in R5 step 4): a full recompute of this
+tracker's links over all candidate sessions, deterministic and idempotent.
+*Incremental relinking (a per-tracker watermark; full recompute only when the
+known-key prefix set changes) is deferred — backlog.*
 
 ### R7 · Metrics (computed at read; nothing materialised)
 
@@ -466,7 +486,7 @@ sit behind one guard layer built from **existing** code:
 | `POST /api/projects/{id}/trackers/sync` | R5 now. 200 `{counts:{sprints, tasks, removed, links, skipped_members}}`; 409 `{error:"busy"}`; 502 `{error:<code>}`; 404 if no tracker. |
 | `GET /api/projects/{id}/sprints` | the project's sprints, newest first: `[{id, name, state, start_at, end_at, complete_at, candidates_in_window, linked_sprint, linked_other, unlinked}]` (each part a usage object; `null` + `reason` for future). Removed sprints excluded. |
 | `GET /api/projects/{id}/tracker-tasks?sprint={uuid}&include_removed=bool` | the sprint's tickets (or all the project's tickets without `sprint`): `[{key, summary, issue_type, status, current_sprint, sprints:[{id, name}], removed, usage}]`. `sprint` filters to its members; unknown sprint → 404. |
-| `GET /api/projects/{id}/tracker-tasks/{key}` | `{task, usage, sessions:[{id, started_at, sources, matched_key}]}`; case-insensitive key; 404 if absent. |
+| `GET /api/projects/{id}/tracker-tasks/{key}` | `{task, usage, sessions:[{id, started_at, links:[{source, matched_key, mentions}]}]}` (usage from F4); `key` matched case-insensitively against current keys **and aliases**; 404 if absent. |
 | `GET /api/projects/{id}/sessions/unlinked?sprint={uuid}` | the sprint's `unlinked` sessions `[{id, started_at, task}]`; sprint required; unknown → 404. |
 
 Error codes the routes return (body `{error: <code>}`, extra fields where noted):
@@ -557,7 +577,7 @@ in its own slice (recorded in `docs/backlog.md`):
 
 Unattended (CI):
 1. `cargo test -p senseid tracker` passes, including:
-   a. `match_links` with `known = {AUTH-420, AUTH-421, MY_PROJ-12}`: `UTF-8`, `AES-256`, `CVE-2026` → none; `fix/auth-420-store` → AUTH-420/branch; `AUTH-420_fix`, `feature_AUTH-420` → AUTH-420; `xAUTH-420`, `AUTH-4201`, `AUTH-0420` → none; `MY_PROJ-12` → MY_PROJ-12; a prompt with AUTH-420 twice → `mentions = 2`; AUTH-420 and AUTH-421 → two links; empty `known` → none.
+   a. `match_links` with `known = {AUTH-420, AUTH-421, MY_PROJ-12}`: `UTF-8`, `AES-256`, `CVE-2026` → none; `fix/auth-420-store` → AUTH-420/branch; `AUTH-420_fix`, `feature_AUTH-420` → AUTH-420; `xAUTH-420`, `AUTH-4201`, `AUTH-0420` → none; `MY_PROJ-12` → MY_PROJ-12; a prompt with AUTH-420 twice → `mentions = 2`; AUTH-420 and AUTH-421 → two links; empty `known` → none. With `PROJ-12` also known: `MY_PROJ-12` → only MY_PROJ-12. `\u{212A}EY-1` with `KEY-1` known → none. `ßİ AUTH-420` → AUTH-420, no panic. A renamed issue (AUTH-420 → IAM-5, same id) still links a session on `fix/auth-420` after the rename sync (`matched_key` AUTH-420). Two tasks claiming one key → the live one wins.
    b. Sync on the fake transport (fixture-shaped): 2 issue pages + 2 sprints → all rows; a second identical sync changes nothing but `last_seen_at`; an issue missing on the third sync → `removed_at` set once (unchanged on a fourth sync) **and its links still present**; a renamed key → same row, new key.
    c. Page 2 errors → zero data rows changed, `last_error` set, `last_success_at` unchanged.
    d. Issue listed by a closed and an active sprint → `current_sprint_id` = active; both rows in `tracker_task_sprints`; a closed sprint fetched after closing is not re-fetched. A task in closed S1 and future S2, then S2 is deleted in Jira → S2 gets `removed_at`, its membership rows are deleted, and `current_sprint_id` = S1. A sprint member that isn't among the board issues → skipped, `skipped_members = 1`, no error.
