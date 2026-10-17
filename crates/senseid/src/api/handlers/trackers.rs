@@ -15,6 +15,9 @@ use crate::tracker::connect::{ConnectError, connect, disconnect};
 use crate::tracker::runtime::sync_stored;
 use crate::tracker::status::status;
 use crate::tracker::sync::SyncError;
+use crate::tracker::usage::{
+    sprint_usages, ticket_usage_by_repo, ticket_usages, unlinked_in_sprint,
+};
 use crate::tracker::{TrackerKind, ValidateError, adapter_for_kind};
 
 /// One-second waits a first sync spends on a running sync before leaving it to the tick.
@@ -244,6 +247,19 @@ pub(crate) async fn get_tracker_task(
         Ok(None) => return fail(StatusCode::NOT_FOUND, "task_not_found"),
         Err(_) => return internal(),
     };
+    // The ticket exists, so the project has a tracker.
+    let tracker = match tracker_of(&state, project).await {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    let usage = match ticket_usages(&state.pg, tracker.id, Some(&[task.id])).await {
+        Ok(mut u) => u.remove(&task.id).unwrap_or_default(),
+        Err(_) => return internal(),
+    };
+    let by_repo = match ticket_usage_by_repo(&state.pg, tracker.id, task.id).await {
+        Ok(r) => r,
+        Err(_) => return internal(),
+    };
     let sessions: Vec<serde_json::Value> = task
         .sessions
         .iter()
@@ -265,9 +281,162 @@ pub(crate) async fn get_tracker_task(
             "key": task.key, "summary": task.summary, "issue_type": task.issue_type,
             "status": task.status, "removed": task.removed,
         },
+        "usage": usage,
+        "by_repo": by_repo,
         "sessions": sessions,
     }))
     .into_response()
+}
+
+/// The project's tracker, or the response to return (404 `not_connected`).
+async fn tracker_of(state: &AppState, project: uuid::Uuid) -> Result<TrackerRow, Response> {
+    match state.pg.tracker_for_project(project).await {
+        Ok(Some(row)) => Ok(row),
+        Ok(None) => Err(fail(StatusCode::NOT_FOUND, "not_connected")),
+        Err(_) => Err(internal()),
+    }
+}
+
+/// The project's tracker for a read route: the project must exist and be connected.
+async fn connected(state: &AppState, id: &str) -> Result<TrackerRow, Response> {
+    let project = known_project(state, id).await?;
+    tracker_of(state, project).await
+}
+
+/// `?sprint=` as one of the tracker's sprints (404 `sprint_not_found` otherwise).
+async fn known_sprint(
+    state: &AppState,
+    tracker: uuid::Uuid,
+    raw: &str,
+) -> Result<uuid::Uuid, Response> {
+    let not_found = || fail(StatusCode::NOT_FOUND, "sprint_not_found");
+    let id: uuid::Uuid = raw.parse().map_err(|_| not_found())?;
+    let sprints = state.pg.tracker_sprints(tracker).await.map_err(|_| internal())?;
+    sprints.iter().any(|s| s.id == id).then_some(id).ok_or_else(not_found)
+}
+
+/// `?sprint=<uuid>&include_removed=<bool>`
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct SprintQuery {
+    sprint: Option<String>,
+    #[serde(default)]
+    include_removed: bool,
+}
+
+/// `GET /api/projects/{id}/sprints`
+pub(crate) async fn list_sprints(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    let tracker = match connected(&state, &id).await {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    let sprints = match sprint_usages(&state.pg, tracker.id, chrono::Utc::now()).await {
+        Ok(s) => s,
+        Err(_) => return internal(),
+    };
+    let rows: Vec<serde_json::Value> = sprints
+        .into_iter()
+        .map(|su| {
+            let s = su.sprint;
+            let mut row = serde_json::json!({
+                "id": s.id, "name": s.name, "state": s.state, "start_at": s.start_at,
+                "end_at": s.end_at, "complete_at": s.complete_at, "tasks": s.tasks,
+            });
+            let parts = match su.parts {
+                Ok(p) => serde_json::json!({
+                    "candidates_in_window": p.candidates_in_window,
+                    "linked_sprint": p.linked_sprint, "linked_other": p.linked_other,
+                    "unlinked": p.unlinked, "reason": null,
+                }),
+                Err(reason) => serde_json::json!({
+                    "candidates_in_window": null, "linked_sprint": null,
+                    "linked_other": null, "unlinked": null, "reason": reason,
+                }),
+            };
+            if let (Some(row), Some(parts)) = (row.as_object_mut(), parts.as_object()) {
+                row.extend(parts.clone());
+            }
+            row
+        })
+        .collect();
+    Json(rows).into_response()
+}
+
+/// `GET /api/projects/{id}/tracker-tasks?sprint=&include_removed=`
+pub(crate) async fn list_tracker_tasks(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<SprintQuery>,
+) -> Response {
+    let tracker = match connected(&state, &id).await {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    let sprint = match q.sprint.as_deref() {
+        Some(raw) => match known_sprint(&state, tracker.id, raw).await {
+            Ok(s) => Some(s),
+            Err(r) => return r,
+        },
+        None => None,
+    };
+    let tasks = match state.pg.tracker_task_rows(tracker.id, sprint, q.include_removed).await {
+        Ok(t) => t,
+        Err(_) => return internal(),
+    };
+    let ids: Vec<uuid::Uuid> = tasks.iter().map(|t| t.id).collect();
+    let mut usage = match ticket_usages(&state.pg, tracker.id, Some(&ids)).await {
+        Ok(u) => u,
+        Err(_) => return internal(),
+    };
+    let named = |(id, name): &(uuid::Uuid, String)| serde_json::json!({"id": id, "name": name});
+    let rows: Vec<serde_json::Value> = tasks
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "key": t.key, "summary": t.summary, "issue_type": t.issue_type,
+                "status": t.status, "removed": t.removed,
+                "current_sprint": t.current_sprint.as_ref().map(named),
+                "sprints": t.sprints.iter().map(named).collect::<Vec<_>>(),
+                // No linked sessions is a genuinely empty set: zero sessions, null sums.
+                "usage": usage.remove(&t.id).unwrap_or_default(),
+            })
+        })
+        .collect();
+    Json(rows).into_response()
+}
+
+/// `GET /api/projects/{id}/sessions/unlinked?sprint=`
+pub(crate) async fn list_unlinked_sessions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<SprintQuery>,
+) -> Response {
+    let tracker = match connected(&state, &id).await {
+        Ok(t) => t,
+        Err(r) => return r,
+    };
+    let Some(raw) = q.sprint.as_deref() else {
+        return fail(StatusCode::UNPROCESSABLE_ENTITY, "sprint_required");
+    };
+    let sprint = match known_sprint(&state, tracker.id, raw).await {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    match unlinked_in_sprint(&state.pg, tracker.id, sprint, chrono::Utc::now()).await {
+        Ok(Some(sessions)) => Json(
+            sessions
+                .iter()
+                .map(
+                    |s| serde_json::json!({"id": s.id, "started_at": s.started_at, "task": s.task}),
+                )
+                .collect::<Vec<_>>(),
+        )
+        .into_response(),
+        Ok(None) => fail(StatusCode::NOT_FOUND, "sprint_not_found"),
+        Err(_) => internal(),
+    }
 }
 
 #[cfg(test)]
@@ -719,5 +888,89 @@ mod tests {
             call(&h, "GET", &format!("/api/projects/{unknown}/tracker-tasks/AUTH-3"), None, None)
                 .await;
         assert_eq!(json(&gone.1)["error"], json!("project_not_found"));
+    }
+
+    #[tokio::test]
+    async fn usage_routes_return_their_shapes_and_fixed_codes() {
+        use crate::tracker::test_support::{repo_in, session_with};
+        let h = harness().await;
+        let p = project(&h).await;
+        let get = |uri: String| {
+            let h = &h;
+            async move { call(h, "GET", &uri, None, None).await }
+        };
+        assert_eq!(
+            json(&get(format!("/api/projects/{p}/sprints")).await.1)["error"],
+            json!("not_connected")
+        );
+        let s = site();
+        h.factory.serve(&format!("https://{s}"), FakeBoard::standard());
+        let repo = repo_in(&h.state.pg, p).await;
+        let sess = session_with(&h.state.pg, Some(repo), &["fix/AUTH-2"], &[]).await;
+        connect(&h, p, &s).await;
+        settled(&h, p).await;
+
+        let (st, b) = get(format!("/api/projects/{p}/sprints")).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let sprints = json(&b);
+        assert_eq!(sprints.as_array().map(Vec::len), Some(2), "{b}");
+        assert_eq!(sprints[0]["name"], json!("Sprint 2"), "newest first");
+        assert_eq!(sprints[0]["state"], json!("active"));
+        assert_eq!(sprints[0]["tasks"], json!(2), "ticket count");
+        assert!(sprints[0]["candidates_in_window"].is_number(), "{b}");
+        for part in ["linked_sprint", "linked_other", "unlinked"] {
+            assert!(sprints[0][part]["sessions"].is_number(), "{part}: {b}");
+        }
+        let s101 = sprints[0]["id"].as_str().unwrap().to_string();
+
+        let (st, b) = get(format!("/api/projects/{p}/tracker-tasks")).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let tasks = json(&b);
+        assert_eq!(tasks.as_array().map(Vec::len), Some(3));
+        let auth2 = tasks.as_array().unwrap().iter().find(|t| t["key"] == "AUTH-2").unwrap();
+        assert_eq!(auth2["usage"]["sessions"], json!(1));
+        assert_eq!(auth2["current_sprint"]["name"], json!("Sprint 2"));
+        assert_eq!(auth2["sprints"][0]["name"], json!("Sprint 2"));
+        assert_eq!(auth2["removed"], json!(false));
+        let none = tasks.as_array().unwrap().iter().find(|t| t["key"] == "AUTH-1").unwrap();
+        assert_eq!(none["usage"]["sessions"], json!(0));
+        assert!(none["usage"]["active_secs"].is_null());
+
+        let (_, b) = get(format!("/api/projects/{p}/tracker-tasks?sprint={s101}")).await;
+        assert_eq!(json(&b).as_array().map(Vec::len), Some(2), "{b}");
+        let unknown = uuid::Uuid::new_v4();
+        let (st, b) = get(format!("/api/projects/{p}/tracker-tasks?sprint={unknown}")).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::NOT_FOUND, json!("sprint_not_found"))
+        );
+
+        let (st, b) = get(format!("/api/projects/{p}/tracker-tasks/AUTH-2")).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        let detail = json(&b);
+        assert_eq!(detail["usage"]["sessions"], json!(1));
+        assert_eq!(detail["by_repo"].as_array().map(Vec::len), Some(1));
+        assert_eq!(detail["by_repo"][0]["usage"]["sessions"], json!(1));
+
+        let (st, b) = get(format!("/api/projects/{p}/sessions/unlinked")).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::UNPROCESSABLE_ENTITY, json!("sprint_required"))
+        );
+        let (st, b) = get(format!("/api/projects/{p}/sessions/unlinked?sprint={s101}")).await;
+        assert_eq!(st, StatusCode::OK, "{b}");
+        assert!(
+            !json(&b).as_array().unwrap().iter().any(|s| s["id"] == json!(sess)),
+            "a linked session is not unlinked"
+        );
+        let (st, b) = get(format!("/api/projects/{p}/sessions/unlinked?sprint={unknown}")).await;
+        assert_eq!(
+            (st, json(&b)["error"].clone()),
+            (StatusCode::NOT_FOUND, json!("sprint_not_found"))
+        );
+        let foreign =
+            call(&h, "GET", &format!("/api/projects/{p}/sprints"), None, Some("https://evil.com"))
+                .await;
+        assert_eq!(foreign.0, StatusCode::FORBIDDEN);
     }
 }

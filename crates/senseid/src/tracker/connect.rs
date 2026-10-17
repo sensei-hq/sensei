@@ -52,7 +52,7 @@ pub async fn connect(
     let validated = adapter.validate(transport, &params).await.map_err(ConnectError::Validate)?;
 
     // 1. Record the new secret before it exists, so no crash can orphan it.
-    let service = format!("com.sensei.tracker.{kind}.{}", uuid::Uuid::new_v4());
+    let service = format!("{}{kind}.{}", store.namespace(), uuid::Uuid::new_v4());
     let grace =
         chrono::Duration::from_std(PENDING_GRACE).unwrap_or_else(|_| chrono::Duration::minutes(10));
     pg.write_pending_tombstone(&service, &params.account, chrono::Utc::now() + grace)
@@ -140,12 +140,14 @@ pub struct DrainReport {
 /// Every keyring entry the tracker integration writes starts with this.
 pub const SECRET_PREFIX: &str = "com.sensei.tracker.";
 
-/// Delete every due tombstone's keyring entry, then the tombstone (R3 draining).
+/// Delete every due tombstone's keyring entry, then the tombstone (R3 draining),
+/// over the store's namespace.
 pub async fn drain_tombstones(
     pg: &PgStore,
     store: Arc<dyn SecretStore>,
 ) -> Result<DrainReport, String> {
-    drain_matching(pg, store, SECRET_PREFIX).await
+    let namespace = store.namespace();
+    drain_matching(pg, store, &namespace).await
 }
 
 /// [`drain_tombstones`] over the services starting with `prefix`.
@@ -254,7 +256,8 @@ pub(crate) mod tests {
             ("AUTH", "dev@example.com")
         );
         assert_eq!(row.params["board_name"], serde_json::json!("AUTH Scrum"));
-        assert!(row.secret_service.starts_with("com.sensei.tracker.jira."));
+        assert!(row.secret_service.starts_with(&format!("{}jira.", store.namespace)));
+        assert!(row.secret_service.starts_with(SECRET_PREFIX));
         assert!(store.has(&row.secret_service));
         assert_eq!(
             tombstone_due(&pg, &row.secret_service).await,
@@ -455,8 +458,7 @@ pub(crate) mod tests {
         let Ok(pg) = PgStore::connect_test().await else { return };
         let store = Arc::new(MemoryStore::default());
         let now = chrono::Utc::now();
-        // Own prefix: concurrent connect tests drain the production prefix.
-        let prefix = format!("test.drain.{}.", uuid::Uuid::new_v4());
+        let prefix = format!("{}drain.", store.namespace);
         let (due, pending) = (format!("{prefix}due"), format!("{prefix}pending"));
         pg.write_pending_tombstone(&due, "a", now - chrono::Duration::seconds(1)).await.unwrap();
         pg.write_pending_tombstone(&pending, "a", now + chrono::Duration::minutes(10))
@@ -487,7 +489,7 @@ pub(crate) mod tests {
         pg.write_pending_tombstone(&live, "dev@example.com", now - chrono::Duration::seconds(1))
             .await
             .unwrap();
-        drain_tombstones(&pg, store.clone()).await.unwrap();
+        drain_matching(&pg, store.clone(), &live).await.unwrap();
         assert_eq!(tombstone_due(&pg, &live).await, None, "a referenced tombstone is dropped...");
         assert!(
             !store.deletes.lock().unwrap().contains(&live),
@@ -500,7 +502,7 @@ pub(crate) mod tests {
     /// Seed `n` due tombstones that a slow keyring will take ages to delete.
     async fn slow_backlog(pg: &PgStore, store: &MemoryStore, n: usize) {
         for _ in 0..n {
-            let service = format!("com.sensei.tracker.jira.backlog-{}", uuid::Uuid::new_v4());
+            let service = format!("{}jira.backlog-{}", store.namespace, uuid::Uuid::new_v4());
             pg.write_pending_tombstone(
                 &service,
                 "a",

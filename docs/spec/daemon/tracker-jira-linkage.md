@@ -457,7 +457,7 @@ effect immediately, without waiting for the next relink. Also returns `by_repo:
 parts sum to the total).
 
 **Sprint usage:**
-- `state = 'future'` → `usage: null, reason: "not_started"`.
+- `state = 'future'` → `usage: null, reason: "not_started"`. A non-future sprint without a `start_at`, or a closed one with neither `complete_at` nor `end_at`, has no window → `reason: "no_dates"` (never a `0`).
 - Window: `active` → `[start_at, now())`; `closed` → `[start_at, coalesce(complete_at, end_at))`.
 - `candidates_in_window` = candidate sessions (R1) with `started_at` in the window.
 - Partition: `linked_sprint` = links to ≥1 task in this sprint's
@@ -488,10 +488,10 @@ sit behind one guard layer built from **existing** code:
 | `POST /api/projects/{id}/trackers/{kind}/connect` | `kind` resolved by `adapter_for_kind`; unknown or unregistered → 422 `{error:"unsupported_tracker"}`. Body = the adapter's connect params (Jira: R4, e.g. `{board_url, email, api_token}`). Validate and normalise the URL (R4) → 422. The normalised `(kind, base_url, board_ref)` already connected to **another** project → 409 `{error:"board_already_connected", project:{id, name}}`. The project already connected (same or different board) → **re-connect**: fields and token replaced after validation; a different board drops the old board's sprints/tickets/links (old tracker row replaced). Then `adapter.validate`: credential rejected → 401 `{error:"unauthorized"}`; board/scope missing → 404 `{error:"board_not_found", base_url, board_ref}` (the normalised values, so a UI that sent only `board_url` can name them); adapter-specific mismatches → 422 with the adapter's code (Jira: `board_project_mismatch`). Then persist (R3). Return **201** `{tracker, first_sync:{pending:true}}` straight away, and start the first sync in the background (`tokio::spawn`, under the R5 guard; if a sync is already running it waits it out, polling once a second for up to 15 min, then leaves it to the tick). Connect never waits on a sync, so it finishes in the time of `validate` (2 requests with no 429 retries) plus one keyring call. Clients poll `GET …/trackers` until `status` leaves `pending`. A failed first sync keeps the connection (the credential was valid), and `status` shows `error`. |
 | `DELETE /api/projects/{id}/trackers` | R3 disconnect; 204; 404 if the project has no tracker. |
 | `POST /api/projects/{id}/trackers/sync` | R5 now. 200 `{counts:{sprints, tasks, removed, links, skipped_members}}`; 409 `{error:"busy"}`; 502 `{error:<code>}`; 404 if no tracker. |
-| `GET /api/projects/{id}/sprints` | the project's sprints, newest first: `[{id, name, state, start_at, end_at, complete_at, candidates_in_window, linked_sprint, linked_other, unlinked}]` (each part a usage object; `null` + `reason` for future). Removed sprints excluded. |
-| `GET /api/projects/{id}/tracker-tasks?sprint={uuid}&include_removed=bool` | the sprint's tickets (or all the project's tickets without `sprint`): `[{key, summary, issue_type, status, current_sprint, sprints:[{id, name}], removed, usage}]`. `sprint` filters to its members; unknown sprint → 404. |
-| `GET /api/projects/{id}/tracker-tasks/{key}` | `{task, usage, sessions:[{id, started_at, links:[{source, matched_key, mentions}]}]}` (usage from F4); `key` matched case-insensitively against current keys **and aliases**; sessions are the ticket's current candidates (R1), as for usage; 404 `task_not_found` if absent or the project has no tracker. |
-| `GET /api/projects/{id}/sessions/unlinked?sprint={uuid}` | the sprint's `unlinked` sessions `[{id, started_at, task}]`; sprint required; unknown → 404. |
+| `GET /api/projects/{id}/sprints` | the project's sprints, newest first (`start_at` desc, NULL last, then `seq` desc): `[{id, name, state, start_at, end_at, complete_at, tasks, candidates_in_window, linked_sprint, linked_other, unlinked, reason}]` — `tasks` = tickets the sprint lists; each part a usage object; without a window the count and parts are `null` and `reason` says why (`not_started`, `no_dates`). Removed sprints excluded. 404 `not_connected` without a tracker. |
+| `GET /api/projects/{id}/tracker-tasks?sprint={uuid}&include_removed=bool` | the sprint's tickets (or all the project's tickets without `sprint`): `[{key, summary, issue_type, status, current_sprint, sprints:[{id, name}], removed, usage}]`. `sprint` filters to its members; unknown sprint → 404 `sprint_not_found`. A ticket with no linked sessions has a zero-session usage object (sums `null`, counts `0`). |
+| `GET /api/projects/{id}/tracker-tasks/{key}` | `{task, usage, by_repo:[{repository_id, name, usage}], sessions:[{id, started_at, links:[{source, matched_key, mentions}]}]}`; `key` matched case-insensitively against current keys **and aliases**; sessions are the ticket's current candidates (R1), as for usage; 404 `task_not_found` if absent or the project has no tracker. |
+| `GET /api/projects/{id}/sessions/unlinked?sprint={uuid}` | the sprint's `unlinked` sessions `[{id, started_at, task}]`, oldest first; no `sprint` → 422 `sprint_required`; unknown → 404 `sprint_not_found`; a sprint without a window → `[]`. |
 
 Error codes the routes return (body `{error: <code>}`, extra fields where noted):
 
@@ -499,9 +499,9 @@ Error codes the routes return (body `{error: <code>}`, extra fields where noted)
 |---|---|
 | 401 | `unauthorized` (Jira rejected the credential at connect) |
 | 403 | `forbidden` (the account can't read the board, at connect); `forbidden_caller` (the local-caller guard: foreign `Origin` or non-loopback `Host`) |
-| 404 | `project_not_found`; `not_connected` (sync/disconnect with no tracker); `board_not_found` (+ `base_url`, `board_ref`); `task_not_found` (no ticket with that key or alias) |
+| 404 | `project_not_found`; `not_connected` (sync/disconnect with no tracker); `board_not_found` (+ `base_url`, `board_ref`); `task_not_found` (no ticket with that key or alias); `sprint_not_found` |
 | 409 | `board_already_connected` (+ `project {id, name}`); `busy` |
-| 422 | `unsupported_tracker`; `invalid_base_url`; `email_required`; `token_required`; `board_project_mismatch` |
+| 422 | `unsupported_tracker`; `invalid_base_url`; `email_required`; `token_required`; `board_project_mismatch`; `sprint_required` |
 | 500 | `credential_store`; `internal` (database error) |
 | 502 | a `tracker_error` code from the provider (connect validation or sync): `rate_limited`, `transport`, `http_error`, `redirect`, `decode`, `not_found`, `token_missing`, … |
 

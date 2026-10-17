@@ -26,6 +26,24 @@ pub enum TrackerCmd {
         #[arg(long)]
         project: String,
     },
+    /// The project's sprints, with ticket counts and sessions in each window
+    Sprints {
+        #[arg(long)]
+        project: String,
+    },
+    /// Active AI time and tokens per ticket: all tickets, a sprint's, or one
+    Usage {
+        #[arg(long)]
+        project: String,
+        /// A sprint id or exact name
+        #[arg(long, conflicts_with = "key")]
+        sprint: Option<String>,
+        /// One ticket key (current or former), e.g. AUTH-420
+        key: Option<String>,
+        /// One row per repository (with a ticket key)
+        #[arg(long, requires = "key")]
+        by_repo: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -55,7 +73,12 @@ pub enum ConnectKind {
 /// The project id for `input` (a uuid or an exact project name) from the
 /// `GET /api/projects` list. Zero or several matches is an error naming them.
 pub fn resolve_project(projects: &Value, input: &str) -> Result<String, String> {
-    let list = projects.as_array().map(Vec::as_slice).unwrap_or_default();
+    resolve_named(projects, input, "project")
+}
+
+/// The id of the one `noun` in `list` whose id or exact name is `input`.
+fn resolve_named(list: &Value, input: &str, noun: &str) -> Result<String, String> {
+    let list = list.as_array().map(Vec::as_slice).unwrap_or_default();
     let id_of = |p: &Value| p.get("id").and_then(Value::as_str).map(String::from);
     let name_of = |p: &Value| p.get("name").and_then(Value::as_str).unwrap_or_default().to_string();
     if uuid_like(input) {
@@ -63,7 +86,7 @@ pub fn resolve_project(projects: &Value, input: &str) -> Result<String, String> 
             .iter()
             .filter_map(id_of)
             .find(|id| id.eq_ignore_ascii_case(input))
-            .ok_or_else(|| format!("no project has id {input}"));
+            .ok_or_else(|| format!("no {noun} has id {input}"));
     }
     let matches: Vec<String> =
         list.iter().filter(|p| name_of(p) == input).filter_map(id_of).collect();
@@ -71,13 +94,95 @@ pub fn resolve_project(projects: &Value, input: &str) -> Result<String, String> 
         [one] => Ok(one.clone()),
         [] => {
             let names: Vec<String> = list.iter().map(name_of).collect();
-            Err(format!("no project named {input:?}; projects: {}", names.join(", ")))
+            Err(format!("no {noun} named {input:?}; {noun}s: {}", names.join(", ")))
         }
         many => Err(format!(
-            "{} projects are named {input:?} ({}); pass one id with --project",
+            "{} {noun}s are named {input:?} ({}); pass one id with --{noun}",
             many.len(),
             many.join(", ")
         )),
+    }
+}
+
+/// The sprint id for `input` (a uuid or an exact sprint name) from the
+/// `GET …/sprints` list, by the same rule as projects.
+pub fn resolve_sprint(sprints: &Value, input: &str) -> Result<String, String> {
+    resolve_named(sprints, input, "sprint")
+}
+
+/// Active AI time as `h:mm`; blank when no session had a duration.
+pub fn active_time(secs: Option<f64>) -> String {
+    secs.map(|s| {
+        let minutes = (s.max(0.0) / 60.0).floor() as u64;
+        format!("{}:{:02}", minutes / 60, minutes % 60)
+    })
+    .unwrap_or_default()
+}
+
+/// The usage table's header.
+pub const USAGE_HEADER: [&str; 8] = [
+    "key",
+    "summary",
+    "sessions (branch/prompt)",
+    "active AI time",
+    "fresh tokens",
+    "cache-read",
+    "out tokens",
+    "cost",
+];
+
+/// One usage row's cells, in [`USAGE_HEADER`] order. Unknown values are blank, never `0`.
+pub fn usage_cells(label: &str, summary: &str, usage: &Value) -> Vec<String> {
+    let count = |v: &Value| v.as_i64().map(|n| n.to_string()).unwrap_or_default();
+    vec![
+        label.to_string(),
+        summary.to_string(),
+        format!(
+            "{} ({}/{})",
+            usage["sessions"].as_i64().unwrap_or(0),
+            usage["by_source"]["branch"].as_i64().unwrap_or(0),
+            usage["by_source"]["prompt"].as_i64().unwrap_or(0)
+        ),
+        active_time(usage["active_secs"].as_f64()),
+        count(&usage["tokens_fresh"]),
+        count(&usage["cache_read"]),
+        count(&usage["tokens_out"]),
+        usage["metered_cost"].as_f64().map(|c| format!("{c:.2}")).unwrap_or_default(),
+    ]
+}
+
+/// Left-aligned columns, two spaces apart.
+fn table(header: &[&str], rows: &[Vec<String>]) -> String {
+    let width = |i: usize| {
+        rows.iter()
+            .map(|r| r.get(i).map_or(0, |c| c.chars().count()))
+            .max()
+            .unwrap_or(0)
+            .max(header[i].chars().count())
+    };
+    let widths: Vec<usize> = (0..header.len()).map(width).collect();
+    let line = |cells: Vec<&str>| {
+        cells
+            .iter()
+            .zip(&widths)
+            .map(|(c, w)| format!("{c:<w$}"))
+            .collect::<Vec<_>>()
+            .join("  ")
+            .trim_end()
+            .to_string()
+    };
+    let mut out = vec![line(header.to_vec())];
+    out.extend(rows.iter().map(|r| line(r.iter().map(String::as_str).collect())));
+    out.join("\n")
+}
+
+/// A ticket's summary, shortened for a table cell.
+fn short(v: &Value) -> String {
+    let s = v.as_str().unwrap_or_default();
+    if s.chars().count() > 40 {
+        format!("{}…", s.chars().take(39).collect::<String>())
+    } else {
+        s.into()
     }
 }
 
@@ -245,8 +350,8 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
             }
             let c = &v["counts"];
             println!(
-                "Synced: {} sprints, {} tickets ({} removed, {} sprint members skipped).",
-                c["sprints"], c["tasks"], c["removed"], c["skipped_members"]
+                "Synced: {} sprints, {} tickets, {} session links ({} removed, {} sprint members skipped).",
+                c["sprints"], c["tasks"], c["links"], c["removed"], c["skipped_members"]
             );
             Ok(())
         }
@@ -262,6 +367,129 @@ fn execute(cmd: TrackerCmd) -> Result<(), String> {
                 return Ok(());
             }
             Err(describe_error(status, &resp.json().unwrap_or(Value::Null)))
+        }
+        TrackerCmd::Sprints { project } => {
+            let id = project_id(&project)?;
+            let sprints = get_json(&client, &format!("{base}/api/projects/{id}/sprints"))?;
+            let rows: Vec<Vec<String>> = sprints
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .map(|s| {
+                    let day = |v: &Value| {
+                        v.as_str().map(|d| d.chars().take(10).collect()).unwrap_or_default()
+                    };
+                    let (window, linked, unlinked) = match s["reason"].as_str() {
+                        Some(reason) => (reason.replace('_', " "), String::new(), String::new()),
+                        None => (
+                            s["candidates_in_window"].to_string(),
+                            s["linked_sprint"]["sessions"].to_string(),
+                            s["unlinked"]["sessions"].to_string(),
+                        ),
+                    };
+                    vec![
+                        s["name"].as_str().unwrap_or_default().to_string(),
+                        s["state"].as_str().unwrap_or_default().to_string(),
+                        day(&s["start_at"]),
+                        day(&s["end_at"]),
+                        s["tasks"].to_string(),
+                        window,
+                        linked,
+                        unlinked,
+                    ]
+                })
+                .collect();
+            println!(
+                "{}",
+                table(
+                    &[
+                        "sprint",
+                        "state",
+                        "start",
+                        "end",
+                        "tickets",
+                        "sessions in window",
+                        "linked",
+                        "unlinked"
+                    ],
+                    &rows
+                )
+            );
+            Ok(())
+        }
+        TrackerCmd::Usage { project, sprint, key, by_repo } => {
+            let id = project_id(&project)?;
+            let mut rows = Vec::new();
+            let mut footer = Vec::new();
+            if let Some(key) = key {
+                let t =
+                    get_json(&client, &format!("{base}/api/projects/{id}/tracker-tasks/{key}"))?;
+                rows.push(usage_cells(
+                    t["task"]["key"].as_str().unwrap_or(&key),
+                    &short(&t["task"]["summary"]),
+                    &t["usage"],
+                ));
+                if by_repo {
+                    for r in t["by_repo"].as_array().map(Vec::as_slice).unwrap_or_default() {
+                        rows.push(usage_cells(
+                            &format!("  {}", r["name"].as_str().unwrap_or_default()),
+                            "",
+                            &r["usage"],
+                        ));
+                    }
+                }
+            } else {
+                let mut uri = format!("{base}/api/projects/{id}/tracker-tasks");
+                let mut sprint_row = None;
+                if let Some(sprint) = sprint {
+                    let sprints = get_json(&client, &format!("{base}/api/projects/{id}/sprints"))?;
+                    let sid = resolve_sprint(&sprints, &sprint)?;
+                    uri = format!("{uri}?sprint={sid}");
+                    sprint_row = sprints
+                        .as_array()
+                        .and_then(|l| l.iter().find(|s| s["id"].as_str() == Some(sid.as_str())))
+                        .cloned();
+                }
+                let tasks = get_json(&client, &uri)?;
+                let list = tasks.as_array().map(Vec::as_slice).unwrap_or_default();
+                let worked: Vec<&Value> = list
+                    .iter()
+                    .filter(|t| t["usage"]["sessions"].as_i64().unwrap_or(0) > 0)
+                    .collect();
+                rows.extend(worked.iter().map(|t| {
+                    usage_cells(
+                        t["key"].as_str().unwrap_or_default(),
+                        &short(&t["summary"]),
+                        &t["usage"],
+                    )
+                }));
+                if list.len() > worked.len() {
+                    footer.push(format!(
+                        "{} tickets without AI sessions not shown.",
+                        list.len() - worked.len()
+                    ));
+                }
+                if let Some(s) = sprint_row {
+                    match s["reason"].as_str() {
+                        Some(reason) => footer
+                            .push(format!("Sprint usage: none ({}).", reason.replace('_', " "))),
+                        None => {
+                            // The sprint's own total: each session once, never a sum of tickets.
+                            rows.push(usage_cells("sprint total", "", &s["linked_sprint"]));
+                            footer.push(format!(
+                                "Unlinked sessions in the sprint window: {}.",
+                                s["unlinked"]["sessions"]
+                            ));
+                        }
+                    }
+                }
+            }
+            println!("{}", table(&USAGE_HEADER, &rows));
+            for line in footer {
+                println!("{line}");
+            }
+            Ok(())
         }
     }
 }
@@ -498,5 +726,80 @@ mod tests {
             describe_error(500, &json!({"error": "mystery"})).contains("mystery"),
             "unknown codes are shown, not hidden"
         );
+    }
+
+    #[test]
+    fn sprints_and_usage_parse() {
+        assert_eq!(
+            parse(&["sprints", "--project", "p"]).unwrap(),
+            TrackerCmd::Sprints { project: "p".into() }
+        );
+        assert_eq!(
+            parse(&["usage", "--project", "p", "AUTH-1", "--by-repo"]).unwrap(),
+            TrackerCmd::Usage {
+                project: "p".into(),
+                sprint: None,
+                key: Some("AUTH-1".into()),
+                by_repo: true
+            }
+        );
+        assert_eq!(
+            parse(&["usage", "--project", "p", "--sprint", "Sprint 2"]).unwrap(),
+            TrackerCmd::Usage {
+                project: "p".into(),
+                sprint: Some("Sprint 2".into()),
+                key: None,
+                by_repo: false
+            }
+        );
+        assert!(
+            parse(&["usage", "--project", "p", "--sprint", "s", "AUTH-1"]).is_err(),
+            "both is an error"
+        );
+        assert!(parse(&["usage", "--project", "p", "--by-repo"]).is_err(), "--by-repo needs a key");
+    }
+
+    #[test]
+    fn sprints_resolve_like_projects() {
+        let sprints = json!([
+            {"id": "44444444-4444-4444-4444-444444444444", "name": "Sprint 2"},
+            {"id": "55555555-5555-5555-5555-555555555555", "name": "Sprint 1"},
+            {"id": "66666666-6666-6666-6666-666666666666", "name": "Sprint 1"}
+        ]);
+        assert_eq!(
+            resolve_sprint(&sprints, "Sprint 2"),
+            Ok("44444444-4444-4444-4444-444444444444".into())
+        );
+        let none = resolve_sprint(&sprints, "Sprint 9").unwrap_err();
+        assert!(none.contains("no sprint") && none.contains("Sprint 2"), "{none}");
+        let two = resolve_sprint(&sprints, "Sprint 1").unwrap_err();
+        assert!(two.contains("2 sprints") && two.contains("--sprint"), "{two}");
+    }
+
+    #[test]
+    fn active_time_is_hours_and_minutes_and_blank_when_unknown() {
+        assert_eq!(active_time(Some(5400.0)), "1:30");
+        assert_eq!(active_time(Some(3599.0)), "0:59");
+        assert_eq!(active_time(Some(36_000.0)), "10:00");
+        assert_eq!(active_time(None), "");
+    }
+
+    #[test]
+    fn usage_cells_leave_unknown_values_blank() {
+        let usage = json!({
+            "sessions": 3, "by_source": {"branch": 3, "prompt": 1},
+            "active_secs": 180.0, "active_n": 2,
+            "tokens_fresh": 15, "tokens_fresh_n": 2,
+            "cache_read": null, "cache_read_n": 0,
+            "tokens_out": 40, "tokens_out_n": 1,
+            "metered_cost": null, "metered_cost_n": 0
+        });
+        assert_eq!(
+            usage_cells("AUTH-2", "Login", &usage),
+            vec!["AUTH-2", "Login", "3 (3/1)", "0:03", "15", "", "40", ""]
+        );
+        assert!(USAGE_HEADER.contains(&"active AI time"), "never just \"hours\"");
+        let priced = json!({"sessions": 1, "by_source": {"branch": 1, "prompt": 0}, "metered_cost": 1.5, "metered_cost_n": 1});
+        assert_eq!(usage_cells("K-1", "", &priced)[7], "1.50");
     }
 }

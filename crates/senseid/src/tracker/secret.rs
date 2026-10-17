@@ -18,6 +18,10 @@ pub trait SecretStore: Send + Sync + 'static {
     fn get(&self, service: &str, account: &str) -> Result<ApiToken, TrackerError>;
     /// A missing entry counts as success.
     fn delete(&self, service: &str, account: &str) -> Result<(), TrackerError>;
+    /// The prefix of every service name this store holds; drains match on it.
+    fn namespace(&self) -> String {
+        crate::tracker::connect::SECRET_PREFIX.to_string()
+    }
 }
 
 /// The production store: `gateway_keys`' keyring backend.
@@ -74,15 +78,32 @@ pub mod test_support {
     use std::collections::HashMap;
     use std::sync::Mutex;
 
-    /// In-memory store with failure injection, for lifecycle tests.
-    #[derive(Default)]
+    /// In-memory store with failure injection, for lifecycle tests. Each one has
+    /// its own namespace, so a drain run by one test never reaches another's.
     pub struct MemoryStore {
+        pub namespace: String,
         pub entries: Mutex<HashMap<(String, String), String>>,
         pub fail_set: Mutex<bool>,
         pub fail_delete: Mutex<bool>,
         pub deletes: Mutex<Vec<String>>,
         /// Each delete blocks this long first (a slow or prompting keyring).
         pub delete_delay: Mutex<Option<Duration>>,
+    }
+    impl Default for MemoryStore {
+        fn default() -> Self {
+            MemoryStore {
+                namespace: format!(
+                    "{}test-{}.",
+                    crate::tracker::connect::SECRET_PREFIX,
+                    uuid::Uuid::new_v4().simple()
+                ),
+                entries: Mutex::default(),
+                fail_set: Mutex::default(),
+                fail_delete: Mutex::default(),
+                deletes: Mutex::default(),
+                delete_delay: Mutex::default(),
+            }
+        }
     }
     impl MemoryStore {
         pub fn has(&self, service: &str) -> bool {
@@ -117,6 +138,9 @@ pub mod test_support {
             self.deletes.lock().unwrap().push(service.into());
             self.entries.lock().unwrap().remove(&(service.into(), account.into()));
             Ok(())
+        }
+        fn namespace(&self) -> String {
+            self.namespace.clone()
         }
     }
 }

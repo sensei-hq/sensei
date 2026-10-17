@@ -85,7 +85,16 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   `GET /api/projects/{id}/tracker-tasks/{key}`. 19 tests written red first; mutation-checked.
   Spec fixes: `_` separates again (3db9cee9 contradicted gate 1a); `KnownTask.current`;
   404 `task_not_found`. Adapter registry is now `&'static [&'static dyn TrackerAdapter]`.
-- **Next:** F4 (usage metrics, sprint and ticket lists, unlinked sessions, CLI).
+- **Live connect (2026-10-17):** `got_a_guy` ↔ senecaglobal.jira.com board #333 (12 sprints,
+  728 tickets). Needed `*.jira.com` in the host rule (33417322). 0 links so far: transcript
+  consent is off, so no turns are read.
+- **F4 usage** ✅ R7 usage (one grouped query, JSON-built so NULL sums stay null), the
+  pure sprint window (`not_started`, `no_dates`), ticket usage with `by_repo`, the sprint
+  partition (linked_sprint / linked_other / unlinked), routes `/sprints`,
+  `/tracker-tasks[?sprint]`, `/sessions/unlinked`, usage on `/tracker-tasks/{key}`, CLI
+  `sensei tracker sprints|usage`. The R1 candidate rule is one SQL fragment
+  (`candidate_sessions`) used by linking and every usage read. Tested on the live board.
+- **Next:** F6 (desktop Integrations screen); then F5 once transcripts are consented.
 
 ## Gate for `/sensei:build`
 
@@ -94,4 +103,4 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
 
 ## Next command
 
-`/sensei:build docs/plans/2026-10-15-tracker-jira-linkage.md`, continuing at F4. F1.1 still needs the Jira tenant.
+`/sensei:build docs/plans/2026-10-15-tracker-jira-linkage.md`, continuing at F6. F1.1 still needs the Jira tenant.

@@ -15,6 +15,7 @@ pub mod sprint;
 pub mod status;
 pub mod sync;
 pub mod transport;
+pub mod usage;
 
 use std::collections::HashMap;
 

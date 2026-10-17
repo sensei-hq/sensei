@@ -16,7 +16,7 @@
     "F6 app screen",
     "F5 live verification"
   ],
-  "current_phase": "F4 usage",
+  "current_phase": "F6 app screen",
   "completed": [
     "F1.2 schema (7 DB tests green; deployed to sensei_test)",
     "F1.3 pure core (21 tests green; http::bounded_builder extracted, federation uses it)",
@@ -24,7 +24,8 @@
     "F1.5 api + guards + cli (24 senseid + 7 cli tests) and F2 scheduled sync (folded in: status needs the tracker_sync interval)",
     "Review (approve depth) of 403b303a^..6bd154ca: 5 reviewers; fixes G1 sync data, G2 credential lifecycle, G3 transport tests, G4 guard tests, G5 docs — uncommitted pending user",
     "develop (incl. linux_support #270) merged in 5ddb6df0; rustup-less rust-analyzer fallback 2b0edf95 fixes the 6 baseline failures",
-    "F3 linking (20 tests red-first incl. owner-rank gap found by mutation; 120 tracker tests green; full suite 3643 pass / 1 known load flake; mutations M1,M3-M8 caught, M2 equivalent: prefixes are '-'-terminated so order cannot change a match)"
+    "F3 linking (20 tests red-first incl. owner-rank gap found by mutation; 120 tracker tests green; full suite 3643 pass / 1 known load flake; mutations M1,M3-M8 caught, M2 equivalent: prefixes are '-'-terminated so order cannot change a match)",
+    "F4 usage (12 tests red-first + 1 by_source assertion added after mutation N8 survived; tracker 128/128, cli 70/70; mutations N1-N8 caught); live board got_a_guy↔senecaglobal.jira.com #333 connected (12 sprints, 728 tickets) after *.jira.com host fix"
   ],
   "decomposition_approved": "2026-10-16 (user)",
   "gate_status": "pass",
@@ -34,14 +35,13 @@
   "known_broken": [
     "sensei MCP index: 'folder not indexed' for this repo — grep fallback",
     "update_phase MCP returns 404",
-    "2 indexer corpus tests flake only under full-suite load (a_scanned_repository_records_its_project_in_the_junction, every_stage_reaches_the_progress_stream); pass in isolation and with tracker tests; ruled out: env mutation, scan config, fd limit (524288), Postgres connections (no 'too many clients'). Root cause open.",
-    "tracker tests: drains spawned by connect/disconnect use the global prefix with each test's own MemoryStore, so a parallel test can drain another's due tombstone (seen once: deleting_a_project_lets_the_next_tick_delete_its_secret). Tick-vs-tick theft fixed by tick_with(own secret); full fix = per-runtime secret prefix. Also seen once, not reproduced in 4 runs: no_db_connection_is_held_while_fetching."
+    "2 indexer corpus tests flake only under full-suite load (a_scanned_repository_records_its_project_in_the_junction, every_stage_reaches_the_progress_stream); pass in isolation and with tracker tests; ruled out: env mutation, scan config, fd limit (524288), Postgres connections (no 'too many clients'). Root cause open."
   ],
   "blocked": [
-    "F1.1 fixture capture needs user's Jira tenant (C11 still UNCHECKABLE)",
-    "F5 needs P0 = setup, not code: consent to Claude Code transcripts + watch the repos (2026-10-17 diagnosis)"
+    "F5 needs P0 = setup, not code: consent to Claude Code transcripts + watch the repos (2026-10-17 diagnosis)",
+    "F1.1 fixture capture: tenant now connected (senecaglobal.jira.com #333); live sync parsed 12 sprints/728 issues with the assumed C11 shapes — record as evidence"
   ],
-  "next_command": "F4: usage metrics (R7) + sprints/tracker-tasks/unlinked routes + CLI usage/sprints, tests red-first",
+  "next_command": "F6: desktop Integrations screen (docs/spec/screen/project-integrations.md), tests red-first. F5 waits on transcript consent.",
   "spec_audit_4_5": "2026-10-16: 3 reviewers (conformance, failure-mode, data-correctness) → 14 findings; spec corrected (3-phase→5-step sync, no tx across I/O, atomic relink in apply tx, async first sync, keyring spawn_blocking+timeout, board-id canonicalisation, URL policy on require_secure_url). Re-audit → 7 contradictions fixed. Awaiting user confirmation of corrections.",
   "baseline": {
     "date": "2026-10-16",
@@ -68,7 +68,7 @@
       "tasks::index_audit::tests::audit_repairs_nested_standalone"
     ]
   },
-  "last_verify": "2026-10-17 F3: full senseid 3643 pass / 1 fail (tool_calls_tests load flake, passes alone); tracker 120/120; clippy 0; fmt 0; lints 0",
+  "last_verify": "2026-10-17 F4: full senseid 3652 pass / 1 fail x2 runs (indexer corpus load flakes only); clippy 0; fmt 0; lints 0",
   "checkpoint_path": "docs/checkpoints/tracker-jira-linkage.md",
   "committed": "F1.2+F1.3 committed by user in 403b303a (2026-10-16 19:52)",
   "workarounds": [
@@ -97,5 +97,6 @@
     "keyring set that times out can complete after the 10 min grace → orphaned entry; abandoned spawn_blocking threads uncapped",
     "DB tests skip silently without a DB (`let Ok(pg) = connect_test() else return`) — CI must set TEST_DATABASE_URL",
     "CLI connect help lacks the env-var visibility caveat"
-  ]
+  ],
+  "fixed_during_f4": "tracker test isolation: SecretStore::namespace() — production keeps com.sensei.tracker., each MemoryStore gets its own; connect names secrets and drains match on the store's namespace (was: parallel tests drained each other's tombstones)"
 }

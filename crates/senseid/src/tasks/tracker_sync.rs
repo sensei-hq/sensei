@@ -20,7 +20,8 @@ pub async fn tick_scoped(
     rt: &TrackerRuntime,
     only: Option<&[uuid::Uuid]>,
 ) -> Result<(), String> {
-    tick_with(pg, rt, only, crate::tracker::connect::SECRET_PREFIX).await
+    let namespace = rt.secrets.namespace();
+    tick_with(pg, rt, only, &namespace).await
 }
 
 /// [`tick_scoped`] draining only the tombstones whose service starts with `prefix`.
@@ -145,7 +146,7 @@ mod tests {
     async fn the_tick_drains_due_tombstones() {
         let Ok(pg) = PgStore::connect_test().await else { return };
         let (rt, store, _factory) = fake_runtime();
-        let service = format!("com.sensei.tracker.jira.tick-{}", uuid::Uuid::new_v4());
+        let service = format!("{}jira.tick-{}", store.namespace, uuid::Uuid::new_v4());
         pg.write_pending_tombstone(
             &service,
             "a",

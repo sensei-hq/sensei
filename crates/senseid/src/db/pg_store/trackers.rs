@@ -86,6 +86,7 @@ pub struct LinkedSession {
 /// One ticket of a project's tracker and the candidate sessions linked to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskDetail {
+    pub id: uuid::Uuid,
     pub key: String,
     pub summary: Option<String>,
     pub issue_type: Option<String>,
@@ -148,6 +149,19 @@ fn dedupe_by<T: Clone, K: std::hash::Hash + Eq>(items: &[T], key: impl Fn(&T) ->
     let mut keep: Vec<usize> = seen.into_values().collect();
     keep.sort_unstable();
     keep.into_iter().map(|i| items[i].clone()).collect()
+}
+
+/// The tracker's candidate sessions (spec R1): anchored in a repository of the
+/// tracker's project, whichever repo. One row per session; `tracker` is the SQL
+/// placeholder holding the tracker id.
+pub(crate) fn candidate_sessions(tracker: &str) -> String {
+    format!(
+        "SELECT s.id AS session_id, fp.repository_id
+           FROM activity.sessions s
+           JOIN sensei.folder_projects fp ON fp.folder_id = s.repo_folder_id
+           JOIN sensei.trackers tr ON tr.project_id = fp.project_id
+          WHERE tr.id = {tracker}"
+    )
 }
 
 fn is_unique_violation(e: &sqlx_core::Error) -> bool {
@@ -584,26 +598,26 @@ impl PgStore {
         limit: i64,
     ) -> Result<Vec<SessionText>, String> {
         let rows = sqlx_core::query_as::query_as::<_, (uuid::Uuid, Option<String>, Vec<String>, Vec<String>)>(
-            "WITH c AS (
+            &format!("WITH c AS (
                 SELECT s.id, s.client_session_id, r.repo_key
-                  FROM sensei.trackers tr
-                  JOIN sensei.folder_projects fp ON fp.project_id = tr.project_id
-                  JOIN activity.sessions s ON s.repo_folder_id = fp.folder_id
-                  JOIN sensei.repositories r ON r.id = fp.repository_id
-                 WHERE tr.id = $1 AND ($2::uuid IS NULL OR s.id > $2)
-                 ORDER BY s.id
+                  FROM ({candidates}) cs
+                  JOIN activity.sessions s ON s.id = cs.session_id
+                  JOIN sensei.repositories r ON r.id = cs.repository_id
+                 WHERE ($2::uuid IS NULL OR cs.session_id > $2)
+                 ORDER BY cs.session_id
                  LIMIT $3)
              SELECT c.id, c.repo_key,
                     coalesce((SELECT array_agg(DISTINCT t.git_branch)
                                 FROM activity.transcript_turns t
                                WHERE t.session_id = c.client_session_id AND t.git_branch IS NOT NULL),
-                             '{}'),
+                             '{{}}'),
                     coalesce((SELECT array_agg(left(t.user_text, 4096) ORDER BY t.turn_index)
                                 FROM activity.transcript_turns t
                                WHERE t.session_id = c.client_session_id AND t.user_text IS NOT NULL),
-                             '{}')
+                             '{{}}')
                FROM c ORDER BY c.id",
-        )
+            candidates = candidate_sessions("$1"),
+        ))
         .bind(tracker_id)
         .bind(after)
         .bind(limit)
@@ -656,17 +670,17 @@ impl PgStore {
         let rows = sqlx_core::query_as::query_as::<
             _,
             (uuid::Uuid, Option<chrono::DateTime<chrono::Utc>>, String, String, i32),
-        >(
+        >(&format!(
             "SELECT s.id, s.started_at, l.source::text, l.matched_key, l.mentions
-               FROM sensei.session_task_links l
-               JOIN activity.sessions s ON s.id = l.session_id
-              WHERE l.task_id = $1
-                AND EXISTS (SELECT 1 FROM sensei.folder_projects fp
-                             WHERE fp.folder_id = s.repo_folder_id AND fp.project_id = $2)
-              ORDER BY s.started_at DESC NULLS LAST, s.id, l.source",
-        )
+                   FROM sensei.session_task_links l
+                   JOIN activity.sessions s ON s.id = l.session_id
+                  WHERE l.task_id = $1
+                    AND l.session_id IN (SELECT session_id FROM ({candidates}) c)
+                  ORDER BY s.started_at DESC NULLS LAST, s.id, l.source",
+            candidates =
+                candidate_sessions("(SELECT tracker_id FROM sensei.tracker_tasks WHERE id = $1)"),
+        ))
         .bind(task_id)
-        .bind(project_id)
         .fetch_all(&self.pool)
         .await
         .map_err(err)?;
@@ -678,7 +692,7 @@ impl PgStore {
                 _ => sessions.push(LinkedSession { id, started_at, links: vec![link] }),
             }
         }
-        Ok(Some(TaskDetail { key, summary, issue_type, status, removed, sessions }))
+        Ok(Some(TaskDetail { id: task_id, key, summary, issue_type, status, removed, sessions }))
     }
 
     pub async fn write_pending_tombstone(
