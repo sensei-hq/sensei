@@ -73,8 +73,10 @@ Jira · acme.atlassian.net · project AUTH · board "AUTH Scrum" (#42)
   R9: `connected`; `stale` ("last synced 3 h ago"); `error` (mapped message below);
   `pending` ("first sync running…", also shown after **Replace token** until the new credential syncs).
 - **Sync now** calls `POST …/trackers/sync`. A 409 shows "A sync is already running".
-- **Replace token** opens the form with Board URL and email pre-filled from the
-  connection and the token field empty, then re-connects through R3.
+- **Replace token** opens the form with **Advanced** Site URL + Board id and email
+  pre-filled from the connection (`base_url`, `board_ref`, `account`; the daemon keeps no
+  board URL, and the UI never builds one) and the token field empty, then re-connects
+  through R3.
 - **Disconnect** opens a modal dialog:
   - Title: "Disconnect Jira?"
   - Body: "This removes this project's synced sprints, tickets and session links from
@@ -93,7 +95,7 @@ failure, focus moves to the alert.
 | Code | Shown as | Recovery offered |
 |---|---|---|
 | `invalid_base_url` | "That isn't a Jira Cloud board address. It should look like https://<your-site>.atlassian.net/…/boards/<number> (older sites: <your-site>.jira.com)." | focus Board URL |
-| `unauthorized` | "Jira rejected the email and token." | "Check both, or **create a new token**" (link) |
+| `unauthorized` | "Jira rejected the email and token." (concerns the token field) | "Check both, or **create a new token**" (link) |
 | `forbidden` | "This account can't read that board." | "Ask the board admin for access, or use another account." |
 | `board_not_found` | "No board #<board_id> on <base_url>." (values from the 404 body) | focus Board URL |
 | `email_required` / `token_required` | "Enter your Atlassian account email and an API token." (normally unreachable: Connect is disabled until both are filled) | focus the empty field |
@@ -107,6 +109,7 @@ failure, focus moves to the alert.
 | `not_connected` | "This project has no tracker connected." Reload to the not-connected form. | none |
 | `project_not_found` | "This project no longer exists in sensei." | none |
 | `internal` | "The sensei daemon hit a database error." | **Retry** |
+| `db` (a sync's `last_error`) | "sensei hit a database error while syncing." | **Retry sync** |
 | `unsupported_tracker` | "This tracker type isn't available in this version of sensei." | none |
 | `busy` | "A sync is already running." | none |
 | any other code | "Unexpected error from sensei (<code>)." | **Retry** |

@@ -94,7 +94,15 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
   `/tracker-tasks[?sprint]`, `/sessions/unlinked`, usage on `/tracker-tasks/{key}`, CLI
   `sensei tracker sprints|usage`. The R1 candidate rule is one SQL fragment
   (`candidate_sessions`) used by linking and every usage read. Tested on the live board.
-- **Next:** F6 (desktop Integrations screen); then F5 once transcripts are consented.
+- **F6 app screen** ✅ project window 繋 Integrations (`/project/[id]/integrations`):
+  connect form (board URL or Advanced site + board id, email, token), first-sync polling,
+  connected card (Sync now / Replace token / Disconnect with a confirming dialog), every
+  daemon code in words, failures take focus, the token never kept. `ModalShell` extracted
+  (SignInOverlay and the logs report modal moved onto it); `api.ts` gained one `tryJson`
+  that keeps the error body (`tryPutJson`/`tryPatchJson` now use it). 50 new unit tests;
+  app suite 1837/1837, svelte-check 0. Checked live in headless Chromium against the real
+  board. Not run: the Tauri e2e suite (macOS-only harness); the logs modal live (needs Tauri).
+- **Next:** F5 live verification once Claude Code transcript consent is on.
 
 ## Gate for `/sensei:build`
 
@@ -103,4 +111,4 @@ Run contract: `.sensei/slice-state.json` (resumable without this conversation).
 
 ## Next command
 
-`/sensei:build docs/plans/2026-10-15-tracker-jira-linkage.md`, continuing at F6. F1.1 still needs the Jira tenant.
+`/sensei:build docs/plans/2026-10-15-tracker-jira-linkage.md`, continuing at F5. F1.1 still needs the Jira tenant.

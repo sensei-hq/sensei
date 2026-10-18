@@ -16,7 +16,7 @@
     "F6 app screen",
     "F5 live verification"
   ],
-  "current_phase": "F6 app screen",
+  "current_phase": "F5 live verification",
   "completed": [
     "F1.2 schema (7 DB tests green; deployed to sensei_test)",
     "F1.3 pure core (21 tests green; http::bounded_builder extracted, federation uses it)",
@@ -25,7 +25,8 @@
     "Review (approve depth) of 403b303a^..6bd154ca: 5 reviewers; fixes G1 sync data, G2 credential lifecycle, G3 transport tests, G4 guard tests, G5 docs — uncommitted pending user",
     "develop (incl. linux_support #270) merged in 5ddb6df0; rustup-less rust-analyzer fallback 2b0edf95 fixes the 6 baseline failures",
     "F3 linking (20 tests red-first incl. owner-rank gap found by mutation; 120 tracker tests green; full suite 3643 pass / 1 known load flake; mutations M1,M3-M8 caught, M2 equivalent: prefixes are '-'-terminated so order cannot change a match)",
-    "F4 usage (12 tests red-first + 1 by_source assertion added after mutation N8 survived; tracker 128/128, cli 70/70; mutations N1-N8 caught); live board got_a_guy↔senecaglobal.jira.com #333 connected (12 sprints, 728 tickets) after *.jira.com host fix"
+    "F4 usage (12 tests red-first + 1 by_source assertion added after mutation N8 survived; tracker 128/128, cli 70/70; mutations N1-N8 caught); live board got_a_guy↔senecaglobal.jira.com #333 connected (12 sprints, 728 tickets) after *.jira.com host fix",
+    "F6 app screen (50 unit tests red-first: state 24, panel 13 incl. axe x3, ModalShell 6, api 6, sidebar 1; app 1837/1837; svelte-check 0; verified live in headless chromium against senecaglobal board)"
   ],
   "decomposition_approved": "2026-10-16 (user)",
   "gate_status": "pass",
@@ -35,13 +36,14 @@
   "known_broken": [
     "sensei MCP index: 'folder not indexed' for this repo — grep fallback",
     "update_phase MCP returns 404",
-    "2 indexer corpus tests flake only under full-suite load (a_scanned_repository_records_its_project_in_the_junction, every_stage_reaches_the_progress_stream); pass in isolation and with tracker tests; ruled out: env mutation, scan config, fd limit (524288), Postgres connections (no 'too many clients'). Root cause open."
+    "2 indexer corpus tests flake only under full-suite load (a_scanned_repository_records_its_project_in_the_junction, every_stage_reaches_the_progress_stream); pass in isolation and with tracker tests; ruled out: env mutation, scan config, fd limit (524288), Postgres connections (no 'too many clients'). Root cause open.",
+    "app e2e (Tauri Playwright) runs only on macOS; F6 route added to zz-a11y.spec.ts but not run here. Logs report modal (moved onto ModalShell) not exercised live: its sessions come from a Tauri command"
   ],
   "blocked": [
     "F5 needs P0 = setup, not code: consent to Claude Code transcripts + watch the repos (2026-10-17 diagnosis)",
     "F1.1 fixture capture: tenant now connected (senecaglobal.jira.com #333); live sync parsed 12 sprints/728 issues with the assumed C11 shapes — record as evidence"
   ],
-  "next_command": "F6: desktop Integrations screen (docs/spec/screen/project-integrations.md), tests red-first. F5 waits on transcript consent.",
+  "next_command": "F5: needs Claude Code transcript consent + the project's repos watched; then sync and check links/usage against real sessions (done gate 6-10)",
   "spec_audit_4_5": "2026-10-16: 3 reviewers (conformance, failure-mode, data-correctness) → 14 findings; spec corrected (3-phase→5-step sync, no tx across I/O, atomic relink in apply tx, async first sync, keyring spawn_blocking+timeout, board-id canonicalisation, URL policy on require_secure_url). Re-audit → 7 contradictions fixed. Awaiting user confirmation of corrections.",
   "baseline": {
     "date": "2026-10-16",
@@ -68,7 +70,7 @@
       "tasks::index_audit::tests::audit_repairs_nested_standalone"
     ]
   },
-  "last_verify": "2026-10-17 F4: full senseid 3652 pass / 1 fail x2 runs (indexer corpus load flakes only); clippy 0; fmt 0; lints 0",
+  "last_verify": "2026-10-18 F6: app unit 133 files / 1837 pass; svelte-check 0 errors 0 warnings; senseid unchanged since F4",
   "checkpoint_path": "docs/checkpoints/tracker-jira-linkage.md",
   "committed": "F1.2+F1.3 committed by user in 403b303a (2026-10-16 19:52)",
   "workarounds": [

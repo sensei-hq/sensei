@@ -2134,6 +2134,37 @@ export interface PruneResult {
   pruned: PruneReport;
 }
 
+// ── Issue trackers (docs/spec/daemon/tracker-jira-linkage.md R8, R9) ─────────
+
+/** A project's tracker connection as `GET /api/projects/{id}/trackers` returns
+ *  it. Never the token, never the keyring name. */
+export interface TrackerConnection {
+  id: string;
+  kind: 'jira';
+  /** Normalised by the daemon, e.g. `https://acme.atlassian.net`. */
+  base_url: string;
+  /** The account the token belongs to (Jira: the Atlassian email). */
+  account: string;
+  /** Jira project key, or the board name for a cross-project board. */
+  external_scope: string;
+  board_ref: string;
+  board_name: string | null;
+  status: 'pending' | 'connected' | 'stale' | 'error';
+  last_success_at: string | null;
+  /** A fixed `tracker_error` code, never a raw message. */
+  last_error: string | null;
+  counts: { tasks: number; sprints: number };
+}
+
+/** What `POST …/trackers/sync` counted. */
+export interface TrackerSyncCounts {
+  sprints: number;
+  tasks: number;
+  removed: number;
+  links: number;
+  skipped_members: number;
+}
+
 // ── Transcript consent (#218) ───────────────────────────────────────────────
 
 /** One source sensei can read conversation history from, and whether the user
